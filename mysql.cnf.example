@@ -1,0 +1,5 @@
+# Copy this file into a mysql.cnf and enter your db details
+[client]
+user = wocod
+password = SuperSecureSecret123
+default-character-set = utf8mb4

@@ -1,0 +1,8 @@
+{
+    "editor.autoClosingQuotes": "never",
+    "editor.autoSurround": "never",
+    "html.completion.attributeDefaultValue": "empty",
+    "python.analysis.ignore": [
+        "*"
+    ]
+}
