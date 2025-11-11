@@ -1,5 +1,5 @@
 ###################################################################################################
-## Monolith Project - Configuration
+## WoCo Project - Configuration
 ## MPC: 2025/10/24
 ###################################################################################################
 import os, sys
@@ -38,7 +38,9 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
-    "django_admin_logs"
+    "django_admin_logs",
+
+    "common"
 ]
 if not TESTING:
     # django_debug_toolbar cannot be present in automated testing
@@ -63,7 +65,7 @@ if not TESTING:
         *MIDDLEWARE
     ]
 
-ROOT_URLCONF = "monolith.urls"
+ROOT_URLCONF = "woco.urls"
 
 TEMPLATES = [
     {
@@ -80,7 +82,7 @@ TEMPLATES = [
     }
 ]
 
-WSGI_APPLICATION = "monolith.wsgi.application"
+WSGI_APPLICATION = "woco.wsgi.application"
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases

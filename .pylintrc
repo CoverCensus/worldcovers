@@ -1,6 +1,6 @@
 [MASTER]
 load-plugins=pylint_django
-django-settings-module=myproject.settings
+django-settings-module=woco.settings
 [FORMAT]
 max-line-length=120
 [MESSAGES CONTROL]
