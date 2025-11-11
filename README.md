@@ -3,7 +3,7 @@
 
 Welcome to _**Covers**_, a stampless cover and postmark catalog application
 
-This build, nicknamed _Lightspeed_, is version **2.01**
+This build, nicknamed _Lightspeed_, is version **2.0.0**
 
 > Another success is the post-office, with its educating energy augmented by cheapness and guarded by a certain religious sentiment in mankind; so that the power of a wafer or a drop of wax or gluten to guard a letter, as it flies over sea over land and comes to its address as if a battalion of artillery brought it, I look upon as a fine meter of civilization.
 
@@ -19,7 +19,7 @@ This build, nicknamed _Lightspeed_, is version **2.01**
 
 ## Project Overview
 
-Version strings follow the **MAJOR**(#?).**MINOR**(#??) format.  
+Version strings follow the **MAJOR**(#?).**MINOR**(#?).**REVISION**(#?) format.  
 
 Current planned Milestones are `alpha`, `beta`, and `rtm`.  
 
