@@ -14,6 +14,8 @@ from django.utils.translation import gettext_lazy as _
 
 from django.conf import settings
 
+from colorfield.fields import ColorField
+
 
 
 # ========== BASE ABSTRACT MODELS ==========
@@ -344,6 +346,7 @@ class Color(TimestampedModel):
     
     color_id = models.AutoField(primary_key=True, db_column='ColorID')
     color_name = models.CharField(max_length=50, unique=True, db_column='ColorName')
+    color_value = ColorField(default="#FFFFFF", db_column='ColorValue')
 
     class Meta:
         db_table = 'Colors'
@@ -367,6 +370,13 @@ class Postmark(TimestampedModel):
         ('RIGHT', 'Right'),
         ('CENTER', 'Center'),
         ('NONE', 'None'),
+    ]
+    
+    CONDITION_CHOICES = [
+        ('VERY_FINE', 'Very Fine'),
+        ('FINE', 'Fine'),
+        ('VERY_GOOD', 'Very Good'),
+        ('POOR', 'Poor'),
     ]
     
     postmark_id = models.AutoField(primary_key=True, db_column='PostmarkID')
@@ -416,6 +426,14 @@ class Postmark(TimestampedModel):
         max_length=50,
         db_column='RateValue',
         help_text="5c, 10c, Free, Paid, etc"
+    )
+    condition = models.CharField(
+        max_length=20,
+        choices=CONDITION_CHOICES,
+        null=True,
+        blank=True,
+        db_column='Condition',
+        help_text="Physical condition of the postmark"
     )
     is_manuscript = models.BooleanField(
         default=False,
@@ -784,6 +802,13 @@ class PostmarkImage(TimestampedModel):
 class Postcover(TimestampedModel):
     """Physical postal covers/envelopes that collectors own"""
     
+    CONDITION_CHOICES = [
+        ('VERY_FINE', 'Very Fine'),
+        ('FINE', 'Fine'),
+        ('VERY_GOOD', 'Very Good'),
+        ('POOR', 'Poor'),
+    ]
+    
     postcover_id = models.AutoField(primary_key=True, db_column='PostcoverID')
     owner_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -797,6 +822,14 @@ class Postcover(TimestampedModel):
         db_column='PostcoverKey'
     )
     description = models.TextField(blank=True, db_column='Description')
+    condition = models.CharField(
+        max_length=20,
+        choices=CONDITION_CHOICES,
+        blank=True,
+        null=True,
+        db_column='Condition',
+        help_text="Physical condition of the postcover"
+    )
 
     class Meta:
         db_table = 'Postcovers'
@@ -944,3 +977,5 @@ class PostcoverImage(TimestampedModel):
         if not self.file_checksum and hasattr(self, 'file_object'):
             self.file_checksum = PostmarkImage._generate_checksum(self.file_object)
         super().save(*args, **kwargs)
+
+###################################################################################################
