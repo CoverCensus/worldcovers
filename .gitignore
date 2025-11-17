@@ -1,3 +1,5 @@
+.DS_Store
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -141,6 +143,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.env
 
 # Spyder project settings
 .spyderproject
@@ -151,6 +154,10 @@ venv.bak/
 
 # mkdocs documentation
 /site
+
+# createstatic Static files
+/static/*
+!/static/DELETE.ME
 
 # mypy
 .mypy_cache/
