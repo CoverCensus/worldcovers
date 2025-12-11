@@ -1,14 +1,14 @@
 ###################################################################################################
-## WoCo Project - Model Serialization
+## WoCo Commons - Model Serialization
 ## MPC: 2025/11/15
 ###################################################################################################
 from rest_framework import serializers
-
 from django.contrib.auth import get_user_model
-
+from django.contrib.auth.models import Group
 from .models import (
-    GeographicLocation, AdministrativeUnit, GeographicAffiliation,
-    AdministrativeUnitNameHistory, AdministrativeUnitHistory,
+    PostalFacility, PostalFacilityIdentity,
+    AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
+    JurisdictionalAffiliation,
     PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
     Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
@@ -18,7 +18,7 @@ from .models import (
 User = get_user_model()
 
 
-# ========== USER SERIALIZER ==========
+# ========== USER AND GROUP SERIALIZERS ==========
 
 class UserSerializer(serializers.ModelSerializer):
     """Basic user serializer for nested representations"""
@@ -28,26 +28,78 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
 
 
+class GroupSerializer(serializers.ModelSerializer):
+    """Group serializer for responsibility assignments"""
+    class Meta:
+        model = Group
+        fields = ['id', 'name']
+        read_only_fields = ['id']
+
+
 # ========== GEOGRAPHIC HIERARCHY SERIALIZERS ==========
 
 class AdministrativeUnitListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for lists"""
+    current_name = serializers.SerializerMethodField()
+    current_type = serializers.SerializerMethodField()
+    
     class Meta:
         model = AdministrativeUnit
-        fields = ['administrative_unit_id', 'unit_name', 'unit_abbreviation', 
-                  'unit_type', 'hierarchy_level', 'is_active']
+        fields = ['administrative_unit_id', 'reference_code', 'current_name', 'current_type']
+    
+    def get_current_name(self, obj):
+        identity = obj.get_current_identity()
+        return identity.unit_name if identity else None
+    
+    def get_current_type(self, obj):
+        identity = obj.get_current_identity()
+        return identity.unit_type if identity else None
+
+
+class AdministrativeUnitIdentitySerializer(serializers.ModelSerializer):
+    """Serializer for administrative unit identities"""
+    parent_name = serializers.SerializerMethodField()
+    created_by = UserSerializer(read_only=True)
+    
+    class Meta:
+        model = AdministrativeUnitIdentity
+        fields = '__all__'
+        read_only_fields = ['administrative_unit_identity_id', 'created_date']
+    
+    def get_parent_name(self, obj):
+        if obj.parent_administrative_unit:
+            parent_identity = obj.get_parent_identity_at_this_time()
+            return parent_identity.unit_name if parent_identity else None
+        return None
+
+
+class AdministrativeUnitResponsibilitySerializer(serializers.ModelSerializer):
+    """Serializer for group responsibilities"""
+    group = GroupSerializer(read_only=True)
+    group_id = serializers.PrimaryKeyRelatedField(
+        queryset=Group.objects.all(),
+        source='group',
+        write_only=True
+    )
+    administrative_unit_name = serializers.SerializerMethodField()
+    created_by = UserSerializer(read_only=True)
+    modified_by = UserSerializer(read_only=True)
+    
+    class Meta:
+        model = AdministrativeUnitResponsibility
+        fields = '__all__'
+        read_only_fields = ['administrative_unit_responsibility_id', 'created_date', 'modified_date']
+    
+    def get_administrative_unit_name(self, obj):
+        identity = obj.administrative_unit.get_current_identity()
+        return identity.unit_name if identity else obj.administrative_unit.reference_code
 
 
 class AdministrativeUnitSerializer(serializers.ModelSerializer):
-    """Full serializer with nested parent"""
-    parent_administrative_unit = AdministrativeUnitListSerializer(read_only=True)
-    parent_administrative_unit_id = serializers.PrimaryKeyRelatedField(
-        queryset=AdministrativeUnit.objects.all(),
-        source='parent_administrative_unit',
-        write_only=True,
-        required=False,
-        allow_null=True
-    )
+    """Full serializer with nested identities and responsibilities"""
+    identities = AdministrativeUnitIdentitySerializer(many=True, read_only=True)
+    responsibilities = AdministrativeUnitResponsibilitySerializer(many=True, read_only=True)
+    current_identity = serializers.SerializerMethodField()
     created_by = UserSerializer(read_only=True)
     modified_by = UserSerializer(read_only=True)
     
@@ -55,108 +107,84 @@ class AdministrativeUnitSerializer(serializers.ModelSerializer):
         model = AdministrativeUnit
         fields = '__all__'
         read_only_fields = ['administrative_unit_id', 'created_date', 'modified_date']
+    
+    def get_current_identity(self, obj):
+        identity = obj.get_current_identity()
+        return AdministrativeUnitIdentitySerializer(identity).data if identity else None
 
 
-class GeographicLocationListSerializer(serializers.ModelSerializer):
+class PostalFacilityListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for lists"""
+    current_name = serializers.SerializerMethodField()
+    current_type = serializers.SerializerMethodField()
+    
     class Meta:
-        model = GeographicLocation
-        fields = ['geographic_location_id', 'location_name', 'location_type', 
+        model = PostalFacility
+        fields = ['postal_facility_id', 'reference_code', 'current_name', 'current_type', 
                   'latitude', 'longitude']
-
-
-class GeographicLocationSerializer(serializers.ModelSerializer):
-    """Full serializer with nested data"""
-    created_by = UserSerializer(read_only=True)
-    modified_by = UserSerializer(read_only=True)
-    current_affiliations = serializers.SerializerMethodField()
     
-    class Meta:
-        model = GeographicLocation
-        fields = '__all__'
-        read_only_fields = ['geographic_location_id', 'created_date', 'modified_date']
+    def get_current_name(self, obj):
+        identity = obj.get_current_identity()
+        return identity.facility_name if identity else None
     
-    def get_current_affiliations(self, obj):
-        """Get current geographic affiliations (where effective_to_date is NULL)"""
-        from datetime import date
-        affiliations = obj.affiliations.filter(
-            effective_to_date__isnull=True
-        ) | obj.affiliations.filter(
-            effective_to_date__gte=date.today()
-        )
-        return GeographicAffiliationListSerializer(affiliations, many=True).data
+    def get_current_type(self, obj):
+        identity = obj.get_current_identity()
+        return identity.facility_type if identity else None
 
 
-class GeographicAffiliationListSerializer(serializers.ModelSerializer):
-    """Lightweight serializer"""
-    geographic_location_name = serializers.CharField(
-        source='geographic_location.location_name', 
-        read_only=True
-    )
-    administrative_unit_name = serializers.CharField(
-        source='administrative_unit.unit_name', 
-        read_only=True
-    )
-    
-    class Meta:
-        model = GeographicAffiliation
-        fields = ['geographic_affiliation_id', 'geographic_location_name', 
-                  'administrative_unit_name', 'effective_from_date', 'effective_to_date']
-
-
-class GeographicAffiliationSerializer(serializers.ModelSerializer):
-    """Full serializer"""
-    geographic_location = GeographicLocationListSerializer(read_only=True)
-    administrative_unit = AdministrativeUnitListSerializer(read_only=True)
-    geographic_location_id = serializers.PrimaryKeyRelatedField(
-        queryset=GeographicLocation.objects.all(),
-        source='geographic_location',
-        write_only=True
-    )
-    administrative_unit_id = serializers.PrimaryKeyRelatedField(
-        queryset=AdministrativeUnit.objects.all(),
-        source='administrative_unit',
-        write_only=True
-    )
+class PostalFacilityIdentitySerializer(serializers.ModelSerializer):
+    """Serializer for postal facility identities"""
+    coordinates = serializers.SerializerMethodField()
     created_by = UserSerializer(read_only=True)
     modified_by = UserSerializer(read_only=True)
     
     class Meta:
-        model = GeographicAffiliation
+        model = PostalFacilityIdentity
         fields = '__all__'
-        read_only_fields = ['geographic_affiliation_id', 'created_date', 'modified_date']
+        read_only_fields = ['postal_facility_identity_id', 'created_date', 'modified_date']
+    
+    def get_coordinates(self, obj):
+        coords = obj.get_coordinates()
+        if coords and coords[0] and coords[1]:
+            return {'latitude': coords[0], 'longitude': coords[1]}
+        return None
 
 
-class AdministrativeUnitNameHistorySerializer(serializers.ModelSerializer):
-    """Administrative unit name history"""
-    administrative_unit = AdministrativeUnitListSerializer(read_only=True)
-    administrative_unit_id = serializers.PrimaryKeyRelatedField(
-        queryset=AdministrativeUnit.objects.all(),
-        source='administrative_unit',
-        write_only=True
+class JurisdictionalAffiliationSerializer(serializers.ModelSerializer):
+    """Serializer for jurisdictional affiliations"""
+    facility_name = serializers.CharField(
+        source='postal_facility_identity.facility_name',
+        read_only=True
     )
+    administrative_unit_name = serializers.SerializerMethodField()
     created_by = UserSerializer(read_only=True)
+    modified_by = UserSerializer(read_only=True)
     
     class Meta:
-        model = AdministrativeUnitNameHistory
+        model = JurisdictionalAffiliation
         fields = '__all__'
-        read_only_fields = ['administrative_unit_name_history_id', 'created_date']
+        read_only_fields = ['jurisdictional_affiliation_id', 'created_date', 'modified_date']
+    
+    def get_administrative_unit_name(self, obj):
+        identity = obj.get_administrative_unit_identity()
+        return identity.unit_name if identity else None
 
 
-class AdministrativeUnitHistorySerializer(serializers.ModelSerializer):
-    """Administrative unit version history"""
-    administrative_unit = AdministrativeUnitListSerializer(read_only=True)
-    administrative_unit_id = serializers.PrimaryKeyRelatedField(
-        queryset=AdministrativeUnit.objects.all(),
-        source='administrative_unit',
-        write_only=True
-    )
+class PostalFacilitySerializer(serializers.ModelSerializer):
+    """Full serializer with nested identities"""
+    identities = PostalFacilityIdentitySerializer(many=True, read_only=True)
+    current_identity = serializers.SerializerMethodField()
     created_by = UserSerializer(read_only=True)
+    modified_by = UserSerializer(read_only=True)
     
     class Meta:
-        model = AdministrativeUnitHistory
+        model = PostalFacility
         fields = '__all__'
-        read_only_fields = ['administrative_unit_history_id', 'created_date']
+        read_only_fields = ['postal_facility_id', 'created_date', 'modified_date']
+    
+    def get_current_identity(self, obj):
+        identity = obj.get_current_identity()
+        return PostalFacilityIdentitySerializer(identity).data if identity else None
 
 
 # ========== PHYSICAL CHARACTERISTICS SERIALIZERS ==========
@@ -249,8 +277,7 @@ class PostmarkImageSerializer(serializers.ModelSerializer):
         fields = ['postmark_image_id', 'original_filename', 'storage_filename',
                   'image_url', 'mime_type', 'image_width', 'image_height',
                   'file_size_bytes', 'image_view', 'image_description',
-                  'display_order', 'image_status', 'submitter_name',
-                  'submitter_email', 'created_date']
+                  'display_order', 'uploaded_by', 'created_date']
         read_only_fields = ['postmark_image_id', 'file_checksum', 'created_date', 'modified_date']
     
     def get_image_url(self, obj):
@@ -267,37 +294,45 @@ class PostmarkImageSerializer(serializers.ModelSerializer):
 
 class PostmarkListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for postmark lists"""
-    location_name = serializers.CharField(source='geographic_location.location_name', read_only=True)
+    facility_name = serializers.CharField(
+        source='postal_facility_identity.facility_name',
+        read_only=True
+    )
     shape_name = serializers.CharField(source='postmark_shape.shape_name', read_only=True)
     main_image = serializers.SerializerMethodField()
-    condition_display = serializers.CharField(source='get_condition_display', read_only=True)
+    responsible_groups = serializers.SerializerMethodField()
     
     class Meta:
         model = Postmark
-        fields = ['postmark_id', 'postmark_key', 'location_name', 'shape_name',
-                  'rate_location', 'rate_value', 'condition', 'condition_display', 
-                  'is_manuscript', 'main_image']
+        fields = ['postmark_id', 'postmark_key', 'facility_name', 'shape_name',
+                  'rate_location', 'rate_value', 'is_manuscript', 'main_image',
+                  'responsible_groups']
     
     def get_main_image(self, obj):
         """Get main image (display_order=0)"""
-        main_img = obj.images.filter(display_order=0, image_status='APPROVED').first()
+        main_img = obj.images.filter(display_order=0).first()
         if main_img:
             return PostmarkImageSerializer(main_img, context=self.context).data
         return None
+    
+    def get_responsible_groups(self, obj):
+        """Get groups responsible for this postmark"""
+        groups = obj.get_responsible_groups()
+        return [{'id': g.id, 'name': g.name} for g in groups]
 
 
 class PostmarkSerializer(serializers.ModelSerializer):
     """Full postmark serializer with all nested data"""
-    geographic_location = GeographicLocationListSerializer(read_only=True)
+    postal_facility_identity = PostalFacilityIdentitySerializer(read_only=True)
     postmark_shape = PostmarkShapeSerializer(read_only=True)
     lettering_style = LetteringStyleSerializer(read_only=True)
     framing_style = FramingStyleSerializer(read_only=True)
     date_format = DateFormatSerializer(read_only=True)
     
     # Write-only foreign key IDs
-    geographic_location_id = serializers.PrimaryKeyRelatedField(
-        queryset=GeographicLocation.objects.all(),
-        source='geographic_location',
+    postal_facility_identity_id = serializers.PrimaryKeyRelatedField(
+        queryset=PostalFacilityIdentity.objects.all(),
+        source='postal_facility_identity',
         write_only=True
     )
     postmark_shape_id = serializers.PrimaryKeyRelatedField(
@@ -327,6 +362,7 @@ class PostmarkSerializer(serializers.ModelSerializer):
     sizes = PostmarkSizeSerializer(many=True, read_only=True)
     valuations = PostmarkValuationSerializer(many=True, read_only=True)
     images = PostmarkImageSerializer(many=True, read_only=True)
+    responsible_groups = serializers.SerializerMethodField()
     
     created_by = UserSerializer(read_only=True)
     modified_by = UserSerializer(read_only=True)
@@ -335,6 +371,11 @@ class PostmarkSerializer(serializers.ModelSerializer):
         model = Postmark
         fields = '__all__'
         read_only_fields = ['postmark_id', 'created_date', 'modified_date']
+    
+    def get_responsible_groups(self, obj):
+        """Get groups responsible for this postmark"""
+        groups = obj.get_responsible_groups()
+        return [{'id': g.id, 'name': g.name} for g in groups]
 
 
 # ========== PUBLICATION SERIALIZERS ==========
@@ -406,12 +447,11 @@ class PostcoverListSerializer(serializers.ModelSerializer):
     """Lightweight postcover list"""
     owner_username = serializers.CharField(source='owner_user.username', read_only=True)
     postmark_count = serializers.SerializerMethodField()
-    condition_display = serializers.CharField(source='get_condition_display', read_only=True)
     
     class Meta:
         model = Postcover
         fields = ['postcover_id', 'postcover_key', 'owner_username', 
-                  'condition', 'condition_display', 'postmark_count', 'created_date']
+                  'postmark_count', 'created_date']
     
     def get_postmark_count(self, obj):
         return obj.postcover_postmarks.count()

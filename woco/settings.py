@@ -52,8 +52,10 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "corsheaders",
     "colorfield",
+    "reversion",
+    "reversion_compare",
 
-    "common"
+    "common.apps.CommonConfig"
 ]
 if not TESTING:
     # django_debug_toolbar cannot be present in automated testing
@@ -74,6 +76,7 @@ MIDDLEWARE = [
 
     "allauth.account.middleware.AccountMiddleware",
     "djangorestframework_camel_case.middleware.CamelCaseMiddleWare",
+    "reversion.middleware.RevisionMiddleware",
 ]
 if not TESTING:
     # django_debug_toolbar cannot be present in automated testing
@@ -121,23 +124,15 @@ DATABASES = {
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 AUTH_PASSWORD_VALIDATORS = [
     {
-        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
-    },
-    {
         "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
+        "OPTIONS": {"min_length": 4},
     }
 ]
 
 # Authentication (provided by AllAuth)
 SITE_ID = 1
-ACCOUNT_AUTHENTICATION_METHOD = "username_email"
-ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_LOGIN_METHODS = {"email", "username"}
+ACCOUNT_SIGNUP_FIELDS = ['email*', 'username*', 'password1*', 'password2*']
 ACCOUNT_EMAIL_VERIFICATION = "none" if DEBUG or TESTING else "mandatory"
 AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",

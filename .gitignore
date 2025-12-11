@@ -59,6 +59,7 @@ cover/
 
 # Django stuff:
 *.log
+*.log.*
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -159,6 +160,10 @@ venv.bak/
 /static/*
 !/static/DELETE.ME
 
+# runtime uploaded media
+media/*
+!media/DELETE.ME
+
 # mypy
 .mypy_cache/
 .dmypy.json
@@ -213,3 +218,10 @@ __marimo__/
 
 # MySQL driver client config (contains secret)
 mysql.cnf
+
+# System backups
+backups/*
+!backups/DELETE.ME
+
+# Documentation (will go on the GH Wiki)
+docs/

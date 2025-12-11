@@ -1,5 +1,5 @@
 ###################################################################################################
-## WoCo Project - API View (Endpoints)
+## WoCo Commons - API Views
 ## MPC: 2025/11/15
 ###################################################################################################
 from datetime import date
@@ -9,13 +9,14 @@ from django.db.models import Q, Count, Prefetch
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated
+from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated, BasePermission
 
 from django_filters.rest_framework import DjangoFilterBackend
 
 from .models import (
-    GeographicLocation, AdministrativeUnit, GeographicAffiliation,
-    AdministrativeUnitNameHistory, AdministrativeUnitHistory,
+    PostalFacility, PostalFacilityIdentity,
+    AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
+    JurisdictionalAffiliation,
     PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
     Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
@@ -23,47 +24,61 @@ from .models import (
 )
 
 from .serializers import (
-    GeographicLocationSerializer, GeographicLocationListSerializer,
-    AdministrativeUnitSerializer, AdministrativeUnitListSerializer,
-    GeographicAffiliationSerializer, AdministrativeUnitNameHistorySerializer,
-    AdministrativeUnitHistorySerializer, PostmarkShapeSerializer,
-    LetteringStyleSerializer, FramingStyleSerializer, ColorSerializer,
-    DateFormatSerializer, PostmarkSerializer, PostmarkListSerializer,
-    PostmarkColorSerializer, PostmarkDatesSeenSerializer, PostmarkSizeSerializer,
-    PostmarkValuationSerializer, PostmarkPublicationSerializer,
+    PostalFacilitySerializer, PostalFacilityListSerializer,
+    PostalFacilityIdentitySerializer, AdministrativeUnitSerializer,
+    AdministrativeUnitListSerializer, AdministrativeUnitIdentitySerializer,
+    AdministrativeUnitResponsibilitySerializer, JurisdictionalAffiliationSerializer,
+    PostmarkShapeSerializer, LetteringStyleSerializer, FramingStyleSerializer,
+    ColorSerializer, DateFormatSerializer, PostmarkSerializer,
+    PostmarkListSerializer, PostmarkColorSerializer, PostmarkDatesSeenSerializer,
+    PostmarkSizeSerializer, PostmarkValuationSerializer, PostmarkPublicationSerializer,
     PostmarkPublicationReferenceSerializer, PostmarkImageSerializer,
     PostcoverSerializer, PostcoverListSerializer, PostcoverPostmarkSerializer,
     PostcoverImageSerializer
 )
 
 
+# ========== CUSTOM PERMISSIONS ==========
+
+class IsResponsibleForRegion(BasePermission):
+    """
+    Permission check: User must be in a group responsible for the postmark's region.
+    """
+    def has_object_permission(self, request, view, obj):
+        # Read permissions are allowed for all authenticated users
+        if request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return True
+        
+        # For postmarks, check if user is in responsible group
+        if isinstance(obj, Postmark):
+            responsible_groups = obj.get_responsible_groups()
+            user_groups = request.user.groups.all()
+            return any(group in responsible_groups for group in user_groups)
+        
+        # For other objects, allow if authenticated
+        return request.user and request.user.is_authenticated
+
+
 # ========== GEOGRAPHIC HIERARCHY VIEWSETS ==========
 
-class GeographicLocationViewSet(viewsets.ModelViewSet):
+class PostalFacilityViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for geographic locations (towns, cities, post offices)
-    
-    list: Return all geographic locations
-    retrieve: Return a specific location with current affiliations
-    create: Create a new location (authenticated users only)
-    update: Update a location (authenticated users only)
-    partial_update: Partially update a location (authenticated users only)
-    destroy: Delete a location (authenticated users only)
+    ViewSet for postal facilities (stable containers)
     """
-    queryset = GeographicLocation.objects.all().select_related(
+    queryset = PostalFacility.objects.all().select_related(
         'created_by', 'modified_by'
-    ).prefetch_related('affiliations__administrative_unit')
+    ).prefetch_related('identities')
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['location_type', 'location_name']
-    search_fields = ['location_name', 'location_type']
-    ordering_fields = ['location_name', 'location_type', 'created_date']
-    ordering = ['location_name']
+    filterset_fields = ['reference_code']
+    search_fields = ['reference_code']
+    ordering_fields = ['reference_code', 'created_date']
+    ordering = ['reference_code']
     
     def get_serializer_class(self):
         if self.action == 'list':
-            return GeographicLocationListSerializer
-        return GeographicLocationSerializer
+            return PostalFacilityListSerializer
+        return PostalFacilitySerializer
     
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, modified_by=self.request.user)
@@ -72,28 +87,69 @@ class GeographicLocationViewSet(viewsets.ModelViewSet):
         serializer.save(modified_by=self.request.user)
     
     @action(detail=True, methods=['get'])
-    def affiliations_timeline(self, request, pk=None):
-        """Get all historical affiliations for this location"""
-        location = self.get_object()
-        affiliations = location.affiliations.all().order_by('effective_from_date')
-        from .serializers import GeographicAffiliationSerializer
-        serializer = GeographicAffiliationSerializer(affiliations, many=True, context={'request': request})
+    def identities_timeline(self, request, pk=None):
+        """Get all historical identities for this facility"""
+        facility = self.get_object()
+        identities = facility.identities.all().order_by('effective_from_date')
+        serializer = PostalFacilityIdentitySerializer(identities, many=True, context={'request': request})
         return Response(serializer.data)
+    
+    @action(detail=True, methods=['get'])
+    def identity_at_date(self, request, pk=None):
+        """Get identity at a specific date"""
+        facility = self.get_object()
+        date_str = request.query_params.get('date')
+        
+        if not date_str:
+            return Response(
+                {'error': 'date parameter required (YYYY-MM-DD)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            target_date = date.fromisoformat(date_str)
+            identity = facility.get_identity_at_date(target_date)
+            if identity:
+                serializer = PostalFacilityIdentitySerializer(identity, context={'request': request})
+                return Response(serializer.data)
+            return Response(
+                {'error': f'No identity found for {date_str}'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except ValueError:
+            return Response(
+                {'error': 'Invalid date format, use YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class PostalFacilityIdentityViewSet(viewsets.ModelViewSet):
+    """ViewSet for postal facility identities"""
+    queryset = PostalFacilityIdentity.objects.all().select_related(
+        'postal_facility', 'created_by', 'modified_by'
+    )
+    serializer_class = PostalFacilityIdentitySerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['postal_facility', 'facility_type', 'is_operational']
+    search_fields = ['facility_name']
+    ordering_fields = ['effective_from_date', 'facility_name']
+    ordering = ['-effective_from_date']
 
 
 class AdministrativeUnitViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for administrative units (states, territories, counties, countries)
+    ViewSet for administrative units (stable containers)
     """
     queryset = AdministrativeUnit.objects.all().select_related(
-        'parent_administrative_unit', 'created_by', 'modified_by'
-    )
+        'created_by', 'modified_by'
+    ).prefetch_related('identities', 'responsibilities__group')
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['unit_type', 'hierarchy_level', 'is_active', 'unit_abbreviation']
-    search_fields = ['unit_name', 'unit_abbreviation']
-    ordering_fields = ['unit_name', 'hierarchy_level', 'created_date']
-    ordering = ['hierarchy_level', 'unit_name']
+    filterset_fields = ['reference_code']
+    search_fields = ['reference_code']
+    ordering_fields = ['reference_code', 'created_date']
+    ordering = ['reference_code']
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -107,42 +163,84 @@ class AdministrativeUnitViewSet(viewsets.ModelViewSet):
         serializer.save(modified_by=self.request.user)
     
     @action(detail=True, methods=['get'])
-    def children(self, request, pk=None):
-        """Get all child administrative units"""
-        parent = self.get_object()
-        children = AdministrativeUnit.objects.filter(parent_administrative_unit=parent)
-        serializer = AdministrativeUnitListSerializer(children, many=True)
+    def identities_timeline(self, request, pk=None):
+        """Get all historical identities for this unit"""
+        unit = self.get_object()
+        identities = unit.identities.all().order_by('effective_from_date')
+        serializer = AdministrativeUnitIdentitySerializer(identities, many=True)
         return Response(serializer.data)
     
     @action(detail=True, methods=['get'])
-    def locations(self, request, pk=None):
-        """Get all locations currently in this administrative unit"""
+    def children(self, request, pk=None):
+        """Get all child administrative units (current)"""
+        parent = self.get_object()
+        # Get identities where this unit is the parent
+        child_identities = AdministrativeUnitIdentity.objects.filter(
+            parent_administrative_unit=parent,
+            effective_to_date__isnull=True
+        )
+        # Get the administrative units
+        child_units = [identity.administrative_unit for identity in child_identities]
+        serializer = AdministrativeUnitListSerializer(child_units, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['get'])
+    def facilities(self, request, pk=None):
+        """Get all facilities currently in this administrative unit"""
         unit = self.get_object()
-        current_affiliations = GeographicAffiliation.objects.filter(
+        current_affiliations = JurisdictionalAffiliation.objects.filter(
             administrative_unit=unit,
             effective_to_date__isnull=True
-        ) | GeographicAffiliation.objects.filter(
-            administrative_unit=unit,
-            effective_to_date__gte=date.today()
-        )
-        locations = [aff.geographic_location for aff in current_affiliations]
-        serializer = GeographicLocationListSerializer(locations, many=True)
+        ).select_related('postal_facility_identity__postal_facility')
+        
+        facilities = [aff.postal_facility_identity.postal_facility for aff in current_affiliations]
+        serializer = PostalFacilityListSerializer(facilities, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['get'])
+    def responsible_groups(self, request, pk=None):
+        """Get groups responsible for this unit"""
+        unit = self.get_object()
+        responsibilities = unit.responsibilities.filter(is_active=True)
+        serializer = AdministrativeUnitResponsibilitySerializer(responsibilities, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def my_responsibilities(self, request):
+        """Get administrative units the current user's groups are responsible for"""
+        user_groups = request.user.groups.all()
+        responsibilities = AdministrativeUnitResponsibility.objects.filter(
+            group__in=user_groups,
+            is_active=True
+        ).select_related('administrative_unit')
+        
+        units = [resp.administrative_unit for resp in responsibilities]
+        serializer = AdministrativeUnitListSerializer(units, many=True)
         return Response(serializer.data)
 
 
-class GeographicAffiliationViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for geographic affiliations (temporal relationships between locations and units)
-    """
-    queryset = GeographicAffiliation.objects.all().select_related(
-        'geographic_location', 'administrative_unit', 'created_by', 'modified_by'
+class AdministrativeUnitIdentityViewSet(viewsets.ModelViewSet):
+    """ViewSet for administrative unit identities"""
+    queryset = AdministrativeUnitIdentity.objects.all().select_related(
+        'administrative_unit', 'parent_administrative_unit', 'created_by'
     )
-    serializer_class = GeographicAffiliationSerializer
+    serializer_class = AdministrativeUnitIdentitySerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['geographic_location', 'administrative_unit']
-    ordering_fields = ['effective_from_date', 'effective_to_date']
+    filterset_fields = ['administrative_unit', 'unit_type', 'change_reason']
     ordering = ['-effective_from_date']
+
+
+class AdministrativeUnitResponsibilityViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing group responsibilities"""
+    queryset = AdministrativeUnitResponsibility.objects.all().select_related(
+        'administrative_unit', 'group', 'created_by', 'modified_by'
+    )
+    serializer_class = AdministrativeUnitResponsibilitySerializer
+    permission_classes = [IsAuthenticated]  # Only authenticated users can manage
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['administrative_unit', 'group', 'is_active']
+    ordering = ['administrative_unit']
     
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, modified_by=self.request.user)
@@ -151,27 +249,15 @@ class GeographicAffiliationViewSet(viewsets.ModelViewSet):
         serializer.save(modified_by=self.request.user)
 
 
-class AdministrativeUnitNameHistoryViewSet(viewsets.ModelViewSet):
-    """ViewSet for administrative unit name history"""
-    queryset = AdministrativeUnitNameHistory.objects.all().select_related(
-        'administrative_unit', 'created_by'
+class JurisdictionalAffiliationViewSet(viewsets.ModelViewSet):
+    """ViewSet for jurisdictional affiliations"""
+    queryset = JurisdictionalAffiliation.objects.all().select_related(
+        'postal_facility_identity', 'administrative_unit', 'created_by', 'modified_by'
     )
-    serializer_class = AdministrativeUnitNameHistorySerializer
+    serializer_class = JurisdictionalAffiliationSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['administrative_unit']
-    ordering = ['-effective_from_date']
-
-
-class AdministrativeUnitHistoryViewSet(viewsets.ModelViewSet):
-    """ViewSet for administrative unit version history"""
-    queryset = AdministrativeUnitHistory.objects.all().select_related(
-        'administrative_unit', 'parent_administrative_unit', 'created_by'
-    )
-    serializer_class = AdministrativeUnitHistorySerializer
-    permission_classes = [IsAuthenticatedOrReadOnly]
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['administrative_unit', 'change_reason', 'unit_type']
+    filterset_fields = ['postal_facility_identity', 'administrative_unit']
     ordering = ['-effective_from_date']
 
 
@@ -231,39 +317,28 @@ class DateFormatViewSet(viewsets.ModelViewSet):
 
 class PostmarkViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for postmarks with comprehensive filtering
-    
-    Supports filtering by:
-    - geographic_location: Filter by location ID
-    - postmark_shape: Filter by shape ID
-    - lettering_style: Filter by lettering ID
-    - framing_style: Filter by framing ID
-    - rate_location: Filter by rate location
-    - rate_value: Filter by rate value
-    - condition: Filter by condition (VERY_FINE, FINE, VERY_GOOD, POOR)
-    - is_manuscript: Filter manuscript postmarks
-    - search: Full-text search across location name, postmark_key, rate_value
+    ViewSet for postmarks with group-based permission checking
     """
     queryset = Postmark.objects.all().select_related(
-        'geographic_location', 'postmark_shape', 'lettering_style',
-        'framing_style', 'date_format', 'created_by', 'modified_by'
+        'postal_facility_identity__postal_facility',
+        'postmark_shape', 'lettering_style', 'framing_style',
+        'date_format', 'created_by', 'modified_by'
     ).prefetch_related(
-        'postmark_colors__color', 'dates_seen', 'sizes', 
+        'postmark_colors__color', 'dates_seen', 'sizes',
         'valuations', 'images', 'publication_references__postmark_publication'
     )
-    permission_classes = [IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAuthenticatedOrReadOnly, IsResponsibleForRegion]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = {
-        'geographic_location': ['exact'],
+        'postal_facility_identity': ['exact'],
         'postmark_shape': ['exact'],
         'lettering_style': ['exact'],
         'framing_style': ['exact'],
         'rate_location': ['exact'],
         'rate_value': ['exact', 'icontains'],
-        'condition': ['exact'],
         'is_manuscript': ['exact'],
     }
-    search_fields = ['postmark_key', 'geographic_location__location_name', 
+    search_fields = ['postmark_key', 'postal_facility_identity__facility_name',
                      'rate_value', 'other_characteristics']
     ordering_fields = ['postmark_key', 'created_date', 'rate_value']
     ordering = ['postmark_key']
@@ -278,6 +353,38 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     
     def perform_update(self, serializer):
         serializer.save(modified_by=self.request.user)
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def my_region(self, request):
+        """Get postmarks from regions the user's groups are responsible for"""
+        user_groups = request.user.groups.all()
+        
+        # Get administrative units user's groups are responsible for
+        responsibilities = AdministrativeUnitResponsibility.objects.filter(
+            group__in=user_groups,
+            is_active=True
+        )
+        responsible_units = [resp.administrative_unit for resp in responsibilities]
+        
+        # Get current affiliations for these units
+        affiliations = JurisdictionalAffiliation.objects.filter(
+            administrative_unit__in=responsible_units,
+            effective_to_date__isnull=True
+        ).select_related('postal_facility_identity')
+        
+        # Get postmarks from these facility identities
+        facility_identities = [aff.postal_facility_identity for aff in affiliations]
+        postmarks = self.get_queryset().filter(
+            postal_facility_identity__in=facility_identities
+        )
+        
+        page = self.paginate_queryset(postmarks)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(postmarks, many=True)
+        return Response(serializer.data)
     
     @action(detail=True, methods=['post'])
     def add_color(self, request, pk=None):
@@ -313,14 +420,16 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=False, methods=['get'])
-    def by_location(self, request):
-        """Get postmarks grouped by location"""
-        location_id = request.query_params.get('location_id')
-        if not location_id:
-            return Response({'error': 'location_id parameter is required'}, 
+    def by_facility(self, request):
+        """Get postmarks grouped by facility"""
+        facility_id = request.query_params.get('facility_id')
+        if not facility_id:
+            return Response({'error': 'facility_id parameter is required'},
                           status=status.HTTP_400_BAD_REQUEST)
         
-        postmarks = self.get_queryset().filter(geographic_location_id=location_id)
+        # Get all identities for this facility
+        identities = PostalFacilityIdentity.objects.filter(postal_facility_id=facility_id)
+        postmarks = self.get_queryset().filter(postal_facility_identity__in=identities)
         serializer = self.get_serializer(postmarks, many=True)
         return Response(serializer.data)
 
@@ -331,7 +440,7 @@ class PostmarkImageViewSet(viewsets.ModelViewSet):
     serializer_class = PostmarkImageSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['postmark', 'image_view', 'image_status']
+    filterset_fields = ['postmark', 'image_view']
     ordering_fields = ['display_order', 'created_date']
     ordering = ['display_order']
     
@@ -343,17 +452,37 @@ class PostmarkImageViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
-        """Approve an image"""
+        """Approve an image (requires regional permission)"""
         image = self.get_object()
-        image.image_status = 'APPROVED'
+        
+        # Check if user is in responsible group
+        responsible_groups = image.postmark.get_responsible_groups()
+        user_groups = request.user.groups.all()
+        
+        if not any(group in responsible_groups for group in user_groups):
+            return Response(
+                {'error': 'You are not responsible for this region'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         image.save()
         return Response({'status': 'image approved'})
     
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
-        """Reject an image"""
+        """Reject an image (requires regional permission)"""
         image = self.get_object()
-        image.image_status = 'REJECTED'
+        
+        # Check if user is in responsible group
+        responsible_groups = image.postmark.get_responsible_groups()
+        user_groups = request.user.groups.all()
+        
+        if not any(group in responsible_groups for group in user_groups):
+            return Response(
+                {'error': 'You are not responsible for this region'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         image.save()
         return Response({'status': 'image rejected'})
 
@@ -383,12 +512,6 @@ class PostmarkPublicationViewSet(viewsets.ModelViewSet):
     search_fields = ['publication_title', 'author', 'publisher', 'isbn']
     ordering_fields = ['publication_date', 'publication_title']
     ordering = ['-publication_date']
-    
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
-    
-    def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
 
 
 class PostmarkPublicationReferenceViewSet(viewsets.ModelViewSet):
@@ -406,19 +529,7 @@ class PostmarkPublicationReferenceViewSet(viewsets.ModelViewSet):
 # ========== POSTCOVER VIEWSETS ==========
 
 class PostcoverViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for postcovers (postal covers/envelopes in collections)
-    
-    list: Return all postcovers (or filter by owner and/or condition)
-    retrieve: Return a specific postcover with all postmarks and images
-    create: Create a new postcover
-    update: Update a postcover
-    my_collection: Get current user's postcovers
-    
-    Supports filtering by:
-    - owner_user: Filter by owner user ID
-    - condition: Filter by condition (VERY_FINE, FINE, VERY_GOOD, POOR)
-    """
+    """ViewSet for postcovers"""
     queryset = Postcover.objects.all().select_related(
         'owner_user', 'created_by', 'modified_by'
     ).prefetch_related(
@@ -427,7 +538,7 @@ class PostcoverViewSet(viewsets.ModelViewSet):
     )
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['owner_user', 'condition']
+    filterset_fields = ['owner_user']
     search_fields = ['postcover_key', 'description']
     ordering_fields = ['postcover_key', 'created_date']
     ordering = ['postcover_key']
@@ -453,17 +564,6 @@ class PostcoverViewSet(viewsets.ModelViewSet):
         postcovers = self.get_queryset().filter(owner_user=request.user)
         serializer = self.get_serializer(postcovers, many=True)
         return Response(serializer.data)
-    
-    @action(detail=True, methods=['post'])
-    def add_postmark(self, request, pk=None):
-        """Add a postmark to this postcover"""
-        postcover = self.get_object()
-        serializer = PostcoverPostmarkSerializer(data=request.data)
-        
-        if serializer.is_valid():
-            serializer.save(postcover=postcover, created_by=request.user)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class PostcoverImageViewSet(viewsets.ModelViewSet):
@@ -477,15 +577,5 @@ class PostcoverImageViewSet(viewsets.ModelViewSet):
     filterset_fields = ['postcover', 'image_view']
     ordering_fields = ['display_order', 'created_date']
     ordering = ['display_order']
-    
-    def perform_create(self, serializer):
-        serializer.save(
-            uploaded_by_user=self.request.user,
-            created_by=self.request.user,
-            modified_by=self.request.user
-        )
-    
-    def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
 
 ###################################################################################################
