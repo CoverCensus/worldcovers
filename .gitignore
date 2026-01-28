@@ -222,6 +222,10 @@ mysql.cnf
 # System backups
 backups/*
 !backups/DELETE.ME
+*.bak
 
-# Documentation (will go on the GH Wiki)
-docs/
+#Local WIP files for the one-off utilities in tools/
+tools/wip/in/*
+!tools/wip/in/DELETE.ME
+tools/wip/out/*
+!tools/wip/out/DELETE.ME
