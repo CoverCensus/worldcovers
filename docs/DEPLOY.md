@@ -106,3 +106,4 @@ Then your deploy step uses the repo **after** this has run, so `frontend/dist/` 
 | **Deploy on your own server** | On server: `git pull` → `./scripts/deploy.sh` → restart app (gunicorn/systemd). |
 | **GitHub Actions only** | Workflow runs on push to `main` and builds frontend; add a deploy job in `.github/workflows/build-and-deploy.yml` to push to your host. |
 | **PaaS (Railway, Render, etc.)** | Set build command to install Python deps + `cd frontend && npm ci && npm run build`; start command = your Django/gunicorn command. |
+Rebuild
