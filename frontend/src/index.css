@@ -1,0 +1,110 @@
+/* Google Fonts - @import must be first */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Archival neutral palette - warm grays and cream */
+    --background: 40 20% 98%;
+    --foreground: 0 0% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 10%;
+
+    /* Deep burgundy for scholarly feel */
+    --primary: 0 45% 25%;
+    --primary-foreground: 40 20% 98%;
+
+    /* Warm gray secondary */
+    --secondary: 30 8% 88%;
+    --secondary-foreground: 0 0% 10%;
+
+    /* Subtle muted tones */
+    --muted: 30 12% 92%;
+    --muted-foreground: 0 0% 45%;
+
+    /* Muted gold accent */
+    --accent: 42 78% 55%;
+    --accent-foreground: 0 0% 10%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 40 20% 98%;
+
+    --border: 30 15% 88%;
+    --input: 30 15% 88%;
+    --ring: 0 45% 25%;
+
+    --radius: 0.375rem;
+
+    /* Archival theme extensions */
+    --archive-brown: 25 35% 35%;
+    --archive-cream: 40 25% 96%;
+    --archive-gold: 42 78% 55%;
+    --archive-gray: 0 0% 55%;
+    
+    /* Typography */
+    --font-heading: 'Playfair Display', serif;
+    --font-body: 'Inter', system-ui, sans-serif;
+    
+    /* Shadows for depth */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.08);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.08);
+  }
+
+  .dark {
+    --background: 0 0% 12%;
+    --foreground: 40 20% 98%;
+
+    --card: 0 0% 15%;
+    --card-foreground: 40 20% 98%;
+
+    --popover: 0 0% 15%;
+    --popover-foreground: 40 20% 98%;
+
+    --primary: 0 45% 45%;
+    --primary-foreground: 40 20% 98%;
+
+    --secondary: 0 0% 22%;
+    --secondary-foreground: 40 20% 98%;
+
+    --muted: 0 0% 22%;
+    --muted-foreground: 0 0% 65%;
+
+    --accent: 42 78% 45%;
+    --accent-foreground: 40 20% 98%;
+
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 40 20% 98%;
+
+    --border: 0 0% 22%;
+    --input: 0 0% 22%;
+    --ring: 0 45% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Playfair Display', serif;
+    font-weight: 600;
+  }
+}

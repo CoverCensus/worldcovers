@@ -157,6 +157,10 @@ STATICFILES_DIRS = [
     BASE_DIR / "assets",
 ]
 
+# React SPA (Lovable/frontend) – built output served as site home
+# Put your React app in frontend/ and run `npm run build`; index.html + /assets/ served from here
+FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
+
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
@@ -262,8 +266,11 @@ LOGGING = {
 }
 
 # CORS (adjust for frontend)
+# 8080 = common dev port; 5173 = Vite default (e.g. Lovable/React)
 CORS_ALLOWED_ORIGINS = [ 
-    "http://localhost:8080", 
+    "http://localhost:8080",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ] if DEBUG else [ 
     f"https://{DJANGO_APP_HOSTNAME}/", 
 ]
