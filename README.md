@@ -32,6 +32,8 @@ For licensing details, see [LICENSE](LICENSE)
   * TODO: DESCRIBE HERE
 * [WoCo Server](./woco)
   * TODO: DESCRIBE HERE
+* [Frontend (React)](./frontend)
+  * The public UI at [hellowoco.app](https://hellowoco.app) is a React SPA (e.g. from Lovable). Put the app in `frontend/`, run `npm run build`; Django serves it as the site home and all frontend routes. API and admin stay under `/api/` and `/admin/`.
 
 
 For more details see [DESIGN.md](./docs/DESIGN.md)
@@ -45,7 +47,9 @@ This project uses `pipenv`, and `django`. Make sure you have at least `python` 3
 
 `dotenv` is used as well, but strictly for convenience.  It allows you to directly call `django-admin` for all project commands, instead of `python manage.py`. 
 
-For building other targets, and instructions for packaging in preparation for deployment, see [BUILD.md](./docs/BUILD.md)
+For building other targets, and instructions for packaging in preparation for deployment, see [BUILD.md](./docs/BUILD.md).
+
+To have the site home and routes served by the React app (e.g. at hellowoco.app), add your frontend in [frontend/](./frontend) and **run `npm run build` there before deployment**. The built output (`frontend/dist/`) is not in git, so your **deploy must run the frontend build** (e.g. `cd frontend && npm ci && npm run build`) before starting Django. See [docs/DEPLOY.md](./docs/DEPLOY.md) and [frontend/README.md](./frontend/README.md).
 
 
 ## Configuration
