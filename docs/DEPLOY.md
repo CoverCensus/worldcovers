@@ -33,7 +33,11 @@ Choose **one** of these, depending on how you host hellowoco.app.
    pip install -r requirements.txt && cd frontend && npm ci && npm run build && cd ..
    ```
    (or run `./scripts/deploy.sh` if the host supports it and you have Node + Python).
-3. Set the **start command** to your Django command (e.g. `gunicorn woco.wsgi:application`).
+3. **Set environment variables** in the host dashboard so the frontend build gets Supabase config:
+   - `VITE_SUPABASE_URL` = your Supabase project URL (e.g. `https://xxxx.supabase.co`)
+   - `VITE_SUPABASE_PUBLISHABLE_KEY` = your Supabase anon/public key  
+   (GitHub Secrets are **not** available to the host; the host builds from source and needs these vars.)
+4. Set the **start command** to your Django command (e.g. `gunicorn woco.wsgi:application`).
 
 ---
 
