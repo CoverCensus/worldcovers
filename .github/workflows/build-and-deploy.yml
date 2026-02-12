@@ -56,7 +56,8 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             cd /srv/woco
-            git pull
+            git fetch origin
+            git reset --hard origin/staging
             ./scripts/deploy.sh
-            # restart app (adjust to your process manager)
-            sudo systemctl restart worldcovers || true
+            # restart app
+            sudo systemctl restart worldcovers
