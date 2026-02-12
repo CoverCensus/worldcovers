@@ -9,7 +9,7 @@
 
 1. From the project root:
    ```bash
-   python3.11 manage.py createsuperuser
+   python3.11 backend/manage.py createsuperuser
    ```
 2. Use the credentials above when prompted.
 3. Log in at:
@@ -19,7 +19,7 @@
 ## Optional: Create a regular user via Django shell
 
 ```bash
-python3.11 manage.py shell
+python3.11 backend/manage.py shell
 ```
 
 ```python

@@ -14,6 +14,7 @@ from decouple import config
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 ###
 BASE_DIR = Path(__file__).resolve().parent.parent
+REPO_ROOT = BASE_DIR.parent
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
@@ -115,7 +116,7 @@ DATABASES = {
             "NAME": "test_woco"
         },
         "OPTIONS": {
-            "read_default_file": str(BASE_DIR / "mysql.cnf")
+            "read_default_file": str(REPO_ROOT / "mysql.cnf")
         }
     }
 }
@@ -157,9 +158,9 @@ STATICFILES_DIRS = [
     BASE_DIR / "assets",
 ]
 
-# React SPA (Lovable/frontend) – built output served as site home
+# React SPA (frontend) – built output served as site home
 # Put your React app in frontend/ and run `npm run build`; index.html + /assets/ served from here
-FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
+FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"

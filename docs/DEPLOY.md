@@ -35,9 +35,9 @@
 1. **Push** to `staging`.
 2. In your host’s dashboard, set the **build command** to:
    ```bash
-   pip install -r requirements.txt && cd frontend && npm ci && npm run build && cd ..
+   pip install -r backend/requirements.txt && cd frontend && npm ci && npm run build && cd ..
    ```
-3. Set the **start command** to your Django command (e.g. `gunicorn woco.wsgi:application`).
+3. Set the **start command** to your Django command (e.g. `cd backend && gunicorn woco.wsgi:application`).
 
 ---
 
@@ -50,7 +50,7 @@ So after a fresh deploy, the server has the Python/Django code and the React **s
 
 The **deploy process** must:
 
-1. **Install Python deps** and run Django as you do now (e.g. `pip install -r requirements.txt`, `python manage.py migrate`, etc.).
+1. **Install Python deps** and run Django as you do now (e.g. `pip install -r backend/requirements.txt`, `python backend/manage.py migrate`, etc.).
 2. **Build the frontend** so `frontend/dist/` exists **before** Django serves the site:
    ```bash
    cd frontend
@@ -58,7 +58,7 @@ The **deploy process** must:
    npm run build
    cd ..
    ```
-3. **Start Django** (e.g. `gunicorn`, `python manage.py runserver`, or your usual command).
+3. **Start Django** (e.g. `gunicorn`, `python backend/manage.py runserver`, or your usual command).
 
 So the **deploy environment** needs:
 
@@ -71,15 +71,15 @@ From the **project root** (worldcovers/):
 
 ```bash
 # 1. Python
-pip install -r requirements.txt
-python manage.py migrate --noinput
-python manage.py collectstatic --noinput
+pip install -r backend/requirements.txt
+python backend/manage.py migrate --noinput
+python backend/manage.py collectstatic --noinput
 
 # 2. Frontend (creates frontend/dist/)
 cd frontend && npm ci && npm run build && cd ..
 
 # 3. Run the app (example; use gunicorn/uwsgi in production)
-python manage.py runserver 0.0.0.0:8000
+python backend/manage.py runserver 0.0.0.0:8000
 ```
 
 ## Example: GitHub Actions (CI)

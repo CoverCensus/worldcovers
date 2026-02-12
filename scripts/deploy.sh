@@ -5,10 +5,10 @@ set -e
 cd "$(dirname "$0")/.."
 
 echo "[1/4] Installing Python dependencies..."
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 
 echo "[2/4] Running migrations..."
-python manage.py migrate --noinput
+python backend/manage.py migrate --noinput
 
 echo "[3/4] Building frontend (creates frontend/dist/)..."
 # Load frontend/.env if present (not in git; create on server or set env vars in host dashboard).
@@ -16,6 +16,6 @@ if [ -f frontend/.env ]; then set -a; . frontend/.env; set +a; fi
 (cd frontend && npm ci && npm run build)
 
 echo "[4/4] Collecting static files (Django)..."
-python manage.py collectstatic --noinput 2>/dev/null || true
+python backend/manage.py collectstatic --noinput 2>/dev/null || true
 
 echo "Done. Start or restart your app (e.g. gunicorn, systemctl restart worldcovers)."

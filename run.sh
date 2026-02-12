@@ -7,4 +7,4 @@ echo "Building frontend (frontend/dist/)..."
 (cd frontend && npm run build)
 
 echo "Starting Django at http://127.0.0.1:8000/ ..."
-exec python3.11 manage.py runserver
+exec python3.11 backend/manage.py runserver

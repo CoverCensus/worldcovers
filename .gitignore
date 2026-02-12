@@ -161,10 +161,14 @@ venv.bak/
 # createstatic Static files
 /static/*
 !/static/DELETE.ME
+/backend/static/*
+!/backend/static/DELETE.ME
 
 # runtime uploaded media
 media/*
 !media/DELETE.ME
+/backend/media/*
+!/backend/media/DELETE.ME
 
 # mypy
 .mypy_cache/
