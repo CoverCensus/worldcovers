@@ -55,7 +55,7 @@ const Index = () => {
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-32">
           <div className="max-w-3xl">
             <h1 className="font-heading text-4xl md:text-6xl font-bold text-foreground mb-6 leading-tight">
-              American Stampless Cover Catalog
+              American Stampless Cover Database
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground mb-8 leading-relaxed">
               Explore over 25,000 historical postal markings from across America. A comprehensive, open-access archive for researchers, collectors, and philatelic enthusiasts.
