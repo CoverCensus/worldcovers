@@ -55,9 +55,7 @@ jobs:
           username: jlogan
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
-            cd /srv/woco
-            git fetch origin
-            git reset --hard origin/staging
-            ./scripts/deploy.sh
+            set -euo pipefail
+            sudo -u wocod -s bash -lc "cd /srv/woco && git fetch origin && git reset --hard origin/staging && ./scripts/deploy.sh"
             # restart app
             sudo systemctl restart worldcovers
