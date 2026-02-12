@@ -5,6 +5,8 @@
 from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.urls import reverse
+from django.utils.html import format_html
 
 from import_export import resources, fields
 from import_export.admin import ImportExportModelAdmin
@@ -511,15 +513,25 @@ class PostmarkImageInline(admin.TabularInline):
     exclude = ["created_by", "modified_by", "created_date", "modified_date"]
 
 
+class ExampleCoverInline(admin.TabularInline):
+    """Example Covers attached to this Listing via PostcoverPostmark"""
+    model = PostcoverPostmark
+    extra = 1
+    raw_id_fields = ['postcover']
+    fields = ['postcover', 'position_order', 'postmark_location']
+    exclude = ["created_by", "modified_by", "created_date", "modified_date"]
+
+
 @admin.register(Postmark)
 class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     resource_class = PostmarkResource
     list_display = ['postmark_key', 'get_facility_name', 'get_admin_unit', 
-                    'postmark_shape', 'rate_value', 'is_manuscript', 
+                    'postmark_shape', 'rate_value', 'is_manuscript',
+                    'visibility', 'example_cover_count', 'example_cover_link',
                     'get_responsible_groups']
     list_filter = ['postmark_shape', 'lettering_style', 'framing_style',
-                   'rate_location', 'is_manuscript']
-    search_fields = ['postmark_key', 'postal_facility_identity__facility_name', 'rate_value']
+                   'rate_location', 'is_manuscript', 'visibility']
+    search_fields = ['postmark_key', 'postal_facility_identity__facility_name', 'rate_value', 'public_slug', 'raw_state_data_id']
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
     raw_id_fields = ['postal_facility_identity', 'postmark_shape', 'lettering_style',
                      'framing_style', 'date_format']
@@ -531,11 +543,19 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
         PostmarkValuationInline,
         PostmarkPublicationReferenceInline,
         PostmarkImageInline,
+        ExampleCoverInline,
     ]
     
     fieldsets = (
         ('Basic Information', {
             'fields': ('postmark_key', 'postal_facility_identity')
+        }),
+        ('Listing Status & Source', {
+            'fields': ('visibility', 'public_slug', 'source_catalog', 'source_page', 'last_public_update_at')
+        }),
+        ('Import Linkage', {
+            'fields': ('raw_state_data_id', 'raw_import_payload'),
+            'classes': ('collapse',)
         }),
         ('Physical Characteristics', {
             'fields': ('postmark_shape', 'lettering_style', 'framing_style', 'date_format')
@@ -570,6 +590,18 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
         groups = obj.get_responsible_groups()
         return ', '.join([g.name for g in groups]) if groups else '-'
     get_responsible_groups.short_description = 'Responsible Groups'
+
+    def example_cover_count(self, obj):
+        return obj.postcover_postmarks.count()
+    example_cover_count.short_description = 'Example Covers'
+
+    def example_cover_link(self, obj):
+        url = (
+            reverse('admin:common_postcover_changelist')
+            + f"?postcover_postmarks__postmark__postmark_id__exact={obj.postmark_id}"
+        )
+        return format_html('<a href="{}">View</a>', url)
+    example_cover_link.short_description = 'Example Covers Link'
 
 
 @admin.register(PostmarkImage)

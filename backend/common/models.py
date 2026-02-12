@@ -500,6 +500,11 @@ class Postmark(TimestampedModel):
         ('CENTER', 'Center'),
         ('NONE', 'None'),
     ]
+    VISIBILITY_CHOICES = [
+        ('PUBLIC', 'Public'),
+        ('DRAFT', 'Draft'),
+        ('ARCHIVED', 'Archived'),
+    ]
 
     postmark_id = models.AutoField(primary_key=True, db_column='PostmarkID')
     postal_facility_identity = models.ForeignKey(
@@ -538,6 +543,48 @@ class Postmark(TimestampedModel):
         unique=True,
         db_column='PostmarkKey'
     )
+    raw_state_data_id = models.IntegerField(
+        null=True,
+        blank=True,
+        unique=True,
+        db_column='RawStateDataID',
+        help_text="Original nRawStateDataID from CSV import"
+    )
+    public_slug = models.SlugField(
+        max_length=150,
+        unique=True,
+        null=True,
+        blank=True,
+        db_column='PublicSlug'
+    )
+    visibility = models.CharField(
+        max_length=10,
+        choices=VISIBILITY_CHOICES,
+        default='PUBLIC',
+        db_column='Visibility'
+    )
+    source_catalog = models.CharField(
+        max_length=255,
+        blank=True,
+        default='ASCC 5th ed. (1997)',
+        db_column='SourceCatalog'
+    )
+    source_page = models.CharField(
+        max_length=50,
+        blank=True,
+        db_column='SourcePage'
+    )
+    last_public_update_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_column='LastPublicUpdateAt'
+    )
+    raw_import_payload = models.JSONField(
+        null=True,
+        blank=True,
+        db_column='RawImportPayload',
+        help_text="Full raw CSV row payload for import/backfill"
+    )
     rate_location = models.CharField(
         max_length=10,
         choices=RATE_LOCATION_CHOICES,
@@ -560,8 +607,8 @@ class Postmark(TimestampedModel):
 
     class Meta:
         db_table = 'Postmarks'
-        verbose_name = 'Postmark'
-        verbose_name_plural = 'Postmarks'
+        verbose_name = 'Listing'
+        verbose_name_plural = 'Listings'
         indexes = [
             models.Index(fields=['postal_facility_identity']),
             models.Index(fields=['postmark_key']),
@@ -829,8 +876,8 @@ class PostmarkImage(TimestampedModel):
 
     class Meta:
         db_table = 'PostmarkImages'
-        verbose_name = 'Postmark Image'
-        verbose_name_plural = 'Postmark Images'
+        verbose_name = 'Listing Image'
+        verbose_name_plural = 'Listing Images'
         ordering = ['postmark', 'display_order']
         indexes = [
             models.Index(fields=['postmark', 'display_order']),
@@ -876,8 +923,8 @@ class Postcover(TimestampedModel):
 
     class Meta:
         db_table = 'Postcovers'
-        verbose_name = 'Postcover'
-        verbose_name_plural = 'Postcovers'
+        verbose_name = 'Example Cover'
+        verbose_name_plural = 'Example Covers'
         indexes = [
             models.Index(fields=['owner_user']),
             models.Index(fields=['postcover_key']),
@@ -922,8 +969,8 @@ class PostcoverPostmark(TimestampedModel):
 
     class Meta:
         db_table = 'PostcoverPostmarks'
-        verbose_name = 'Postcover Postmark'
-        verbose_name_plural = 'Postcover Postmarks'
+        verbose_name = 'Example Cover Marking'
+        verbose_name_plural = 'Example Cover Markings'
         unique_together = [['postcover', 'postmark', 'position_order']]
         ordering = ['postcover', 'position_order']
 
@@ -983,8 +1030,8 @@ class PostcoverImage(TimestampedModel):
 
     class Meta:
         db_table = 'PostcoverImages'
-        verbose_name = 'Postcover Image'
-        verbose_name_plural = 'Postcover Images'
+        verbose_name = 'Example Image'
+        verbose_name_plural = 'Example Images'
         ordering = ['postcover', 'display_order']
         indexes = [
             models.Index(fields=['postcover', 'display_order']),
