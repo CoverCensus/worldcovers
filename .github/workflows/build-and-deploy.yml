@@ -1,10 +1,10 @@
-# On push to main: build frontend and optionally deploy.
+# On push to staging: build frontend and optionally deploy.
 # The built frontend (frontend/dist/) is produced so your server or deploy step can use it.
 name: Build and deploy
 
 on:
   push:
-    branches: [main]
+    branches: [staging]
   workflow_dispatch:
 
 jobs:
@@ -33,9 +33,6 @@ jobs:
         run: python manage.py migrate --check --noinput || true
 
       - name: Build frontend
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
         run: |
           cd frontend
           npm ci

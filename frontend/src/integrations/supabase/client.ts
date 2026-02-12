@@ -5,11 +5,82 @@ import type { Database } from './types';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
+const disabledError = new Error("Supabase is disabled for this environment.");
+
+type QueryResult<T = any> = { data: T | null; error: Error | null };
+
+class DisabledQuery {
+  private result: QueryResult<any> = { data: [], error: null };
+
+  select() {
+    this.result = { data: [], error: null };
+    return this;
+  }
+  order() { return this; }
+  eq() { return this; }
+  ilike() { return this; }
+  gte() { return this; }
+  lte() { return this; }
+  in() { return this; }
+  or() { return this; }
+  range() { return this; }
+  limit() { return this; }
+  single() {
+    this.result = { data: null, error: null };
+    return this;
+  }
+  maybeSingle() {
+    this.result = { data: null, error: null };
+    return this;
+  }
+  insert() {
+    this.result = { data: null, error: disabledError };
+    return this;
+  }
+  update() {
+    this.result = { data: null, error: disabledError };
+    return this;
+  }
+  delete() {
+    this.result = { data: null, error: disabledError };
+    return this;
+  }
+  upsert() {
+    this.result = { data: null, error: disabledError };
+    return this;
+  }
+  then(resolve: (value: QueryResult<any>) => any, reject: (reason: any) => any) {
+    return Promise.resolve(this.result).then(resolve, reject);
+  }
+}
+
+function createDisabledClient(): SupabaseClient<Database> {
+  const auth = {
+    getSession: async () => ({ data: { session: null }, error: null }),
+    onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+    signOut: async () => ({ error: null }),
+    signInWithPassword: async () => ({ data: null, error: disabledError }),
+    signUp: async () => ({ data: null, error: disabledError }),
+    resetPasswordForEmail: async () => ({ data: null, error: disabledError }),
+  };
+
+  const storage = {
+    from: () => ({
+      upload: async () => ({ data: null, error: disabledError }),
+      getPublicUrl: () => ({ data: { publicUrl: "" } }),
+    }),
+  };
+
+  return {
+    auth,
+    storage,
+    from: () => new DisabledQuery(),
+  } as unknown as SupabaseClient<Database>;
+}
+
 function createSupabaseClient(): SupabaseClient<Database> {
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-    throw new Error(
-      'Supabase is not configured. Add GitHub repo secrets VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY, then redeploy.'
-    );
+    return createDisabledClient();
   }
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: {
@@ -28,7 +99,7 @@ function getClient(): SupabaseClient<Database> {
   return _client;
 }
 
-// Lazy singleton: only creates the client when first used. Throws a clear error if env is missing.
+// Lazy singleton: creates a real Supabase client when configured; otherwise returns a safe stub.
 export const supabase = new Proxy({} as SupabaseClient<Database>, {
   get(_, prop) {
     return getClient()[prop as keyof SupabaseClient<Database>];

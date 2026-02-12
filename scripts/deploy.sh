@@ -13,9 +13,6 @@ python manage.py migrate --noinput
 echo "[3/4] Building frontend (creates frontend/dist/)..."
 # Load frontend/.env if present (not in git; create on server or set env vars in host dashboard).
 if [ -f frontend/.env ]; then set -a; . frontend/.env; set +a; fi
-if [ -z "$VITE_SUPABASE_URL" ] || [ -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]; then
-  echo "WARNING: VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY not set. Frontend will show a config error. Set them in frontend/.env or as environment variables."
-fi
 (cd frontend && npm ci && npm run build)
 
 echo "[4/4] Collecting static files (Django)..."
