@@ -44,24 +44,19 @@ jobs:
           name: frontend-dist
           path: frontend/dist/
 
-  # Optional: add a deploy job that uses the artifact or triggers your host.
-  # Uncomment and adjust for your host (e.g. Railway, Render, VPS via SSH).
-  #
-  # deploy:
-  #   needs: build
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/download-artifact@v4
-  #       with:
-  #         name: frontend-dist
-  #         path: frontend/dist/
-  #     # Example: deploy to a server via SSH (you provide secrets).
-  #     # - name: Deploy to server
-  #     #   uses: appleboy/ssh-action@v1.0.0
-  #     #   with:
-  #     #     host: ${{ secrets.DEPLOY_HOST }}
-  #     #     username: ${{ secrets.DEPLOY_USER }}
-  #     #     key: ${{ secrets.DEPLOY_SSH_KEY }}
-  #     #     script: |
-  #     #       cd /var/www/worldcovers && git pull && ./scripts/deploy.sh && sudo systemctl restart worldcovers
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server (SSH)
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: hellowoco.app
+          username: jlogan
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /srv/woco
+            git pull
+            ./scripts/deploy.sh
+            # restart app (adjust to your process manager)
+            sudo systemctl restart worldcovers || true
