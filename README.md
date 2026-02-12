@@ -33,7 +33,7 @@ For licensing details, see [LICENSE](LICENSE)
 * [WoCo Server](./woco)
   * TODO: DESCRIBE HERE
 * [Frontend (React)](./frontend)
-  * The public UI at [hellowoco.app](https://hellowoco.app) is a React SPA (e.g. from Lovable). Put the app in `frontend/`, run `npm run build`; Django serves it as the site home and all frontend routes. API and admin stay under `/api/` and `/admin/`.
+  * The public UI at [hellowoco.app](https://hellowoco.app) is a React SPA. Put the app in `frontend/`, run `npm run build`; Django serves it as the site home and all frontend routes. API and admin stay under `/api/` and `/admin/`.
 
 
 For more details see [DESIGN.md](./docs/DESIGN.md)
