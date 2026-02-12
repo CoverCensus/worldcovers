@@ -26,12 +26,17 @@ SECRET_KEY = "DUMMY-KEY-HERE-NO-FALSE-POSITIVES-NO-WHAMMY-NO-WHAMMY-STOP"
 DEBUG = config("DEBUG", default=True, cast=bool)
 TESTING = "test" in sys.argv or "PYTEST_VERSION" in os.environ
 
-ALLOWED_HOSTS = []
+DJANGO_APP_HOSTNAME = config("DJANGO_APP_HOSTNAME", default="hellowoco.app")
+
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    DJANGO_APP_HOSTNAME,
+    f"www.{DJANGO_APP_HOSTNAME}",
+]
 INTERNAL_IPS = [
     "127.0.0.1"
 ]
-
-DJANGO_APP_HOSTNAME = config("DJANGO_APP_HOSTNAME", default="hellowoco.app")
 
 # Application definition
 INSTALLED_APPS = [
