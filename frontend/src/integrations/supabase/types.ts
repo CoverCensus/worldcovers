@@ -14,41 +14,136 @@ export type Database = {
   }
   public: {
     Tables: {
-      catalog_records: {
+      catalog_edit_requests: {
         Row: {
+          catalog_record_id: string
+          citation_references: string | null
           color: string
           created_at: string
           date_range: string
+          description: string | null
+          dimensions: string | null
           id: string
           image_url: string | null
+          manuscript: string | null
           name: string
+          rarity: string | null
+          requested_by: string
+          reviewed_at: string | null
+          reviewed_by: string | null
           state: string
+          status: string
+          town: string
+          type: string
+          valuation: string | null
+        }
+        Insert: {
+          catalog_record_id: string
+          citation_references?: string | null
+          color: string
+          created_at?: string
+          date_range: string
+          description?: string | null
+          dimensions?: string | null
+          id?: string
+          image_url?: string | null
+          manuscript?: string | null
+          name: string
+          rarity?: string | null
+          requested_by: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          state: string
+          status?: string
+          town: string
+          type: string
+          valuation?: string | null
+        }
+        Update: {
+          catalog_record_id?: string
+          citation_references?: string | null
+          color?: string
+          created_at?: string
+          date_range?: string
+          description?: string | null
+          dimensions?: string | null
+          id?: string
+          image_url?: string | null
+          manuscript?: string | null
+          name?: string
+          rarity?: string | null
+          requested_by?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          state?: string
+          status?: string
+          town?: string
+          type?: string
+          valuation?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_edit_requests_catalog_record_id_fkey"
+            columns: ["catalog_record_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_records"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      catalog_records: {
+        Row: {
+          citation_references: string | null
+          color: string
+          created_at: string
+          date_range: string
+          description: string | null
+          dimensions: string | null
+          id: string
+          image_url: string | null
+          manuscript: string | null
+          name: string
+          rarity: string | null
+          state: string
+          submitted_by: string | null
           town: string
           type: string
           updated_at: string
           valuation: string | null
         }
         Insert: {
+          citation_references?: string | null
           color: string
           created_at?: string
           date_range: string
+          description?: string | null
+          dimensions?: string | null
           id?: string
           image_url?: string | null
+          manuscript?: string | null
           name: string
+          rarity?: string | null
           state: string
+          submitted_by?: string | null
           town: string
           type: string
           updated_at?: string
           valuation?: string | null
         }
         Update: {
+          citation_references?: string | null
           color?: string
           created_at?: string
           date_range?: string
+          description?: string | null
+          dimensions?: string | null
           id?: string
           image_url?: string | null
+          manuscript?: string | null
           name?: string
+          rarity?: string | null
           state?: string
+          submitted_by?: string | null
           town?: string
           type?: string
           updated_at?: string
@@ -105,9 +200,12 @@ export type Database = {
           created_at: string
           date_range: string
           description: string | null
+          dimensions: string | null
           id: string
           image_url: string | null
+          manuscript: string | null
           name: string
+          rarity: string | null
           reviewed_at: string | null
           reviewed_by: string | null
           state: string
@@ -124,9 +222,12 @@ export type Database = {
           created_at?: string
           date_range: string
           description?: string | null
+          dimensions?: string | null
           id?: string
           image_url?: string | null
+          manuscript?: string | null
           name: string
+          rarity?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           state: string
@@ -143,9 +244,12 @@ export type Database = {
           created_at?: string
           date_range?: string
           description?: string | null
+          dimensions?: string | null
           id?: string
           image_url?: string | null
+          manuscript?: string | null
           name?: string
+          rarity?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           state?: string
@@ -184,12 +288,34 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      approve_catalog_edit_request: {
+        Args: { p_admin_uid?: string; p_request_id: string }
+        Returns: Json
+      }
+      catalog_record_has_approved_submission: {
+        Args: {
+          p_date_range: string
+          p_name: string
+          p_state: string
+          p_town: string
+          p_type: string
+        }
+        Returns: boolean
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
           _user_id: string
         }
         Returns: boolean
+      }
+      list_users_for_admin: {
+        Args: never
+        Returns: {
+          created_at: string
+          email: string
+          id: string
+        }[]
       }
     }
     Enums: {

@@ -2,6 +2,9 @@
 ## WoCo Commons - Admin Panel Configuration
 ## MPC: 2025/10/24
 ###################################################################################################
+import csv
+import io
+
 from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
@@ -9,6 +12,8 @@ from django.urls import reverse
 from django.utils.html import format_html
 from django.core.paginator import Paginator
 from django.utils.functional import cached_property
+from django import forms
+from django.contrib import messages
 
 from import_export import resources, fields
 from import_export.admin import ImportExportModelAdmin
@@ -24,8 +29,12 @@ from .models import (
     PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
     Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
-    PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage
+    PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
+    LegacyAbbreviation, LegacyRateLocation, LegacyRateValue,
+    LegacyParseStep, LegacyUserState, LegacyRawStateDataPendingUpdate, LegacyCover,
+    AdminCsvUpload,
 )
+from .csv_import import IMPORTERS
 
 User = get_user_model()
 
@@ -710,5 +719,192 @@ class PostcoverImageAdmin(TimestampedModelAdmin):
     def get_postcover_key(self, obj):
         return obj.postcover.postcover_key
     get_postcover_key.short_description = 'Postcover'
+
+
+def _parse_csv_file(uploaded_file) -> dict:
+    """Parse CSV file. Returns { headers: [...], rows: [[...], ...] }."""
+    content = uploaded_file.read()
+    if isinstance(content, bytes):
+        content = content.decode('utf-8', errors='replace')
+    reader = csv.reader(io.StringIO(content), quoting=csv.QUOTE_MINIMAL)
+    rows = list(reader)
+    if not rows:
+        return {'headers': [], 'rows': []}
+    return {'headers': rows[0], 'rows': rows[1:]}
+
+
+class AdminCsvUploadForm(forms.ModelForm):
+    """Form with optional CSV file upload. File is required when adding a new upload."""
+    csv_file = forms.FileField(
+        label='CSV file',
+        required=False,
+        help_text='Upload a CSV (e.g. tblTownmarkDateFormat.csv). Required when adding new.',
+    )
+
+    class Meta:
+        model = AdminCsvUpload
+        fields = ['name']  # csv_file is form-only, not a model field
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['name'].required = False
+        self.fields['name'].help_text = 'Display name (optional; defaults to filename).'
+        if self.instance and self.instance.pk:
+            self.fields['csv_file'].help_text = 'Leave empty to keep existing data. Upload a new file to replace.'
+
+    def clean(self):
+        data = super().clean()
+        if not self.instance.pk and not self.files.get('csv_file'):
+            raise forms.ValidationError('Please upload a CSV file when adding a new upload.')
+        return data
+
+
+# ========== LEGACY ERD TABLES (read-only friendly) ==========
+
+
+@admin.register(LegacyAbbreviation)
+class LegacyAbbreviationAdmin(admin.ModelAdmin):
+    list_display = ['id', 'txt_abbreviation', 'txt_meaning', 'n_order', 'yn_active']
+    list_filter = ['yn_active']
+    search_fields = ['txt_abbreviation', 'txt_meaning']
+    ordering = ['n_order', 'txt_abbreviation']
+
+
+@admin.register(LegacyRateLocation)
+class LegacyRateLocationAdmin(admin.ModelAdmin):
+    list_display = ['id', 'txt_townmark_rate_location', 'n_order', 'yn_active']
+    list_filter = ['yn_active']
+    ordering = ['n_order']
+
+
+@admin.register(LegacyRateValue)
+class LegacyRateValueAdmin(admin.ModelAdmin):
+    list_display = ['id', 'txt_townmark_rate_value', 'n_order', 'yn_active']
+    list_filter = ['yn_active']
+    ordering = ['n_order']
+
+
+@admin.register(LegacyParseStep)
+class LegacyParseStepAdmin(admin.ModelAdmin):
+    list_display = ['id', 'txt_parse_step', 'n_state_id', 'yn_completed', 'n_order', 'yn_active']
+    list_filter = ['yn_completed', 'yn_active']
+    search_fields = ['txt_parse_step']
+    ordering = ['n_state_id', 'n_order']
+
+
+@admin.register(LegacyUserState)
+class LegacyUserStateAdmin(admin.ModelAdmin):
+    list_display = ['id', 'n_user_id', 'n_state_id', 'mem_roles']
+    list_filter = ['n_state_id']
+    ordering = ['n_user_id', 'n_state_id']
+
+
+@admin.register(LegacyRawStateDataPendingUpdate)
+class LegacyRawStateDataPendingUpdateAdmin(admin.ModelAdmin):
+    list_display = ['id', 'n_raw_state_data_id', 'n_state_id']
+    list_filter = ['n_state_id']
+    readonly_fields = ['payload']
+    ordering = ['-id']
+
+
+@admin.register(LegacyCover)
+class LegacyCoverAdmin(admin.ModelAdmin):
+    list_display = ['id', 'n_user_id', 'txt_cover_key_id', 'txt_state_abv', 'txt_town', 'n_estimated_value']
+    list_filter = ['txt_state_abv']
+    search_fields = ['txt_town', 'txt_cover_key_id', 'mem_notes']
+    ordering = ['n_user_id', 'id']
+
+
+@admin.register(AdminCsvUpload)
+class AdminCsvUploadAdmin(admin.ModelAdmin):
+    form = AdminCsvUploadForm
+    list_display = ['id', 'name', 'file_name', 'uploaded_at', 'uploaded_by']
+    list_filter = ['uploaded_at']
+    search_fields = ['name', 'file_name']
+    readonly_fields = ['uploaded_at', 'uploaded_by', 'data', 'row_count_display']
+    ordering = ['-uploaded_at']
+    list_per_page = 25
+    actions = ['import_to_date_formats', 'import_to_lettering', 'import_to_framing', 'import_to_colors', 'import_to_states']
+
+    def has_add_permission(self, request):
+        return request.user.is_staff
+
+    def get_queryset(self, request):
+        # Select only small columns so MySQL never reads the huge Data JSON (avoids "Out of sort memory")
+        return super().get_queryset(request).only(
+            'id', 'name', 'file_name', 'uploaded_at', 'uploaded_by_id'
+        )
+
+    def get_fieldsets(self, request, obj=None):
+        if obj is None:
+            return [(None, {'fields': ['name', 'csv_file']})]
+        return [
+            (None, {'fields': ['name', 'file_name', 'uploaded_at', 'uploaded_by', 'row_count_display']}),
+            ('Parsed data', {'fields': ['data'], 'classes': ['collapse']}),
+        ]
+
+    def row_count_display(self, obj):
+        return len((obj.data or {}).get('rows') or [])
+    row_count_display.short_description = 'Rows'
+
+    def save_model(self, request, obj, form, change):
+        csv_file = request.FILES.get('csv_file') or (form.files.get('csv_file') if form else None)
+        if csv_file:
+            try:
+                obj.data = _parse_csv_file(csv_file)
+                obj.file_name = csv_file.name or obj.file_name or 'upload.csv'
+                if not (change and obj.name):
+                    obj.name = request.POST.get('name') or csv_file.name or obj.file_name or 'Unnamed upload'
+            except Exception as e:
+                self.message_user(request, f'CSV parse error: {e}', level=messages.ERROR)
+                return
+        if not change:
+            obj.uploaded_by = request.user
+        super().save_model(request, obj, form, change)
+
+    def _run_import(self, request, queryset, import_type):
+        created_total = 0
+        errors_all = []
+        for obj in queryset:
+            data = obj.data or {}
+            if not data.get('rows'):
+                self.message_user(request, f'Upload "{obj.name}" has no rows.', level=messages.WARNING)
+                continue
+            importer = IMPORTERS.get(import_type)
+            if not importer:
+                continue
+            try:
+                result = importer(data, request.user)
+                created_total += result.get('created', 0)
+                errors_all.extend(result.get('errors') or [])
+            except Exception as e:
+                self.message_user(request, f'Import failed for "{obj.name}": {e}', level=messages.ERROR)
+        if created_total or errors_all:
+            msg = f'Created {created_total} record(s).'
+            if errors_all:
+                msg += f' {len(errors_all)} error(s) (e.g. {errors_all[0][:80]}).'
+            self.message_user(request, msg, level=messages.SUCCESS if created_total else messages.WARNING)
+        else:
+            self.message_user(request, 'No rows imported (duplicates skipped or no data).', level=messages.INFO)
+
+    @admin.action(description='Import selected into Date Formats')
+    def import_to_date_formats(self, request, queryset):
+        self._run_import(request, queryset, 'date_format')
+
+    @admin.action(description='Import selected into Lettering Styles')
+    def import_to_lettering(self, request, queryset):
+        self._run_import(request, queryset, 'lettering')
+
+    @admin.action(description='Import selected into Framing Styles')
+    def import_to_framing(self, request, queryset):
+        self._run_import(request, queryset, 'framing')
+
+    @admin.action(description='Import selected into Colors')
+    def import_to_colors(self, request, queryset):
+        self._run_import(request, queryset, 'colors')
+
+    @admin.action(description='Import selected into States (Admin Units)')
+    def import_to_states(self, request, queryset):
+        self._run_import(request, queryset, 'states')
 
 ###################################################################################################

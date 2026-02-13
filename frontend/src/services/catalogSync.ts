@@ -1,6 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 
-type SubmissionForCatalog = {
+export type SubmissionForCatalog = {
   name: string;
   state: string;
   town: string;
@@ -8,11 +8,18 @@ type SubmissionForCatalog = {
   type: string;
   color: string;
   image_url: string | null;
+  description?: string | null;
+  citation_references?: string | null;
+  dimensions?: string | null;
+  manuscript?: string | null;
+  rarity?: string | null;
+  user_id: string;
 };
 
 /**
  * When a submission is approved, add it to catalog_records so it appears in the
  * catalog (Search) list. Skips insert if a matching record already exists.
+ * Sets submitted_by to the submitting user for "My Catalogs".
  */
 export async function syncApprovedSubmissionToCatalog(
   submission: SubmissionForCatalog
@@ -41,7 +48,13 @@ export async function syncApprovedSubmissionToCatalog(
       color: submission.color,
       type: submission.type,
       image_url: submission.image_url,
-      valuation: "Common",
+      valuation: submission.rarity ?? "Common",
+      description: submission.description ?? null,
+      citation_references: submission.citation_references ?? null,
+      dimensions: submission.dimensions ?? null,
+      manuscript: submission.manuscript ?? null,
+      rarity: submission.rarity ?? null,
+      submitted_by: submission.user_id,
     });
 
     if (error) return { ok: false, error: error.message };

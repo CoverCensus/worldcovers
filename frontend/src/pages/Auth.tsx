@@ -7,46 +7,49 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { RequestLoginForm } from "@/components/RequestLoginForm";
 
 import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
+import { login, getAdminUrl } from "@/services/djangoAuth";
 import { z } from "zod";
 
 const authSchema = z.object({
-  email: z
+  username: z
     .string()
     .trim()
-    .email({ message: "Please enter a valid email address" })
-    .max(255, { message: "Email must be less than 255 characters" }),
+    .min(1, { message: "Please enter your username" })
+    .max(150, { message: "Username must be less than 150 characters" }),
   password: z
     .string()
-    .min(8, { message: "Password must be at least 8 characters" })
-    .max(72, { message: "Password must be less than 72 characters" })
+    .min(1, { message: "Please enter your password" }),
 });
 
 const Auth = () => {
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user, loading: authLoading, refetch } = useAuth();
 
-  // Redirect if already logged in
+  // Redirect if already logged in: staff → Django admin (full page), normal user → /dashboard
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        navigate("/");
+    if (authLoading) return;
+    if (user) {
+      if (user.is_staff) {
+        window.location.href = getAdminUrl();
+        return;
       }
-    });
-  }, [navigate]);
+      navigate("/dashboard");
+    }
+  }, [user, authLoading, navigate]);
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Validate inputs
-    const validation = authSchema.safeParse({ email, password });
-    
+
+    const validation = authSchema.safeParse({ username, password });
+
     if (!validation.success) {
       const firstError = validation.error.errors[0];
       toast({
@@ -58,26 +61,29 @@ const Auth = () => {
     }
 
     setLoading(true);
-
-    const { error } = await supabase.auth.signInWithPassword({
-      email: validation.data.email,
-      password: validation.data.password,
-    });
-
-    setLoading(false);
-
-    if (error) {
-      toast({
-        title: "Sign in failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    } else {
+    try {
+      const { user: loggedInUser } = await login(
+        validation.data.username,
+        validation.data.password,
+      );
+      await refetch();
       toast({
         title: "Welcome back!",
-        description: "You have successfully signed in.",
+        description: `Signed in as ${loggedInUser.username}.`,
       });
-      navigate("/");
+      if (loggedInUser.is_staff) {
+        window.location.href = getAdminUrl();
+      } else {
+        navigate("/dashboard");
+      }
+    } catch (err) {
+      toast({
+        title: "Sign in failed",
+        description: err instanceof Error ? err.message : "Invalid username or password.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -92,19 +98,20 @@ const Auth = () => {
               WorldCovers Account
             </CardTitle>
             <CardDescription className="text-center">
-              Sign in to access the catalog
+              Sign in with your Django account (same as /admin)
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSignIn} className="space-y-4 pt-4">
               <div className="space-y-2">
-                <Label htmlFor="signin-email">Email</Label>
+                <Label htmlFor="signin-username">Username</Label>
                 <Input
-                  id="signin-email"
-                  type="email"
-                  placeholder="name@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  id="signin-username"
+                  type="text"
+                  placeholder="Username"
+                  autoComplete="username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
                   required
                 />
               </div>
@@ -114,6 +121,7 @@ const Auth = () => {
                   id="signin-password"
                   type="password"
                   placeholder="Enter your password"
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -142,9 +150,9 @@ const Auth = () => {
         </Card>
       </div>
 
-      <RequestLoginForm 
-        open={requestDialogOpen} 
-        onOpenChange={setRequestDialogOpen} 
+      <RequestLoginForm
+        open={requestDialogOpen}
+        onOpenChange={setRequestDialogOpen}
       />
 
       <Footer />

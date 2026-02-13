@@ -1,30 +1,33 @@
 /**
- * Postmarks (catalog): from GET /api/postmarks/ when VITE_POSTMARKS_API_URL is set.
- * When not set, the app uses Supabase catalog_records for the catalog list.
+ * Postmarks (catalog): from Django GET /api/postmarks/
+ * (single base URL: VITE_API_BASE_URL).
  */
 
-/** One item from GET /api/postmarks/ */
+import { fetchAllPages } from "@/lib/api";
+
+/** One item from GET /api/postmarks/ list (camelCase or snake_case from Django) */
 export interface PostmarkApiResultItem {
-  postmarkId: number;
-  postmarkKey: string;
-  facilityName: string;
-  shapeName: string;
-  rateLocation: string;
-  rateValue: string;
-  isManuscript: boolean;
-  mainImage: string | null;
-  responsibleGroups: unknown[];
+  postmark_id?: number;
+  postmarkId?: number;
+  postmark_key?: string;
+  postmarkKey?: string;
+  facility_name?: string;
+  facilityName?: string;
+  shape_name?: string;
+  shapeName?: string;
+  rate_location?: string;
+  rateLocation?: string;
+  rate_value?: string;
+  rateValue?: string;
+  is_manuscript?: boolean;
+  isManuscript?: boolean;
+  main_image?: { image_url?: string | null } | null;
+  mainImage?: string | null;
+  responsible_groups?: unknown[];
+  responsibleGroups?: unknown[];
 }
 
-/** Paginated response from GET /api/postmarks/ */
-export interface PostmarkApiResponse {
-  count: number;
-  next: string | null;
-  previous: string | null;
-  results: PostmarkApiResultItem[];
-}
-
-/** Normalized postmark for list/detail (matches API shape) */
+/** Normalized postmark for list/detail */
 export interface PostmarkRecord {
   id: number;
   postmarkKey: string;
@@ -38,47 +41,25 @@ export interface PostmarkRecord {
 }
 
 function mapApiResultToRecord(item: PostmarkApiResultItem): PostmarkRecord {
+  const id = item.postmark_id ?? item.postmarkId ?? 0;
+  const mainImage = item.main_image?.image_url ?? item.mainImage ?? null;
   return {
-    id: item.postmarkId,
-    postmarkKey: item.postmarkKey,
-    facilityName: item.facilityName,
-    shapeName: item.shapeName,
-    rateLocation: item.rateLocation,
-    rateValue: item.rateValue,
-    isManuscript: item.isManuscript,
-    mainImage: item.mainImage,
-    responsibleGroups: item.responsibleGroups ?? [],
+    id,
+    postmarkKey: item.postmark_key ?? item.postmarkKey ?? "",
+    facilityName: item.facility_name ?? item.facilityName ?? "",
+    shapeName: item.shape_name ?? item.shapeName ?? "",
+    rateLocation: item.rate_location ?? item.rateLocation ?? "",
+    rateValue: item.rate_value ?? item.rateValue ?? "",
+    isManuscript: item.is_manuscript ?? item.isManuscript ?? false,
+    mainImage: mainImage ?? null,
+    responsibleGroups: item.responsible_groups ?? item.responsibleGroups ?? [],
   };
 }
 
-function getPostmarksApiUrl(): string | null {
-  const env = import.meta.env.VITE_POSTMARKS_API_URL;
-  if (!env || typeof env !== "string" || env.trim() === "") return null;
-  const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/postmarks")) return base;
-  return `${base}/api/postmarks`;
-}
-
 /**
- * Fetches postmarks from GET /api/postmarks/.
- * When VITE_POSTMARKS_API_URL is not set, returns [] (app uses Supabase catalog_records).
+ * Fetches postmarks from Django GET /api/postmarks/ (all pages).
  */
 export async function getPostmarks(): Promise<PostmarkRecord[]> {
-  const apiUrl = getPostmarksApiUrl();
-  if (!apiUrl) {
-    return [];
-  }
-
-  const url = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Postmarks API error: ${res.status} ${res.statusText}`);
-  }
-
-  const data: PostmarkApiResponse = await res.json();
-  if (!Array.isArray(data.results)) {
-    throw new Error("Postmarks API: invalid response (missing results array)");
-  }
-
-  return data.results.map(mapApiResultToRecord);
+  const results = await fetchAllPages<PostmarkApiResultItem>("postmarks");
+  return results.map(mapApiResultToRecord);
 }

@@ -2,14 +2,22 @@
 ## WoCo Commons - API Views
 ## MPC: 2025/11/15
 ###################################################################################################
+import csv
+import io
 from datetime import date
 
+from django.contrib.auth import authenticate, login, logout
 from django.db.models import Q, Count, Prefetch
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 
 from rest_framework import viewsets, filters, status
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated, BasePermission
+from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated, IsAdminUser, BasePermission, AllowAny
+from rest_framework.views import APIView
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from django_filters.rest_framework import DjangoFilterBackend
 
@@ -20,7 +28,8 @@ from .models import (
     PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
     Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
-    PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage
+    PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
+    AdminCsvUpload,
 )
 
 from .serializers import (
@@ -34,8 +43,84 @@ from .serializers import (
     PostmarkSizeSerializer, PostmarkValuationSerializer, PostmarkPublicationSerializer,
     PostmarkPublicationReferenceSerializer, PostmarkImageSerializer,
     PostcoverSerializer, PostcoverListSerializer, PostcoverPostmarkSerializer,
-    PostcoverImageSerializer
+    PostcoverImageSerializer,
+    AdminCsvUploadListSerializer, AdminCsvUploadSerializer,
 )
+from .csv_import import IMPORTERS
+
+
+# ========== AUTH (SESSION LOGIN FOR SPA) ==========
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class LoginView(APIView):
+    """Session login for frontend when Supabase is not used. Accepts username or email + password."""
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        username = request.data.get("username") or request.data.get("email") or ""
+        password = request.data.get("password") or ""
+        username = username.strip()
+        if not username or not password:
+            return Response(
+                {"detail": "Username and password required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user = authenticate(request, username=username, password=password)
+        if user is None and "@" in username:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            try:
+                u = User.objects.get(email__iexact=username)
+                user = authenticate(request, username=u.username, password=password)
+            except (User.DoesNotExist, User.MultipleObjectsReturned):
+                pass
+        if user is None:
+            return Response(
+                {"detail": "Invalid credentials."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        if not user.is_active:
+            return Response(
+                {"detail": "Account is disabled."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        login(request, user)
+        return Response({
+            "user": {
+                "id": user.pk,
+                "username": user.username,
+                "email": getattr(user, "email", "") or "",
+                "is_staff": getattr(user, "is_staff", False),
+            },
+        })
+
+
+class CurrentUserView(APIView):
+    """Return current user when authenticated via session (for SPA auth state)."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        if not request.user.is_authenticated:
+            return Response(status=status.HTTP_401_UNAUTHORIZED)
+        user = request.user
+        return Response({
+            "user": {
+                "id": user.pk,
+                "username": user.username,
+                "email": getattr(user, "email", "") or "",
+                "is_staff": getattr(user, "is_staff", False),
+            },
+        })
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class LogoutView(APIView):
+    """Session logout for SPA."""
+    def post(self, request):
+        logout(request)
+        return Response(status=status.HTTP_200_OK)
 
 
 # ========== CUSTOM PERMISSIONS ==========
@@ -577,5 +662,114 @@ class PostcoverImageViewSet(viewsets.ModelViewSet):
     filterset_fields = ['postcover', 'image_view']
     ordering_fields = ['display_order', 'created_date']
     ordering = ['display_order']
+
+
+# ========== ADMIN CSV UPLOADS (STAFF ONLY) ==========
+
+
+def _parse_csv_file(file) -> dict:
+    """Parse CSV file (handles quoted newlines). Returns { headers: [...], rows: [[...], ...] }."""
+    content = file.read()
+    if isinstance(content, bytes):
+        content = content.decode('utf-8', errors='replace')
+    reader = csv.reader(io.StringIO(content), quoting=csv.QUOTE_MINIMAL)
+    rows = list(reader)
+    if not rows:
+        return {'headers': [], 'rows': []}
+    return {'headers': rows[0], 'rows': rows[1:]}
+
+
+class SessionAuthenticationNoCSRF(SessionAuthentication):
+    """Session auth without CSRF check; use only for admin CSV upload/import (staff-only)."""
+
+    def enforce_csrf(self, request):
+        pass  # Skip so SPA can POST import-to-catalog without CSRF token
+
+
+class AdminCsvUploadViewSet(viewsets.ModelViewSet):
+    """
+    Staff-only: upload CSV files and view parsed data.
+    POST multipart/form-data with key "file" (the CSV file).
+    CSRF not enforced so SPA can POST without token (protected by IsAdminUser).
+    """
+    authentication_classes = [SessionAuthenticationNoCSRF]
+    permission_classes = [IsAuthenticated, IsAdminUser]
+    queryset = AdminCsvUpload.objects.all().select_related('uploaded_by').order_by('-uploaded_at')
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    http_method_names = ['get', 'post', 'head', 'options', 'delete']
+
+    @classmethod
+    def as_view(cls, *args, **kwargs):
+        """Wrap so the view function Django's CSRF middleware sees is exempt (SPA cross-origin)."""
+        view = super().as_view(*args, **kwargs)
+        return csrf_exempt(view)
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.action == 'list':
+            # Don't load the large Data JSON so MySQL and responses stay fast
+            qs = qs.only('id', 'name', 'file_name', 'uploaded_at', 'uploaded_by_id', 'row_count')
+        return qs
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return AdminCsvUploadListSerializer
+        return AdminCsvUploadSerializer
+
+    def create(self, request, *args, **kwargs):
+        csv_file = request.FILES.get('file')
+        if not csv_file:
+            return Response(
+                {'detail': 'No file provided. Send multipart/form-data with key "file".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        name = request.data.get('name') or csv_file.name or 'Unnamed upload'
+        try:
+            data = _parse_csv_file(csv_file)
+        except Exception as e:
+            return Response(
+                {'detail': f'Failed to parse CSV: {e!s}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        obj = AdminCsvUpload.objects.create(
+            name=name,
+            file_name=csv_file.name or 'upload.csv',
+            uploaded_by=request.user if request.user.is_authenticated else None,
+            data=data,
+        )
+        serializer = AdminCsvUploadSerializer(obj)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='import-to-catalog')
+    def import_to_catalog(self, request, pk=None):
+        """
+        Import this CSV upload into catalog tables.
+        POST body: { "import_type": "states" | "lettering" | "framing" | "date_format" | "colors" }
+        """
+        obj = self.get_object()
+        import_type = (request.data.get('import_type') or '').strip().lower()
+        if not import_type:
+            return Response(
+                {'detail': 'Missing import_type. Use one of: states, lettering, framing, date_format, colors.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if import_type not in IMPORTERS:
+            return Response(
+                {'detail': f'Unknown import_type: {import_type}. Use one of: {", ".join(IMPORTERS)}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user = request.user
+        if not user.is_authenticated:
+            return Response({'detail': 'Authentication required.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        data = obj.data or {}
+        try:
+            result = IMPORTERS[import_type](data, user)
+        except Exception as e:
+            return Response(
+                {'detail': f'Import failed: {e!s}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(result, status=status.HTTP_200_OK)
 
 ###################################################################################################

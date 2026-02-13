@@ -1,4 +1,14 @@
 .DS_Store
+*.DS_Store
+
+# Vite cache
+frontend/.vite/
+
+# Local / legacy data (optional: remove if you want to track)
+frontend/public/Old Data/
+
+# direnv (local env; often not committed)
+.envrc
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

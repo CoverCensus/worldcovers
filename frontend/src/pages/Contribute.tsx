@@ -9,11 +9,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Upload, CheckCircle, XCircle, Clock } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import type { User } from "@supabase/supabase-js";
+import { useAuth } from "@/contexts/AuthContext";
 
 const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 10;
@@ -52,18 +52,30 @@ interface MySubmission {
   created_at: string;
 }
 
+function parseDateRange(dateRange: string): { firstSeen: string; lastSeen: string } {
+  const s = (dateRange ?? "").trim();
+  if (!s) return { firstSeen: "", lastSeen: "" };
+  const dash = s.indexOf("-");
+  if (dash === -1) return { firstSeen: s, lastSeen: "" };
+  return { firstSeen: s.slice(0, dash).trim(), lastSeen: s.slice(dash + 1).trim() };
+}
+
 const Contribute = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const editId = searchParams.get("edit");
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [user, setUser] = useState<User | null>(null);
+  const { user } = useAuth();
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [mySubmissions, setMySubmissions] = useState<MySubmission[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [loadingEdit, setLoadingEdit] = useState(false);
 
   // Form state – all fields shown on Submission Detail
+  const [name, setName] = useState("");
   const [state, setState] = useState("");
   const [town, setTown] = useState("");
   const [firstSeen, setFirstSeen] = useState("");
@@ -77,21 +89,12 @@ const Contribute = () => {
   const [references, setReferences] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [existingImageUrl, setExistingImageUrl] = useState<string | null>(null);
 
   useEffect(() => {
     getColors()
       .then(setColorOptions)
       .catch(() => setColorOptions([{ id: 0, name: "Black", value: "" }]));
-  }, []);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-    return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -106,7 +109,7 @@ const Contribute = () => {
         const { data, error } = await supabase
           .from("submissions")
           .select("id, name, status, created_at")
-          .eq("user_id", user.id)
+          .eq("user_id", String(user.id))
           .order("created_at", { ascending: false });
 
         if (error) throw error;
@@ -128,6 +131,63 @@ const Contribute = () => {
     };
     fetchMySubmissions();
   }, [user, toast]);
+
+  // Load submission for edit mode
+  useEffect(() => {
+    if (!editId) {
+      setExistingImageUrl(null);
+      setLoadingEdit(false);
+      return;
+    }
+    if (!user) {
+      setLoadingEdit(false);
+      return;
+    }
+    setLoadingEdit(true);
+    const load = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("submissions")
+          .select("*")
+          .eq("id", editId)
+          .eq("user_id", String(user.id))
+          .single();
+        if (error || !data) {
+          toast({
+            title: "Cannot edit submission",
+            description: "Submission not found or you don't have permission.",
+            variant: "destructive",
+          });
+          navigate("/contribute", { replace: true });
+          return;
+        }
+        const { firstSeen, lastSeen } = parseDateRange(data.date_range ?? "");
+        setName(data.name ?? "");
+        setState(data.state ?? "");
+        setTown(data.town ?? "");
+        setFirstSeen(firstSeen);
+        setLastSeen(lastSeen);
+        setType(data.type ?? "");
+        setColor(data.color ?? "");
+        setDimensions(data.dimensions ?? "");
+        setManuscript(data.manuscript ?? "");
+        setRarity(data.rarity ?? "");
+        setDescription(data.description ?? "");
+        setReferences(data.citation_references ?? "");
+        setExistingImageUrl(data.image_url ?? null);
+        setImagePreview(data.image_url ?? null);
+      } catch {
+        toast({
+          title: "Error loading submission",
+          variant: "destructive",
+        });
+        navigate("/contribute", { replace: true });
+      } finally {
+        setLoadingEdit(false);
+      }
+    };
+    load();
+  }, [editId, user, navigate, toast]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -158,11 +218,6 @@ const Contribute = () => {
     reader.readAsDataURL(file);
   };
 
-  const buildName = () => {
-    const stateLabel = STATE_OPTIONS.find((s) => s.value === state)?.label ?? state;
-    return `${town.trim()}, ${stateLabel} ${type}`.trim();
-  };
-
   const buildDateRange = () => {
     const first = firstSeen.trim();
     const last = lastSeen.trim();
@@ -182,16 +237,17 @@ const Contribute = () => {
       return;
     }
 
+    const nameVal = name.trim();
     const stateVal = state.trim();
     const townVal = town.trim();
     const firstVal = firstSeen.trim();
     const typeVal = type.trim();
     const colorVal = color.trim();
 
-    if (!stateVal || !townVal || !firstVal || !typeVal || !colorVal) {
+    if (!nameVal || !stateVal || !townVal || !firstVal || !typeVal || !colorVal) {
       toast({
         title: "Missing required fields",
-        description: "Please fill in State, Town/City, First Seen Year, Postmark Type, and Color.",
+        description: "Please fill in Name, State, Town/City, First Seen Year, Postmark Type, and Color.",
         variant: "destructive",
       });
       return;
@@ -230,53 +286,87 @@ const Contribute = () => {
         }
       }
 
-      const name = buildName();
-      const submitterName = user.user_metadata?.full_name ?? user.email ?? undefined;
+      const submitterName = user.username || user.email || undefined;
 
-      const { error } = await supabase.from("submissions").insert({
-        user_id: user.id,
-        submitter_name: submitterName,
-        name,
-        state: stateVal,
-        town: townVal,
-        date_range: dateRange,
-        color: colorVal,
-        type: typeVal,
-        description: description.trim() || null,
-        citation_references: references.trim() || null,
-        image_url: imageUrl,
-        dimensions: dimensions.trim() || null,
-        manuscript: manuscript.trim() || null,
-        rarity: rarity.trim() || null,
-        status: "pending",
-      });
+      if (editId) {
+        const updatePayload: Record<string, unknown> = {
+          submitter_name: submitterName,
+          name: nameVal,
+          state: stateVal,
+          town: townVal,
+          date_range: dateRange,
+          color: colorVal,
+          type: typeVal,
+          description: description.trim() || null,
+          citation_references: references.trim() || null,
+          dimensions: dimensions.trim() || null,
+          manuscript: manuscript.trim() || null,
+          rarity: rarity.trim() || null,
+          status: "pending",
+        };
+        updatePayload.image_url = imageUrl !== null ? imageUrl : (imagePreview ? existingImageUrl : null);
 
-      if (error) throw error;
+        const { error } = await supabase
+          .from("submissions")
+          .update(updatePayload)
+          .eq("id", editId)
+          .eq("user_id", String(user.id));
 
-      toast({
-        title: "Submission sent",
-        description: "Your entry has been submitted for review.",
-      });
+        if (error) throw error;
 
-      setState("");
-      setTown("");
-      setFirstSeen("");
-      setLastSeen("");
-      setType("");
-      setColor("");
-      setDimensions("");
-      setManuscript("");
-      setRarity("");
-      setDescription("");
-      setReferences("");
-      setImageFile(null);
-      setImagePreview(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+        toast({
+          title: "Submission updated",
+          description: "Your changes have been submitted for review.",
+        });
 
-      setMySubmissions((prev) => [
-        { id: crypto.randomUUID(), name, status: "pending", created_at: new Date().toISOString() },
-        ...prev,
-      ]);
+        navigate("/dashboard", { replace: true });
+      } else {
+        const { error } = await supabase.from("submissions").insert({
+          user_id: String(user.id),
+          submitter_name: submitterName,
+          name: nameVal,
+          state: stateVal,
+          town: townVal,
+          date_range: dateRange,
+          color: colorVal,
+          type: typeVal,
+          description: description.trim() || null,
+          citation_references: references.trim() || null,
+          image_url: imageUrl,
+          dimensions: dimensions.trim() || null,
+          manuscript: manuscript.trim() || null,
+          rarity: rarity.trim() || null,
+          status: "pending",
+        });
+
+        if (error) throw error;
+
+        toast({
+          title: "Submission sent",
+          description: "Your entry has been submitted for review.",
+        });
+
+        setName("");
+        setState("");
+        setTown("");
+        setFirstSeen("");
+        setLastSeen("");
+        setType("");
+        setColor("");
+        setDimensions("");
+        setManuscript("");
+        setRarity("");
+        setDescription("");
+        setReferences("");
+        setImageFile(null);
+        setImagePreview(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+
+        setMySubmissions((prev) => [
+          { id: crypto.randomUUID(), name: nameVal, status: "pending", created_at: new Date().toISOString() },
+          ...prev,
+        ]);
+      }
     } catch (err: unknown) {
       toast({
         title: "Submission failed",
@@ -329,7 +419,14 @@ const Contribute = () => {
             <div className="lg:col-span-2">
               <Card className="shadow-archival-lg">
                 <CardHeader>
-                  <CardTitle className="font-heading text-xl">Submit New Entry</CardTitle>
+                  <CardTitle className="font-heading text-xl">
+                    {editId ? "Edit Submission" : "Submit New Entry"}
+                  </CardTitle>
+                  {editId && (
+                    <p className="text-sm text-muted-foreground">
+                      Update your submission and resubmit for review.
+                    </p>
+                  )}
                 </CardHeader>
                 <CardContent className="space-y-6">
                   {!user && (
@@ -342,6 +439,17 @@ const Contribute = () => {
                   )}
 
                   <form onSubmit={handleSubmit} className="space-y-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="name">Name *</Label>
+                      <Input
+                        id="name"
+                        placeholder="e.g., Boston Harbor Cover, Central Park Postmark"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        required
+                      />
+                    </div>
+
                     <div className="space-y-2">
                       <Label htmlFor="state">State *</Label>
                       <Select value={state} onValueChange={setState} required>
@@ -496,25 +604,38 @@ const Contribute = () => {
                       <Label>Upload Image</Label>
                       <input
                         ref={fileInputRef}
+                        id="contribute-image-input"
                         type="file"
                         accept={ALLOWED_IMAGE_TYPES.join(",")}
-                        className="hidden"
+                        className="sr-only"
                         onChange={handleImageChange}
                       />
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => fileInputRef.current?.click()}
-                        onKeyDown={(e) => e.key === "Enter" && fileInputRef.current?.click()}
-                        className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
+                      <label
+                        htmlFor="contribute-image-input"
+                        className="flex flex-col items-center justify-center border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer min-h-[180px]"
                       >
                         {imagePreview ? (
-                          <div className="space-y-2">
-                            <img src={imagePreview} alt="Preview" className="mx-auto max-h-40 rounded object-contain" />
-                            <p className="text-sm text-muted-foreground">{imageFile?.name}</p>
-                            <Button type="button" variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setImageFile(null); setImagePreview(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}>
-                              Remove
-                            </Button>
+                          <div className="space-y-2 w-full">
+                            <img src={imagePreview} alt="Preview" className="mx-auto max-h-40 rounded object-contain pointer-events-none" />
+                            <p className="text-sm text-muted-foreground">{imageFile?.name || "Current image"}</p>
+                            <div className="flex gap-2 justify-center">
+                              <span className="text-sm text-primary font-medium">Click to change</span>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setImageFile(null);
+                                  setImagePreview(null);
+                                  setExistingImageUrl(null);
+                                  if (fileInputRef.current) fileInputRef.current.value = "";
+                                }}
+                              >
+                                Remove
+                              </Button>
+                            </div>
                           </div>
                         ) : (
                           <>
@@ -527,20 +648,20 @@ const Contribute = () => {
                             </p>
                           </>
                         )}
-                      </div>
+                      </label>
                     </div>
 
                     <Button
                       type="submit"
                       className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
-                      disabled={!user || submitting}
+                      disabled={!user || submitting || loadingEdit}
                     >
-                      {submitting ? "Submitting..." : "Submit for Review"}
+                      {submitting ? (editId ? "Updating..." : "Submitting...") : editId ? "Update and Resubmit" : "Submit for Review"}
                     </Button>
                   </form>
 
                   <p className="text-xs text-muted-foreground">
-                    * Required: State, Town/City, First Seen Year, Postmark Type, Color. All other fields match Submission Detail.
+                    * Required: Name, State, Town/City, First Seen Year, Postmark Type, Color. All other fields match Submission Detail.
                   </p>
                 </CardContent>
               </Card>

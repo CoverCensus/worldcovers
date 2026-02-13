@@ -4,16 +4,51 @@ import re
 import hashlib
 import datetime as dt
 from django.core.management.base import BaseCommand
+from django.contrib.auth import get_user_model
 from common.models import *  # Import all models from common.models
 
-IMPORT_PATH = '/srv/woco/backend/imports'
-DEFAULT_USER_ID = 2
+DEFAULT_IMPORT_PATH = 'frontend/public/Old Data'
 
 
 class Command(BaseCommand):
-    help = 'Import ASCC data into Django models'
+    help = 'Import ASCC data (states, raw state data, townmark images) from CSV directory into Django models'
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--dir', '-d',
+            default=DEFAULT_IMPORT_PATH,
+            help=f'Directory containing CSV files (default: {DEFAULT_IMPORT_PATH})',
+        )
+        parser.add_argument(
+            '--user', '-u',
+            default=None,
+            help='Username for created_by/modified_by (default: first superuser, or id 2)',
+        )
 
     def handle(self, *args, **options):
+        User = get_user_model()
+        self.import_path = os.path.normpath(options['dir'])
+        if not os.path.isdir(self.import_path):
+            self.stderr.write(self.style.ERROR(f'Directory not found: {self.import_path}'))
+            return
+
+        username = options.get('user')
+        if username:
+            try:
+                user = User.objects.get(username=username)
+            except User.DoesNotExist:
+                self.stderr.write(self.style.ERROR(f'User not found: {username}'))
+                return
+        else:
+            user = User.objects.filter(is_superuser=True).first()
+            if not user:
+                user = User.objects.filter(pk=2).first()
+            if not user:
+                self.stderr.write(self.style.ERROR('No user found. Create a superuser or pass --user.'))
+                return
+        self.user_id = user.pk
+        self.stdout.write(f'Using user: {user.username} (id={self.user_id}), dir: {self.import_path}')
+
         self.state_by_id = {}
         self.shape_cache = {}
         self.lettering_cache = {}
@@ -27,24 +62,25 @@ class Command(BaseCommand):
         # Add import functions for other CSVs as needed
 
     def import_states(self):
-        filepath = os.path.join(IMPORT_PATH, 'tblStates.csv')
+        filepath = os.path.join(self.import_path, 'tblStates.csv')
         with open(filepath, newline='', encoding='utf-8-sig') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
                 self.state_by_id[row['nStateID']] = row
+                reference_code = f"US-{row['txtStateAbv'].strip().upper()}"
                 admin_unit, created = AdministrativeUnit.objects.get_or_create(
-                    reference_code=row['txtStateAbv'],
+                    reference_code=reference_code,
                     defaults={
-                        'created_by_id': DEFAULT_USER_ID,  # Assume a system user ID
-                        'modified_by_id': DEFAULT_USER_ID,
+                        'created_by_id': self.user_id,
+                        'modified_by_id': self.user_id,
                     },
                 )
                 identity, identity_created = AdministrativeUnitIdentity.objects.get_or_create(
                     administrative_unit=admin_unit,
-                    effective_from_date='2026-01-01',  # Dummy date
+                    effective_from_date='1900-01-01',
                     defaults={
-                        'created_by_id': DEFAULT_USER_ID,
-                        'modified_by_id': DEFAULT_USER_ID,
+                        'created_by_id': self.user_id,
+                        'modified_by_id': self.user_id,
                         'unit_name': row['txtState'],
                         'unit_abbreviation': row['txtStateAbv'],
                         'unit_type': 'STATE',  # Default type
@@ -108,8 +144,8 @@ class Command(BaseCommand):
         defaults = {}
         if hasattr(model, 'created_by') or 'created_by' in [f.name for f in model._meta.fields]:
             defaults = {
-                'created_by_id': DEFAULT_USER_ID,
-                'modified_by_id': DEFAULT_USER_ID,
+                'created_by_id': self.user_id,
+                'modified_by_id': self.user_id,
             }
         obj, _ = model.objects.get_or_create(**{field_name: name}, defaults=defaults)
         cache[name] = obj
@@ -126,7 +162,7 @@ class Command(BaseCommand):
         return f"{trimmed}{suffix}"
 
     def import_raw_state_data(self):
-        filepath = os.path.join(IMPORT_PATH, 'tblRawStateData.csv')
+        filepath = os.path.join(self.import_path, 'tblRawStateData.csv')
         with open(filepath, newline='', encoding='utf-8-sig') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
@@ -185,8 +221,8 @@ class Command(BaseCommand):
                         'is_manuscript': self.parse_bool(row.get('ynManuscript')),
                         'other_characteristics': row.get('txtOther') or '',
                         'source_page': row.get('txtPDFPage') or '',
-                        'created_by_id': DEFAULT_USER_ID,
-                        'modified_by_id': DEFAULT_USER_ID,
+                        'created_by_id': self.user_id,
+                        'modified_by_id': self.user_id,
                         'raw_import_payload': row
                     },
                 )
@@ -199,8 +235,8 @@ class Command(BaseCommand):
                             postmark=listing,
                             color=color,
                             defaults={
-                                'created_by_id': DEFAULT_USER_ID,
-                                'modified_by_id': DEFAULT_USER_ID,
+                                'created_by_id': self.user_id,
+                                'modified_by_id': self.user_id,
                             }
                         )
 
@@ -220,8 +256,8 @@ class Command(BaseCommand):
                             earliest_date_seen=earliest_date or latest_date,
                             latest_date_seen=latest_date or earliest_date,
                             defaults={
-                                'created_by_id': DEFAULT_USER_ID,
-                                'modified_by_id': DEFAULT_USER_ID,
+                                'created_by_id': self.user_id,
+                                'modified_by_id': self.user_id,
                             }
                         )
 
@@ -243,15 +279,15 @@ class Command(BaseCommand):
                                 height=height_val or 0,
                                 defaults={
                                     'size_notes': row.get('txtSizes') or '',
-                                    'created_by_id': DEFAULT_USER_ID,
-                                    'modified_by_id': DEFAULT_USER_ID,
+                                    'created_by_id': self.user_id,
+                                    'modified_by_id': self.user_id,
                                 }
                             )
 
                 print(f"Listing {listing} {'created' if created else 'exists'}.")
 
     def import_townmark_images(self):
-        filepath = os.path.join(IMPORT_PATH, 'tblTownmarkImages.csv')
+        filepath = os.path.join(self.import_path, 'tblTownmarkImages.csv')
         with open(filepath, newline='', encoding='utf-8-sig') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
@@ -289,9 +325,9 @@ class Command(BaseCommand):
                         'image_height': 0,
                         'file_size_bytes': 0,
                         'image_view': 'FULL',
-                        'uploaded_by_id': DEFAULT_USER_ID,
-                        'created_by_id': DEFAULT_USER_ID,  # Assume a system user ID
-                        'modified_by_id': DEFAULT_USER_ID,
+                        'uploaded_by_id': self.user_id,
+                        'created_by_id': self.user_id,
+                        'modified_by_id': self.user_id,
                     },
                 )
                 print(f"Image {image} {'created' if created else 'exists'}.")

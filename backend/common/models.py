@@ -1062,4 +1062,211 @@ class PostcoverImage(TimestampedModel):
             self.file_checksum = PostmarkImage.generate_checksum(self.file_object)
         super().save(*args, **kwargs)
 
+
+# ========== LEGACY REFERENCE TABLES (from ERD / Old Data CSVs) ==========
+# These mirror the 13 CSV files; no created_by/modified_by so bulk import works without a user.
+
+
+class LegacyAbbreviation(models.Model):
+    """TBLABBREVIATIONS: abbreviation → meaning (e.g. Arc, Box, DL)."""
+    id = models.AutoField(primary_key=True, db_column='ID')
+    txt_abbreviation = models.CharField(max_length=100, db_column='txtAbbreviation')
+    txt_meaning = models.CharField(max_length=255, blank=True, db_column='txtMeaning')
+    n_order = models.IntegerField(default=0, db_column='nOrder')
+    yn_active = models.BooleanField(default=True, db_column='ynActive')
+
+    class Meta:
+        db_table = 'LegacyAbbreviations'
+        verbose_name = 'Legacy Abbreviation'
+        ordering = ['n_order', 'txt_abbreviation']
+
+    def __str__(self):
+        return f"{self.txt_abbreviation}: {self.txt_meaning}"
+
+
+class LegacyRateLocation(models.Model):
+    """TBLTOWNMARKRATELOCATION: rate location lookup."""
+    id = models.AutoField(primary_key=True, db_column='nTownmarkRateLocationID')
+    txt_townmark_rate_location = models.CharField(
+        max_length=100, db_column='txtTownmarkRateLocation'
+    )
+    mem_townmark_rate_location = models.CharField(
+        max_length=255, blank=True, db_column='memTownmarkRateLocation'
+    )
+    n_order = models.IntegerField(default=0, db_column='nOrder')
+    yn_active = models.BooleanField(default=True, db_column='ynActive')
+
+    class Meta:
+        db_table = 'LegacyTownmarkRateLocations'
+        verbose_name = 'Legacy Rate Location'
+        ordering = ['n_order']
+
+    def __str__(self):
+        return self.txt_townmark_rate_location
+
+
+class LegacyRateValue(models.Model):
+    """TBLTOWNMARKRATEVALUE: rate value lookup (numeric or text)."""
+    id = models.AutoField(primary_key=True, db_column='nTownmarkRateValueID')
+    txt_townmark_rate_value = models.CharField(
+        max_length=50, db_column='txtTownmarkRateValue'
+    )  # CSV has 1, 3, 5, n/a
+    n_order = models.IntegerField(default=0, db_column='nOrder')
+    yn_active = models.BooleanField(default=True, db_column='ynActive')
+
+    class Meta:
+        db_table = 'LegacyTownmarkRateValues'
+        verbose_name = 'Legacy Rate Value'
+        ordering = ['n_order']
+
+    def __str__(self):
+        return str(self.txt_townmark_rate_value)
+
+
+class LegacyParseStep(models.Model):
+    """TBLPARSESTEPS: parse step per state."""
+    id = models.AutoField(primary_key=True, db_column='nParseStepID')
+    txt_parse_step = models.CharField(max_length=255, db_column='txtParseStep')
+    n_state_id = models.IntegerField(db_column='nStateID')
+    yn_completed = models.BooleanField(default=False, db_column='ynCompleted')
+    n_order = models.IntegerField(default=0, db_column='nOrder')
+    yn_active = models.BooleanField(default=True, db_column='ynActive')
+
+    class Meta:
+        db_table = 'LegacyParseSteps'
+        verbose_name = 'Legacy Parse Step'
+        ordering = ['n_state_id', 'n_order']
+
+    def __str__(self):
+        return f"{self.txt_parse_step} (State {self.n_state_id})"
+
+
+class LegacyUserState(models.Model):
+    """CTUSERSTATES: user ↔ state visibility/roles."""
+    id = models.AutoField(primary_key=True, db_column='ID')
+    n_user_id = models.IntegerField(db_column='nUserID')
+    n_state_id = models.IntegerField(db_column='nStateID')
+    mem_roles = models.TextField(blank=True, db_column='memRoles')
+
+    class Meta:
+        db_table = 'LegacyUserStates'
+        verbose_name = 'Legacy User State'
+        unique_together = [['n_user_id', 'n_state_id']]
+        ordering = ['n_user_id', 'n_state_id']
+
+    def __str__(self):
+        return f"User {self.n_user_id} → State {self.n_state_id}"
+
+
+class LegacyRawStateDataPendingUpdate(models.Model):
+    """TBLRAWSTATEDATA_PENDINGUPDATE: pending edit rows; full row stored as JSON."""
+    id = models.AutoField(primary_key=True, db_column='id')
+    n_raw_state_data_id = models.IntegerField(null=True, blank=True, db_column='nRawStateDataID')
+    n_state_id = models.IntegerField(null=True, blank=True, db_column='nStateID')
+    payload = models.JSONField(default=dict, db_column='Payload')
+
+    class Meta:
+        db_table = 'LegacyRawStateDataPendingUpdates'
+        verbose_name = 'Legacy Pending Update'
+        ordering = ['-id']
+
+    def __str__(self):
+        return f"Pending #{self.id} (raw {self.n_raw_state_data_id})"
+
+
+class LegacyCover(models.Model):
+    """TBLCOVERS: user-entered cover records from legacy CSV."""
+    id = models.AutoField(primary_key=True, db_column='nCoverID')
+    n_user_id = models.IntegerField(db_column='nUserID')
+    txt_cover_key_id = models.CharField(max_length=100, blank=True, db_column='txtCoverKeyID')
+    txt_state_abv = models.CharField(max_length=20, blank=True, db_column='txtStateAbv')
+    txt_territory = models.CharField(max_length=255, blank=True, db_column='txtTerritory')
+    txt_town = models.CharField(max_length=255, blank=True, db_column='txtTown')
+    txt_townmark_shape = models.CharField(max_length=100, blank=True, db_column='txtTownmarkShape')
+    txt_lettering = models.CharField(max_length=100, blank=True, db_column='txtLettering')
+    txt_townmark_framing = models.CharField(max_length=100, blank=True, db_column='txtTownmarkFraming')
+    txt_date_format = models.CharField(max_length=100, blank=True, db_column='txtDateFormat')
+    txt_rate = models.CharField(max_length=50, blank=True, db_column='txtRate')
+    txt_rate_text = models.CharField(max_length=255, blank=True, db_column='txtRateText')
+    txt_second_rate = models.CharField(max_length=255, blank=True, db_column='txtSecondRate')
+    n_width = models.FloatField(null=True, blank=True, db_column='nWidth')
+    n_height = models.FloatField(null=True, blank=True, db_column='nHeight')
+    txt_color = models.CharField(max_length=100, blank=True, db_column='txtColor')
+    n_earliest_use_day = models.IntegerField(null=True, blank=True, db_column='nEarliestUseDay')
+    n_earliest_use_month = models.IntegerField(null=True, blank=True, db_column='nEarliestUseMonth')
+    n_earliest_use_year = models.IntegerField(null=True, blank=True, db_column='nEarliestUseYear')
+    n_latest_use_day = models.IntegerField(null=True, blank=True, db_column='nLatestUseDay')
+    n_latest_use_month = models.IntegerField(null=True, blank=True, db_column='nLatestUseMonth')
+    n_latest_use_year = models.IntegerField(null=True, blank=True, db_column='nLatestUseYear')
+    mem_ascc_text = models.TextField(blank=True, db_column='memASCCText')
+    mem_notes = models.TextField(blank=True, db_column='memNotes')
+    mem_other_char = models.TextField(blank=True, db_column='memOtherChar')
+    n_estimated_value = models.FloatField(null=True, blank=True, db_column='nEstimatedValue')
+    txt_published_id = models.CharField(max_length=100, blank=True, db_column='txtPublishedID')
+    txt_image1 = models.CharField(max_length=255, blank=True, db_column='txtImage1')
+    txt_image2 = models.CharField(max_length=255, blank=True, db_column='txtImage2')
+
+    class Meta:
+        db_table = 'LegacyCovers'
+        verbose_name = 'Legacy Cover'
+        ordering = ['n_user_id', 'id']
+
+    def __str__(self):
+        return f"Cover {self.id} ({self.txt_town or self.txt_cover_key_id})"
+
+
+# ========== ADMIN CSV UPLOADS (STAFF-ONLY UTILITY) ==========
+
+
+class AdminCsvUpload(models.Model):
+    """
+    Stores a CSV file uploaded by a staff user for admin reference.
+    Data is parsed and stored as JSON (headers + rows) for display in the dashboard.
+    """
+    id = models.AutoField(primary_key=True, db_column='AdminCsvUploadID')
+    name = models.CharField(
+        max_length=255,
+        db_column='Name',
+        help_text='Display name for this upload (e.g. from filename or user input)',
+    )
+    file_name = models.CharField(
+        max_length=255,
+        db_column='FileName',
+        help_text='Original filename of the CSV',
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True, db_column='UploadedAt')
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='admin_csv_uploads',
+        db_column='UploadedByUserID',
+    )
+    # Parsed CSV: { "headers": ["col1", "col2", ...], "rows": [[val1, val2], ...] }
+    data = models.JSONField(
+        default=dict,
+        db_column='Data',
+        help_text='Parsed CSV: headers and rows',
+    )
+    row_count = models.PositiveIntegerField(
+        default=0,
+        db_column='RowCount',
+        help_text='Number of data rows (denormalized for list views without loading Data).',
+    )
+
+    class Meta:
+        db_table = 'AdminCsvUploads'
+        verbose_name = 'Admin CSV Upload'
+        verbose_name_plural = 'Admin CSV Uploads'
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f"{self.name} ({self.file_name})"
+
+    def save(self, *args, **kwargs):
+        if self.data:
+            self.row_count = len(self.data.get('rows') or [])
+        super().save(*args, **kwargs)
+
 ###################################################################################################
