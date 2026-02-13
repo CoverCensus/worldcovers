@@ -1,4 +1,6 @@
 from django.contrib import admin
+from django.core.paginator import Paginator
+from django.utils.functional import cached_property
 
 from common.admin import (
     TimestampedModelAdmin,
@@ -36,7 +38,22 @@ from .models import (
 )
 
 
-admin.site.register(Listing, PostmarkAdmin)
+class NoCountPaginator(Paginator):
+    @cached_property
+    def count(self):
+        return 10_000_000
+
+
+@admin.register(Listing)
+class ListingAdmin(PostmarkAdmin):
+    list_per_page = 50
+    list_max_show_all = 200
+    show_full_result_count = False
+
+    def get_paginator(self, request, queryset, per_page, orphans=0, allow_empty_first_page=True, **kwargs):
+        return NoCountPaginator(queryset, per_page, orphans=orphans, allow_empty_first_page=allow_empty_first_page)
+
+
 admin.site.register(ListingImage, PostmarkImageAdmin)
 admin.site.register(PostmarkShape, PostmarkShapeAdmin)
 admin.site.register(LetteringStyle, LetteringStyleAdmin)
