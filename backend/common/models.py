@@ -645,13 +645,6 @@ class Postmark(TimestampedModel):
         return f"{self.postmark_key} - {self.postal_facility_identity.facility_name}"
 
 
-class Listings(Postmark):
-    class Meta:
-        proxy = True
-        verbose_name = 'Listing'
-        verbose_name_plural = 'Listings'
-
-
 class PostmarkColor(TimestampedModel):
     """Many-to-many relationship between postmarks and colors"""
     postmark_color_id = models.AutoField(primary_key=True, db_column='PostmarkColorID')

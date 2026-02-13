@@ -10,7 +10,7 @@ import reversion
 class CommonConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "common"
-    verbose_name = "Postmarks"
+    verbose_name = "Commons"
 
     def ready(self):
         # Auto-register all non-abstract models in this app with django-reversion

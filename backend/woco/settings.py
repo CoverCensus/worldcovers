@@ -61,7 +61,8 @@ INSTALLED_APPS = [
     "reversion",
     "reversion_compare",
 
-    "common.apps.CommonConfig"
+    "common.apps.CommonConfig",
+    "postmarks.apps.PostmarksConfig"
 ]
 if not TESTING:
     # django_debug_toolbar cannot be present in automated testing

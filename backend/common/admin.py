@@ -20,7 +20,7 @@ from .models import (
     AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
     JurisdictionalAffiliation,
     PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
-    Postmark, Listings, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
+    Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage
 )
@@ -430,7 +430,6 @@ class JurisdictionalAffiliationAdmin(TimestampedModelAdmin):
 
 # ========== PHYSICAL CHARACTERISTICS ADMIN ==========
 
-@admin.register(PostmarkShape)
 class PostmarkShapeAdmin(TimestampedModelAdmin):
     resource_class = PostmarkShapeResource
     list_display = ['shape_name', 'shape_description']
@@ -438,7 +437,6 @@ class PostmarkShapeAdmin(TimestampedModelAdmin):
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
 
 
-@admin.register(LetteringStyle)
 class LetteringStyleAdmin(TimestampedModelAdmin):
     resource_class = LetteringStyleResource
     list_display = ['lettering_style_name', 'lettering_description']
@@ -446,7 +444,6 @@ class LetteringStyleAdmin(TimestampedModelAdmin):
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
 
 
-@admin.register(FramingStyle)
 class FramingStyleAdmin(TimestampedModelAdmin):
     resource_class = FramingStyleResource
     list_display = ['framing_style_name', 'framing_description']
@@ -454,7 +451,6 @@ class FramingStyleAdmin(TimestampedModelAdmin):
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
 
 
-@admin.register(Color)
 class ColorAdmin(TimestampedModelAdmin):
     resource_class = ColorResource
     list_display = ['color_name', 'color_value']
@@ -462,7 +458,6 @@ class ColorAdmin(TimestampedModelAdmin):
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
 
 
-@admin.register(DateFormat)
 class DateFormatAdmin(TimestampedModelAdmin):
     resource_class = DateFormatResource
     list_display = ['format_name', 'format_description']
@@ -522,7 +517,6 @@ class ExampleCoverInline(admin.TabularInline):
     exclude = ["created_by", "modified_by", "created_date", "modified_date"]
 
 
-@admin.register(Listings)
 class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     resource_class = PostmarkResource
     list_display = ['postmark_key', 'get_facility_name', 'get_admin_unit', 
@@ -604,7 +598,6 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     example_cover_link.short_description = 'Example Covers Link'
 
 
-@admin.register(PostmarkImage)
 class PostmarkImageAdmin(TimestampedModelAdmin):
     list_display = ['get_postmark_key', 'original_filename', 'image_view', 'display_order', 'uploaded_by']
     list_filter = ['image_view']
@@ -639,7 +632,6 @@ class PostmarkImageAdmin(TimestampedModelAdmin):
 
 # ========== PUBLICATION ADMIN ==========
 
-@admin.register(PostmarkPublication)
 class PostmarkPublicationAdmin(TimestampedModelAdmin):
     list_display = ['publication_title', 'author', 'publisher', 'publication_date', 'publication_type']
     list_filter = ['publication_type', 'publication_date']
@@ -648,7 +640,6 @@ class PostmarkPublicationAdmin(TimestampedModelAdmin):
     date_hierarchy = 'publication_date'
 
 
-@admin.register(PostmarkPublicationReference)
 class PostmarkPublicationReferenceAdmin(TimestampedModelAdmin):
     list_display = ['get_postmark_key', 'get_publication_title', 'published_id', 'reference_location']
     list_filter = ['postmark_publication__publication_type']
@@ -682,7 +673,6 @@ class PostcoverImageInline(admin.TabularInline):
     exclude = ["created_by", "modified_by", "created_date", "modified_date"]
 
 
-@admin.register(Postcover)
 class PostcoverAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     list_display = ['postcover_key', 'owner_user']
     search_fields = ['postcover_key', 'owner_user__username', 'description']
@@ -695,7 +685,6 @@ class PostcoverAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     ]
 
 
-@admin.register(PostcoverImage)
 class PostcoverImageAdmin(TimestampedModelAdmin):
     list_display = ['get_postcover_key', 'original_filename', 'image_view', 
                     'display_order', 'uploaded_by']
