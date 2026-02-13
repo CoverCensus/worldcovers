@@ -627,6 +627,9 @@ class Postmark(TimestampedModel):
 
     def get_responsible_groups(self):
         """Get the groups responsible for this postmark's region"""
+        if not self.postal_facility_identity:
+            return []
+
         # Get current jurisdictions for this facility
         affiliations = self.postal_facility_identity.jurisdictions.filter(
             Q(effective_to_date__isnull=True) | Q(effective_to_date__gte=models.functions.Now())
@@ -644,7 +647,8 @@ class Postmark(TimestampedModel):
         return [resp.group for resp in responsibilities]
 
     def __str__(self):
-        return f"{self.postmark_key} - {self.postal_facility_identity.facility_name}"
+        facility_name = self.postal_facility_identity.facility_name if self.postal_facility_identity else "Unknown"
+        return f"{self.postmark_key} - {facility_name}"
 
 
 class PostmarkColor(TimestampedModel):

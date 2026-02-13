@@ -567,10 +567,14 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     )
     
     def get_facility_name(self, obj):
+        if not obj.postal_facility_identity:
+            return '-'
         return obj.postal_facility_identity.facility_name
     get_facility_name.short_description = 'Facility'
     
     def get_admin_unit(self, obj):
+        if not obj.postal_facility_identity:
+            return '-'
         affiliations = obj.postal_facility_identity.jurisdictions.filter(
             effective_to_date__isnull=True
         ).first()
