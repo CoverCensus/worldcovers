@@ -11,9 +11,9 @@ import { Upload, CheckCircle, XCircle, Clock } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
-import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { getApiBaseUrl } from "@/lib/api";
 
 const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 10;
@@ -98,96 +98,21 @@ const Contribute = () => {
   }, []);
 
   useEffect(() => {
-    if (!user) {
-      setMySubmissions([]);
-      setLoadingSubmissions(false);
-      return;
-    }
-    const fetchMySubmissions = async () => {
-      setLoadingSubmissions(true);
-      try {
-        const { data, error } = await supabase
-          .from("submissions")
-          .select("id, name, status, created_at")
-          .eq("user_id", String(user.id))
-          .order("created_at", { ascending: false });
+    setMySubmissions([]);
+    setLoadingSubmissions(false);
+  }, [user]);
 
-        if (error) throw error;
-        setMySubmissions((data ?? []).map((row) => ({
-          id: row.id,
-          name: row.name,
-          status: row.status ?? "pending",
-          created_at: row.created_at,
-        })));
-      } catch (err: unknown) {
-        toast({
-          title: "Error loading your submissions",
-          description: err instanceof Error ? err.message : "Could not load submissions",
-          variant: "destructive",
-        });
-      } finally {
-        setLoadingSubmissions(false);
-      }
-    };
-    fetchMySubmissions();
-  }, [user, toast]);
-
-  // Load submission for edit mode
   useEffect(() => {
-    if (!editId) {
-      setExistingImageUrl(null);
-      setLoadingEdit(false);
-      return;
+    if (editId) {
+      toast({
+        title: "Edit not available",
+        description: "Submissions are managed via Django admin. Use the admin site to edit.",
+        variant: "destructive",
+      });
+      navigate("/contribute", { replace: true });
     }
-    if (!user) {
-      setLoadingEdit(false);
-      return;
-    }
-    setLoadingEdit(true);
-    const load = async () => {
-      try {
-        const { data, error } = await supabase
-          .from("submissions")
-          .select("*")
-          .eq("id", editId)
-          .eq("user_id", String(user.id))
-          .single();
-        if (error || !data) {
-          toast({
-            title: "Cannot edit submission",
-            description: "Submission not found or you don't have permission.",
-            variant: "destructive",
-          });
-          navigate("/contribute", { replace: true });
-          return;
-        }
-        const { firstSeen, lastSeen } = parseDateRange(data.date_range ?? "");
-        setName(data.name ?? "");
-        setState(data.state ?? "");
-        setTown(data.town ?? "");
-        setFirstSeen(firstSeen);
-        setLastSeen(lastSeen);
-        setType(data.type ?? "");
-        setColor(data.color ?? "");
-        setDimensions(data.dimensions ?? "");
-        setManuscript(data.manuscript ?? "");
-        setRarity(data.rarity ?? "");
-        setDescription(data.description ?? "");
-        setReferences(data.citation_references ?? "");
-        setExistingImageUrl(data.image_url ?? null);
-        setImagePreview(data.image_url ?? null);
-      } catch {
-        toast({
-          title: "Error loading submission",
-          variant: "destructive",
-        });
-        navigate("/contribute", { replace: true });
-      } finally {
-        setLoadingEdit(false);
-      }
-    };
-    load();
-  }, [editId, user, navigate, toast]);
+    setLoadingEdit(false);
+  }, [editId, navigate, toast]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -265,114 +190,15 @@ const Contribute = () => {
 
     setSubmitting(true);
     try {
-      let imageUrl: string | null = null;
-      if (imageFile && user) {
-        try {
-          const ext = imageFile.name.split(".").pop() || "jpg";
-          const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
-          const { error: uploadError } = await supabase.storage
-            .from(SUBMISSION_IMAGES_BUCKET)
-            .upload(path, imageFile, { contentType: imageFile.type, upsert: false });
-
-          if (uploadError) throw uploadError;
-          const { data: urlData } = supabase.storage.from(SUBMISSION_IMAGES_BUCKET).getPublicUrl(path);
-          imageUrl = urlData.publicUrl;
-        } catch {
-          toast({
-            title: "Image upload failed",
-            description: "Submission will be saved without the image. Create bucket 'submission-images' in Supabase Storage if needed.",
-            variant: "destructive",
-          });
-        }
-      }
-
-      const submitterName = user.username || user.email || undefined;
-
-      if (editId) {
-        const updatePayload: Record<string, unknown> = {
-          submitter_name: submitterName,
-          name: nameVal,
-          state: stateVal,
-          town: townVal,
-          date_range: dateRange,
-          color: colorVal,
-          type: typeVal,
-          description: description.trim() || null,
-          citation_references: references.trim() || null,
-          dimensions: dimensions.trim() || null,
-          manuscript: manuscript.trim() || null,
-          rarity: rarity.trim() || null,
-          status: "pending",
-        };
-        updatePayload.image_url = imageUrl !== null ? imageUrl : (imagePreview ? existingImageUrl : null);
-
-        const { error } = await supabase
-          .from("submissions")
-          .update(updatePayload)
-          .eq("id", editId)
-          .eq("user_id", String(user.id));
-
-        if (error) throw error;
-
-        toast({
-          title: "Submission updated",
-          description: "Your changes have been submitted for review.",
-        });
-
-        navigate("/dashboard", { replace: true });
-      } else {
-        const { error } = await supabase.from("submissions").insert({
-          user_id: String(user.id),
-          submitter_name: submitterName,
-          name: nameVal,
-          state: stateVal,
-          town: townVal,
-          date_range: dateRange,
-          color: colorVal,
-          type: typeVal,
-          description: description.trim() || null,
-          citation_references: references.trim() || null,
-          image_url: imageUrl,
-          dimensions: dimensions.trim() || null,
-          manuscript: manuscript.trim() || null,
-          rarity: rarity.trim() || null,
-          status: "pending",
-        });
-
-        if (error) throw error;
-
-        toast({
-          title: "Submission sent",
-          description: "Your entry has been submitted for review.",
-        });
-
-        setName("");
-        setState("");
-        setTown("");
-        setFirstSeen("");
-        setLastSeen("");
-        setType("");
-        setColor("");
-        setDimensions("");
-        setManuscript("");
-        setRarity("");
-        setDescription("");
-        setReferences("");
-        setImageFile(null);
-        setImagePreview(null);
-        if (fileInputRef.current) fileInputRef.current.value = "";
-
-        setMySubmissions((prev) => [
-          { id: crypto.randomUUID(), name: nameVal, status: "pending", created_at: new Date().toISOString() },
-          ...prev,
-        ]);
-      }
-    } catch (err: unknown) {
+      const adminUrl = getApiBaseUrl().replace(/\/api\/?$/, "") + "/admin/";
       toast({
-        title: "Submission failed",
-        description: err instanceof Error ? err.message : "Could not submit. Try again.",
-        variant: "destructive",
+        title: "Submissions via Django",
+        description: "New entries and corrections are managed via Django admin. Contact the site administrator for access or use the admin site.",
+        variant: "default",
       });
+      if (window.confirm("Open Django admin to add or edit postmarks?")) {
+        window.open(adminUrl, "_blank");
+      }
     } finally {
       setSubmitting(false);
     }

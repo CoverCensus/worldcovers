@@ -27,21 +27,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
-import { syncApprovedSubmissionToCatalog } from "@/services/catalogSync";
-import { LegacyImportButton } from "@/components/LegacyImportButton";
-import type { Tables } from "@/integrations/supabase/types";
+import { getApiBaseUrl } from "@/lib/api";
 import postmarkSample from "@/assets/postmark-sample.jpg";
 
-type LoginRequestRow = Tables<"login_requests">;
-
-/** Supabase expects string user ids; we use Django user id as string for integration. */
-function userIdForSupabase(id: number): string {
-  return String(id);
-}
+type LoginRequestRow = { id: string; email: string | null; created_at: string };
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -74,9 +66,9 @@ const Dashboard = () => {
   const [adminTab, setAdminTab] = useState("mine");
   const [allSubmissionFiltersOpen, setAllSubmissionFiltersOpen] = useState(false);
   const [allSubmissionViewMode, setAllSubmissionViewMode] = useState<"list" | "gallery">("list");
-  const [myCatalogs, setMyCatalogs] = useState<Tables<"catalog_records">[]>([]);
+  const [myCatalogs, setMyCatalogs] = useState<{ id: string; name: string; state?: string; town?: string; date_range?: string; type?: string; color?: string; image_url?: string | null }[]>([]);
   const [myCatalogsLoading, setMyCatalogsLoading] = useState(false);
-  const [editRequests, setEditRequests] = useState<Tables<"catalog_edit_requests">[]>([]);
+  const [editRequests, setEditRequests] = useState<{ id: string; name: string; state?: string; status: string; created_at: string }[]>([]);
   const [editRequestsLoading, setEditRequestsLoading] = useState(false);
   const [loginRequests, setLoginRequests] = useState<LoginRequestRow[]>([]);
   const [allUsers, setAllUsers] = useState<{ id: string; email: string | null; created_at: string }[]>([]);
@@ -87,35 +79,15 @@ const Dashboard = () => {
   const [deleteUser, setDeleteUser] = useState<{ id: string; email: string | null; created_at: string } | null>(null);
   const [deleteUserLoading, setDeleteUserLoading] = useState(false);
 
-  // Fetch only current user's submissions
-  const fetchSubmissions = async (opts?: { silent?: boolean }) => {
+  const fetchSubmissions = async (_opts?: { silent?: boolean }) => {
     if (!user) {
       setSubmissions([]);
       setLoading(false);
       return;
     }
-    if (!opts?.silent) setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("submissions")
-        .select("*")
-        .eq("user_id", userIdForSupabase(user.id))
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-
-      setSubmissions(data || []);
-    } catch (error: unknown) {
-      if (!opts?.silent) {
-        toast({
-          title: "Error loading submissions",
-          description: error instanceof Error ? error.message : "Failed",
-          variant: "destructive",
-        });
-      }
-    } finally {
-      if (!opts?.silent) setLoading(false);
-    }
+    setLoading(true);
+    setSubmissions([]);
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -172,82 +144,28 @@ const Dashboard = () => {
     }
   };
 
-  // Same table as "My Submissions" — no user_id filter so admins see all rows (RLS: "Authenticated users can view all submissions for review")
-  const fetchAllSubmissions = async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) {
-      setAllSubmissionsLoading(true);
-      setAllSubmissionsError(null);
-    }
-    try {
-      const { data, error } = await supabase
-        .from("submissions")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      setAllSubmissions(data ?? []);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Failed to load";
-      setAllSubmissionsError(msg);
-      if (!opts?.silent) {
-        toast({
-          title: "Error loading submissions",
-          description: msg,
-          variant: "destructive",
-        });
-      }
-    } finally {
-      if (!opts?.silent) {
-        setAllSubmissionsLoading(false);
-      }
-    }
+  const fetchAllSubmissions = async (_opts?: { silent?: boolean }) => {
+    setAllSubmissionsLoading(true);
+    setAllSubmissionsError(null);
+    setAllSubmissions([]);
+    setAllSubmissionsLoading(false);
   };
 
   const fetchUsers = async () => {
     setUsersLoading(true);
-    try {
-      const [usersRes, requestsRes] = await Promise.all([
-        supabase.rpc("list_users_for_admin"),
-        supabase.from("login_requests").select("*").order("created_at", { ascending: false }),
-      ]);
-      if (usersRes.error) throw usersRes.error;
-      if (requestsRes.error) throw requestsRes.error;
-      setAllUsers(usersRes.data ?? []);
-      setLoginRequests(requestsRes.data ?? []);
-    } catch (e: unknown) {
-      toast({
-        title: "Error loading users",
-        description: e instanceof Error ? e.message : "Failed to load",
-        variant: "destructive",
-      });
-    } finally {
-      setUsersLoading(false);
-    }
+    setAllUsers([]);
+    setLoginRequests([]);
+    setUsersLoading(false);
   };
 
-  // Fetch current user's catalog records (where they are submitted_by)
   const fetchMyCatalogs = async () => {
     if (!user) {
       setMyCatalogs([]);
       return;
     }
     setMyCatalogsLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("catalog_records")
-        .select("*")
-        .eq("submitted_by", userIdForSupabase(user.id))
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      setMyCatalogs(data ?? []);
-    } catch (e: unknown) {
-      toast({
-        title: "Error loading catalogs",
-        description: e instanceof Error ? e.message : "Failed",
-        variant: "destructive",
-      });
-    } finally {
-      setMyCatalogsLoading(false);
-    }
+    setMyCatalogs([]);
+    setMyCatalogsLoading(false);
   };
 
   useEffect(() => {
@@ -265,38 +183,10 @@ const Dashboard = () => {
     }
   }, [isAdmin, adminTab]);
 
-  // Load edit requests when admin opens the Edit Requests tab.
-  // Handles 404 gracefully when catalog_edit_requests table doesn't exist yet (migration not applied).
   const fetchEditRequests = async () => {
     setEditRequestsLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("catalog_edit_requests")
-        .select("*")
-        .eq("status", "pending")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      setEditRequests(data ?? []);
-    } catch (e: unknown) {
-      const err = e as { message?: string; code?: string };
-      const msg = err?.message ?? String(e);
-      const code = err?.code ?? "";
-      const isTableMissing =
-        msg.includes("does not exist") ||
-        msg.includes("404") ||
-        code === "42P01" ||
-        code === "PGRST116";
-      if (!isTableMissing) {
-        toast({
-          title: "Error loading edit requests",
-          description: msg,
-          variant: "destructive",
-        });
-      }
-      setEditRequests([]);
-    } finally {
-      setEditRequestsLoading(false);
-    }
+    setEditRequests([]);
+    setEditRequestsLoading(false);
   };
 
   useEffect(() => {
@@ -313,200 +203,41 @@ const Dashboard = () => {
   }, [isAdmin, adminTab]);
 
   const handleEditRequestApprove = async (requestId: string) => {
-    if (!user) return;
-    try {
-      const { data, error } = await supabase.rpc("approve_catalog_edit_request", {
-        p_request_id: requestId,
-        p_admin_uid: userIdForSupabase(user.id),
-      });
-      const result = data as unknown as { ok?: boolean; error?: string } | null;
-      if (error) throw error;
-      if (result && result.ok === false) {
-        throw new Error(result.error ?? "Approval failed");
-      }
-      setEditRequests((prev) => prev.filter((r) => r.id !== requestId));
-      toast({ title: "Edit request approved", description: "Catalog and submission updated." });
-    } catch (e: unknown) {
-      toast({
-        title: "Failed to approve",
-        description: e instanceof Error ? e.message : "Failed",
-        variant: "destructive",
-      });
-    }
+    setEditRequests((prev) => prev.filter((r) => r.id !== requestId));
+    toast({ title: "Edit requests", description: "Manage via Django admin." });
   };
 
   const handleEditRequestReject = async (requestId: string) => {
-    if (!user) return;
-    try {
-      const { error } = await supabase
-        .from("catalog_edit_requests")
-        .update({
-          status: "rejected",
-          reviewed_by: userIdForSupabase(user.id),
-          reviewed_at: new Date().toISOString(),
-        })
-        .eq("id", requestId);
-      if (error) throw error;
-      setEditRequests((prev) => prev.filter((r) => r.id !== requestId));
-      toast({ title: "Edit request rejected" });
-    } catch (e: unknown) {
-      toast({
-        title: "Failed to reject",
-        description: e instanceof Error ? e.message : "Failed",
-        variant: "destructive",
-      });
-    }
+    setEditRequests((prev) => prev.filter((r) => r.id !== requestId));
+    toast({ title: "Edit requests", description: "Manage via Django admin." });
   };
 
   const handleAllSubmissionStatus = async (
-    submissionId: string,
-    status: "approved" | "rejected" | "revision" | "pending"
+    _submissionId: string,
+    status: string
   ) => {
-    try {
-      const submission = allSubmissions.find((s) => s.id === submissionId);
-      if (!submission) return;
-      const belongsToCurrentUser = submission.user_id === user?.id;
-
-      if (status === "approved") {
-        // Sync to catalog first; only update submission status if sync succeeds
-        const sync = await syncApprovedSubmissionToCatalog({
-          name: submission.name,
-          state: submission.state,
-          town: submission.town,
-          date_range: submission.date_range,
-          type: submission.type,
-          color: submission.color,
-          image_url: submission.image_url ?? null,
-          description: submission.description ?? null,
-          citation_references: submission.citation_references ?? null,
-          dimensions: submission.dimensions ?? null,
-          manuscript: submission.manuscript ?? null,
-          rarity: submission.rarity ?? null,
-          user_id: submission.user_id,
-        });
-        if (!sync.ok) {
-          toast({
-            title: "Approval failed",
-            description: "Sync to catalog failed: " + (sync.error ?? "unknown"),
-            variant: "destructive",
-          });
-          return;
-        }
-      }
-
-      const { data: updated, error } = await supabase
-        .from("submissions")
-        .update({
-          status,
-          reviewed_by: user?.id ?? null,
-          reviewed_at: new Date().toISOString(),
-        })
-        .eq("id", submissionId)
-        .select("id, status")
-        .maybeSingle();
-      if (error) throw error;
-      if (!updated) {
-        throw new Error("Update did not persist. You may need admin role to change submission status.");
-      }
-
-      const updatePayload = { status, reviewed_by: user?.id ?? null, reviewed_at: new Date().toISOString() };
-      setAllSubmissions((prev) =>
-        prev.map((s) =>
-          s.id === submissionId ? { ...s, ...updatePayload } : s
-        )
-      );
-      if (belongsToCurrentUser) {
-        setSubmissions((prev) =>
-          prev.map((s) =>
-            s.id === submissionId ? { ...s, ...updatePayload } : s
-          )
-        );
-      }
-      if (status === "approved" && belongsToCurrentUser) {
-        fetchMyCatalogs();
-      }
-
-      toast(
-        status === "approved"
-          ? { title: "Submission approved and synced to catalog" }
-          : { title: `Submission set to ${status}` }
-      );
-    } catch (e: unknown) {
-      toast({
-        title: "Error updating submission",
-        description: e instanceof Error ? e.message : "Failed",
-        variant: "destructive",
-      });
-    }
+    toast({ title: "Submissions", description: `Manage status (e.g. ${status}) via Django admin.` });
   };
 
   const handleLoginRequestStatus = async (requestId: string, status: string) => {
-    try {
-      const { error } = await supabase
-        .from("login_requests")
-        .update({ status })
-        .eq("id", requestId);
-      if (error) throw error;
-      setLoginRequests((prev) =>
-        prev.map((r) => (r.id === requestId ? { ...r, status } : r))
-      );
-      toast({ title: "Login request updated" });
-    } catch (e: unknown) {
-      toast({
-        title: "Error updating request",
-        description: e instanceof Error ? e.message : "Failed",
-        variant: "destructive",
-      });
-    }
+    setLoginRequests((prev) =>
+      prev.map((r) => (r.id === requestId ? { ...r, status } : r))
+    );
+    toast({ title: "Login requests", description: "Manage via Django admin." });
   };
 
   const handleResetPasswordSubmit = async () => {
     if (!resetPasswordUser || resetPasswordValue.length < 6) return;
-    setResetPasswordLoading(true);
-    try {
-      const { data, error } = await supabase.functions.invoke("admin-reset-password", {
-        body: { user_id: resetPasswordUser.id, new_password: resetPasswordValue },
-      });
-      if (error) throw error;
-      const err = (data as { error?: string })?.error;
-      if (err) throw new Error(err);
-      setResetPasswordUser(null);
-      setResetPasswordValue("");
-      toast({ title: "Password reset" });
-      fetchUsers();
-    } catch (e: unknown) {
-      toast({
-        title: "Reset password failed",
-        description: e instanceof Error ? e.message : "Failed",
-        variant: "destructive",
-      });
-    } finally {
-      setResetPasswordLoading(false);
-    }
+    setResetPasswordUser(null);
+    setResetPasswordValue("");
+    toast({ title: "User management", description: "Reset passwords via Django admin." });
   };
 
   const handleDeleteUserConfirm = async () => {
     if (!deleteUser) return;
-    setDeleteUserLoading(true);
-    try {
-      const { data, error } = await supabase.functions.invoke("admin-delete-user", {
-        body: { user_id: deleteUser.id },
-      });
-      if (error) throw error;
-      const err = (data as { error?: string })?.error;
-      if (err) throw new Error(err);
-      setAllUsers((prev) => prev.filter((u) => u.id !== deleteUser.id));
-      setDeleteUser(null);
-      toast({ title: "User deleted" });
-    } catch (e: unknown) {
-      toast({
-        title: "Delete user failed",
-        description: e instanceof Error ? e.message : "Failed",
-        variant: "destructive",
-      });
-    } finally {
-      setDeleteUserLoading(false);
-    }
+    setAllUsers((prev) => prev.filter((u) => u.id !== deleteUser.id));
+    setDeleteUser(null);
+    toast({ title: "User management", description: "Delete users via Django admin." });
   };
 
   // Unique values for All Submissions filters (from loaded data)
@@ -1225,7 +956,16 @@ const Dashboard = () => {
                   )}
                 </CardContent>
               </Card>
-              <LegacyImportButton />
+              <Card className="mt-4">
+                <CardContent className="pt-6">
+                  <p className="text-sm text-muted-foreground mb-2">Catalog and bulk import are managed in Django admin.</p>
+                  <Button variant="outline" size="sm" asChild>
+                    <a href={getApiBaseUrl().replace(/\/api\/?$/, "") + "/admin/"} target="_blank" rel="noopener noreferrer">
+                      Open Django Admin
+                    </a>
+                  </Button>
+                </CardContent>
+              </Card>
             </TabsContent>
           </Tabs>
         ) : null}

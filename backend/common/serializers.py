@@ -425,6 +425,11 @@ class PostmarkSerializer(serializers.ModelSerializer):
     valuations = PostmarkValuationSerializer(many=True, read_only=True)
     images = PostmarkImageSerializer(many=True, read_only=True)
     responsible_groups = serializers.SerializerMethodField()
+    state = serializers.SerializerMethodField()
+    town = serializers.SerializerMethodField()
+    date_range = serializers.SerializerMethodField()
+    colors_display = serializers.SerializerMethodField()
+    valuation_display = serializers.SerializerMethodField()
     
     created_by = UserSerializer(read_only=True)
     modified_by = UserSerializer(read_only=True)
@@ -434,6 +439,49 @@ class PostmarkSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['postmark_id', 'created_date', 'modified_date']
     
+    def get_state(self, obj):
+        if not obj.postal_facility_identity_id:
+            return None
+        aff = obj.postal_facility_identity.jurisdictions.filter(
+            effective_to_date__isnull=True
+        ).select_related('administrative_unit').first()
+        if not aff or not aff.administrative_unit:
+            return None
+        identity = aff.administrative_unit.get_current_identity()
+        return identity.unit_name if identity else None
+
+    def get_town(self, obj):
+        if obj.postal_facility_identity_id:
+            return getattr(obj.postal_facility_identity, 'facility_name', None) or ''
+        return ''
+
+    def get_date_range(self, obj):
+        if not obj.dates_seen.exists():
+            return None
+        earliest = obj.dates_seen.order_by('earliest_date_seen').first()
+        latest = obj.dates_seen.order_by('-latest_date_seen').first()
+        if not earliest:
+            return None
+        e_str = str(earliest.earliest_date_seen.year) if earliest.earliest_date_seen else ''
+        l_str = str(latest.latest_date_seen.year) if latest and latest.latest_date_seen else e_str
+        if e_str == l_str:
+            return e_str
+        return f"{e_str}-{l_str}" if e_str and l_str else e_str or l_str
+
+    def get_colors_display(self, obj):
+        names = [
+            pc.color.color_name
+            for pc in obj.postmark_colors.select_related('color').all()
+            if getattr(pc, 'color', None)
+        ]
+        return ', '.join(names) if names else None
+
+    def get_valuation_display(self, obj):
+        val = obj.valuations.order_by('-valuation_date').first()
+        if not val:
+            return None
+        return str(val.estimated_value)
+
     def get_responsible_groups(self, obj):
         """Get groups responsible for this postmark"""
         groups = obj.get_responsible_groups()

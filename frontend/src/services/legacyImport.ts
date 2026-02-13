@@ -1,5 +1,4 @@
 import Papa from "papaparse";
-import { supabase } from "@/integrations/supabase/client";
 
 /** State ID → { name, abbr } mapping from old database */
 const STATE_MAP: Record<number, { name: string; abbr: string }> = {
@@ -206,31 +205,15 @@ export async function importLegacyData(
   progress.total = mappedRows.length + progress.skipped;
   onProgress({ ...progress });
 
-  // Insert in batches
+  // Bulk import is done via Django admin (e.g. management commands). No Supabase.
   for (let i = 0; i < mappedRows.length; i += BATCH_SIZE) {
     const batch = mappedRows.slice(i, i + BATCH_SIZE).filter(Boolean) as NonNullable<
       ReturnType<typeof mapRow>
     >[];
-
-    try {
-      const { error } = await supabase.from("catalog_records").insert(batch);
-
-      if (error) {
-        console.error(`Batch ${i / BATCH_SIZE + 1} error:`, error.message);
-        progress.errors += batch.length;
-      } else {
-        progress.inserted += batch.length;
-      }
-    } catch (e) {
-      console.error(`Batch ${i / BATCH_SIZE + 1} exception:`, e);
-      progress.errors += batch.length;
-    }
-
     progress.processed += batch.length;
+    progress.skipped += batch.length;
     onProgress({ ...progress });
-
-    // Small delay to avoid overwhelming the API
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 50));
   }
 
   progress.done = true;

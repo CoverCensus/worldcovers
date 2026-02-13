@@ -1,26 +1,44 @@
 import axios, { AxiosError } from 'axios';
 
+const LOCALHOST_PATTERN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
+const LOCALHOST_API_PATTERN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/api\/?$/i;
+
 /**
  * Single source of truth for the Django REST API base URL.
- * Set VITE_API_BASE_URL in .env (e.g. https://hellowoco.app for production).
- * - If you set the full API root: https://hellowoco.app/api
- * - If you set only the host: https://hellowoco.app → we append /api
- * Default when unset: http://127.0.0.1:8000/api
+ * - When the app is opened from a non-local host (e.g. hellowoco.app), we always use the current
+ *   origin + /api so requests succeed (no ERR_CONNECTION_REFUSED) and no "local network" prompt.
+ * - When on localhost, use VITE_API_BASE_URL if set, else http://127.0.0.1:8000/api.
+ * Called at request time so the correct URL is used even after deploy (no stale build default).
  */
 export function getApiBaseUrl(): string {
-  const raw = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
-  const base = String(raw).trim().replace(/\/+$/, '');
-  return base.endsWith('/api') ? base : `${base}/api`;
+  if (typeof window !== "undefined" && window.location?.origin) {
+    const origin = window.location.origin;
+    if (origin && !LOCALHOST_PATTERN.test(origin)) {
+      return origin.endsWith("/api") ? origin : `${origin}/api`;
+    }
+  }
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  if (envUrl && String(envUrl).trim()) {
+    const base = String(envUrl).trim().replace(/\/+$/, "");
+    const url = base.endsWith("/api") ? base : `${base}/api`;
+    if (!LOCALHOST_API_PATTERN.test(url)) return url;
+  }
+  return "http://127.0.0.1:8000/api";
 }
 
-// Create axios instance with the single base URL (all API calls use this)
+// Create axios instance; baseURL is set per request so production always uses current origin
 const apiClient = axios.create({
-  baseURL: getApiBaseUrl(),
+  baseURL: "/api",
   headers: {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   },
   timeout: 10000,
   withCredentials: true,
+});
+
+apiClient.interceptors.request.use((config) => {
+  config.baseURL = getApiBaseUrl();
+  return config;
 });
 
 // Response interceptor for error handling
@@ -134,5 +152,40 @@ export const fetchPostmarks = async (): Promise<DjangoPostmarkListResult[]> => {
   }
   return all;
 };
+
+/** Single postmark detail from GET /api/postmarks/:id/ (camelCase from Django) */
+export interface DjangoPostmarkDetail {
+  postmarkId?: number;
+  postmark_id?: number;
+  postmarkKey?: string;
+  postmark_key?: string;
+  facilityName?: string;
+  facility_name?: string;
+  shapeName?: string;
+  shape_name?: string;
+  state?: string;
+  town?: string;
+  dateRange?: string;
+  date_range?: string;
+  colorsDisplay?: string;
+  colors_display?: string;
+  valuationDisplay?: string;
+  valuation_display?: string;
+  mainImage?: { imageUrl?: string | null; image_url?: string | null } | null;
+  main_image?: { imageUrl?: string | null; image_url?: string | null } | null;
+  images?: Array<{ imageUrl?: string | null; image_url?: string | null }>;
+  datesSeen?: Array<{ earliestDateSeen?: string; latestDateSeen?: string }>;
+  dates_seen?: Array<{ earliest_date_seen?: string; latest_date_seen?: string }>;
+  [key: string]: unknown;
+}
+
+export async function fetchPostmarkById(id: string | number): Promise<DjangoPostmarkDetail | null> {
+  try {
+    const response = await apiClient.get<DjangoPostmarkDetail>(`/postmarks/${id}/`);
+    return response.data;
+  } catch {
+    return null;
+  }
+}
 
 export default apiClient;
