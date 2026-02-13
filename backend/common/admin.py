@@ -7,6 +7,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.urls import reverse
 from django.utils.html import format_html
+from django.core.paginator import Paginator
+from django.utils.functional import cached_property
 
 from import_export import resources, fields
 from import_export.admin import ImportExportModelAdmin
@@ -30,9 +32,21 @@ User = get_user_model()
 
 # ========== BASE ABSTRACT MODELS ==========
 
+class NoCountPaginator(Paginator):
+    @cached_property
+    def count(self):
+        return 10_000_000
+
+
 class TimestampedModelAdmin(ImportExportModelAdmin):
     """Base admin for models using TimestampedModel"""
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
+    show_full_result_count = False
+    list_per_page = 50
+    list_max_show_all = 200
+
+    def get_paginator(self, request, queryset, per_page, orphans=0, allow_empty_first_page=True, **kwargs):
+        return NoCountPaginator(queryset, per_page, orphans=orphans, allow_empty_first_page=allow_empty_first_page)
     
     def save_model(self, request, obj, form, change):
         if not change:
@@ -519,12 +533,8 @@ class ExampleCoverInline(admin.TabularInline):
 
 class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     resource_class = PostmarkResource
-    list_display = ['postmark_key', 'get_facility_name', 'get_admin_unit', 
-                    'postmark_shape', 'rate_value', 'is_manuscript',
-                    'visibility', 'example_cover_count', 'example_cover_link',
-                    'get_responsible_groups']
-    list_filter = ['postmark_shape', 'lettering_style', 'framing_style',
-                   'rate_location', 'is_manuscript', 'visibility']
+    list_display = ['postmark_key', 'postmark_shape', 'rate_value', 'visibility']
+    list_filter = []
     search_fields = ['postmark_key', 'postal_facility_identity__facility_name', 'rate_value', 'public_slug', 'raw_state_data_id']
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
     raw_id_fields = ['site', 'postal_facility_identity', 'postmark_shape', 'lettering_style',
