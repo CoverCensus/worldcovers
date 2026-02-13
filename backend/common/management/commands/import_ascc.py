@@ -104,7 +104,13 @@ class Command(BaseCommand):
         name = self.normalize_value(value)
         if name in cache:
             return cache[name]
-        obj, _ = model.objects.get_or_create(**{field_name: name})
+        defaults = {}
+        if hasattr(model, 'created_by') or 'created_by' in [f.name for f in model._meta.fields]:
+            defaults = {
+                'created_by_id': 1,
+                'modified_by_id': 1,
+            }
+        obj, _ = model.objects.get_or_create(**{field_name: name}, defaults=defaults)
         cache[name] = obj
         return obj
 
