@@ -50,6 +50,7 @@ class Command(BaseCommand):
                     raw_state_data_id=row['nRawStateDataID'],
                     defaults={
                         'postmark_key': row['txtPostmark'],
+                        'site_id': 1,
                         'created_by_id': 1,
                         'modified_by_id': 1,
                         'raw_import_payload': row

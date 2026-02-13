@@ -20,7 +20,7 @@ from .models import (
     AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
     JurisdictionalAffiliation,
     PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
-    Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
+    Postmark, Listings, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage
 )
@@ -522,7 +522,7 @@ class ExampleCoverInline(admin.TabularInline):
     exclude = ["created_by", "modified_by", "created_date", "modified_date"]
 
 
-@admin.register(Postmark)
+@admin.register(Listings)
 class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     resource_class = PostmarkResource
     list_display = ['postmark_key', 'get_facility_name', 'get_admin_unit', 
@@ -533,7 +533,7 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
                    'rate_location', 'is_manuscript', 'visibility']
     search_fields = ['postmark_key', 'postal_facility_identity__facility_name', 'rate_value', 'public_slug', 'raw_state_data_id']
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-    raw_id_fields = ['postal_facility_identity', 'postmark_shape', 'lettering_style',
+    raw_id_fields = ['site', 'postal_facility_identity', 'postmark_shape', 'lettering_style',
                      'framing_style', 'date_format']
     
     inlines = [
@@ -548,7 +548,7 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('postmark_key', 'postal_facility_identity')
+            'fields': ('postmark_key', 'site', 'postal_facility_identity')
         }),
         ('Listing Status & Source', {
             'fields': ('visibility', 'public_slug', 'source_catalog', 'source_page', 'last_public_update_at')

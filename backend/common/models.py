@@ -8,6 +8,7 @@ from django.db import models
 from django.db.models import Q
 
 from django.contrib.auth.models import Group
+from django.contrib.sites.models import Site
 
 from django.utils.translation import gettext_lazy as _
 
@@ -507,6 +508,14 @@ class Postmark(TimestampedModel):
     ]
 
     postmark_id = models.AutoField(primary_key=True, db_column='PostmarkID')
+    site = models.ForeignKey(
+        Site,
+        on_delete=models.PROTECT,
+        related_name='postmarks',
+        db_column='SiteID',
+        default=1,
+        help_text="Owning site for this listing"
+    )
     postal_facility_identity = models.ForeignKey(
         PostalFacilityIdentity,
         on_delete=models.PROTECT,
@@ -634,6 +643,13 @@ class Postmark(TimestampedModel):
 
     def __str__(self):
         return f"{self.postmark_key} - {self.postal_facility_identity.facility_name}"
+
+
+class Listings(Postmark):
+    class Meta:
+        proxy = True
+        verbose_name = 'Listing'
+        verbose_name_plural = 'Listings'
 
 
 class PostmarkColor(TimestampedModel):
