@@ -114,6 +114,16 @@ class Command(BaseCommand):
         cache[name] = obj
         return obj
 
+    def make_unique_postmark_key(self, base_key, raw_id):
+        base_key = self.normalize_value(base_key, str(raw_id))
+        candidate = base_key
+        if not Postmark.objects.filter(postmark_key=candidate).exists():
+            return candidate
+        suffix = f"-{raw_id}"
+        max_len = 100 - len(suffix)
+        trimmed = base_key[:max_len] if max_len > 0 else str(raw_id)
+        return f"{trimmed}{suffix}"
+
     def import_raw_state_data(self):
         filepath = os.path.join(IMPORT_PATH, 'tblRawStateData.csv')
         with open(filepath, newline='', encoding='utf-8-sig') as csvfile:
@@ -155,7 +165,10 @@ class Command(BaseCommand):
                     'Unknown'
                 )
 
-                postmark_key = self.normalize_value(row.get('txtPostmark'), str(row.get('nRawStateDataID')))
+                postmark_key = self.make_unique_postmark_key(
+                    row.get('txtPostmark'),
+                    row.get('nRawStateDataID')
+                )
 
                 listing, created = Postmark.objects.get_or_create(
                     raw_state_data_id=row['nRawStateDataID'],
