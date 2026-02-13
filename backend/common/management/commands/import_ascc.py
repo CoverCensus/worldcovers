@@ -267,8 +267,15 @@ class Command(BaseCommand):
                 if state_id and state_id in self.state_by_id:
                     image_dir = self.state_by_id[state_id].get('txtImageDirectory')
 
-                filename = row['txtFilename']
+                filename = self.normalize_value(row.get('txtFilename'), '')
+                if not filename or filename.lower() == 'null':
+                    continue
+
+                image_dir = self.normalize_value(image_dir, '') if image_dir else ''
                 storage_filename = f"{image_dir}/{filename}" if image_dir else filename
+                if not storage_filename:
+                    continue
+
                 checksum = hashlib.sha256(storage_filename.encode('utf-8')).hexdigest()
 
                 image, created = PostmarkImage.objects.get_or_create(
