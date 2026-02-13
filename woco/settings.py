@@ -1,6 +1,5 @@
 ###################################################################################################
 ## WoCo Project - Configuration
-## MPC: 2025/10/24
 ###################################################################################################
 import os, sys
 
@@ -25,12 +24,13 @@ SECRET_KEY = "DUMMY-KEY-HERE-NO-FALSE-POSITIVES-NO-WHAMMY-NO-WHAMMY-STOP"
 DEBUG = config("DEBUG", default=True, cast=bool)
 TESTING = "test" in sys.argv or "PYTEST_VERSION" in os.environ
 
-ALLOWED_HOSTS = []
 INTERNAL_IPS = [
     "127.0.0.1"
 ]
 
 DJANGO_APP_HOSTNAME = config("DJANGO_APP_HOSTNAME", default="hellowoco.app")
+
+ALLOWED_HOSTS = [DJANGO_APP_HOSTNAME, *INTERNAL_IPS]
 
 # Application definition
 INSTALLED_APPS = [
@@ -153,13 +153,14 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "static"
-STATICFILES_DIRS = [
-    BASE_DIR / "assets",
-]
 
 # React SPA (Lovable/frontend) – built output served as site home
 # Put your React app in frontend/ and run `npm run build`; index.html + /assets/ served from here
 FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
+
+STATICFILES_DIRS = [
+    FRONTEND_DIST
+]
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -269,15 +270,17 @@ LOGGING = {
 # 8080 = common dev port; 5173 = Vite default (e.g. Lovable/React)
 CORS_ALLOWED_ORIGINS = [ 
     "http://localhost:8080",
+    "http://localhost:8000",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-] if DEBUG else [ 
-    f"https://{DJANGO_APP_HOSTNAME}/", 
+    f"https://{DJANGO_APP_HOSTNAME}"
 ]
+
+SECURE_SSL_REDIRECT = True
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # Security Settings (for production)
 if not DEBUG:
-    SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_BROWSER_XSS_FILTER = True
