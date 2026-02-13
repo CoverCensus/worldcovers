@@ -550,7 +550,7 @@ class Postmark(TimestampedModel):
         db_column='DateFormatID'
     )
     postmark_key = models.CharField(
-        max_length=100,
+        max_length=255,
         unique=True,
         db_column='PostmarkKey'
     )
