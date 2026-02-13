@@ -20,16 +20,26 @@ class Command(BaseCommand):
         with open(filepath, newline='', encoding='utf-8-sig') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
-                state, created = AdministrativeUnit.objects.get_or_create(
+                admin_unit, created = AdministrativeUnit.objects.get_or_create(
                     reference_code=row['txtStateAbv'],
                     defaults={
                         'created_by_id': 1,  # Assume a system user ID
                         'modified_by_id': 1,
-                        'unit_abbreviation': row['txtStateAbv'],
-                        'unit_name': row['txtState'],
                     },
                 )
-                print(f"State {state} {'created' if created else 'exists'}.")
+                identity, identity_created = AdministrativeUnitIdentity.objects.get_or_create(
+                    administrative_unit=admin_unit,
+                    effective_from_date='2026-01-01',  # Dummy date
+                    defaults={
+                        'created_by_id': 1,
+                        'modified_by_id': 1,
+                        'unit_name': row['txtState'],
+                        'unit_abbreviation': row['txtStateAbv'],
+                        'unit_type': 'STATE',  # Default type
+                        'hierarchy_level': 2,  # State level hierarchy
+                    },
+                )
+                print(f"State {admin_unit} with identity {identity} {'created' if created else 'exists'}.")
 
     def import_raw_state_data(self):
         filepath = os.path.join(IMPORT_PATH, 'tblRawStateData.csv')
