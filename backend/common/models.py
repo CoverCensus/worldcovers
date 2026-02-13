@@ -521,6 +521,8 @@ class Postmark(TimestampedModel):
         on_delete=models.PROTECT,
         related_name='postmarks',
         db_column='PostalFacilityIdentityID',
+        null=True,
+        blank=True,
         help_text="The facility identity when this postmark was used"
     )
     postmark_shape = models.ForeignKey(
