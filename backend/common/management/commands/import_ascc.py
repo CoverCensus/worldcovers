@@ -7,6 +7,7 @@ from django.core.management.base import BaseCommand
 from common.models import *  # Import all models from common.models
 
 IMPORT_PATH = '/srv/woco/backend/imports'
+DEFAULT_USER_ID = 2
 
 
 class Command(BaseCommand):
@@ -34,16 +35,16 @@ class Command(BaseCommand):
                 admin_unit, created = AdministrativeUnit.objects.get_or_create(
                     reference_code=row['txtStateAbv'],
                     defaults={
-                        'created_by_id': 1,  # Assume a system user ID
-                        'modified_by_id': 1,
+                        'created_by_id': DEFAULT_USER_ID,  # Assume a system user ID
+                        'modified_by_id': DEFAULT_USER_ID,
                     },
                 )
                 identity, identity_created = AdministrativeUnitIdentity.objects.get_or_create(
                     administrative_unit=admin_unit,
                     effective_from_date='2026-01-01',  # Dummy date
                     defaults={
-                        'created_by_id': 1,
-                        'modified_by_id': 1,
+                        'created_by_id': DEFAULT_USER_ID,
+                        'modified_by_id': DEFAULT_USER_ID,
                         'unit_name': row['txtState'],
                         'unit_abbreviation': row['txtStateAbv'],
                         'unit_type': 'STATE',  # Default type
@@ -107,8 +108,8 @@ class Command(BaseCommand):
         defaults = {}
         if hasattr(model, 'created_by') or 'created_by' in [f.name for f in model._meta.fields]:
             defaults = {
-                'created_by_id': 1,
-                'modified_by_id': 1,
+                'created_by_id': DEFAULT_USER_ID,
+                'modified_by_id': DEFAULT_USER_ID,
             }
         obj, _ = model.objects.get_or_create(**{field_name: name}, defaults=defaults)
         cache[name] = obj
@@ -184,8 +185,8 @@ class Command(BaseCommand):
                         'is_manuscript': self.parse_bool(row.get('ynManuscript')),
                         'other_characteristics': row.get('txtOther') or '',
                         'source_page': row.get('txtPDFPage') or '',
-                        'created_by_id': 1,
-                        'modified_by_id': 1,
+                        'created_by_id': DEFAULT_USER_ID,
+                        'modified_by_id': DEFAULT_USER_ID,
                         'raw_import_payload': row
                     },
                 )
@@ -198,8 +199,8 @@ class Command(BaseCommand):
                             postmark=listing,
                             color=color,
                             defaults={
-                                'created_by_id': 1,
-                                'modified_by_id': 1,
+                                'created_by_id': DEFAULT_USER_ID,
+                                'modified_by_id': DEFAULT_USER_ID,
                             }
                         )
 
@@ -219,8 +220,8 @@ class Command(BaseCommand):
                             earliest_date_seen=earliest_date or latest_date,
                             latest_date_seen=latest_date or earliest_date,
                             defaults={
-                                'created_by_id': 1,
-                                'modified_by_id': 1,
+                                'created_by_id': DEFAULT_USER_ID,
+                                'modified_by_id': DEFAULT_USER_ID,
                             }
                         )
 
@@ -242,8 +243,8 @@ class Command(BaseCommand):
                                 height=height_val or 0,
                                 defaults={
                                     'size_notes': row.get('txtSizes') or '',
-                                    'created_by_id': 1,
-                                    'modified_by_id': 1,
+                                    'created_by_id': DEFAULT_USER_ID,
+                                    'modified_by_id': DEFAULT_USER_ID,
                                 }
                             )
 
@@ -281,9 +282,9 @@ class Command(BaseCommand):
                         'image_height': 0,
                         'file_size_bytes': 0,
                         'image_view': 'FULL',
-                        'uploaded_by_id': 1,
-                        'created_by_id': 1,  # Assume a system user ID
-                        'modified_by_id': 1,
+                        'uploaded_by_id': DEFAULT_USER_ID,
+                        'created_by_id': DEFAULT_USER_ID,  # Assume a system user ID
+                        'modified_by_id': DEFAULT_USER_ID,
                     },
                 )
                 print(f"Image {image} {'created' if created else 'exists'}.")
