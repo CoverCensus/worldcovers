@@ -94,6 +94,26 @@ python backend/manage.py runserver 0.0.0.0:8000
 
 If you deploy from a **different** server (e.g. pull from git on the server), that server must run the same `cd frontend && npm ci && npm run build` as part of its deploy.
 
+## Troubleshooting: 502 on admin (e.g. Listings changelist)
+
+If the admin returns **502 Bad Gateway** for a heavy page (e.g. `/admin/postmarks/listing/`):
+
+1. **Check app server logs** (where gunicorn runs) for the real error or timeout:
+   - `journalctl -u <your-gunicorn-service>` (systemd), or
+   - Gunicorn’s `--access-logfile` / `--error-logfile`, or
+   - Stderr of the process.
+   Look for `Worker timeout`, `SIGKILL`, or a Python traceback.
+
+2. **Increase Gunicorn worker timeout** if the page is slow but valid:
+   ```bash
+   gunicorn woco.wsgi:application --timeout 120 ...
+   ```
+   (Default is 30s; the Listings changelist uses a non-counting paginator and `select_related` to stay fast.)
+
+3. **Increase proxy timeout** if the reverse proxy (nginx, Caddy, etc.) returns 502 before gunicorn:
+   - nginx: `proxy_read_timeout 120s;` (in the `location` that proxies to Django).
+   - Caddy: `timeout 120s` on the reverse_proxy.
+
 ## Quick reference
 
 | After you push… | Do this |
