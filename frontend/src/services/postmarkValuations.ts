@@ -1,32 +1,31 @@
 /**
- * Postmark valuations: from GET /api/postmark-valuations/ when
- * VITE_POSTMARK_VALUATIONS_API_URL is set. No Supabase fallback (no matching table).
+ * Postmark valuations: from Django GET /api/postmark-valuations/
+ * (single base URL: VITE_API_BASE_URL).
  */
+
+import { fetchAllPages } from "@/lib/api";
 
 /** User object in valuedBy */
 export interface PostmarkValuationUser {
   id: number;
   username: string;
   email: string;
-  firstName: string;
-  lastName: string;
+  firstName?: string;
+  lastName?: string;
 }
 
-/** One item from GET /api/postmark-valuations/ */
+/** One item from /api/postmark-valuations/ */
 export interface PostmarkValuationApiResultItem {
-  postmarkValuationId: number;
-  valuedBy: PostmarkValuationUser;
-  estimatedValue: string;
-  valuationDate: string;
-  createdDate: string;
-}
-
-/** Paginated response from GET /api/postmark-valuations/ */
-export interface PostmarkValuationApiResponse {
-  count: number;
-  next: string | null;
-  previous: string | null;
-  results: PostmarkValuationApiResultItem[];
+  postmarkValuationId?: number;
+  postmark_valuation_id?: number;
+  valuedBy?: PostmarkValuationUser;
+  valued_by?: PostmarkValuationUser;
+  estimatedValue?: string | number;
+  estimated_value?: string | number;
+  valuationDate?: string;
+  valuation_date?: string;
+  createdDate?: string;
+  created_date?: string;
 }
 
 /** Normalized valuation for list/detail */
@@ -41,49 +40,32 @@ export interface PostmarkValuationRecord {
 function mapApiResultToRecord(
   item: PostmarkValuationApiResultItem
 ): PostmarkValuationRecord {
+  const id = item.postmarkValuationId ?? item.postmark_valuation_id ?? 0;
+  const valuedBy = item.valuedBy ?? item.valued_by ?? {
+    id: 0,
+    username: "",
+    email: "",
+  };
+  const estimatedValue = String(
+    item.estimatedValue ?? item.estimated_value ?? ""
+  );
   return {
-    id: item.postmarkValuationId,
-    valuedBy: item.valuedBy,
-    estimatedValue: item.estimatedValue,
-    valuationDate: item.valuationDate,
-    createdDate: item.createdDate,
+    id,
+    valuedBy,
+    estimatedValue,
+    valuationDate: item.valuationDate ?? item.valuation_date ?? "",
+    createdDate: item.createdDate ?? item.created_date ?? "",
   };
 }
 
-function getPostmarkValuationsApiUrl(): string | null {
-  const env = import.meta.env.VITE_POSTMARK_VALUATIONS_API_URL;
-  if (!env || typeof env !== "string" || env.trim() === "") return null;
-  const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/postmark-valuations")) return base;
-  return `${base}/api/postmark-valuations`;
-}
-
 /**
- * Fetches postmark valuations from GET /api/postmark-valuations/.
- * When VITE_POSTMARK_VALUATIONS_API_URL is not set, returns [].
+ * Fetches postmark valuations from Django GET /api/postmark-valuations/.
  */
 export async function getPostmarkValuations(): Promise<
   PostmarkValuationRecord[]
 > {
-  const apiUrl = getPostmarkValuationsApiUrl();
-  if (!apiUrl) {
-    return [];
-  }
-
-  const url = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(
-      `Postmark valuations API error: ${res.status} ${res.statusText}`
-    );
-  }
-
-  const data: PostmarkValuationApiResponse = await res.json();
-  if (!Array.isArray(data.results)) {
-    throw new Error(
-      "Postmark valuations API: invalid response (missing results array)"
-    );
-  }
-
-  return data.results.map(mapApiResultToRecord);
+  const results = await fetchAllPages<PostmarkValuationApiResultItem>(
+    "postmark-valuations"
+  );
+  return results.map(mapApiResultToRecord);
 }

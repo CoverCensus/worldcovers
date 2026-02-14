@@ -12,7 +12,8 @@ from .models import (
     PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
     Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
-    PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage
+    PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
+    AdminCsvUpload,
 )
 
 User = get_user_model()
@@ -293,32 +294,93 @@ class PostmarkImageSerializer(serializers.ModelSerializer):
 
 
 class PostmarkListSerializer(serializers.ModelSerializer):
-    """Lightweight serializer for postmark lists"""
-    facility_name = serializers.CharField(
-        source='postal_facility_identity.facility_name',
-        read_only=True
-    )
-    shape_name = serializers.CharField(source='postmark_shape.shape_name', read_only=True)
+    """Lightweight serializer for postmark lists (search/catalog)"""
+    facility_name = serializers.SerializerMethodField()
+    shape_name = serializers.SerializerMethodField()
     main_image = serializers.SerializerMethodField()
     responsible_groups = serializers.SerializerMethodField()
-    
+    state = serializers.SerializerMethodField()
+    town = serializers.SerializerMethodField()
+    date_range = serializers.SerializerMethodField()
+    colors_display = serializers.SerializerMethodField()
+    valuation_display = serializers.SerializerMethodField()
+
     class Meta:
         model = Postmark
         fields = ['postmark_id', 'postmark_key', 'facility_name', 'shape_name',
                   'rate_location', 'rate_value', 'is_manuscript', 'main_image',
-                  'responsible_groups']
-    
+                  'responsible_groups', 'state', 'town', 'date_range',
+                  'colors_display', 'valuation_display']
+
+    def get_facility_name(self, obj):
+        if obj.postal_facility_identity_id:
+            return getattr(obj.postal_facility_identity, 'facility_name', None) or ''
+        return ''
+
+    def get_shape_name(self, obj):
+        if obj.postmark_shape_id:
+            return getattr(obj.postmark_shape, 'shape_name', None) or ''
+        return ''
+
     def get_main_image(self, obj):
         """Get main image (display_order=0)"""
         main_img = obj.images.filter(display_order=0).first()
         if main_img:
             return PostmarkImageSerializer(main_img, context=self.context).data
         return None
-    
+
     def get_responsible_groups(self, obj):
         """Get groups responsible for this postmark"""
         groups = obj.get_responsible_groups()
         return [{'id': g.id, 'name': g.name} for g in groups]
+
+    def get_state(self, obj):
+        """State from current jurisdictional affiliation (administrative unit name)."""
+        if not obj.postal_facility_identity_id:
+            return None
+        aff = obj.postal_facility_identity.jurisdictions.filter(
+            effective_to_date__isnull=True
+        ).select_related('administrative_unit').first()
+        if not aff or not aff.administrative_unit:
+            return None
+        identity = aff.administrative_unit.get_current_identity()
+        return identity.unit_name if identity else None
+
+    def get_town(self, obj):
+        """Town: facility name from identity."""
+        if obj.postal_facility_identity_id:
+            return getattr(obj.postal_facility_identity, 'facility_name', None) or ''
+        return ''
+
+    def get_date_range(self, obj):
+        """Earliest–latest date seen as string (e.g. '1850-1860')."""
+        if not obj.dates_seen.exists():
+            return None
+        earliest = obj.dates_seen.order_by('earliest_date_seen').first()
+        latest = obj.dates_seen.order_by('-latest_date_seen').first()
+        if not earliest:
+            return None
+        e_str = str(earliest.earliest_date_seen.year) if earliest.earliest_date_seen else ''
+        l_str = str(latest.latest_date_seen.year) if latest and latest.latest_date_seen else e_str
+        if e_str == l_str:
+            return e_str
+        return f"{e_str}-{l_str}" if e_str and l_str else e_str or l_str
+
+    def get_colors_display(self, obj):
+        """Comma-separated color names for this postmark."""
+        names = [
+            pc.color.color_name
+            for pc in obj.postmark_colors.select_related('color').all()
+            if getattr(pc, 'color', None)
+        ]
+        return ', '.join(names) if names else None
+
+    def get_valuation_display(self, obj):
+        """Latest valuation as string (e.g. Common, or numeric)."""
+        val = obj.valuations.order_by('-valuation_date').first()
+        if not val:
+            return None
+        return str(val.estimated_value)
 
 
 class PostmarkSerializer(serializers.ModelSerializer):
@@ -363,6 +425,11 @@ class PostmarkSerializer(serializers.ModelSerializer):
     valuations = PostmarkValuationSerializer(many=True, read_only=True)
     images = PostmarkImageSerializer(many=True, read_only=True)
     responsible_groups = serializers.SerializerMethodField()
+    state = serializers.SerializerMethodField()
+    town = serializers.SerializerMethodField()
+    date_range = serializers.SerializerMethodField()
+    colors_display = serializers.SerializerMethodField()
+    valuation_display = serializers.SerializerMethodField()
     
     created_by = UserSerializer(read_only=True)
     modified_by = UserSerializer(read_only=True)
@@ -372,6 +439,49 @@ class PostmarkSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['postmark_id', 'created_date', 'modified_date']
     
+    def get_state(self, obj):
+        if not obj.postal_facility_identity_id:
+            return None
+        aff = obj.postal_facility_identity.jurisdictions.filter(
+            effective_to_date__isnull=True
+        ).select_related('administrative_unit').first()
+        if not aff or not aff.administrative_unit:
+            return None
+        identity = aff.administrative_unit.get_current_identity()
+        return identity.unit_name if identity else None
+
+    def get_town(self, obj):
+        if obj.postal_facility_identity_id:
+            return getattr(obj.postal_facility_identity, 'facility_name', None) or ''
+        return ''
+
+    def get_date_range(self, obj):
+        if not obj.dates_seen.exists():
+            return None
+        earliest = obj.dates_seen.order_by('earliest_date_seen').first()
+        latest = obj.dates_seen.order_by('-latest_date_seen').first()
+        if not earliest:
+            return None
+        e_str = str(earliest.earliest_date_seen.year) if earliest.earliest_date_seen else ''
+        l_str = str(latest.latest_date_seen.year) if latest and latest.latest_date_seen else e_str
+        if e_str == l_str:
+            return e_str
+        return f"{e_str}-{l_str}" if e_str and l_str else e_str or l_str
+
+    def get_colors_display(self, obj):
+        names = [
+            pc.color.color_name
+            for pc in obj.postmark_colors.select_related('color').all()
+            if getattr(pc, 'color', None)
+        ]
+        return ', '.join(names) if names else None
+
+    def get_valuation_display(self, obj):
+        val = obj.valuations.order_by('-valuation_date').first()
+        if not val:
+            return None
+        return str(val.estimated_value)
+
     def get_responsible_groups(self, obj):
         """Get groups responsible for this postmark"""
         groups = obj.get_responsible_groups()
@@ -469,5 +579,32 @@ class PostcoverSerializer(serializers.ModelSerializer):
         model = Postcover
         fields = '__all__'
         read_only_fields = ['postcover_id', 'created_date', 'modified_date']
+
+
+# ========== ADMIN CSV UPLOADS ==========
+
+
+class AdminCsvUploadListSerializer(serializers.ModelSerializer):
+    """List view: id, name, file_name, uploaded_at, row_count (no full data). Uses model.row_count."""
+    uploaded_by_username = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AdminCsvUpload
+        fields = ['id', 'name', 'file_name', 'uploaded_at', 'uploaded_by_username', 'row_count']
+
+    def get_uploaded_by_username(self, obj):
+        return obj.uploaded_by.username if obj.uploaded_by else None
+
+
+class AdminCsvUploadSerializer(serializers.ModelSerializer):
+    """Detail view: full data for display in admin."""
+    uploaded_by_username = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AdminCsvUpload
+        fields = ['id', 'name', 'file_name', 'uploaded_at', 'uploaded_by_username', 'data']
+
+    def get_uploaded_by_username(self, obj):
+        return obj.uploaded_by.username if obj.uploaded_by else None
 
 ###################################################################################################

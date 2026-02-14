@@ -11,13 +11,13 @@ import { Grid3x3, List, Search as SearchIcon, SlidersHorizontal, Loader2 } from 
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import postmarkSample from "@/assets/postmark-sample.jpg";
-import { supabase } from "@/integrations/supabase/client";
+import { fetchPostmarks } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
 
 const Search = () => {
   const [viewMode, setViewMode] = useState<"gallery" | "list">("list");
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -44,35 +44,27 @@ const Search = () => {
   const [catalogRecords, setCatalogRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Fetch catalog records from database
+  // Fetch catalog records from Django API
   useEffect(() => {
-    const fetchCatalogRecords = async () => {
+    const loadCatalog = async () => {
       try {
-        const { data, error } = await supabase
-          .from('catalog_records')
-          .select('*')
-          .order('created_at', { ascending: true });
-
-        if (error) throw error;
-
-        // Transform data to match component format
-        const transformedData = data?.map((record) => ({
-          id: record.id,
-          name: record.name,
-          state: record.state,
-          town: record.town,
-          dateRange: record.date_range,
-          color: record.color,
-          type: record.type,
-          valuation: record.valuation,
-          image: record.image_url || postmarkSample,
-        })) || [];
-
+        const results = await fetchPostmarks();
+        const transformedData = results.map((record) => ({
+          id: record.postmark_id,
+          name: record.facility_name || record.postmark_key,
+          state: record.state ?? "",
+          town: record.town ?? "",
+          dateRange: record.date_range ?? "",
+          color: record.colors_display ?? "",
+          type: record.shape_name ?? "",
+          valuation: record.valuation_display ?? "",
+          image: record.main_image?.image_url || postmarkSample,
+        }));
         setCatalogRecords(transformedData);
       } catch (error: any) {
         toast({
           title: "Error loading catalog",
-          description: error.message,
+          description: error?.message ?? "Failed to load catalog from API",
           variant: "destructive",
         });
       } finally {
@@ -80,162 +72,18 @@ const Search = () => {
       }
     };
 
-    fetchCatalogRecords();
+    loadCatalog();
   }, [toast]);
 
-  // Mock data - keeping for reference but not used
-  const mockResults = [
-    {
-      id: 1,
-      name: "Boston, Mass.",
-      state: "Massachusetts",
-      town: "Boston",
-      dateRange: "1825-1845",
-      color: "Black",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
-    },
-    {
-      id: 2,
-      name: "Philadelphia, Penn.",
-      state: "Pennsylvania",
-      town: "Philadelphia",
-      dateRange: "1820-1840",
-      color: "Red",
-      type: "Straight Line",
-      image: postmarkSample,
-    },
-    {
-      id: 3,
-      name: "New York, N.Y.",
-      state: "New York",
-      town: "New York",
-      dateRange: "1830-1850",
-      color: "Black",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
-    },
-    {
-      id: 4,
-      name: "Charleston, S.C.",
-      state: "South Carolina",
-      town: "Charleston",
-      dateRange: "1815-1835",
-      color: "Blue",
-      type: "Manuscript",
-      image: postmarkSample,
-    },
-    {
-      id: 5,
-      name: "Baltimore, Md.",
-      state: "Maryland",
-      town: "Baltimore",
-      dateRange: "1828-1848",
-      color: "Red",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
-    },
-    {
-      id: 6,
-      name: "Richmond, Va.",
-      state: "Virginia",
-      town: "Richmond",
-      dateRange: "1822-1842",
-      color: "Black",
-      type: "Straight Line",
-      image: postmarkSample,
-    },
-    {
-      id: 7,
-      name: "New Orleans, La.",
-      state: "Louisiana",
-      town: "New Orleans",
-      dateRange: "1825-1845",
-      color: "Red",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
-    },
-    {
-      id: 8,
-      name: "Salem, Mass.",
-      state: "Massachusetts",
-      town: "Salem",
-      dateRange: "1810-1830",
-      color: "Black",
-      type: "Manuscript",
-      image: postmarkSample,
-    },
-    {
-      id: 9,
-      name: "Albany, N.Y.",
-      state: "New York",
-      town: "Albany",
-      dateRange: "1818-1838",
-      color: "Blue",
-      type: "Straight Line",
-      image: postmarkSample,
-    },
-    {
-      id: 10,
-      name: "Providence, R.I.",
-      state: "Rhode Island",
-      town: "Providence",
-      dateRange: "1820-1840",
-      color: "Black",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
-    },
-    {
-      id: 11,
-      name: "Savannah, Ga.",
-      state: "Georgia",
-      town: "Savannah",
-      dateRange: "1816-1836",
-      color: "Red",
-      type: "Manuscript",
-      image: postmarkSample,
-    },
-    {
-      id: 12,
-      name: "Cincinnati, Ohio",
-      state: "Ohio",
-      town: "Cincinnati",
-      dateRange: "1825-1845",
-      color: "Black",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
-    },
-    {
-      id: 13,
-      name: "Hartford, Conn.",
-      state: "Connecticut",
-      town: "Hartford",
-      dateRange: "1812-1832",
-      color: "Blue",
-      type: "Straight Line",
-      image: postmarkSample,
-    },
-    {
-      id: 14,
-      name: "Pittsburgh, Penn.",
-      state: "Pennsylvania",
-      town: "Pittsburgh",
-      dateRange: "1820-1840",
-      color: "Red",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
-    },
-    {
-      id: 15,
-      name: "Portland, Maine",
-      state: "Maine",
-      town: "Portland",
-      dateRange: "1814-1834",
-      color: "Black",
-      type: "Manuscript",
-      image: postmarkSample,
-    },
-  ];
+  // Derive unique state values from catalog records for the filter dropdown
+  const uniqueStates = useMemo(() => {
+    return Array.from(new Set(catalogRecords.map((r) => r.state).filter(Boolean))).sort();
+  }, [catalogRecords]);
+
+  // Derive unique type values from catalog records
+  const uniqueTypes = useMemo(() => {
+    return Array.from(new Set(catalogRecords.map((r) => r.type).filter(Boolean))).sort();
+  }, [catalogRecords]);
 
   // Apply filters
   const filteredResults = useMemo(() => {
@@ -252,8 +100,8 @@ const Search = () => {
       // State filter
       if (stateFilter !== "all" && result.state !== stateFilter) return false;
 
-      // Town filter (guard null/undefined town from DB)
-      if (townFilter && !(result.town ?? "").toLowerCase().includes(townFilter.toLowerCase())) return false;
+      // Town filter
+      if (townFilter && !result.town.toLowerCase().includes(townFilter.toLowerCase())) return false;
 
       // Year range filter
       const dateRange = result.dateRange ?? "";
@@ -266,8 +114,14 @@ const Search = () => {
       // Type filter
       if (typeFilter !== "all" && result.type !== typeFilter) return false;
 
-      // Color filter
-      if (colorFilter !== "all" && result.color?.toLowerCase() !== colorFilter) return false;
+      // Color filter (color can be comma-separated from API)
+      if (colorFilter !== "all") {
+        const recordColors = (result.color ?? "")
+          .split(",")
+          .map((c) => c.trim().toLowerCase())
+          .filter(Boolean);
+        if (!recordColors.length || !recordColors.includes(colorFilter)) return false;
+      }
 
       // Valuation filter
       if (valuationFilter !== "all" && result.valuation !== valuationFilter) return false;
@@ -366,18 +220,11 @@ const Search = () => {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All States</SelectItem>
-                        <SelectItem value="Massachusetts">Massachusetts</SelectItem>
-                        <SelectItem value="New York">New York</SelectItem>
-                        <SelectItem value="Pennsylvania">Pennsylvania</SelectItem>
-                        <SelectItem value="South Carolina">South Carolina</SelectItem>
-                        <SelectItem value="Maryland">Maryland</SelectItem>
-                        <SelectItem value="Virginia">Virginia</SelectItem>
-                        <SelectItem value="Louisiana">Louisiana</SelectItem>
-                        <SelectItem value="Rhode Island">Rhode Island</SelectItem>
-                        <SelectItem value="Georgia">Georgia</SelectItem>
-                        <SelectItem value="Ohio">Ohio</SelectItem>
-                        <SelectItem value="Connecticut">Connecticut</SelectItem>
-                        <SelectItem value="Maine">Maine</SelectItem>
+                        {uniqueStates.map((state) => (
+                          <SelectItem key={state} value={state}>
+                            {state}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -423,9 +270,11 @@ const Search = () => {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All Types</SelectItem>
-                        <SelectItem value="Circular Date Stamp">Circular Date Stamp</SelectItem>
-                        <SelectItem value="Straight Line">Straight Line</SelectItem>
-                        <SelectItem value="Manuscript">Manuscript</SelectItem>
+                        {uniqueTypes.map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {type}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -565,41 +414,40 @@ const Search = () => {
                   <p className="text-muted-foreground">No catalog records found.</p>
                 </div>
               ) : viewMode === "list" ? (
-                <div className="space-y-4">
+                <div className="space-y-4 min-w-0">
                   {paginatedResults.map((result) => (
                     <Card
                       key={result.id}
-                      className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
+                      className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden min-w-0"
                       onClick={() => navigate(`/record/${result.id}`)}
                     >
-                      <CardContent className="p-6">
-                        <div className="flex gap-6">
+                      <CardContent className="p-4 sm:p-6 min-w-0 overflow-hidden">
+                        <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 min-w-0">
                           <img
                             src={result.image}
                             alt={result.name}
-                            className="w-32 h-32 object-cover rounded border border-border"
+                            className="w-full h-40 sm:w-32 sm:h-32 object-cover rounded border border-border shrink-0 min-w-0"
                           />
-                          <div className="flex-1">
-                            <h3 className="font-heading text-xl font-semibold text-foreground mb-2">
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-heading text-lg sm:text-xl font-semibold text-foreground mb-2 truncate">
                               {result.name}
                             </h3>
-                            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                              <div>
-                                <span className="text-muted-foreground">Location:</span>{" "}
-                                <span className="text-foreground">{result.town}, {result.state}</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">Date Range:</span>{" "}
-                                <span className="text-foreground">{result.dateRange}</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">Type:</span>{" "}
-                                <span className="text-foreground">{result.type}</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">Color:</span>{" "}
-                                <span className="text-foreground">{result.color}</span>
-                              </div>
+                            {/* One line on small screens */}
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm min-w-0 sm:hidden">
+                              <span className="text-muted-foreground">Location:</span><span className="text-foreground">{result.town}, {result.state}</span>
+                              <span className="text-muted-foreground/50">·</span>
+                              <span className="text-muted-foreground">Date:</span><span className="text-foreground">{result.dateRange}</span>
+                              <span className="text-muted-foreground/50">·</span>
+                              <span className="text-muted-foreground">Type:</span><span className="text-foreground">{result.type}</span>
+                              <span className="text-muted-foreground/50">·</span>
+                              <span className="text-muted-foreground">Color:</span><span className="text-foreground">{result.color}</span>
+                            </div>
+                            {/* Two columns on sm+ */}
+                            <div className="hidden sm:grid grid-cols-2 gap-x-6 gap-y-1 text-sm min-w-0">
+                              <div className="min-w-0"><span className="text-muted-foreground">Location:</span>{" "}<span className="text-foreground break-words">{result.town}, {result.state}</span></div>
+                              <div className="min-w-0"><span className="text-muted-foreground">Date Range:</span>{" "}<span className="text-foreground break-words">{result.dateRange}</span></div>
+                              <div className="min-w-0"><span className="text-muted-foreground">Type:</span>{" "}<span className="text-foreground break-words">{result.type}</span></div>
+                              <div className="min-w-0"><span className="text-muted-foreground">Color:</span>{" "}<span className="text-foreground break-words">{result.color}</span></div>
                             </div>
                           </div>
                         </div>
@@ -608,11 +456,11 @@ const Search = () => {
                   ))}
                 </div>
               ) : (
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 min-w-0">
                   {paginatedResults.map((result) => (
                     <Card
                       key={result.id}
-                      className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden"
+                      className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden min-w-0"
                       onClick={() => navigate(`/record/${result.id}`)}
                     >
                       <img
@@ -620,23 +468,23 @@ const Search = () => {
                         alt={result.name}
                         className="w-full h-48 object-cover"
                       />
-                      <CardContent className="p-4">
-                        <h3 className="font-heading text-lg font-semibold text-foreground mb-2">
+                      <CardContent className="p-4 min-w-0 overflow-hidden">
+                        <h3 className="font-heading text-lg font-semibold text-foreground mb-2 truncate">
                           {result.name}
                         </h3>
-                        <div className="space-y-1 text-sm">
-                          <div>
-                            <span className="text-muted-foreground">Location:</span>{" "}
-                            <span className="text-foreground">{result.town}, {result.state}</span>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Date:</span>{" "}
-                            <span className="text-foreground">{result.dateRange}</span>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Color:</span>{" "}
-                            <span className="text-foreground">{result.color}</span>
-                          </div>
+                        {/* One line on small screens */}
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm min-w-0 sm:hidden">
+                          <span className="text-muted-foreground">Location:</span><span className="text-foreground">{result.town}, {result.state}</span>
+                          <span className="text-muted-foreground/50">·</span>
+                          <span className="text-muted-foreground">Date:</span><span className="text-foreground">{result.dateRange}</span>
+                          <span className="text-muted-foreground/50">·</span>
+                          <span className="text-muted-foreground">Color:</span><span className="text-foreground">{result.color}</span>
+                        </div>
+                        {/* Stacked rows on sm+ */}
+                        <div className="hidden sm:block space-y-1 text-sm min-w-0">
+                          <div className="min-w-0"><span className="text-muted-foreground">Location:</span>{" "}<span className="text-foreground break-words">{result.town}, {result.state}</span></div>
+                          <div className="min-w-0"><span className="text-muted-foreground">Date:</span>{" "}<span className="text-foreground break-words">{result.dateRange}</span></div>
+                          <div className="min-w-0"><span className="text-muted-foreground">Color:</span>{" "}<span className="text-foreground break-words">{result.color}</span></div>
                         </div>
                       </CardContent>
                     </Card>

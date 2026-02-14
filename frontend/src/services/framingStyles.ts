@@ -1,25 +1,18 @@
 /**
- * Framing styles: from GET /api/framing-styles/ when VITE_FRAMING_STYLES_API_URL is set.
- * No Supabase fallback (no matching table).
+ * Framing styles: from Django GET /api/framing-styles/ (single base URL: VITE_API_BASE_URL).
  */
 
-/** One item from GET /api/framing-styles/ */
+import { fetchAllPages } from "@/lib/api";
+
+/** One item from /api/framing-styles/ */
 export interface FramingStyleApiResultItem {
   framingStyleId: number;
-  createdDate: string;
-  modifiedDate: string;
+  createdDate?: string;
+  modifiedDate?: string;
   framingStyleName: string;
-  framingDescription: string;
-  createdBy: number;
-  modifiedBy: number;
-}
-
-/** Paginated response from GET /api/framing-styles/ */
-export interface FramingStyleApiResponse {
-  count: number;
-  next: string | null;
-  previous: string | null;
-  results: FramingStyleApiResultItem[];
+  framingDescription?: string;
+  createdBy?: number;
+  modifiedBy?: number;
 }
 
 /** Normalized option for dropdowns / filters */
@@ -33,38 +26,14 @@ function mapApiResultToOption(item: FramingStyleApiResultItem): FramingStyleOpti
   return {
     id: item.framingStyleId,
     name: item.framingStyleName,
-    description: item.framingDescription,
+    description: item.framingDescription ?? "",
   };
 }
 
-function getFramingStylesApiUrl(): string | null {
-  const env = import.meta.env.VITE_FRAMING_STYLES_API_URL;
-  if (!env || typeof env !== "string" || env.trim() === "") return null;
-  const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/framing-styles")) return base;
-  return `${base}/api/framing-styles`;
-}
-
 /**
- * Fetches framing styles from GET /api/framing-styles/.
- * When VITE_FRAMING_STYLES_API_URL is not set, returns [].
+ * Fetches framing styles from Django GET /api/framing-styles/.
  */
 export async function getFramingStyles(): Promise<FramingStyleOption[]> {
-  const apiUrl = getFramingStylesApiUrl();
-  if (!apiUrl) {
-    return [];
-  }
-
-  const url = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Framing styles API error: ${res.status} ${res.statusText}`);
-  }
-
-  const data: FramingStyleApiResponse = await res.json();
-  if (!Array.isArray(data.results)) {
-    throw new Error("Framing styles API: invalid response (missing results array)");
-  }
-
-  return data.results.map(mapApiResultToOption);
+  const results = await fetchAllPages<FramingStyleApiResultItem>("framing-styles");
+  return results.map(mapApiResultToOption);
 }

@@ -272,15 +272,37 @@ LOGGING = {
     },
 }
 
-# CORS (adjust for frontend)
-# 8080 = common dev port; 5173 = Vite default (e.g. Lovable/React)
-CORS_ALLOWED_ORIGINS = [ 
+# CORS (adjust for frontend). Session auth requires credentials.
+CORS_ALLOW_CREDENTIALS = True
+# 8080 = common dev port; 5173 = Vite default
+CORS_ALLOWED_ORIGINS = [
     "http://localhost:8080",
+    "http://127.0.0.1:8080",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-] if DEBUG else [ 
-    f"https://{DJANGO_APP_HOSTNAME}/", 
+] if DEBUG else [
+    f"https://{DJANGO_APP_HOSTNAME}/",
 ]
+
+# CSRF: allow frontend origins so cookie-based auth works with same-host.
+# For /auth login to work, open the frontend with the SAME host as the API:
+#   API at http://127.0.0.1:8000 → open app at http://127.0.0.1:8080 (not localhost:8080).
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+] if DEBUG else [
+    f"https://{DJANGO_APP_HOSTNAME}",
+]
+
+# Session cookie: use same host for frontend and API so the session cookie is sent.
+# In dev, open the app at http://127.0.0.1:8080 and use VITE_API_BASE_URL=http://127.0.0.1:8000.
+if DEBUG:
+    SESSION_COOKIE_SAMESITE = "Lax"
+    SESSION_COOKIE_HTTPONLY = True
 
 # Security Settings (for production)
 if not DEBUG:

@@ -3,6 +3,7 @@
 ## MPC: 2025/11/15
 ###################################################################################################
 from django.urls import path, include
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework.routers import DefaultRouter
 
 from . import views
@@ -120,8 +121,20 @@ router.register(
     basename="postcover-image",
 )
 
+# ========== ADMIN (STAFF ONLY) ==========
+
+router.register(
+    r"admin-csv-uploads",
+    views.AdminCsvUploadViewSet,
+    basename="admin-csv-upload",
+)
+
 # The API URLs are now determined automatically by the router
+# csrf_exempt on login/logout so the SPA can POST without a CSRF token
 urlpatterns = [
+    path("login/", csrf_exempt(views.LoginView.as_view()), name="login"),
+    path("logout/", csrf_exempt(views.LogoutView.as_view()), name="logout"),
+    path("me/", views.CurrentUserView.as_view(), name="current-user"),
     path("", include(router.urls)),
 ]
 

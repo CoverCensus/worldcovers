@@ -1,10 +1,10 @@
 -- ============================================
--- CREATE TEST USER FOR WORLDCOVERS
+-- CREATE ADMIN TEST USER FOR WORLDCOVERS
 -- ============================================
 -- 
--- CREDENTIALS:
--- Email: admin@worldcovers.test
--- Password: TestAdmin123!
+-- CREDENTIALS (distinct from existing admin@worldcovers.test):
+-- Email: worldcovers-admin@worldcovers.test
+-- Password: WorldCoversAdmin123!
 --
 -- INSTRUCTIONS:
 -- 1. Go to Supabase Dashboard > SQL Editor
@@ -43,8 +43,8 @@ BEGIN
     new_user_id,
     'authenticated',
     'authenticated',
-    'admin@worldcovers.test',
-    crypt('TestAdmin123!', gen_salt('bf')),
+    'worldcovers-admin@worldcovers.test',
+    crypt('WorldCoversAdmin123!', gen_salt('bf')),
     NOW(),
     '{"provider":"email","providers":["email"]}',
     '{}',
@@ -58,8 +58,8 @@ BEGIN
   ON CONFLICT (email) DO NOTHING;
   
   RAISE NOTICE 'User created successfully!';
-  RAISE NOTICE 'Email: admin@worldcovers.test';
-  RAISE NOTICE 'Password: TestAdmin123!';
+  RAISE NOTICE 'Email: worldcovers-admin@worldcovers.test';
+  RAISE NOTICE 'Password: WorldCoversAdmin123!';
   RAISE NOTICE 'User ID: %', new_user_id;
 EXCEPTION
   WHEN OTHERS THEN
@@ -75,4 +75,4 @@ SELECT
   email_confirmed_at,
   created_at
 FROM auth.users
-WHERE email = 'admin@worldcovers.test';
+WHERE email = 'worldcovers-admin@worldcovers.test';

@@ -1,6 +1,6 @@
--- Create a test admin user for WorldCovers
--- Email: admin@worldcovers.test
--- Password: TestAdmin123!
+-- Create a test admin user for WorldCovers (distinct from admin@worldcovers.test)
+-- Email: worldcovers-admin@worldcovers.test
+-- Password: WorldCoversAdmin123!
 
 -- Note: In Supabase, you need to use the Admin API or Dashboard to create users with passwords
 -- This SQL script creates the user record, but you'll need to set the password via:
@@ -16,8 +16,8 @@
 DO $$
 DECLARE
   user_id uuid;
-  user_email text := 'admin@worldcovers.test';
-  user_password text := 'TestAdmin123!';
+  user_email text := 'worldcovers-admin@worldcovers.test';
+  user_password text := 'WorldCoversAdmin123!';
 BEGIN
   -- Check if user already exists
   SELECT id INTO user_id

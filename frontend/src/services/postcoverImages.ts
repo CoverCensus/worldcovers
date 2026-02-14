@@ -1,33 +1,39 @@
 /**
- * Postcover images: from GET /api/postcover-images/ when VITE_POSTCOVER_IMAGES_API_URL is set.
- * When not set, returns [] (app may use Supabase or other source for cover images).
+ * Postcover images: from Django GET /api/postcover-images/
+ * (single base URL: VITE_API_BASE_URL).
  */
 
-/** One item from GET /api/postcover-images/ */
+import { fetchAllPages } from "@/lib/api";
+
+/** One item from /api/postcover-images/ (camelCase or snake_case) */
 export interface PostcoverImageApiResultItem {
-  postcoverImageId: number;
-  originalFilename: string;
-  storageFilename: string;
-  imageUrl: string;
-  mimeType: string;
-  imageWidth: number;
-  imageHeight: number;
-  fileSizeBytes: number;
-  imageView: string;
-  imageDescription: string;
-  displayOrder: number;
-  createdDate: string;
+  postcoverImageId?: number;
+  postcover_image_id?: number;
+  originalFilename?: string;
+  original_filename?: string;
+  storageFilename?: string;
+  storage_filename?: string;
+  imageUrl?: string;
+  image_url?: string;
+  mimeType?: string;
+  mime_type?: string;
+  imageWidth?: number;
+  image_width?: number;
+  imageHeight?: number;
+  image_height?: number;
+  fileSizeBytes?: number;
+  file_size_bytes?: number;
+  imageView?: string;
+  image_view?: string;
+  imageDescription?: string;
+  image_description?: string;
+  displayOrder?: number;
+  display_order?: number;
+  createdDate?: string;
+  created_date?: string;
 }
 
-/** Paginated response from GET /api/postcover-images/ */
-export interface PostcoverImageApiResponse {
-  count: number;
-  next: string | null;
-  previous: string | null;
-  results: PostcoverImageApiResultItem[];
-}
-
-/** Normalized postcover image for display (matches API shape) */
+/** Normalized postcover image for display */
 export interface PostcoverImageRecord {
   id: number;
   originalFilename: string;
@@ -46,54 +52,29 @@ export interface PostcoverImageRecord {
 function mapApiResultToRecord(
   item: PostcoverImageApiResultItem
 ): PostcoverImageRecord {
+  const id = item.postcoverImageId ?? item.postcover_image_id ?? 0;
   return {
-    id: item.postcoverImageId,
-    originalFilename: item.originalFilename,
-    storageFilename: item.storageFilename,
-    imageUrl: item.imageUrl,
-    mimeType: item.mimeType,
-    imageWidth: item.imageWidth,
-    imageHeight: item.imageHeight,
-    fileSizeBytes: item.fileSizeBytes,
-    imageView: item.imageView,
-    imageDescription: item.imageDescription,
-    displayOrder: item.displayOrder,
-    createdDate: item.createdDate,
+    id,
+    originalFilename: item.originalFilename ?? item.original_filename ?? "",
+    storageFilename: item.storageFilename ?? item.storage_filename ?? "",
+    imageUrl: item.imageUrl ?? item.image_url ?? "",
+    mimeType: item.mimeType ?? item.mime_type ?? "",
+    imageWidth: item.imageWidth ?? item.image_width ?? 0,
+    imageHeight: item.imageHeight ?? item.image_height ?? 0,
+    fileSizeBytes: item.fileSizeBytes ?? item.file_size_bytes ?? 0,
+    imageView: item.imageView ?? item.image_view ?? "",
+    imageDescription: item.imageDescription ?? item.image_description ?? "",
+    displayOrder: item.displayOrder ?? item.display_order ?? 0,
+    createdDate: item.createdDate ?? item.created_date ?? "",
   };
 }
 
-function getPostcoverImagesApiUrl(): string | null {
-  const env = import.meta.env.VITE_POSTCOVER_IMAGES_API_URL;
-  if (!env || typeof env !== "string" || env.trim() === "") return null;
-  const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/postcover-images")) return base;
-  return `${base}/api/postcover-images`;
-}
-
 /**
- * Fetches postcover images from GET /api/postcover-images/.
- * When VITE_POSTCOVER_IMAGES_API_URL is not set, returns [].
+ * Fetches postcover images from Django GET /api/postcover-images/.
  */
 export async function getPostcoverImages(): Promise<PostcoverImageRecord[]> {
-  const apiUrl = getPostcoverImagesApiUrl();
-  if (!apiUrl) {
-    return [];
-  }
-
-  const url = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(
-      `Postcover images API error: ${res.status} ${res.statusText}`
-    );
-  }
-
-  const data: PostcoverImageApiResponse = await res.json();
-  if (!Array.isArray(data.results)) {
-    throw new Error(
-      "Postcover images API: invalid response (missing results array)"
-    );
-  }
-
-  return data.results.map(mapApiResultToRecord);
+  const results = await fetchAllPages<PostcoverImageApiResultItem>(
+    "postcover-images"
+  );
+  return results.map(mapApiResultToRecord);
 }

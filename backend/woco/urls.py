@@ -3,6 +3,7 @@
 ## MPC: 2025/10/24
 ###################################################################################################
 from django.urls import include, path, re_path
+from django.views.decorators.csrf import csrf_exempt
 from django.views.static import serve
 from django.views.generic import RedirectView
 
@@ -16,6 +17,7 @@ from debug_toolbar.toolbar import debug_toolbar_urls
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 from .views import ServeSPAView
+from common.views import LoginView, LogoutView
 
 
 ###
@@ -28,6 +30,9 @@ urlpatterns = [
     path("accounts/", include("allauth.urls")),
 
     path("api", RedirectView.as_view(url="/api/", permanent=True)),
+    # Login/logout with CSRF exempt so SPA can POST without token (matched before include)
+    path("api/login/", csrf_exempt(LoginView.as_view()), name="api-login"),
+    path("api/logout/", csrf_exempt(LogoutView.as_view()), name="api-logout"),
     path("api/", include("common.urls")),
     path("api-auth/", include("rest_framework.urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
