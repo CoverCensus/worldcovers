@@ -620,6 +620,7 @@ class Postmark(TimestampedModel):
         db_table = 'Postmarks'
         verbose_name = 'Listing'
         verbose_name_plural = 'Listings'
+        ordering = ['postmark_id']
         indexes = [
             models.Index(fields=['postal_facility_identity']),
             models.Index(fields=['postmark_key']),

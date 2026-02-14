@@ -50,6 +50,9 @@ class ListingAdmin(PostmarkAdmin):
     list_max_show_all = 200
     show_full_result_count = False
 
+    def get_queryset(self, request):
+        return super().get_queryset(request).order_by('postmark_id')
+
     def get_paginator(self, request, queryset, per_page, orphans=0, allow_empty_first_page=True, **kwargs):
         return NoCountPaginator(queryset, per_page, orphans=orphans, allow_empty_first_page=allow_empty_first_page)
 
