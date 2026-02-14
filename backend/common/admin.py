@@ -533,7 +533,7 @@ class ExampleCoverInline(admin.TabularInline):
 
 class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     resource_class = PostmarkResource
-    list_display = ['postmark_key', 'postmark_shape', 'rate_value', 'visibility']
+    list_display = ['postmark_key', 'get_postmark_shape_display', 'rate_value', 'visibility']
     list_filter = []
     search_fields = ['postmark_key', 'postal_facility_identity__facility_name', 'rate_value', 'public_slug', 'raw_state_data_id']
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
@@ -576,6 +576,14 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
         }),
     )
     
+    def get_postmark_shape_display(self, obj):
+        """Safe list_display for postmark_shape so one bad FK does not break the changelist."""
+        try:
+            return obj.postmark_shape if obj.postmark_shape_id else '-'
+        except Exception:
+            return '-'
+    get_postmark_shape_display.short_description = 'Postmark shape'
+
     def get_facility_name(self, obj):
         if not obj.postal_facility_identity:
             return '-'

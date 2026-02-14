@@ -242,3 +242,4 @@ tools/wip/in/*
 !tools/wip/in/DELETE.ME
 tools/wip/out/*
 !tools/wip/out/DELETE.ME
+.DS_Store
