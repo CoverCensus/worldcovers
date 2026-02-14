@@ -245,7 +245,7 @@ def _logging_can_use_file():
         with open(LOG_PATH, "a"):
             pass
         return True
-    except (PermissionError, OSError):
+    except Exception:
         return False
 
 
