@@ -234,6 +234,36 @@ POSTMARK_IMAGE_QUALITY = 95
 # Logging Configuration
 DJANGO_LOG_LEVEL = "DEBUG" if DEBUG else config("DJANGO_LOG_LEVEL", default="WARNING")
 LOG_FILENAME = config("LOG_FILENAME", default="woco.log")
+LOG_DIR = BASE_DIR / "logs"
+LOG_PATH = LOG_DIR / LOG_FILENAME
+
+
+def _logging_can_use_file():
+    """Return True if we can create/append to the log file (avoids PermissionError at startup)."""
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(LOG_PATH, "a"):
+            pass
+        return True
+    except (PermissionError, OSError):
+        return False
+
+
+_use_file_handler = _logging_can_use_file()
+_log_handlers = ["console"]
+_file_handler_config = {}
+if _use_file_handler:
+    _log_handlers.append("file")
+    _file_handler_config["file"] = {
+        "class": "logging.handlers.TimedRotatingFileHandler",
+        "filename": str(LOG_PATH),
+        "when": "midnight",
+        "interval": 1,
+        "backupCount": 30,
+        "formatter": "verbose",
+        "encoding": "utf-8",
+    }
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -248,24 +278,16 @@ LOGGING = {
             "class": "logging.StreamHandler",
             "formatter": "verbose",
         },
-        "file": {
-            "class": "logging.handlers.TimedRotatingFileHandler",
-            "filename": BASE_DIR / "logs" / LOG_FILENAME,
-            "when": "midnight",
-            "interval": 1,
-            "backupCount": 30,
-            "formatter": "verbose",
-            "encoding": "utf-8",
-        },
+        **_file_handler_config,
     },
     "loggers": {
         "django": {
-            "handlers": ["console", "file"],
+            "handlers": _log_handlers,
             "level": DJANGO_LOG_LEVEL,
             "propagate": False,
         },
-        "common": {  # Replace with your app name
-            "handlers": ["console", "file"],
+        "common": {
+            "handlers": _log_handlers,
             "level": "DEBUG",
             "propagate": False,
         },
