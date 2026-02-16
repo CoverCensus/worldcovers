@@ -60,8 +60,8 @@ class Command(BaseCommand):
         parser.add_argument(
             "--dir",
             "-d",
-            default="frontend/public/Old Data",
-            help="Directory containing the 13 CSV files (default: frontend/public/Old Data)",
+            default="imports",
+            help="Directory containing the 13 CSV files (default: backend/imports)",
         )
         parser.add_argument(
             "--user",

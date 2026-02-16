@@ -199,8 +199,8 @@ class AdministrativeUnit(TimestampedModel):
 
     class Meta:
         db_table = 'AdministrativeUnits'
-        verbose_name = 'Administrative Unit'
-        verbose_name_plural = 'Administrative Units'
+        verbose_name = 'Location'
+        verbose_name_plural = 'Locations'
         indexes = [
             models.Index(fields=['reference_code']),
         ]
@@ -233,13 +233,13 @@ class AdministrativeUnitIdentity(TimestampedModel):
         db_column='AdministrativeUnitIdentityID'
     )
     administrative_unit = models.ForeignKey(
-        AdministrativeUnit,
+        'postmarks.Location',
         on_delete=models.CASCADE,
         related_name='identities',
         db_column='AdministrativeUnitID'
     )
     parent_administrative_unit = models.ForeignKey(
-        AdministrativeUnit,
+        'postmarks.Location',
         on_delete=models.PROTECT,
         null=True,
         blank=True,
@@ -289,8 +289,8 @@ class AdministrativeUnitIdentity(TimestampedModel):
 
     class Meta:
         db_table = 'AdministrativeUnitIdentities'
-        verbose_name = 'Administrative Unit Identity'
-        verbose_name_plural = 'Administrative Unit Identities'
+        verbose_name = 'Location identity'
+        verbose_name_plural = 'Location identities'
         indexes = [
             models.Index(fields=['administrative_unit', 'effective_from_date']),
             models.Index(fields=['effective_from_date', 'effective_to_date']),
@@ -319,11 +319,11 @@ class AdministrativeUnitResponsibility(TimestampedModel):
         db_column='AdministrativeUnitResponsibilityID'
     )
     administrative_unit = models.ForeignKey(
-        AdministrativeUnit,
+        'postmarks.Location',
         on_delete=models.CASCADE,
         related_name='responsibilities',
         db_column='AdministrativeUnitID',
-        help_text="The administrative unit this group is responsible for"
+        help_text="The location this group is responsible for"
     )
     group = models.ForeignKey(
         Group,
@@ -341,8 +341,8 @@ class AdministrativeUnitResponsibility(TimestampedModel):
 
     class Meta:
         db_table = 'AdministrativeUnitResponsibilities'
-        verbose_name = 'Administrative Unit Responsibility'
-        verbose_name_plural = 'Administrative Unit Responsibilities'
+        verbose_name = 'Location responsibility'
+        verbose_name_plural = 'Location responsibilities'
         unique_together = [['administrative_unit', 'group']]
         indexes = [
             models.Index(fields=['administrative_unit', 'is_active']),
@@ -370,7 +370,7 @@ class JurisdictionalAffiliation(TimestampedModel):
         db_column='PostalFacilityIdentityID'
     )
     administrative_unit = models.ForeignKey(
-        AdministrativeUnit,
+        'postmarks.Location',
         on_delete=models.PROTECT,
         related_name='governed_facilities',
         db_column='AdministrativeUnitID'
@@ -525,6 +525,15 @@ class Postmark(TimestampedModel):
         blank=True,
         help_text="The facility identity when this postmark was used"
     )
+    state = models.ForeignKey(
+        'postmarks.Location',
+        on_delete=models.PROTECT,
+        related_name='postmarks_by_state',
+        db_column='StateID',
+        null=True,
+        blank=True,
+        help_text="Location (state/region) this listing belongs to; from import nStateID or facility jurisdiction"
+    )
     postmark_shape = models.ForeignKey(
         PostmarkShape,
         on_delete=models.PROTECT,
@@ -624,6 +633,7 @@ class Postmark(TimestampedModel):
         indexes = [
             models.Index(fields=['postal_facility_identity']),
             models.Index(fields=['postmark_key']),
+            models.Index(fields=['state']),
         ]
 
     def get_responsible_groups(self):

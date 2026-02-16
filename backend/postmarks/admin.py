@@ -1,6 +1,4 @@
 from django.contrib import admin
-from django.core.paginator import Paginator
-from django.utils.functional import cached_property
 
 from common.admin import (
     TimestampedModelAdmin,
@@ -16,7 +14,9 @@ from common.admin import (
     DateFormatAdmin,
     PostcoverAdmin,
     PostcoverImageAdmin,
+    AdministrativeUnitAdmin,
 )
+from common.utils import get_canonical_location_reference_codes
 
 from .models import (
     Listing,
@@ -35,13 +35,8 @@ from .models import (
     Postcover,
     PostcoverPostmark,
     PostcoverImage,
+    Location,
 )
-
-
-class NoCountPaginator(Paginator):
-    @cached_property
-    def count(self):
-        return 10_000_000
 
 
 @admin.register(Listing)
@@ -53,12 +48,9 @@ class ListingAdmin(PostmarkAdmin):
     def get_queryset(self, request):
         return (
             super().get_queryset(request)
-            .select_related('postmark_shape')
+            .select_related('postmark_shape', 'state')
             .order_by('postmark_id')
         )
-
-    def get_paginator(self, request, queryset, per_page, orphans=0, allow_empty_first_page=True, **kwargs):
-        return NoCountPaginator(queryset, per_page, orphans=orphans, allow_empty_first_page=allow_empty_first_page)
 
 
 admin.site.register(ListingImage, PostmarkImageAdmin)
@@ -71,6 +63,18 @@ admin.site.register(PostmarkPublication, PostmarkPublicationAdmin)
 admin.site.register(PostmarkPublicationReference, PostmarkPublicationReferenceAdmin)
 admin.site.register(Postcover, PostcoverAdmin)
 admin.site.register(PostcoverImage, PostcoverImageAdmin)
+
+# Locations (proxy of AdministrativeUnit) — under Postmarks; only show rows from tblStates.csv
+class LocationAdmin(AdministrativeUnitAdmin):
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        codes = get_canonical_location_reference_codes()
+        if codes is not None:
+            return qs.filter(reference_code__in=codes)
+        return qs
+
+
+admin.site.register(Location, LocationAdmin)
 
 
 @admin.register(PostmarkColor)

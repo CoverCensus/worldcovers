@@ -309,7 +309,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         model = Postmark
         fields = ['postmark_id', 'postmark_key', 'facility_name', 'shape_name',
                   'rate_location', 'rate_value', 'is_manuscript', 'main_image',
-                  'responsible_groups', 'state', 'town', 'date_range',
+                  'responsible_groups', 'state', 'state_id', 'town', 'date_range',
                   'colors_display', 'valuation_display']
 
     def get_facility_name(self, obj):
@@ -335,7 +335,10 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         return [{'id': g.id, 'name': g.name} for g in groups]
 
     def get_state(self, obj):
-        """State from current jurisdictional affiliation (administrative unit name)."""
+        """State: direct FK (listing.state) if set, else from facility's current jurisdiction."""
+        if obj.state_id:
+            identity = obj.state.get_current_identity() if getattr(obj, 'state', None) else None
+            return identity.unit_name if identity else (obj.state.reference_code if getattr(obj, 'state', None) else None)
         if not obj.postal_facility_identity_id:
             return None
         aff = obj.postal_facility_identity.jurisdictions.filter(
@@ -440,6 +443,10 @@ class PostmarkSerializer(serializers.ModelSerializer):
         read_only_fields = ['postmark_id', 'created_date', 'modified_date']
     
     def get_state(self, obj):
+        """State: direct FK (listing.state) if set, else from facility's current jurisdiction."""
+        if obj.state_id:
+            identity = obj.state.get_current_identity() if getattr(obj, 'state', None) else None
+            return identity.unit_name if identity else (obj.state.reference_code if getattr(obj, 'state', None) else None)
         if not obj.postal_facility_identity_id:
             return None
         aff = obj.postal_facility_identity.jurisdictions.filter(
