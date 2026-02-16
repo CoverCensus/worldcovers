@@ -57,6 +57,7 @@ jobs:
           command_timeout: 20m
           script: |
             set -euo pipefail
+            # Stop app so migrations can run without table locks (ALTER TABLE on Postmarks can block otherwise)
+            sudo systemctl stop worldcovers
             sudo -u wocod -s bash -lc "cd /srv/woco && git fetch origin && git reset --hard origin/staging && ./scripts/deploy.sh"
-            # restart app
-            sudo systemctl restart worldcovers
+            sudo systemctl start worldcovers
