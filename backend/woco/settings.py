@@ -114,12 +114,13 @@ WSGI_APPLICATION = "woco.wsgi.application"
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
+_db_name = config("DB_NAME", default="woco")
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
-        "NAME": "woco",
+        "NAME": _db_name,
         "TEST": {
-            "NAME": "test_woco"
+            "NAME": f"test_{_db_name}"
         },
         "OPTIONS": {
             "read_default_file": str(REPO_ROOT / "mysql.cnf")

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Rebuild staging database from scratch: drop DB, recreate, migrate, create admin, run imports.
-# Run from repo root. Requires mysql.cnf in repo root and CSV files in backend/imports/.
+# Rebuild staging database: ensure DB exists, migrate, create admin, run imports.
+# Uses database "worldcovers" by default. One-time setup: run scripts/setup_worldcovers_db.sql as MySQL root.
+# Run from repo root. Requires mysql.cnf in repo root (with database=worldcovers) and CSV files in backend/imports/.
 # Usage: ./scripts/rebuild_staging_db.sh [--no-import]
 set -e
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
 
-DB_NAME="${DB_NAME:-woco}"
+DB_NAME="${DB_NAME:-worldcovers}"
 MYSQL_CNF="${REPO_ROOT}/mysql.cnf"
 # Path to CSVs relative to backend/ (e.g. imports or /srv/woco/backend/imports on server)
 IMPORT_DIR="${IMPORT_DIR:-imports}"
@@ -17,17 +18,19 @@ else
   SKIP_IMPORT=0
 fi
 
-echo "[1/5] Dropping and recreating database '${DB_NAME}'..."
+echo "[1/5] Ensuring database '${DB_NAME}' exists..."
 if [[ ! -f "$MYSQL_CNF" ]]; then
   echo "Error: mysql.cnf not found at $MYSQL_CNF. Create it from mysql.cnf.example." >&2
   exit 1
 fi
-# Connect to system DB so we can DROP the app database
-mysql --defaults-file="$MYSQL_CNF" --database=mysql -e "
-  DROP DATABASE IF EXISTS \`${DB_NAME}\`;
-  CREATE DATABASE \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-"
+# One-time: run scripts/setup_worldcovers_db.sql as root to create DB and grant wocod
+if ! mysql --defaults-file="$MYSQL_CNF" --database="${DB_NAME}" -e "SELECT 1;" 2>/dev/null; then
+  echo "Error: Cannot use database '${DB_NAME}'. Create it and grant the mysql.cnf user access, e.g.:" >&2
+  echo "  mysql -u root -p < scripts/setup_worldcovers_db.sql" >&2
+  exit 1
+fi
 
+export DB_NAME
 echo "[2/5] Running migrations..."
 (cd backend && python manage.py migrate --noinput)
 
