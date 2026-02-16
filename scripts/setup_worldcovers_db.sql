@@ -1,7 +1,7 @@
 -- Run once as MySQL root (or another user with CREATE DATABASE and GRANT):
---   mysql -u root -p < scripts/setup_worldcovers_db.sql
--- Or from the mysql client:
---   source /path/to/scripts/setup_worldcovers_db.sql
+--   sudo mysql < scripts/setup_worldcovers_db.sql
+--   # or, if root has a password: mysql -u root -p < scripts/setup_worldcovers_db.sql
+-- Or from the mysql client: source /path/to/scripts/setup_worldcovers_db.sql
 
 CREATE DATABASE IF NOT EXISTS worldcovers
   CHARACTER SET utf8mb4

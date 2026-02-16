@@ -261,6 +261,8 @@ class Command(BaseCommand):
                 if created:
                     color_name = self.normalize_value(row.get('txtTownmarkColor'), '')
                     if color_name:
+                        if len(color_name) > 50:  # Color.color_name max_length
+                            color_name = color_name[:50]
                         color = self.get_or_create_simple(Color, 'color_name', color_name, self.color_cache)
                         PostmarkColor.objects.get_or_create(
                             postmark=listing,
