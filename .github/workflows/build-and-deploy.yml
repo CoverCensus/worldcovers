@@ -54,6 +54,7 @@ jobs:
           host: hellowoco.app
           username: jlogan
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 20m
           script: |
             set -euo pipefail
             sudo -u wocod -s bash -lc "cd /srv/woco && git fetch origin && git reset --hard origin/staging && ./scripts/deploy.sh"
