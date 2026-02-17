@@ -47,6 +47,7 @@ from .serializers import (
     AdminCsvUploadListSerializer, AdminCsvUploadSerializer,
 )
 from .csv_import import IMPORTERS
+from .pagination import PostmarkPageNumberPagination
 
 
 # ========== AUTH (SESSION LOGIN FOR SPA) ==========
@@ -402,7 +403,8 @@ class DateFormatViewSet(viewsets.ModelViewSet):
 
 class PostmarkViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for postmarks with group-based permission checking
+    ViewSet for postmarks with group-based permission checking.
+    Paginated: 10 records per page. Use ?page=2 for next page.
     """
     queryset = Postmark.objects.all().select_related(
         'postal_facility_identity__postal_facility',
@@ -412,6 +414,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         'postmark_colors__color', 'dates_seen', 'sizes',
         'valuations', 'images', 'publication_references__postmark_publication'
     )
+    pagination_class = PostmarkPageNumberPagination
     permission_classes = [IsAuthenticatedOrReadOnly, IsResponsibleForRegion]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = {
@@ -422,6 +425,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         'rate_location': ['exact'],
         'rate_value': ['exact', 'icontains'],
         'is_manuscript': ['exact'],
+        'color': ['exact'],
     }
     search_fields = ['postmark_key', 'postal_facility_identity__facility_name',
                      'rate_value', 'other_characteristics']
