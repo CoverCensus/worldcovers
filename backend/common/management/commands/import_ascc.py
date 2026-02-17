@@ -6,8 +6,9 @@ import datetime as dt
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 from common.models import *  # Import all models from common.models
+from postmarks.models import Location
 
-DEFAULT_IMPORT_PATH = 'frontend/public/Old Data'
+DEFAULT_IMPORT_PATH = 'imports'
 
 
 class Command(BaseCommand):
@@ -68,7 +69,7 @@ class Command(BaseCommand):
             for row in reader:
                 self.state_by_id[row['nStateID']] = row
                 reference_code = f"US-{row['txtStateAbv'].strip().upper()}"
-                admin_unit, created = AdministrativeUnit.objects.get_or_create(
+                loc, created = Location.objects.get_or_create(
                     reference_code=reference_code,
                     defaults={
                         'created_by_id': self.user_id,
@@ -76,7 +77,7 @@ class Command(BaseCommand):
                     },
                 )
                 identity, identity_created = AdministrativeUnitIdentity.objects.get_or_create(
-                    administrative_unit=admin_unit,
+                    administrative_unit=loc,
                     effective_from_date='1900-01-01',
                     defaults={
                         'created_by_id': self.user_id,
@@ -88,7 +89,18 @@ class Command(BaseCommand):
                         'change_reason': 'INITIAL',
                     },
                 )
-                print(f"State {admin_unit} with identity {identity} {'created' if created else 'exists'}.")
+                print(f"State {loc} with identity {identity} {'created' if created else 'exists'}.")
+
+    def _state_admin_unit_for_row(self, row):
+        """Return AdministrativeUnit (state) for CSV row using nStateID, or None."""
+        n_state_id = row.get('nStateID')
+        if not n_state_id or n_state_id not in self.state_by_id:
+            return None
+        state_row = self.state_by_id[n_state_id]
+        reference_code = f"US-{state_row.get('txtStateAbv', '').strip().upper()}"
+        if not reference_code or reference_code == 'US-':
+            return None
+        return Location.objects.filter(reference_code=reference_code).first()
 
     def normalize_value(self, value, fallback='Unknown'):
         if value is None:
@@ -97,6 +109,17 @@ class Command(BaseCommand):
         if value == '' or value.lower() in {'null', 'n/a', 'na', 'none'}:
             return fallback
         return value
+
+    def _first_meaningful_rate(self, row):
+        """First non-empty, non-null/n/a value from rate-related columns (for rate_value)."""
+        for key in ('txtTownmarkRateValue', 'txtTownmarkRateText', 'txtRatesText', 'txtRates', 'txtValue'):
+            value = row.get(key)
+            if value is None:
+                continue
+            value = str(value).strip()
+            if value and value.lower() not in {'null', 'n/a', 'na', 'none'}:
+                return value
+        return None
 
     def parse_bool(self, value):
         return str(value).strip() in {'1', 'true', 'True', 'yes', 'Y'}
@@ -197,39 +220,49 @@ class Command(BaseCommand):
                 if rate_location not in valid_rate_locations:
                     rate_location = 'NONE'
 
-                rate_value = self.normalize_value(
-                    row.get('txtTownmarkRateValue') or row.get('txtTownmarkRateText') or row.get('txtRatesText'),
-                    'Unknown'
-                )
+                raw_rate = self._first_meaningful_rate(row)
+                rate_value = self.normalize_value(raw_rate, 'Unknown')
+                if rate_value and len(rate_value) > 50:  # Postmark.rate_value max_length
+                    rate_value = rate_value[:50]
 
                 postmark_key = self.make_unique_postmark_key(
                     row.get('txtPostmark'),
                     row.get('nRawStateDataID')
                 )
 
+                defaults = {
+                    'postmark_key': postmark_key,
+                    'site_id': 1,
+                    'postmark_shape': shape,
+                    'lettering_style': lettering,
+                    'framing_style': framing,
+                    'date_format': date_format,
+                    'rate_location': rate_location,
+                    'rate_value': rate_value,
+                    'is_manuscript': self.parse_bool(row.get('ynManuscript')),
+                    'other_characteristics': row.get('txtOther') or '',
+                    'source_page': row.get('txtPDFPage') or '',
+                    'created_by_id': self.user_id,
+                    'modified_by_id': self.user_id,
+                    'raw_import_payload': row
+                }
+                state_unit = self._state_admin_unit_for_row(row)
+                if state_unit:
+                    defaults['state'] = state_unit
+
                 listing, created = Postmark.objects.get_or_create(
                     raw_state_data_id=row['nRawStateDataID'],
-                    defaults={
-                        'postmark_key': postmark_key,
-                        'site_id': 1,
-                        'postmark_shape': shape,
-                        'lettering_style': lettering,
-                        'framing_style': framing,
-                        'date_format': date_format,
-                        'rate_location': rate_location,
-                        'rate_value': rate_value,
-                        'is_manuscript': self.parse_bool(row.get('ynManuscript')),
-                        'other_characteristics': row.get('txtOther') or '',
-                        'source_page': row.get('txtPDFPage') or '',
-                        'created_by_id': self.user_id,
-                        'modified_by_id': self.user_id,
-                        'raw_import_payload': row
-                    },
+                    defaults=defaults,
                 )
+                if not created and state_unit and not listing.state_id:
+                    listing.state = state_unit
+                    listing.save(update_fields=['state'])
 
                 if created:
                     color_name = self.normalize_value(row.get('txtTownmarkColor'), '')
                     if color_name:
+                        if len(color_name) > 50:  # Color.color_name max_length
+                            color_name = color_name[:50]
                         color = self.get_or_create_simple(Color, 'color_name', color_name, self.color_cache)
                         PostmarkColor.objects.get_or_create(
                             postmark=listing,

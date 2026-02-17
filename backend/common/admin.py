@@ -54,9 +54,6 @@ class TimestampedModelAdmin(ImportExportModelAdmin):
     list_per_page = 50
     list_max_show_all = 200
 
-    def get_paginator(self, request, queryset, per_page, orphans=0, allow_empty_first_page=True, **kwargs):
-        return NoCountPaginator(queryset, per_page, orphans=orphans, allow_empty_first_page=allow_empty_first_page)
-    
     def save_model(self, request, obj, form, change):
         if not change:
             obj.created_by = request.user
@@ -332,7 +329,6 @@ class AdministrativeUnitResponsibilityInline(admin.TabularInline):
     exclude = ["created_by", "modified_by", "created_date", "modified_date"]
 
 
-@admin.register(AdministrativeUnit)
 class AdministrativeUnitAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     resource_class = AdministrativeUnitResource
     list_display = ['reference_code', 'get_current_name', 'get_current_type', 
@@ -357,7 +353,6 @@ class AdministrativeUnitAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     get_responsible_groups.short_description = 'Responsible Groups'
 
 
-@admin.register(AdministrativeUnitIdentity)
 class AdministrativeUnitIdentityAdmin(TimestampedModelAdmin):
     resource_class = AdministrativeUnitIdentityResource
     list_display = ['unit_name', 'administrative_unit', 'unit_type', 'hierarchy_level',
@@ -369,7 +364,7 @@ class AdministrativeUnitIdentityAdmin(TimestampedModelAdmin):
     date_hierarchy = 'effective_from_date'
     
     fieldsets = (
-        ('Administrative Unit Reference', {
+        ('Location Reference', {
             'fields': ('administrative_unit', 'parent_administrative_unit')
         }),
         ('Identity Information', {
@@ -385,7 +380,6 @@ class AdministrativeUnitIdentityAdmin(TimestampedModelAdmin):
     )
 
 
-@admin.register(AdministrativeUnitResponsibility)
 class AdministrativeUnitResponsibilityAdmin(TimestampedModelAdmin):
     resource_class = AdministrativeUnitResponsibilityResource
     list_display = ['get_unit_name', 'group', 'is_active']
@@ -410,7 +404,7 @@ class AdministrativeUnitResponsibilityAdmin(TimestampedModelAdmin):
     def get_unit_name(self, obj):
         identity = obj.administrative_unit.get_current_identity()
         return identity.unit_name if identity else obj.administrative_unit.reference_code
-    get_unit_name.short_description = 'Administrative Unit'
+    get_unit_name.short_description = 'Location'
 
 
 @admin.register(JurisdictionalAffiliation)
@@ -448,7 +442,7 @@ class JurisdictionalAffiliationAdmin(TimestampedModelAdmin):
     def get_admin_unit_name(self, obj):
         identity = obj.get_administrative_unit_identity()
         return identity.unit_name if identity else obj.administrative_unit.reference_code
-    get_admin_unit_name.short_description = 'Administrative Unit'
+    get_admin_unit_name.short_description = 'Location'
 
 
 # ========== PHYSICAL CHARACTERISTICS ADMIN ==========
@@ -542,11 +536,11 @@ class ExampleCoverInline(admin.TabularInline):
 
 class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     resource_class = PostmarkResource
-    list_display = ['postmark_key', 'postmark_shape', 'rate_value', 'visibility']
-    list_filter = []
+    list_display = ['postmark_key', 'get_postmark_shape_display', 'state', 'rate_value', 'visibility']
+    list_filter = ['state']
     search_fields = ['postmark_key', 'postal_facility_identity__facility_name', 'rate_value', 'public_slug', 'raw_state_data_id']
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-    raw_id_fields = ['site', 'postal_facility_identity', 'postmark_shape', 'lettering_style',
+    raw_id_fields = ['site', 'postal_facility_identity', 'state', 'postmark_shape', 'lettering_style',
                      'framing_style', 'date_format']
     
     inlines = [
@@ -561,7 +555,7 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('postmark_key', 'site', 'postal_facility_identity')
+            'fields': ('postmark_key', 'site', 'postal_facility_identity', 'state')
         }),
         ('Listing Status & Source', {
             'fields': ('visibility', 'public_slug', 'source_catalog', 'source_page', 'last_public_update_at')
@@ -585,6 +579,14 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
         }),
     )
     
+    def get_postmark_shape_display(self, obj):
+        """Safe list_display for postmark_shape so one bad FK does not break the changelist."""
+        try:
+            return obj.postmark_shape if obj.postmark_shape_id else '-'
+        except Exception:
+            return '-'
+    get_postmark_shape_display.short_description = 'Postmark shape'
+
     def get_facility_name(self, obj):
         if not obj.postal_facility_identity:
             return '-'
@@ -601,7 +603,7 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
             identity = affiliations.get_administrative_unit_identity()
             return identity.unit_name if identity else '-'
         return '-'
-    get_admin_unit.short_description = 'Administrative Unit'
+    get_admin_unit.short_description = 'Location'
     
     def get_responsible_groups(self, obj):
         groups = obj.get_responsible_groups()
