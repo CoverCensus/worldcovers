@@ -48,8 +48,6 @@ type CatalogEntryDetailViewProps = {
   /** Show "Upload Image" (record page); submission page omits */
   showUploadImage?: boolean;
   onUploadImage?: () => void;
-  /** Optional action (e.g. Edit button) rendered next to the back button */
-  extraAction?: React.ReactNode;
 };
 
 const getStatusBadge = (status: string) => {
@@ -72,20 +70,16 @@ export const CatalogEntryDetailView = ({
   detailsCardTitle,
   showUploadImage,
   onUploadImage,
-  extraAction,
 }: CatalogEntryDetailViewProps) => {
   const imageUrl = entry.image_url || postmarkSample;
   const { firstSeen, lastSeen } = parseDateRange(entry.date_range);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="flex flex-wrap items-center gap-2 mb-6">
-        <Button variant="ghost" onClick={onBack} className="-ml-4">
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          {backLabel}
-        </Button>
-        {extraAction}
-      </div>
+      <Button variant="ghost" onClick={onBack} className="mb-6 -ml-4">
+        <ArrowLeft className="mr-2 h-4 w-4" />
+        {backLabel}
+      </Button>
 
       <div className="grid items-start lg:grid-cols-2 gap-8 mb-8">
         {/* Image */}

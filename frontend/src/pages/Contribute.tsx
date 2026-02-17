@@ -9,11 +9,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Upload, CheckCircle, XCircle, Clock } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
+import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/contexts/AuthContext";
-import { getApiBaseUrl } from "@/lib/api";
+import type { User } from "@supabase/supabase-js";
 
 const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 10;
@@ -52,30 +52,18 @@ interface MySubmission {
   created_at: string;
 }
 
-function parseDateRange(dateRange: string): { firstSeen: string; lastSeen: string } {
-  const s = (dateRange ?? "").trim();
-  if (!s) return { firstSeen: "", lastSeen: "" };
-  const dash = s.indexOf("-");
-  if (dash === -1) return { firstSeen: s, lastSeen: "" };
-  return { firstSeen: s.slice(0, dash).trim(), lastSeen: s.slice(dash + 1).trim() };
-}
-
 const Contribute = () => {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const editId = searchParams.get("edit");
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { user } = useAuth();
+  const [user, setUser] = useState<User | null>(null);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [mySubmissions, setMySubmissions] = useState<MySubmission[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [loadingEdit, setLoadingEdit] = useState(false);
 
   // Form state – all fields shown on Submission Detail
-  const [name, setName] = useState("");
   const [state, setState] = useState("");
   const [town, setTown] = useState("");
   const [firstSeen, setFirstSeen] = useState("");
@@ -89,7 +77,6 @@ const Contribute = () => {
   const [references, setReferences] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [existingImageUrl, setExistingImageUrl] = useState<string | null>(null);
 
   useEffect(() => {
     getColors()
@@ -98,21 +85,49 @@ const Contribute = () => {
   }, []);
 
   useEffect(() => {
-    setMySubmissions([]);
-    setLoadingSubmissions(false);
-  }, [user]);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
-    if (editId) {
-      toast({
-        title: "Edit not available",
-        description: "Submissions are managed via Django admin. Use the admin site to edit.",
-        variant: "destructive",
-      });
-      navigate("/contribute", { replace: true });
+    if (!user) {
+      setMySubmissions([]);
+      setLoadingSubmissions(false);
+      return;
     }
-    setLoadingEdit(false);
-  }, [editId, navigate, toast]);
+    const fetchMySubmissions = async () => {
+      setLoadingSubmissions(true);
+      try {
+        const { data, error } = await supabase
+          .from("submissions")
+          .select("id, name, status, created_at")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false });
+
+        if (error) throw error;
+        setMySubmissions((data ?? []).map((row) => ({
+          id: row.id,
+          name: row.name,
+          status: row.status ?? "pending",
+          created_at: row.created_at,
+        })));
+      } catch (err: unknown) {
+        toast({
+          title: "Error loading your submissions",
+          description: err instanceof Error ? err.message : "Could not load submissions",
+          variant: "destructive",
+        });
+      } finally {
+        setLoadingSubmissions(false);
+      }
+    };
+    fetchMySubmissions();
+  }, [user, toast]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -143,6 +158,11 @@ const Contribute = () => {
     reader.readAsDataURL(file);
   };
 
+  const buildName = () => {
+    const stateLabel = STATE_OPTIONS.find((s) => s.value === state)?.label ?? state;
+    return `${town.trim()}, ${stateLabel} ${type}`.trim();
+  };
+
   const buildDateRange = () => {
     const first = firstSeen.trim();
     const last = lastSeen.trim();
@@ -162,17 +182,16 @@ const Contribute = () => {
       return;
     }
 
-    const nameVal = name.trim();
     const stateVal = state.trim();
     const townVal = town.trim();
     const firstVal = firstSeen.trim();
     const typeVal = type.trim();
     const colorVal = color.trim();
 
-    if (!nameVal || !stateVal || !townVal || !firstVal || !typeVal || !colorVal) {
+    if (!stateVal || !townVal || !firstVal || !typeVal || !colorVal) {
       toast({
         title: "Missing required fields",
-        description: "Please fill in Name, State, Town/City, First Seen Year, Postmark Type, and Color.",
+        description: "Please fill in State, Town/City, First Seen Year, Postmark Type, and Color.",
         variant: "destructive",
       });
       return;
@@ -190,15 +209,80 @@ const Contribute = () => {
 
     setSubmitting(true);
     try {
-      const adminUrl = getApiBaseUrl().replace(/\/api\/?$/, "") + "/admin/";
-      toast({
-        title: "Submissions via Django",
-        description: "New entries and corrections are managed via Django admin. Contact the site administrator for access or use the admin site.",
-        variant: "default",
-      });
-      if (window.confirm("Open Django admin to add or edit postmarks?")) {
-        window.open(adminUrl, "_blank");
+      let imageUrl: string | null = null;
+      if (imageFile && user) {
+        try {
+          const ext = imageFile.name.split(".").pop() || "jpg";
+          const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
+          const { error: uploadError } = await supabase.storage
+            .from(SUBMISSION_IMAGES_BUCKET)
+            .upload(path, imageFile, { contentType: imageFile.type, upsert: false });
+
+          if (uploadError) throw uploadError;
+          const { data: urlData } = supabase.storage.from(SUBMISSION_IMAGES_BUCKET).getPublicUrl(path);
+          imageUrl = urlData.publicUrl;
+        } catch {
+          toast({
+            title: "Image upload failed",
+            description: "Submission will be saved without the image. Create bucket 'submission-images' in Supabase Storage if needed.",
+            variant: "destructive",
+          });
+        }
       }
+
+      const name = buildName();
+      const submitterName = user.user_metadata?.full_name ?? user.email ?? undefined;
+
+      const { error } = await supabase.from("submissions").insert({
+        user_id: user.id,
+        submitter_name: submitterName,
+        name,
+        state: stateVal,
+        town: townVal,
+        date_range: dateRange,
+        color: colorVal,
+        type: typeVal,
+        description: description.trim() || null,
+        citation_references: references.trim() || null,
+        image_url: imageUrl,
+        dimensions: dimensions.trim() || null,
+        manuscript: manuscript.trim() || null,
+        rarity: rarity.trim() || null,
+        status: "pending",
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Submission sent",
+        description: "Your entry has been submitted for review.",
+      });
+
+      setState("");
+      setTown("");
+      setFirstSeen("");
+      setLastSeen("");
+      setType("");
+      setColor("");
+      setDimensions("");
+      setManuscript("");
+      setRarity("");
+      setDescription("");
+      setReferences("");
+      setImageFile(null);
+      setImagePreview(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+
+      setMySubmissions((prev) => [
+        { id: crypto.randomUUID(), name, status: "pending", created_at: new Date().toISOString() },
+        ...prev,
+      ]);
+    } catch (err: unknown) {
+      toast({
+        title: "Submission failed",
+        description: err instanceof Error ? err.message : "Could not submit. Try again.",
+        variant: "destructive",
+      });
     } finally {
       setSubmitting(false);
     }
@@ -245,14 +329,7 @@ const Contribute = () => {
             <div className="lg:col-span-2">
               <Card className="shadow-archival-lg">
                 <CardHeader>
-                  <CardTitle className="font-heading text-xl">
-                    {editId ? "Edit Submission" : "Submit New Entry"}
-                  </CardTitle>
-                  {editId && (
-                    <p className="text-sm text-muted-foreground">
-                      Update your submission and resubmit for review.
-                    </p>
-                  )}
+                  <CardTitle className="font-heading text-xl">Submit New Entry</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   {!user && (
@@ -265,17 +342,6 @@ const Contribute = () => {
                   )}
 
                   <form onSubmit={handleSubmit} className="space-y-6">
-                    <div className="space-y-2">
-                      <Label htmlFor="name">Name *</Label>
-                      <Input
-                        id="name"
-                        placeholder="e.g., Boston Harbor Cover, Central Park Postmark"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        required
-                      />
-                    </div>
-
                     <div className="space-y-2">
                       <Label htmlFor="state">State *</Label>
                       <Select value={state} onValueChange={setState} required>
@@ -430,38 +496,25 @@ const Contribute = () => {
                       <Label>Upload Image</Label>
                       <input
                         ref={fileInputRef}
-                        id="contribute-image-input"
                         type="file"
                         accept={ALLOWED_IMAGE_TYPES.join(",")}
-                        className="sr-only"
+                        className="hidden"
                         onChange={handleImageChange}
                       />
-                      <label
-                        htmlFor="contribute-image-input"
-                        className="flex flex-col items-center justify-center border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer min-h-[180px]"
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => fileInputRef.current?.click()}
+                        onKeyDown={(e) => e.key === "Enter" && fileInputRef.current?.click()}
+                        className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
                       >
                         {imagePreview ? (
-                          <div className="space-y-2 w-full">
-                            <img src={imagePreview} alt="Preview" className="mx-auto max-h-40 rounded object-contain pointer-events-none" />
-                            <p className="text-sm text-muted-foreground">{imageFile?.name || "Current image"}</p>
-                            <div className="flex gap-2 justify-center">
-                              <span className="text-sm text-primary font-medium">Click to change</span>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  setImageFile(null);
-                                  setImagePreview(null);
-                                  setExistingImageUrl(null);
-                                  if (fileInputRef.current) fileInputRef.current.value = "";
-                                }}
-                              >
-                                Remove
-                              </Button>
-                            </div>
+                          <div className="space-y-2">
+                            <img src={imagePreview} alt="Preview" className="mx-auto max-h-40 rounded object-contain" />
+                            <p className="text-sm text-muted-foreground">{imageFile?.name}</p>
+                            <Button type="button" variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setImageFile(null); setImagePreview(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}>
+                              Remove
+                            </Button>
                           </div>
                         ) : (
                           <>
@@ -474,20 +527,20 @@ const Contribute = () => {
                             </p>
                           </>
                         )}
-                      </label>
+                      </div>
                     </div>
 
                     <Button
                       type="submit"
                       className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
-                      disabled={!user || submitting || loadingEdit}
+                      disabled={!user || submitting}
                     >
-                      {submitting ? (editId ? "Updating..." : "Submitting...") : editId ? "Update and Resubmit" : "Submit for Review"}
+                      {submitting ? "Submitting..." : "Submit for Review"}
                     </Button>
                   </form>
 
                   <p className="text-xs text-muted-foreground">
-                    * Required: Name, State, Town/City, First Seen Year, Postmark Type, Color. All other fields match Submission Detail.
+                    * Required: State, Town/City, First Seen Year, Postmark Type, Color. All other fields match Submission Detail.
                   </p>
                 </CardContent>
               </Card>

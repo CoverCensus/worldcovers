@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 import { z } from "zod";
 
 const requestLoginSchema = z.object({
@@ -45,7 +46,23 @@ export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) 
       setLoading(true);
       
       // Validate form data
-      requestLoginSchema.parse(formData);
+      const validated = requestLoginSchema.parse(formData);
+      
+      // Submit to database
+      const { error } = await supabase
+        .from("login_requests")
+        .insert({
+          first_name: validated.firstName,
+          last_name: validated.lastName,
+          salutation: validated.salutation || null,
+          country: validated.country,
+          email: validated.email,
+          phone_number: validated.phoneNumber || null,
+          organization: validated.organization || null,
+          comments: validated.comments || null,
+        });
+
+      if (error) throw error;
 
       toast({
         title: "Request submitted!",

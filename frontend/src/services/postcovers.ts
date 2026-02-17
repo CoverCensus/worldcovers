@@ -1,22 +1,23 @@
 /**
- * Postcovers: from Django GET /api/postcovers/
- * (single base URL: VITE_API_BASE_URL).
+ * Postcovers: from GET /api/postcovers/ when VITE_POSTCOVERS_API_URL is set.
+ * When not set, returns [] (app may use Supabase or other source for covers).
  */
 
-import { fetchAllPages } from "@/lib/api";
-
-/** One item from /api/postcovers/ (camelCase or snake_case) */
+/** One item from GET /api/postcovers/ */
 export interface PostcoverApiResultItem {
-  postcoverId?: number;
-  postcover_id?: number;
-  postcoverKey?: string;
-  postcover_key?: string;
-  ownerUsername?: string;
-  owner_username?: string;
-  postmarkCount?: number;
-  postmark_count?: number;
-  createdDate?: string;
-  created_date?: string;
+  postcoverId: number;
+  postcoverKey: string;
+  ownerUsername: string;
+  postmarkCount: number;
+  createdDate: string;
+}
+
+/** Paginated response from GET /api/postcovers/ */
+export interface PostcoverApiResponse {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: PostcoverApiResultItem[];
 }
 
 /** Normalized postcover for list/detail */
@@ -29,20 +30,45 @@ export interface PostcoverRecord {
 }
 
 function mapApiResultToRecord(item: PostcoverApiResultItem): PostcoverRecord {
-  const id = item.postcoverId ?? item.postcover_id ?? 0;
   return {
-    id,
-    postcoverKey: item.postcoverKey ?? item.postcover_key ?? "",
-    ownerUsername: item.ownerUsername ?? item.owner_username ?? "",
-    postmarkCount: item.postmarkCount ?? item.postmark_count ?? 0,
-    createdDate: item.createdDate ?? item.created_date ?? "",
+    id: item.postcoverId,
+    postcoverKey: item.postcoverKey,
+    ownerUsername: item.ownerUsername,
+    postmarkCount: item.postmarkCount,
+    createdDate: item.createdDate,
   };
 }
 
+function getPostcoversApiUrl(): string | null {
+  const env = import.meta.env.VITE_POSTCOVERS_API_URL;
+  if (!env || typeof env !== "string" || env.trim() === "") return null;
+  const base = env.trim().replace(/\/+$/, "");
+  if (base.endsWith("/api/postcovers")) return base;
+  return `${base}/api/postcovers`;
+}
+
 /**
- * Fetches postcovers from Django GET /api/postcovers/.
+ * Fetches postcovers from GET /api/postcovers/.
+ * When VITE_POSTCOVERS_API_URL is not set, returns [].
  */
 export async function getPostcovers(): Promise<PostcoverRecord[]> {
-  const results = await fetchAllPages<PostcoverApiResultItem>("postcovers");
-  return results.map(mapApiResultToRecord);
+  const apiUrl = getPostcoversApiUrl();
+  if (!apiUrl) {
+    return [];
+  }
+
+  const url = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Postcovers API error: ${res.status} ${res.statusText}`);
+  }
+
+  const data: PostcoverApiResponse = await res.json();
+  if (!Array.isArray(data.results)) {
+    throw new Error(
+      "Postcovers API: invalid response (missing results array)"
+    );
+  }
+
+  return data.results.map(mapApiResultToRecord);
 }
