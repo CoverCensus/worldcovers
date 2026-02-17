@@ -40,7 +40,7 @@ function mapApiResultToRecord(item: PostcoverApiResultItem): PostcoverRecord {
 }
 
 function getPostcoversApiUrl(): string | null {
-  const env = import.meta.env.VITE_POSTCOVERS_API_URL;
+  const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
   if (base.endsWith("/api/postcovers")) return base;

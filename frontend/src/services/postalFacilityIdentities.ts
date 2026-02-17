@@ -74,7 +74,7 @@ function mapApiResultToOption(
 }
 
 function getPostalFacilityIdentitiesApiUrl(): string | null {
-  const env = import.meta.env.VITE_POSTAL_FACILITY_IDENTITIES_API_URL;
+  const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
   if (base.endsWith("/api/postal-facility-identities")) return base;

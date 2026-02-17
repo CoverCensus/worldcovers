@@ -75,7 +75,7 @@ function mapApiResultToRecord(
 }
 
 function getPostmarkImagesApiUrl(): string | null {
-  const env = import.meta.env.VITE_POSTMARK_IMAGES_API_URL;
+  const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
   if (base.endsWith("/api/postmark-images")) return base;

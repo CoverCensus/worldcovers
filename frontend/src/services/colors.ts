@@ -46,7 +46,7 @@ function mapApiResultToOption(item: ColorsApiResultItem): ColorOption {
  * or just the origin (we append /api/colors).
  */
 function getColorsApiUrl(): string | null {
-  const env = import.meta.env.VITE_COLORS_API_URL;
+  const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
   if (base.endsWith("/api/colors")) return base;
@@ -57,28 +57,28 @@ function getColorsApiUrl(): string | null {
  * Fetches distinct colors from Supabase (catalog_records + submissions).
  * Returns ColorOption[] with id = index, name = color string, value = "".
  */
-async function getColorsFromSupabase(): Promise<ColorOption[]> {
-  const colors = new Set<string>();
+// async function getColorsFromSupabase(): Promise<ColorOption[]> {
+//   const colors = new Set<string>();
 
-  const { data: catalogColors } = await supabase
-    .from("catalog_records")
-    .select("color");
+//   const { data: catalogColors } = await supabase
+//     .from("catalog_records")
+//     .select("color");
 
-  const { data: submissionColors } = await supabase
-    .from("submissions")
-    .select("color");
+//   const { data: submissionColors } = await supabase
+//     .from("submissions")
+//     .select("color");
 
-  for (const row of catalogColors ?? []) {
-    if (row?.color && String(row.color).trim()) colors.add(String(row.color).trim());
-  }
-  for (const row of submissionColors ?? []) {
-    if (row?.color && String(row.color).trim()) colors.add(String(row.color).trim());
-  }
+//   for (const row of catalogColors ?? []) {
+//     if (row?.color && String(row.color).trim()) colors.add(String(row.color).trim());
+//   }
+//   for (const row of submissionColors ?? []) {
+//     if (row?.color && String(row.color).trim()) colors.add(String(row.color).trim());
+//   }
 
-  return Array.from(colors)
-    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
-    .map((name, index) => ({ id: index, name, value: "" }));
-}
+//   return Array.from(colors)
+//     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+//     .map((name, index) => ({ id: index, name, value: "" }));
+// }
 
 /**
  * Fetches color options. When VITE_COLORS_API_URL is set, uses GET /api/colors/.
@@ -99,5 +99,5 @@ export async function getColors(): Promise<ColorOption[]> {
     return data.results.map(mapApiResultToOption);
   }
 
-  return getColorsFromSupabase();
+  // return getColorsFromSupabase();
 }

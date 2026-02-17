@@ -41,11 +41,19 @@ function mapApiResultToOption(item: PostmarkShapeApiResultItem): PostmarkShapeOp
 }
 
 function getPostmarkShapesApiUrl(): string | null {
-  const env = import.meta.env.VITE_POSTMARK_SHAPES_API_URL;
-  if (!env || typeof env !== "string" || env.trim() === "") return null;
-  const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/postmark-shapes")) return base;
-  return `${base}/api/postmark-shapes`;
+  const env = import.meta.env.VITE_API_URL;
+  if (env && typeof env === "string" && env.trim() !== "") {
+    const base = env.trim().replace(/\/+$/, "");
+    if (base.endsWith("/api/postmark-shapes")) return base;
+    return `${base}/api/postmark-shapes`;
+  }
+  // Fallback: use postmarks API base (e.g. .../api/postmarks → .../api/postmark-shapes)
+  const postmarksBase = import.meta.env.VITE_POSTMARKS_API_URL;
+  if (postmarksBase && typeof postmarksBase === "string" && postmarksBase.trim() !== "") {
+    const base = postmarksBase.trim().replace(/\/+$/, "");
+    return base.replace(/postmarks\/?$/, "postmark-shapes");
+  }
+  return null;
 }
 
 /**
