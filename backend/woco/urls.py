@@ -33,6 +33,8 @@ urlpatterns = [
     # Login/logout with CSRF exempt so SPA can POST without token (matched before include)
     path("api/login/", csrf_exempt(LoginView.as_view()), name="api-login"),
     path("api/logout/", csrf_exempt(LogoutView.as_view()), name="api-logout"),
+    path("api/login", csrf_exempt(LoginView.as_view()), name="api-login"),
+    path("api/logout", csrf_exempt(LogoutView.as_view()), name="api-logout"),
     path("api/", include("common.urls")),
     path("api-auth/", include("rest_framework.urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),

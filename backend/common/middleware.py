@@ -8,7 +8,11 @@ the check is skipped even if the view was resolved from an include().
 
 def process_view(request, view_func, view_args, view_kwargs):
     path = request.path
-    if path in ("/api/login/", "/api/logout/") or path.startswith("/api/admin-csv-uploads/"):
+    exempt_paths = (
+        "/api/login", "/api/login/", "/api/logout", "/api/logout/",
+        "/api/login-requests", "/api/login-requests/",
+    )
+    if path in exempt_paths or path.startswith("/api/admin-csv-uploads/"):
         setattr(view_func, "csrf_exempt", True)
     return None
 

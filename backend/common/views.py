@@ -21,6 +21,8 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from django_filters.rest_framework import DjangoFilterBackend
 
+from django.contrib.auth import get_user_model
+
 from .models import (
     PostalFacility, PostalFacilityIdentity,
     AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
@@ -45,6 +47,7 @@ from .serializers import (
     PostcoverSerializer, PostcoverListSerializer, PostcoverPostmarkSerializer,
     PostcoverImageSerializer,
     AdminCsvUploadListSerializer, AdminCsvUploadSerializer,
+    LoginRequestSerializer,
 )
 from .csv_import import IMPORTERS
 
@@ -121,6 +124,37 @@ class LogoutView(APIView):
     def post(self, request):
         logout(request)
         return Response(status=status.HTTP_200_OK)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class LoginRequestView(APIView):
+    """
+    Public API for users to request login access.
+    Creates User directly (is_active=False). Admin sets username/password and activates in Users.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = LoginRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        data = serializer.validated_data
+        User = get_user_model()
+        email = data['email'].strip().lower()
+        user = User(
+            username=email,
+            email=email,
+            first_name=data['first_name'].strip(),
+            last_name=data['last_name'].strip(),
+            is_active=False,
+        )
+        user.set_unusable_password()
+        user.save()
+        return Response(
+            {"detail": "Request submitted. An admin will provide your username and password."},
+            status=status.HTTP_201_CREATED,
+        )
 
 
 # ========== CUSTOM PERMISSIONS ==========
