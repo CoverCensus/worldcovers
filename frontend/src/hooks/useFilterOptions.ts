@@ -44,10 +44,12 @@ export const useFilterOptions = (): UseFilterOptionsReturn => {
         getPostmarkShapes(),
         getAdministrativeUnits(),
       ]);
+      console.log(colors)
       setColorOptions(colors.map((c) => ({ value: String(c.id), label: c.name })));
       setShapeOptions(shapes.map((s) => ({ value: String(s.id), label: s.name })));
       setStateOptions(states);
     } catch (err) {
+      console.log(err)
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch filter options';
       setError(errorMessage);
       console.error('Error fetching filter options:', errorMessage);

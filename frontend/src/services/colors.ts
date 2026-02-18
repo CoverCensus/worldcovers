@@ -85,7 +85,8 @@ function getColorsApiUrl(): string | null {
  * Otherwise uses Supabase (distinct colors from catalog_records and submissions).
  */
 export async function getColors(): Promise<ColorOption[]> {
-  const apiUrl = getColorsApiUrl();
+  const apiUrl = '/api/colors';
+  // const apiUrl = getColorsApiUrl();
   if (apiUrl) {
     const url = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
     const res = await fetch(url);

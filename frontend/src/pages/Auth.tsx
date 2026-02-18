@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getStoredUser, setStoredUser } from "@/lib/auth";
 
 function getLoginApiUrl(): string {
-  return `${import.meta.env.VITE_API_URL}/api/login/`;
+  return `/api/login`;
 }
 
 interface AuthValues {
