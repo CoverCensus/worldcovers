@@ -13,7 +13,7 @@ import { useNavigate } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import type { User } from "@supabase/supabase-js";
+import { useAuth } from "@/hooks/useAuth";
 
 const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 10;
@@ -57,7 +57,7 @@ const Contribute = () => {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [user, setUser] = useState<User | null>(null);
+  const user = useAuth();
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [mySubmissions, setMySubmissions] = useState<MySubmission[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(true);
@@ -85,16 +85,6 @@ const Contribute = () => {
   }, []);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
-  useEffect(() => {
     if (!user) {
       setMySubmissions([]);
       setLoadingSubmissions(false);
@@ -106,7 +96,7 @@ const Contribute = () => {
         const { data, error } = await supabase
           .from("submissions")
           .select("id, name, status, created_at")
-          .eq("user_id", user.id)
+          .eq("user_id", String(user.id))
           .order("created_at", { ascending: false });
 
         if (error) throw error;
@@ -231,10 +221,10 @@ const Contribute = () => {
       }
 
       const name = buildName();
-      const submitterName = user.user_metadata?.full_name ?? user.email ?? undefined;
+      const submitterName = user.username || user.email || undefined;
 
       const { error } = await supabase.from("submissions").insert({
-        user_id: user.id,
+        user_id: String(user.id),
         submitter_name: submitterName,
         name,
         state: stateVal,

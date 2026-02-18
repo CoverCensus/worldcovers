@@ -6,78 +6,95 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { RequestLoginForm } from "@/components/RequestLoginForm";
 
-import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { useEffect, useState } from "react";
+import { Formik, Form, Field, FormikHelpers } from "formik";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import { z } from "zod";
+import { getStoredUser, setStoredUser } from "@/lib/auth";
 
-const authSchema = z.object({
-  email: z
-    .string()
-    .trim()
-    .email({ message: "Please enter a valid email address" })
-    .max(255, { message: "Email must be less than 255 characters" }),
-  password: z
-    .string()
-    .min(8, { message: "Password must be at least 8 characters" })
-    .max(72, { message: "Password must be less than 72 characters" })
-});
+function getLoginApiUrl(): string {
+  return `${import.meta.env.VITE_API_URL}/api/login/`;
+}
+
+interface AuthValues {
+  email: string;
+  password: string;
+}
+
+const validateAuth = (values: AuthValues): Partial<Record<keyof AuthValues, string>> => {
+  const errors: Partial<Record<keyof AuthValues, string>> = {};
+
+  if (!values.email?.trim()) {
+    errors.email = "Email is required";
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email.trim())) {
+    errors.email = "Please enter a valid email address";
+  }
+
+  if (!values.password) {
+    errors.password = "Password is required";
+  }
+
+  return errors;
+};
 
 const Auth = () => {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // Redirect if already logged in
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        navigate("/");
-      }
-    });
+    if (getStoredUser()) {
+      navigate("/");
+    }
   }, [navigate]);
 
-  const handleSignIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    // Validate inputs
-    const validation = authSchema.safeParse({ email, password });
-    
-    if (!validation.success) {
-      const firstError = validation.error.errors[0];
-      toast({
-        title: "Validation failed",
-        description: firstError.message,
-        variant: "destructive",
+  const handleSubmit = async (
+    values: AuthValues,
+    { setSubmitting }: FormikHelpers<AuthValues>
+  ) => {
+    try {
+      const res = await fetch(getLoginApiUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: values.email.trim(),
+          password: values.password,
+        }),
       });
-      return;
-    }
 
-    setLoading(true);
+      const data = await res.json().catch(() => ({}));
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: validation.data.email,
-      password: validation.data.password,
-    });
+      if (!res.ok) {
+        const message =
+          (data as { message?: string }).message ||
+          (data as { detail?: string }).detail ||
+          (typeof data === "string" ? data : "Sign in failed");
+        toast({
+          title: "Sign in failed",
+          description: message,
+          variant: "destructive",
+        });
+        return;
+      }
 
-    setLoading(false);
+      const userData = (data as { user?: { id: number; username: string; email: string; is_staff: boolean } }).user;
+      if (userData) {
+        setStoredUser(userData);
+      }
 
-    if (error) {
-      toast({
-        title: "Sign in failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    } else {
       toast({
         title: "Welcome back!",
         description: "You have successfully signed in.",
       });
       navigate("/");
+    } catch (err) {
+      toast({
+        title: "Sign in failed",
+        description: err instanceof Error ? err.message : "Network error",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -96,55 +113,78 @@ const Auth = () => {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSignIn} className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <Label htmlFor="signin-email">Email</Label>
-                <Input
-                  id="signin-email"
-                  type="email"
-                  placeholder="name@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="signin-password">Password</Label>
-                <Input
-                  id="signin-password"
-                  type="password"
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </div>
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={loading}
-              >
-                {loading ? "Signing in..." : "Sign In"}
-              </Button>
+            <Formik
+              initialValues={{ email: "", password: "" }}
+              validate={validateAuth}
+              validateOnMount
+              onSubmit={handleSubmit}
+            >
+              {({ errors, touched, isSubmitting, isValid }) => (
+                <Form className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="signin-email">Email</Label>
+                    <Field
+                      as={Input}
+                      id="signin-email"
+                      name="email"
+                      type="email"
+                      placeholder="name@example.com"
+                      aria-invalid={!!(touched.email && errors.email)}
+                      aria-describedby={touched.email && errors.email ? "signin-email-error" : undefined}
+                      className={touched.email && errors.email ? "border-destructive" : ""}
+                    />
+                    {touched.email && errors.email && (
+                      <p id="signin-email-error" className="text-sm text-destructive">
+                        {errors.email}
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="signin-password">Password</Label>
+                    <Field
+                      as={Input}
+                      id="signin-password"
+                      name="password"
+                      type="password"
+                      placeholder="Enter your password"
+                      aria-invalid={!!(touched.password && errors.password)}
+                      aria-describedby={touched.password && errors.password ? "signin-password-error" : undefined}
+                      className={touched.password && errors.password ? "border-destructive" : ""}
+                    />
+                    {touched.password && errors.password && (
+                      <p id="signin-password-error" className="text-sm text-destructive">
+                        {errors.password}
+                      </p>
+                    )}
+                  </div>
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={!isValid || isSubmitting}
+                  >
+                    {isSubmitting ? "Signing in..." : "Sign In"}
+                  </Button>
 
-              <div className="text-center pt-2">
-                <Button
-                  type="button"
-                  variant="link"
-                  className="text-sm"
-                  onClick={() => setRequestDialogOpen(true)}
-                >
-                  Request a login
-                </Button>
-              </div>
-            </form>
+                  <div className="text-center pt-2">
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="text-sm"
+                      onClick={() => setRequestDialogOpen(true)}
+                    >
+                      Request a login
+                    </Button>
+                  </div>
+                </Form>
+              )}
+            </Formik>
           </CardContent>
         </Card>
       </div>
 
-      <RequestLoginForm 
-        open={requestDialogOpen} 
-        onOpenChange={setRequestDialogOpen} 
+      <RequestLoginForm
+        open={requestDialogOpen}
+        onOpenChange={setRequestDialogOpen}
       />
 
       <Footer />

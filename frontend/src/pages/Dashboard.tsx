@@ -12,12 +12,13 @@ import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import postmarkSample from "@/assets/postmark-sample.jpg";
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [user, setUser] = useState<{ id: string } | null>(null);
+  const user = useAuth();
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtersOpen, setFiltersOpen] = useState(true);
@@ -28,16 +29,6 @@ const Dashboard = () => {
   const [stateFilter, setStateFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
 
   // Fetch only current user's submissions
   useEffect(() => {
@@ -51,18 +42,18 @@ const Dashboard = () => {
       setLoading(true);
       try {
         const { data, error } = await supabase
-          .from('submissions')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
+          .from("submissions")
+          .select("*")
+          .eq("user_id", String(user.id))
+          .order("created_at", { ascending: false });
 
         if (error) throw error;
 
         setSubmissions(data || []);
-      } catch (error: any) {
+      } catch (error: unknown) {
         toast({
           title: "Error loading submissions",
-          description: error.message,
+          description: error instanceof Error ? error.message : "Could not load submissions",
           variant: "destructive",
         });
       } finally {
