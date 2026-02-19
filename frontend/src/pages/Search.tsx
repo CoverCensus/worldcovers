@@ -26,9 +26,8 @@ function ImageOrPlaceholder({
   className?: string;
 }) {
   const [error, setError] = useState(false);
-  console.log(src)
   if (src) {
-    return <img src={src?.imageUrl} alt={alt} className={className} onError={() => setError(true)} />;
+    return <img src={`${import.meta.env.VITE_IMAGE_URL}${src.storageFilename}`} alt={alt} className={className} onError={() => setError(true)} />;
   } else {
     return (
       <div

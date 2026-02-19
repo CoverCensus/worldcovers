@@ -5,11 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Download, Upload, ArrowLeft } from "lucide-react";
+import { Download, Upload, ArrowLeft, Loader2 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import postmarkSample from "@/assets/postmark-sample.jpg";
 import { SubmitImageDialog } from "@/components/SubmitImageDialog";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
+import { getPostmarkById } from "@/services/postmarks";
 
 const RecordDetail = () => {
   const navigate = useNavigate();
@@ -18,24 +19,77 @@ const RecordDetail = () => {
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(0);
   const [count, setCount] = useState(0);
+  const [record, setRecord] = useState<{
+    id: number;
+    name: string;
+    state: string;
+    town: string;
+    dateFirstSeen: string;
+    dateLastSeen: string;
+    color: string;
+    type: any;
+    dimensions: string;
+    manuscript: string;
+    rarity: string;
+    description: string;
+    images: (string | { imageUrl?: string })[];
+    valuations?: Array<{ estimatedValue?: string; condition?: string }>;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Mock data - in production, this would come from API based on id
-  const record = {
-    id: 1,
-    name: "Boston, Mass. - Circular Date Stamp",
-    state: "Massachusetts",
-    town: "Boston",
-    dateFirstSeen: "1825",
-    dateLastSeen: "1845",
-    color: "Black",
-    type: "Circular Date Stamp",
-    dimensions: "32mm diameter",
-    manuscript: "No",
-    rarity: "Common",
-    description: "Standard circular date stamp used at the Boston Post Office during the pre-stamp period. Features town name in arc above center date.",
-    images: [postmarkSample, postmarkSample, postmarkSample], // Multiple images for carousel
-  };
+  // Parse id from URL: "api-1" -> 1 (from Search when using API)
+  const postmarkId = id ? parseInt(String(id).replace(/^api-/, ""), 10) : null;
 
+  useEffect(() => {
+    if (postmarkId == null || isNaN(postmarkId)) {
+     
+      navigate('/')
+    }
+
+    let cancelled = false;
+    getPostmarkById(postmarkId)
+      .then((data) => {
+        if (cancelled) return;
+        if (data) {
+          const datesSeen = data.datesSeen?.[0];
+          const firstSize = data.sizes?.[0];
+          const firstVal = data.valuations?.[0];
+          setRecord({
+            id: data.postmarkId,
+            name: data.postmarkKey,
+            state: data.state || "",
+            town: data.town || "",
+            dateFirstSeen: datesSeen?.earliestDateSeen?.slice(0, 4) || "",
+            dateLastSeen: datesSeen?.latestDateSeen?.slice(0, 4) || "",
+            color: data.colorsDisplay || "",
+            type: data?.postmarkShape?.shapeName || "",
+            dimensions: firstSize ? `${firstSize.width}×${firstSize.height} mm` : "",
+            manuscript: data.isManuscript ? "Yes" : "No",
+            rarity: firstVal?.estimatedValue ? `$${firstVal.estimatedValue}` : "",
+            description: data.otherCharacteristics || data.sourceCatalog || "",
+            images: data.images?.length
+              ? data.images.map((img) => ({ imageUrl: `${import.meta.env.VITE_IMAGE_URL}${img.storageFilename}`, originalFilename: img.originalFilename }))
+              : [],
+            valuations: data.valuations?.map((v) => ({
+              estimatedValue: v.estimatedValue,
+              condition: "Average condition",
+            })),
+          });
+        } else {
+          setError("Record not found");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setError("Failed to load record");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [postmarkId]);
   // Carousel pagination
   useEffect(() => {
     if (!api) return;
@@ -53,6 +107,38 @@ const RecordDetail = () => {
       });
     };
   }, [api]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <Navigation />
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+        <Footer />
+      </div>
+    );
+  }
+
+  if (error || !record) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <Navigation />
+        <div className="flex-1 flex flex-col items-center justify-center gap-4">
+          <p className="text-muted-foreground">{error || "Record not found"}</p>
+          <Button variant="outline" onClick={() => navigate("/search")}>
+            Back to Search
+          </Button>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
+
+  // const imageSources: string[] = record.images
+  //   .map((img) => (typeof img === "string" ? img : (img as { imageUrl?: string }).imageUrl))
+  //   .filter((url): url is string => !!url);
+  // if (imageSources.length === 0) imageSources.push(postmarkSample);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -77,21 +163,36 @@ const RecordDetail = () => {
               <CardContent className="p-6">
                 <Carousel setApi={setApi} className="w-full">
                   <CarouselContent>
-                    {record.images.map((image, index) => (
-                      <CarouselItem key={index}>
-                        <img
-                          src={image}
-                          alt={`${record.name} - Image ${index + 1}`}
-                          className="w-full rounded border border-border object-contain"
-                        />
-                      </CarouselItem>
-                    ))}
+                    {record?.images?.length ? (
+                      record.images.map((img: any, index) => (
+                        <CarouselItem key={index}>
+                          <img
+                            src={img.imageUrl}
+                            alt={`${img.originalFilename} - Image ${index + 1}`}
+                            className="w-full rounded border border-border object-contain"
+                          />
+                        </CarouselItem>
+                      ))
+                    ) : (
+                      // <CarouselItem>
+                        <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted text-muted-foreground">
+                          No Image
+                        </div>
+                      // </CarouselItem>
+                    )}
                   </CarouselContent>
-                  <CarouselPrevious className="left-2" />
-                  <CarouselNext className="right-2" />
+                  {
+                    record?.images.length > 1 && 
+                    <>
+                    <CarouselPrevious className="left-2" />
+                    <CarouselNext className="right-2" />
+                    </>
+                  }
+                  
                 </Carousel>
                 
                 {/* Pagination Dots */}
+                {record?.images?.length > 1 && (
                 <div className="flex justify-center gap-2 mt-4 mb-4">
                   {record.images.map((_, index) => (
                     <button
@@ -106,6 +207,7 @@ const RecordDetail = () => {
                     />
                   ))}
                 </div>
+                )}
 
                 {/* <div className="flex gap-2">
                   <Button variant="outline" size="sm" className="flex-1">
@@ -132,9 +234,9 @@ const RecordDetail = () => {
                   {record.name}
                 </h1>
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant="secondary">{record.type}</Badge>
-                  <Badge variant="secondary">{record.color}</Badge>
-                  <Badge variant="outline">{record.rarity}</Badge>
+                  {record?.type && <Badge variant="secondary">{record?.type}</Badge>}
+                  {record?.color && <Badge variant="secondary">{record.color}</Badge>}
+                  {record?.rarity && <Badge variant="outline">{record.rarity}</Badge>}
                 </div>
               </div>
 
@@ -192,7 +294,7 @@ const RecordDetail = () => {
           {/* Additional Information Tabs */}
           <Card className="shadow-archival-lg">
             <CardContent className="p-6">
-              <Tabs defaultValue="references">
+              <Tabs defaultValue="valuations">
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="references">References</TabsTrigger>
                   <TabsTrigger value="valuations">Valuations</TabsTrigger>
@@ -216,20 +318,20 @@ const RecordDetail = () => {
                 </TabsContent>
                 <TabsContent value="valuations" className="mt-6">
                   <div className="space-y-4">
-                    <div className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                      <div>
-                        <p className="text-sm font-medium text-foreground">On Cover</p>
-                        <p className="text-xs text-muted-foreground">Average condition</p>
+                    {(record.valuations && record.valuations.length > 0
+                      ? record.valuations
+                      : [{ estimatedValue: "", condition: "" }]
+                    ).map((v, i) => (
+                      <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">On Cover</p>
+                          <p className="text-xs text-muted-foreground">{v.condition}</p>
+                        </div>
+                        <p className="text-lg font-heading font-semibold text-primary">
+                          {v.estimatedValue ? `$${v.estimatedValue}` : "—"}
+                        </p>
                       </div>
-                      <p className="text-lg font-heading font-semibold text-primary">$45-$75</p>
-                    </div>
-                    <div className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                      <div>
-                        <p className="text-sm font-medium text-foreground">Strike on Folded Letter</p>
-                        <p className="text-xs text-muted-foreground">Clear strike</p>
-                      </div>
-                      <p className="text-lg font-heading font-semibold text-primary">$25-$40</p>
-                    </div>
+                    ))}
                   </div>
                 </TabsContent>
                 <TabsContent value="citations" className="mt-6">

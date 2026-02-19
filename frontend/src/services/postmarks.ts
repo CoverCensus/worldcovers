@@ -1,31 +1,8 @@
-/**
- * Postmarks (catalog): from GET /api/postmarks/ when VITE_POSTMARKS_API_URL is set.
- * When not set, the app uses Supabase catalog_records for the catalog list.
- */
-
-/** One item from GET /api/postmarks/ */
-export interface PostmarkApiResultItem {
-  postmarkId: number;
-  postmarkKey: string;
-  facilityName: string;
-  shapeName: string;
-  rateLocation: string;
-  rateValue: string;
-  colorsDisplay: string,
-  state: string,
-  dateRange: string,
-  town: string,
-  isManuscript: boolean;
-  mainImage: string | null;
-  responsibleGroups: unknown[];
-}
-
-/** Paginated response from GET /api/postmarks/ */
 export interface PostmarkApiResponse {
   count: number;
   next: string | null;
   previous: string | null;
-  results: PostmarkApiResultItem[];
+  results: any | [];
 }
 
 /** Normalized postmark for list/detail (matches API shape) */
@@ -45,7 +22,7 @@ export interface PostmarkRecord {
   responsibleGroups: unknown[];
 }
 
-function mapApiResultToRecord(item: PostmarkApiResultItem): PostmarkRecord {
+function mapApiResultToRecord(item: any): PostmarkRecord {
   return {
     id: item.postmarkId,
     postmarkKey: item.postmarkKey,
@@ -69,6 +46,23 @@ function getPostmarksApiUrl(): string | null {
   const base = env.trim().replace(/\/+$/, "");
   if (base.endsWith("/api/postmarks")) return base;
   return `${base}/api/postmarks`;
+}
+
+/**
+ * Fetches a single postmark by ID from GET /api/postmarks/{postmarkId}/.
+ * Returns null if API is not configured or request fails.
+ */
+export async function getPostmarkById(postmarkId: number): Promise<any | null> {
+  const apiUrl = getPostmarksApiUrl();
+  if (!apiUrl) return null;
+
+  const base = apiUrl.replace(/\/+$/, "");
+  const url = `${base}/${postmarkId}/`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+
+  const data = await res.json();
+  return data;
 }
 
 /**
