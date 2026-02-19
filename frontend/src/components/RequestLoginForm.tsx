@@ -44,7 +44,7 @@ export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) 
     { setSubmitting, resetForm }: FormikHelpers<RequestLoginFormValues>
   ) => {
     try {
-      const res = await fetch(`/api/login-requests`, {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/login-requests/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -107,7 +107,6 @@ export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) 
         >
           {({ errors, touched, isSubmitting, isValid }) => (
             <Form className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="request-firstName">First Name</Label>
                   <Field
@@ -143,7 +142,7 @@ export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) 
                     </p>
                   )}
                 </div>
-              </div>
+              
 
               <div className="space-y-2">
                 <Label htmlFor="request-email">Email</Label>
