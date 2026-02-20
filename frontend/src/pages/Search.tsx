@@ -14,7 +14,10 @@ import postmarkSample from "@/assets/postmark-sample.jpg";
 import { getPostmarksPage } from "@/services/postmarks";
 import { useToast } from "@/hooks/use-toast";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
+import { useDebounce } from "@/hooks/useDebounce";
 import { cn } from "@/lib/utils";
+
+const DEBOUNCE_MS = 400;
 
 const noImageClassName = "flex items-center justify-center bg-muted text-muted-foreground text-sm";
 
@@ -79,6 +82,12 @@ const Search = () => {
   const [excludeManuscripts, setExcludeManuscripts] = useState(false);
   const [imagesOnly, setImagesOnly] = useState(false);
 
+  // Debounced values for text inputs - API called only after user stops typing
+  const debouncedKeywordSearch = useDebounce(keywordSearch, DEBOUNCE_MS);
+  const debouncedTownFilter = useDebounce(townFilter, DEBOUNCE_MS);
+  const debouncedBeginYear = useDebounce(beginYear, DEBOUNCE_MS);
+  const debouncedEndYear = useDebounce(endYear, DEBOUNCE_MS);
+
   // Pagination - 10 records per page from api/postmarks/
   const [currentPage, setCurrentPage] = useState(1);
   const [goToPageInput, setGoToPageInput] = useState("");
@@ -89,34 +98,34 @@ const Search = () => {
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  const prevKeywordRef = useRef(keywordSearch);
+  const prevKeywordRef = useRef(debouncedKeywordSearch);
   const prevTypeFilterRef = useRef(typeFilter);
   const prevColorFilterRef = useRef(colorFilter);
   const prevStateFilterRef = useRef(stateFilter);
-  const prevTownFilterRef = useRef(townFilter);
-  const prevBeginYearRef = useRef(beginYear);
-  const prevEndYearRef = useRef(endYear);
+  const prevTownFilterRef = useRef(debouncedTownFilter);
+  const prevBeginYearRef = useRef(debouncedBeginYear);
+  const prevEndYearRef = useRef(debouncedEndYear);
   const prevImagesOnlyRef = useRef(imagesOnly);
   const prevExcludeManuscriptsRef = useRef(excludeManuscripts);
 
-  // Fetch postmarks page when filters or page change. Postmark Type sends postmark_shape=id to API.
+  // Fetch postmarks page when filters or page change. Text inputs use debounced values.
   useEffect(() => {
-    const searchJustChanged = prevKeywordRef.current !== keywordSearch;
+    const searchJustChanged = prevKeywordRef.current !== debouncedKeywordSearch;
     const typeFilterJustChanged = prevTypeFilterRef.current !== typeFilter;
     const colorFilterJustChanged = prevColorFilterRef.current !== colorFilter;
     const stateFilterJustChanged = prevStateFilterRef.current !== stateFilter;
-    const townFilterJustChanged = prevTownFilterRef.current !== townFilter;
-    const beginYearJustChanged = prevBeginYearRef.current !== beginYear;
-    const endYearJustChanged = prevEndYearRef.current !== endYear;
+    const townFilterJustChanged = prevTownFilterRef.current !== debouncedTownFilter;
+    const beginYearJustChanged = prevBeginYearRef.current !== debouncedBeginYear;
+    const endYearJustChanged = prevEndYearRef.current !== debouncedEndYear;
     const imagesOnlyJustChanged = prevImagesOnlyRef.current !== imagesOnly;
     const excludeManuscriptsJustChanged = prevExcludeManuscriptsRef.current !== excludeManuscripts;
-    if (searchJustChanged) prevKeywordRef.current = keywordSearch;
+    if (searchJustChanged) prevKeywordRef.current = debouncedKeywordSearch;
     if (typeFilterJustChanged) prevTypeFilterRef.current = typeFilter;
     if (colorFilterJustChanged) prevColorFilterRef.current = colorFilter;
     if (stateFilterJustChanged) prevStateFilterRef.current = stateFilter;
-    if (townFilterJustChanged) prevTownFilterRef.current = townFilter;
-    if (beginYearJustChanged) prevBeginYearRef.current = beginYear;
-    if (endYearJustChanged) prevEndYearRef.current = endYear;
+    if (townFilterJustChanged) prevTownFilterRef.current = debouncedTownFilter;
+    if (beginYearJustChanged) prevBeginYearRef.current = debouncedBeginYear;
+    if (endYearJustChanged) prevEndYearRef.current = debouncedEndYear;
     if (imagesOnlyJustChanged) prevImagesOnlyRef.current = imagesOnly;
     if (excludeManuscriptsJustChanged) prevExcludeManuscriptsRef.current = excludeManuscripts;
 
@@ -141,14 +150,14 @@ const Search = () => {
         const { results, count } = await getPostmarksPage(
           pageToFetch,
           itemsPerPage,
-          keywordSearch.trim() || undefined,
+          debouncedKeywordSearch.trim() || undefined,
           typeFilter !== "all" ? typeFilter : undefined, // postmark_shape (e.g. 5 = Circle, Arc, Box, etc.)
           excludeManuscripts,
           colorFilter !== "all" ? colorFilter : null,
           stateFilter !== "all" ? stateFilter : undefined,
-          townFilter.trim() || undefined,
-          beginYear.trim() || undefined,
-          endYear.trim() || undefined,
+          debouncedTownFilter.trim() || undefined,
+          debouncedBeginYear.trim() || undefined,
+          debouncedEndYear.trim() || undefined,
           imagesOnly
         );
 
@@ -178,7 +187,7 @@ const Search = () => {
     };
 
     fetchPage();
-  }, [currentPage, keywordSearch, typeFilter, stateFilter, townFilter, beginYear, endYear, imagesOnly, colorFilter, excludeManuscripts, toast]);
+  }, [currentPage, debouncedKeywordSearch, typeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, excludeManuscripts, toast]);
 
   // Enforce exactly itemsPerPage (10) per page — slice in case API returns more
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
@@ -531,7 +540,7 @@ const Search = () => {
               )}
 
               {/* Pagination - compact for 500+ pages */}
-              {totalPages > 1 && (
+              {totalPages > 1 && !loading && (
                 <div className="mt-8 flex flex-col items-center gap-4">
                   <Pagination>
                     <PaginationContent>
