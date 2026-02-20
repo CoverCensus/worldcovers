@@ -385,10 +385,10 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         return f"{e_str}-{l_str}" if e_str and l_str else e_str or l_str
 
     def get_colors_display(self, obj):
-        """Comma-separated color names for this postmark."""
+        """Comma-separated color names for this postmark. Uses prefetched postmark_colors__color."""
         names = [
             pc.color.color_name
-            for pc in obj.postmark_colors.select_related('color').all()
+            for pc in obj.postmark_colors.all()
             if getattr(pc, 'color', None)
         ]
         return ', '.join(names) if names else None

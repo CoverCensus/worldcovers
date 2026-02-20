@@ -8,6 +8,7 @@ from datetime import date
 
 from django.contrib.auth import authenticate, login, logout
 from django.db.models import Q, Count, Prefetch
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 
@@ -438,21 +439,42 @@ class DateFormatViewSet(viewsets.ModelViewSet):
 
 # ========== POSTMARK VIEWSETS ==========
 
+def _postmark_list_queryset():
+    """Optimized queryset for postmark list: prefetches all data needed by PostmarkListSerializer."""
+    current_identities = AdministrativeUnitIdentity.objects.filter(effective_to_date__isnull=True)
+    current_jurisdictions = JurisdictionalAffiliation.objects.filter(
+        Q(effective_to_date__isnull=True) | Q(effective_to_date__gte=timezone.now().date())
+    ).select_related('administrative_unit').prefetch_related(
+        Prefetch('administrative_unit__identities', queryset=current_identities),
+        Prefetch(
+            'administrative_unit__responsibilities',
+            queryset=AdministrativeUnitResponsibility.objects.filter(is_active=True).select_related('group'),
+        )
+    )
+    return Postmark.objects.all().select_related(
+        'postal_facility_identity__postal_facility',
+        'postmark_shape', 'lettering_style', 'framing_style',
+        'date_format', 'created_by', 'modified_by',
+        'state',
+    ).prefetch_related(
+        'postmark_colors__color', 'dates_seen', 'sizes',
+        'valuations', 'images', 'publication_references__postmark_publication',
+        Prefetch('postal_facility_identity__jurisdictions', queryset=current_jurisdictions),
+        Prefetch('state__identities', queryset=current_identities),
+    )
+
+
 class PostmarkViewSet(viewsets.ModelViewSet):
     """
     ViewSet for postmarks with group-based permission checking.
     List is paginated: 10 per page (honors ?page_size= up to 100).
     """
     pagination_class = PageSizePagination
-    queryset = Postmark.objects.all().select_related(
-        'postal_facility_identity__postal_facility',
-        'postmark_shape', 'lettering_style', 'framing_style',
-        'date_format', 'created_by', 'modified_by'
-    ).prefetch_related(
-        'postmark_colors__color', 'dates_seen', 'sizes',
-        'valuations', 'images', 'publication_references__postmark_publication'
-    )
+    queryset = Postmark.objects.all()  # Base queryset; get_queryset() returns optimized version
     permission_classes = [IsAuthenticatedOrReadOnly, IsResponsibleForRegion]
+
+    def get_queryset(self):
+        return _postmark_list_queryset()
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = PostmarkListFilter
     search_fields = ['postmark_key', 'postal_facility_identity__facility_name',

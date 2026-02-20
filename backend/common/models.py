@@ -637,25 +637,28 @@ class Postmark(TimestampedModel):
         ]
 
     def get_responsible_groups(self):
-        """Get the groups responsible for this postmark's region"""
+        """Get the groups responsible for this postmark's region.
+        Uses prefetched jurisdictions/responsibilities when available to avoid N+1 queries.
+        """
         if not self.postal_facility_identity:
             return []
 
-        # Get current jurisdictions for this facility
+        # Get current jurisdictions for this facility (uses prefetch cache when available)
         affiliations = self.postal_facility_identity.jurisdictions.filter(
             Q(effective_to_date__isnull=True) | Q(effective_to_date__gte=models.functions.Now())
         )
-        
-        # Get all administrative units this facility belongs to
         admin_units = [aff.administrative_unit for aff in affiliations]
-        
-        # Get responsibilities for these units
-        responsibilities = AdministrativeUnitResponsibility.objects.filter(
-            administrative_unit__in=admin_units,
-            is_active=True
-        )
-        
-        return [resp.group for resp in responsibilities]
+
+        # Use reverse relation (uses prefetch cache) instead of fresh query
+        seen_ids = set()
+        result = []
+        for unit in admin_units:
+            for resp in unit.responsibilities.filter(is_active=True):
+                g = resp.group
+                if g.id not in seen_ids:
+                    seen_ids.add(g.id)
+                    result.append(g)
+        return result
 
     def __str__(self):
         facility_name = self.postal_facility_identity.facility_name if self.postal_facility_identity else "Unknown"
