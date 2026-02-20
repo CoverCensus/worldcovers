@@ -9,6 +9,7 @@ from .models import (
     Postmark,
     PostalFacilityIdentity,
     AdministrativeUnit,
+    AdministrativeUnitIdentity,
     JurisdictionalAffiliation,
     PostmarkPublication,
     Postcover,
@@ -42,6 +43,16 @@ class PostmarkListFilter(django_filters.FilterSet):
     # Frontend sends ?color=black or ?color=Black (iexact so case doesn't matter).
     color = django_filters.CharFilter(method='filter_by_color', label='Color (name)')
 
+    # State: match by state name or abbreviation (current identity). Frontend sends ?state=Iowa.
+    state = django_filters.CharFilter(method='filter_by_state_name', label='State (name or abbreviation)')
+
+    # Town: match facility name (same as list API "town" display). Frontend sends ?town=...
+    town = django_filters.CharFilter(
+        field_name='postal_facility_identity__facility_name',
+        lookup_expr='icontains',
+        label='Town (facility name contains)',
+    )
+
     @staticmethod
     def filter_is_manuscript(queryset, name, value):
         if not value or not str(value).strip():
@@ -60,6 +71,21 @@ class PostmarkListFilter(django_filters.FilterSet):
         return queryset.filter(
             postmark_colors__color__color_name__iexact=str(value).strip()
         ).distinct()
+
+    @staticmethod
+    def filter_by_state_name(queryset, name, value):
+        """Filter by state name or abbreviation (current identity)."""
+        if not value or not str(value).strip():
+            return queryset
+        value = str(value).strip()
+        unit_ids = AdministrativeUnitIdentity.objects.filter(
+            effective_to_date__isnull=True
+        ).filter(
+            Q(unit_name__iexact=value) | Q(unit_abbreviation__iexact=value)
+        ).values_list('administrative_unit_id', flat=True).distinct()
+        if not unit_ids:
+            return queryset.none()
+        return queryset.filter(state_id__in=unit_ids)
 
 
 class PostmarkFilter(django_filters.FilterSet):
