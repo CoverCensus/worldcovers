@@ -9,7 +9,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
 import { Grid3x3, List, Search as SearchIcon, SlidersHorizontal, Loader2 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import postmarkSample from "@/assets/postmark-sample.jpg";
 import { getPostmarksPage } from "@/services/postmarks";
 import { useToast } from "@/hooks/use-toast";
@@ -18,6 +19,12 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 400;
+
+/** Read a single search param with default */
+function getSearchParam(params: URLSearchParams, key: string, defaultValue: string): string {
+  const v = params.get(key);
+  return v ?? defaultValue;
+}
 
 const noImageClassName = "flex items-center justify-center bg-muted text-muted-foreground text-sm";
 
@@ -62,6 +69,7 @@ function getPaginationPages(currentPage: number, totalPages: number): (number | 
 }
 
 const Search = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [viewMode, setViewMode] = useState<"gallery" | "list">("list");
   const [filtersOpen, setFiltersOpen] = useState(true);
   const navigate = useNavigate();
@@ -70,17 +78,17 @@ const Search = () => {
   // Fetch filter options from API (colors, postmark shapes, states)
   const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } = useFilterOptions();
 
-  // Filter states
-  const [keywordSearch, setKeywordSearch] = useState("");
-  const [stateFilter, setStateFilter] = useState("all");
-  const [townFilter, setTownFilter] = useState("");
-  const [beginYear, setBeginYear] = useState("");
-  const [endYear, setEndYear] = useState("");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const [colorFilter, setColorFilter] = useState("all");
+  // Filter states - initialize from URL so filters persist when navigating back from detail
+  const [keywordSearch, setKeywordSearch] = useState(() => getSearchParam(searchParams, "q", ""));
+  const [stateFilter, setStateFilter] = useState(() => getSearchParam(searchParams, "state", "all"));
+  const [townFilter, setTownFilter] = useState(() => getSearchParam(searchParams, "town", ""));
+  const [beginYear, setBeginYear] = useState(() => getSearchParam(searchParams, "from", ""));
+  const [endYear, setEndYear] = useState(() => getSearchParam(searchParams, "to", ""));
+  const [typeFilter, setTypeFilter] = useState(() => getSearchParam(searchParams, "type", "all"));
+  const [colorFilter, setColorFilter] = useState(() => getSearchParam(searchParams, "color", "all"));
   const [valuationFilter, setValuationFilter] = useState("all");
-  const [excludeManuscripts, setExcludeManuscripts] = useState(false);
-  const [imagesOnly, setImagesOnly] = useState(false);
+  const [excludeManuscripts, setExcludeManuscripts] = useState(() => getSearchParam(searchParams, "noManuscripts", "") === "true");
+  const [imagesOnly, setImagesOnly] = useState(() => getSearchParam(searchParams, "images", "") === "true");
 
   // Debounced values for text inputs - API called only after user stops typing
   const debouncedKeywordSearch = useDebounce(keywordSearch, DEBOUNCE_MS);
@@ -89,14 +97,13 @@ const Search = () => {
   const debouncedEndYear = useDebounce(endYear, DEBOUNCE_MS);
 
   // Pagination - 10 records per page from api/postmarks/
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => {
+    const p = searchParams.get("page");
+    const n = p ? parseInt(p, 10) : 1;
+    return Number.isNaN(n) || n < 1 ? 1 : n;
+  });
   const [goToPageInput, setGoToPageInput] = useState("");
   const itemsPerPage = 10;
-
-  // Catalog records (current page from API)
-  const [catalogRecords, setCatalogRecords] = useState<any[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
-  const [loading, setLoading] = useState(true);
 
   const prevKeywordRef = useRef(debouncedKeywordSearch);
   const prevTypeFilterRef = useRef(typeFilter);
@@ -108,7 +115,7 @@ const Search = () => {
   const prevImagesOnlyRef = useRef(imagesOnly);
   const prevExcludeManuscriptsRef = useRef(excludeManuscripts);
 
-  // Fetch postmarks page when filters or page change. Text inputs use debounced values.
+  // Reset page to 1 when filters change
   useEffect(() => {
     const searchJustChanged = prevKeywordRef.current !== debouncedKeywordSearch;
     const typeFilterJustChanged = prevTypeFilterRef.current !== typeFilter;
@@ -142,58 +149,99 @@ const Search = () => {
     if (anyFilterChanged) {
       setCurrentPage(1);
     }
-    const pageToFetch = anyFilterChanged ? 1 : currentPage;
+  }, [debouncedKeywordSearch, typeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, excludeManuscripts]);
 
-    const fetchPage = async () => {
-      setLoading(true);
-      try {
-        const { results, count } = await getPostmarksPage(
-          pageToFetch,
-          itemsPerPage,
-          debouncedKeywordSearch.trim() || undefined,
-          typeFilter !== "all" ? typeFilter : undefined, // postmark_shape (e.g. 5 = Circle, Arc, Box, etc.)
-          excludeManuscripts,
-          colorFilter !== "all" ? colorFilter : null,
-          stateFilter !== "all" ? stateFilter : undefined,
-          debouncedTownFilter.trim() || undefined,
-          debouncedBeginYear.trim() || undefined,
-          debouncedEndYear.trim() || undefined,
-          imagesOnly
-        );
+  // Fetch postmarks with React Query - cached so Back shows previous results immediately
+  const {
+    data: queryData,
+    isLoading: queryLoading,
+    isFetching: queryFetching,
+    error: queryError,
+  } = useQuery({
+    queryKey: [
+      "postmarks",
+      currentPage,
+      debouncedKeywordSearch,
+      typeFilter,
+      stateFilter,
+      debouncedTownFilter,
+      debouncedBeginYear,
+      debouncedEndYear,
+      imagesOnly,
+      colorFilter,
+      excludeManuscripts,
+      itemsPerPage,
+    ],
+    queryFn: async () => {
+      const { results, count } = await getPostmarksPage(
+        currentPage,
+        itemsPerPage,
+        debouncedKeywordSearch.trim() || undefined,
+        typeFilter !== "all" ? typeFilter : undefined,
+        excludeManuscripts,
+        colorFilter !== "all" ? colorFilter : null,
+        stateFilter !== "all" ? stateFilter : undefined,
+        debouncedTownFilter.trim() || undefined,
+        debouncedBeginYear.trim() || undefined,
+        debouncedEndYear.trim() || undefined,
+        imagesOnly
+      );
+      const apiTransformed = results.map((record: any) => ({
+        id: `api-${record.id}`,
+        name: record.postmarkKey,
+        state: record.state || "",
+        town: record.town || "",
+        dateRange: record.dateRange || "",
+        color: record.colorsDisplay || "",
+        type: record.shapeName || "",
+        valuation: record.rateValue,
+        image: record.mainImage || null,
+      }));
+      return { records: apiTransformed, count };
+    },
+    staleTime: 5 * 60 * 1000, // 5 min - use cache when navigating back, no loading
+  });
 
-        const apiTransformed = results.map((record) => ({
-          id: `api-${record.id}`,
-          name: record.postmarkKey,
-          state: record.state || "",
-          town: record.town || "",
-          dateRange: record.dateRange || "",
-          color: record.colorsDisplay || "",
-          type: record.shapeName || "",
-          valuation: record.rateValue,
-          image: record.mainImage || null,
-        }));
+  const catalogRecords = queryData?.records ?? [];
+  const totalCount = queryData?.count ?? 0;
+  // Show loading only when we have no data; when we have cached data, show it (no spinner)
+  const loading = queryLoading || (queryFetching && catalogRecords.length === 0);
 
-        setCatalogRecords(apiTransformed);
-        setTotalCount(count);
-      } catch (error: any) {
-        toast({
-          title: "Error loading catalog",
-          description: error.message,
-          variant: "destructive",
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
+  useEffect(() => {
+    if (queryError) {
+      toast({
+        title: "Error loading catalog",
+        description: (queryError as Error).message,
+        variant: "destructive",
+      });
+    }
+  }, [queryError, toast]);
 
-    fetchPage();
-  }, [currentPage, debouncedKeywordSearch, typeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, excludeManuscripts, toast]);
+  // Persist filters to URL so they survive navigation (Back from detail page)
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (debouncedKeywordSearch.trim()) params.set("q", debouncedKeywordSearch.trim());
+    if (stateFilter !== "all") params.set("state", stateFilter);
+    if (debouncedTownFilter.trim()) params.set("town", debouncedTownFilter.trim());
+    if (debouncedBeginYear.trim()) params.set("from", debouncedBeginYear.trim());
+    if (debouncedEndYear.trim()) params.set("to", debouncedEndYear.trim());
+    if (typeFilter !== "all") params.set("type", typeFilter);
+    if (colorFilter !== "all") params.set("color", colorFilter);
+    if (excludeManuscripts) params.set("noManuscripts", "true");
+    if (imagesOnly) params.set("images", "true");
+    if (currentPage > 1) params.set("page", String(currentPage));
+    const next = params.toString();
+    const current = searchParams.toString();
+    if (next !== current) {
+      setSearchParams(next ? params : {}, { replace: true });
+    }
+  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, typeFilter, colorFilter, excludeManuscripts, imagesOnly, searchParams, setSearchParams]);
 
   // Enforce exactly itemsPerPage (10) per page — slice in case API returns more
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
   const paginatedResults = catalogRecords.slice(0, itemsPerPage);
 
-  // Clear all filters
+  // Clear all filters and URL params
   const handleClearAllFilters = () => {
     setKeywordSearch("");
     setStateFilter("all");
@@ -206,6 +254,7 @@ const Search = () => {
     setExcludeManuscripts(false);
     setImagesOnly(false);
     setCurrentPage(1);
+    setSearchParams("", { replace: true });
   };
 
   return (
@@ -465,7 +514,7 @@ const Search = () => {
                     <Card
                       key={result.id}
                       className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
-                      onClick={() => navigate(`/record/${result.id}`)}
+                      onClick={() => navigate(`/record/${result.id}`, { state: { fromSearch: true } })}
                     >
                       <CardContent className="p-6">
                         <div className="flex gap-6">
@@ -508,7 +557,7 @@ const Search = () => {
                     <Card
                       key={result.id}
                       className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden"
-                      onClick={() => navigate(`/record/${result.id}`)}
+                      onClick={() => navigate(`/record/${result.id}`, { state: { fromSearch: true } })}
                     >
                       <ImageOrPlaceholder
                         src={result.image}

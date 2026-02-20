@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Download, Upload, ArrowLeft, Loader2 } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import postmarkSample from "@/assets/postmark-sample.jpg";
 import { SubmitImageDialog } from "@/components/SubmitImageDialog";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
@@ -14,6 +14,7 @@ import { getPostmarkById } from "@/services/postmarks";
 
 const RecordDetail = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id } = useParams();
   const [submitImageOpen, setSubmitImageOpen] = useState(false);
   const [api, setApi] = useState<CarouselApi>();
@@ -126,7 +127,7 @@ const RecordDetail = () => {
         <Navigation />
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <p className="text-muted-foreground">{error || "Record not found"}</p>
-          <Button variant="outline" onClick={() => navigate("/search")}>
+          <Button variant="outline" onClick={() => (location.state?.fromSearch ? navigate(-1) : navigate("/search"))}>
             Back to Search
           </Button>
         </div>
@@ -149,7 +150,7 @@ const RecordDetail = () => {
           {/* Breadcrumb */}
           <Button
             variant="ghost"
-            onClick={() => navigate('/search')}
+            onClick={() => (location.state?.fromSearch ? navigate(-1) : navigate("/search"))}
             className="mb-6 -ml-4"
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
