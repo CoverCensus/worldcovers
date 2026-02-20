@@ -9,6 +9,25 @@ from django.http import FileResponse, Http404
 from django.views import View
 
 
+class FaviconView(View):
+    """Serve the frontend favicon for all site pages (admin, SPA, etc.) so backend pages show the same icon as the frontend."""
+
+    def get(self, request, *_args, **_kwargs):
+        root = Path(settings.FRONTEND_DIST)
+        if request.path.rstrip("/").endswith(".ico"):
+            favicon_path = root / "favicon.ico"
+            content_type = "image/x-icon"
+        else:
+            favicon_path = root / "favicon.png"
+            content_type = "image/png"
+        if not favicon_path.is_file():
+            raise Http404("Favicon not found. Build frontend: cd frontend && npm run build")
+        return FileResponse(
+            favicon_path.open("rb"),
+            content_type=content_type,
+        )
+
+
 class ServeSPAView(View):
     """
     Serve frontend/dist for any path not handled by API/admin/accounts/media/static.
