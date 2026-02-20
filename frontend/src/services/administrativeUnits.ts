@@ -54,11 +54,17 @@ export async function getAdministrativeUnits(): Promise<StateOption[]> {
     throw new Error("Administrative units API: invalid response (missing results array)");
   }
 
+  const seen = new Set<string>();
   return data.results
-    .filter((u) => u.currentName && u.currentName.trim())
-    .sort((a, b) => (a.currentName || "").localeCompare(b.currentName || "", undefined, { sensitivity: "base" }))
+    .filter((u) => {
+      const name = u.currentName?.trim();
+      if (!name || seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    })
     .map((u) => ({
       value: u.currentName!.trim(),
       label: u.currentName!.trim(),
-    }));
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
 }

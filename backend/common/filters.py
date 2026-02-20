@@ -53,6 +53,13 @@ class PostmarkListFilter(django_filters.FilterSet):
         label='Town (facility name contains)',
     )
 
+    # Date range: from PostmarkDatesSeen. Use method filters so we can .distinct() (postmark can have multiple dates_seen).
+    earliest_use_year_min = django_filters.NumberFilter(method='filter_earliest_year_min', label='Earliest use year (min)')
+    latest_use_year_max = django_filters.NumberFilter(method='filter_latest_year_max', label='Latest use year (max)')
+
+    # Images only: when true, restrict to postmarks that have at least one image. Frontend sends ?has_images=true.
+    has_images = django_filters.CharFilter(method='filter_has_images', label='Has images')
+
     @staticmethod
     def filter_is_manuscript(queryset, name, value):
         if not value or not str(value).strip():
@@ -86,6 +93,37 @@ class PostmarkListFilter(django_filters.FilterSet):
         if not unit_ids:
             return queryset.none()
         return queryset.filter(state_id__in=unit_ids)
+
+    @staticmethod
+    def filter_earliest_year_min(queryset, name, value):
+        if value is None:
+            return queryset
+        try:
+            year = int(value)
+        except (TypeError, ValueError):
+            return queryset
+        return queryset.filter(
+            dates_seen__earliest_date_seen__year__gte=year
+        ).distinct()
+
+    @staticmethod
+    def filter_latest_year_max(queryset, name, value):
+        if value is None:
+            return queryset
+        try:
+            year = int(value)
+        except (TypeError, ValueError):
+            return queryset
+        return queryset.filter(
+            dates_seen__latest_date_seen__year__lte=year
+        ).distinct()
+
+    @staticmethod
+    def filter_has_images(queryset, name, value):
+        """When value is 'true', only postmarks that have at least one image. Ignore other values."""
+        if not value or str(value).strip().lower() != 'true':
+            return queryset
+        return queryset.filter(images__isnull=False).distinct()
 
 
 class PostmarkFilter(django_filters.FilterSet):

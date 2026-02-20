@@ -95,6 +95,9 @@ const Search = () => {
   const prevColorFilterRef = useRef(colorFilter);
   const prevStateFilterRef = useRef(stateFilter);
   const prevTownFilterRef = useRef(townFilter);
+  const prevBeginYearRef = useRef(beginYear);
+  const prevEndYearRef = useRef(endYear);
+  const prevImagesOnlyRef = useRef(imagesOnly);
   const prevExcludeManuscriptsRef = useRef(excludeManuscripts);
 
   // Fetch postmarks page when filters or page change. Postmark Type sends postmark_shape=id to API.
@@ -104,12 +107,18 @@ const Search = () => {
     const colorFilterJustChanged = prevColorFilterRef.current !== colorFilter;
     const stateFilterJustChanged = prevStateFilterRef.current !== stateFilter;
     const townFilterJustChanged = prevTownFilterRef.current !== townFilter;
+    const beginYearJustChanged = prevBeginYearRef.current !== beginYear;
+    const endYearJustChanged = prevEndYearRef.current !== endYear;
+    const imagesOnlyJustChanged = prevImagesOnlyRef.current !== imagesOnly;
     const excludeManuscriptsJustChanged = prevExcludeManuscriptsRef.current !== excludeManuscripts;
     if (searchJustChanged) prevKeywordRef.current = keywordSearch;
     if (typeFilterJustChanged) prevTypeFilterRef.current = typeFilter;
     if (colorFilterJustChanged) prevColorFilterRef.current = colorFilter;
     if (stateFilterJustChanged) prevStateFilterRef.current = stateFilter;
     if (townFilterJustChanged) prevTownFilterRef.current = townFilter;
+    if (beginYearJustChanged) prevBeginYearRef.current = beginYear;
+    if (endYearJustChanged) prevEndYearRef.current = endYear;
+    if (imagesOnlyJustChanged) prevImagesOnlyRef.current = imagesOnly;
     if (excludeManuscriptsJustChanged) prevExcludeManuscriptsRef.current = excludeManuscripts;
 
     const anyFilterChanged =
@@ -118,6 +127,9 @@ const Search = () => {
       colorFilterJustChanged ||
       stateFilterJustChanged ||
       townFilterJustChanged ||
+      beginYearJustChanged ||
+      endYearJustChanged ||
+      imagesOnlyJustChanged ||
       excludeManuscriptsJustChanged;
     if (anyFilterChanged) {
       setCurrentPage(1);
@@ -135,7 +147,10 @@ const Search = () => {
           excludeManuscripts,
           colorFilter !== "all" ? colorFilter : null,
           stateFilter !== "all" ? stateFilter : undefined,
-          townFilter.trim() || undefined
+          townFilter.trim() || undefined,
+          beginYear.trim() || undefined,
+          endYear.trim() || undefined,
+          imagesOnly
         );
 
         const apiTransformed = results.map((record) => ({
@@ -164,7 +179,7 @@ const Search = () => {
     };
 
     fetchPage();
-  }, [currentPage, keywordSearch, typeFilter, stateFilter, townFilter, colorFilter, excludeManuscripts, toast]);
+  }, [currentPage, keywordSearch, typeFilter, stateFilter, townFilter, beginYear, endYear, imagesOnly, colorFilter, excludeManuscripts, toast]);
 
   // Enforce exactly itemsPerPage (10) per page — slice in case API returns more
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;

@@ -111,7 +111,10 @@ export async function getPostmarksPage(
   excludeManuscripts?: boolean,
   color?: string,
   state?: string,
-  town?: string
+  town?: string,
+  beginYear?: string,
+  endYear?: string,
+  hasImages?: boolean
 ): Promise<GetPostmarksPageResult> {
   const apiUrl = getPostmarksApiUrl();
   if (!apiUrl) {
@@ -134,6 +137,17 @@ export async function getPostmarksPage(
   }
   if (town != null && town.trim() !== "") {
     params.set("town", town.trim());
+  }
+  const begin = beginYear?.trim();
+  if (begin !== undefined && begin !== "") {
+    params.set("earliest_use_year_min", begin);
+  }
+  const end = endYear?.trim();
+  if (end !== undefined && end !== "") {
+    params.set("latest_use_year_max", end);
+  }
+  if (hasImages === true) {
+    params.set("has_images", "true");
   }
   const base = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
   const url = `${base}?${params.toString()}`;
