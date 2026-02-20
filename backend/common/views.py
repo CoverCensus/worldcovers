@@ -22,6 +22,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django_filters.rest_framework import DjangoFilterBackend
 
 from django.contrib.auth import get_user_model
+from woco.pagination import PageSizePagination
 
 from .models import (
     PostalFacility, PostalFacilityIdentity,
@@ -49,6 +50,7 @@ from .serializers import (
     AdminCsvUploadListSerializer, AdminCsvUploadSerializer,
     LoginRequestSerializer,
 )
+# from .filters import PostmarkFilter  # reverted: keep only pagination
 from .csv_import import IMPORTERS
 
 
@@ -436,8 +438,10 @@ class DateFormatViewSet(viewsets.ModelViewSet):
 
 class PostmarkViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for postmarks with group-based permission checking
+    ViewSet for postmarks with group-based permission checking.
+    List is paginated: 10 per page (honors ?page_size= up to 100).
     """
+    pagination_class = PageSizePagination
     queryset = Postmark.objects.all().select_related(
         'postal_facility_identity__postal_facility',
         'postmark_shape', 'lettering_style', 'framing_style',
@@ -551,6 +555,10 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         postmarks = self.get_queryset().filter(postal_facility_identity__in=identities)
         serializer = self.get_serializer(postmarks, many=True)
         return Response(serializer.data)
+
+    # Catalog action commented out: keep only list + pagination (PageSizePagination in settings)
+    # @action(detail=False, methods=['get'], url_path='catalog')
+    # def catalog(self, request): ...
 
 
 class PostmarkImageViewSet(viewsets.ModelViewSet):

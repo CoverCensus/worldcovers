@@ -184,8 +184,8 @@ DJANGO_ADMIN_LOGS_IGNORE_UNCHANGED = False if DEBUG else True
 
 # REST Framework settings (if using API)
 REST_FRAMEWORK = {
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
-    "PAGE_SIZE": 100,
+    "DEFAULT_PAGINATION_CLASS": "woco.pagination.PageSizePagination",
+    "PAGE_SIZE": 10,
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
     ],

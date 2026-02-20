@@ -144,9 +144,9 @@ const Search = () => {
     fetchPage();
   }, [currentPage, keywordSearch, typeFilter, stateFilter, colorFilter, excludeManuscripts, toast]);
 
-  // Server-side pagination: catalogRecords = current page (10 items) from api/postmarks/
+  // Enforce exactly itemsPerPage (10) per page — slice in case API returns more
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
-  const paginatedResults = catalogRecords;
+  const paginatedResults = catalogRecords.slice(0, itemsPerPage);
 
   // Clear all filters
   const handleClearAllFilters = () => {
