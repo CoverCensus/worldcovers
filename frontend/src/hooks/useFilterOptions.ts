@@ -44,7 +44,7 @@ export const useFilterOptions = (): UseFilterOptionsReturn => {
         getPostmarkShapes(),
         getAdministrativeUnits(),
       ]);
-      setColorOptions(colors.map((c) => ({ value: String(c.id), label: c.name })));
+      setColorOptions(colors.map((c) => ({ value: c.name, label: c.name })));
       setShapeOptions(shapes.map((s) => ({ value: String(s.id), label: s.name })));
       setStateOptions(states);
     } catch (err) {

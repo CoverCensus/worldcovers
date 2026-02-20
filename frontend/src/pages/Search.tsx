@@ -27,7 +27,11 @@ function ImageOrPlaceholder({
 }) {
   const [error, setError] = useState(false);
   if (src) {
-    return <img src={`${import.meta.env.VITE_IMAGE_URL}${src.storageFilename}`} alt={alt} className={className} onError={() => setError(true)} />;
+    const imgSrc = src.imageUrl || (import.meta.env.VITE_IMAGE_URL && src.storageFilename ? `${import.meta.env.VITE_IMAGE_URL}${src.storageFilename}` : null);
+    if (!imgSrc) return (
+      <div className={`flex items-center justify-center bg-muted text-muted-foreground text-sm ${className || ""}`}>No Image</div>
+    );
+    return <img src={imgSrc} alt={alt} className={className} onError={() => setError(true)} />;
   } else {
     return (
       <div
@@ -88,21 +92,25 @@ const Search = () => {
 
   const prevKeywordRef = useRef(keywordSearch);
   const prevTypeFilterRef = useRef(typeFilter);
+  const prevColorFilterRef = useRef(colorFilter);
+  const prevExcludeManuscriptsRef = useRef(excludeManuscripts);
 
-  // Fetch postmarks page when currentPage, keywordSearch, or typeFilter changes
+  // Fetch postmarks page when filters or page change. Postmark Type sends postmark_shape=id to API.
   useEffect(() => {
     const searchJustChanged = prevKeywordRef.current !== keywordSearch;
     const typeFilterJustChanged = prevTypeFilterRef.current !== typeFilter;
-    if (searchJustChanged) {
-      prevKeywordRef.current = keywordSearch;
-    }
-    if (typeFilterJustChanged) {
-      prevTypeFilterRef.current = typeFilter;
-    }
-    if (searchJustChanged || typeFilterJustChanged || excludeManuscripts) {
+    const colorFilterJustChanged = prevColorFilterRef.current !== colorFilter;
+    const excludeManuscriptsJustChanged = prevExcludeManuscriptsRef.current !== excludeManuscripts;
+    if (searchJustChanged) prevKeywordRef.current = keywordSearch;
+    if (typeFilterJustChanged) prevTypeFilterRef.current = typeFilter;
+    if (colorFilterJustChanged) prevColorFilterRef.current = colorFilter;
+    if (excludeManuscriptsJustChanged) prevExcludeManuscriptsRef.current = excludeManuscripts;
+
+    const anyFilterChanged = searchJustChanged || typeFilterJustChanged || colorFilterJustChanged || excludeManuscriptsJustChanged;
+    if (anyFilterChanged) {
       setCurrentPage(1);
     }
-    const pageToFetch = searchJustChanged || typeFilterJustChanged ? 1 : currentPage;
+    const pageToFetch = anyFilterChanged ? 1 : currentPage;
 
     const fetchPage = async () => {
       setLoading(true);
@@ -111,7 +119,7 @@ const Search = () => {
           pageToFetch,
           itemsPerPage,
           keywordSearch.trim() || undefined,
-          typeFilter !== "all" ? typeFilter : undefined,
+          typeFilter !== "all" ? typeFilter : undefined, // postmark_shape (e.g. 5 = Circle, Arc, Box, etc.)
           excludeManuscripts,
           colorFilter !== "all" ? colorFilter : null
         );

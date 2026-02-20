@@ -50,7 +50,7 @@ from .serializers import (
     AdminCsvUploadListSerializer, AdminCsvUploadSerializer,
     LoginRequestSerializer,
 )
-# from .filters import PostmarkFilter  # reverted: keep only pagination
+from .filters import PostmarkListFilter
 from .csv_import import IMPORTERS
 
 
@@ -452,15 +452,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     )
     permission_classes = [IsAuthenticatedOrReadOnly, IsResponsibleForRegion]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = {
-        'postal_facility_identity': ['exact'],
-        'postmark_shape': ['exact'],
-        'lettering_style': ['exact'],
-        'framing_style': ['exact'],
-        'rate_location': ['exact'],
-        'rate_value': ['exact', 'icontains'],
-        'is_manuscript': ['exact'],
-    }
+    filterset_class = PostmarkListFilter
     search_fields = ['postmark_key', 'postal_facility_identity__facility_name',
                      'rate_value', 'other_characteristics']
     ordering_fields = ['postmark_key', 'created_date', 'rate_value']

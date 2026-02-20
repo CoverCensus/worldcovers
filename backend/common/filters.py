@@ -19,6 +19,49 @@ from .models import (
 # ================================================================================================
 
 
+class PostmarkListFilter(django_filters.FilterSet):
+    """
+    List-view filters for Postmark (used by PostmarkViewSet list action).
+    Only applies a filter when the param has a real value (ignore empty, "unknown", etc.).
+    """
+    class Meta:
+        model = Postmark
+        fields = {
+            'postal_facility_identity': ['exact'],
+            'postmark_shape': ['exact'],
+            'lettering_style': ['exact'],
+            'framing_style': ['exact'],
+            'rate_location': ['exact'],
+            'rate_value': ['exact', 'icontains'],
+        }
+
+    # Only filter when value is "true" or "false"; ignore "unknown", empty, or other values.
+    is_manuscript = django_filters.CharFilter(method='filter_is_manuscript', label='Is manuscript')
+
+    # Filter by color name: same source as list API's colorsDisplay (postmark_colors -> color.color_name).
+    # Frontend sends ?color=black or ?color=Black (iexact so case doesn't matter).
+    color = django_filters.CharFilter(method='filter_by_color', label='Color (name)')
+
+    @staticmethod
+    def filter_is_manuscript(queryset, name, value):
+        if not value or not str(value).strip():
+            return queryset
+        raw = str(value).strip().lower()
+        if raw == 'true':
+            return queryset.filter(is_manuscript=True)
+        if raw == 'false':
+            return queryset.filter(is_manuscript=False)
+        return queryset  # "unknown" or anything else: do not filter by is_manuscript
+
+    @staticmethod
+    def filter_by_color(queryset, name, value):
+        if not value or not str(value).strip():
+            return queryset
+        return queryset.filter(
+            postmark_colors__color__color_name__iexact=str(value).strip()
+        ).distinct()
+
+
 class PostmarkFilter(django_filters.FilterSet):
     """
     Advanced filters for Postmark objects.

@@ -124,9 +124,9 @@ export async function getPostmarksPage(
   if (excludeManuscripts) {
     params.set("is_manuscript", String(excludeManuscripts));
   }
-  // if (color !== "all" && color !== null && color !== "") {
-  //   params.set("color", color);
-  // }
+  if (color !== "all" && color !== null && color !== "") {
+    params.set("color", color);
+  }
   const base = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
   const url = `${base}?${params.toString()}`;
   const res = await fetch(url);
