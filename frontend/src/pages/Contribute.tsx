@@ -6,11 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
 import { Upload, CheckCircle, XCircle, Clock } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
+import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -19,12 +21,10 @@ const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 10;
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/tiff"];
 
-const STATE_OPTIONS = [
-  { value: "MA", label: "Massachusetts" },
-  { value: "NY", label: "New York" },
-  { value: "PA", label: "Pennsylvania" },
-  { value: "CT", label: "Connecticut" },
-];
+/** Value when user chooses "Other" and types state manually */
+const STATE_OTHER_VALUE = "__other__";
+/** Value when user chooses "Other" and types color manually */
+const COLOR_OTHER_VALUE = "__other__";
 
 const TYPE_OPTIONS = [
   { value: "Circular Date Stamp", label: "Circular Date Stamp" },
@@ -59,17 +59,22 @@ const Contribute = () => {
 
   const user = useAuth();
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
+  const [stateOptions, setStateOptions] = useState<StateOption[]>([]);
+  const [loadingStates, setLoadingStates] = useState(true);
+  const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
   const [mySubmissions, setMySubmissions] = useState<MySubmission[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   // Form state – all fields shown on Submission Detail
   const [state, setState] = useState("");
+  const [stateOther, setStateOther] = useState("");
   const [town, setTown] = useState("");
   const [firstSeen, setFirstSeen] = useState("");
   const [lastSeen, setLastSeen] = useState("");
   const [type, setType] = useState("");
   const [color, setColor] = useState("");
+  const [colorOther, setColorOther] = useState("");
   const [dimensions, setDimensions] = useState("");
   const [manuscript, setManuscript] = useState("");
   const [rarity, setRarity] = useState("");
@@ -82,6 +87,18 @@ const Contribute = () => {
     getColors()
       .then(setColorOptions)
       .catch(() => setColorOptions([{ id: 0, name: "Black", value: "" }]));
+  }, []);
+
+  useEffect(() => {
+    setLoadingStates(true);
+    setStateOptionsError(null);
+    getAdministrativeUnits()
+      .then(setStateOptions)
+      .catch((err) => {
+        setStateOptionsError(err instanceof Error ? err.message : "Failed to load states");
+        setStateOptions([]);
+      })
+      .finally(() => setLoadingStates(false));
   }, []);
 
   useEffect(() => {
@@ -149,7 +166,7 @@ const Contribute = () => {
   };
 
   const buildName = () => {
-    const stateLabel = STATE_OPTIONS.find((s) => s.value === state)?.label ?? state;
+    const stateLabel = state === STATE_OTHER_VALUE ? stateOther.trim() : state;
     return `${town.trim()}, ${stateLabel} ${type}`.trim();
   };
 
@@ -172,16 +189,22 @@ const Contribute = () => {
       return;
     }
 
-    const stateVal = state.trim();
+    const stateVal = state === STATE_OTHER_VALUE ? stateOther.trim() : state.trim();
     const townVal = town.trim();
     const firstVal = firstSeen.trim();
     const typeVal = type.trim();
-    const colorVal = color.trim();
+    const colorVal = color === COLOR_OTHER_VALUE ? colorOther.trim() : color.trim();
 
     if (!stateVal || !townVal || !firstVal || !typeVal || !colorVal) {
+      const parts = [];
+      if (!stateVal) parts.push("State");
+      if (!townVal) parts.push("Town/City");
+      if (!firstVal) parts.push("First Seen Year");
+      if (!typeVal) parts.push("Postmark Type");
+      if (!colorVal) parts.push("Color");
       toast({
         title: "Missing required fields",
-        description: "Please fill in State, Town/City, First Seen Year, Postmark Type, and Color.",
+        description: `Please fill in: ${parts.join(", ")}.`,
         variant: "destructive",
       });
       return;
@@ -334,18 +357,32 @@ const Contribute = () => {
                   <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="space-y-2">
                       <Label htmlFor="state">State *</Label>
-                      <Select value={state} onValueChange={setState} required>
-                        <SelectTrigger id="state">
-                          <SelectValue placeholder="Select state..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {STATE_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <SearchableSelect
+                        id="state"
+                        value={state}
+                        onValueChange={setState}
+                        placeholder="Select state..."
+                        options={[
+                          ...stateOptions,
+                          { value: STATE_OTHER_VALUE, label: "Other (type below)" },
+                        ]}
+                        loading={loadingStates}
+                        error={!!stateOptionsError}
+                        errorMessage={stateOptionsError ?? "Failed to load states"}
+                        searchPlaceholder="Search states..."
+                        emptyMessage="No state found."
+                        aria-label="State"
+                      />
+                      {state === STATE_OTHER_VALUE && (
+                        <Input
+                          id="state-other"
+                          placeholder="e.g. Virginia Territory, District of Columbia"
+                          value={stateOther}
+                          onChange={(e) => setStateOther(e.target.value)}
+                          className="mt-2"
+                          aria-label="State (other)"
+                        />
+                      )}
                     </div>
 
                     <div className="space-y-2">
@@ -364,24 +401,32 @@ const Contribute = () => {
                         <Label htmlFor="firstSeen">First Seen Year *</Label>
                         <Input
                           id="firstSeen"
-                          type="number"
+                          type="text"
+                          inputMode="numeric"
                           placeholder="1825"
                           value={firstSeen}
-                          onChange={(e) => setFirstSeen(e.target.value)}
-                          min={1700}
-                          max={1861}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(/\D/g, "").slice(0, 5);
+                            setFirstSeen(v);
+                          }}
+                          maxLength={5}
+                          aria-label="First seen year (numbers only, up to 5 digits)"
                         />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="lastSeen">Last Seen Year</Label>
                         <Input
                           id="lastSeen"
-                          type="number"
+                          type="text"
+                          inputMode="numeric"
                           placeholder="1845"
                           value={lastSeen}
-                          onChange={(e) => setLastSeen(e.target.value)}
-                          min={1700}
-                          max={1861}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(/\D/g, "").slice(0, 5);
+                            setLastSeen(v);
+                          }}
+                          maxLength={5}
+                          aria-label="Last seen year (numbers only, up to 5 digits)"
                         />
                       </div>
                     </div>
@@ -414,8 +459,21 @@ const Contribute = () => {
                               {c.name}
                             </SelectItem>
                           ))}
+                          <SelectItem value={COLOR_OTHER_VALUE}>
+                            Other (type below)
+                          </SelectItem>
                         </SelectContent>
                       </Select>
+                      {color === COLOR_OTHER_VALUE && (
+                        <Input
+                          id="color-other"
+                          placeholder="e.g. Sepia, Blue-black"
+                          value={colorOther}
+                          onChange={(e) => setColorOther(e.target.value)}
+                          className="mt-2"
+                          aria-label="Color (other)"
+                        />
+                      )}
                     </div>
 
                     <div className="space-y-2">
