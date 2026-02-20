@@ -22,7 +22,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django_filters.rest_framework import DjangoFilterBackend
 
 from django.contrib.auth import get_user_model
-from woco.pagination import PageSizePagination
+from woco.pagination import PageSizePagination, LargePageSizePagination
 
 from .models import (
     PostalFacility, PostalFacilityIdentity,
@@ -260,8 +260,10 @@ class PostalFacilityIdentityViewSet(viewsets.ModelViewSet):
 
 class AdministrativeUnitViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for administrative units (stable containers)
+    ViewSet for administrative units (stable containers).
+    Uses larger max page_size so filter dropdowns can request all states in one call.
     """
+    pagination_class = LargePageSizePagination
     queryset = AdministrativeUnit.objects.all().select_related(
         'created_by', 'modified_by'
     ).prefetch_related('identities', 'responsibilities__group')

@@ -34,8 +34,9 @@ function getAdministrativeUnitsApiUrl(): string | null {
 }
 
 /**
- * Fetches administrative units from GET /api/administrative-units/.
- * Returns state options for the filter dropdown (value = currentName, label = currentName).
+ * Fetches all administrative units from GET /api/administrative-units/.
+ * Follows pagination (next) so the filter dropdown gets every state in the catalog.
+ * Returns state options (value = currentName, label = currentName).
  */
 export async function getAdministrativeUnits(): Promise<StateOption[]> {
   const apiUrl = getAdministrativeUnitsApiUrl();
@@ -43,19 +44,25 @@ export async function getAdministrativeUnits(): Promise<StateOption[]> {
     return [];
   }
 
-  const url = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Administrative units API error: ${res.status} ${res.statusText}`);
-  }
+  const base = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
+  const allResults: AdministrativeUnitApiItem[] = [];
+  let nextUrl: string | null = `${base}?page_size=500`;
 
-  const data: AdministrativeUnitsApiResponse = await res.json();
-  if (!Array.isArray(data.results)) {
-    throw new Error("Administrative units API: invalid response (missing results array)");
+  while (nextUrl) {
+    const res = await fetch(nextUrl);
+    if (!res.ok) {
+      throw new Error(`Administrative units API error: ${res.status} ${res.statusText}`);
+    }
+    const data: AdministrativeUnitsApiResponse = await res.json();
+    if (!Array.isArray(data.results)) {
+      throw new Error("Administrative units API: invalid response (missing results array)");
+    }
+    allResults.push(...data.results);
+    nextUrl = data.next;
   }
 
   const seen = new Set<string>();
-  return data.results
+  return allResults
     .filter((u) => {
       const name = u.currentName?.trim();
       if (!name || seen.has(name)) return false;

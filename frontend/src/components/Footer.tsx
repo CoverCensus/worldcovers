@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 export const Footer = () => {
   return (
     <footer className="bg-card border-t border-border mt-auto">
@@ -10,12 +12,23 @@ export const Footer = () => {
             </p>
           </div>
           <div>
-            <h3 className="font-heading text-lg font-semibold mb-3">Resources</h3>
+            <h3 className="font-heading text-lg font-semibold mb-3">Quick links</h3>
             <ul className="space-y-2 text-sm text-muted-foreground">
-              <li><a href="#" className="hover:text-foreground transition-colors">Search Guide</a></li>
-              <li><a href="#" className="hover:text-foreground transition-colors">Submission Guidelines</a></li>
-              <li><a href="#" className="hover:text-foreground transition-colors">Glossary</a></li>
-              <li><a href="#" className="hover:text-foreground transition-colors">API Documentation</a></li>
+              <li>
+                <Link to="/" className="hover:text-foreground transition-colors">
+                  Home
+                </Link>
+              </li>
+              <li>
+                <Link to="/search" className="hover:text-foreground transition-colors">
+                  Catalog search
+                </Link>
+              </li>
+              <li>
+                <Link to="/contribute" className="hover:text-foreground transition-colors">
+                  Contribute
+                </Link>
+              </li>
             </ul>
           </div>
           <div>

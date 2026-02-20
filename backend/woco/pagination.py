@@ -9,3 +9,10 @@ class PageSizePagination(PageNumberPagination):
     page_size = 10
     page_size_query_param = "page_size"
     max_page_size = 100
+
+
+class LargePageSizePagination(PageNumberPagination):
+    """Use for list endpoints that are often consumed in full (e.g. administrative units for filter dropdown)."""
+    page_size = 100
+    page_size_query_param = "page_size"
+    max_page_size = 500

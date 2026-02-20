@@ -3,7 +3,7 @@ import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
@@ -14,8 +14,11 @@ import postmarkSample from "@/assets/postmark-sample.jpg";
 import { getPostmarksPage } from "@/services/postmarks";
 import { useToast } from "@/hooks/use-toast";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
+import { cn } from "@/lib/utils";
 
-/** Placeholder when image is missing or fails to load */
+const noImageClassName = "flex items-center justify-center bg-muted text-muted-foreground text-sm";
+
+/** Placeholder when image is missing or fails to load. Shows "No Image" instead of alt when not found. */
 function ImageOrPlaceholder({
   src,
   alt,
@@ -26,22 +29,17 @@ function ImageOrPlaceholder({
   className?: string;
 }) {
   const [error, setError] = useState(false);
-  if (src) {
-    const imgSrc = src.storageFilename ? `${import.meta.env.VITE_IMAGE_URL}${src.storageFilename}` : null;
-    if (!imgSrc) return (
-      <div className={`flex items-center justify-center bg-muted text-muted-foreground text-sm ${className || ""}`}>No Image</div>
-    );
-    return <img src={imgSrc} alt={alt} className={className} onError={() => setError(true)} />;
-  } else {
-    return (
-      <div
-        className={`flex items-center justify-center bg-muted text-muted-foreground text-sm ${className || ""}`}
-      >
-        No Image
-      </div>
-    );
+  if (error) {
+    return <div className={cn(noImageClassName, className)}>No Image</div>;
   }
-  
+  if (src) {
+    const imgSrc = src.imageUrl || (import.meta.env.VITE_IMAGE_URL && src.storageFilename ? `${import.meta.env.VITE_IMAGE_URL}${src.storageFilename}` : null);
+    if (!imgSrc) {
+      return <div className={cn(noImageClassName, className)}>No Image</div>;
+    }
+    return <img src={imgSrc} alt={alt} className={className} onError={() => setError(true)} />;
+  }
+  return <div className={cn(noImageClassName, className)}>No Image</div>;
 }
 
 /** Build compact page numbers for pagination (handles 500+ pages) */
@@ -83,6 +81,7 @@ const Search = () => {
 
   // Pagination - 10 records per page from api/postmarks/
   const [currentPage, setCurrentPage] = useState(1);
+  const [goToPageInput, setGoToPageInput] = useState("");
   const itemsPerPage = 10;
 
   // Catalog records (current page from API)
@@ -251,29 +250,20 @@ const Search = () => {
 
                   <div className="space-y-2">
                     <Label htmlFor="state">State</Label>
-                    <Select value={stateFilter} onValueChange={setStateFilter}>
-                      <SelectTrigger id="state">
-                        <SelectValue placeholder="All States" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All States</SelectItem>
-                        {isLoadingFilters ? (
-                          <div className="flex items-center justify-center py-2">
-                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                          </div>
-                        ) : filterError ? (
-                          <div className="px-2 py-1 text-sm text-destructive">
-                            Failed to load states
-                          </div>
-                        ) : (
-                          (Array.isArray(stateOptions) ? stateOptions : []).map((state) => (
-                            <SelectItem key={state.value} value={state.value}>
-                              {state.label}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      id="state"
+                      value={stateFilter}
+                      onValueChange={setStateFilter}
+                      placeholder="All States"
+                      allOption={{ value: "all", label: "All States" }}
+                      options={Array.isArray(stateOptions) ? stateOptions : []}
+                      loading={isLoadingFilters}
+                      error={!!filterError}
+                      errorMessage="Failed to load states"
+                      searchPlaceholder="Search states..."
+                      emptyMessage="No state found."
+                      aria-label="Filter by state"
+                    />
                   </div>
 
                   <div className="space-y-2">
@@ -295,6 +285,7 @@ const Search = () => {
                         placeholder="1776"
                         value={beginYear}
                         onChange={(e) => setBeginYear(e.target.value)}
+                        className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                     </div>
                     <div className="space-y-2">
@@ -305,62 +296,45 @@ const Search = () => {
                         placeholder="1900"
                         value={endYear}
                         onChange={(e) => setEndYear(e.target.value)}
+                        className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                     </div>
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="type">Postmark Type</Label>
-                    <Select value={typeFilter} onValueChange={setTypeFilter}>
-                      <SelectTrigger id="type">
-                        <SelectValue placeholder="All Types" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Types</SelectItem>
-                        {isLoadingFilters ? (
-                          <div className="flex items-center justify-center py-2">
-                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                          </div>
-                        ) : filterError ? (
-                          <div className="px-2 py-1 text-sm text-destructive">
-                            Failed to load types
-                          </div>
-                        ) : (
-                          (Array.isArray(shapeOptions) ? shapeOptions : []).map((shape) => (
-                            <SelectItem key={shape.value} value={shape.value}>
-                              {shape.label}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      id="type"
+                      value={typeFilter}
+                      onValueChange={setTypeFilter}
+                      placeholder="All Types"
+                      allOption={{ value: "all", label: "All Types" }}
+                      options={Array.isArray(shapeOptions) ? shapeOptions : []}
+                      loading={isLoadingFilters}
+                      error={!!filterError}
+                      errorMessage="Failed to load types"
+                      searchPlaceholder="Search types..."
+                      emptyMessage="No type found."
+                      aria-label="Filter by postmark type"
+                    />
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="color">Color</Label>
-                    <Select value={colorFilter} onValueChange={setColorFilter}>
-                      <SelectTrigger id="color">
-                        <SelectValue placeholder="All Colors" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Colors</SelectItem>
-                        {isLoadingFilters ? (
-                          <div className="flex items-center justify-center py-2">
-                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                          </div>
-                        ) : filterError ? (
-                          <div className="px-2 py-1 text-sm text-destructive">
-                            Failed to load colors
-                          </div>
-                        ) : (
-                          (Array.isArray(colorOptions) ? colorOptions : []).map((color) => (
-                            <SelectItem key={color.value} value={color.value}>
-                              {color.label}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      id="color"
+                      value={colorFilter}
+                      onValueChange={setColorFilter}
+                      placeholder="All Colors"
+                      allOption={{ value: "all", label: "All Colors" }}
+                      options={Array.isArray(colorOptions) ? colorOptions : []}
+                      loading={isLoadingFilters}
+                      error={!!filterError}
+                      errorMessage="Failed to load colors"
+                      searchPlaceholder="Search colors..."
+                      emptyMessage="No color found."
+                      aria-label="Filter by color"
+                    />
                   </div>
 
                   {/* <div className="space-y-2">
@@ -558,41 +532,92 @@ const Search = () => {
 
               {/* Pagination - compact for 500+ pages */}
               {totalPages > 1 && (
-                <Pagination className="mt-8">
-                  <PaginationContent>
-                    <PaginationItem>
-                      <PaginationPrevious
-                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                        className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
-                      />
-                    </PaginationItem>
+                <div className="mt-8 flex flex-col items-center gap-4">
+                  <Pagination>
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious
+                          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                          className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                        />
+                      </PaginationItem>
 
-                    {getPaginationPages(currentPage, totalPages).map((p, i) =>
-                      p === "ellipsis" ? (
-                        <PaginationItem key={`ellipsis-${i}`}>
-                          <PaginationEllipsis />
-                        </PaginationItem>
-                      ) : (
-                        <PaginationItem key={p}>
-                          <PaginationLink
-                            onClick={() => setCurrentPage(p)}
-                            isActive={currentPage === p}
-                            className="cursor-pointer"
-                          >
-                            {p}
-                          </PaginationLink>
-                        </PaginationItem>
-                      )
-                    )}
+                      {getPaginationPages(currentPage, totalPages).map((p, i) =>
+                        p === "ellipsis" ? (
+                          <PaginationItem key={`ellipsis-${i}`}>
+                            <PaginationEllipsis />
+                          </PaginationItem>
+                        ) : (
+                          <PaginationItem key={p}>
+                            <PaginationLink
+                              onClick={() => setCurrentPage(p)}
+                              isActive={currentPage === p}
+                              className="cursor-pointer"
+                            >
+                              {p}
+                            </PaginationLink>
+                          </PaginationItem>
+                        )
+                      )}
 
-                    <PaginationItem>
-                      <PaginationNext
-                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                        className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
-                      />
-                    </PaginationItem>
-                  </PaginationContent>
-                </Pagination>
+                      <PaginationItem>
+                        <PaginationNext
+                          onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                          className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Go to page</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={totalPages}
+                      placeholder="Page"
+                      value={goToPageInput}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (raw === "") {
+                          setGoToPageInput("");
+                          return;
+                        }
+                        const n = parseInt(raw, 10);
+                        if (Number.isNaN(n)) return;
+                        const clamped = Math.max(1, Math.min(totalPages, n));
+                        setGoToPageInput(String(clamped));
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          const n = parseInt(goToPageInput, 10);
+                          if (!Number.isNaN(n)) {
+                            setCurrentPage(Math.max(1, Math.min(totalPages, n)));
+                            setGoToPageInput("");
+                          }
+                        }
+                      }}
+                      className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      aria-label="Go to page number"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9"
+                      onClick={() => {
+                        const n = parseInt(goToPageInput, 10);
+                        if (!Number.isNaN(n)) {
+                          setCurrentPage(Math.max(1, Math.min(totalPages, n)));
+                          setGoToPageInput("");
+                        }
+                      }}
+                    >
+                      Go
+                    </Button>
+                  </div>
+                </div>
               )}
             </main>
           </div>
