@@ -27,7 +27,7 @@ function ImageOrPlaceholder({
 }) {
   const [error, setError] = useState(false);
   if (src) {
-    const imgSrc = src.imageUrl || (import.meta.env.VITE_IMAGE_URL && src.storageFilename ? `${import.meta.env.VITE_IMAGE_URL}${src.storageFilename}` : null);
+    const imgSrc = src.storageFilename ? `${import.meta.env.VITE_IMAGE_URL}${src.storageFilename}` : null;
     if (!imgSrc) return (
       <div className={`flex items-center justify-center bg-muted text-muted-foreground text-sm ${className || ""}`}>No Image</div>
     );
