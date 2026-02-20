@@ -109,7 +109,9 @@ export async function getPostmarksPage(
   search?: string,
   postmarkShapeId?: string | number,
   excludeManuscripts?: boolean,
-  color?: string
+  color?: string,
+  state?: string,
+  town?: string
 ): Promise<GetPostmarksPageResult> {
   const apiUrl = getPostmarksApiUrl();
   if (!apiUrl) {
@@ -126,6 +128,12 @@ export async function getPostmarksPage(
   }
   if (color !== "all" && color !== null && color !== "") {
     params.set("color", color);
+  }
+  if (state !== "all" && state != null && state !== "") {
+    params.set("state", state.trim());
+  }
+  if (town != null && town.trim() !== "") {
+    params.set("town", town.trim());
   }
   const base = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
   const url = `${base}?${params.toString()}`;

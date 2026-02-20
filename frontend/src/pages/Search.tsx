@@ -93,6 +93,8 @@ const Search = () => {
   const prevKeywordRef = useRef(keywordSearch);
   const prevTypeFilterRef = useRef(typeFilter);
   const prevColorFilterRef = useRef(colorFilter);
+  const prevStateFilterRef = useRef(stateFilter);
+  const prevTownFilterRef = useRef(townFilter);
   const prevExcludeManuscriptsRef = useRef(excludeManuscripts);
 
   // Fetch postmarks page when filters or page change. Postmark Type sends postmark_shape=id to API.
@@ -100,13 +102,23 @@ const Search = () => {
     const searchJustChanged = prevKeywordRef.current !== keywordSearch;
     const typeFilterJustChanged = prevTypeFilterRef.current !== typeFilter;
     const colorFilterJustChanged = prevColorFilterRef.current !== colorFilter;
+    const stateFilterJustChanged = prevStateFilterRef.current !== stateFilter;
+    const townFilterJustChanged = prevTownFilterRef.current !== townFilter;
     const excludeManuscriptsJustChanged = prevExcludeManuscriptsRef.current !== excludeManuscripts;
     if (searchJustChanged) prevKeywordRef.current = keywordSearch;
     if (typeFilterJustChanged) prevTypeFilterRef.current = typeFilter;
     if (colorFilterJustChanged) prevColorFilterRef.current = colorFilter;
+    if (stateFilterJustChanged) prevStateFilterRef.current = stateFilter;
+    if (townFilterJustChanged) prevTownFilterRef.current = townFilter;
     if (excludeManuscriptsJustChanged) prevExcludeManuscriptsRef.current = excludeManuscripts;
 
-    const anyFilterChanged = searchJustChanged || typeFilterJustChanged || colorFilterJustChanged || excludeManuscriptsJustChanged;
+    const anyFilterChanged =
+      searchJustChanged ||
+      typeFilterJustChanged ||
+      colorFilterJustChanged ||
+      stateFilterJustChanged ||
+      townFilterJustChanged ||
+      excludeManuscriptsJustChanged;
     if (anyFilterChanged) {
       setCurrentPage(1);
     }
@@ -121,7 +133,9 @@ const Search = () => {
           keywordSearch.trim() || undefined,
           typeFilter !== "all" ? typeFilter : undefined, // postmark_shape (e.g. 5 = Circle, Arc, Box, etc.)
           excludeManuscripts,
-          colorFilter !== "all" ? colorFilter : null
+          colorFilter !== "all" ? colorFilter : null,
+          stateFilter !== "all" ? stateFilter : undefined,
+          townFilter.trim() || undefined
         );
 
         const apiTransformed = results.map((record) => ({
@@ -150,7 +164,7 @@ const Search = () => {
     };
 
     fetchPage();
-  }, [currentPage, keywordSearch, typeFilter, stateFilter, colorFilter, excludeManuscripts, toast]);
+  }, [currentPage, keywordSearch, typeFilter, stateFilter, townFilter, colorFilter, excludeManuscripts, toast]);
 
   // Enforce exactly itemsPerPage (10) per page — slice in case API returns more
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
