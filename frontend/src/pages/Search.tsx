@@ -33,7 +33,7 @@ function ImageOrPlaceholder({
     return <div className={cn(noImageClassName, className)}>No Image</div>;
   }
   if (src) {
-    const imgSrc = src.imageUrl || (import.meta.env.VITE_IMAGE_URL && src.storageFilename ? `${import.meta.env.VITE_IMAGE_URL}${src.storageFilename}` : null);
+    const imgSrc = src.storageFilename ? `${import.meta.env.VITE_IMAGE_URL}${src.storageFilename}` : null;
     if (!imgSrc) {
       return <div className={cn(noImageClassName, className)}>No Image</div>;
     }
