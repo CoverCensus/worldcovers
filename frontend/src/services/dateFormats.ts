@@ -38,7 +38,7 @@ function mapApiResultToOption(item: DateFormatApiResultItem): DateFormatOption {
 }
 
 function getDateFormatsApiUrl(): string | null {
-  const env = import.meta.env.VITE_DATE_FORMATS_API_URL;
+  const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
   if (base.endsWith("/api/date-formats")) return base;

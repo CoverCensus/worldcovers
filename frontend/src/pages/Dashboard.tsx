@@ -10,14 +10,22 @@ import { Filter, Search } from "lucide-react";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer";
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import postmarkSample from "@/assets/postmark-sample.jpg";
+import { useAuth } from "@/hooks/useAuth";
+import imageNotAvailable from "@/assets/image-not-available.jpg";
+
+function getPostmarksApiUrl(): string | null {
+  const env = import.meta.env.VITE_API_URL;
+  if (!env || typeof env !== "string" || env.trim() === "") return null;
+  const base = env.trim().replace(/\/+$/, "");
+  if (base.endsWith("/api/postmarks")) return base;
+  return `${base}/api/postmarks`;
+}
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [user, setUser] = useState<{ id: string } | null>(null);
+  const user = useAuth();
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtersOpen, setFiltersOpen] = useState(true);
@@ -29,17 +37,7 @@ const Dashboard = () => {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
-  // Fetch only current user's submissions
+  // Fetch only current user's catalog submissions (from Django postmarks API)
   useEffect(() => {
     if (!user) {
       setSubmissions([]);
@@ -50,19 +48,47 @@ const Dashboard = () => {
     const fetchSubmissions = async () => {
       setLoading(true);
       try {
-        const { data, error } = await supabase
-          .from('submissions')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
-
-        setSubmissions(data || []);
-      } catch (error: any) {
+        const submitter = user.username || user.email;
+        if (!submitter) {
+          setSubmissions([]);
+          return;
+        }
+        const apiUrl = getPostmarksApiUrl();
+        if (!apiUrl) {
+          toast({
+            title: "Configuration error",
+            description: "VITE_API_URL is not set, cannot load submissions.",
+            variant: "destructive",
+          });
+          setSubmissions([]);
+          return;
+        }
+        const base = apiUrl.replace(/\/+$/, "");
+        const url = `${base}/my-submissions/?submitter=${encodeURIComponent(submitter)}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          throw new Error(`API error: ${res.status} ${res.statusText}`);
+        }
+        const data = await res.json();
+        const results = Array.isArray(data.results) ? data.results : [];
+        const mapped = results.map((item: any) => ({
+          id: item.postmark_id,
+          name: `${item.town || ""}${item.state ? `, ${item.state}` : ""} ${item.shape_name || ""}`.trim(),
+          town: item.town || "",
+          state: item.state || "",
+          date_range: item.date_range || "",
+          type: item.shape_name || "",
+          color: item.colors_display || "",
+          status: "approved" as const,
+          created_at: item.created_date || new Date().toISOString(),
+          description: undefined,
+          image_url: item.main_image?.image_url || null,
+        }));
+        setSubmissions(mapped);
+      } catch (error: unknown) {
         toast({
           title: "Error loading submissions",
-          description: error.message,
+          description: error instanceof Error ? error.message : "Could not load submissions",
           variant: "destructive",
         });
       } finally {
@@ -360,13 +386,13 @@ const Dashboard = () => {
                   <Card
                     key={submission.id}
                     className="hover:shadow-md transition-shadow cursor-pointer"
-                    onClick={() => navigate(`/dashboard/${submission.id}`)}
+                    onClick={() => navigate(`/record/${submission.id}`)}
                   >
                     <CardContent className="p-6">
                       <div className="grid md:grid-cols-[200px_1fr] gap-6">
                         <div className="aspect-square rounded-lg overflow-hidden bg-muted">
                           <img
-                            src={submission.image_url || postmarkSample}
+                            src={submission.image_url || imageNotAvailable}
                             alt={submission.name}
                             className="w-full h-full object-cover"
                           />
@@ -415,7 +441,7 @@ const Dashboard = () => {
                             className="p-0 h-auto text-primary"
                             onClick={(e) => {
                               e.stopPropagation();
-                              navigate(`/dashboard/${submission.id}`);
+                              navigate(`/record/${submission.id}`);
                             }}
                           >
                             View details

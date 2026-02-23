@@ -6,32 +6,34 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
 import { Upload, CheckCircle, XCircle, Clock } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
-import { supabase } from "@/integrations/supabase/client";
+import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
+import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
 import { useToast } from "@/hooks/use-toast";
-import type { User } from "@supabase/supabase-js";
+import { useAuth } from "@/hooks/useAuth";
+
+/** Base URL for Django API (contributions, etc.) */
+function getApiBaseUrl(): string | null {
+  const env = import.meta.env.VITE_API_URL;
+  if (!env || typeof env !== "string" || env.trim() === "") return null;
+  return env.trim().replace(/\/+$/, "");
+}
 
 const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 10;
-const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/tiff"];
+const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/tiff"];
 
-const STATE_OPTIONS = [
-  { value: "MA", label: "Massachusetts" },
-  { value: "NY", label: "New York" },
-  { value: "PA", label: "Pennsylvania" },
-  { value: "CT", label: "Connecticut" },
-];
-
-const TYPE_OPTIONS = [
-  { value: "Circular Date Stamp", label: "Circular Date Stamp" },
-  { value: "Straight Line", label: "Straight Line" },
-  { value: "Manuscript", label: "Manuscript" },
-  { value: "Oval", label: "Oval" },
-];
+/** Value when user chooses "Other" and types state manually */
+const STATE_OTHER_VALUE = "__other__";
+/** Value when user chooses "Other" and types color manually */
+const COLOR_OTHER_VALUE = "__other__";
+/** Value when user chooses "Other" and types postmark type manually */
+const TYPE_OTHER_VALUE = "__other__";
 
 const RARITY_OPTIONS = [
   { value: "Common", label: "Common" },
@@ -57,19 +59,28 @@ const Contribute = () => {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [user, setUser] = useState<User | null>(null);
+  const user = useAuth();
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
+  const [stateOptions, setStateOptions] = useState<StateOption[]>([]);
+  const [typeOptions, setTypeOptions] = useState<PostmarkShapeOption[]>([]);
+  const [loadingStates, setLoadingStates] = useState(true);
+  const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
+  const [loadingTypes, setLoadingTypes] = useState(true);
+  const [typeOptionsError, setTypeOptionsError] = useState<string | null>(null);
   const [mySubmissions, setMySubmissions] = useState<MySubmission[]>([]);
-  const [loadingSubmissions, setLoadingSubmissions] = useState(true);
+  const [loadingSubmissions, setLoadingSubmissions] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Form state – all fields shown on Submission Detail
   const [state, setState] = useState("");
+  const [stateOther, setStateOther] = useState("");
   const [town, setTown] = useState("");
   const [firstSeen, setFirstSeen] = useState("");
   const [lastSeen, setLastSeen] = useState("");
   const [type, setType] = useState("");
+  const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
+  const [colorOther, setColorOther] = useState("");
   const [dimensions, setDimensions] = useState("");
   const [manuscript, setManuscript] = useState("");
   const [rarity, setRarity] = useState("");
@@ -85,49 +96,30 @@ const Contribute = () => {
   }, []);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-    return () => subscription.unsubscribe();
+    setLoadingStates(true);
+    setStateOptionsError(null);
+    getAdministrativeUnits()
+      .then(setStateOptions)
+      .catch((err) => {
+        setStateOptionsError(err instanceof Error ? err.message : "Failed to load states");
+        setStateOptions([]);
+      })
+      .finally(() => setLoadingStates(false));
   }, []);
 
   useEffect(() => {
-    if (!user) {
-      setMySubmissions([]);
-      setLoadingSubmissions(false);
-      return;
-    }
-    const fetchMySubmissions = async () => {
-      setLoadingSubmissions(true);
-      try {
-        const { data, error } = await supabase
-          .from("submissions")
-          .select("id, name, status, created_at")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: false });
+    setLoadingTypes(true);
+    setTypeOptionsError(null);
+    getPostmarkShapes()
+      .then(setTypeOptions)
+      .catch((err) => {
+        setTypeOptionsError(err instanceof Error ? err.message : "Failed to load postmark types");
+        setTypeOptions([]);
+      })
+      .finally(() => setLoadingTypes(false));
+  }, []);
 
-        if (error) throw error;
-        setMySubmissions((data ?? []).map((row) => ({
-          id: row.id,
-          name: row.name,
-          status: row.status ?? "pending",
-          created_at: row.created_at,
-        })));
-      } catch (err: unknown) {
-        toast({
-          title: "Error loading your submissions",
-          description: err instanceof Error ? err.message : "Could not load submissions",
-          variant: "destructive",
-        });
-      } finally {
-        setLoadingSubmissions(false);
-      }
-    };
-    fetchMySubmissions();
-  }, [user, toast]);
+  // Submissions are now stored in Django; "My Submissions" list can be added via Django API later if needed.
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -139,7 +131,7 @@ const Contribute = () => {
     if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
       toast({
         title: "Invalid file type",
-        description: "Please use PNG, JPG, WebP, or TIFF.",
+        description: "Only PNG, JPG, or TIFF are allowed.",
         variant: "destructive",
       });
       return;
@@ -159,7 +151,7 @@ const Contribute = () => {
   };
 
   const buildName = () => {
-    const stateLabel = STATE_OPTIONS.find((s) => s.value === state)?.label ?? state;
+    const stateLabel = state === STATE_OTHER_VALUE ? stateOther.trim() : state;
     return `${town.trim()}, ${stateLabel} ${type}`.trim();
   };
 
@@ -172,26 +164,23 @@ const Contribute = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to submit an entry.",
-        variant: "destructive",
-      });
-      navigate("/auth");
-      return;
-    }
 
-    const stateVal = state.trim();
+    const stateVal = state === STATE_OTHER_VALUE ? stateOther.trim() : state.trim();
     const townVal = town.trim();
     const firstVal = firstSeen.trim();
-    const typeVal = type.trim();
-    const colorVal = color.trim();
+    const typeVal = type === TYPE_OTHER_VALUE ? typeOther.trim() : type.trim();
+    const colorVal = color === COLOR_OTHER_VALUE ? colorOther.trim() : color.trim();
 
     if (!stateVal || !townVal || !firstVal || !typeVal || !colorVal) {
+      const parts = [];
+      if (!stateVal) parts.push("State");
+      if (!townVal) parts.push("Town/City");
+      if (!firstVal) parts.push("First Seen Year");
+      if (!typeVal) parts.push("Postmark Type");
+      if (!colorVal) parts.push("Color");
       toast({
         title: "Missing required fields",
-        description: "Please fill in State, Town/City, First Seen Year, Postmark Type, and Color.",
+        description: `Please fill in: ${parts.join(", ")}.`,
         variant: "destructive",
       });
       return;
@@ -207,63 +196,84 @@ const Contribute = () => {
       return;
     }
 
+    const apiBase = getApiBaseUrl();
+    if (!apiBase) {
+      toast({
+        title: "Configuration error",
+        description: "VITE_API_URL is not set. Cannot submit to catalog.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSubmitting(true);
     try {
-      let imageUrl: string | null = null;
-      if (imageFile && user) {
-        try {
-          const ext = imageFile.name.split(".").pop() || "jpg";
-          const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
-          const { error: uploadError } = await supabase.storage
-            .from(SUBMISSION_IMAGES_BUCKET)
-            .upload(path, imageFile, { contentType: imageFile.type, upsert: false });
+      const submitterName = user?.username || user?.email || undefined;
 
-          if (uploadError) throw uploadError;
-          const { data: urlData } = supabase.storage.from(SUBMISSION_IMAGES_BUCKET).getPublicUrl(path);
-          imageUrl = urlData.publicUrl;
-        } catch {
-          toast({
-            title: "Image upload failed",
-            description: "Submission will be saved without the image. Create bucket 'submission-images' in Supabase Storage if needed.",
-            variant: "destructive",
-          });
-        }
+      let body: string | FormData;
+      let headers: Record<string, string> = {};
+
+      if (imageFile) {
+        const form = new FormData();
+        form.append("state", stateVal);
+        form.append("town", townVal);
+        form.append("firstSeen", firstVal);
+        form.append("lastSeen", lastSeen.trim());
+        form.append("type", typeVal);
+        form.append("color", colorVal);
+        if (dimensions.trim()) form.append("dimensions", dimensions.trim());
+        if (manuscript.trim()) form.append("manuscript", manuscript.trim());
+        if (rarity.trim()) form.append("rarity", rarity.trim());
+        if (description.trim()) form.append("description", description.trim());
+        if (references.trim()) form.append("references", references.trim());
+        if (submitterName) form.append("submitterName", submitterName);
+        form.append("image", imageFile, imageFile.name);
+        body = form;
+        // Do not set Content-Type so browser sets multipart/form-data with boundary
+      } else {
+        body = JSON.stringify({
+          state: stateVal,
+          town: townVal,
+          firstSeen: firstVal,
+          lastSeen: lastSeen.trim(),
+          type: typeVal,
+          color: colorVal,
+          dimensions: dimensions.trim() || undefined,
+          manuscript: manuscript.trim() || undefined,
+          rarity: rarity.trim() || undefined,
+          description: description.trim() || undefined,
+          references: references.trim() || undefined,
+          submitterName: submitterName || undefined,
+        });
+        headers["Content-Type"] = "application/json";
       }
 
-      const name = buildName();
-      const submitterName = user.user_metadata?.full_name ?? user.email ?? undefined;
-
-      const { error } = await supabase.from("submissions").insert({
-        user_id: user.id,
-        submitter_name: submitterName,
-        name,
-        state: stateVal,
-        town: townVal,
-        date_range: dateRange,
-        color: colorVal,
-        type: typeVal,
-        description: description.trim() || null,
-        citation_references: references.trim() || null,
-        image_url: imageUrl,
-        dimensions: dimensions.trim() || null,
-        manuscript: manuscript.trim() || null,
-        rarity: rarity.trim() || null,
-        status: "pending",
+      const res = await fetch(`${apiBase}/api/contributions/`, {
+        method: "POST",
+        headers,
+        body,
       });
 
-      if (error) throw error;
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        const msg = errBody?.detail || res.statusText || "Could not submit.";
+        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+      }
 
       toast({
         title: "Submission sent",
-        description: "Your entry has been submitted for review.",
+        description: "Your entry has been added to the catalog.",
       });
 
       setState("");
+      setStateOther("");
       setTown("");
       setFirstSeen("");
       setLastSeen("");
       setType("");
+      setTypeOther("");
       setColor("");
+      setColorOther("");
       setDimensions("");
       setManuscript("");
       setRarity("");
@@ -272,11 +282,6 @@ const Contribute = () => {
       setImageFile(null);
       setImagePreview(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
-
-      setMySubmissions((prev) => [
-        { id: crypto.randomUUID(), name, status: "pending", created_at: new Date().toISOString() },
-        ...prev,
-      ]);
     } catch (err: unknown) {
       toast({
         title: "Submission failed",
@@ -334,7 +339,7 @@ const Contribute = () => {
                 <CardContent className="space-y-6">
                   {!user && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-4 text-sm text-amber-800 dark:text-amber-200">
-                      You must be signed in to submit.{" "}
+                      Sign in to add your name to the submission.{" "}
                       <Button variant="link" className="p-0 h-auto text-amber-700 dark:text-amber-300" onClick={() => navigate("/auth")}>
                         Sign in
                       </Button>
@@ -344,18 +349,32 @@ const Contribute = () => {
                   <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="space-y-2">
                       <Label htmlFor="state">State *</Label>
-                      <Select value={state} onValueChange={setState} required>
-                        <SelectTrigger id="state">
-                          <SelectValue placeholder="Select state..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {STATE_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <SearchableSelect
+                        id="state"
+                        value={state}
+                        onValueChange={setState}
+                        placeholder="Select state..."
+                        options={[
+                          ...stateOptions,
+                          { value: STATE_OTHER_VALUE, label: "Other (type below)" },
+                        ]}
+                        loading={loadingStates}
+                        error={!!stateOptionsError}
+                        errorMessage={stateOptionsError ?? "Failed to load states"}
+                        searchPlaceholder="Search states..."
+                        emptyMessage="No state found."
+                        aria-label="State"
+                      />
+                      {state === STATE_OTHER_VALUE && (
+                        <Input
+                          id="state-other"
+                          placeholder="e.g. Virginia Territory, District of Columbia"
+                          value={stateOther}
+                          onChange={(e) => setStateOther(e.target.value)}
+                          className="mt-2"
+                          aria-label="State (other)"
+                        />
+                      )}
                     </div>
 
                     <div className="space-y-2">
@@ -374,42 +393,64 @@ const Contribute = () => {
                         <Label htmlFor="firstSeen">First Seen Year *</Label>
                         <Input
                           id="firstSeen"
-                          type="number"
+                          type="text"
+                          inputMode="numeric"
                           placeholder="1825"
                           value={firstSeen}
-                          onChange={(e) => setFirstSeen(e.target.value)}
-                          min={1700}
-                          max={1861}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(/\D/g, "").slice(0, 5);
+                            setFirstSeen(v);
+                          }}
+                          maxLength={5}
+                          aria-label="First seen year (numbers only, up to 5 digits)"
                         />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="lastSeen">Last Seen Year</Label>
                         <Input
                           id="lastSeen"
-                          type="number"
+                          type="text"
+                          inputMode="numeric"
                           placeholder="1845"
                           value={lastSeen}
-                          onChange={(e) => setLastSeen(e.target.value)}
-                          min={1700}
-                          max={1861}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(/\D/g, "").slice(0, 5);
+                            setLastSeen(v);
+                          }}
+                          maxLength={5}
+                          aria-label="Last seen year (numbers only, up to 5 digits)"
                         />
                       </div>
                     </div>
 
                     <div className="space-y-2">
                       <Label htmlFor="type">Postmark Type *</Label>
-                      <Select value={type} onValueChange={setType} required>
-                        <SelectTrigger id="type">
-                          <SelectValue placeholder="Select type..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TYPE_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <SearchableSelect
+                        id="type"
+                        value={type}
+                        onValueChange={setType}
+                        placeholder="Select type..."
+                        options={[
+                          ...typeOptions.map((t) => ({ value: t.name, label: t.name })),
+                          { value: TYPE_OTHER_VALUE, label: "Other (type below)" },
+                        ]}
+                        loading={loadingTypes}
+                        error={!!typeOptionsError}
+                        errorMessage={typeOptionsError ?? "Failed to load postmark types"}
+                        searchPlaceholder="Search types..."
+                        emptyMessage="No type found."
+                        aria-label="Postmark type"
+                      />
+                      {type === TYPE_OTHER_VALUE && (
+                        <Input
+                          id="type-other"
+                          placeholder="e.g. Circular Date Stamp, Straight Line"
+                          value={typeOther}
+                          onChange={(e) => setTypeOther(e.target.value)}
+                          className="mt-2"
+                          aria-label="Postmark type (other)"
+                        />
+                      )}
                     </div>
 
                     <div className="space-y-2">
@@ -424,8 +465,21 @@ const Contribute = () => {
                               {c.name}
                             </SelectItem>
                           ))}
+                          <SelectItem value={COLOR_OTHER_VALUE}>
+                            Other (type below)
+                          </SelectItem>
                         </SelectContent>
                       </Select>
+                      {color === COLOR_OTHER_VALUE && (
+                        <Input
+                          id="color-other"
+                          placeholder="e.g. Sepia, Blue-black"
+                          value={colorOther}
+                          onChange={(e) => setColorOther(e.target.value)}
+                          className="mt-2"
+                          aria-label="Color (other)"
+                        />
+                      )}
                     </div>
 
                     <div className="space-y-2">
@@ -533,9 +587,9 @@ const Contribute = () => {
                     <Button
                       type="submit"
                       className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
-                      disabled={!user || submitting}
+                      disabled={submitting}
                     >
-                      {submitting ? "Submitting..." : "Submit for Review"}
+                      {submitting ? "Submitting..." : "Submit to Catalog"}
                     </Button>
                   </form>
 

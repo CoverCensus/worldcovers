@@ -3,298 +3,270 @@ import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
 import { Grid3x3, List, Search as SearchIcon, SlidersHorizontal, Loader2 } from "lucide-react";
-import { useState, useMemo, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import postmarkSample from "@/assets/postmark-sample.jpg";
-import { supabase } from "@/integrations/supabase/client";
+import { useState, useEffect, useRef } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import imageNotAvailable from "@/assets/image-not-available.jpg";
+import { getPostmarksPage } from "@/services/postmarks";
 import { useToast } from "@/hooks/use-toast";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
+import { useDebounce } from "@/hooks/useDebounce";
+import { cn } from "@/lib/utils";
+
+const DEBOUNCE_MS = 400;
+
+/** Read a single search param with default */
+function getSearchParam(params: URLSearchParams, key: string, defaultValue: string): string {
+  const v = params.get(key);
+  return v ?? defaultValue;
+}
+
+const noImageClassName = "flex items-center justify-center bg-muted text-muted-foreground text-sm";
+
+/** Placeholder when image is missing or fails to load. Shows fallback artwork instead of text. */
+function ImageOrPlaceholder({
+  src,
+  alt,
+  className,
+}: {
+  src: any;
+  alt: string;
+  className?: string;
+}) {
+  const [error, setError] = useState(false);
+  if (error) {
+    return (
+      <img
+        src={imageNotAvailable}
+        alt="No image available"
+        className={cn(noImageClassName, className)}
+      />
+    );
+  }
+  if (src) {
+    const imgSrc = src.storageFilename ? `${import.meta.env.VITE_IMAGE_URL}${src.storageFilename}` : null;
+    if (!imgSrc) {
+      return (
+        <img
+          src={imageNotAvailable}
+          alt="No image available"
+          className={cn(noImageClassName, className)}
+        />
+      );
+    }
+    return <img src={imgSrc} alt={alt} className={className} onError={() => setError(true)} />;
+  }
+  return (
+    <img
+      src={imageNotAvailable}
+      alt="No image available"
+      className={cn(noImageClassName, className)}
+    />
+  );
+}
+
+/** Build compact page numbers for pagination (handles 500+ pages) */
+function getPaginationPages(currentPage: number, totalPages: number): (number | "ellipsis")[] {
+  const delta = 2;
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  const pages: (number | "ellipsis")[] = [1];
+  if (currentPage > delta + 2) pages.push("ellipsis");
+  const start = Math.max(2, currentPage - delta);
+  const end = Math.min(totalPages - 1, currentPage + delta);
+  for (let i = start; i <= end; i++) pages.push(i);
+  if (currentPage < totalPages - delta - 1) pages.push("ellipsis");
+  pages.push(totalPages);
+  return pages;
+}
 
 const Search = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [viewMode, setViewMode] = useState<"gallery" | "list">("list");
   const [filtersOpen, setFiltersOpen] = useState(true);
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // Fetch filter options from API
-  const { colorOptions, isLoading: isLoadingFilters, error: filterError } = useFilterOptions();
+  // Fetch filter options from API (colors, postmark shapes, states)
+  const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } = useFilterOptions();
 
-  // Filter states
-  const [keywordSearch, setKeywordSearch] = useState("");
-  const [stateFilter, setStateFilter] = useState("all");
-  const [townFilter, setTownFilter] = useState("");
-  const [beginYear, setBeginYear] = useState("");
-  const [endYear, setEndYear] = useState("");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const [colorFilter, setColorFilter] = useState("all");
+  // Filter states - initialize from URL so filters persist when navigating back from detail
+  const [keywordSearch, setKeywordSearch] = useState(() => getSearchParam(searchParams, "q", ""));
+  const [stateFilter, setStateFilter] = useState(() => getSearchParam(searchParams, "state", "all"));
+  const [townFilter, setTownFilter] = useState(() => getSearchParam(searchParams, "town", ""));
+  const [beginYear, setBeginYear] = useState(() => getSearchParam(searchParams, "from", ""));
+  const [endYear, setEndYear] = useState(() => getSearchParam(searchParams, "to", ""));
+  const [typeFilter, setTypeFilter] = useState(() => getSearchParam(searchParams, "type", "all"));
+  const [colorFilter, setColorFilter] = useState(() => getSearchParam(searchParams, "color", "all"));
   const [valuationFilter, setValuationFilter] = useState("all");
-  const [excludeManuscripts, setExcludeManuscripts] = useState(false);
-  const [imagesOnly, setImagesOnly] = useState(false);
+  const [excludeManuscripts, setExcludeManuscripts] = useState(() => getSearchParam(searchParams, "noManuscripts", "") === "true");
+  const [imagesOnly, setImagesOnly] = useState(() => getSearchParam(searchParams, "images", "") === "true");
 
-  // Pagination
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 9;
+  // Debounced values for text inputs - API called only after user stops typing
+  const debouncedKeywordSearch = useDebounce(keywordSearch, DEBOUNCE_MS);
+  const debouncedTownFilter = useDebounce(townFilter, DEBOUNCE_MS);
+  const debouncedBeginYear = useDebounce(beginYear, DEBOUNCE_MS);
+  const debouncedEndYear = useDebounce(endYear, DEBOUNCE_MS);
 
-  // Catalog records from database
-  const [catalogRecords, setCatalogRecords] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Pagination - 10 records per page from api/postmarks/
+  const [currentPage, setCurrentPage] = useState(() => {
+    const p = searchParams.get("page");
+    const n = p ? parseInt(p, 10) : 1;
+    return Number.isNaN(n) || n < 1 ? 1 : n;
+  });
+  const [goToPageInput, setGoToPageInput] = useState("");
+  const itemsPerPage = 10;
 
-  // Fetch catalog records from database
+  const prevKeywordRef = useRef(debouncedKeywordSearch);
+  const prevTypeFilterRef = useRef(typeFilter);
+  const prevColorFilterRef = useRef(colorFilter);
+  const prevStateFilterRef = useRef(stateFilter);
+  const prevTownFilterRef = useRef(debouncedTownFilter);
+  const prevBeginYearRef = useRef(debouncedBeginYear);
+  const prevEndYearRef = useRef(debouncedEndYear);
+  const prevImagesOnlyRef = useRef(imagesOnly);
+  const prevExcludeManuscriptsRef = useRef(excludeManuscripts);
+
+  // Reset page to 1 when filters change
   useEffect(() => {
-    const fetchCatalogRecords = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('catalog_records')
-          .select('*')
-          .order('created_at', { ascending: true });
+    const searchJustChanged = prevKeywordRef.current !== debouncedKeywordSearch;
+    const typeFilterJustChanged = prevTypeFilterRef.current !== typeFilter;
+    const colorFilterJustChanged = prevColorFilterRef.current !== colorFilter;
+    const stateFilterJustChanged = prevStateFilterRef.current !== stateFilter;
+    const townFilterJustChanged = prevTownFilterRef.current !== debouncedTownFilter;
+    const beginYearJustChanged = prevBeginYearRef.current !== debouncedBeginYear;
+    const endYearJustChanged = prevEndYearRef.current !== debouncedEndYear;
+    const imagesOnlyJustChanged = prevImagesOnlyRef.current !== imagesOnly;
+    const excludeManuscriptsJustChanged = prevExcludeManuscriptsRef.current !== excludeManuscripts;
+    if (searchJustChanged) prevKeywordRef.current = debouncedKeywordSearch;
+    if (typeFilterJustChanged) prevTypeFilterRef.current = typeFilter;
+    if (colorFilterJustChanged) prevColorFilterRef.current = colorFilter;
+    if (stateFilterJustChanged) prevStateFilterRef.current = stateFilter;
+    if (townFilterJustChanged) prevTownFilterRef.current = debouncedTownFilter;
+    if (beginYearJustChanged) prevBeginYearRef.current = debouncedBeginYear;
+    if (endYearJustChanged) prevEndYearRef.current = debouncedEndYear;
+    if (imagesOnlyJustChanged) prevImagesOnlyRef.current = imagesOnly;
+    if (excludeManuscriptsJustChanged) prevExcludeManuscriptsRef.current = excludeManuscripts;
 
-        if (error) throw error;
+    const anyFilterChanged =
+      searchJustChanged ||
+      typeFilterJustChanged ||
+      colorFilterJustChanged ||
+      stateFilterJustChanged ||
+      townFilterJustChanged ||
+      beginYearJustChanged ||
+      endYearJustChanged ||
+      imagesOnlyJustChanged ||
+      excludeManuscriptsJustChanged;
+    if (anyFilterChanged) {
+      setCurrentPage(1);
+    }
+  }, [debouncedKeywordSearch, typeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, excludeManuscripts]);
 
-        // Transform data to match component format
-        const transformedData = data?.map((record) => ({
-          id: record.id,
-          name: record.name,
-          state: record.state,
-          town: record.town,
-          dateRange: record.date_range,
-          color: record.color,
-          type: record.type,
-          valuation: record.valuation,
-          image: record.image_url || postmarkSample,
-        })) || [];
-
-        setCatalogRecords(transformedData);
-      } catch (error: any) {
-        toast({
-          title: "Error loading catalog",
-          description: error.message,
-          variant: "destructive",
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchCatalogRecords();
-  }, [toast]);
-
-  // Mock data - keeping for reference but not used
-  const mockResults = [
-    {
-      id: 1,
-      name: "Boston, Mass.",
-      state: "Massachusetts",
-      town: "Boston",
-      dateRange: "1825-1845",
-      color: "Black",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
+  // Fetch postmarks with React Query - cached so Back shows previous results immediately
+  const {
+    data: queryData,
+    isLoading: queryLoading,
+    isFetching: queryFetching,
+    error: queryError,
+  } = useQuery({
+    queryKey: [
+      "postmarks",
+      currentPage,
+      debouncedKeywordSearch,
+      typeFilter,
+      stateFilter,
+      debouncedTownFilter,
+      debouncedBeginYear,
+      debouncedEndYear,
+      imagesOnly,
+      colorFilter,
+      excludeManuscripts,
+      itemsPerPage,
+    ],
+    queryFn: async () => {
+      const { results, count } = await getPostmarksPage(
+        currentPage,
+        itemsPerPage,
+        debouncedKeywordSearch.trim() || undefined,
+        typeFilter !== "all" ? typeFilter : undefined,
+        excludeManuscripts,
+        colorFilter !== "all" ? colorFilter : null,
+        stateFilter !== "all" ? stateFilter : undefined,
+        debouncedTownFilter.trim() || undefined,
+        debouncedBeginYear.trim() || undefined,
+        debouncedEndYear.trim() || undefined,
+        imagesOnly
+      );
+      const apiTransformed = results.map((record: any) => ({
+        id: `api-${record.id}`,
+        name:
+          [
+            [record.town, record.state].filter(Boolean).join(", "),
+            record.shapeName,
+          ]
+            .filter(Boolean)
+            .join(" — ") || record.postmarkKey,
+        postmarkKey: record.postmarkKey,
+        state: record.state || "",
+        town: record.town || "",
+        dateRange: record.dateRange || "",
+        color: record.colorsDisplay || "",
+        type: record.shapeName || "",
+        valuation: record.rateValue,
+        image: record.mainImage || null,
+      }));
+      return { records: apiTransformed, count };
     },
-    {
-      id: 2,
-      name: "Philadelphia, Penn.",
-      state: "Pennsylvania",
-      town: "Philadelphia",
-      dateRange: "1820-1840",
-      color: "Red",
-      type: "Straight Line",
-      image: postmarkSample,
-    },
-    {
-      id: 3,
-      name: "New York, N.Y.",
-      state: "New York",
-      town: "New York",
-      dateRange: "1830-1850",
-      color: "Black",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
-    },
-    {
-      id: 4,
-      name: "Charleston, S.C.",
-      state: "South Carolina",
-      town: "Charleston",
-      dateRange: "1815-1835",
-      color: "Blue",
-      type: "Manuscript",
-      image: postmarkSample,
-    },
-    {
-      id: 5,
-      name: "Baltimore, Md.",
-      state: "Maryland",
-      town: "Baltimore",
-      dateRange: "1828-1848",
-      color: "Red",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
-    },
-    {
-      id: 6,
-      name: "Richmond, Va.",
-      state: "Virginia",
-      town: "Richmond",
-      dateRange: "1822-1842",
-      color: "Black",
-      type: "Straight Line",
-      image: postmarkSample,
-    },
-    {
-      id: 7,
-      name: "New Orleans, La.",
-      state: "Louisiana",
-      town: "New Orleans",
-      dateRange: "1825-1845",
-      color: "Red",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
-    },
-    {
-      id: 8,
-      name: "Salem, Mass.",
-      state: "Massachusetts",
-      town: "Salem",
-      dateRange: "1810-1830",
-      color: "Black",
-      type: "Manuscript",
-      image: postmarkSample,
-    },
-    {
-      id: 9,
-      name: "Albany, N.Y.",
-      state: "New York",
-      town: "Albany",
-      dateRange: "1818-1838",
-      color: "Blue",
-      type: "Straight Line",
-      image: postmarkSample,
-    },
-    {
-      id: 10,
-      name: "Providence, R.I.",
-      state: "Rhode Island",
-      town: "Providence",
-      dateRange: "1820-1840",
-      color: "Black",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
-    },
-    {
-      id: 11,
-      name: "Savannah, Ga.",
-      state: "Georgia",
-      town: "Savannah",
-      dateRange: "1816-1836",
-      color: "Red",
-      type: "Manuscript",
-      image: postmarkSample,
-    },
-    {
-      id: 12,
-      name: "Cincinnati, Ohio",
-      state: "Ohio",
-      town: "Cincinnati",
-      dateRange: "1825-1845",
-      color: "Black",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
-    },
-    {
-      id: 13,
-      name: "Hartford, Conn.",
-      state: "Connecticut",
-      town: "Hartford",
-      dateRange: "1812-1832",
-      color: "Blue",
-      type: "Straight Line",
-      image: postmarkSample,
-    },
-    {
-      id: 14,
-      name: "Pittsburgh, Penn.",
-      state: "Pennsylvania",
-      town: "Pittsburgh",
-      dateRange: "1820-1840",
-      color: "Red",
-      type: "Circular Date Stamp",
-      image: postmarkSample,
-    },
-    {
-      id: 15,
-      name: "Portland, Maine",
-      state: "Maine",
-      town: "Portland",
-      dateRange: "1814-1834",
-      color: "Black",
-      type: "Manuscript",
-      image: postmarkSample,
-    },
-  ];
+    staleTime: 5 * 60 * 1000, // 5 min - use cache when navigating back, no loading
+  });
 
-  // Apply filters
-  const filteredResults = useMemo(() => {
-    return catalogRecords.filter((result) => {
-      // Keyword search (name, town, state, type, color)
-      if (keywordSearch.trim()) {
-        const q = keywordSearch.trim().toLowerCase();
-        const matches = [result.name, result.town, result.state, result.type, result.color].some(
-          (val) => val != null && String(val).toLowerCase().includes(q)
-        );
-        if (!matches) return false;
-      }
+  const catalogRecords = queryData?.records ?? [];
+  const totalCount = queryData?.count ?? 0;
+  // Show loading only when we have no data; when we have cached data, show it (no spinner)
+  const loading = queryLoading || (queryFetching && catalogRecords.length === 0);
 
-      // State filter
-      if (stateFilter !== "all" && result.state !== stateFilter) return false;
-
-      // Town filter (guard null/undefined town from DB)
-      if (townFilter && !(result.town ?? "").toLowerCase().includes(townFilter.toLowerCase())) return false;
-
-      // Year range filter
-      const dateRange = result.dateRange ?? "";
-      const parts = dateRange.split("-").map((y) => parseInt(y, 10));
-      const resultBegin = parts[0];
-      const resultEnd = parts[1] ?? resultBegin;
-      if (beginYear && (isNaN(resultBegin) || resultBegin < parseInt(beginYear, 10))) return false;
-      if (endYear && (isNaN(resultEnd) || resultEnd > parseInt(endYear, 10))) return false;
-
-      // Type filter
-      if (typeFilter !== "all" && result.type !== typeFilter) return false;
-
-      // Color filter
-      if (colorFilter !== "all" && result.color?.toLowerCase() !== colorFilter) return false;
-
-      // Valuation filter
-      if (valuationFilter !== "all" && result.valuation !== valuationFilter) return false;
-
-      // Manuscripts filter
-      if (excludeManuscripts && result.type === "Manuscript") return false;
-
-      // Images only filter (in real app, check if image exists)
-      if (imagesOnly && !result.image) return false;
-
-      return true;
-    });
-  }, [catalogRecords, keywordSearch, stateFilter, townFilter, beginYear, endYear, typeFilter, colorFilter, valuationFilter, excludeManuscripts, imagesOnly]);
-
-  // Pagination
-  const totalPages = Math.ceil(filteredResults.length / itemsPerPage);
-  const paginatedResults = useMemo(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    return filteredResults.slice(startIndex, startIndex + itemsPerPage);
-  }, [filteredResults, currentPage]);
-
-  // Reset to page 1 when filters change
   useEffect(() => {
-    setCurrentPage(1);
-  }, [keywordSearch, stateFilter, townFilter, beginYear, endYear, typeFilter, colorFilter, valuationFilter, excludeManuscripts, imagesOnly]);
+    if (queryError) {
+      toast({
+        title: "Error loading catalog",
+        description: (queryError as Error).message,
+        variant: "destructive",
+      });
+    }
+  }, [queryError, toast]);
 
-  // Clear all filters
+  // Persist filters to URL so they survive navigation (Back from detail page)
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (debouncedKeywordSearch.trim()) params.set("q", debouncedKeywordSearch.trim());
+    if (stateFilter !== "all") params.set("state", stateFilter);
+    if (debouncedTownFilter.trim()) params.set("town", debouncedTownFilter.trim());
+    if (debouncedBeginYear.trim()) params.set("from", debouncedBeginYear.trim());
+    if (debouncedEndYear.trim()) params.set("to", debouncedEndYear.trim());
+    if (typeFilter !== "all") params.set("type", typeFilter);
+    if (colorFilter !== "all") params.set("color", colorFilter);
+    if (excludeManuscripts) params.set("noManuscripts", "true");
+    if (imagesOnly) params.set("images", "true");
+    if (currentPage > 1) params.set("page", String(currentPage));
+    const next = params.toString();
+    const current = searchParams.toString();
+    if (next !== current) {
+      setSearchParams(next ? params : {}, { replace: true });
+    }
+  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, typeFilter, colorFilter, excludeManuscripts, imagesOnly, searchParams, setSearchParams]);
+
+  // Enforce exactly itemsPerPage (10) per page — slice in case API returns more
+  const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
+  const paginatedResults = catalogRecords.slice(0, itemsPerPage);
+
+  // Clear all filters and URL params
   const handleClearAllFilters = () => {
     setKeywordSearch("");
     setStateFilter("all");
@@ -307,6 +279,7 @@ const Search = () => {
     setExcludeManuscripts(false);
     setImagesOnly(false);
     setCurrentPage(1);
+    setSearchParams("", { replace: true });
   };
 
   return (
@@ -360,26 +333,20 @@ const Search = () => {
 
                   <div className="space-y-2">
                     <Label htmlFor="state">State</Label>
-                    <Select value={stateFilter} onValueChange={setStateFilter}>
-                      <SelectTrigger id="state">
-                        <SelectValue placeholder="All States" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All States</SelectItem>
-                        <SelectItem value="Massachusetts">Massachusetts</SelectItem>
-                        <SelectItem value="New York">New York</SelectItem>
-                        <SelectItem value="Pennsylvania">Pennsylvania</SelectItem>
-                        <SelectItem value="South Carolina">South Carolina</SelectItem>
-                        <SelectItem value="Maryland">Maryland</SelectItem>
-                        <SelectItem value="Virginia">Virginia</SelectItem>
-                        <SelectItem value="Louisiana">Louisiana</SelectItem>
-                        <SelectItem value="Rhode Island">Rhode Island</SelectItem>
-                        <SelectItem value="Georgia">Georgia</SelectItem>
-                        <SelectItem value="Ohio">Ohio</SelectItem>
-                        <SelectItem value="Connecticut">Connecticut</SelectItem>
-                        <SelectItem value="Maine">Maine</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      id="state"
+                      value={stateFilter}
+                      onValueChange={setStateFilter}
+                      placeholder="All States"
+                      allOption={{ value: "all", label: "All States" }}
+                      options={Array.isArray(stateOptions) ? stateOptions : []}
+                      loading={isLoadingFilters}
+                      error={!!filterError}
+                      errorMessage="Failed to load states"
+                      searchPlaceholder="Search states..."
+                      emptyMessage="No state found."
+                      aria-label="Filter by state"
+                    />
                   </div>
 
                   <div className="space-y-2">
@@ -401,6 +368,7 @@ const Search = () => {
                         placeholder="1776"
                         value={beginYear}
                         onChange={(e) => setBeginYear(e.target.value)}
+                        className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                     </div>
                     <div className="space-y-2">
@@ -411,53 +379,48 @@ const Search = () => {
                         placeholder="1900"
                         value={endYear}
                         onChange={(e) => setEndYear(e.target.value)}
+                        className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                     </div>
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="type">Postmark Type</Label>
-                    <Select value={typeFilter} onValueChange={setTypeFilter}>
-                      <SelectTrigger id="type">
-                        <SelectValue placeholder="All Types" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Types</SelectItem>
-                        <SelectItem value="Circular Date Stamp">Circular Date Stamp</SelectItem>
-                        <SelectItem value="Straight Line">Straight Line</SelectItem>
-                        <SelectItem value="Manuscript">Manuscript</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      id="type"
+                      value={typeFilter}
+                      onValueChange={setTypeFilter}
+                      placeholder="All Types"
+                      allOption={{ value: "all", label: "All Types" }}
+                      options={Array.isArray(shapeOptions) ? shapeOptions : []}
+                      loading={isLoadingFilters}
+                      error={!!filterError}
+                      errorMessage="Failed to load types"
+                      searchPlaceholder="Search types..."
+                      emptyMessage="No type found."
+                      aria-label="Filter by postmark type"
+                    />
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="color">Color</Label>
-                    <Select value={colorFilter} onValueChange={setColorFilter}>
-                      <SelectTrigger id="color">
-                        <SelectValue placeholder="All Colors" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Colors</SelectItem>
-                        {isLoadingFilters ? (
-                          <div className="flex items-center justify-center py-2">
-                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                          </div>
-                        ) : filterError ? (
-                          <div className="px-2 py-1 text-sm text-destructive">
-                            Failed to load colors
-                          </div>
-                        ) : (
-                          (Array.isArray(colorOptions) ? colorOptions : []).map((color) => (
-                            <SelectItem key={color.value} value={color.value}>
-                              {color.label}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      id="color"
+                      value={colorFilter}
+                      onValueChange={setColorFilter}
+                      placeholder="All Colors"
+                      allOption={{ value: "all", label: "All Colors" }}
+                      options={Array.isArray(colorOptions) ? colorOptions : []}
+                      loading={isLoadingFilters}
+                      error={!!filterError}
+                      errorMessage="Failed to load colors"
+                      searchPlaceholder="Search colors..."
+                      emptyMessage="No color found."
+                      aria-label="Filter by color"
+                    />
                   </div>
 
-                  <div className="space-y-2">
+                  {/* <div className="space-y-2">
                     <Label htmlFor="valuation">Postmark Valuation</Label>
                     <Select value={valuationFilter} onValueChange={setValuationFilter}>
                       <SelectTrigger id="valuation">
@@ -471,7 +434,7 @@ const Search = () => {
                         <SelectItem value="Very Rare">Very Rare</SelectItem>
                       </SelectContent>
                     </Select>
-                  </div>
+                  </div> */}
 
                   <div className="space-y-3 pt-2">
                     <div className="flex items-center space-x-2">
@@ -519,7 +482,13 @@ const Search = () => {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
                 <div>
                   <p className="text-sm text-muted-foreground">
-                    Showing <span className="font-semibold text-foreground">{((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, filteredResults.length)}</span> of <span className="font-semibold text-foreground">{filteredResults.length}</span> results
+                    {totalCount === 0 ? (
+                      "0 results"
+                    ) : (
+                      <>
+                        Showing <span className="font-semibold text-foreground">{((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, totalCount)}</span> of <span className="font-semibold text-foreground">{totalCount}</span> results
+                      </>
+                    )}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -570,11 +539,11 @@ const Search = () => {
                     <Card
                       key={result.id}
                       className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
-                      onClick={() => navigate(`/record/${result.id}`)}
+                      onClick={() => navigate(`/record/${result.id}`, { state: { fromSearch: true } })}
                     >
                       <CardContent className="p-6">
                         <div className="flex gap-6">
-                          <img
+                          <ImageOrPlaceholder
                             src={result.image}
                             alt={result.name}
                             className="w-32 h-32 object-cover rounded border border-border"
@@ -583,10 +552,15 @@ const Search = () => {
                             <h3 className="font-heading text-xl font-semibold text-foreground mb-2">
                               {result.name}
                             </h3>
+                            {result.postmarkKey && (
+                              <p className="text-xs text-muted-foreground mb-2">
+                                Catalog key: {result.postmarkKey}
+                              </p>
+                            )}
                             <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
                               <div>
                                 <span className="text-muted-foreground">Location:</span>{" "}
-                                <span className="text-foreground">{result.town}, {result.state}</span>
+                                <span className="text-foreground">{result.town ? `${result.town}, ${result.state}` : result.state}</span>
                               </div>
                               <div>
                                 <span className="text-muted-foreground">Date Range:</span>{" "}
@@ -613,9 +587,9 @@ const Search = () => {
                     <Card
                       key={result.id}
                       className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden"
-                      onClick={() => navigate(`/record/${result.id}`)}
+                      onClick={() => navigate(`/record/${result.id}`, { state: { fromSearch: true } })}
                     >
-                      <img
+                      <ImageOrPlaceholder
                         src={result.image}
                         alt={result.name}
                         className="w-full h-48 object-cover"
@@ -624,10 +598,15 @@ const Search = () => {
                         <h3 className="font-heading text-lg font-semibold text-foreground mb-2">
                           {result.name}
                         </h3>
+                        {result.postmarkKey && (
+                          <p className="text-xs text-muted-foreground mb-2">
+                            Catalog key: {result.postmarkKey}
+                          </p>
+                        )}
                         <div className="space-y-1 text-sm">
                           <div>
                             <span className="text-muted-foreground">Location:</span>{" "}
-                            <span className="text-foreground">{result.town}, {result.state}</span>
+                            <span className="text-foreground">{result.town ? `${result.town}, ${result.state}` : result.state}</span>
                           </div>
                           <div>
                             <span className="text-muted-foreground">Date:</span>{" "}
@@ -644,37 +623,94 @@ const Search = () => {
                 </div>
               )}
 
-              {/* Pagination */}
-              {totalPages > 1 && (
-                <Pagination className="mt-8">
-                  <PaginationContent>
-                    <PaginationItem>
-                      <PaginationPrevious
-                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                        className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
-                      />
-                    </PaginationItem>
-
-                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                      <PaginationItem key={page}>
-                        <PaginationLink
-                          onClick={() => setCurrentPage(page)}
-                          isActive={currentPage === page}
-                          className="cursor-pointer"
-                        >
-                          {page}
-                        </PaginationLink>
+              {/* Pagination - compact for 500+ pages */}
+              {totalPages > 1 && !loading && (
+                <div className="mt-8 flex flex-col items-center gap-4">
+                  <Pagination>
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious
+                          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                          className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                        />
                       </PaginationItem>
-                    ))}
 
-                    <PaginationItem>
-                      <PaginationNext
-                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                        className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
-                      />
-                    </PaginationItem>
-                  </PaginationContent>
-                </Pagination>
+                      {getPaginationPages(currentPage, totalPages).map((p, i) =>
+                        p === "ellipsis" ? (
+                          <PaginationItem key={`ellipsis-${i}`}>
+                            <PaginationEllipsis />
+                          </PaginationItem>
+                        ) : (
+                          <PaginationItem key={p}>
+                            <PaginationLink
+                              onClick={() => setCurrentPage(p)}
+                              isActive={currentPage === p}
+                              className="cursor-pointer"
+                            >
+                              {p}
+                            </PaginationLink>
+                          </PaginationItem>
+                        )
+                      )}
+
+                      <PaginationItem>
+                        <PaginationNext
+                          onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                          className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Go to page</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={totalPages}
+                      placeholder="Page"
+                      value={goToPageInput}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (raw === "") {
+                          setGoToPageInput("");
+                          return;
+                        }
+                        const n = parseInt(raw, 10);
+                        if (Number.isNaN(n)) return;
+                        const clamped = Math.max(1, Math.min(totalPages, n));
+                        setGoToPageInput(String(clamped));
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          const n = parseInt(goToPageInput, 10);
+                          if (!Number.isNaN(n)) {
+                            setCurrentPage(Math.max(1, Math.min(totalPages, n)));
+                            setGoToPageInput("");
+                          }
+                        }
+                      }}
+                      className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      aria-label="Go to page number"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9"
+                      onClick={() => {
+                        const n = parseInt(goToPageInput, 10);
+                        if (!Number.isNaN(n)) {
+                          setCurrentPage(Math.max(1, Math.min(totalPages, n)));
+                          setGoToPageInput("");
+                        }
+                      }}
+                    >
+                      Go
+                    </Button>
+                  </div>
+                </div>
               )}
             </main>
           </div>

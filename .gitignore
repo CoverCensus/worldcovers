@@ -1,4 +1,14 @@
 .DS_Store
+*.DS_Store
+
+# Vite cache
+frontend/.vite/
+
+# Local / legacy data (optional: remove if you want to track)
+frontend/public/Old Data/
+
+# direnv (local env; often not committed)
+.envrc
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -161,10 +171,14 @@ venv.bak/
 # createstatic Static files
 /static/*
 !/static/DELETE.ME
+/backend/static/*
+!/backend/static/DELETE.ME
 
 # runtime uploaded media
 media/*
 !media/DELETE.ME
+/backend/media/*
+!/backend/media/DELETE.ME
 
 # mypy
 .mypy_cache/
@@ -238,3 +252,5 @@ tools/wip/in/*
 !tools/wip/in/DELETE.ME
 tools/wip/out/*
 !tools/wip/out/DELETE.ME
+.DS_Store
+/backend/imports

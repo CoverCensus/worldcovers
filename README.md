@@ -28,12 +28,12 @@ Currently only tested on Chromium (TODO: version?) on Windows 11, and Brave (1.8
 For licensing details, see [LICENSE](LICENSE)
 
 ###  **Apps**:
-* [Common Model](./common)
+* [Common Model](./backend/common)
   * TODO: DESCRIBE HERE
-* [WoCo Server](./woco)
+* [WoCo Server](./backend/woco)
   * TODO: DESCRIBE HERE
 * [Frontend (React)](./frontend)
-  * The public UI at [hellowoco.app](https://hellowoco.app) is a React SPA (e.g. from Lovable). Put the app in `frontend/`, run `npm run build`; Django serves it as the site home and all frontend routes. API and admin stay under `/api/` and `/admin/`.
+  * The public UI at [hellowoco.app](https://hellowoco.app) is a React SPA. Put the app in `frontend/`, run `npm run build`; Django serves it as the site home and all frontend routes. API and admin stay under `/api/` and `/admin/`.
 
 
 For more details see [DESIGN.md](./docs/DESIGN.md)
@@ -43,9 +43,9 @@ For more details see [DESIGN.md](./docs/DESIGN.md)
 
 ### Quickstart
 
-This project uses `pipenv`, and `django`. Make sure you have at least `python` 3.11 installed.
+This project uses `pipenv`, and `django`. Make sure you have at least `python` 3.11 installed. The Python backend lives in `backend/` (run pipenv/pip commands from there when needed).
 
-`dotenv` is used as well, but strictly for convenience.  It allows you to directly call `django-admin` for all project commands, instead of `python manage.py`. 
+`dotenv` is used as well, but strictly for convenience.  It allows you to directly call `django-admin` for all project commands, instead of `python backend/manage.py`. 
 
 For building other targets, and instructions for packaging in preparation for deployment, see [BUILD.md](./docs/BUILD.md).
 

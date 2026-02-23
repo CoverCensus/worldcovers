@@ -1,10 +1,10 @@
-# On push to main: build frontend and optionally deploy.
+# On push to staging: build frontend and optionally deploy.
 # The built frontend (frontend/dist/) is produced so your server or deploy step can use it.
 name: Build and deploy
 
 on:
   push:
-    branches: [main]
+    branches: [staging]
   workflow_dispatch:
 
 jobs:
@@ -27,15 +27,12 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Python dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r backend/requirements.txt
 
       - name: Run migrations (check)
-        run: python manage.py migrate --check --noinput || true
+        run: python backend/manage.py migrate --check --noinput || true
 
       - name: Build frontend
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
         run: |
           cd frontend
           npm ci
@@ -47,24 +44,20 @@ jobs:
           name: frontend-dist
           path: frontend/dist/
 
-  # Optional: add a deploy job that uses the artifact or triggers your host.
-  # Uncomment and adjust for your host (e.g. Railway, Render, VPS via SSH).
-  #
-  # deploy:
-  #   needs: build
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/download-artifact@v4
-  #       with:
-  #         name: frontend-dist
-  #         path: frontend/dist/
-  #     # Example: deploy to a server via SSH (you provide secrets).
-  #     # - name: Deploy to server
-  #     #   uses: appleboy/ssh-action@v1.0.0
-  #     #   with:
-  #     #     host: ${{ secrets.DEPLOY_HOST }}
-  #     #     username: ${{ secrets.DEPLOY_USER }}
-  #     #     key: ${{ secrets.DEPLOY_SSH_KEY }}
-  #     #     script: |
-  #     #       cd /var/www/worldcovers && git pull && ./scripts/deploy.sh && sudo systemctl restart worldcovers
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server (SSH)
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: hellowoco.app
+          username: jlogan
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 20m
+          script: |
+            set -euo pipefail
+            # Stop app so migrations can run without table locks (ALTER TABLE on Postmarks can block otherwise)
+            sudo systemctl stop worldcovers
+            sudo -u wocod -s bash -lc "cd /srv/woco && git fetch origin && git reset --hard origin/staging && ./scripts/deploy.sh"
+            sudo systemctl start worldcovers

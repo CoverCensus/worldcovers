@@ -5,37 +5,148 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Download, Upload, ArrowLeft } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
-import postmarkSample from "@/assets/postmark-sample.jpg";
+import { Download, Upload, ArrowLeft, Loader2 } from "lucide-react";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
+import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { SubmitImageDialog } from "@/components/SubmitImageDialog";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
+import { getPostmarkById } from "@/services/postmarks";
+
+function parseOtherCharacteristics(raw: string | null | undefined) {
+  const result = {
+    submitterName: "",
+    description: "",
+    citationReferences: "",
+    rarityLabel: "",
+  };
+
+  if (!raw) return result;
+
+  const lines = String(raw).split(/\r?\n/);
+  const extraDescriptionLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.startsWith("Submitted by:")) {
+      result.submitterName = trimmed.slice("Submitted by:".length).trim();
+    } else if (trimmed.startsWith("Description:")) {
+      result.description = trimmed.slice("Description:".length).trim();
+    } else if (trimmed.startsWith("Citation references:")) {
+      result.citationReferences = trimmed
+        .slice("Citation references:".length)
+        .trim();
+    } else if (trimmed.startsWith("Rarity:")) {
+      result.rarityLabel = trimmed.slice("Rarity:".length).trim();
+    } else {
+      extraDescriptionLines.push(trimmed);
+    }
+  }
+
+  const extra = extraDescriptionLines.join("\n");
+  result.description = [result.description, extra].filter(Boolean).join("\n");
+
+  return result;
+}
 
 const RecordDetail = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id } = useParams();
   const [submitImageOpen, setSubmitImageOpen] = useState(false);
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(0);
   const [count, setCount] = useState(0);
+  const [record, setRecord] = useState<{
+    id: number;
+    name: string;
+    postmarkKey: string;
+    state: string;
+    town: string;
+    dateFirstSeen: string;
+    dateLastSeen: string;
+    color: string;
+    type: any;
+    dimensions: string;
+    manuscript: string;
+    rarity: string;
+    description: string;
+    submitterName?: string;
+    citationReferences?: string;
+    images: (string | { imageUrl?: string })[];
+    valuations?: Array<{ estimatedValue?: string; condition?: string }>;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Mock data - in production, this would come from API based on id
-  const record = {
-    id: 1,
-    name: "Boston, Mass. - Circular Date Stamp",
-    state: "Massachusetts",
-    town: "Boston",
-    dateFirstSeen: "1825",
-    dateLastSeen: "1845",
-    color: "Black",
-    type: "Circular Date Stamp",
-    dimensions: "32mm diameter",
-    manuscript: "No",
-    rarity: "Common",
-    description: "Standard circular date stamp used at the Boston Post Office during the pre-stamp period. Features town name in arc above center date.",
-    images: [postmarkSample, postmarkSample, postmarkSample], // Multiple images for carousel
-  };
+  // Parse id from URL: "api-1" -> 1 (from Search when using API)
+  const postmarkId = id ? parseInt(String(id).replace(/^api-/, ""), 10) : null;
 
+  useEffect(() => {
+    if (postmarkId == null || isNaN(postmarkId)) {
+     
+      navigate('/')
+    }
+
+    let cancelled = false;
+    getPostmarkById(postmarkId)
+      .then((data) => {
+        if (cancelled) return;
+        if (data) {
+          const datesSeen = data.datesSeen?.[0];
+          const firstSize = data.sizes?.[0];
+          const firstVal = data.valuations?.[0];
+          const parsed = parseOtherCharacteristics(data.otherCharacteristics);
+          const locationLabel = [data.town, data.state].filter(Boolean).join(", ");
+          const shapeLabel = data?.postmarkShape?.shapeName || "";
+          const displayName = [locationLabel, shapeLabel].filter(Boolean).join(" — ") || data.postmarkKey;
+          const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
+          const rarityFromValuation = firstVal?.estimatedValue ? `$${firstVal.estimatedValue}` : "";
+          const rarityFromOther = parsed.rarityLabel || "";
+          const images =
+            data.images?.length
+              ? data.images.map((img: any) => ({
+                  imageUrl: `${baseImageUrl}${img.storageFilename}`,
+                  originalFilename: img.originalFilename,
+                }))
+              : [];
+          setRecord({
+            id: data.postmarkId,
+            name: displayName,
+            postmarkKey: data.postmarkKey,
+            state: data.state || "",
+            town: data.town || "",
+            dateFirstSeen: datesSeen?.earliestDateSeen?.slice(0, 4) || "",
+            dateLastSeen: datesSeen?.latestDateSeen?.slice(0, 4) || "",
+            color: data.colorsDisplay || "",
+            type: data?.postmarkShape?.shapeName || "",
+            dimensions: firstSize ? `${firstSize.width}×${firstSize.height} mm` : "",
+            manuscript: data.isManuscript ? "Yes" : "No",
+            rarity: rarityFromValuation || rarityFromOther,
+            description: parsed.description || data.otherCharacteristics || data.sourceCatalog || "",
+            submitterName: parsed.submitterName || "",
+            citationReferences: parsed.citationReferences || "",
+            images,
+            valuations: data.valuations?.map((v) => ({
+              estimatedValue: v.estimatedValue,
+              condition: "Average condition",
+            })),
+          });
+        } else {
+          setError("Record not found");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setError("Failed to load record");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [postmarkId]);
   // Carousel pagination
   useEffect(() => {
     if (!api) return;
@@ -54,6 +165,33 @@ const RecordDetail = () => {
     };
   }, [api]);
 
+  if (loading) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <Navigation />
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+        <Footer />
+      </div>
+    );
+  }
+
+  if (error || !record) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <Navigation />
+        <div className="flex-1 flex flex-col items-center justify-center gap-4">
+          <p className="text-muted-foreground">{error || "Record not found"}</p>
+          <Button variant="outline" onClick={() => (location.state?.fromSearch ? navigate(-1) : navigate("/search"))}>
+            Back to Search
+          </Button>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col">
       <Navigation />
@@ -63,7 +201,7 @@ const RecordDetail = () => {
           {/* Breadcrumb */}
           <Button
             variant="ghost"
-            onClick={() => navigate('/search')}
+            onClick={() => (location.state?.fromSearch ? navigate(-1) : navigate("/search"))}
             className="mb-6 -ml-4"
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
@@ -77,21 +215,40 @@ const RecordDetail = () => {
               <CardContent className="p-6">
                 <Carousel setApi={setApi} className="w-full">
                   <CarouselContent>
-                    {record.images.map((image, index) => (
-                      <CarouselItem key={index}>
-                        <img
-                          src={image}
-                          alt={`${record.name} - Image ${index + 1}`}
-                          className="w-full rounded border border-border object-contain"
-                        />
+                    {record?.images?.length ? (
+                      record.images.map((img: any, index) => (
+                        <CarouselItem key={index}>
+                          <img
+                            src={img.imageUrl}
+                            alt={`${img.originalFilename} - Image ${index + 1}`}
+                            className="w-full rounded border border-border object-contain"
+                          />
+                        </CarouselItem>
+                      ))
+                    ) : (
+                      <CarouselItem>
+                        <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted">
+                          <img
+                            src={imageNotAvailable}
+                            alt="No image available"
+                            className="max-h-full max-w-full object-contain"
+                          />
+                        </div>
                       </CarouselItem>
-                    ))}
+                    )}
                   </CarouselContent>
-                  <CarouselPrevious className="left-2" />
-                  <CarouselNext className="right-2" />
+                  {
+                    record?.images.length > 1 && 
+                    <>
+                    <CarouselPrevious className="left-2" />
+                    <CarouselNext className="right-2" />
+                    </>
+                  }
+                  
                 </Carousel>
                 
                 {/* Pagination Dots */}
+                {record?.images?.length > 1 && (
                 <div className="flex justify-center gap-2 mt-4 mb-4">
                   {record.images.map((_, index) => (
                     <button
@@ -106,6 +263,7 @@ const RecordDetail = () => {
                     />
                   ))}
                 </div>
+                )}
 
                 {/* <div className="flex gap-2">
                   <Button variant="outline" size="sm" className="flex-1">
@@ -131,10 +289,20 @@ const RecordDetail = () => {
                 <h1 className="font-heading text-3xl font-bold text-foreground mb-2">
                   {record.name}
                 </h1>
+                {record.postmarkKey && (
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Catalog key: {record.postmarkKey}
+                  </p>
+                )}
+                {record.submitterName && (
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Submitted by {record.submitterName}
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant="secondary">{record.type}</Badge>
-                  <Badge variant="secondary">{record.color}</Badge>
-                  <Badge variant="outline">{record.rarity}</Badge>
+                  {record?.type && <Badge variant="secondary">{record?.type}</Badge>}
+                  {record?.color && <Badge variant="secondary">{record.color}</Badge>}
+                  {record?.rarity && <Badge variant="outline">{record.rarity}</Badge>}
                 </div>
               </div>
 
@@ -172,6 +340,14 @@ const RecordDetail = () => {
                       <dt className="text-muted-foreground font-medium">Rarity</dt>
                       <dd className="text-foreground">{record.rarity}</dd>
                     </div>
+                    {record.citationReferences && (
+                      <div className="flex justify-between py-2">
+                        <dt className="text-muted-foreground font-medium">Citation References</dt>
+                        <dd className="text-foreground text-right ml-4">
+                          {record.citationReferences}
+                        </dd>
+                      </div>
+                    )}
                   </dl>
                 </CardContent>
               </Card>
@@ -181,7 +357,7 @@ const RecordDetail = () => {
                   <CardTitle className="font-heading text-lg">Description</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
+                  <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
                     {record.description}
                   </p>
                 </CardContent>
@@ -192,7 +368,7 @@ const RecordDetail = () => {
           {/* Additional Information Tabs */}
           <Card className="shadow-archival-lg">
             <CardContent className="p-6">
-              <Tabs defaultValue="references">
+              <Tabs defaultValue="valuations">
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="references">References</TabsTrigger>
                   <TabsTrigger value="valuations">Valuations</TabsTrigger>
@@ -216,20 +392,20 @@ const RecordDetail = () => {
                 </TabsContent>
                 <TabsContent value="valuations" className="mt-6">
                   <div className="space-y-4">
-                    <div className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                      <div>
-                        <p className="text-sm font-medium text-foreground">On Cover</p>
-                        <p className="text-xs text-muted-foreground">Average condition</p>
+                    {(record.valuations && record.valuations.length > 0
+                      ? record.valuations
+                      : [{ estimatedValue: "", condition: "" }]
+                    ).map((v, i) => (
+                      <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">On Cover</p>
+                          <p className="text-xs text-muted-foreground">{v.condition}</p>
+                        </div>
+                        <p className="text-lg font-heading font-semibold text-primary">
+                          {v.estimatedValue ? `$${v.estimatedValue}` : "—"}
+                        </p>
                       </div>
-                      <p className="text-lg font-heading font-semibold text-primary">$45-$75</p>
-                    </div>
-                    <div className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                      <div>
-                        <p className="text-sm font-medium text-foreground">Strike on Folded Letter</p>
-                        <p className="text-xs text-muted-foreground">Clear strike</p>
-                      </div>
-                      <p className="text-lg font-heading font-semibold text-primary">$25-$40</p>
-                    </div>
+                    ))}
                   </div>
                 </TabsContent>
                 <TabsContent value="citations" className="mt-6">

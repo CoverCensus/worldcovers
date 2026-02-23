@@ -66,7 +66,7 @@ function mapApiResultToRecord(item: PublicationApiResultItem): PublicationRecord
 }
 
 function getPublicationsApiUrl(): string | null {
-  const env = import.meta.env.VITE_PUBLICATIONS_API_URL;
+  const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
   if (base.endsWith("/api/publications")) return base;

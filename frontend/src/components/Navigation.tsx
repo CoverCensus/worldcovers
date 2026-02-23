@@ -1,30 +1,18 @@
 import { NavLink } from "@/components/NavLink";
 import { Button } from "@/components/ui/button";
 import { Menu, X, LogOut } from "lucide-react";
-import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { User } from "@supabase/supabase-js";
+import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
+import { clearStoredUser } from "@/lib/auth";
 
 export const Navigation = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [user, setUser] = useState<User | null>(null);
+  const user = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
 
   const handleFaqClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
@@ -41,20 +29,21 @@ export const Navigation = () => {
 
   const handleLogout = async () => {
     try {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-      
+      await fetch("/api/logout/", { method: "POST", credentials: "include" });
+      clearStoredUser();
+
       toast({
         title: "Signed out",
         description: "You have been successfully signed out.",
       });
-      
-      navigate('/');
+
+      navigate("/");
       setMobileMenuOpen(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      clearStoredUser();
       toast({
         title: "Error signing out",
-        description: error.message,
+        description: error instanceof Error ? error.message : "Could not sign out",
         variant: "destructive",
       });
     }
