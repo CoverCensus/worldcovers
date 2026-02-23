@@ -12,7 +12,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import postmarkSample from "@/assets/postmark-sample.jpg";
+import imageNotAvailable from "@/assets/image-not-available.jpg";
 
 function getPostmarksApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
@@ -392,7 +392,7 @@ const Dashboard = () => {
                       <div className="grid md:grid-cols-[200px_1fr] gap-6">
                         <div className="aspect-square rounded-lg overflow-hidden bg-muted">
                           <img
-                            src={submission.image_url || postmarkSample}
+                            src={submission.image_url || imageNotAvailable}
                             alt={submission.name}
                             className="w-full h-full object-cover"
                           />
