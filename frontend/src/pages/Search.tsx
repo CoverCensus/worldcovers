@@ -11,7 +11,7 @@ import { Grid3x3, List, Search as SearchIcon, SlidersHorizontal, Loader2 } from 
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import postmarkSample from "@/assets/postmark-sample.jpg";
+import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { getPostmarksPage } from "@/services/postmarks";
 import { useToast } from "@/hooks/use-toast";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
@@ -28,7 +28,7 @@ function getSearchParam(params: URLSearchParams, key: string, defaultValue: stri
 
 const noImageClassName = "flex items-center justify-center bg-muted text-muted-foreground text-sm";
 
-/** Placeholder when image is missing or fails to load. Shows "No Image" instead of alt when not found. */
+/** Placeholder when image is missing or fails to load. Shows fallback artwork instead of text. */
 function ImageOrPlaceholder({
   src,
   alt,
@@ -40,16 +40,34 @@ function ImageOrPlaceholder({
 }) {
   const [error, setError] = useState(false);
   if (error) {
-    return <div className={cn(noImageClassName, className)}>No Image</div>;
+    return (
+      <img
+        src={imageNotAvailable}
+        alt="No image available"
+        className={cn(noImageClassName, className)}
+      />
+    );
   }
   if (src) {
     const imgSrc = src.storageFilename ? `${import.meta.env.VITE_IMAGE_URL}${src.storageFilename}` : null;
     if (!imgSrc) {
-      return <div className={cn(noImageClassName, className)}>No Image</div>;
+      return (
+        <img
+          src={imageNotAvailable}
+          alt="No image available"
+          className={cn(noImageClassName, className)}
+        />
+      );
     }
     return <img src={imgSrc} alt={alt} className={className} onError={() => setError(true)} />;
   }
-  return <div className={cn(noImageClassName, className)}>No Image</div>;
+  return (
+    <img
+      src={imageNotAvailable}
+      alt="No image available"
+      className={cn(noImageClassName, className)}
+    />
+  );
 }
 
 /** Build compact page numbers for pagination (handles 500+ pages) */
@@ -188,7 +206,14 @@ const Search = () => {
       );
       const apiTransformed = results.map((record: any) => ({
         id: `api-${record.id}`,
-        name: record.postmarkKey,
+        name:
+          [
+            [record.town, record.state].filter(Boolean).join(", "),
+            record.shapeName,
+          ]
+            .filter(Boolean)
+            .join(" — ") || record.postmarkKey,
+        postmarkKey: record.postmarkKey,
         state: record.state || "",
         town: record.town || "",
         dateRange: record.dateRange || "",
@@ -527,6 +552,11 @@ const Search = () => {
                             <h3 className="font-heading text-xl font-semibold text-foreground mb-2">
                               {result.name}
                             </h3>
+                            {result.postmarkKey && (
+                              <p className="text-xs text-muted-foreground mb-2">
+                                Catalog key: {result.postmarkKey}
+                              </p>
+                            )}
                             <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
                               <div>
                                 <span className="text-muted-foreground">Location:</span>{" "}
@@ -568,6 +598,11 @@ const Search = () => {
                         <h3 className="font-heading text-lg font-semibold text-foreground mb-2">
                           {result.name}
                         </h3>
+                        {result.postmarkKey && (
+                          <p className="text-xs text-muted-foreground mb-2">
+                            Catalog key: {result.postmarkKey}
+                          </p>
+                        )}
                         <div className="space-y-1 text-sm">
                           <div>
                             <span className="text-muted-foreground">Location:</span>{" "}

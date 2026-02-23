@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft } from "lucide-react";
-import postmarkSample from "@/assets/postmark-sample.jpg";
+import imageNotAvailable from "@/assets/image-not-available.jpg";
 
 /** Unified shape for catalog entry (from catalog_records or submissions). */
 export type CatalogEntry = {
@@ -71,7 +71,7 @@ export const CatalogEntryDetailView = ({
   showUploadImage,
   onUploadImage,
 }: CatalogEntryDetailViewProps) => {
-  const imageUrl = entry.image_url || postmarkSample;
+  const imageUrl = entry.image_url || imageNotAvailable;
   const { firstSeen, lastSeen } = parseDateRange(entry.date_range);
 
   return (

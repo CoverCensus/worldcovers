@@ -7,10 +7,48 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Download, Upload, ArrowLeft, Loader2 } from "lucide-react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
-import postmarkSample from "@/assets/postmark-sample.jpg";
+import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { SubmitImageDialog } from "@/components/SubmitImageDialog";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { getPostmarkById } from "@/services/postmarks";
+
+function parseOtherCharacteristics(raw: string | null | undefined) {
+  const result = {
+    submitterName: "",
+    description: "",
+    citationReferences: "",
+    rarityLabel: "",
+  };
+
+  if (!raw) return result;
+
+  const lines = String(raw).split(/\r?\n/);
+  const extraDescriptionLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.startsWith("Submitted by:")) {
+      result.submitterName = trimmed.slice("Submitted by:".length).trim();
+    } else if (trimmed.startsWith("Description:")) {
+      result.description = trimmed.slice("Description:".length).trim();
+    } else if (trimmed.startsWith("Citation references:")) {
+      result.citationReferences = trimmed
+        .slice("Citation references:".length)
+        .trim();
+    } else if (trimmed.startsWith("Rarity:")) {
+      result.rarityLabel = trimmed.slice("Rarity:".length).trim();
+    } else {
+      extraDescriptionLines.push(trimmed);
+    }
+  }
+
+  const extra = extraDescriptionLines.join("\n");
+  result.description = [result.description, extra].filter(Boolean).join("\n");
+
+  return result;
+}
 
 const RecordDetail = () => {
   const navigate = useNavigate();
@@ -23,6 +61,7 @@ const RecordDetail = () => {
   const [record, setRecord] = useState<{
     id: number;
     name: string;
+    postmarkKey: string;
     state: string;
     town: string;
     dateFirstSeen: string;
@@ -33,6 +72,8 @@ const RecordDetail = () => {
     manuscript: string;
     rarity: string;
     description: string;
+    submitterName?: string;
+    citationReferences?: string;
     images: (string | { imageUrl?: string })[];
     valuations?: Array<{ estimatedValue?: string; condition?: string }>;
   } | null>(null);
@@ -56,9 +97,24 @@ const RecordDetail = () => {
           const datesSeen = data.datesSeen?.[0];
           const firstSize = data.sizes?.[0];
           const firstVal = data.valuations?.[0];
+          const parsed = parseOtherCharacteristics(data.otherCharacteristics);
+          const locationLabel = [data.town, data.state].filter(Boolean).join(", ");
+          const shapeLabel = data?.postmarkShape?.shapeName || "";
+          const displayName = [locationLabel, shapeLabel].filter(Boolean).join(" — ") || data.postmarkKey;
+          const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
+          const rarityFromValuation = firstVal?.estimatedValue ? `$${firstVal.estimatedValue}` : "";
+          const rarityFromOther = parsed.rarityLabel || "";
+          const images =
+            data.images?.length
+              ? data.images.map((img: any) => ({
+                  imageUrl: `${baseImageUrl}${img.storageFilename}`,
+                  originalFilename: img.originalFilename,
+                }))
+              : [];
           setRecord({
             id: data.postmarkId,
-            name: data.postmarkKey,
+            name: displayName,
+            postmarkKey: data.postmarkKey,
             state: data.state || "",
             town: data.town || "",
             dateFirstSeen: datesSeen?.earliestDateSeen?.slice(0, 4) || "",
@@ -67,11 +123,11 @@ const RecordDetail = () => {
             type: data?.postmarkShape?.shapeName || "",
             dimensions: firstSize ? `${firstSize.width}×${firstSize.height} mm` : "",
             manuscript: data.isManuscript ? "Yes" : "No",
-            rarity: firstVal?.estimatedValue ? `$${firstVal.estimatedValue}` : "",
-            description: data.otherCharacteristics || data.sourceCatalog || "",
-            images: data.images?.length
-              ? data.images.map((img) => ({ imageUrl: `${import.meta.env.VITE_IMAGE_URL}${img.storageFilename}`, originalFilename: img.originalFilename }))
-              : [],
+            rarity: rarityFromValuation || rarityFromOther,
+            description: parsed.description || data.otherCharacteristics || data.sourceCatalog || "",
+            submitterName: parsed.submitterName || "",
+            citationReferences: parsed.citationReferences || "",
+            images,
             valuations: data.valuations?.map((v) => ({
               estimatedValue: v.estimatedValue,
               condition: "Average condition",
@@ -136,11 +192,6 @@ const RecordDetail = () => {
     );
   }
 
-  // const imageSources: string[] = record.images
-  //   .map((img) => (typeof img === "string" ? img : (img as { imageUrl?: string }).imageUrl))
-  //   .filter((url): url is string => !!url);
-  // if (imageSources.length === 0) imageSources.push(postmarkSample);
-
   return (
     <div className="min-h-screen flex flex-col">
       <Navigation />
@@ -175,11 +226,15 @@ const RecordDetail = () => {
                         </CarouselItem>
                       ))
                     ) : (
-                      // <CarouselItem>
-                        <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted text-muted-foreground">
-                          No Image
+                      <CarouselItem>
+                        <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted">
+                          <img
+                            src={imageNotAvailable}
+                            alt="No image available"
+                            className="max-h-full max-w-full object-contain"
+                          />
                         </div>
-                      // </CarouselItem>
+                      </CarouselItem>
                     )}
                   </CarouselContent>
                   {
@@ -234,6 +289,16 @@ const RecordDetail = () => {
                 <h1 className="font-heading text-3xl font-bold text-foreground mb-2">
                   {record.name}
                 </h1>
+                {record.postmarkKey && (
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Catalog key: {record.postmarkKey}
+                  </p>
+                )}
+                {record.submitterName && (
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Submitted by {record.submitterName}
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-2">
                   {record?.type && <Badge variant="secondary">{record?.type}</Badge>}
                   {record?.color && <Badge variant="secondary">{record.color}</Badge>}
@@ -275,6 +340,14 @@ const RecordDetail = () => {
                       <dt className="text-muted-foreground font-medium">Rarity</dt>
                       <dd className="text-foreground">{record.rarity}</dd>
                     </div>
+                    {record.citationReferences && (
+                      <div className="flex justify-between py-2">
+                        <dt className="text-muted-foreground font-medium">Citation References</dt>
+                        <dd className="text-foreground text-right ml-4">
+                          {record.citationReferences}
+                        </dd>
+                      </div>
+                    )}
                   </dl>
                 </CardContent>
               </Card>
@@ -284,7 +357,7 @@ const RecordDetail = () => {
                   <CardTitle className="font-heading text-lg">Description</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
+                  <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
                     {record.description}
                   </p>
                 </CardContent>
