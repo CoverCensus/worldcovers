@@ -836,6 +836,35 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(postmarks, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='my-submissions', permission_classes=[AllowAny])
+    def my_submissions(self, request):
+        """
+        Get catalog entries that were submitted via the Contributor Dashboard.
+        Filters Postmarks where source_catalog='User contribution' and
+        other_characteristics contains 'Submitted by: <submitter>'.
+        Frontend passes ?submitter=<username-or-email> (from its auth layer).
+        """
+        submitter = (request.query_params.get('submitter') or '').strip()
+        if not submitter:
+            return Response(
+                {"detail": "submitter query parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Simple text match on other_characteristics; restrict to user contributions only
+        needle = f"Submitted by: {submitter}"
+        qs = self.get_queryset().filter(
+            source_catalog="User contribution",
+            other_characteristics__icontains=needle,
+        ).order_by('-created_date')
+
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
     
     @action(detail=True, methods=['post'])
     def add_color(self, request, pk=None):

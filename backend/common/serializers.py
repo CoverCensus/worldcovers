@@ -325,7 +325,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         fields = ['postmark_id', 'postmark_key', 'facility_name', 'shape_name',
                   'rate_location', 'rate_value', 'is_manuscript', 'main_image',
                   'responsible_groups', 'state', 'state_id', 'town', 'date_range',
-                  'colors_display', 'valuation_display']
+                  'colors_display', 'valuation_display', 'created_date']
 
     def get_facility_name(self, obj):
         if obj.postal_facility_identity_id:
