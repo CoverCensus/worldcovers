@@ -3,10 +3,16 @@
 ## MPC: 2025/11/15
 ###################################################################################################
 import csv
+import hashlib
 import io
+import os
+import re
+import uuid
 from datetime import date
 
+from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
+from django.utils.text import slugify
 from django.db.models import Q, Count, Prefetch
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -156,6 +162,312 @@ class LoginRequestView(APIView):
         user.save()
         return Response(
             {"detail": "Request submitted. An admin will provide your username and password."},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+def _get_contribution_user():
+    """User for creating Postmark and related TimestampedModel from a contribution (no request user)."""
+    User = get_user_model()
+    return User.objects.filter(is_superuser=True).first() or User.objects.first()
+
+
+def _save_contribution_image(uploaded_file):
+    """
+    Save uploaded image to media/postmarks/contributions/ and return metadata for PostmarkImage.
+    Returns dict with storage_filename, original_filename, file_checksum, mime_type,
+    image_width, image_height, file_size_bytes, or None if invalid/failed.
+    """
+    if not uploaded_file or not getattr(uploaded_file, "read", None):
+        return None
+    allowed_types = {"image/png", "image/jpeg", "image/jpg", "image/tiff"}
+    content_type = getattr(uploaded_file, "content_type", "") or ""
+    if content_type not in allowed_types:
+        return None
+    max_size_bytes = 10 * 1024 * 1024  # 10 MB
+    uploaded_file.seek(0)
+    content = uploaded_file.read()
+    if len(content) > max_size_bytes:
+        return None
+    if not content:
+        return None
+    uploaded_file.seek(0)
+    try:
+        from PIL import Image as PILImage
+    except ImportError:
+        return None
+    # Checksum
+    file_checksum = hashlib.sha256(content).hexdigest()
+    # Unique storage path: contributions/<uuid>.<ext>
+    ext = "jpg"
+    if "png" in content_type:
+        ext = "png"
+    elif "tiff" in content_type:
+        ext = "tiff"
+    storage_name = f"contributions/{uuid.uuid4().hex}.{ext}"
+    media_dir = os.path.join(settings.MEDIA_ROOT, "postmarks")
+    sub_dir = os.path.join(media_dir, "contributions")
+    os.makedirs(sub_dir, exist_ok=True)
+    file_path = os.path.join(media_dir, storage_name)
+    with open(file_path, "wb") as f:
+        f.write(content)
+    # Dimensions
+    try:
+        img = PILImage.open(io.BytesIO(content))
+        width, height = img.size
+    except Exception:
+        width, height = 0, 0
+    return {
+        "storage_filename": storage_name,
+        "original_filename": getattr(uploaded_file, "name", "image")[:255] or "image",
+        "file_checksum": file_checksum,
+        "mime_type": content_type[:50],
+        "image_width": width,
+        "image_height": height,
+        "file_size_bytes": len(content),
+    }
+
+
+def _create_postmark_in_catalog(payload):
+    """
+    Create a Postmark (and related records) directly in the catalog tables from
+    the contribute form payload. No separate contribution table; data goes into
+    the same tables that catalog search uses.
+    Uses a system user for created_by/modified_by. Returns the Postmark or None on failure.
+    """
+    user = _get_contribution_user()
+    if not user:
+        return None
+    try:
+        state_str = (payload.get("state") or "").strip()
+        town_str = (payload.get("town") or "").strip()
+        date_range_str = (payload.get("date_range") or "").strip()
+        type_str = (payload.get("type") or "").strip()
+        color_str = (payload.get("color") or "").strip()
+        manuscript_str = (payload.get("manuscript") or "").strip()
+        dimensions_str = (payload.get("dimensions") or "").strip()
+        description_str = (payload.get("description") or "").strip()
+        references_str = (payload.get("references") or "").strip()
+        rarity_str = (payload.get("rarity") or "").strip()
+
+        # State: get or create AdministrativeUnit + Identity
+        state_slug = slugify(state_str)[:40] or "unknown"
+        ref_code = f"CONTRIB-{state_slug}"
+        admin_unit, _ = AdministrativeUnit.objects.get_or_create(
+            reference_code=ref_code,
+            defaults={"created_by": user, "modified_by": user},
+        )
+        effective_from = date(1900, 1, 1)
+        if not AdministrativeUnitIdentity.objects.filter(
+            administrative_unit=admin_unit,
+            unit_name=state_str[:255],
+            effective_from_date=effective_from,
+        ).exists():
+            AdministrativeUnitIdentity.objects.create(
+                administrative_unit=admin_unit,
+                unit_name=state_str[:255],
+                unit_abbreviation=(state_slug.upper()[:10] if state_slug != "unknown" else "CONTRIB"),
+                unit_type="STATE",
+                hierarchy_level=2,
+                change_reason="INITIAL",
+                effective_from_date=effective_from,
+                effective_to_date=None,
+                created_by=user,
+                modified_by=user,
+            )
+        # Facility: get or create PostalFacility + Identity for town
+        town_slug = slugify(town_str)[:30] or "unknown"
+        facility_ref = f"CONTRIB-{town_slug}-{state_slug}"[:50]
+        facility, _ = PostalFacility.objects.get_or_create(
+            reference_code=facility_ref,
+            defaults={"created_by": user, "modified_by": user},
+        )
+        identity, _ = PostalFacilityIdentity.objects.get_or_create(
+            postal_facility=facility,
+            effective_from_date=effective_from,
+            defaults={
+                "facility_name": town_str[:255],
+                "facility_type": "POST_OFFICE",
+                "is_operational": True,
+                "created_by": user,
+                "modified_by": user,
+            },
+        )
+        # Link facility to state (jurisdiction)
+        if not JurisdictionalAffiliation.objects.filter(
+            postal_facility_identity=identity,
+            administrative_unit=admin_unit,
+            effective_from_date=effective_from,
+        ).exists():
+            JurisdictionalAffiliation.objects.create(
+                postal_facility_identity=identity,
+                administrative_unit=admin_unit,
+                effective_from_date=effective_from,
+                effective_to_date=None,
+                affiliation_source="Contribution",
+                created_by=user,
+                modified_by=user,
+            )
+        # Shape by type name; fallback to first
+        shape = PostmarkShape.objects.filter(shape_name=type_str).first()
+        if not shape:
+            shape = PostmarkShape.objects.first()
+        if not shape:
+            return None
+        lettering = LetteringStyle.objects.first()
+        framing = FramingStyle.objects.first()
+        date_fmt = DateFormat.objects.first()
+        if not lettering or not framing or not date_fmt:
+            return None
+        # Unique key
+        postmark_key = f"CONTRIB-{uuid.uuid4().hex[:12]}"
+        is_manuscript = manuscript_str.lower() == "yes"
+        # Build other_characteristics from all contributor fields (description, references, rarity, submitter)
+        submitter_str = (payload.get("submitter_name") or "").strip()
+        other_parts = []
+        if submitter_str:
+            other_parts.append(f"Submitted by: {submitter_str}")
+        if description_str:
+            other_parts.append(f"Description: {description_str}")
+        if references_str:
+            other_parts.append(f"Citation references: {references_str}")
+        if rarity_str:
+            other_parts.append(f"Rarity: {rarity_str}")
+        other_characteristics = "\n".join(other_parts) if other_parts else ""
+
+        postmark = Postmark.objects.create(
+            site_id=1,
+            postal_facility_identity=identity,
+            state=admin_unit,
+            postmark_shape=shape,
+            lettering_style=lettering,
+            framing_style=framing,
+            date_format=date_fmt,
+            postmark_key=postmark_key,
+            rate_location="NONE",
+            rate_value="",
+            is_manuscript=is_manuscript,
+            source_catalog="User contribution",
+            other_characteristics=other_characteristics[:10000] if other_characteristics else "",
+            created_by=user,
+            modified_by=user,
+        )
+        # Dimensions: store in PostmarkSize (size_notes) when provided
+        if dimensions_str:
+            PostmarkSize.objects.create(
+                postmark=postmark,
+                width=0,
+                height=0,
+                size_notes=dimensions_str[:255],
+                created_by=user,
+                modified_by=user,
+            )
+        # Color
+        color_name = color_str or "Black"
+        color, _ = Color.objects.get_or_create(
+            color_name=color_name[:50],
+            defaults={"created_by": user, "modified_by": user},
+        )
+        PostmarkColor.objects.create(
+            postmark=postmark,
+            color=color,
+            created_by=user,
+            modified_by=user,
+        )
+        # Dates seen: parse "YYYY" or "YYYY-YYYY"
+        parts = re.split(r"[-–—]", date_range_str)
+        try:
+            y1 = int(parts[0].strip()[:4]) if parts else 1900
+            y2 = int(parts[1].strip()[:4]) if len(parts) > 1 else y1
+        except (ValueError, IndexError):
+            y1 = y2 = 1900
+        earliest = date(max(1, min(y1, 9999)), 1, 1)
+        latest = date(max(1, min(y2, 9999)), 12, 31)
+        PostmarkDatesSeen.objects.create(
+            postmark=postmark,
+            earliest_date_seen=earliest,
+            latest_date_seen=latest,
+            created_by=user,
+            modified_by=user,
+        )
+        # Optional: attach uploaded image
+        image_meta = payload.get("image_meta")
+        if image_meta and isinstance(image_meta, dict):
+            PostmarkImage.objects.create(
+                postmark=postmark,
+                original_filename=image_meta.get("original_filename", "image")[:255],
+                storage_filename=image_meta["storage_filename"],
+                file_checksum=image_meta.get("file_checksum", "")[:64],
+                mime_type=image_meta.get("mime_type", "image/jpeg")[:50],
+                image_width=image_meta.get("image_width", 0),
+                image_height=image_meta.get("image_height", 0),
+                file_size_bytes=image_meta.get("file_size_bytes", 0),
+                image_view="FULL",
+                display_order=0,
+                uploaded_by=user,
+                created_by=user,
+                modified_by=user,
+            )
+        return postmark
+    except Exception:
+        return None
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class ContributionView(APIView):
+    """
+    Public API to submit a catalog entry. Writes directly into the catalog tables
+    (Postmark and related) so the entry appears in catalog search. No separate contribution table.
+    Accepts JSON or multipart/form-data; when 'image' file is present, saves it and links to the new postmark.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def post(self, request):
+        data = request.data or {}
+        state = (data.get("state") or "").strip()
+        town = (data.get("town") or "").strip()
+        first_seen = (data.get("firstSeen") or "").strip()
+        last_seen = (data.get("lastSeen") or "").strip()
+        type_val = (data.get("type") or "").strip()
+        color = (data.get("color") or "").strip()
+        if not state or not town or not first_seen or not type_val or not color:
+            return Response(
+                {"detail": "Missing required fields: state, town, firstSeen, type, color."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        date_range = f"{first_seen}-{last_seen}" if last_seen else first_seen
+        payload = {
+            "state": state,
+            "town": town,
+            "date_range": date_range,
+            "type": type_val,
+            "color": color,
+            "manuscript": (data.get("manuscript") or "").strip(),
+            "dimensions": (data.get("dimensions") or "").strip(),
+            "description": (data.get("description") or "").strip(),
+            "references": (data.get("references") or "").strip(),
+            "rarity": (data.get("rarity") or "").strip(),
+            "submitter_name": (data.get("submitterName") or "").strip(),
+        }
+        # Optional image upload
+        image_file = request.FILES.get("image")
+        if image_file:
+            image_meta = _save_contribution_image(image_file)
+            if image_meta:
+                payload["image_meta"] = image_meta
+        postmark = _create_postmark_in_catalog(payload)
+        if not postmark:
+            return Response(
+                {"detail": "Could not add entry to catalog. Ensure the database has at least one user and reference data (shapes, lettering, framing, date format)."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        return Response(
+            {
+                "detail": "Submission sent. Your entry has been added to the catalog.",
+                "postmarkId": postmark.postmark_id,
+            },
             status=status.HTTP_201_CREATED,
         )
 
