@@ -44,7 +44,7 @@ const Index = () => {
               American Stampless Cover Catalog
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground mb-8 leading-relaxed">
-              Explore over 25,000 historical postal markings from across America. A comprehensive, open-access archive for researchers, collectors, and philatelic enthusiasts.
+              Explore over 52,000 historical postal markings from across America. A comprehensive, open-access archive for researchers, collectors, and philatelic enthusiasts.
             </p>
             <div className="flex flex-col sm:flex-row gap-4">
               <Button 
@@ -74,19 +74,19 @@ const Index = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             <div className="text-center">
-              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">25,000+</div>
+              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">52,000+</div>
               <div className="text-sm text-muted-foreground">Postmarks Cataloged</div>
             </div>
             <div className="text-center">
-              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">2,500+</div>
+              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">13,000+</div>
               <div className="text-sm text-muted-foreground">Towns Documented</div>
             </div>
             <div className="text-center">
-              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">50</div>
-              <div className="text-sm text-muted-foreground">States Covered</div>
+              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">53</div>
+              <div className="text-sm text-muted-foreground">States/Territories Covered</div>
             </div>
             <div className="text-center">
-              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">1776-1900</div>
+              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">1700-1870</div>
               <div className="text-sm text-muted-foreground">Historical Range</div>
             </div>
           </div>
