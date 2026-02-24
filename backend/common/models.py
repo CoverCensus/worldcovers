@@ -914,7 +914,15 @@ class PostmarkImage(TimestampedModel):
         ]
 
     def __str__(self):
-        return f"{self.postmark} - {self.original_filename}"
+        """
+        Robust string representation that tolerates missing or invalid
+        related Postmark records, so that admin views never crash.
+        """
+        try:
+            postmark_display = str(self.postmark) if self.postmark_id else "Orphan"
+        except Exception:
+            postmark_display = "Orphan"
+        return f"{postmark_display} - {self.original_filename}"
 
     def save(self, *args, **kwargs):
         """Generate file checksum if not provided"""
