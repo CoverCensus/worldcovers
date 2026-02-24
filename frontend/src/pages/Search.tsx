@@ -191,7 +191,7 @@ const Search = () => {
       itemsPerPage,
     ],
     queryFn: async () => {
-      const { results, count } = await getPostmarksPage(
+      const { results, count, count_capped } = await getPostmarksPage(
         currentPage,
         itemsPerPage,
         debouncedKeywordSearch.trim() || undefined,
@@ -222,13 +222,14 @@ const Search = () => {
         valuation: record.rateValue,
         image: record.mainImage || null,
       }));
-      return { records: apiTransformed, count };
+      return { records: apiTransformed, count, count_capped };
     },
     staleTime: 5 * 60 * 1000, // 5 min - use cache when navigating back, no loading
   });
 
   const catalogRecords = queryData?.records ?? [];
   const totalCount = queryData?.count ?? 0;
+  const countCapped = queryData?.count_capped ?? false;
   // Show loading only when we have no data; when we have cached data, show it (no spinner)
   const loading = queryLoading || (queryFetching && catalogRecords.length === 0);
 
@@ -486,7 +487,7 @@ const Search = () => {
                       "0 results"
                     ) : (
                       <>
-                        Showing <span className="font-semibold text-foreground">{((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, totalCount)}</span> of <span className="font-semibold text-foreground">{totalCount}</span> results
+                        Showing <span className="font-semibold text-foreground">{((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, totalCount)}</span> of <span className="font-semibold text-foreground">{countCapped ? `${totalCount.toLocaleString()}+` : totalCount.toLocaleString()}</span> results
                       </>
                     )}
                   </p>

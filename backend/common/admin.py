@@ -629,7 +629,13 @@ class PostmarkImageAdmin(TimestampedModelAdmin):
     search_fields = ['postmark__postmark_key', 'original_filename', 'uploaded_by']
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date', 'file_checksum']
     raw_id_fields = ['postmark']
-    
+    # Avoid slow COUNT(*) on large tables in production (prevents 502 from timeout)
+    paginator = NoCountPaginator
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        return qs.select_related('postmark', 'uploaded_by').order_by('-postmark_image_id')
+
     fieldsets = (
         ('Postmark', {
             'fields': ('postmark',)
