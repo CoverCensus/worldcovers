@@ -3,6 +3,8 @@ export interface PostmarkApiResponse {
   next: string | null;
   previous: string | null;
   results: any | [];
+  /** True when count was capped for performance (e.g. 10,001+) */
+  count_capped?: boolean;
 }
 
 /** Normalized postmark for list/detail (matches API shape) */
@@ -95,6 +97,7 @@ export interface GetPostmarksPageResult {
   count: number;
   next: string | null;
   previous: string | null;
+  count_capped?: boolean;
 }
 
 /**
@@ -166,5 +169,6 @@ export async function getPostmarksPage(
     count: data.count,
     next: data.next,
     previous: data.previous,
+    count_capped: data.count_capped,
   };
 }
