@@ -786,7 +786,28 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly, IsResponsibleForRegion]
 
     def get_queryset(self):
-        return _postmark_list_queryset()
+    return (
+        Postmark.objects
+        .filter(visibility="PUBLIC")
+        .select_related(
+            "postal_facility_identity",
+            "state",
+            "postmark_shape",
+            "lettering_style",
+            "framing_style",
+            "date_format"
+        )
+        .only(
+            "postmark_id",
+            "postmark_key",
+            "visibility",
+            "rate_value",
+            "postal_facility_identity__facility_name",
+            "state__reference_code"
+        )
+    )
+
+    return _postmark_list_queryset()
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = PostmarkListFilter
     search_fields = ['postmark_key', 'postal_facility_identity__facility_name',
@@ -1143,3 +1164,4 @@ class AdminCsvUploadViewSet(viewsets.ModelViewSet):
         return Response(result, status=status.HTTP_200_OK)
 
 ###################################################################################################
+

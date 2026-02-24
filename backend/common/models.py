@@ -367,7 +367,10 @@ class JurisdictionalAffiliation(TimestampedModel):
         PostalFacilityIdentity,
         on_delete=models.CASCADE,
         related_name='jurisdictions',
-        db_column='PostalFacilityIdentityID'
+        db_column='PostalFacilityIdentityID',
+         null=True,
+    blank=True,
+    db_index=True 
     )
     administrative_unit = models.ForeignKey(
         'postmarks.Location',
@@ -532,7 +535,7 @@ class Postmark(TimestampedModel):
         db_column='StateID',
         null=True,
         blank=True,
-        help_text="Location (state/region) this listing belongs to; from import nStateID or facility jurisdiction"
+        # help_text="Location (state/region) this listing belongs to; from import nStateID or facility jurisdiction"
     )
     postmark_shape = models.ForeignKey(
         PostmarkShape,
@@ -629,12 +632,14 @@ class Postmark(TimestampedModel):
         db_table = 'Postmarks'
         verbose_name = 'Listing'
         verbose_name_plural = 'Listings'
-        ordering = ['postmark_id']
-        indexes = [
-            models.Index(fields=['postal_facility_identity']),
-            models.Index(fields=['postmark_key']),
-            models.Index(fields=['state']),
-        ]
+        ordering = ['-postmark_id']
+         indexes = [
+        models.Index(fields=['visibility']),
+        models.Index(fields=['state', 'visibility']),
+        models.Index(fields=['postal_facility_identity', 'visibility']),
+        models.Index(fields=['created_date']),
+        models.Index(fields=['postmark_key']),
+    ]
 
     def get_responsible_groups(self):
         """Get the groups responsible for this postmark's region.
