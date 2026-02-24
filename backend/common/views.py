@@ -322,11 +322,8 @@ def _create_postmark_in_catalog(payload):
         # Unique key
         postmark_key = f"CONTRIB-{uuid.uuid4().hex[:12]}"
         is_manuscript = manuscript_str.lower() == "yes"
-        # Build other_characteristics from all contributor fields (description, references, rarity, submitter)
-        submitter_str = (payload.get("submitter_name") or "").strip()
+        # Build other_characteristics from contributor fields (description, references, rarity)
         other_parts = []
-        if submitter_str:
-            other_parts.append(f"Submitted by: {submitter_str}")
         if description_str:
             other_parts.append(f"Description: {description_str}")
         if references_str:

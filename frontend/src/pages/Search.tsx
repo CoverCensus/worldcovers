@@ -34,7 +34,7 @@ function ImageOrPlaceholder({
   alt,
   className,
 }: {
-  src: any;
+  src: string | null;
   alt: string;
   className?: string;
 }) {
@@ -48,26 +48,16 @@ function ImageOrPlaceholder({
       />
     );
   }
-  if (src) {
-    const imgSrc = src.storageFilename ? `${import.meta.env.VITE_IMAGE_URL}${src.storageFilename}` : null;
-    if (!imgSrc) {
-      return (
-        <img
-          src={imageNotAvailable}
-          alt="No image available"
-          className={cn(noImageClassName, className)}
-        />
-      );
-    }
-    return <img src={imgSrc} alt={alt} className={className} onError={() => setError(true)} />;
+  if (!src) {
+    return (
+      <img
+        src={imageNotAvailable}
+        alt="No image available"
+        className={cn(noImageClassName, className)}
+      />
+    );
   }
-  return (
-    <img
-      src={imageNotAvailable}
-      alt="No image available"
-      className={cn(noImageClassName, className)}
-    />
-  );
+  return <img src={src} alt={alt} className={className} onError={() => setError(true)} />;
 }
 
 /** Build compact page numbers for pagination (handles 500+ pages) */
@@ -220,7 +210,9 @@ const Search = () => {
         color: record.colorsDisplay || "",
         type: record.shapeName || "",
         valuation: record.rateValue,
-        image: record.mainImage || null,
+        image:
+          record.mainImage?.imageUrl ??
+          (typeof record.mainImage === "string" ? record.mainImage : null),
       }));
       return { records: apiTransformed, count, count_capped };
     },
@@ -553,11 +545,7 @@ const Search = () => {
                             <h3 className="font-heading text-xl font-semibold text-foreground mb-2">
                               {result.name}
                             </h3>
-                            {result.postmarkKey && (
-                              <p className="text-xs text-muted-foreground mb-2">
-                                Catalog key: {result.postmarkKey}
-                              </p>
-                            )}
+                            
                             <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
                               <div>
                                 <span className="text-muted-foreground">Location:</span>{" "}
@@ -599,11 +587,7 @@ const Search = () => {
                         <h3 className="font-heading text-lg font-semibold text-foreground mb-2">
                           {result.name}
                         </h3>
-                        {result.postmarkKey && (
-                          <p className="text-xs text-muted-foreground mb-2">
-                            Catalog key: {result.postmarkKey}
-                          </p>
-                        )}
+                        
                         <div className="space-y-1 text-sm">
                           <div>
                             <span className="text-muted-foreground">Location:</span>{" "}
