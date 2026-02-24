@@ -651,7 +651,18 @@ class PostmarkImageAdmin(TimestampedModelAdmin):
     )
     
     def get_postmark_key(self, obj):
-        return obj.postmark.postmark_key
+        """
+        Safe accessor for the related postmark key so that a broken
+        foreign key does not crash the changelist view.
+        """
+        try:
+            if obj.postmark_id:
+                return obj.postmark.postmark_key
+        except Exception:
+            # If the FK is stale or the related Postmark row is missing,
+            # fall back to a neutral placeholder so the row can still render.
+            return '-'
+        return '-'
     get_postmark_key.short_description = 'Postmark'
 
 
