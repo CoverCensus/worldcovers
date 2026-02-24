@@ -156,7 +156,6 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-.env
 
 # Spyder project settings
 .spyderproject
@@ -254,3 +253,5 @@ tools/wip/out/*
 !tools/wip/out/DELETE.ME
 .DS_Store
 /backend/imports
+config.bat
+node_modules
