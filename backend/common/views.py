@@ -29,7 +29,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django_filters.rest_framework import DjangoFilterBackend
 
 from django.contrib.auth import get_user_model
-from woco.pagination import PageSizePagination, FastPageSizePagination, LargePageSizePagination
+from woco.pagination import PageSizePagination, LargePageSizePagination
 
 from .models import (
     PostalFacility, PostalFacilityIdentity,
@@ -780,9 +780,8 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     """
     ViewSet for postmarks with group-based permission checking.
     List is paginated: 10 per page (honors ?page_size= up to 100).
-    Uses FastPageSizePagination so count is capped and list stays fast on 50k+ rows.
     """
-    pagination_class = FastPageSizePagination
+    pagination_class = PageSizePagination
     queryset = Postmark.objects.all()  # Base queryset; get_queryset() returns optimized version
     permission_classes = [IsAuthenticatedOrReadOnly, IsResponsibleForRegion]
 
