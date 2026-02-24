@@ -297,15 +297,35 @@ class PostmarkImageSerializer(serializers.ModelSerializer):
         read_only_fields = ['postmark_image_id', 'file_checksum', 'created_date', 'modified_date']
     
     def get_image_url(self, obj):
-        """Generate image URL if using media files"""
-        if obj.storage_filename:
-            request = self.context.get('request')
-            if request:
-                from django.conf import settings
-                return request.build_absolute_uri(
-                    f"{settings.MEDIA_URL}postmarks/{obj.storage_filename}"
-                )
-        return None
+        """
+        Generate image URL.
+        - Legacy catalog images use storage_filename like 'iowa/Marking-....jpg'
+          and live directly under MEDIA_ROOT/<state>/..., so their public URL
+          should be `${MEDIA_URL}${storage_filename}` → `/media/iowa/...`.
+        - New contributor images are saved under MEDIA_ROOT/postmarks/contributions/...
+          with storage_filename like 'contributions/<uuid>.ext', so their public
+          URL should be `${MEDIA_URL}postmarks/${storage_filename}`.
+        """
+        storage = (obj.storage_filename or "").lstrip("/")
+        if not storage:
+            return None
+
+        request = self.context.get("request")
+        if not request:
+            return None
+
+        from django.conf import settings
+
+        # Heuristic: treat 'contributions/...' (and any future explicit
+        # postmarks subpaths) as living under MEDIA_ROOT/postmarks/.
+        if storage.startswith("contributions/") or storage.startswith("postmarks/"):
+            path = f"{settings.MEDIA_URL.rstrip('/')}/postmarks/{storage}"
+        else:
+            # Legacy images already include their state/dir prefix and live
+            # directly under MEDIA_ROOT, so don't insert 'postmarks/'.
+            path = f"{settings.MEDIA_URL.rstrip('/')}/{storage}"
+
+        return request.build_absolute_uri(path)
 
 
 class PostmarkListSerializer(serializers.ModelSerializer):

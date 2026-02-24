@@ -107,7 +107,11 @@ const RecordDetail = () => {
           const images =
             data.images?.length
               ? data.images.map((img: any) => ({
-                  imageUrl: `${baseImageUrl}${img.storageFilename}`,
+                  imageUrl:
+                    img.imageUrl ??
+                    (baseImageUrl
+                      ? `${baseImageUrl.replace(/\/+$/, "")}/postmarks/${img.storageFilename ?? ""}`
+                      : null),
                   originalFilename: img.originalFilename,
                 }))
               : [];
@@ -124,7 +128,8 @@ const RecordDetail = () => {
             dimensions: firstSize ? `${firstSize.width}×${firstSize.height} mm` : "",
             manuscript: data.isManuscript ? "Yes" : "No",
             rarity: rarityFromValuation || rarityFromOther,
-            description: parsed.description || data.otherCharacteristics || data.sourceCatalog || "",
+            // Only show description text the contributor actually provided
+            description: parsed.description || data.otherCharacteristics || "",
             submitterName: parsed.submitterName || "",
             citationReferences: parsed.citationReferences || "",
             images,
@@ -289,16 +294,7 @@ const RecordDetail = () => {
                 <h1 className="font-heading text-3xl font-bold text-foreground mb-2">
                   {record.name}
                 </h1>
-                {record.postmarkKey && (
-                  <p className="text-sm text-muted-foreground mb-1">
-                    Catalog key: {record.postmarkKey}
-                  </p>
-                )}
-                {record.submitterName && (
-                  <p className="text-sm text-muted-foreground mb-3">
-                    Submitted by {record.submitterName}
-                  </p>
-                )}
+                
                 <div className="flex flex-wrap gap-2">
                   {record?.type && <Badge variant="secondary">{record?.type}</Badge>}
                   {record?.color && <Badge variant="secondary">{record.color}</Badge>}
@@ -340,14 +336,6 @@ const RecordDetail = () => {
                       <dt className="text-muted-foreground font-medium">Rarity</dt>
                       <dd className="text-foreground">{record.rarity}</dd>
                     </div>
-                    {record.citationReferences && (
-                      <div className="flex justify-between py-2">
-                        <dt className="text-muted-foreground font-medium">Citation References</dt>
-                        <dd className="text-foreground text-right ml-4">
-                          {record.citationReferences}
-                        </dd>
-                      </div>
-                    )}
                   </dl>
                 </CardContent>
               </Card>
@@ -372,7 +360,9 @@ const RecordDetail = () => {
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="references">References</TabsTrigger>
                   <TabsTrigger value="valuations">Valuations</TabsTrigger>
-                  <TabsTrigger value="citations">Citations</TabsTrigger>
+                  {record.citationReferences && (
+                    <TabsTrigger value="citations">Citations</TabsTrigger>
+                  )}
                 </TabsList>
                 <TabsContent value="references" className="mt-6">
                   <div className="space-y-4">
@@ -408,21 +398,13 @@ const RecordDetail = () => {
                     ))}
                   </div>
                 </TabsContent>
-                <TabsContent value="citations" className="mt-6">
-                  <div className="space-y-3 text-sm">
-                    <p className="text-muted-foreground leading-relaxed">
-                      • Kay, John L. and Smith, Chester M. Jr. (1950). "Massachusetts Postal History." 
-                      Quarterman Publications, pp. 87-92.
-                    </p>
-                    <p className="text-muted-foreground leading-relaxed">
-                      • Baughman, Urban E. (1975). "Boston Postal Markings to 1850." 
-                      American Philatelic Research Library.
-                    </p>
-                    <p className="text-muted-foreground leading-relaxed">
-                      • Chronicle of U.S. Classic Postal Issues, Vol. 48, No. 2 (1996), pp. 45-48.
-                    </p>
-                  </div>
-                </TabsContent>
+                {record.citationReferences && (
+                  <TabsContent value="citations" className="mt-6">
+                    <div className="space-y-3 text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
+                      {record.citationReferences}
+                    </div>
+                  </TabsContent>
+                )}
               </Tabs>
             </CardContent>
           </Card>
