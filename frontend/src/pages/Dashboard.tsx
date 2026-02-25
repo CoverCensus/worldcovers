@@ -6,13 +6,17 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Filter, Search } from "lucide-react";
+import { Filter, Search as SearchIcon } from "lucide-react";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer";
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
+import { cn } from "@/lib/utils";
+import { normalizeImageUrl } from "@/services/postmarks";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { useFilterOptions } from "@/hooks/useFilterOptions";
 
 function getPostmarksApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
@@ -20,6 +24,40 @@ function getPostmarksApiUrl(): string | null {
   const base = env.trim().replace(/\/+$/, "");
   if (base.endsWith("/api/postmarks")) return base;
   return `${base}/api/postmarks`;
+}
+
+const noImageClassName = "w-full h-full min-w-0 min-h-0 object-cover bg-muted";
+
+/** Placeholder when image is missing or fails to load. Matches Catalog Search. */
+function ImageOrPlaceholder({
+  src,
+  alt,
+  className,
+}: {
+  src: string | null;
+  alt: string;
+  className?: string;
+}) {
+  const [error, setError] = useState(false);
+  if (error) {
+    return (
+      <img
+        src={imageNotAvailable}
+        alt="No image available"
+        className={cn(noImageClassName, className)}
+      />
+    );
+  }
+  if (!src) {
+    return (
+      <img
+        src={imageNotAvailable}
+        alt="No image available"
+        className={cn(noImageClassName, className)}
+      />
+    );
+  }
+  return <img src={src} alt={alt} className={className} onError={() => setError(true)} />;
 }
 
 const Dashboard = () => {
@@ -30,12 +68,19 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [filtersOpen, setFiltersOpen] = useState(true);
 
-  // Filter states
+  // Filter states (mirror Catalog Search)
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
+  const [townFilter, setTownFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [colorFilter, setColorFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+
+  // Shared filter options (states, types, colors)
+  const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } =
+    useFilterOptions();
 
   // Fetch only current user's catalog submissions (from Django postmarks API)
   useEffect(() => {
@@ -71,19 +116,36 @@ const Dashboard = () => {
         }
         const data = await res.json();
         const results = Array.isArray(data.results) ? data.results : [];
-        const mapped = results.map((item: any) => ({
-          id: item.postmark_id,
-          name: `${item.town || ""}${item.state ? `, ${item.state}` : ""} ${item.shape_name || ""}`.trim(),
-          town: item.town || "",
-          state: item.state || "",
-          date_range: item.date_range || "",
-          type: item.shape_name || "",
-          color: item.colors_display || "",
-          status: "approved" as const,
-          created_at: item.created_date || new Date().toISOString(),
-          description: undefined,
-          image_url: item.main_image?.image_url || null,
-        }));
+        const mapped = results.map((item: any) => {
+          // Prefer list-style mainImage when present; otherwise derive from images[] (full serializer).
+          const mainImageFromList =
+            (item as any).mainImage?.imageUrl ??
+            (typeof (item as any).mainImage === "string" ? (item as any).mainImage : null);
+
+          const mainImageFromImages =
+            (item as any).images?.find?.((img: any) => img.displayOrder === 0)?.imageUrl ??
+            ((item as any).images && (item as any).images.length > 0
+              ? (item as any).images[0].imageUrl
+              : null);
+
+          const imageUrl = normalizeImageUrl(mainImageFromList ?? mainImageFromImages);
+
+          return {
+            // API uses camelCase keys via Postmark* serializers + renderer
+            id: item.postmarkId,
+            name: `${item.town || ""}${item.state ? `, ${item.state}` : ""} ${item.shapeName || ""}`.trim(),
+            town: item.town || "",
+            state: item.state || "",
+            date_range: item.dateRange || "",
+            type: item.shapeName || "",
+            color: item.colorsDisplay || "",
+            is_manuscript: item.isManuscript === true,
+            status: "approved" as const,
+            created_at: item.createdDate || new Date().toISOString(),
+            description: undefined,
+            image_url: imageUrl,
+          };
+        });
         setSubmissions(mapped);
       } catch (error: unknown) {
         toast({
@@ -99,16 +161,51 @@ const Dashboard = () => {
     fetchSubmissions();
   }, [user, toast]);
 
-  // Apply filters
+  const handleDeleteSubmission = async (submissionId: number) => {
+    if (!window.confirm("Are you sure you want to delete this submission from the catalog? This cannot be undone.")) {
+      return;
+    }
+    const apiUrl = getPostmarksApiUrl();
+    if (!apiUrl) {
+      toast({
+        title: "Configuration error",
+        description: "VITE_API_URL is not set, cannot delete submission.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const base = apiUrl.replace(/\/+$/, "");
+    const url = `${base}/${submissionId}/`;
+    try {
+      const res = await fetch(url, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        throw new Error(`Delete failed: ${res.status} ${res.statusText}`);
+      }
+      setSubmissions(prev => prev.filter(s => s.id !== submissionId));
+      toast({
+        title: "Submission deleted",
+        description: "The catalog entry has been removed.",
+      });
+    } catch (error: unknown) {
+      toast({
+        title: "Could not delete submission",
+        description: error instanceof Error ? error.message : "Please try again or contact an admin.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Apply filters (mirror Catalog Search semantics on client side)
   const filteredSubmissions = useMemo(() => {
     return submissions.filter((submission) => {
-      // Text search (name, town, state)
+      // Text search (name, town, state, type, color)
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
-        const matches = [submission.name, submission.town, submission.state].some(
-          (val) => val != null && String(val).toLowerCase().includes(q)
-        );
-        if (!matches) return false;
+        const nameMatch = submission.name != null && String(submission.name).toLowerCase().includes(q);
+        if (!nameMatch) return false;
       }
 
       // Status filter
@@ -117,19 +214,35 @@ const Dashboard = () => {
       // State filter
       if (stateFilter !== "all" && submission.state !== stateFilter) return false;
 
-      // Date range filter
+      // Town filter
+      if (townFilter.trim()) {
+        const tq = townFilter.trim().toLowerCase();
+        if (!submission.town || !submission.town.toLowerCase().includes(tq)) return false;
+      }
+
+      // Type filter
+      if (typeFilter !== "all" && submission.type !== typeFilter) return false;
+
+      // Color filter
+      if (colorFilter !== "all" && submission.color !== colorFilter) return false;
+
+      // Submission created date range filter
       if (dateFrom && new Date(submission.created_at) < new Date(dateFrom)) return false;
       if (dateTo && new Date(submission.created_at) > new Date(dateTo)) return false;
 
       return true;
     });
-  }, [submissions, searchQuery, statusFilter, stateFilter, dateFrom, dateTo]);
-
-  // Get unique values for filters
-  const uniqueStates = useMemo(() => 
-    Array.from(new Set(submissions.map(s => s.state).filter(Boolean))),
-    [submissions]
-  );
+  }, [
+    submissions,
+    searchQuery,
+    statusFilter,
+    stateFilter,
+    townFilter,
+    typeFilter,
+    colorFilter,
+    dateFrom,
+    dateTo,
+  ]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -173,14 +286,14 @@ const Dashboard = () => {
                 <div className="space-y-2">
                   <Label>Search</Label>
                   <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       type="search"
-                      placeholder="Name, town, state..."
+                      placeholder="Name, town, state, type..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className="pl-9 bg-background"
-                      aria-label="Search submissions by name, town, or state"
+                      aria-label="Search submissions by name, town, state, or type"
                     />
                   </div>
                 </div>
@@ -201,32 +314,76 @@ const Dashboard = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>State</Label>
-                  <Select value={stateFilter} onValueChange={setStateFilter}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All States</SelectItem>
-                      {uniqueStates.map(state => (
-                        <SelectItem key={state} value={state}>
-                          {state}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="state-mobile">State</Label>
+                  <SearchableSelect
+                    id="state-mobile"
+                    value={stateFilter}
+                    onValueChange={setStateFilter}
+                    placeholder="All States"
+                    allOption={{ value: "all", label: "All States" }}
+                    options={Array.isArray(stateOptions) ? stateOptions : []}
+                    loading={isLoadingFilters}
+                    error={!!filterError}
+                    errorMessage="Failed to load states"
+                    searchPlaceholder="Search states..."
+                    emptyMessage="No state found."
+                    aria-label="Filter by state"
+                  />
                 </div>
 
                 <div className="space-y-2">
+                  <Label htmlFor="town-mobile">Town</Label>
+                  <Input
+                    id="town-mobile"
+                    placeholder="Enter town name..."
+                    value={townFilter}
+                    onChange={(e) => setTownFilter(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="type-mobile">Postmark Type</Label>
+                  <SearchableSelect
+                    id="type-mobile"
+                    value={typeFilter}
+                    onValueChange={setTypeFilter}
+                    placeholder="All Types"
+                    allOption={{ value: "all", label: "All Types" }}
+                    options={Array.isArray(shapeOptions) ? shapeOptions : []}
+                    loading={isLoadingFilters}
+                    error={!!filterError}
+                    errorMessage="Failed to load types"
+                    searchPlaceholder="Search types..."
+                    emptyMessage="No type found."
+                    aria-label="Filter by postmark type"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="color-mobile">Color</Label>
+                  <SearchableSelect
+                    id="color-mobile"
+                    value={colorFilter}
+                    onValueChange={setColorFilter}
+                    placeholder="All Colors"
+                    allOption={{ value: "all", label: "All Colors" }}
+                    options={Array.isArray(colorOptions) ? colorOptions : []}
+                    loading={isLoadingFilters}
+                    error={!!filterError}
+                    errorMessage="Failed to load colors"
+                    searchPlaceholder="Search colors..."
+                    emptyMessage="No color found."
+                    aria-label="Filter by color"
+                  />
+                </div>
+
+                <div className="space-y-2 pt-2">
                   <Label>Submission Date From</Label>
                   <Input
                     type="date"
                     value={dateFrom}
                     onChange={(e) => setDateFrom(e.target.value)}
                   />
-                </div>
-
-                <div className="space-y-2">
                   <Label>Submission Date To</Label>
                   <Input
                     type="date"
@@ -242,6 +399,9 @@ const Dashboard = () => {
                     setSearchQuery("");
                     setStatusFilter("all");
                     setStateFilter("all");
+                    setTownFilter("");
+                    setTypeFilter("all");
+                    setColorFilter("all");
                     setDateFrom("");
                     setDateTo("");
                   }}
@@ -267,14 +427,14 @@ const Dashboard = () => {
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">Search</Label>
                   <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       type="search"
-                      placeholder="Name, town, state..."
+                      placeholder="Name, town, state, type..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className="pl-9 bg-background"
-                      aria-label="Search submissions by name, town, or state"
+                      aria-label="Search submissions by name, town, state, or type"
                     />
                   </div>
                 </div>
@@ -295,24 +455,72 @@ const Dashboard = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">State</Label>
-                  <Select value={stateFilter} onValueChange={setStateFilter}>
-                    <SelectTrigger className="bg-background">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All States</SelectItem>
-                      {uniqueStates.map(state => (
-                        <SelectItem key={state} value={state}>
-                          {state}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label className="text-sm font-medium" htmlFor="state-desktop">State</Label>
+                  <SearchableSelect
+                    id="state-desktop"
+                    value={stateFilter}
+                    onValueChange={setStateFilter}
+                    placeholder="All States"
+                    allOption={{ value: "all", label: "All States" }}
+                    options={Array.isArray(stateOptions) ? stateOptions : []}
+                    loading={isLoadingFilters}
+                    error={!!filterError}
+                    errorMessage="Failed to load states"
+                    searchPlaceholder="Search states..."
+                    emptyMessage="No state found."
+                    aria-label="Filter by state"
+                  />
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">Date From</Label>
+                  <Label className="text-sm font-medium" htmlFor="town-desktop">Town</Label>
+                  <Input
+                    id="town-desktop"
+                    placeholder="Enter town name..."
+                    value={townFilter}
+                    onChange={(e) => setTownFilter(e.target.value)}
+                    className="bg-background"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium" htmlFor="type-desktop">Postmark Type</Label>
+                  <SearchableSelect
+                    id="type-desktop"
+                    value={typeFilter}
+                    onValueChange={setTypeFilter}
+                    placeholder="All Types"
+                    allOption={{ value: "all", label: "All Types" }}
+                    options={Array.isArray(shapeOptions) ? shapeOptions : []}
+                    loading={isLoadingFilters}
+                    error={!!filterError}
+                    errorMessage="Failed to load types"
+                    searchPlaceholder="Search types..."
+                    emptyMessage="No type found."
+                    aria-label="Filter by postmark type"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium" htmlFor="color-desktop">Color</Label>
+                  <SearchableSelect
+                    id="color-desktop"
+                    value={colorFilter}
+                    onValueChange={setColorFilter}
+                    placeholder="All Colors"
+                    allOption={{ value: "all", label: "All Colors" }}
+                    options={Array.isArray(colorOptions) ? colorOptions : []}
+                    loading={isLoadingFilters}
+                    error={!!filterError}
+                    errorMessage="Failed to load colors"
+                    searchPlaceholder="Search colors..."
+                    emptyMessage="No color found."
+                    aria-label="Filter by color"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Submission Date From</Label>
                   <Input
                     type="date"
                     value={dateFrom}
@@ -322,7 +530,7 @@ const Dashboard = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">Date To</Label>
+                  <Label className="text-sm font-medium">Submission Date To</Label>
                   <Input
                     type="date"
                     value={dateTo}
@@ -338,6 +546,9 @@ const Dashboard = () => {
                     setSearchQuery("");
                     setStatusFilter("all");
                     setStateFilter("all");
+                    setTownFilter("");
+                    setTypeFilter("all");
+                    setColorFilter("all");
                     setDateFrom("");
                     setDateTo("");
                   }}
@@ -385,67 +596,91 @@ const Dashboard = () => {
                 {filteredSubmissions.map((submission) => (
                   <Card
                     key={submission.id}
-                    className="hover:shadow-md transition-shadow cursor-pointer"
+                    className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
                     onClick={() => navigate(`/record/${submission.id}`)}
                   >
                     <CardContent className="p-6">
-                      <div className="grid md:grid-cols-[200px_1fr] gap-6">
-                        <div className="aspect-square rounded-lg overflow-hidden bg-muted">
-                          <img
-                            src={submission.image_url || imageNotAvailable}
-                            alt={submission.name}
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-
-                        <div className="space-y-4">
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <h3 className="font-semibold text-lg mb-1">{submission.name}</h3>
-                              <p className="text-sm text-muted-foreground">
-                                {submission.town}, {submission.state}
-                              </p>
-                            </div>
+                      <div className="flex gap-6">
+                        <ImageOrPlaceholder
+                          src={submission.image_url}
+                          alt={submission.name}
+                          className="w-32 h-32 object-cover rounded border border-border shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <h3 className="font-heading text-xl font-semibold text-foreground">
+                              {submission.name}
+                            </h3>
                             {getStatusBadge(submission.status)}
                           </div>
 
-                          <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                            {(submission.town || submission.state) && (
+                              <div>
+                                <span className="text-muted-foreground">Location:</span>{" "}
+                                <span className="text-foreground">
+                                  {submission.town ? `${submission.town}, ${submission.state}` : submission.state}
+                                </span>
+                              </div>
+                            )}
+                            {submission.date_range && (
+                              <div>
+                                <span className="text-muted-foreground">Date Range:</span>{" "}
+                                <span className="text-foreground">{submission.date_range}</span>
+                              </div>
+                            )}
+                            {submission.color && (
+                              <div>
+                                <span className="text-muted-foreground">Color:</span>{" "}
+                                <span className="text-foreground">{submission.color}</span>
+                              </div>
+                            )}
                             <div>
-                              <span className="text-muted-foreground">Date Range:</span>
-                              <span className="ml-2 font-medium">{submission.date_range}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Type:</span>
-                              <span className="ml-2 font-medium">{submission.type}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Color:</span>
-                              <span className="ml-2 font-medium">{submission.color}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Submitted:</span>
-                              <span className="ml-2 font-medium">
+                              <span className="text-muted-foreground">Submitted:</span>{" "}
+                              <span className="text-foreground">
                                 {new Date(submission.created_at).toLocaleDateString()}
                               </span>
                             </div>
                           </div>
 
                           {submission.description && (
-                            <p className="text-sm text-muted-foreground line-clamp-2">
+                            <p className="text-sm text-muted-foreground line-clamp-2 mt-2">
                               {submission.description}
                             </p>
                           )}
 
-                          <Button
-                            variant="link"
-                            className="p-0 h-auto text-primary"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigate(`/record/${submission.id}`);
-                            }}
-                          >
-                            View details
-                          </Button>
+                          <div className="mt-3 flex gap-2 justify-end">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/record/${submission.id}`);
+                              }}
+                            >
+                              View details
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/edit/${submission.id}`);
+                              }}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteSubmission(submission.id);
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     </CardContent>

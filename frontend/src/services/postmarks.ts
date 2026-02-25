@@ -24,6 +24,22 @@ export interface PostmarkRecord {
   responsibleGroups: unknown[];
 }
 
+/** Normalize image URL to absolute using the API origin when needed. */
+export function normalizeImageUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  // Already absolute
+  if (/^https?:\/\//i.test(path)) return path;
+  const apiUrl = getPostmarksApiUrl();
+  if (!apiUrl) return path;
+  try {
+    const url = new URL(apiUrl);
+    const relative = path.startsWith("/") ? path : `/${path}`;
+    return `${url.origin}${relative}`;
+  } catch {
+    return path;
+  }
+}
+
 function mapApiResultToRecord(item: any): PostmarkRecord {
   return {
     id: item.postmarkId,
