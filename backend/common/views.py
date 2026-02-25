@@ -474,6 +474,7 @@ class ContributionView(APIView):
 class IsResponsibleForRegion(BasePermission):
     """
     Permission check: User must be in a group responsible for the postmark's region.
+    Exception: submitters may delete (and update) their own user-contribution postmarks.
     """
     def has_object_permission(self, request, view, obj):
         # Read permissions are allowed for all authenticated users
@@ -482,6 +483,18 @@ class IsResponsibleForRegion(BasePermission):
         
         # For postmarks, check if user is in responsible group
         if isinstance(obj, Postmark):
+            # Allow submitter to delete or update their own user contribution
+            if obj.source_catalog == "User contribution" and obj.other_characteristics:
+                submitter_needles = [
+                    f"Submitted by: {request.user.username}",
+                    f"Submitted by: {getattr(request.user, 'email', '') or ''}",
+                ]
+                if any(
+                    needle in (obj.other_characteristics or "")
+                    for needle in submitter_needles
+                    if needle.strip() != "Submitted by:"
+                ):
+                    return True
             responsible_groups = obj.get_responsible_groups()
             user_groups = request.user.groups.all()
             return any(group in responsible_groups for group in user_groups)
@@ -786,10 +799,10 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         return _postmark_list_queryset()
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = PostmarkListFilter
-    search_fields = ['postmark_key', 'postal_facility_identity__facility_name',
-                     'rate_value', 'other_characteristics']
+    # Search only by name (postmark_key); town, state, type, color have their own filters
+    search_fields = ['postmark_key']
     ordering_fields = ['postmark_key', 'created_date', 'rate_value']
-    ordering = ['postmark_key']
+    ordering = ['-created_date']  # Newest first for catalog search list
     
     def get_serializer_class(self):
         if self.action == 'list':

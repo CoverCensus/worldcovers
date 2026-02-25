@@ -12,7 +12,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
-import { getPostmarksPage } from "@/services/postmarks";
+import { getPostmarksPage, normalizeImageUrl } from "@/services/postmarks";
 import { useToast } from "@/hooks/use-toast";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
 import { useDebounce } from "@/hooks/useDebounce";
@@ -26,7 +26,7 @@ function getSearchParam(params: URLSearchParams, key: string, defaultValue: stri
   return v ?? defaultValue;
 }
 
-const noImageClassName = "flex items-center justify-center bg-muted text-muted-foreground text-sm";
+const noImageClassName = "w-full h-full min-w-0 min-h-0 object-cover bg-muted";
 
 /** Placeholder when image is missing or fails to load. Shows fallback artwork instead of text. */
 function ImageOrPlaceholder({
@@ -210,9 +210,10 @@ const Search = () => {
         color: record.colorsDisplay || "",
         type: record.shapeName || "",
         valuation: record.rateValue,
-        image:
-          record.mainImage?.imageUrl ??
-          (typeof record.mainImage === "string" ? record.mainImage : null),
+        image: normalizeImageUrl(
+          (record as any).mainImage?.imageUrl ??
+          (typeof (record as any).mainImage === "string" ? (record as any).mainImage : null)
+        ),
       }));
       return { records: apiTransformed, count, count_capped };
     },
@@ -315,7 +316,7 @@ const Search = () => {
                       <Input
                         id="keyword-search"
                         type="search"
-                        placeholder="Name, town, state, type..."
+                        placeholder="Search by name..."
                         value={keywordSearch}
                         onChange={(e) => setKeywordSearch(e.target.value)}
                         className="pl-9"
@@ -547,22 +548,24 @@ const Search = () => {
                             </h3>
                             
                             <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                              <div>
-                                <span className="text-muted-foreground">Location:</span>{" "}
-                                <span className="text-foreground">{result.town ? `${result.town}, ${result.state}` : result.state}</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">Date Range:</span>{" "}
-                                <span className="text-foreground">{result.dateRange}</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">Type:</span>{" "}
-                                <span className="text-foreground">{result.type}</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">Color:</span>{" "}
-                                <span className="text-foreground">{result.color}</span>
-                              </div>
+                              {(result.town || result.state) && (
+                                <div>
+                                  <span className="text-muted-foreground">Location:</span>{" "}
+                                  <span className="text-foreground">{result.town ? `${result.town}, ${result.state}` : result.state}</span>
+                                </div>
+                              )}
+                              {result.dateRange && (
+                                <div>
+                                  <span className="text-muted-foreground">Date Range:</span>{" "}
+                                  <span className="text-foreground">{result.dateRange}</span>
+                                </div>
+                              )}
+                              {result.color && (
+                                <div>
+                                  <span className="text-muted-foreground">Color:</span>{" "}
+                                  <span className="text-foreground">{result.color}</span>
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -589,18 +592,24 @@ const Search = () => {
                         </h3>
                         
                         <div className="space-y-1 text-sm">
-                          <div>
-                            <span className="text-muted-foreground">Location:</span>{" "}
-                            <span className="text-foreground">{result.town ? `${result.town}, ${result.state}` : result.state}</span>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Date:</span>{" "}
-                            <span className="text-foreground">{result.dateRange}</span>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Color:</span>{" "}
-                            <span className="text-foreground">{result.color}</span>
-                          </div>
+                          {(result.town || result.state) && (
+                            <div>
+                              <span className="text-muted-foreground">Location:</span>{" "}
+                              <span className="text-foreground">{result.town ? `${result.town}, ${result.state}` : result.state}</span>
+                            </div>
+                          )}
+                          {result.dateRange && (
+                            <div>
+                              <span className="text-muted-foreground">Date:</span>{" "}
+                              <span className="text-foreground">{result.dateRange}</span>
+                            </div>
+                          )}
+                          {result.color && (
+                            <div>
+                              <span className="text-muted-foreground">Color:</span>{" "}
+                              <span className="text-foreground">{result.color}</span>
+                            </div>
+                          )}
                         </div>
                       </CardContent>
                     </Card>

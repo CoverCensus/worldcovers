@@ -7,6 +7,7 @@ import Index from "./pages/Index";
 import Search from "./pages/Search";
 import RecordDetail from "./pages/RecordDetail";
 import Contribute from "./pages/Contribute";
+import EditCatalogEntry from "./pages/EditCatalogEntry";
 import Dashboard from "./pages/Dashboard";
 import SubmissionDetail from "./pages/SubmissionDetail";
 import Auth from "./pages/Auth";
@@ -25,6 +26,7 @@ const App = () => (
           <Route path="/search" element={<Search />} />
           <Route path="/record/:id" element={<RecordDetail />} />
           <Route path="/contribute" element={<Contribute />} />
+          <Route path="/edit/:id" element={<EditCatalogEntry />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/dashboard/:id" element={<SubmissionDetail />} />
           <Route path="/auth" element={<Auth />} />

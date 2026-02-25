@@ -89,7 +89,7 @@ export const CatalogEntryDetailView = ({
               <img
                 src={imageUrl}
                 alt={entry.name}
-                className="w-full h-full object-contain"
+                className={`w-full h-full ${imageUrl === imageNotAvailable ? "object-cover" : "object-contain"}`}
               />
             </div>
             {showUploadImage && onUploadImage && (

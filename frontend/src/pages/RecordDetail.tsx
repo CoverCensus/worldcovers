@@ -5,12 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Download, Upload, ArrowLeft, Loader2 } from "lucide-react";
+import { Download, Upload, ArrowLeft, Loader2, Pencil } from "lucide-react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { SubmitImageDialog } from "@/components/SubmitImageDialog";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
-import { getPostmarkById } from "@/services/postmarks";
+import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
 
 function parseOtherCharacteristics(raw: string | null | undefined) {
   const result = {
@@ -204,14 +204,24 @@ const RecordDetail = () => {
       <div className="flex-1 bg-background">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Breadcrumb */}
-          <Button
-            variant="ghost"
-            onClick={() => (location.state?.fromSearch ? navigate(-1) : navigate("/search"))}
-            className="mb-6 -ml-4"
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Search
-          </Button>
+          <div className="flex items-center justify-between mb-6">
+            <Button
+              variant="ghost"
+              onClick={() => (location.state?.fromSearch ? navigate(-1) : navigate("/search"))}
+              className="-ml-4"
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Search
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(`/edit/${record.id}`)}
+            >
+              <Pencil className="mr-2 h-4 w-4" />
+              Edit entry
+            </Button>
+          </div>
 
           {/* Main Content */}
           <div className="grid items-start lg:grid-cols-2 gap-8 mb-8">
@@ -223,20 +233,22 @@ const RecordDetail = () => {
                     {record?.images?.length ? (
                       record.images.map((img: any, index) => (
                         <CarouselItem key={index}>
-                          <img
-                            src={img.imageUrl}
-                            alt={`${img.originalFilename} - Image ${index + 1}`}
-                            className="w-full rounded border border-border object-contain"
-                          />
+                          <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
+                            <img
+                              src={normalizeImageUrl(img.imageUrl)}
+                              alt={`${img.originalFilename} - Image ${index + 1}`}
+                              className="w-full h-full object-contain"
+                            />
+                          </div>
                         </CarouselItem>
                       ))
                     ) : (
                       <CarouselItem>
-                        <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted">
+                        <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
                           <img
                             src={imageNotAvailable}
                             alt="No image available"
-                            className="max-h-full max-w-full object-contain"
+                            className="w-full h-full object-cover"
                           />
                         </div>
                       </CarouselItem>
@@ -307,49 +319,48 @@ const RecordDetail = () => {
                   <CardTitle className="font-heading text-lg">Record Details</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <dl className="space-y-3 text-sm">
-                    <div className="flex justify-between py-2 border-b border-border">
-                      <dt className="text-muted-foreground font-medium">State</dt>
-                      <dd className="text-foreground">{record.state}</dd>
-                    </div>
-                    <div className="flex justify-between py-2 border-b border-border">
-                      <dt className="text-muted-foreground font-medium">Town</dt>
-                      <dd className="text-foreground">{record.town}</dd>
-                    </div>
-                    <div className="flex justify-between py-2 border-b border-border">
-                      <dt className="text-muted-foreground font-medium">First Seen</dt>
-                      <dd className="text-foreground">{record.dateFirstSeen}</dd>
-                    </div>
-                    <div className="flex justify-between py-2 border-b border-border">
-                      <dt className="text-muted-foreground font-medium">Last Seen</dt>
-                      <dd className="text-foreground">{record.dateLastSeen}</dd>
-                    </div>
-                    <div className="flex justify-between py-2 border-b border-border">
-                      <dt className="text-muted-foreground font-medium">Dimensions</dt>
-                      <dd className="text-foreground">{record.dimensions}</dd>
-                    </div>
-                    <div className="flex justify-between py-2 border-b border-border">
-                      <dt className="text-muted-foreground font-medium">Manuscript</dt>
-                      <dd className="text-foreground">{record.manuscript}</dd>
-                    </div>
-                    <div className="flex justify-between py-2">
-                      <dt className="text-muted-foreground font-medium">Rarity</dt>
-                      <dd className="text-foreground">{record.rarity}</dd>
-                    </div>
+                  <dl className="space-y-0 text-sm">
+                    {(() => {
+                      const details = [
+                        { label: "State", value: record.state },
+                        { label: "Town", value: record.town },
+                        { label: "First Seen", value: record.dateFirstSeen },
+                        { label: "Last Seen", value: record.dateLastSeen },
+                        { label: "Dimensions", value: record.dimensions },
+                        { label: "Manuscript", value: record.manuscript },
+                        { label: "Rarity", value: record.rarity },
+                      ].filter(({ value }) => value != null && String(value).trim() !== "");
+                      if (details.length === 0) {
+                        return (
+                          <p className="text-sm text-muted-foreground py-2">No record details available.</p>
+                        );
+                      }
+                      return details.map(({ label, value }, index) => (
+                        <div
+                          key={label}
+                          className={`flex justify-between py-2 ${index < details.length - 1 ? "border-b border-border" : ""}`}
+                        >
+                          <dt className="text-muted-foreground font-medium">{label}</dt>
+                          <dd className="text-foreground">{value}</dd>
+                        </div>
+                      ));
+                    })()}
                   </dl>
                 </CardContent>
               </Card>
 
-              <Card className="shadow-archival-md">
-                <CardHeader>
-                  <CardTitle className="font-heading text-lg">Description</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
-                    {record.description}
-                  </p>
-                </CardContent>
-              </Card>
+              {record.description?.trim() ? (
+                <Card className="shadow-archival-md">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">Description</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
+                      {record.description}
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : null}
             </div>
           </div>
 
@@ -382,20 +393,25 @@ const RecordDetail = () => {
                 </TabsContent>
                 <TabsContent value="valuations" className="mt-6">
                   <div className="space-y-4">
-                    {(record.valuations && record.valuations.length > 0
-                      ? record.valuations
-                      : [{ estimatedValue: "", condition: "" }]
-                    ).map((v, i) => (
-                      <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                        <div>
-                          <p className="text-sm font-medium text-foreground">On Cover</p>
-                          <p className="text-xs text-muted-foreground">{v.condition}</p>
-                        </div>
-                        <p className="text-lg font-heading font-semibold text-primary">
-                          {v.estimatedValue ? `$${v.estimatedValue}` : "—"}
-                        </p>
-                      </div>
-                    ))}
+                    {record.valuations?.filter((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "").length ? (
+                      record.valuations
+                        .filter((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "")
+                        .map((v, i) => (
+                          <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
+                            <div>
+                              <p className="text-sm font-medium text-foreground">On Cover</p>
+                              {v.condition ? (
+                                <p className="text-xs text-muted-foreground">{v.condition}</p>
+                              ) : null}
+                            </div>
+                            <p className="text-lg font-heading font-semibold text-primary">
+                              ${v.estimatedValue}
+                            </p>
+                          </div>
+                        ))
+                    ) : (
+                      <p className="text-sm text-muted-foreground py-2">No valuations recorded.</p>
+                    )}
                   </div>
                 </TabsContent>
                 {record.citationReferences && (
