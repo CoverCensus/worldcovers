@@ -11,6 +11,7 @@ import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { SubmitImageDialog } from "@/components/SubmitImageDialog";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
+import { useAuth } from "@/hooks/useAuth";
 
 function parseOtherCharacteristics(raw: string | null | undefined) {
   const result = {
@@ -53,6 +54,7 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
 const RecordDetail = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const user = useAuth();
   const { id } = useParams();
   const [submitImageOpen, setSubmitImageOpen] = useState(false);
   const [api, setApi] = useState<CarouselApi>();
@@ -203,7 +205,7 @@ const RecordDetail = () => {
       
       <div className="flex-1 bg-background">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {/* Breadcrumb */}
+          {/* Breadcrumb + conditional edit */}
           <div className="flex items-center justify-between mb-6">
             <Button
               variant="ghost"
@@ -213,14 +215,22 @@ const RecordDetail = () => {
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back to Search
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate(`/edit/${record.id}`)}
-            >
-              <Pencil className="mr-2 h-4 w-4" />
-              Edit entry
-            </Button>
+            {user &&
+              record.submitterName &&
+              [user.username, user.email]
+                .filter(Boolean)
+                .some(
+                  (id) => id && id.toLowerCase() === record.submitterName!.toLowerCase()
+                ) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(`/edit/${record.id}`)}
+                >
+                  <Pencil className="mr-2 h-4 w-4" />
+                  Edit entry
+                </Button>
+              )}
           </div>
 
           {/* Main Content */}
