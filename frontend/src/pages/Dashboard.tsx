@@ -26,6 +26,12 @@ function getPostmarksApiUrl(): string | null {
   return `${base}/api/postmarks`;
 }
 
+function getCsrfTokenFromCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(/(^|;\\s*)csrftoken=([^;]+)/);
+  return match ? decodeURIComponent(match[2]) : null;
+}
+
 const noImageClassName = "w-full h-full min-w-0 min-h-0 object-cover bg-muted";
 
 /** Placeholder when image is missing or fails to load. Matches Catalog Search. */
@@ -130,10 +136,18 @@ const Dashboard = () => {
 
           const imageUrl = normalizeImageUrl(mainImageFromList ?? mainImageFromImages);
 
+          const displayName =
+            [
+              [item.town, item.state].filter(Boolean).join(", "),
+              item.shapeName,
+            ]
+              .filter(Boolean)
+              .join(" — ") || item.postmarkKey;
+
           return {
             // API uses camelCase keys via Postmark* serializers + renderer
             id: item.postmarkId,
-            name: `${item.town || ""}${item.state ? `, ${item.state}` : ""} ${item.shapeName || ""}`.trim(),
+            name: displayName,
             town: item.town || "",
             state: item.state || "",
             date_range: item.dateRange || "",
@@ -176,10 +190,16 @@ const Dashboard = () => {
     }
     const base = apiUrl.replace(/\/+$/, "");
     const url = `${base}/${submissionId}/`;
+    const csrfToken = getCsrfTokenFromCookie();
+    const headers: HeadersInit = {};
+    if (csrfToken) {
+      headers["X-CSRFToken"] = csrfToken;
+    }
     try {
       const res = await fetch(url, {
         method: "DELETE",
         credentials: "include",
+        headers,
       });
       if (!res.ok) {
         throw new Error(`Delete failed: ${res.status} ${res.statusText}`);

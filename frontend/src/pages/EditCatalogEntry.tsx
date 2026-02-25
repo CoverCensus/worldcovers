@@ -152,6 +152,13 @@ const EditCatalogEntry = () => {
         const firstSize = data.sizes?.[0];
         const firstVal = data.valuations?.[0];
         const parsed = parseOtherCharacteristics(data.otherCharacteristics);
+        const submitterName = parsed.submitterName?.trim();
+        const currentUserId = (user?.username || user?.email || "").trim();
+
+        if (!submitterName || !currentUserId || submitterName.toLowerCase() !== currentUserId.toLowerCase()) {
+          setRecordError("You can only edit catalog entries that you originally submitted.");
+          return;
+        }
         const rarityFromValuation = firstVal?.estimatedValue ? `$${firstVal.estimatedValue}` : "";
         const rarityFromOther = parsed.rarityLabel || "";
         const dimStr =
@@ -284,6 +291,7 @@ const EditCatalogEntry = () => {
 
       if (imageFile) {
         const form = new FormData();
+        form.append("editPostmarkId", String(postmarkId!));
         form.append("state", stateVal);
         form.append("town", townVal);
         form.append("firstSeen", firstVal);
@@ -300,6 +308,7 @@ const EditCatalogEntry = () => {
         body = form;
       } else {
         body = JSON.stringify({
+          editPostmarkId: postmarkId!,
           state: stateVal,
           town: townVal,
           firstSeen: firstVal,
@@ -328,11 +337,18 @@ const EditCatalogEntry = () => {
         throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
 
+      const result = await res.json().catch(() => ({}));
+      const updatedId = result?.postmarkId;
+
       toast({
-        title: "Edited entry submitted",
-        description: "Your corrected entry has been submitted to the catalog.",
+        title: "Entry updated",
+        description: "Your catalog entry has been updated.",
       });
-      navigate("/dashboard");
+      if (updatedId) {
+        navigate(`/record/api-${updatedId}`);
+      } else {
+        navigate("/dashboard");
+      }
     } catch (err: unknown) {
       toast({
         title: "Submit failed",
