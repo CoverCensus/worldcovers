@@ -18,26 +18,31 @@ class PostmarkListPagination(PageSizePagination):
     """
     Pagination for postmarks list. Supports ?include_count=false to skip the slow
     COUNT query on 50k+ rows for faster first paint. When count is skipped,
-    next/previous links use heuristics (full page => assume next exists).
+    we manually slice the queryset (Django Paginator breaks with count=0).
     """
     def paginate_queryset(self, queryset, request, view=None):
         self.request = request
         self._defer_count = bool(request and request.query_params.get("include_count") == "false")
+
         if self._defer_count:
-            from django.core.paginator import Paginator
-            from django.utils.functional import cached_property
+            # Manually paginate without running COUNT - Django Paginator caps slice
+            # when count=0 and returns empty results, so we slice directly
+            page_number = request.query_params.get(self.page_query_param, 1)
+            try:
+                page_number = int(page_number)
+            except (TypeError, ValueError):
+                page_number = 1
+            page_number = max(1, page_number)
+            page_size = self.get_page_size(request)
+            offset = (page_number - 1) * page_size
+            self.page = list(queryset[offset:offset + page_size])
+            self.request = request
+            return self.page
 
-            class NoCountPaginator(Paginator):
-                @cached_property
-                def count(self):
-                    return 0  # Skip expensive count query
-
-            self.django_paginator_class = NoCountPaginator
         return super().paginate_queryset(queryset, request, view)
 
     def get_paginated_response(self, data):
         if getattr(self, "_defer_count", False):
-            # Build next/previous without count: next if we got a full page
             from urllib.parse import urlencode, urlparse, urlunparse
 
             page_size = self.get_page_size(self.request)
@@ -48,21 +53,14 @@ class PostmarkListPagination(PageSizePagination):
             except (TypeError, ValueError):
                 page_number = 1
 
-            url = self.request.build_absolute_uri()
-            parsed = urlparse(url)
-            query = parsed.query
-
-            def replace_page_param(params, page_val):
+            def build_link(page_val):
                 p = self.request.query_params.copy()
                 p[self.page_query_param] = str(page_val)
-                return urlencode(p, doseq=True)
+                parsed = urlparse(self.request.build_absolute_uri())
+                return urlunparse(parsed._replace(query=urlencode(p, doseq=True)))
 
-            next_link = None
-            if has_next:
-                next_link = urlunparse(parsed._replace(query=replace_page_param(query, page_number + 1)))
-            prev_link = None
-            if page_number > 1:
-                prev_link = urlunparse(parsed._replace(query=replace_page_param(query, page_number - 1)))
+            next_link = build_link(page_number + 1) if has_next else None
+            prev_link = build_link(page_number - 1) if page_number > 1 else None
 
             return Response(OrderedDict([
                 ("count", None),
