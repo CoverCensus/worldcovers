@@ -181,7 +181,7 @@ const Search = () => {
       itemsPerPage,
     ],
     queryFn: async () => {
-      const { results, count, count_capped } = await getPostmarksPage(
+      const { results, count, count_capped, next, previous } = await getPostmarksPage(
         currentPage,
         itemsPerPage,
         debouncedKeywordSearch.trim() || undefined,
@@ -192,7 +192,8 @@ const Search = () => {
         debouncedTownFilter.trim() || undefined,
         debouncedBeginYear.trim() || undefined,
         debouncedEndYear.trim() || undefined,
-        imagesOnly
+        imagesOnly,
+        true // deferCount: skip slow COUNT query for faster first load
       );
       const apiTransformed = results.map((record: any) => ({
         id: `api-${record.id}`,
@@ -215,14 +216,17 @@ const Search = () => {
           (typeof (record as any).mainImage === "string" ? (record as any).mainImage : null)
         ),
       }));
-      return { records: apiTransformed, count, count_capped };
+      return { records: apiTransformed, count, count_capped, next, previous };
     },
     staleTime: 5 * 60 * 1000, // 5 min - use cache when navigating back, no loading
   });
 
   const catalogRecords = queryData?.records ?? [];
   const totalCount = queryData?.count ?? 0;
+  const countKnown = queryData?.count != null;
   const countCapped = queryData?.count_capped ?? false;
+  const hasNext = !!queryData?.next;
+  const hasPrevious = !!queryData?.previous;
   // Show loading only when we have no data; when we have cached data, show it (no spinner)
   const loading = queryLoading || (queryFetching && catalogRecords.length === 0);
 
@@ -476,7 +480,9 @@ const Search = () => {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
                 <div>
                   <p className="text-sm text-muted-foreground">
-                    {totalCount === 0 ? (
+                    {!countKnown && catalogRecords.length > 0 ? (
+                      <>Page {currentPage} • {catalogRecords.length} results</>
+                    ) : totalCount === 0 ? (
                       "0 results"
                     ) : (
                       <>
@@ -617,8 +623,8 @@ const Search = () => {
                 </div>
               )}
 
-              {/* Pagination - compact for 500+ pages */}
-              {totalPages > 1 && !loading && (
+              {/* Pagination - full when count known, Prev/Next only when count deferred */}
+              {!loading && (totalPages > 1 || hasNext || hasPrevious || currentPage > 1) && (
                 <div className="mt-8 flex flex-col items-center gap-4">
                   <Pagination>
                     <PaginationContent>
@@ -629,7 +635,8 @@ const Search = () => {
                         />
                       </PaginationItem>
 
-                      {getPaginationPages(currentPage, totalPages).map((p, i) =>
+                      {/* Page numbers only when we have total count */}
+                      {totalPages > 1 && getPaginationPages(currentPage, totalPages).map((p, i) =>
                         p === "ellipsis" ? (
                           <PaginationItem key={`ellipsis-${i}`}>
                             <PaginationEllipsis />
@@ -649,19 +656,20 @@ const Search = () => {
 
                       <PaginationItem>
                         <PaginationNext
-                          onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                          className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                          onClick={() => setCurrentPage(p => Math.min(totalPages || p + 1, p + 1))}
+                          className={!(hasNext || (totalPages > 1 && currentPage < totalPages)) ? "pointer-events-none opacity-50" : "cursor-pointer"}
                         />
                       </PaginationItem>
                     </PaginationContent>
                   </Pagination>
 
+                  {totalPages > 1 && (
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-muted-foreground">Go to page</span>
                     <Input
                       type="number"
                       min={1}
-                      max={totalPages}
+                      max={totalPages || 1}
                       placeholder="Page"
                       value={goToPageInput}
                       onChange={(e) => {
@@ -704,6 +712,7 @@ const Search = () => {
                       Go
                     </Button>
                   </div>
+                  )}
                 </div>
               )}
             </main>

@@ -29,7 +29,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django_filters.rest_framework import DjangoFilterBackend
 
 from django.contrib.auth import get_user_model
-from woco.pagination import PageSizePagination, LargePageSizePagination
+from woco.pagination import PageSizePagination, LargePageSizePagination, PostmarkListPagination
 
 from .models import (
     PostalFacility, PostalFacilityIdentity,
@@ -962,7 +962,9 @@ class DateFormatViewSet(viewsets.ModelViewSet):
 # ========== POSTMARK VIEWSETS ==========
 
 def _postmark_list_queryset():
-    """Optimized queryset for postmark list: prefetches all data needed by PostmarkListSerializer."""
+    """Optimized queryset for postmark list: prefetches only data needed by PostmarkListSerializer.
+    Minimal select_related/prefetch reduces JOINs and speeds up pagination count on 50k+ rows.
+    """
     current_identities = AdministrativeUnitIdentity.objects.filter(effective_to_date__isnull=True)
     current_jurisdictions = JurisdictionalAffiliation.objects.filter(
         Q(effective_to_date__isnull=True) | Q(effective_to_date__gte=timezone.now().date())
@@ -975,12 +977,10 @@ def _postmark_list_queryset():
     )
     return Postmark.objects.all().select_related(
         'postal_facility_identity__postal_facility',
-        'postmark_shape', 'lettering_style', 'framing_style',
-        'date_format', 'created_by', 'modified_by',
+        'postmark_shape',
         'state',
     ).prefetch_related(
-        'postmark_colors__color', 'dates_seen', 'sizes',
-        'valuations', 'images', 'publication_references__postmark_publication',
+        'postmark_colors__color', 'dates_seen', 'valuations', 'images',
         Prefetch('postal_facility_identity__jurisdictions', queryset=current_jurisdictions),
         Prefetch('state__identities', queryset=current_identities),
     )
@@ -990,8 +990,9 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     """
     ViewSet for postmarks with group-based permission checking.
     List is paginated: 10 per page (honors ?page_size= up to 100).
+    Supports ?include_count=false to skip the COUNT query for faster first load.
     """
-    pagination_class = PageSizePagination
+    pagination_class = PostmarkListPagination
     queryset = Postmark.objects.all()  # Base queryset; get_queryset() returns optimized version
     permission_classes = [IsAuthenticatedOrReadOnly, IsResponsibleForRegion]
 
