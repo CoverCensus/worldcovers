@@ -1,5 +1,6 @@
 export interface PostmarkApiResponse {
-  count: number;
+  /** Total count; null when include_count=false for faster response */
+  count: number | null;
   next: string | null;
   previous: string | null;
   results: any | [];
@@ -110,7 +111,8 @@ export async function getPostmarks(): Promise<PostmarkRecord[]> {
 /** Paginated result from getPostmarksPage */
 export interface GetPostmarksPageResult {
   results: PostmarkRecord[];
-  count: number;
+  /** Total count; null when include_count=false */
+  count: number | null;
   next: string | null;
   previous: string | null;
   count_capped?: boolean;
@@ -133,7 +135,9 @@ export async function getPostmarksPage(
   town?: string,
   beginYear?: string,
   endYear?: string,
-  hasImages?: boolean
+  hasImages?: boolean,
+  /** When true, skips slow COUNT query for faster first load (count will be null) */
+  deferCount?: boolean
 ): Promise<GetPostmarksPageResult> {
   const apiUrl = getPostmarksApiUrl();
   if (!apiUrl) {
@@ -167,6 +171,9 @@ export async function getPostmarksPage(
   }
   if (hasImages === true) {
     params.set("has_images", "true");
+  }
+  if (deferCount === true) {
+    params.set("include_count", "false");
   }
   const base = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
   const url = `${base}?${params.toString()}`;
