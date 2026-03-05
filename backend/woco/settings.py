@@ -123,8 +123,10 @@ DATABASES = {
             "NAME": f"test_{_db_name}"
         },
         "OPTIONS": {
-            "read_default_file": str(REPO_ROOT / "mysql.cnf")
-        }
+            "read_default_file": str(REPO_ROOT / "mysql.cnf"),
+            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
+        "CONN_MAX_AGE": 600,  # Keep connections open for 10 min (reduces handshake overhead)
     }
 }
 

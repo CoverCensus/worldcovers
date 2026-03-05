@@ -32,9 +32,10 @@ from .models import (
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
     LegacyAbbreviation, LegacyRateLocation, LegacyRateValue,
     LegacyParseStep, LegacyUserState, LegacyRawStateDataPendingUpdate, LegacyCover,
-    AdminCsvUpload,
+    AdminCsvUpload, CatalogContributionRequest,
 )
 from .csv_import import IMPORTERS
+from .contributions import create_postmark_from_contribution, update_postmark_from_contribution
 
 User = get_user_model()
 
@@ -536,8 +537,8 @@ class ExampleCoverInline(admin.TabularInline):
 
 class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     resource_class = PostmarkResource
-    list_display = ['postmark_key', 'get_postmark_shape_display', 'state', 'rate_value', 'visibility']
-    list_filter = ['state']
+    list_display = ['postmark_key', 'get_postmark_shape_display', 'state', 'rate_value', 'visibility', 'moderation_status']
+    list_filter = ['state', 'moderation_status']
     search_fields = ['postmark_key', 'postal_facility_identity__facility_name', 'rate_value', 'public_slug', 'raw_state_data_id']
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
     raw_id_fields = ['site', 'postal_facility_identity', 'state', 'postmark_shape', 'lettering_style',
@@ -558,7 +559,7 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
             'fields': ('postmark_key', 'site', 'postal_facility_identity', 'state')
         }),
         ('Listing Status & Source', {
-            'fields': ('visibility', 'public_slug', 'source_catalog', 'source_page', 'last_public_update_at')
+            'fields': ('visibility', 'moderation_status', 'moderation_notes', 'public_slug', 'source_catalog', 'source_page', 'last_public_update_at')
         }),
         ('Import Linkage', {
             'fields': ('raw_state_data_id', 'raw_import_payload'),
@@ -579,6 +580,8 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
         }),
     )
     
+    actions = ['mark_moderation_approved', 'mark_moderation_rejected', 'mark_moderation_revision']
+
     def get_postmark_shape_display(self, obj):
         """Safe list_display for postmark_shape so one bad FK does not break the changelist."""
         try:
@@ -621,6 +624,24 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
         )
         return format_html('<a href="{}">View</a>', url)
     example_cover_link.short_description = 'Example Covers Link'
+
+    @admin.action(description="Mark selected listings as APPROVED")
+    def mark_moderation_approved(self, request, queryset):
+        updated = queryset.update(moderation_status="APPROVED")
+        if updated:
+            self.message_user(request, f"Updated moderation status to APPROVED for {updated} listing(s).", level=messages.SUCCESS)
+
+    @admin.action(description="Mark selected listings as REJECTED")
+    def mark_moderation_rejected(self, request, queryset):
+        updated = queryset.update(moderation_status="REJECTED")
+        if updated:
+            self.message_user(request, f"Updated moderation status to REJECTED for {updated} listing(s).", level=messages.SUCCESS)
+
+    @admin.action(description="Mark selected listings as NEEDS REVISION")
+    def mark_moderation_revision(self, request, queryset):
+        updated = queryset.update(moderation_status="REVISION")
+        if updated:
+            self.message_user(request, f"Updated moderation status to REVISION for {updated} listing(s).", level=messages.SUCCESS)
 
 
 class PostmarkImageAdmin(TimestampedModelAdmin):
@@ -925,5 +946,195 @@ class AdminCsvUploadAdmin(admin.ModelAdmin):
     @admin.action(description='Import selected into States (Admin Units)')
     def import_to_states(self, request, queryset):
         self._run_import(request, queryset, 'states')
+
+
+@admin.register(CatalogContributionRequest)
+class CatalogContributionRequestAdmin(TimestampedModelAdmin):
+    """
+    Admin interface for catalog contribution requests coming from the public contribute form.
+    Superadmin can approve/reject/request revision; approve will create a Postmark in the catalog.
+    """
+    list_display = [
+        'catalog_contribution_request_id',
+        'action',
+        'state',
+        'town',
+        'submitter_name',
+        'submitter_email',
+        'status',
+        'created_date',
+        'postmark_link',
+    ]
+    list_filter = ['status', 'action', 'state']
+    search_fields = ['state', 'town', 'submitter_name', 'submitter_email']
+    readonly_fields = ['action', 'postmark', 'created_by', 'created_date', 'modified_by', 'modified_date']
+
+    fieldsets = (
+        ('Submitter', {
+            'fields': ('submitter_name', 'submitter_email'),
+        }),
+        ('Contribution Details', {
+            'fields': (
+                'state',
+                'town',
+                'first_seen',
+                'last_seen',
+                'type',
+                'color',
+                'manuscript',
+                'dimensions',
+                'description',
+                'references',
+                'rarity',
+            ),
+        }),
+        ('Status', {
+            'fields': ('status', 'status_notes', 'postmark'),
+        }),
+        ('Raw Payload', {
+            'fields': ('raw_payload',),
+            'classes': ('collapse',),
+        }),
+        ('Metadata', {
+            'fields': ('created_date', 'created_by', 'modified_date', 'modified_by'),
+            'classes': ('collapse',),
+        }),
+    )
+
+    actions = ['approve_requests', 'reject_requests', 'mark_needs_revision']
+
+    def postmark_link(self, obj):
+        if not obj.postmark_id:
+            return '-'
+        try:
+            url = reverse('admin:common_postmark_change', args=[obj.postmark_id])
+            return format_html('<a href="{}">Listing #{}</a>', url, obj.postmark_id)
+        except Exception:
+            return obj.postmark_id
+
+    postmark_link.short_description = 'Catalog Listing'
+
+    def _apply_request_to_catalog(self, req_obj):
+        """
+        Apply a single CatalogContributionRequest to the catalog.
+        Returns True if a catalog change was made, False otherwise.
+        """
+        # Do not re-apply if already linked to a catalog listing
+        if req_obj.postmark_id and req_obj.action in ["CREATE", "UPDATE"]:
+            return False
+
+        if not req_obj.raw_payload:
+            # Build a minimal payload from normalized fields
+            date_range = f"{req_obj.first_seen}-{req_obj.last_seen}".strip("-")
+            payload = {
+                "state": req_obj.state,
+                "town": req_obj.town,
+                "date_range": date_range,
+                "type": req_obj.type,
+                "color": req_obj.color,
+                "manuscript": req_obj.manuscript,
+                "dimensions": req_obj.dimensions,
+                "description": req_obj.description,
+                "references": req_obj.references,
+                "rarity": req_obj.rarity,
+                "submitter_name": req_obj.submitter_name,
+            }
+        else:
+            payload = dict(req_obj.raw_payload)
+
+        # Dispatch based on action type
+        if req_obj.action == "CREATE":
+            postmark = create_postmark_from_contribution(payload)
+            if not postmark:
+                return False
+            req_obj.postmark = postmark
+            req_obj.status = "APPROVED"
+            req_obj.save(update_fields=['postmark', 'status', 'modified_date'])
+            return True
+        elif req_obj.action == "UPDATE":
+            # For updates, use the existing postmark (linked via postmark FK)
+            if not req_obj.postmark_id:
+                return False
+            postmark = update_postmark_from_contribution(
+                req_obj.postmark_id,
+                payload,
+                req_obj.submitter_name,
+            )
+            if not postmark:
+                return False
+            req_obj.status = "APPROVED"
+            req_obj.save(update_fields=['status', 'modified_date'])
+            return True
+        elif req_obj.action == "DELETE":
+            # Soft-delete by archiving the listing
+            postmark = req_obj.postmark
+            if not postmark:
+                return False
+            postmark.visibility = "ARCHIVED"
+            postmark.save(update_fields=['visibility'])
+            req_obj.status = "APPROVED"
+            req_obj.save(update_fields=['status', 'modified_date'])
+            return True
+        return False
+
+    @admin.action(description="Approve selected requests and apply to catalog")
+    def approve_requests(self, request, queryset):
+        approved = 0
+        # Allow applying even if an admin has already flipped status to APPROVED manually,
+        # but only when the request has not yet been linked to a catalog listing.
+        for req_obj in queryset.select_for_update().filter(status__in=["PENDING", "APPROVED"]):
+            if self._apply_request_to_catalog(req_obj):
+                approved += 1
+
+        if approved:
+            self.message_user(request, f"Approved {approved} request(s) and applied to catalog.", level=messages.SUCCESS)
+        else:
+            self.message_user(request, "No requests were approved (ensure they are in PENDING state).", level=messages.WARNING)
+
+    @admin.action(description="Reject selected requests")
+    def reject_requests(self, request, queryset):
+        updated = queryset.exclude(status="REJECTED").update(status="REJECTED")
+        if updated:
+            self.message_user(request, f"Marked {updated} request(s) as REJECTED.", level=messages.SUCCESS)
+
+    @admin.action(description="Mark selected as needs revision")
+    def mark_needs_revision(self, request, queryset):
+        updated = queryset.exclude(status="REVISION").update(status="REVISION")
+        if updated:
+            self.message_user(request, f"Marked {updated} request(s) as needing revision.", level=messages.SUCCESS)
+
+    def save_model(self, request, obj, form, change):
+        """
+        When an admin edits a single request and sets status=APPROVED,
+        automatically apply it to the catalog so the new/updated listing
+        appears in Listings and the /search page without needing the bulk action.
+        """
+        apply_after_save = False
+
+        if change and obj.pk:
+            # Compare previous status to detect transitions into APPROVED
+            from .models import CatalogContributionRequest
+
+            try:
+                previous = CatalogContributionRequest.objects.get(pk=obj.pk)
+            except CatalogContributionRequest.DoesNotExist:
+                previous = None
+
+            if previous and previous.status != "APPROVED" and obj.status == "APPROVED":
+                apply_after_save = True
+        else:
+            # New object saved directly as APPROVED
+            if obj.status == "APPROVED":
+                apply_after_save = True
+
+        super().save_model(request, obj, form, change)
+
+        if apply_after_save:
+            if self._apply_request_to_catalog(obj):
+                self.message_user(
+                    request,
+                    "Catalog listing has been updated based on this approved request.",
+                    level=messages.SUCCESS,
+                )
 
 ###################################################################################################
