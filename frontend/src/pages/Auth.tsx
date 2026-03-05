@@ -56,6 +56,7 @@ const Auth = () => {
       const res = await fetch(getLoginApiUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           email: values.email.trim(),
           password: values.password,
