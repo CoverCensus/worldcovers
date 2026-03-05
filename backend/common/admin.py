@@ -16,7 +16,6 @@ from django.core.paginator import Paginator
 from django.utils.functional import cached_property
 from django import forms
 from django.contrib import messages
-from django.db import connection
 
 from import_export import resources, fields
 from import_export.admin import ImportExportModelAdmin
@@ -375,34 +374,8 @@ class UserLocationAssignmentForm(forms.ModelForm):
         model = User
         fields = "__all__"
 
-    @staticmethod
-    def _has_assignment_table() -> bool:
-        """
-        Detect whether the AdministrativeUnits_assigned_users M2M join table
-        actually exists in the current database.
-
-        On some environments the migration was marked as applied without the
-        table being created, which would otherwise crash the User admin page.
-        """
-        try:
-            return "AdministrativeUnits_assigned_users" in connection.introspection.table_names()
-        except Exception:
-            # If introspection itself fails, play it safe and pretend the table
-            # is missing so we do not attempt any M2M queries.
-            return False
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # If the join table does not exist on this database, disable the field
-        # gracefully so the User admin page still loads.
-        if not self._has_assignment_table():
-            self.fields["assigned_states"].queryset = AdministrativeUnit.objects.none()
-            self.fields["assigned_states"].help_text = (
-                "Location assignments are not available on this environment "
-                "(database table missing)."
-            )
-            return
-
         # Limit choices to current STATE-level admin units
         qs = (
             AdministrativeUnit.objects
@@ -431,9 +404,6 @@ class UserLocationAssignmentForm(forms.ModelForm):
     def _save_assigned_states(self, user):
         states_qs = self.cleaned_data.get("assigned_states")
         if states_qs is None or not user.pk:
-            return
-        # If the join table is not present, skip saving to avoid runtime errors.
-        if not self._has_assignment_table():
             return
         # Use the reverse manager provided by related_name on AdministrativeUnit.assigned_users
         user.assigned_states.set(states_qs)
