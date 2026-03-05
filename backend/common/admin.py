@@ -333,7 +333,22 @@ class AdministrativeUnitResponsibilityInline(admin.TabularInline):
     exclude = ["created_by", "modified_by", "created_date", "modified_date"]
 
 
+class AdministrativeUnitAdminForm(forms.ModelForm):
+    """
+    Admin form for AdministrativeUnit that excludes the assigned_users M2M field.
+    This prevents admin pages (including the Location proxy admin) from crashing
+    on databases where the AdministrativeUnits_assigned_users join table does
+    not exist yet.
+    """
+
+    class Meta:
+        model = AdministrativeUnit
+        fields = "__all__"
+        exclude = ["assigned_users"]
+
+
 class AdministrativeUnitAdmin(InlineRevisionMixin, TimestampedModelAdmin):
+    form = AdministrativeUnitAdminForm
     resource_class = AdministrativeUnitResource
     list_display = ['reference_code', 'get_current_name', 'get_current_type', 
                     'get_responsible_groups']

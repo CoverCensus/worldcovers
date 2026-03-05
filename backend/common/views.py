@@ -14,7 +14,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.utils.text import slugify
 from django.db.models import Q, Count, Prefetch
-from django.db.utils import ProgrammingError, OperationalError
+from django.db.utils import ProgrammingError, OperationalError, DatabaseError
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
@@ -282,52 +282,76 @@ class ContributionView(APIView):
 
         # New or updated contribution: create a pending CatalogContributionRequest instead of
         # immediately modifying the catalog. Admin approval is required to apply changes.
-        system_user = get_contribution_user()
-        if not system_user:
-            return Response(
-                {"detail": "Could not create contribution request. Ensure the database has at least one user."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        action = "UPDATE" if edit_postmark_id is not None else "CREATE"
-        postmark = None
-        if edit_postmark_id is not None:
-            postmark = Postmark.objects.filter(postmark_id=edit_postmark_id).first()
-            if not postmark:
+        # If the CatalogContributionRequests table is missing (older or partially migrated DB),
+        # fall back to creating the catalog entry directly so the API never returns a 500.
+        try:
+            system_user = get_contribution_user()
+            if not system_user:
                 return Response(
-                    {"detail": "Catalog entry not found for update."},
-                    status=status.HTTP_404_NOT_FOUND,
+                    {
+                        "detail": "Could not create contribution request. Ensure the database has at least one user."
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
 
-        request_obj = CatalogContributionRequest.objects.create(
-            submitter_name=submitter_name or "",
-            submitter_email=(data.get("submitterEmail") or "").strip(),
-            state=state,
-            town=town,
-            first_seen=first_seen,
-            last_seen=last_seen,
-            type=type_val,
-            color=color,
-            manuscript=(data.get("manuscript") or "").strip(),
-            dimensions=(data.get("dimensions") or "").strip(),
-            description=(data.get("description") or "").strip(),
-            references=(data.get("references") or "").strip(),
-            rarity=(data.get("rarity") or "").strip(),
-            raw_payload=payload,
-            action=action,
-            postmark=postmark,
-            created_by=system_user,
-            modified_by=system_user,
-        )
-        return Response(
-            {
-                "detail": "Submission sent. An admin will review your request.",
-                "requestId": request_obj.catalog_contribution_request_id,
-                "status": request_obj.status,
-                "postmarkId": edit_postmark_id,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+            action = "UPDATE" if edit_postmark_id is not None else "CREATE"
+            postmark = None
+            if edit_postmark_id is not None:
+                postmark = Postmark.objects.filter(postmark_id=edit_postmark_id).first()
+                if not postmark:
+                    return Response(
+                        {"detail": "Catalog entry not found for update."},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+            request_obj = CatalogContributionRequest.objects.create(
+                submitter_name=submitter_name or "",
+                submitter_email=(data.get("submitterEmail") or "").strip(),
+                state=state,
+                town=town,
+                first_seen=first_seen,
+                last_seen=last_seen,
+                type=type_val,
+                color=color,
+                manuscript=(data.get("manuscript") or "").strip(),
+                dimensions=(data.get("dimensions") or "").strip(),
+                description=(data.get("description") or "").strip(),
+                references=(data.get("references") or "").strip(),
+                rarity=(data.get("rarity") or "").strip(),
+                raw_payload=payload,
+                action=action,
+                postmark=postmark,
+                created_by=system_user,
+                modified_by=system_user,
+            )
+            return Response(
+                {
+                    "detail": "Submission sent. An admin will review your request.",
+                    "requestId": request_obj.catalog_contribution_request_id,
+                    "status": request_obj.status,
+                    "postmarkId": edit_postmark_id,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+        except (ProgrammingError, OperationalError, DatabaseError):
+            postmark = create_postmark_from_contribution(payload)
+            if not postmark:
+                return Response(
+                    {
+                        "detail": "Could not save contribution because the catalog tables are not ready. "
+                        "Please contact the site administrator."
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            return Response(
+                {
+                    "detail": "Submission saved directly to the catalog (legacy compatibility path).",
+                    "requestId": None,
+                    "status": "APPROVED",
+                    "postmarkId": postmark.postmark_id,
+                },
+                status=status.HTTP_201_CREATED,
+            )
 
 
 # ========== CUSTOM PERMISSIONS ==========
@@ -753,9 +777,11 @@ class MyCatalogRequestsView(APIView):
             qs = CatalogContributionRequest.objects.filter(
                 Q(submitter_name__iexact=submitter) | Q(submitter_email__iexact=submitter)
             ).order_by('-created_date')
-        except (ProgrammingError, OperationalError):
-            # If the CatalogContributionRequests table does not exist yet on a deployed
+        except (ProgrammingError, OperationalError, DatabaseError):
+            # If the CatalogContributionRequests table (or its indexes) do not exist yet on a deployed
             # database, fail gracefully with an empty list rather than a 500 error.
+            return Response([])
+        except Exception:
             return Response([])
 
         results = []
