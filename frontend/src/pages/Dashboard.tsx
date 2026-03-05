@@ -114,38 +114,50 @@ const Dashboard = () => {
           setSubmissions([]);
           return;
         }
-        // Derive API root: strip trailing /postmarks from /api/postmarks
         const base = apiUrl.replace(/\/+$/, "");
-        const apiRoot = base.replace(/\/postmarks$/, "");
-        const url = `${apiRoot}/catalog-requests/my/?submitter=${encodeURIComponent(submitter)}`;
+        const url = `${base}/my-submissions/?submitter=${encodeURIComponent(submitter)}`;
         const res = await fetch(url);
         if (!res.ok) {
           throw new Error(`API error: ${res.status} ${res.statusText}`);
         }
         const data = await res.json();
-        const results = Array.isArray(data) ? data : [];
+        const results = Array.isArray(data.results) ? data.results : [];
         const mapped = results.map((item: any) => {
+          // Prefer list-style mainImage when present; otherwise derive from images[] (full serializer).
+          const mainImageFromList =
+            (item as any).mainImage?.imageUrl ??
+            (typeof (item as any).mainImage === "string" ? (item as any).mainImage : null);
+
+          const mainImageFromImages =
+            (item as any).images?.find?.((img: any) => img.displayOrder === 0)?.imageUrl ??
+            ((item as any).images && (item as any).images.length > 0
+              ? (item as any).images[0].imageUrl
+              : null);
+
+          const imageUrl = normalizeImageUrl(mainImageFromList ?? mainImageFromImages);
+
+          const displayName =
+            [
+              [item.town, item.state].filter(Boolean).join(", "),
+              item.shapeName,
+            ]
+              .filter(Boolean)
+              .join(" — ") || item.postmarkKey;
+
           return {
-            // Use catalog request ID; if approved and linked, use postmarkId for navigation
-            id: item.postmarkId ?? item.id,
-            requestId: item.id,
-            postmarkId: item.postmarkId ?? null,
-            name:
-              [item.town, item.state].filter(Boolean).join(", ") ||
-              `${item.state || ""} ${item.town || ""}`.trim(),
+            // API uses camelCase keys via Postmark* serializers + renderer
+            id: item.postmarkId,
+            name: displayName,
             town: item.town || "",
             state: item.state || "",
-            date_range:
-              item.firstSeen && item.lastSeen
-                ? `${item.firstSeen}-${item.lastSeen}`
-                : item.firstSeen || "",
-            type: item.type || "",
-            color: item.color || "",
-            is_manuscript: (item.manuscript || "").toLowerCase() === "yes",
-            status: (item.status || "PENDING").toString().toLowerCase(),
-            created_at: item.createdAt || new Date().toISOString(),
+            date_range: item.dateRange || "",
+            type: item.shapeName || "",
+            color: item.colorsDisplay || "",
+            is_manuscript: item.isManuscript === true,
+            status: "approved" as const,
+            created_at: item.createdDate || new Date().toISOString(),
             description: undefined,
-            image_url: null as string | null,
+            image_url: imageUrl,
           };
         });
         setSubmissions(mapped);
@@ -196,46 +208,6 @@ const Dashboard = () => {
       toast({
         title: "Submission deleted",
         description: "The catalog entry has been removed.",
-      });
-    } catch (error: unknown) {
-      toast({
-        title: "Could not delete submission",
-        description: error instanceof Error ? error.message : "Please try again or contact an admin.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleDeleteRequest = async (requestId: number) => {
-    if (!window.confirm("Are you sure you want to delete this submission request? This cannot be undone.")) {
-      return;
-    }
-    const apiUrl = getPostmarksApiUrl();
-    if (!apiUrl) {
-      toast({
-        title: "Configuration error",
-        description: "VITE_API_URL is not set, cannot delete submission.",
-        variant: "destructive",
-      });
-      return;
-    }
-    const base = apiUrl.replace(/\/+$/, "");
-    const apiRoot = base.replace(/\/postmarks$/, "");
-    const url = `${apiRoot}/catalog-requests/${requestId}/`;
-    try {
-      const res = await fetch(url, {
-        method: "DELETE",
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        const msg = body?.detail || `Delete failed: ${res.status} ${res.statusText}`;
-        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
-      }
-      setSubmissions(prev => prev.filter(s => s.requestId !== requestId));
-      toast({
-        title: "Submission deleted",
-        description: "Your pending submission has been removed.",
       });
     } catch (error: unknown) {
       toast({
@@ -645,13 +617,7 @@ const Dashboard = () => {
                   <Card
                     key={submission.id}
                     className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
-                    onClick={() => {
-                      if (submission.postmarkId) {
-                        navigate(`/record/${submission.postmarkId}`);
-                        } else {
-                          navigate(`/submission/${submission.requestId}`);
-                      }
-                    }}
+                    onClick={() => navigate(`/record/${submission.id}`)}
                   >
                     <CardContent className="p-6">
                       <div className="flex gap-6">
@@ -709,11 +675,7 @@ const Dashboard = () => {
                               size="sm"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (submission.postmarkId) {
-                                  navigate(`/record/${submission.postmarkId}`);
-                                } else {
-                                  navigate(`/submission/${submission.requestId}`);
-                                }
+                                navigate(`/record/${submission.id}`);
                               }}
                             >
                               View details
@@ -723,11 +685,7 @@ const Dashboard = () => {
                               size="sm"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (submission.postmarkId) {
-                                  navigate(`/edit/${submission.postmarkId}`);
-                                } else {
-                                  navigate(`/submission/${submission.requestId}?edit=1`);
-                                }
+                                navigate(`/edit/${submission.id}`);
                               }}
                             >
                               Edit
@@ -737,11 +695,7 @@ const Dashboard = () => {
                               size="sm"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (submission.postmarkId) {
-                                  handleDeleteSubmission(submission.postmarkId);
-                                } else {
-                                  handleDeleteRequest(submission.requestId);
-                                }
+                                handleDeleteSubmission(submission.id);
                               }}
                             >
                               Delete

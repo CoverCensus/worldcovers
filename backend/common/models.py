@@ -506,12 +506,6 @@ class Postmark(TimestampedModel):
         ('DRAFT', 'Draft'),
         ('ARCHIVED', 'Archived'),
     ]
-    MODERATION_STATUS_CHOICES = [
-        ("PENDING", "Pending review"),
-        ("APPROVED", "Approved"),
-        ("REJECTED", "Rejected"),
-        ("REVISION", "Needs revision"),
-    ]
 
     postmark_id = models.AutoField(primary_key=True, db_column='PostmarkID')
     site = models.ForeignKey(
@@ -589,18 +583,6 @@ class Postmark(TimestampedModel):
         default='PUBLIC',
         db_column='Visibility'
     )
-    moderation_status = models.CharField(
-        max_length=20,
-        choices=MODERATION_STATUS_CHOICES,
-        default="APPROVED",
-        db_column='ModerationStatus',
-        help_text="Editorial review state for this catalog entry.",
-    )
-    moderation_notes = models.TextField(
-        blank=True,
-        db_column='ModerationNotes',
-        help_text="Internal notes about why this listing is approved/rejected/needs revision.",
-    )
     source_catalog = models.CharField(
         max_length=255,
         blank=True,
@@ -652,7 +634,6 @@ class Postmark(TimestampedModel):
             models.Index(fields=['postal_facility_identity']),
             models.Index(fields=['postmark_key']),
             models.Index(fields=['state']),
-            models.Index(fields=['moderation_status']),
         ]
 
     def get_responsible_groups(self):
@@ -1309,105 +1290,5 @@ class AdminCsvUpload(models.Model):
         if self.data:
             self.row_count = len(self.data.get('rows') or [])
         super().save(*args, **kwargs)
-
-
-class CatalogContributionRequest(TimestampedModel):
-    """
-    Stores catalog contribution requests submitted from the public contribute form.
-    Superadmin can approve/reject/request revision from Django admin.
-    """
-    STATUS_CHOICES = [
-        ("PENDING", "Pending"),
-        ("APPROVED", "Approved"),
-        ("REJECTED", "Rejected"),
-        ("REVISION", "Needs revision"),
-    ]
-    ACTION_CHOICES = [
-        ("CREATE", "Create"),
-        ("UPDATE", "Update"),
-        ("DELETE", "Delete"),
-    ]
-
-    catalog_contribution_request_id = models.AutoField(
-        primary_key=True,
-        db_column='CatalogContributionRequestID',
-    )
-
-    action = models.CharField(
-        max_length=10,
-        choices=ACTION_CHOICES,
-        default="CREATE",
-        db_column='Action',
-        help_text="Type of request: create new listing, update existing, or delete existing.",
-    )
-
-    submitter_name = models.CharField(
-        max_length=255,
-        db_column='SubmitterName',
-    )
-    submitter_email = models.EmailField(
-        max_length=254,
-        blank=True,
-        db_column='SubmitterEmail',
-    )
-
-    # Fields mirroring the contribute form inputs
-    state = models.CharField(max_length=255, db_column='State')
-    town = models.CharField(max_length=255, db_column='Town')
-    first_seen = models.CharField(max_length=20, db_column='FirstSeen')
-    last_seen = models.CharField(max_length=20, blank=True, db_column='LastSeen')
-    type = models.CharField(max_length=255, db_column='Type')
-    color = models.CharField(max_length=255, db_column='Color')
-    manuscript = models.CharField(max_length=50, blank=True, db_column='Manuscript')
-    dimensions = models.CharField(max_length=255, blank=True, db_column='Dimensions')
-    description = models.TextField(blank=True, db_column='Description')
-    references = models.TextField(blank=True, db_column='References')
-    rarity = models.CharField(max_length=50, blank=True, db_column='Rarity')
-
-    raw_payload = models.JSONField(
-        default=dict,
-        blank=True,
-        db_column='RawPayload',
-        help_text="Original payload from contribute form, including any image metadata.",
-    )
-
-    status = models.CharField(
-        max_length=20,
-        choices=STATUS_CHOICES,
-        default="PENDING",
-        db_column='Status',
-    )
-    status_notes = models.TextField(
-        blank=True,
-        db_column='StatusNotes',
-        help_text="Internal notes from admin about approval/rejection or requested changes.",
-    )
-
-    # For CREATE: set when approved to the newly created Postmark.
-    # For UPDATE/DELETE: typically points at the existing Postmark being changed.
-    postmark = models.ForeignKey(
-        Postmark,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name='contribution_requests',
-        db_column='PostmarkID',
-        help_text="Catalog listing created when this request is approved.",
-    )
-
-    class Meta:
-        db_table = 'CatalogContributionRequests'
-        verbose_name = 'Catalog Contribution Request'
-        verbose_name_plural = 'Catalog Contribution Requests'
-        ordering = ['-created_date']
-        indexes = [
-            models.Index(fields=['status']),
-            models.Index(fields=['action']),
-            models.Index(fields=['submitter_name']),
-            models.Index(fields=['submitter_email']),
-        ]
-
-    def __str__(self):
-        return f"{self.state} – {self.town} ({self.status})"
 
 ###################################################################################################
