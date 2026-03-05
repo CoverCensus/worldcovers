@@ -196,12 +196,6 @@ class AdministrativeUnit(TimestampedModel):
         db_column='ReferenceCode',
         help_text="Stable identifier (e.g., 'US-VA', 'RUS', 'DAK-TER')"
     )
-    assigned_users = models.ManyToManyField(
-        settings.AUTH_USER_MODEL,
-        blank=True,
-        related_name='assigned_states',
-        help_text="Users explicitly assigned to this location/state for administration or review",
-    )
 
     class Meta:
         db_table = 'AdministrativeUnits'
