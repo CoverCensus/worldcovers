@@ -38,6 +38,7 @@ from .models import (
     AdminCsvUpload, UserLocationAssignment,
 )
 from .csv_import import IMPORTERS
+from .utils import get_canonical_location_reference_codes
 
 User = get_user_model()
 
@@ -953,7 +954,7 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
 
     locations = forms.ModelMultipleChoiceField(
         label='Locations',
-        queryset=AdministrativeUnit.objects.all(),
+        queryset=AdministrativeUnit.objects.none(),
         required=False,
         widget=FilteredSelectMultiple('Locations', is_stacked=False),
         help_text='Select which locations this user is associated with.',
@@ -964,9 +965,20 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # Base queryset: all AdministrativeUnits. If a canonical list of state
+        # reference codes is available, mirror the Location admin behavior by
+        # restricting to those codes; otherwise, show all locations.
+        location_qs = AdministrativeUnit.objects.all()
+        codes = get_canonical_location_reference_codes()
+        if codes is not None:
+            location_qs = location_qs.filter(reference_code__in=codes)
+
+        location_qs = location_qs.order_by('reference_code')
+        self.fields['locations'].queryset = location_qs
+
         if self.instance.pk:
             # Preselect locations already linked to this user
-            self.fields['locations'].initial = AdministrativeUnit.objects.filter(
+            self.fields['locations'].initial = location_qs.filter(
                 user_location_assignments__user=self.instance
             )
 
