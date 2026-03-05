@@ -473,7 +473,11 @@ class PostmarkSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Postmark
-        fields = '__all__'
+        # Use explicit field control instead of "__all__" so that the API
+        # remains compatible with databases that have not yet added newer
+        # moderation-related columns (e.g. ModerationStatus, ModerationNotes).
+        # These fields are not currently needed by the frontend detail view.
+        exclude = ['moderation_status', 'moderation_notes']
         read_only_fields = ['postmark_id', 'created_date', 'modified_date']
     
     def get_state(self, obj):
