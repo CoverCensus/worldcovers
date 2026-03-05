@@ -2,8 +2,6 @@
 ## WoCo Commons - Model Serialization
 ## MPC: 2025/11/15
 ###################################################################################################
-from datetime import datetime
-
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
@@ -335,6 +333,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
     facility_name = serializers.SerializerMethodField()
     shape_name = serializers.SerializerMethodField()
     main_image = serializers.SerializerMethodField()
+    responsible_groups = serializers.SerializerMethodField()
     state = serializers.SerializerMethodField()
     town = serializers.SerializerMethodField()
     date_range = serializers.SerializerMethodField()
@@ -345,7 +344,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         model = Postmark
         fields = ['postmark_id', 'postmark_key', 'facility_name', 'shape_name',
                   'rate_location', 'rate_value', 'is_manuscript', 'main_image',
-                  'state', 'state_id', 'town', 'date_range',
+                  'responsible_groups', 'state', 'state_id', 'town', 'date_range',
                   'colors_display', 'valuation_display', 'created_date']
 
     def get_facility_name(self, obj):
@@ -359,25 +358,31 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         return ''
 
     def get_main_image(self, obj):
-        """Get main image (display_order=0). Uses prefetched images to avoid query."""
-        for img in obj.images.all():
-            if img.display_order == 0:
-                return PostmarkImageSerializer(img, context=self.context).data
+        """Get main image (display_order=0)"""
+        main_img = obj.images.filter(display_order=0).first()
+        if main_img:
+            return PostmarkImageSerializer(main_img, context=self.context).data
         return None
 
+    def get_responsible_groups(self, obj):
+        """Get groups responsible for this postmark"""
+        groups = obj.get_responsible_groups()
+        return [{'id': g.id, 'name': g.name} for g in groups]
+
     def get_state(self, obj):
-        """State: direct FK (listing.state) if set, else from facility's current jurisdiction. Uses prefetch."""
+        """State: direct FK (listing.state) if set, else from facility's current jurisdiction."""
         if obj.state_id:
             identity = obj.state.get_current_identity() if getattr(obj, 'state', None) else None
             return identity.unit_name if identity else (obj.state.reference_code if getattr(obj, 'state', None) else None)
         if not obj.postal_facility_identity_id:
             return None
-        # Use prefetched jurisdictions to avoid query
-        for aff in obj.postal_facility_identity.jurisdictions.all():
-            if aff.effective_to_date is None:
-                identity = aff.administrative_unit.get_current_identity() if aff.administrative_unit else None
-                return identity.unit_name if identity else None
-        return None
+        aff = obj.postal_facility_identity.jurisdictions.filter(
+            effective_to_date__isnull=True
+        ).select_related('administrative_unit').first()
+        if not aff or not aff.administrative_unit:
+            return None
+        identity = aff.administrative_unit.get_current_identity()
+        return identity.unit_name if identity else None
 
     def get_town(self, obj):
         """Town: facility name from identity."""
@@ -386,12 +391,11 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         return ''
 
     def get_date_range(self, obj):
-        """Earliest–latest date seen as string (e.g. '1850-1860'). Uses prefetched dates_seen."""
-        dates = list(obj.dates_seen.all())
-        if not dates:
+        """Earliest–latest date seen as string (e.g. '1850-1860')."""
+        if not obj.dates_seen.exists():
             return None
-        earliest = min((d for d in dates if d.earliest_date_seen), key=lambda d: d.earliest_date_seen, default=None)
-        latest = max((d for d in dates if d.latest_date_seen), key=lambda d: d.latest_date_seen, default=None)
+        earliest = obj.dates_seen.order_by('earliest_date_seen').first()
+        latest = obj.dates_seen.order_by('-latest_date_seen').first()
         if not earliest:
             return None
         e_str = str(earliest.earliest_date_seen.year) if earliest.earliest_date_seen else ''
@@ -410,11 +414,8 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         return ', '.join(names) if names else None
 
     def get_valuation_display(self, obj):
-        """Latest valuation as string (e.g. Common, or numeric). Uses prefetched valuations."""
-        vals = list(obj.valuations.all())
-        if not vals:
-            return None
-        val = max(vals, key=lambda v: v.valuation_date if v.valuation_date else datetime.min.date(), default=None)
+        """Latest valuation as string (e.g. Common, or numeric)."""
+        val = obj.valuations.order_by('-valuation_date').first()
         if not val:
             return None
         return str(val.estimated_value)
