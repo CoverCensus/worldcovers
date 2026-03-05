@@ -10,31 +10,10 @@ class Migration(migrations.Migration):
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='userlocationassignment',
-            name='administrative_unit',
-            field=models.ForeignKey(
-                db_column='AdministrativeUnitID',
-                help_text='Location this user is associated with',
-                on_delete=django.db.models.deletion.CASCADE,
-                related_name='user_location_assignments',
-                to='common.administrativeunit',
-            ),
-        ),
-        migrations.AddField(
-            model_name='userlocationassignment',
-            name='user',
-            field=models.ForeignKey(
-                db_column='UserID',
-                on_delete=django.db.models.deletion.CASCADE,
-                related_name='location_assignments',
-                to=settings.AUTH_USER_MODEL,
-            ),
-        ),
-        migrations.AlterUniqueTogether(
-            name='userlocationassignment',
-            unique_together={('user', 'administrative_unit')},
-        ),
-    ]
+    # This migration originally ALTERed the UserLocationAssignments table to
+    # add the user and administrative_unit columns. Those columns (and the
+    # unique_together constraint) are now created directly in 0016 for new
+    # databases. To avoid duplicate ALTER TABLE statements and failures on
+    # fresh databases, we turn this into a no-op.
+    operations = []
 

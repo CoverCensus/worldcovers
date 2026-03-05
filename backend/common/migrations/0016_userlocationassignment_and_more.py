@@ -14,10 +14,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.SeparateDatabaseAndState(
-            # We assume the `UserLocationAssignments` table already exists in the
-            # database (from a previous partial migration run or manual creation),
-            # so we only update Django's migration state to include the model and
-            # its fields without issuing any CREATE TABLE statements.
+            # State: register the model with Django.
             state_operations=[
                 migrations.CreateModel(
                     name='UserLocationAssignment',
@@ -58,6 +55,48 @@ class Migration(migrations.Migration):
                     },
                 ),
             ],
-            database_operations=[],
+            # Database: on new databases, actually create the table.
+            # On databases where this migration is already applied, Django will
+            # not re-run this operation, so it is safe.
+            database_operations=[
+                migrations.CreateModel(
+                    name='UserLocationAssignment',
+                    fields=[
+                        (
+                            'id',
+                            models.AutoField(
+                                primary_key=True,
+                                db_column='UserLocationAssignmentID',
+                                serialize=False,
+                            ),
+                        ),
+                        (
+                            'user',
+                            models.ForeignKey(
+                                db_column='UserID',
+                                on_delete=django.db.models.deletion.CASCADE,
+                                related_name='location_assignments',
+                                to=settings.AUTH_USER_MODEL,
+                            ),
+                        ),
+                        (
+                            'administrative_unit',
+                            models.ForeignKey(
+                                db_column='AdministrativeUnitID',
+                                help_text='Location this user is associated with',
+                                on_delete=django.db.models.deletion.CASCADE,
+                                related_name='user_location_assignments',
+                                to='common.administrativeunit',
+                            ),
+                        ),
+                    ],
+                    options={
+                        'db_table': 'UserLocationAssignments',
+                        'verbose_name': 'User location assignment',
+                        'verbose_name_plural': 'User location assignments',
+                        'unique_together': {('user', 'administrative_unit')},
+                    },
+                ),
+            ],
         ),
     ]
