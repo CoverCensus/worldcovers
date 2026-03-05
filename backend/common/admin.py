@@ -7,9 +7,7 @@ import io
 
 from django.contrib import admin
 from django.contrib.auth import get_user_model
-from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import Group
-from django.contrib.admin.widgets import FilteredSelectMultiple
 from django.urls import reverse
 from django.utils.html import format_html
 from django.core.paginator import Paginator
@@ -354,102 +352,6 @@ class AdministrativeUnitAdmin(InlineRevisionMixin, TimestampedModelAdmin):
         groups = [resp.group.name for resp in obj.responsibilities.filter(is_active=True)]
         return ', '.join(groups) if groups else '-'
     get_responsible_groups.short_description = 'Responsible Groups'
-
-
-class UserLocationAssignmentForm(forms.ModelForm):
-    """
-    Custom form for User that exposes a dual-list widget of dynamic locations/states,
-    backed by AdministrativeUnit.assigned_users (many-to-many).
-    """
-
-    assigned_states = forms.ModelMultipleChoiceField(
-        queryset=AdministrativeUnit.objects.none(),
-        required=False,
-        widget=FilteredSelectMultiple("locations", is_stacked=False),
-        label="Locations/states",
-        help_text="Assign this user to one or more locations/states.",
-    )
-
-    class Meta:
-        model = User
-        fields = "__all__"
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Limit choices to current STATE-level admin units
-        qs = (
-            AdministrativeUnit.objects
-            .filter(
-                identities__unit_type="STATE",
-                identities__effective_to_date__isnull=True,
-            )
-            .distinct()
-        )
-        self.fields["assigned_states"].queryset = qs
-
-        if self.instance and self.instance.pk:
-            # Pre-select locations already linked to this user
-            self.fields["assigned_states"].initial = qs.filter(assigned_users=self.instance)
-
-    def save(self, commit=True):
-        user = super().save(commit=commit)
-        # Save M2M after main save so we have a primary key
-        if commit:
-            self._save_assigned_states(user)
-        else:
-            # Defer to caller to handle M2M when saving later
-            self.save_m2m = lambda: self._save_assigned_states(user)
-        return user
-
-    def _save_assigned_states(self, user):
-        states_qs = self.cleaned_data.get("assigned_states")
-        if states_qs is None or not user.pk:
-            return
-        # Use the reverse manager provided by related_name on AdministrativeUnit.assigned_users
-        user.assigned_states.set(states_qs)
-
-
-class WorldCoversUserAdmin(BaseUserAdmin):
-    """
-    Custom User admin that adds a dynamic state/location assignment list on the user form,
-    using the same dual-list UI as User permissions, but backed by AdministrativeUnit.assigned_users.
-    """
-
-    form = UserLocationAssignmentForm
-
-    # Use the base filter_horizontal (groups, user_permissions). Our form already specifies the widget.
-    filter_horizontal = BaseUserAdmin.filter_horizontal
-
-    # Show assigned_states on the User detail page in its own section
-    fieldsets = BaseUserAdmin.fieldsets + (
-        ("Location assignments", {"fields": ("assigned_states",)}),
-    )
-
-    def formfield_for_manytomany(self, db_field, request, **kwargs):
-        """
-        Limit assigned_states choices to current STATE-level AdministrativeUnits.
-        This keeps the list dynamic, driven by AdministrativeUnitIdentity data.
-        """
-        if db_field.name == "assigned_states":
-            qs = (
-                AdministrativeUnit.objects
-                .filter(
-                    identities__unit_type="STATE",
-                    identities__effective_to_date__isnull=True,
-                )
-                .distinct()
-            )
-            kwargs["queryset"] = qs
-        return super().formfield_for_manytomany(db_field, request, **kwargs)
-
-
-try:
-    admin.site.unregister(User)
-except admin.sites.NotRegistered:
-    # If User was not registered yet, that's fine; we'll register our custom admin below.
-    pass
-
-admin.site.register(User, WorldCoversUserAdmin)
 
 
 class AdministrativeUnitIdentityAdmin(TimestampedModelAdmin):
