@@ -258,6 +258,7 @@ class ContributionView(APIView):
                 {"detail": "Missing required fields: state, town, firstSeen, type, color."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
         date_range = f"{first_seen}-{last_seen}" if last_seen else first_seen
         submitter_name = (data.get("submitterName") or "").strip()
         payload = {
@@ -273,6 +274,7 @@ class ContributionView(APIView):
             "rarity": (data.get("rarity") or "").strip(),
             "submitter_name": submitter_name,
         }
+
         # Optional image upload
         image_file = request.FILES.get("image")
         if image_file:
@@ -280,78 +282,59 @@ class ContributionView(APIView):
             if image_meta:
                 payload["image_meta"] = image_meta
 
-        # New or updated contribution: create a pending CatalogContributionRequest instead of
-        # immediately modifying the catalog. Admin approval is required to apply changes.
-        # If the CatalogContributionRequests table is missing (older or partially migrated DB),
-        # fall back to creating the catalog entry directly so the API never returns a 500.
+        # First, apply the contribution directly to the catalog (previous behavior).
+        if edit_postmark_id is not None:
+            postmark = update_postmark_from_contribution(edit_postmark_id, payload, submitter_name)
+        else:
+            postmark = create_postmark_from_contribution(payload)
+
+        if not postmark:
+            return Response(
+                {
+                    "detail": "Could not save contribution. Please verify required catalog reference tables exist "
+                    "and that this entry is a user contribution."
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # Best‑effort: also log a CatalogContributionRequest for admin tracking,
+        # but never fail the API if this part errors.
         try:
             system_user = get_contribution_user()
-            if not system_user:
-                return Response(
-                    {
-                        "detail": "Could not create contribution request. Ensure the database has at least one user."
-                    },
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            if system_user:
+                action = "UPDATE" if edit_postmark_id is not None else "CREATE"
+                CatalogContributionRequest.objects.create(
+                    submitter_name=submitter_name or "",
+                    submitter_email=(data.get("submitterEmail") or "").strip(),
+                    state=state,
+                    town=town,
+                    first_seen=first_seen,
+                    last_seen=last_seen,
+                    type=type_val,
+                    color=color,
+                    manuscript=(data.get("manuscript") or "").strip(),
+                    dimensions=(data.get("dimensions") or "").strip(),
+                    description=(data.get("description") or "").strip(),
+                    references=(data.get("references") or "").strip(),
+                    rarity=(data.get("rarity") or "").strip(),
+                    raw_payload=payload,
+                    action=action,
+                    postmark=postmark,
+                    created_by=system_user,
+                    modified_by=system_user,
                 )
+        except Exception:
+            pass
 
-            action = "UPDATE" if edit_postmark_id is not None else "CREATE"
-            postmark = None
-            if edit_postmark_id is not None:
-                postmark = Postmark.objects.filter(postmark_id=edit_postmark_id).first()
-                if not postmark:
-                    return Response(
-                        {"detail": "Catalog entry not found for update."},
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
-
-            request_obj = CatalogContributionRequest.objects.create(
-                submitter_name=submitter_name or "",
-                submitter_email=(data.get("submitterEmail") or "").strip(),
-                state=state,
-                town=town,
-                first_seen=first_seen,
-                last_seen=last_seen,
-                type=type_val,
-                color=color,
-                manuscript=(data.get("manuscript") or "").strip(),
-                dimensions=(data.get("dimensions") or "").strip(),
-                description=(data.get("description") or "").strip(),
-                references=(data.get("references") or "").strip(),
-                rarity=(data.get("rarity") or "").strip(),
-                raw_payload=payload,
-                action=action,
-                postmark=postmark,
-                created_by=system_user,
-                modified_by=system_user,
-            )
-            return Response(
-                {
-                    "detail": "Submission sent. An admin will review your request.",
-                    "requestId": request_obj.catalog_contribution_request_id,
-                    "status": request_obj.status,
-                    "postmarkId": edit_postmark_id,
-                },
-                status=status.HTTP_201_CREATED,
-            )
-        except (ProgrammingError, OperationalError, DatabaseError):
-            postmark = create_postmark_from_contribution(payload)
-            if not postmark:
-                return Response(
-                    {
-                        "detail": "Could not save contribution because the catalog tables are not ready. "
-                        "Please contact the site administrator."
-                    },
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-            return Response(
-                {
-                    "detail": "Submission saved directly to the catalog (legacy compatibility path).",
-                    "requestId": None,
-                    "status": "APPROVED",
-                    "postmarkId": postmark.postmark_id,
-                },
-                status=status.HTTP_201_CREATED,
-            )
+        return Response(
+            {
+                "detail": "Submission saved to the catalog.",
+                "requestId": None,
+                "status": "APPROVED",
+                "postmarkId": postmark.postmark_id,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 # ========== CUSTOM PERMISSIONS ==========
