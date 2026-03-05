@@ -136,6 +136,8 @@ urlpatterns = [
     path("logout/", csrf_exempt(views.LogoutView.as_view()), name="logout"),
     path("login-requests/", csrf_exempt(views.LoginRequestView.as_view()), name="login-request"),
     path("contributions/", csrf_exempt(views.ContributionView.as_view()), name="contribution"),
+    path("catalog-requests/my/", views.MyCatalogRequestsView.as_view(), name="my-catalog-requests"),
+    path("catalog-requests/<int:pk>/", views.CatalogRequestDetailView.as_view(), name="catalog-request-detail"),
     path("me/", views.CurrentUserView.as_view(), name="current-user"),
     path("", include(router.urls)),
 ]

@@ -160,6 +160,7 @@ const Search = () => {
   }, [debouncedKeywordSearch, typeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, excludeManuscripts]);
 
   // Fetch postmarks with React Query - cached so Back shows previous results immediately
+  // First request uses include_count=false for fast load, then background fetch gets count
   const {
     data: queryData,
     isLoading: queryLoading,
@@ -181,6 +182,7 @@ const Search = () => {
       itemsPerPage,
     ],
     queryFn: async () => {
+      // Fast first load: skip count
       const { results, count, count_capped, next, previous } = await getPostmarksPage(
         currentPage,
         itemsPerPage,
@@ -221,10 +223,47 @@ const Search = () => {
     staleTime: 5 * 60 * 1000, // 5 min - use cache when navigating back, no loading
   });
 
+  // Background fetch for total count (runs after fast first load)
+  const {
+    data: countData,
+  } = useQuery({
+    queryKey: [
+      "postmarks-count",
+      debouncedKeywordSearch,
+      typeFilter,
+      stateFilter,
+      debouncedTownFilter,
+      debouncedBeginYear,
+      debouncedEndYear,
+      imagesOnly,
+      colorFilter,
+      excludeManuscripts,
+    ],
+    queryFn: async () => {
+      // Fetch only count (page 1, include_count=true)
+      const { count, count_capped } = await getPostmarksPage(
+        1,
+        itemsPerPage,
+        debouncedKeywordSearch.trim() || undefined,
+        typeFilter !== "all" ? typeFilter : undefined,
+        excludeManuscripts,
+        colorFilter !== "all" ? colorFilter : null,
+        stateFilter !== "all" ? stateFilter : undefined,
+        debouncedTownFilter.trim() || undefined,
+        debouncedBeginYear.trim() || undefined,
+        debouncedEndYear.trim() || undefined,
+        imagesOnly,
+        false // include count
+      );
+      return { count, count_capped };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
   const catalogRecords = queryData?.records ?? [];
-  const totalCount = queryData?.count ?? 0;
-  const countKnown = queryData?.count != null;
-  const countCapped = queryData?.count_capped ?? false;
+  const totalCount = countData?.count ?? queryData?.count ?? 0;
+  const countKnown = (countData?.count != null) || (queryData?.count != null);
+  const countCapped = countData?.count_capped ?? queryData?.count_capped ?? false;
   const hasNext = !!queryData?.next;
   const hasPrevious = !!queryData?.previous;
   // Show loading only when we have no data; when we have cached data, show it (no spinner)
@@ -480,10 +519,10 @@ const Search = () => {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
                 <div>
                   <p className="text-sm text-muted-foreground">
-                    {!countKnown && catalogRecords.length > 0 ? (
-                      <>Page {currentPage} • {catalogRecords.length} results</>
-                    ) : totalCount === 0 ? (
+                    {totalCount === 0 && countKnown ? (
                       "0 results"
+                    ) : !countKnown && catalogRecords.length > 0 ? (
+                      <>Page {currentPage} • {catalogRecords.length} results</>
                     ) : (
                       <>
                         Showing <span className="font-semibold text-foreground">{((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, totalCount)}</span> of <span className="font-semibold text-foreground">{countCapped ? `${totalCount.toLocaleString()}+` : totalCount.toLocaleString()}</span> results
