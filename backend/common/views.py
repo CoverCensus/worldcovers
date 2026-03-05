@@ -14,6 +14,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.utils.text import slugify
 from django.db.models import Q, Count, Prefetch
+from django.db.utils import ProgrammingError, OperationalError
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
@@ -748,9 +749,14 @@ class MyCatalogRequestsView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        qs = CatalogContributionRequest.objects.filter(
-            Q(submitter_name__iexact=submitter) | Q(submitter_email__iexact=submitter)
-        ).order_by('-created_date')
+        try:
+            qs = CatalogContributionRequest.objects.filter(
+                Q(submitter_name__iexact=submitter) | Q(submitter_email__iexact=submitter)
+            ).order_by('-created_date')
+        except (ProgrammingError, OperationalError):
+            # If the CatalogContributionRequests table does not exist yet on a deployed
+            # database, fail gracefully with an empty list rather than a 500 error.
+            return Response([])
 
         results = []
         for obj in qs:
