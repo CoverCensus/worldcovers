@@ -9,9 +9,23 @@ class Migration(migrations.Migration):
         ('common', '0017_userlocationassignment_fields'),
     ]
 
+    # On some databases the `Postmarks_Created_idx` index was never created,
+    # so attempting to drop it causes an OperationalError during deploy.
+    #
+    # We only need to update Django's *state* so it no longer thinks this
+    # index exists; it's safe to leave any existing DB index in place.
+    #
+    # Using SeparateDatabaseAndState means:
+    # - state_operations: remove index from migration state
+    # - database_operations: do nothing (avoid DROP INDEX errors)
     operations = [
-        migrations.RemoveIndex(
-            model_name='postmark',
-            name='Postmarks_Created_idx',
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.RemoveIndex(
+                    model_name='postmark',
+                    name='Postmarks_Created_idx',
+                ),
+            ],
+            database_operations=[],
         ),
     ]
