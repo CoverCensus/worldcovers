@@ -6,7 +6,10 @@ import csv
 import io
 
 from django.contrib import admin
+from django.contrib.admin.sites import NotRegistered
+from django.contrib.admin.widgets import FilteredSelectMultiple
 from django.contrib.auth import get_user_model
+from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.models import Group
 from django.urls import reverse
 from django.utils.html import format_html
@@ -32,7 +35,7 @@ from .models import (
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
     LegacyAbbreviation, LegacyRateLocation, LegacyRateValue,
     LegacyParseStep, LegacyUserState, LegacyRawStateDataPendingUpdate, LegacyCover,
-    AdminCsvUpload,
+    AdminCsvUpload, UserLocationAssignment,
 )
 from .csv_import import IMPORTERS
 
@@ -925,5 +928,105 @@ class AdminCsvUploadAdmin(admin.ModelAdmin):
     @admin.action(description='Import selected into States (Admin Units)')
     def import_to_states(self, request, queryset):
         self._run_import(request, queryset, 'states')
+
+
+# ========== USER ADMIN CUSTOMIZATION ==========
+
+
+class UserLocationAssignmentInline(admin.TabularInline):
+    """
+    Inline so staff can assign locations to a user directly on the user detail page.
+    (Kept for reference; primary UI uses a dual-column selector on the user form.)
+    """
+    model = UserLocationAssignment
+    extra = 0
+    raw_id_fields = ['administrative_unit']
+    verbose_name = 'Location'
+    verbose_name_plural = 'Locations'
+
+
+class UserLocationUserChangeForm(DjangoUserAdmin.form):
+    """
+    Extend the base User change form to manage locations via a two-column selector,
+    similar to the built-in user permissions widget.
+    """
+
+    locations = forms.ModelMultipleChoiceField(
+        label='Locations',
+        queryset=AdministrativeUnit.objects.all(),
+        required=False,
+        widget=FilteredSelectMultiple('Locations', is_stacked=False),
+        help_text='Select which locations this user is associated with.',
+    )
+
+    class Meta(DjangoUserAdmin.form.Meta):
+        fields = DjangoUserAdmin.form.Meta.fields
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            # Preselect locations already linked to this user
+            self.fields['locations'].initial = AdministrativeUnit.objects.filter(
+                user_location_assignments__user=self.instance
+            )
+
+    def _save_locations(self):
+        """
+        Synchronize UserLocationAssignment rows with the selected locations.
+        """
+        if not self.instance.pk or 'locations' not in self.cleaned_data:
+            return
+
+        user = self.instance
+        selected_qs = self.cleaned_data['locations']
+        selected_ids = set(selected_qs.values_list('pk', flat=True))
+
+        # Remove assignments that are no longer selected
+        UserLocationAssignment.objects.filter(user=user).exclude(
+            administrative_unit_id__in=selected_ids
+        ).delete()
+
+        # Add new assignments for newly selected locations
+        existing_ids = set(
+            UserLocationAssignment.objects.filter(user=user).values_list(
+                'administrative_unit_id', flat=True
+            )
+        )
+        to_create_ids = selected_ids - existing_ids
+
+        UserLocationAssignment.objects.bulk_create(
+            [
+                UserLocationAssignment(user=user, administrative_unit_id=pk)
+                for pk in to_create_ids
+            ]
+        )
+
+    def save_m2m(self):
+        # Let the base form handle its M2M fields (groups, permissions, etc.)
+        super().save_m2m()
+        # Then sync our custom locations selection to the through model
+        self._save_locations()
+
+
+try:
+    admin.site.unregister(User)
+except NotRegistered:
+    # Default User admin may not be registered in some configurations.
+    pass
+
+
+@admin.register(User)
+class CustomUserAdmin(DjangoUserAdmin):
+    """
+    Extend the default Django User admin to show a dual-column Locations selector,
+    similar to the built-in user permissions UI.
+    """
+
+    form = UserLocationUserChangeForm
+    # Add a dedicated fieldset for locations
+    fieldsets = DjangoUserAdmin.fieldsets + (
+        ('Locations', {'fields': ('locations',)}),
+    )
+
 
 ###################################################################################################

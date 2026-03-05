@@ -192,8 +192,7 @@ const Search = () => {
         debouncedTownFilter.trim() || undefined,
         debouncedBeginYear.trim() || undefined,
         debouncedEndYear.trim() || undefined,
-        imagesOnly,
-        true // deferCount: skip slow COUNT query for faster first load
+        imagesOnly
       );
       const apiTransformed = results.map((record: any) => ({
         id: `api-${record.id}`,

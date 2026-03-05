@@ -1291,4 +1291,39 @@ class AdminCsvUpload(models.Model):
             self.row_count = len(self.data.get('rows') or [])
         super().save(*args, **kwargs)
 
+
+# ========== USER ↔ LOCATION ASSIGNMENTS ==========
+
+
+class UserLocationAssignment(models.Model):
+    """
+    Links a Django user account to one or more locations (AdministrativeUnit).
+    Used in the admin user detail page so staff can see and manage which
+    locations a user is associated with.
+    """
+    id = models.AutoField(primary_key=True, db_column='UserLocationAssignmentID')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='location_assignments',
+        db_column='UserID',
+    )
+    administrative_unit = models.ForeignKey(
+        AdministrativeUnit,
+        on_delete=models.CASCADE,
+        related_name='user_location_assignments',
+        db_column='AdministrativeUnitID',
+        help_text='Location this user is associated with',
+    )
+
+    class Meta:
+        db_table = 'UserLocationAssignments'
+        verbose_name = 'User location assignment'
+        verbose_name_plural = 'User location assignments'
+        unique_together = [['user', 'administrative_unit']]
+
+    def __str__(self):
+        return f"{self.user} → {self.administrative_unit}"
+
+
 ###################################################################################################
