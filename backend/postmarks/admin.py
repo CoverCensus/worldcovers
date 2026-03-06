@@ -20,6 +20,7 @@ from common.utils import get_canonical_location_reference_codes
 
 from .models import (
     Listing,
+    CatalogRequest,
     ListingImage,
     PostmarkShape,
     LetteringStyle,
@@ -51,6 +52,18 @@ class ListingAdmin(PostmarkAdmin):
             .select_related('postmark_shape', 'state')
             .order_by('postmark_id')
         )
+
+
+@admin.register(CatalogRequest)
+class CatalogRequestAdmin(ListingAdmin):
+    """
+    Admin view that shows only user-contributed catalog entries,
+    so admins can approve/reject/mark as needing revision.
+    """
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        return qs.filter(source_catalog="User contribution")
 
 
 admin.site.register(ListingImage, PostmarkImageAdmin)

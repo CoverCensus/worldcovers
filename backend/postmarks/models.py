@@ -29,6 +29,19 @@ class Listing(CommonPostmark):
         verbose_name_plural = "Listings"
 
 
+class CatalogRequest(Listing):
+    """
+    Proxy for Postmark used to show only user-contributed catalog requests
+    in the Postmarks section of the admin.
+    """
+
+    class Meta:
+        proxy = True
+        app_label = "postmarks"
+        verbose_name = "Catalog request"
+        verbose_name_plural = "Catalog requests"
+
+
 class ListingImage(CommonPostmarkImage):
     class Meta:
         proxy = True

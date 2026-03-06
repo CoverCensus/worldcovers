@@ -706,6 +706,7 @@ def _create_postmark_in_catalog(payload):
             rate_value="",
             is_manuscript=is_manuscript,
             source_catalog="User contribution",
+            contribution_approval_status="pending",
             other_characteristics=other_characteristics[:10000] if other_characteristics else "",
             created_by=user,
             modified_by=user,
@@ -1430,13 +1431,21 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     ViewSet for postmarks with group-based permission checking.
     List is paginated: 10 per page (honors ?page_size= up to 100).
     Supports ?include_count=false to skip the COUNT query for faster first load.
+    Catalog list (used by /search): only approved user contributions are shown; others visible.
     """
     pagination_class = PostmarkListPagination
     queryset = Postmark.objects.all()  # Base queryset; get_queryset() returns optimized version
     permission_classes = [IsAuthenticatedOrReadOnly, IsResponsibleForRegion]
 
     def get_queryset(self):
-        return _postmark_list_queryset()
+        qs = _postmark_list_queryset()
+        # For list (catalog search): show only non-contributions OR user contributions that are approved
+        if self.action == "list":
+            qs = qs.filter(
+                Q(source_catalog__iexact="User contribution") & Q(contribution_approval_status="approved")
+                | ~Q(source_catalog__iexact="User contribution")
+            )
+        return qs
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = PostmarkListFilter
     # Search only by name (postmark_key); town, state, type, color have their own filters

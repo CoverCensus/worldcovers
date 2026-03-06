@@ -125,6 +125,9 @@ const Contribute = () => {
 
   // Submissions are now stored in Django; "My Submissions" list can be added via Django API later if needed.
 
+  const noAssignedStates =
+    !!user && !loadingStates && !stateOptionsError && stateOptions.length === 0;
+
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) {
@@ -281,7 +284,7 @@ const Contribute = () => {
 
       toast({
         title: "Submission sent",
-        description: "Your entry has been added to the catalog.",
+        description: "Your catalog entry has been submitted for approval. It will appear in Search after an admin approves it.",
       });
 
       setState("");
@@ -355,6 +358,12 @@ const Contribute = () => {
                   <CardTitle className="font-heading text-xl">Submit New Entry</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
+                  {noAssignedStates && (
+                    <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+                      You are signed in but do not have any states assigned to your account. Please contact an
+                      administrator to be assigned to one or more states before submitting catalog entries.
+                    </div>
+                  )}
                   {!user && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-4 text-sm text-amber-800 dark:text-amber-200">
                       Sign in to add your name to the submission.{" "}
@@ -639,7 +648,7 @@ const Contribute = () => {
                     <Button
                       type="submit"
                       className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
-                      disabled={submitting}
+                      disabled={submitting || noAssignedStates}
                     >
                       {submitting ? "Submitting..." : "Submit to Catalog"}
                     </Button>
