@@ -43,6 +43,24 @@ from .utils import get_canonical_location_reference_codes
 User = get_user_model()
 
 
+def _user_location_assignments_table_exists():
+    """Return True if the UserLocationAssignments table exists. Used to avoid 500 when migrations haven't run."""
+    try:
+        with connection.cursor() as cursor:
+            if connection.vendor == "mysql":
+                cursor.execute(
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema = DATABASE() AND LOWER(table_name) = %s LIMIT 1",
+                    ["userlocationassignments"],
+                )
+                return cursor.fetchone() is not None
+            # SQLite / other: introspection
+            tables = [t.lower() for t in connection.introspection.table_names()]
+            return "userlocationassignments" in tables
+    except Exception:
+        return False
+
+
 # ========== BASE ABSTRACT MODELS ==========
 
 class NoCountPaginator(Paginator):
@@ -966,10 +984,14 @@ except NotRegistered:
 class CustomUserAdmin(DjangoUserAdmin):
     """
     User admin with optional location (state) assignment.
-    Staff who can access /admin can assign locations to users via the inline below.
-    Assigning is optional; users can have zero or more locations.
+    The locations inline is only shown when the UserLocationAssignments table exists
+    (after running: python manage.py migrate common).
     """
-    inlines = list(DjangoUserAdmin.inlines) + [UserLocationAssignmentInline]
+    def get_inlines(self, request, obj=None):
+        inlines = list(super().get_inlines(request, obj))
+        if _user_location_assignments_table_exists():
+            inlines = inlines + [UserLocationAssignmentInline]
+        return inlines
 
 
 ###################################################################################################
