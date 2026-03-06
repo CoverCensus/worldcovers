@@ -59,7 +59,5 @@ jobs:
             set -euo pipefail
             # Stop app so migrations can run without table locks (ALTER TABLE on Postmarks can block otherwise)
             sudo systemctl stop worldcovers
-            # Ensure wocod can delete and recreate frontend/dist (fixes EACCES during vite build)
-            sudo chown -R wocod:wocod /srv/woco/frontend/dist 2>/dev/null || true
             sudo -u wocod -s bash -lc "cd /srv/woco && git fetch origin && git reset --hard origin/staging && ./scripts/deploy.sh"
             sudo systemctl start worldcovers
