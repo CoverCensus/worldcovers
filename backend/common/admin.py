@@ -971,7 +971,7 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
     )
 
     class Meta(DjangoUserAdmin.form.Meta):
-        fields = DjangoUserAdmin.form.Meta.fields
+        fields = tuple(DjangoUserAdmin.form.Meta.fields) + ('locations',)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -994,13 +994,14 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
 
     def _save_locations(self):
         """Save chosen locations to UserLocationAssignments for this user."""
+        if not self.instance.pk:
+            return
         if not _user_location_table_available():
             return
-        if not self.instance.pk or 'locations' not in self.cleaned_data:
-            return
+        # locations is in Meta.fields so it is in cleaned_data after validation
+        selected_qs = self.cleaned_data.get('locations') or AdministrativeUnit.objects.none()
 
         user = self.instance
-        selected_qs = self.cleaned_data['locations']
         selected_ids = set(selected_qs.values_list('pk', flat=True))
 
         # Remove assignments that are no longer selected
