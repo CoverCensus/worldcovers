@@ -49,15 +49,29 @@ def has_userlocationassignments_table() -> bool:
     Return True if the UserLocationAssignments table exists on this database.
     Used so the admin UI can degrade gracefully on environments where the
     table was not created yet (e.g. before migrations run).
+    Uses a direct information_schema query so it works regardless of
+    MySQL/MariaDB lower_case_table_names or driver table-name casing.
     """
+    table_name = UserLocationAssignment._meta.db_table
     try:
-        existing = set(connection.introspection.table_names())
+        with connection.cursor() as cursor:
+            if connection.vendor == "mysql":
+                cursor.execute(
+                    """
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = DATABASE()
+                    AND LOWER(table_name) = LOWER(%s)
+                    LIMIT 1
+                    """,
+                    [table_name],
+                )
+            else:
+                # SQLite, PostgreSQL, etc.: use introspection
+                existing = {t.lower() for t in connection.introspection.table_names()}
+                return table_name.lower() in existing
+            return cursor.fetchone() is not None
     except Exception:
         return False
-    # MySQL/MariaDB with lower_case_table_names may return names in lowercase
-    expected = UserLocationAssignment._meta.db_table
-    existing_lower = {t.lower() for t in existing}
-    return expected.lower() in existing_lower
 
 
 # ========== BASE ABSTRACT MODELS ==========
