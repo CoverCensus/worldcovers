@@ -44,14 +44,8 @@ from .utils import get_canonical_location_reference_codes
 User = get_user_model()
 
 
-def has_userlocationassignments_table() -> bool:
-    """
-    Return True if the UserLocationAssignments table exists on this database.
-    Used so the admin UI can degrade gracefully on environments where the
-    table was not created yet (e.g. before migrations run).
-    Uses a single ORM query so it works on any backend and does not depend
-    on information_schema or introspection.
-    """
+def _user_location_table_available() -> bool:
+    """True if UserLocationAssignments table exists (for load/save of chosen locations)."""
     try:
         UserLocationAssignment.objects.only("pk").first()
         return True
@@ -992,31 +986,16 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
         location_qs = location_qs.order_by('reference_code')
         self.fields['locations'].queryset = location_qs
 
-        # Check once per form instance whether the UserLocationAssignments table exists.
-        self._has_userlocationassignments = has_userlocationassignments_table()
-
-        if self._has_userlocationassignments and self.instance.pk:
-            # Preselect locations already linked to this user (only if table exists)
+        # Preselect Chosen Locations from UserLocationAssignment when editing a user
+        if self.instance.pk and _user_location_table_available():
             self.fields['locations'].initial = location_qs.filter(
                 user_location_assignments__user=self.instance
             )
-        elif not self._has_userlocationassignments:
-            # Table is missing: show choices but disable the field to avoid DB errors.
-            self.fields['locations'].disabled = True
-            self.fields['locations'].help_text = (
-                "Location assignments are read-only until the UserLocationAssignments "
-                "table is created (migrations pending)."
-            )
 
     def _save_locations(self):
-        """
-        Synchronize UserLocationAssignment rows with the selected locations.
-        """
-        # If the underlying table does not exist on this database, skip syncing
-        # entirely so the admin page can still be used without errors.
-        if not getattr(self, "_has_userlocationassignments", False):
+        """Save chosen locations to UserLocationAssignments for this user."""
+        if not _user_location_table_available():
             return
-
         if not self.instance.pk or 'locations' not in self.cleaned_data:
             return
 
