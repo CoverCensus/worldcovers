@@ -75,3 +75,34 @@ export async function getAdministrativeUnits(): Promise<StateOption[]> {
     }))
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
 }
+
+function getAssignedAdministrativeUnitsApiUrl(): string | null {
+  const env = import.meta.env.VITE_API_URL;
+  if (!env || typeof env !== "string" || env.trim() === "") return null;
+  const base = env.trim().replace(/\/+$/, "");
+  return `${base}/api/assigned-states`;
+}
+
+/**
+ * Fetches only the administrative units assigned to the current user.
+ * Returns state options (value = name, label = name).
+ */
+export async function getAssignedAdministrativeUnits(): Promise<StateOption[]> {
+  const apiUrl = getAssignedAdministrativeUnitsApiUrl();
+  if (!apiUrl) return [];
+  const res = await fetch(apiUrl);
+  if (!res.ok) {
+    throw new Error(`Assigned states API error: ${res.status} ${res.statusText}`);
+  }
+  const data = await res.json();
+  if (!Array.isArray(data)) {
+    throw new Error("Assigned states API: invalid response");
+  }
+  return data
+    .filter((item) => item && typeof item.value === "string")
+    .map((item) => ({
+      value: item.value,
+      label: item.label || item.value,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+}
