@@ -43,7 +43,7 @@ from .models import (
     Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
-    AdminCsvUpload,
+    AdminCsvUpload, UserLocationAssignment,
 )
 
 from .serializers import (
@@ -1104,6 +1104,8 @@ class AdministrativeUnitViewSet(viewsets.ModelViewSet):
     """
     ViewSet for administrative units (stable containers).
     Uses larger max page_size so filter dropdowns can request all states in one call.
+    For authenticated users with location assignments: returns only assigned locations.
+    For users without assignments (or staff/superuser): returns all.
     """
     pagination_class = LargePageSizePagination
     queryset = AdministrativeUnit.objects.all().select_related(
@@ -1115,6 +1117,27 @@ class AdministrativeUnitViewSet(viewsets.ModelViewSet):
     search_fields = ['reference_code']
     ordering_fields = ['reference_code', 'created_date']
     ordering = ['reference_code']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        # Only filter when assigned_only=true (Contribute, Dashboard); Search uses all states
+        if self.request.query_params.get('assigned_only', '').lower() != 'true':
+            return qs
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return qs
+        # Staff/superuser see all locations even when assigned_only
+        if getattr(user, 'is_staff', False) or getattr(user, 'is_superuser', False):
+            return qs
+        # Filter to user's assigned locations
+        assigned_ids = list(
+            UserLocationAssignment.objects.filter(user=user).values_list(
+                'administrative_unit_id', flat=True
+            )
+        )
+        if assigned_ids:
+            return qs.filter(pk__in=assigned_ids)
+        return qs
     
     def get_serializer_class(self):
         if self.action == 'list':

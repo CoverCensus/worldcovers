@@ -1052,6 +1052,12 @@ class CustomUserAdmin(DjangoUserAdmin):
 
     form = UserLocationUserChangeForm
 
+    def save_related(self, request, form, formsets, change):
+        """Ensure locations are saved (runs after save_m2m)."""
+        super().save_related(request, form, formsets, change)
+        if hasattr(form, '_save_locations'):
+            form._save_locations()
+
     # Add a dedicated fieldset for locations, positioned between the built-in
     # "Permissions" and "Important dates" sections on the user detail page.
     _base_fieldsets = list(DjangoUserAdmin.fieldsets)

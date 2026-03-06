@@ -34,22 +34,27 @@ function getAdministrativeUnitsApiUrl(): string | null {
 }
 
 /**
- * Fetches all administrative units from GET /api/administrative-units/.
+ * Fetches administrative units from GET /api/administrative-units/.
  * Follows pagination (next) so the filter dropdown gets every state in the catalog.
  * Returns state options (value = currentName, label = currentName).
+ * @param assignedOnly - When true, only returns states assigned to the current user (Contribute, Dashboard). When false/undefined, returns all states (Search).
  */
-export async function getAdministrativeUnits(): Promise<StateOption[]> {
+export async function getAdministrativeUnits(assignedOnly?: boolean): Promise<StateOption[]> {
   const apiUrl = getAdministrativeUnitsApiUrl();
   if (!apiUrl) {
     return [];
   }
 
   const base = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
+  const params = new URLSearchParams({ page_size: "500" });
+  if (assignedOnly) {
+    params.set("assigned_only", "true");
+  }
   const allResults: AdministrativeUnitApiItem[] = [];
-  let nextUrl: string | null = `${base}?page_size=500`;
+  let nextUrl: string | null = `${base}?${params.toString()}`;
 
   while (nextUrl) {
-    const res = await fetch(nextUrl);
+    const res = await fetch(nextUrl, { credentials: "include" });
     if (!res.ok) {
       throw new Error(`Administrative units API error: ${res.status} ${res.statusText}`);
     }

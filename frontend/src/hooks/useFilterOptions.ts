@@ -28,12 +28,18 @@ interface UseFilterOptionsReturn {
 //   return { value: value || name, label: name };
 // }
 
-export const useFilterOptions = (): UseFilterOptionsReturn => {
+interface UseFilterOptionsOptions {
+  /** When true, only states assigned to the user (Dashboard). When false, all states (Search). */
+  assignedStatesOnly?: boolean;
+}
+
+export const useFilterOptions = (options?: UseFilterOptionsOptions): UseFilterOptionsReturn => {
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [shapeOptions, setShapeOptions] = useState<ShapeOption[]>([]);
   const [stateOptions, setStateOptions] = useState<StateOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const assignedStatesOnly = options?.assignedStatesOnly ?? false;
 
   const fetchOptions = async () => {
     setIsLoading(true);
@@ -42,7 +48,7 @@ export const useFilterOptions = (): UseFilterOptionsReturn => {
       const [colors, shapes, states] = await Promise.all([
         getColors(),
         getPostmarkShapes(),
-        getAdministrativeUnits(),
+        getAdministrativeUnits(assignedStatesOnly),
       ]);
       setColorOptions(colors.map((c) => ({ value: c.name, label: c.name })));
       setShapeOptions(shapes.map((s) => ({ value: String(s.id), label: s.name })));
@@ -62,7 +68,7 @@ export const useFilterOptions = (): UseFilterOptionsReturn => {
 
   useEffect(() => {
     fetchOptions();
-  }, []);
+  }, [assignedStatesOnly]);
 
   return {
     colorOptions,

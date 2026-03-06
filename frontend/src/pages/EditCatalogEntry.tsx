@@ -120,7 +120,7 @@ const EditCatalogEntry = () => {
   useEffect(() => {
     setLoadingStates(true);
     setStateOptionsError(null);
-    getAdministrativeUnits()
+    getAdministrativeUnits(true)
       .then(setStateOptions)
       .catch((err) => {
         setStateOptionsError(err instanceof Error ? err.message : "Failed to load states");

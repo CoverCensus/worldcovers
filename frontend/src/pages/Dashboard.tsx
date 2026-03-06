@@ -84,9 +84,9 @@ const Dashboard = () => {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
-  // Shared filter options (states, types, colors)
+  // Shared filter options (states, types, colors) - only states assigned to user
   const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } =
-    useFilterOptions();
+    useFilterOptions({ assignedStatesOnly: true });
 
   // Fetch only current user's catalog submissions (from Django postmarks API)
   useEffect(() => {
