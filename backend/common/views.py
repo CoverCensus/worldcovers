@@ -836,6 +836,48 @@ class IsResponsibleForRegion(BasePermission):
         return request.user and request.user.is_authenticated
 
 
+@method_decorator(csrf_exempt, name="dispatch")
+class DeleteMySubmissionView(APIView):
+    """
+    Allow authenticated users to delete their own user-contribution catalog entries.
+
+    This endpoint is CSRF-exempt so the SPA can call it with session authentication.
+    Server-side checks ensure that only the original submitter can delete, and only
+    for Postmarks created from user contributions.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        try:
+            postmark_id = int(pk)
+        except (TypeError, ValueError):
+            return Response({"detail": "Invalid catalog ID."}, status=status.HTTP_400_BAD_REQUEST)
+
+        postmark = Postmark.objects.filter(postmark_id=postmark_id).first()
+        if not postmark or postmark.source_catalog != "User contribution":
+            return Response({"detail": "Catalog entry not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        other = (postmark.other_characteristics or "") or ""
+        username = (getattr(request.user, "username", "") or "").strip()
+        email = (getattr(request.user, "email", "") or "").strip()
+
+        submitter_needles = []
+        if username:
+            submitter_needles.append(f"Submitted by: {username}")
+        if email:
+            submitter_needles.append(f"Submitted by: {email}")
+
+        if not submitter_needles or not any(needle in other for needle in submitter_needles):
+            return Response(
+                {"detail": "You can only delete catalog entries that you originally submitted."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        postmark.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 # ========== GEOGRAPHIC HIERARCHY VIEWSETS ==========
 
 class PostalFacilityViewSet(viewsets.ModelViewSet):
