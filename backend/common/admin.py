@@ -971,7 +971,12 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
     )
 
     class Meta(DjangoUserAdmin.form.Meta):
-        fields = tuple(DjangoUserAdmin.form.Meta.fields) + ('locations',)
+        _parent_fields = DjangoUserAdmin.form.Meta.fields
+        if _parent_fields == '__all__':
+            # Can't add to __all__; use concrete User field names + locations
+            fields = [f.name for f in User._meta.get_fields() if f.concrete] + ['locations']
+        else:
+            fields = tuple(_parent_fields) + ('locations',)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
