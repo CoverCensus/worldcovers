@@ -1064,10 +1064,24 @@ class CustomUserAdmin(DjangoUserAdmin):
     """
 
     form = UserLocationUserChangeForm
-    # Add a dedicated fieldset for locations
-    fieldsets = DjangoUserAdmin.fieldsets + (
-        ('Locations', {'fields': ('locations',)}),
-    )
+
+    # Add a dedicated fieldset for locations, positioned between the built-in
+    # "Permissions" and "Important dates" sections on the user detail page.
+    _base_fieldsets = list(DjangoUserAdmin.fieldsets)
+    try:
+        _important_idx = next(
+            idx
+            for idx, (name, options) in enumerate(_base_fieldsets)
+            if name == 'Important dates'
+        )
+    except StopIteration:
+        # Fallback: if Django's UserAdmin ever renames/removes "Important dates",
+        # just append Locations at the end (better than breaking).
+        _base_fieldsets.append(('Locations', {'fields': ('locations',)}))
+    else:
+        _base_fieldsets.insert(_important_idx, ('Locations', {'fields': ('locations',)}))
+
+    fieldsets = tuple(_base_fieldsets)
 
 
 ###################################################################################################
