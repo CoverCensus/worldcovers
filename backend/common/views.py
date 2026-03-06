@@ -538,7 +538,7 @@ def _get_user_assigned_units(user):
     """Return queryset of AdministrativeUnits assigned to this user.
     Staff/superusers can access all units.
     """
-    if getattr(user, "is_staff", False) or getattr(user, "is_superuser", False):
+    if getattr(user, "is_superuser", False):
         return AdministrativeUnit.objects.all()
     return AdministrativeUnit.objects.filter(
         user_location_assignments__user=user
@@ -981,7 +981,7 @@ class ContributionView(APIView):
         assigned_admin_unit = None
         if not user.is_authenticated:
             return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
-        if not (getattr(user, "is_staff", False) or getattr(user, "is_superuser", False)):
+        if not getattr(user, "is_superuser", False):
             assigned_admin_unit = _resolve_assigned_admin_unit(user, state)
             if not assigned_admin_unit:
                 return Response(
@@ -1492,7 +1492,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
             source_catalog="User contribution",
         ).filter(needle_q).order_by('-created_date')
 
-        if not (getattr(user, "is_staff", False) or getattr(user, "is_superuser", False)):
+        if not getattr(user, "is_superuser", False):
             assigned_units = _get_user_assigned_units(user)
             if assigned_units.exists():
                 qs = qs.filter(state__in=assigned_units)
