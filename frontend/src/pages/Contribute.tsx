@@ -12,7 +12,7 @@ import { Upload, CheckCircle, XCircle, Clock } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
-import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
+import { getAssignedAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
 import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -28,8 +28,6 @@ const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 10;
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/tiff"];
 
-/** Value when user chooses "Other" and types state manually */
-const STATE_OTHER_VALUE = "__other__";
 /** Value when user chooses "Other" and types color manually */
 const COLOR_OTHER_VALUE = "__other__";
 /** Value when user chooses "Other" and types postmark type manually */
@@ -73,7 +71,6 @@ const Contribute = () => {
 
   // Form state – all fields shown on Submission Detail
   const [state, setState] = useState("");
-  const [stateOther, setStateOther] = useState("");
   const [town, setTown] = useState("");
   const [firstSeen, setFirstSeen] = useState("");
   const [lastSeen, setLastSeen] = useState("");
@@ -108,11 +105,11 @@ const Contribute = () => {
     getAdministrativeUnits(true)
       .then(setStateOptions)
       .catch((err) => {
-        setStateOptionsError(err instanceof Error ? err.message : "Failed to load states");
+        setStateOptionsError(err instanceof Error ? err.message : "Failed to load assigned states");
         setStateOptions([]);
       })
       .finally(() => setLoadingStates(false));
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     setLoadingTypes(true);
@@ -158,7 +155,7 @@ const Contribute = () => {
   };
 
   const buildName = () => {
-    const stateLabel = state === STATE_OTHER_VALUE ? stateOther.trim() : state;
+    const stateLabel = state.trim();
     return `${town.trim()}, ${stateLabel} ${type}`.trim();
   };
 
@@ -172,7 +169,16 @@ const Contribute = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const stateVal = state === STATE_OTHER_VALUE ? stateOther.trim() : state.trim();
+    if (!user) {
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to submit listings.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const stateVal = state.trim();
     const townVal = town.trim();
     const firstVal = firstSeen.trim();
     const typeVal = type === TYPE_OTHER_VALUE ? typeOther.trim() : type.trim();
@@ -279,7 +285,6 @@ const Contribute = () => {
       });
 
       setState("");
-      setStateOther("");
       setTown("");
       setFirstSeen("");
       setLastSeen("");
@@ -372,10 +377,7 @@ const Contribute = () => {
                           }
                         }}
                         placeholder="Select state..."
-                        options={[
-                          ...stateOptions,
-                          { value: STATE_OTHER_VALUE, label: "Other (type below)" },
-                        ]}
+                        options={stateOptions}
                         loading={loadingStates}
                         error={!!stateOptionsError}
                         errorMessage={stateOptionsError ?? "Failed to load states"}
@@ -386,16 +388,6 @@ const Contribute = () => {
                       />
                       {fieldErrors.state && (
                         <p className="text-sm text-destructive">{fieldErrors.state}</p>
-                      )}
-                      {state === STATE_OTHER_VALUE && (
-                        <Input
-                          id="state-other"
-                          placeholder="e.g. Virginia Territory, District of Columbia"
-                          value={stateOther}
-                          onChange={(e) => setStateOther(e.target.value)}
-                          className="mt-2"
-                          aria-label="State (other)"
-                        />
                       )}
                     </div>
 

@@ -141,6 +141,34 @@ class CurrentUserView(APIView):
         })
 
 
+class AssignedStatesView(APIView):
+    """Return state options assigned to the current user."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        units = _get_user_assigned_units(user)
+        identities = AdministrativeUnitIdentity.objects.filter(
+            administrative_unit__in=units,
+            effective_to_date__isnull=True,
+        )
+        seen = set()
+        items = []
+        for ident in identities:
+            name = (ident.unit_name or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            items.append({
+                "value": name,
+                "label": name,
+                "administrativeUnitId": ident.administrative_unit_id,
+                "abbreviation": (ident.unit_abbreviation or "").strip(),
+            })
+        items.sort(key=lambda x: x["label"].lower())
+        return Response(items)
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class LogoutView(APIView):
     """Session logout for SPA."""
@@ -505,6 +533,57 @@ def _save_contribution_image(uploaded_file):
     }
 
 
+def _get_user_assigned_units(user):
+    """Return queryset of AdministrativeUnits assigned to this user.
+    Staff/superusers can access all units.
+    """
+    if getattr(user, "is_superuser", False):
+        return AdministrativeUnit.objects.all()
+    return AdministrativeUnit.objects.filter(
+        user_location_assignments__user=user
+    ).distinct()
+
+
+def _get_allowed_state_strings(user):
+    """Return (allowed_strings_set, assigned_units_queryset)."""
+    units = _get_user_assigned_units(user)
+    allowed = set()
+    if not units.exists():
+        return allowed, units
+    identities = AdministrativeUnitIdentity.objects.filter(
+        administrative_unit__in=units,
+        effective_to_date__isnull=True,
+    )
+    for ident in identities:
+        name = (ident.unit_name or "").strip()
+        abv = (ident.unit_abbreviation or "").strip()
+        if name:
+            allowed.add(name.lower())
+        if abv:
+            allowed.add(abv.lower())
+    return allowed, units
+
+
+def _resolve_assigned_admin_unit(user, state_str):
+    """Match a state string to one of the user's assigned AdministrativeUnits."""
+    state_norm = (state_str or "").strip().lower()
+    if not state_norm:
+        return None
+    allowed, units = _get_allowed_state_strings(user)
+    if not allowed:
+        return None
+    identities = AdministrativeUnitIdentity.objects.filter(
+        administrative_unit__in=units,
+        effective_to_date__isnull=True,
+    )
+    for ident in identities:
+        name = (ident.unit_name or "").strip().lower()
+        abv = (ident.unit_abbreviation or "").strip().lower()
+        if state_norm == name or state_norm == abv:
+            return ident.administrative_unit
+    return None
+
+
 def _create_postmark_in_catalog(payload):
     """
     Create a Postmark (and related records) directly in the catalog tables from
@@ -529,13 +608,15 @@ def _create_postmark_in_catalog(payload):
 
         # State: get or create AdministrativeUnit + Identity
         state_slug = slugify(state_str)[:40] or "unknown"
-        ref_code = f"CONTRIB-{state_slug}"
-        admin_unit, _ = AdministrativeUnit.objects.get_or_create(
-            reference_code=ref_code,
-            defaults={"created_by": user, "modified_by": user},
-        )
+        admin_unit = payload.get("admin_unit")
+        if not admin_unit:
+            ref_code = f"CONTRIB-{state_slug}"
+            admin_unit, _ = AdministrativeUnit.objects.get_or_create(
+                reference_code=ref_code,
+                defaults={"created_by": user, "modified_by": user},
+            )
         effective_from = date(1900, 1, 1)
-        if not AdministrativeUnitIdentity.objects.filter(
+        if admin_unit and state_str and not AdministrativeUnitIdentity.objects.filter(
             administrative_unit=admin_unit,
             unit_name=state_str[:255],
             effective_from_date=effective_from,
@@ -871,8 +952,8 @@ class ContributionView(APIView):
     (Postmark and related) so the entry appears in catalog search. No separate contribution table.
     Accepts JSON or multipart/form-data; when 'image' file is present, saves it and links to the new postmark.
     """
-    authentication_classes = []
-    permission_classes = [AllowAny]
+    authentication_classes = [SessionAuthenticationNoCSRF]
+    permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def post(self, request):
@@ -894,8 +975,22 @@ class ContributionView(APIView):
                 {"detail": "Missing required fields: state, town, firstSeen, type, color."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # Enforce assigned-state access for logged-in users
+        user = request.user
+        assigned_admin_unit = None
+        if not user.is_authenticated:
+            return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
+        if not getattr(user, "is_superuser", False):
+            assigned_admin_unit = _resolve_assigned_admin_unit(user, state)
+            if not assigned_admin_unit:
+                return Response(
+                    {"detail": "You are not assigned to submit listings for this state."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
         date_range = f"{first_seen}-{last_seen}" if last_seen else first_seen
         submitter_name = (data.get("submitterName") or "").strip()
+        if user.is_authenticated:
+            submitter_name = user.username or getattr(user, "email", "") or submitter_name
         payload = {
             "state": state,
             "town": town,
@@ -909,6 +1004,8 @@ class ContributionView(APIView):
             "rarity": (data.get("rarity") or "").strip(),
             "submitter_name": submitter_name,
         }
+        if assigned_admin_unit is not None:
+            payload["admin_unit"] = assigned_admin_unit
         # Optional image upload
         image_file = request.FILES.get("image")
         if image_file:
@@ -1390,26 +1487,39 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(postmarks, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=['get'], url_path='my-submissions', permission_classes=[AllowAny])
+    @action(detail=False, methods=['get'], url_path='my-submissions', permission_classes=[IsAuthenticated])
     def my_submissions(self, request):
         """
         Get catalog entries that were submitted via the Contributor Dashboard.
         Filters Postmarks where source_catalog='User contribution' and
-        other_characteristics contains 'Submitted by: <submitter>'.
-        Frontend passes ?submitter=<username-or-email> (from its auth layer).
+        other_characteristics contains 'Submitted by: <username/email>'.
         """
-        submitter = (request.query_params.get('submitter') or '').strip()
-        if not submitter:
+        user = request.user
+        username = (getattr(user, "username", "") or "").strip()
+        email = (getattr(user, "email", "") or "").strip()
+        needles = []
+        if username:
+            needles.append(f"Submitted by: {username}")
+        if email and email != username:
+            needles.append(f"Submitted by: {email}")
+        if not needles:
             return Response(
-                {"detail": "submitter query parameter is required"},
+                {"detail": "User has no username/email to match submissions."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Simple text match on other_characteristics; restrict to user contributions only
-        needle = f"Submitted by: {submitter}"
+        needle_q = Q()
+        for needle in needles:
+            needle_q |= Q(other_characteristics__icontains=needle)
         qs = self.get_queryset().filter(
             source_catalog="User contribution",
-            other_characteristics__icontains=needle,
-        ).order_by('-created_date')
+        ).filter(needle_q).order_by('-created_date')
+
+        if not getattr(user, "is_superuser", False):
+            assigned_units = _get_user_assigned_units(user)
+            if assigned_units.exists():
+                qs = qs.filter(state__in=assigned_units)
+            else:
+                qs = qs.none()
 
         page = self.paginate_queryset(qs)
         if page is not None:

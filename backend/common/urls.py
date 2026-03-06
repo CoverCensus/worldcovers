@@ -141,6 +141,7 @@ urlpatterns = [
     path("contributions/", csrf_exempt(views.ContributionView.as_view()), name="contribution"),
     path("postmarks/<int:pk>/delete-mine/", views.DeleteMySubmissionView.as_view(), name="postmark-delete-mine"),
     path("me/", views.CurrentUserView.as_view(), name="current-user"),
+    path("assigned-states/", views.AssignedStatesView.as_view(), name="assigned-states"),
     path("", include(router.urls)),
 ]
 

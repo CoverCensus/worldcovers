@@ -99,11 +99,6 @@ const Dashboard = () => {
     const fetchSubmissions = async () => {
       setLoading(true);
       try {
-        const submitter = user.username || user.email;
-        if (!submitter) {
-          setSubmissions([]);
-          return;
-        }
         const apiUrl = getPostmarksApiUrl();
         if (!apiUrl) {
           toast({
@@ -115,7 +110,7 @@ const Dashboard = () => {
           return;
         }
         const base = apiUrl.replace(/\/+$/, "");
-        const url = `${base}/my-submissions/?submitter=${encodeURIComponent(submitter)}`;
+        const url = `${base}/my-submissions/`;
         const res = await fetch(url);
         if (!res.ok) {
           throw new Error(`API error: ${res.status} ${res.statusText}`);
