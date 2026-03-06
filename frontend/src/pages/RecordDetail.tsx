@@ -184,14 +184,27 @@ const RecordDetail = () => {
     );
   }
 
+  const fromDashboard = location.state?.fromDashboard;
+  const fromSearch = location.state?.fromSearch;
+
+  const handleBack = () => {
+    if (fromDashboard) {
+      navigate("/dashboard");
+    } else if (fromSearch) {
+      navigate("/search");
+    } else {
+      navigate("/search");
+    }
+  };
+
   if (error || !record) {
     return (
       <div className="min-h-screen flex flex-col">
         <Navigation />
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <p className="text-muted-foreground">{error || "Record not found"}</p>
-          <Button variant="outline" onClick={() => (location.state?.fromSearch ? navigate(-1) : navigate("/search"))}>
-            Back to Search
+          <Button variant="outline" onClick={handleBack}>
+            {fromDashboard ? "Back to Dashboard" : "Back to Search"}
           </Button>
         </div>
         <Footer />
@@ -207,13 +220,9 @@ const RecordDetail = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Breadcrumb + conditional edit */}
           <div className="flex items-center justify-between mb-6">
-            <Button
-              variant="ghost"
-              onClick={() => (location.state?.fromSearch ? navigate(-1) : navigate("/search"))}
-              className="-ml-4"
-            >
+            <Button variant="ghost" onClick={handleBack} className="-ml-4">
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Search
+              {fromDashboard ? "Back to Dashboard" : "Back to Search"}
             </Button>
             {user &&
               record.submitterName &&
@@ -225,7 +234,15 @@ const RecordDetail = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => navigate(`/edit/${record.id}`)}
+                  onClick={() =>
+                    navigate(`/edit/${record.id}`, {
+                      state: {
+                        fromSearch,
+                        fromDashboard,
+                        fromDashboardViaDetail: !!fromDashboard,
+                      },
+                    })
+                  }
                 >
                   <Pencil className="mr-2 h-4 w-4" />
                   Edit entry
@@ -378,7 +395,7 @@ const RecordDetail = () => {
           <Card className="shadow-archival-lg">
             <CardContent className="p-6">
               <Tabs defaultValue="valuations">
-                <TabsList className="grid w-full grid-cols-3">
+              <TabsList className="mt-1 grid w-full grid-cols-3 gap-1 rounded-md bg-muted p-1">
                   <TabsTrigger value="references">References</TabsTrigger>
                   <TabsTrigger value="valuations">Valuations</TabsTrigger>
                   {record.citationReferences && (

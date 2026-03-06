@@ -11,10 +11,14 @@ import uuid
 from datetime import date
 
 from django.conf import settings
-from django.contrib.auth import authenticate, login, logout
-from django.utils.text import slugify
+from django.contrib.auth import authenticate, login, logout, get_user_model
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.core.mail import send_mail
 from django.db.models import Q, Count, Prefetch
 from django.utils import timezone
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.text import slugify
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 
@@ -61,7 +65,10 @@ from .filters import PostmarkListFilter
 from .csv_import import IMPORTERS
 
 
-# ========== AUTH (SESSION LOGIN FOR SPA) ==========
+_password_reset_token_generator = PasswordResetTokenGenerator()
+
+
+# ========== AUTH (SESSION LOGIN FOR SPA & PASSWORD RESET) ==========
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -163,6 +170,132 @@ class LoginRequestView(APIView):
         return Response(
             {"detail": "Request submitted. An admin will provide your username and password."},
             status=status.HTTP_201_CREATED,
+        )
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class ForgotPasswordApiView(APIView):
+    """
+    Public API to start a password reset.
+    POST JSON: { "email": "<user email>" }
+    Sends an email with a link to the SPA reset page.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        if not email:
+            return Response(
+                {"detail": "Email is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        User = get_user_model()
+        try:
+            user = User.objects.get(email__iexact=email)
+        except User.DoesNotExist:
+            # Explicitly tell the caller that this email does not have an account
+            # so the frontend can show a clear validation error.
+            return Response(
+                {"detail": "No account found for that email address."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = _password_reset_token_generator.make_token(user)
+
+        frontend_base = getattr(settings, "FRONTEND_BASE_URL", None) or f"https://{settings.DJANGO_APP_HOSTNAME}"
+        # Ensure we always have an explicit scheme for the frontend URL
+        if not frontend_base.startswith(("http://", "https://")):
+            frontend_base = f"https://{frontend_base.lstrip('/')}"
+        reset_link = f"{frontend_base.rstrip('/')}/reset-password?uid={uid}&token={token}"
+
+        subject = "Reset your WorldCovers password"
+        message_lines = [
+            "You requested a password reset for your WorldCovers account.",
+            "",
+            "Click the link below to choose a new password:",
+            reset_link,
+            "",
+            "If you did not request this, you can safely ignore this email.",
+        ]
+        message = "\n".join(message_lines)
+
+        html_message = f"""
+<p>You requested a password reset for your WorldCovers account.</p>
+<p>
+  Click the button below to choose a new password:<br/>
+  <a href="{reset_link}" style="display:inline-block;padding:10px 16px;margin-top:8px;background-color:#7b4b4b;color:#ffffff;text-decoration:none;border-radius:4px;">
+    Reset your password
+  </a>
+</p>
+<p>If you did not request this, you can safely ignore this email.</p>
+"""
+
+        send_mail(
+            subject,
+            message,
+            getattr(settings, "DEFAULT_FROM_EMAIL", None) or f"no-reply@{settings.DJANGO_APP_HOSTNAME}",
+            [email],
+            fail_silently=False,
+            html_message=html_message,
+        )
+
+        return Response(
+            {"detail": "If an account exists for that email, a reset link has been sent."},
+            status=status.HTTP_200_OK,
+        )
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class ResetPasswordApiView(APIView):
+    """
+    Public API to complete a password reset.
+    POST JSON: { "uid": "<uidb64>", "token": "<token>", "password": "<new password>" }.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        uidb64 = (request.data.get("uid") or "").strip()
+        token = (request.data.get("token") or "").strip()
+        password = (request.data.get("password") or "").strip()
+
+        if not uidb64 or not token or not password:
+            return Response(
+                {"detail": "uid, token, and password are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            uid = force_str(urlsafe_base64_decode(uidb64))
+            User = get_user_model()
+            user = User.objects.get(pk=uid)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            return Response(
+                {"detail": "Invalid reset link."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not _password_reset_token_generator.check_token(user, token):
+            return Response(
+                {"detail": "This reset link is invalid or has expired."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(password) < 4:
+            return Response(
+                {"detail": "Password must be at least 4 characters long."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(password)
+        user.save()
+
+        return Response(
+            {"detail": "Your password has been reset. You can now sign in with your new password."},
+            status=status.HTTP_200_OK,
         )
 
 

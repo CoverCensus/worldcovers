@@ -88,6 +88,13 @@ const Contribute = () => {
   const [references, setReferences] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{
+    state?: string;
+    town?: string;
+    firstSeen?: string;
+    type?: string;
+    color?: string;
+  }>({});
 
   useEffect(() => {
     getColors()
@@ -171,18 +178,24 @@ const Contribute = () => {
     const typeVal = type === TYPE_OTHER_VALUE ? typeOther.trim() : type.trim();
     const colorVal = color === COLOR_OTHER_VALUE ? colorOther.trim() : color.trim();
 
-    if (!stateVal || !townVal || !firstVal || !typeVal || !colorVal) {
-      const parts = [];
-      if (!stateVal) parts.push("State");
-      if (!townVal) parts.push("Town/City");
-      if (!firstVal) parts.push("First Seen Year");
-      if (!typeVal) parts.push("Postmark Type");
-      if (!colorVal) parts.push("Color");
-      toast({
-        title: "Missing required fields",
-        description: `Please fill in: ${parts.join(", ")}.`,
-        variant: "destructive",
-      });
+    const errors: typeof fieldErrors = {};
+    if (!stateVal) {
+      errors.state = "State is required";
+    }
+    if (!townVal) {
+      errors.town = "Town/City is required";
+    }
+    if (!firstVal) {
+      errors.firstSeen = "First Seen Year is required";
+    }
+    if (!typeVal) {
+      errors.type = "Postmark Type is required";
+    }
+    if (!colorVal) {
+      errors.color = "Color is required";
+    }
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
       return;
     }
 
@@ -346,13 +359,18 @@ const Contribute = () => {
                     </div>
                   )}
 
-                  <form onSubmit={handleSubmit} className="space-y-6">
+                  <form onSubmit={handleSubmit} className="space-y-6" noValidate>
                     <div className="space-y-2">
                       <Label htmlFor="state">State *</Label>
                       <SearchableSelect
                         id="state"
                         value={state}
-                        onValueChange={setState}
+                        onValueChange={(value) => {
+                          setState(value);
+                          if (fieldErrors.state) {
+                            setFieldErrors((prev) => ({ ...prev, state: undefined }));
+                          }
+                        }}
                         placeholder="Select state..."
                         options={[
                           ...stateOptions,
@@ -364,7 +382,11 @@ const Contribute = () => {
                         searchPlaceholder="Search states..."
                         emptyMessage="No state found."
                         aria-label="State"
+                        triggerClassName={fieldErrors.state ? "border-destructive" : ""}
                       />
+                      {fieldErrors.state && (
+                        <p className="text-sm text-destructive">{fieldErrors.state}</p>
+                      )}
                       {state === STATE_OTHER_VALUE && (
                         <Input
                           id="state-other"
@@ -383,9 +405,17 @@ const Contribute = () => {
                         id="town"
                         placeholder="e.g., Boston"
                         value={town}
-                        onChange={(e) => setTown(e.target.value)}
-                        required
+                        onChange={(e) => {
+                          setTown(e.target.value);
+                          if (fieldErrors.town) {
+                            setFieldErrors((prev) => ({ ...prev, town: undefined }));
+                          }
+                        }}
+                        className={fieldErrors.town ? "border-destructive" : ""}
                       />
+                      {fieldErrors.town && (
+                        <p className="text-sm text-destructive">{fieldErrors.town}</p>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
@@ -398,12 +428,19 @@ const Contribute = () => {
                           placeholder="1825"
                           value={firstSeen}
                           onChange={(e) => {
-                            const v = e.target.value.replace(/\D/g, "").slice(0, 5);
+                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                             setFirstSeen(v);
+                            if (fieldErrors.firstSeen) {
+                              setFieldErrors((prev) => ({ ...prev, firstSeen: undefined }));
+                            }
                           }}
                           maxLength={5}
                           aria-label="First seen year (numbers only, up to 5 digits)"
+                          className={fieldErrors.firstSeen ? "border-destructive" : ""}
                         />
+                        {fieldErrors.firstSeen && (
+                          <p className="text-sm text-destructive">{fieldErrors.firstSeen}</p>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="lastSeen">Last Seen Year</Label>
@@ -414,7 +451,7 @@ const Contribute = () => {
                           placeholder="1845"
                           value={lastSeen}
                           onChange={(e) => {
-                            const v = e.target.value.replace(/\D/g, "").slice(0, 5);
+                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                             setLastSeen(v);
                           }}
                           maxLength={5}
@@ -428,7 +465,12 @@ const Contribute = () => {
                       <SearchableSelect
                         id="type"
                         value={type}
-                        onValueChange={setType}
+                        onValueChange={(value) => {
+                          setType(value);
+                          if (fieldErrors.type) {
+                            setFieldErrors((prev) => ({ ...prev, type: undefined }));
+                          }
+                        }}
                         placeholder="Select type..."
                         options={[
                           ...typeOptions.map((t) => ({ value: t.name, label: t.name })),
@@ -440,7 +482,11 @@ const Contribute = () => {
                         searchPlaceholder="Search types..."
                         emptyMessage="No type found."
                         aria-label="Postmark type"
+                        triggerClassName={fieldErrors.type ? "border-destructive" : ""}
                       />
+                      {fieldErrors.type && (
+                        <p className="text-sm text-destructive">{fieldErrors.type}</p>
+                      )}
                       {type === TYPE_OTHER_VALUE && (
                         <Input
                           id="type-other"
@@ -455,8 +501,19 @@ const Contribute = () => {
 
                     <div className="space-y-2">
                       <Label htmlFor="color">Color *</Label>
-                      <Select value={color} onValueChange={setColor} required>
-                        <SelectTrigger id="color">
+                      <Select
+                        value={color}
+                        onValueChange={(value) => {
+                          setColor(value);
+                          if (fieldErrors.color) {
+                            setFieldErrors((prev) => ({ ...prev, color: undefined }));
+                          }
+                        }}
+                      >
+                        <SelectTrigger
+                          id="color"
+                          className={fieldErrors.color ? "border-destructive" : ""}
+                        >
                           <SelectValue placeholder="Select color..." />
                         </SelectTrigger>
                         <SelectContent>
@@ -470,6 +527,9 @@ const Contribute = () => {
                           </SelectItem>
                         </SelectContent>
                       </Select>
+                      {fieldErrors.color && (
+                        <p className="text-sm text-destructive">{fieldErrors.color}</p>
+                      )}
                       {color === COLOR_OTHER_VALUE && (
                         <Input
                           id="color-other"

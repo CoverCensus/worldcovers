@@ -29,6 +29,7 @@ interface SearchableSelectProps {
   value: string;
   onValueChange: (value: string) => void;
   placeholder?: string;
+  disabled?: boolean;
   allOption?: { value: string; label: string };
   emptyMessage?: string;
   searchPlaceholder?: string;
@@ -50,6 +51,7 @@ export function SearchableSelect({
   value,
   onValueChange,
   placeholder = "Select...",
+  disabled = false,
   allOption,
   emptyMessage = "No option found.",
   searchPlaceholder = "Search...",
@@ -81,6 +83,7 @@ export function SearchableSelect({
           role="combobox"
           aria-expanded={open}
           aria-label={ariaLabel ?? placeholder}
+           disabled={disabled || loading}
           className={cn(
             "w-full justify-between font-normal h-10 px-3 py-2 text-sm",
             triggerClassName,

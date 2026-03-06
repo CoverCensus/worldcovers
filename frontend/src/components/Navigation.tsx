@@ -182,7 +182,7 @@ export const Navigation = () => {
                 activeClassName="text-primary bg-secondary font-semibold"
                 onClick={() => setMobileMenuOpen(false)}
               >
-                Submission
+                Dashboard
               </NavLink>
             )}
             {!user && (

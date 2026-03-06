@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { RequestLoginForm } from "@/components/RequestLoginForm";
+import { ForgotPasswordForm } from "@/components/ForgotPasswordForm";
 
 import { useEffect, useState } from "react";
 import { Formik, Form, Field, FormikHelpers } from "formik";
@@ -39,6 +40,7 @@ const validateAuth = (values: AuthValues): Partial<Record<keyof AuthValues, stri
 
 const Auth = () => {
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
+  const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -56,7 +58,6 @@ const Auth = () => {
       const res = await fetch(getLoginApiUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           email: values.email.trim(),
           password: values.password,
@@ -158,6 +159,16 @@ const Auth = () => {
                       </p>
                     )}
                   </div>
+                  <div className="flex justify-end -mt-1">
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="px-0 text-sm"
+                      onClick={() => setForgotPasswordOpen(true)}
+                    >
+                      Forgot password?
+                    </Button>
+                  </div>
                   <Button
                     type="submit"
                     className="w-full"
@@ -186,6 +197,11 @@ const Auth = () => {
       <RequestLoginForm
         open={requestDialogOpen}
         onOpenChange={setRequestDialogOpen}
+      />
+
+      <ForgotPasswordForm
+        open={forgotPasswordOpen}
+        onOpenChange={setForgotPasswordOpen}
       />
 
       <Footer />

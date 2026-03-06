@@ -22,4 +22,7 @@ class CommonConfig(AppConfig):
             if not reversion.is_registered(model):
                 reversion.register(model)
 
+        # Register signal handlers (e.g. send email when user is set Active in admin)
+        from . import signals  # noqa: F401
+
 ###################################################################################################
