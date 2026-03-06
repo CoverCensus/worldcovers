@@ -189,7 +189,7 @@ const Dashboard = () => {
       return;
     }
     const base = apiUrl.replace(/\/+$/, "");
-    const url = `${base}/${submissionId}/`;
+    const url = `${base}/${submissionId}/delete-mine/`;
     const csrfToken = getCsrfTokenFromCookie();
     const headers: HeadersInit = {};
     if (csrfToken) {
