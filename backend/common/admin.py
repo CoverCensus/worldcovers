@@ -54,7 +54,10 @@ def has_userlocationassignments_table() -> bool:
         existing = set(connection.introspection.table_names())
     except Exception:
         return False
-    return "UserLocationAssignments" in existing
+    # MySQL/MariaDB with lower_case_table_names may return names in lowercase
+    expected = UserLocationAssignment._meta.db_table
+    existing_lower = {t.lower() for t in existing}
+    return expected.lower() in existing_lower
 
 
 # ========== BASE ABSTRACT MODELS ==========
