@@ -7,7 +7,6 @@ import io
 
 from django.contrib import admin
 from django.contrib.admin.sites import NotRegistered
-from django.contrib.admin.widgets import FilteredSelectMultiple
 from django.contrib.auth import get_user_model
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.models import Group
@@ -42,15 +41,6 @@ from .csv_import import IMPORTERS
 from .utils import get_canonical_location_reference_codes
 
 User = get_user_model()
-
-
-def _user_location_table_available() -> bool:
-    """True if UserLocationAssignments table exists (for load/save of chosen locations)."""
-    try:
-        UserLocationAssignment.objects.only("pk").first()
-        return True
-    except Exception:
-        return False
 
 
 # ========== BASE ABSTRACT MODELS ==========
@@ -946,94 +936,23 @@ class AdminCsvUploadAdmin(admin.ModelAdmin):
 
 class UserLocationAssignmentInline(admin.TabularInline):
     """
-    Inline so staff can assign locations to a user directly on the user detail page.
-    (Kept for reference; primary UI uses a dual-column selector on the user form.)
+    Assign states/locations to a user on the user detail page.
+    Staff pick from a dropdown list of locations (states). Optional: zero or more.
     """
     model = UserLocationAssignment
-    extra = 0
-    raw_id_fields = ['administrative_unit']
-    verbose_name = 'Location'
-    verbose_name_plural = 'Locations'
+    extra = 1
+    verbose_name = 'Location (state)'
+    verbose_name_plural = 'Locations (states)'
 
-
-class UserLocationUserChangeForm(DjangoUserAdmin.form):
-    """
-    Extend the base User change form to manage locations via a two-column selector,
-    similar to the built-in user permissions widget.
-    """
-
-    locations = forms.ModelMultipleChoiceField(
-        label='Locations',
-        queryset=AdministrativeUnit.objects.none(),
-        required=False,
-        widget=FilteredSelectMultiple('Locations', is_stacked=False),
-        help_text='Select which locations this user is associated with.',
-    )
-
-    class Meta(DjangoUserAdmin.form.Meta):
-        _parent_fields = DjangoUserAdmin.form.Meta.fields
-        if _parent_fields == '__all__':
-            # Can't add to __all__; use concrete User field names + locations
-            fields = [f.name for f in User._meta.get_fields() if f.concrete] + ['locations']
-        else:
-            fields = tuple(_parent_fields) + ('locations',)
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Base queryset: all AdministrativeUnits. If a canonical list of state
-        # reference codes is available, mirror the Location admin behavior by
-        # restricting to those codes; otherwise, show all locations.
-        location_qs = AdministrativeUnit.objects.all()
-        codes = get_canonical_location_reference_codes()
-        if codes is not None:
-            location_qs = location_qs.filter(reference_code__in=codes)
-
-        location_qs = location_qs.order_by('reference_code')
-        self.fields['locations'].queryset = location_qs
-
-        # Preselect Chosen Locations from UserLocationAssignment when editing a user
-        if self.instance.pk and _user_location_table_available():
-            self.fields['locations'].initial = location_qs.filter(
-                user_location_assignments__user=self.instance
-            )
-
-    def _save_locations(self):
-        """Save chosen locations to UserLocationAssignments for this user."""
-        if not self.instance.pk:
-            return
-        if not _user_location_table_available():
-            return
-        # locations is in Meta.fields so it is in cleaned_data after validation
-        selected_qs = self.cleaned_data.get('locations') or AdministrativeUnit.objects.none()
-
-        user = self.instance
-        selected_ids = set(selected_qs.values_list('pk', flat=True))
-
-        # Remove assignments that are no longer selected
-        UserLocationAssignment.objects.filter(user=user).exclude(
-            administrative_unit_id__in=selected_ids
-        ).delete()
-
-        # Add new assignments for newly selected locations
-        existing_ids = set(
-            UserLocationAssignment.objects.filter(user=user).values_list(
-                'administrative_unit_id', flat=True
-            )
-        )
-        to_create_ids = selected_ids - existing_ids
-
-        UserLocationAssignment.objects.bulk_create(
-            [
-                UserLocationAssignment(user=user, administrative_unit_id=pk)
-                for pk in to_create_ids
-            ]
-        )
-
-    def save_m2m(self):
-        # Let the base form handle its M2M fields (groups, permissions, etc.)
-        super().save_m2m()
-        # Then sync our custom locations selection to the through model
-        self._save_locations()
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == 'administrative_unit':
+            # Dropdown list: only state-level locations, ordered by reference code
+            qs = AdministrativeUnit.objects.all().order_by('reference_code')
+            codes = get_canonical_location_reference_codes()
+            if codes is not None:
+                qs = qs.filter(reference_code__in=codes)
+            kwargs['queryset'] = qs
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
 try:
@@ -1046,29 +965,11 @@ except NotRegistered:
 @admin.register(User)
 class CustomUserAdmin(DjangoUserAdmin):
     """
-    Extend the default Django User admin to show a dual-column Locations selector,
-    similar to the built-in user permissions UI.
+    User admin with optional location (state) assignment.
+    Staff who can access /admin can assign locations to users via the inline below.
+    Assigning is optional; users can have zero or more locations.
     """
-
-    form = UserLocationUserChangeForm
-
-    # Add a dedicated fieldset for locations, positioned between the built-in
-    # "Permissions" and "Important dates" sections on the user detail page.
-    _base_fieldsets = list(DjangoUserAdmin.fieldsets)
-    try:
-        _important_idx = next(
-            idx
-            for idx, (name, options) in enumerate(_base_fieldsets)
-            if name == 'Important dates'
-        )
-    except StopIteration:
-        # Fallback: if Django's UserAdmin ever renames/removes "Important dates",
-        # just append Locations at the end (better than breaking).
-        _base_fieldsets.append(('Locations', {'fields': ('locations',)}))
-    else:
-        _base_fieldsets.insert(_important_idx, ('Locations', {'fields': ('locations',)}))
-
-    fieldsets = tuple(_base_fieldsets)
+    inlines = list(DjangoUserAdmin.inlines) + [UserLocationAssignmentInline]
 
 
 ###################################################################################################
