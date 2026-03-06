@@ -54,7 +54,7 @@ export async function getAdministrativeUnits(assignedOnly?: boolean): Promise<St
   let nextUrl: string | null = `${base}?${params.toString()}`;
 
   while (nextUrl) {
-    const res = await fetch(nextUrl, { credentials: "include" });
+    const res = await fetch(nextUrl, { credentials: "include", cache: "no-store" });
     if (!res.ok) {
       throw new Error(`Administrative units API error: ${res.status} ${res.statusText}`);
     }
@@ -95,7 +95,7 @@ function getAssignedAdministrativeUnitsApiUrl(): string | null {
 export async function getAssignedAdministrativeUnits(): Promise<StateOption[]> {
   const apiUrl = getAssignedAdministrativeUnitsApiUrl();
   if (!apiUrl) return [];
-  const res = await fetch(apiUrl);
+  const res = await fetch(apiUrl, { credentials: "include", cache: "no-store" });
   if (!res.ok) {
     throw new Error(`Assigned states API error: ${res.status} ${res.statusText}`);
   }

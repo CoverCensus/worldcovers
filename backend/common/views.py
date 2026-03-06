@@ -1222,12 +1222,13 @@ class AdministrativeUnitViewSet(viewsets.ModelViewSet):
         if self.request.query_params.get('assigned_only', '').lower() != 'true':
             return qs
         user = self.request.user
+        # assigned_only requires auth; unauthenticated gets empty (avoids inconsistent "all" when session missing)
         if not user or not user.is_authenticated:
-            return qs
-        # Staff/superuser see all locations even when assigned_only
+            return qs.none()
+        # Staff/superuser see all states everywhere (Contribute, Dashboard, Search)
         if getattr(user, 'is_staff', False) or getattr(user, 'is_superuser', False):
             return qs
-        # Filter to user's assigned locations
+        # Filter to logged-in user's assigned locations; no assignments = show all
         assigned_ids = list(
             UserLocationAssignment.objects.filter(user=user).values_list(
                 'administrative_unit_id', flat=True
@@ -1236,7 +1237,14 @@ class AdministrativeUnitViewSet(viewsets.ModelViewSet):
         if assigned_ids:
             return qs.filter(pk__in=assigned_ids)
         return qs
-    
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        # assigned_only responses are user-specific; prevent caching
+        if request.query_params.get('assigned_only', '').lower() == 'true':
+            response['Cache-Control'] = 'no-store, private, max-age=0'
+        return response
+
     def get_serializer_class(self):
         if self.action == 'list':
             return AdministrativeUnitListSerializer
