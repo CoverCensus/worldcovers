@@ -79,7 +79,7 @@ function getPaginationPages(currentPage: number, totalPages: number): (number | 
 const Search = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [viewMode, setViewMode] = useState<"gallery" | "list">("list");
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -181,7 +181,7 @@ const Search = () => {
       itemsPerPage,
     ],
     queryFn: async () => {
-      const { results, count, count_capped, next, previous } = await getPostmarksPage(
+      const { results, count, count_capped } = await getPostmarksPage(
         currentPage,
         itemsPerPage,
         debouncedKeywordSearch.trim() || undefined,
@@ -215,19 +215,18 @@ const Search = () => {
           (typeof (record as any).mainImage === "string" ? (record as any).mainImage : null)
         ),
       }));
-      return { records: apiTransformed, count, count_capped, next, previous };
+      return { records: apiTransformed, count, count_capped };
     },
     staleTime: 5 * 60 * 1000, // 5 min - use cache when navigating back, no loading
   });
 
   const catalogRecords = queryData?.records ?? [];
   const totalCount = queryData?.count ?? 0;
-  const countKnown = queryData?.count != null;
   const countCapped = queryData?.count_capped ?? false;
-  const hasNext = !!queryData?.next;
-  const hasPrevious = !!queryData?.previous;
   // Show loading only when we have no data; when we have cached data, show it (no spinner)
   const loading = queryLoading || (queryFetching && catalogRecords.length === 0);
+  const refreshing = queryFetching && !loading;
+  const filtersDisabled = loading;
 
   useEffect(() => {
     if (queryError) {
@@ -324,6 +323,7 @@ const Search = () => {
                         onChange={(e) => setKeywordSearch(e.target.value)}
                         className="pl-9"
                         aria-label="Search records by name, town, state, or type"
+                        disabled={filtersDisabled}
                       />
                     </div>
                   </div>
@@ -343,6 +343,7 @@ const Search = () => {
                       searchPlaceholder="Search states..."
                       emptyMessage="No state found."
                       aria-label="Filter by state"
+                      disabled={filtersDisabled}
                     />
                   </div>
 
@@ -353,6 +354,7 @@ const Search = () => {
                       placeholder="Enter town name..."
                       value={townFilter}
                       onChange={(e) => setTownFilter(e.target.value)}
+                      disabled={filtersDisabled}
                     />
                   </div>
 
@@ -363,8 +365,13 @@ const Search = () => {
                         id="beginYear"
                         type="number"
                         placeholder="1776"
+                        inputMode="numeric"
                         value={beginYear}
-                        onChange={(e) => setBeginYear(e.target.value)}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                          setBeginYear(v);
+                        }}
+                        disabled={filtersDisabled}
                         className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                     </div>
@@ -374,8 +381,13 @@ const Search = () => {
                         id="endYear"
                         type="number"
                         placeholder="1900"
+                        inputMode="numeric"
                         value={endYear}
-                        onChange={(e) => setEndYear(e.target.value)}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                          setEndYear(v);
+                        }}
+                        disabled={filtersDisabled}
                         className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                     </div>
@@ -385,6 +397,7 @@ const Search = () => {
                     <Label htmlFor="type">Postmark Type</Label>
                     <SearchableSelect
                       id="type"
+                      disabled={filtersDisabled}
                       value={typeFilter}
                       onValueChange={setTypeFilter}
                       placeholder="All Types"
@@ -414,6 +427,7 @@ const Search = () => {
                       searchPlaceholder="Search colors..."
                       emptyMessage="No color found."
                       aria-label="Filter by color"
+                      disabled={filtersDisabled}
                     />
                   </div>
 
@@ -437,6 +451,7 @@ const Search = () => {
                     <div className="flex items-center space-x-2">
                       <Checkbox
                         id="manuscripts"
+                        disabled={filtersDisabled}
                         checked={excludeManuscripts}
                         onCheckedChange={(checked) => setExcludeManuscripts(checked as boolean)}
                       />
@@ -449,6 +464,7 @@ const Search = () => {
                     </div>
                     <div className="flex items-center space-x-2">
                       <Checkbox
+                        disabled={filtersDisabled}
                         id="imagesOnly"
                         checked={imagesOnly}
                         onCheckedChange={(checked) => setImagesOnly(checked as boolean)}
@@ -466,6 +482,7 @@ const Search = () => {
                     variant="outline"
                     className="w-full"
                     onClick={handleClearAllFilters}
+                    disabled={filtersDisabled}
                   >
                     Clear Filters
                   </Button>
@@ -479,9 +496,7 @@ const Search = () => {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
                 <div>
                   <p className="text-sm text-muted-foreground">
-                    {!countKnown && catalogRecords.length > 0 ? (
-                      <>Page {currentPage} • {catalogRecords.length} results</>
-                    ) : totalCount === 0 ? (
+                    {totalCount === 0 ? (
                       "0 results"
                     ) : (
                       <>
@@ -495,7 +510,7 @@ const Search = () => {
                     variant="ghost"
                     size="sm"
                     className="lg:hidden"
-                    onClick={() => setFiltersOpen(true)}
+                    onClick={() => setFiltersOpen((open) => !open)}
                   >
                     <SlidersHorizontal className="h-4 w-4 mr-2" />
                     Filters
@@ -517,15 +532,19 @@ const Search = () => {
                     >
                       <Grid3x3 className="h-4 w-4" />
                     </Button>
-
-
                   </div>
+                  {refreshing && (
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground ml-2">
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* Results Grid/List */}
               {loading ? (
-                <div className="flex justify-center items-center py-12">
+                <div className="flex flex-col justify-center items-center gap-3 py-12 text-muted-foreground">
+                  <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
                   <p className="text-muted-foreground">Loading catalog records...</p>
                 </div>
               ) : catalogRecords.length === 0 ? (
@@ -540,12 +559,12 @@ const Search = () => {
                       className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
                       onClick={() => navigate(`/record/${result.id}`, { state: { fromSearch: true } })}
                     >
-                      <CardContent className="p-6">
-                        <div className="flex gap-6">
+                      <CardContent className="p-4">
+                        <div className="flex gap-6 md:flex-row flex-col">
                           <ImageOrPlaceholder
                             src={result.image}
                             alt={result.name}
-                            className="w-32 h-32 object-cover rounded border border-border"
+                            className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border"
                           />
                           <div className="flex-1">
                             <h3 className="font-heading text-xl font-semibold text-foreground mb-2">
@@ -622,20 +641,21 @@ const Search = () => {
                 </div>
               )}
 
-              {/* Pagination - full when count known, Prev/Next only when count deferred */}
-              {!loading && (totalPages > 1 || hasNext || hasPrevious || currentPage > 1) && (
+              {/* Pagination - compact for 500+ pages */}
+              {totalPages > 1 && !loading && (
                 <div className="mt-8 flex flex-col items-center gap-4">
                   <Pagination>
                     <PaginationContent>
                       <PaginationItem>
                         <PaginationPrevious
-                          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                          onClick={() => {
+                            setCurrentPage(p => Math.max(1, p - 1));
+                          }}
                           className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
                         />
                       </PaginationItem>
 
-                      {/* Page numbers only when we have total count */}
-                      {totalPages > 1 && getPaginationPages(currentPage, totalPages).map((p, i) =>
+                      {getPaginationPages(currentPage, totalPages).map((p, i) =>
                         p === "ellipsis" ? (
                           <PaginationItem key={`ellipsis-${i}`}>
                             <PaginationEllipsis />
@@ -643,7 +663,9 @@ const Search = () => {
                         ) : (
                           <PaginationItem key={p}>
                             <PaginationLink
-                              onClick={() => setCurrentPage(p)}
+                              onClick={() => {
+                                setCurrentPage(p);
+                              }}
                               isActive={currentPage === p}
                               className="cursor-pointer"
                             >
@@ -655,20 +677,21 @@ const Search = () => {
 
                       <PaginationItem>
                         <PaginationNext
-                          onClick={() => setCurrentPage(p => Math.min(totalPages || p + 1, p + 1))}
-                          className={!(hasNext || (totalPages > 1 && currentPage < totalPages)) ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                          onClick={() => {
+                            setCurrentPage(p => Math.min(totalPages, p + 1));
+                          }}
+                          className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
                         />
                       </PaginationItem>
                     </PaginationContent>
                   </Pagination>
 
-                  {totalPages > 1 && (
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-muted-foreground">Go to page</span>
                     <Input
                       type="number"
                       min={1}
-                      max={totalPages || 1}
+                      max={totalPages}
                       placeholder="Page"
                       value={goToPageInput}
                       onChange={(e) => {
@@ -711,7 +734,6 @@ const Search = () => {
                       Go
                     </Button>
                   </div>
-                  )}
                 </div>
               )}
             </main>
