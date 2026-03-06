@@ -137,6 +137,7 @@ urlpatterns = [
     path("login-requests/", csrf_exempt(views.LoginRequestView.as_view()), name="login-request"),
     path("forgot-password/", csrf_exempt(views.ForgotPasswordApiView.as_view()), name="forgot-password"),
     path("reset-password/", csrf_exempt(views.ResetPasswordApiView.as_view()), name="reset-password"),
+    path("change-password/", csrf_exempt(views.ChangePasswordApiView.as_view()), name="change-password"),
     path("contributions/", csrf_exempt(views.ContributionView.as_view()), name="contribution"),
     path("me/", views.CurrentUserView.as_view(), name="current-user"),
     path("", include(router.urls)),

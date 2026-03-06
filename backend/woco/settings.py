@@ -355,5 +355,8 @@ DEFAULT_FROM_EMAIL = config(
     "DEFAULT_FROM_EMAIL",
     default=f"WorldCovers <no-reply@{DJANGO_APP_HOSTNAME}>",
 )
+# Email(s) to notify when a user requests login access. Comma-separated or single.
+# Falls back to ADMINS or staff users if not set.
+LOGIN_REQUEST_ADMIN_EMAIL = config("LOGIN_REQUEST_ADMIN_EMAIL", default="")
 
 ###################################################################################################

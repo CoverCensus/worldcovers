@@ -8,13 +8,15 @@ import { RequestLoginForm } from "@/components/RequestLoginForm";
 import { ForgotPasswordForm } from "@/components/ForgotPasswordForm";
 
 import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { Formik, Form, Field, FormikHelpers } from "formik";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { getStoredUser, setStoredUser } from "@/lib/auth";
 
 function getLoginApiUrl(): string {
-  return `${import.meta.env.VITE_API_URL}/api/login/`;
+  const base = import.meta.env.VITE_API_URL || "";
+  return base ? `${String(base).replace(/\/+$/, "")}/api/login/` : "/api/login/";
 }
 
 interface AuthValues {
@@ -41,6 +43,7 @@ const validateAuth = (values: AuthValues): Partial<Record<keyof AuthValues, stri
 const Auth = () => {
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -58,6 +61,7 @@ const Auth = () => {
       const res = await fetch(getLoginApiUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           email: values.email.trim(),
           password: values.password,
@@ -143,16 +147,30 @@ const Auth = () => {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="signin-password">Password</Label>
-                    <Field
-                      as={Input}
-                      id="signin-password"
-                      name="password"
-                      type="password"
-                      placeholder="Enter your password"
-                      aria-invalid={!!(touched.password && errors.password)}
-                      aria-describedby={touched.password && errors.password ? "signin-password-error" : undefined}
-                      className={touched.password && errors.password ? "border-destructive" : ""}
-                    />
+                    <div className="relative">
+                      <Field
+                        as={Input}
+                        id="signin-password"
+                        name="password"
+                        type={showPassword ? "text" : "password"}
+                        placeholder="Enter your password"
+                        aria-invalid={!!(touched.password && errors.password)}
+                        aria-describedby={touched.password && errors.password ? "signin-password-error" : undefined}
+                        className={
+                          (touched.password && errors.password ? "border-destructive " : "") + "pr-10"
+                        }
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                        onClick={() => setShowPassword(!showPassword)}
+                        aria-label={showPassword ? "Hide password" : "Show password"}
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                    </div>
                     {touched.password && errors.password && (
                       <p id="signin-password-error" className="text-sm text-destructive">
                         {errors.password}

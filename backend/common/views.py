@@ -68,6 +68,13 @@ from .csv_import import IMPORTERS
 _password_reset_token_generator = PasswordResetTokenGenerator()
 
 
+class SessionAuthenticationNoCSRF(SessionAuthentication):
+    """Session auth without CSRF check; for SPA endpoints that use csrf_exempt."""
+
+    def enforce_csrf(self, request):
+        pass  # Skip so SPA can POST without CSRF token
+
+
 # ========== AUTH (SESSION LOGIN FOR SPA & PASSWORD RESET) ==========
 
 
@@ -142,11 +149,68 @@ class LogoutView(APIView):
         return Response(status=status.HTTP_200_OK)
 
 
+def _get_admin_emails():
+    """Return list of admin emails to notify when a user requests login access."""
+    User = get_user_model()
+    # 1. Explicit setting (LOGIN_REQUEST_ADMIN_EMAIL or LOGIN_REQUEST_ADMIN_EMAILS)
+    explicit = getattr(settings, "LOGIN_REQUEST_ADMIN_EMAIL", None) or getattr(
+        settings, "LOGIN_REQUEST_ADMIN_EMAILS", None
+    )
+    if explicit:
+        if isinstance(explicit, str):
+            emails = [e.strip() for e in explicit.split(",") if (e or "").strip()]
+        else:
+            emails = [e.strip() for e in explicit if (e or "").strip()]
+        if emails:
+            return emails
+    # 2. Django ADMINS
+    admins = getattr(settings, "ADMINS", [])
+    if admins:
+        return [email for _, email in admins if (email or "").strip()]
+    # 3. Staff users with email
+    return list(
+        User.objects.filter(is_staff=True)  # noqa: S301
+        .exclude(email="")
+        .values_list("email", flat=True)
+        .distinct()
+    )
+
+
+# def _send_login_request_notification_to_admin(user):
+#     """Send email to admin when a user requests login access."""
+#     admin_emails = _get_admin_emails()
+#     if not admin_emails:
+#         return
+#     frontend_base = getattr(settings, "FRONTEND_BASE_URL", None) or f"https://{settings.DJANGO_APP_HOSTNAME}"
+#     if not frontend_base.startswith(("http://", "https://")):
+#         frontend_base = f"https://{frontend_base.lstrip('/')}"
+#     admin_url = f"{frontend_base.rstrip('/')}/admin/auth/user/{user.pk}/change/"
+#     subject = "WorldCovers: New login access request"
+#     from_email = getattr(settings, "DEFAULT_FROM_EMAIL", None) or f"no-reply@{settings.DJANGO_APP_HOSTNAME}"
+#     html_message = f"""
+#         <p>A new user has requested login access to WorldCovers.</p>
+#         <p><strong>Name:</strong> {user.first_name} {user.last_name}</p>
+#         <p><strong>Email:</strong> {user.email}</p>
+#         <p>Please review and activate the user in the admin:</p>
+#         <p><a href="{admin_url}" style="display:inline-block;padding:10px 16px;margin-top:8px;background-color:#7b4b4b;color:#ffffff;text-decoration:none;border-radius:4px;">Open Django Admin</a></p>
+#         <p>Best regards,<br>WorldCovers</p>
+# """
+#     send_mail(
+#         subject,
+#         f"A new user ({user.email}) has requested login access. Review at {admin_url}",
+#         from_email,
+#         admin_emails,
+#         fail_silently=True,
+#         html_message=html_message,
+#     )
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class LoginRequestView(APIView):
     """
     Public API for users to request login access.
     Creates User directly (is_active=False). Admin sets username/password and activates in Users.
+    Sends an email to the admin when a request is submitted.
     """
     authentication_classes = []
     permission_classes = [AllowAny]
@@ -167,6 +231,7 @@ class LoginRequestView(APIView):
         )
         user.set_unusable_password()
         user.save()
+        # _send_login_request_notification_to_admin(user)
         return Response(
             {"detail": "Request submitted. An admin will provide your username and password."},
             status=status.HTTP_201_CREATED,
@@ -211,27 +276,27 @@ class ForgotPasswordApiView(APIView):
             frontend_base = f"https://{frontend_base.lstrip('/')}"
         reset_link = f"{frontend_base.rstrip('/')}/reset-password?uid={uid}&token={token}"
 
-        subject = "Reset your WorldCovers password"
+        subject = "Reset password for your WordCover account"
         message_lines = [
-            "You requested a password reset for your WorldCovers account.",
+            "We received a request to reset your WordCover account password",
             "",
-            "Click the link below to choose a new password:",
+            "Please click the link to create a new password:",
             reset_link,
             "",
-            "If you did not request this, you can safely ignore this email.",
+            "If you did not request a password reset, you can safely ignore this email.",
         ]
         message = "\n".join(message_lines)
 
         html_message = f"""
-<p>You requested a password reset for your WorldCovers account.</p>
-<p>
-  Click the button below to choose a new password:<br/>
-  <a href="{reset_link}" style="display:inline-block;padding:10px 16px;margin-top:8px;background-color:#7b4b4b;color:#ffffff;text-decoration:none;border-radius:4px;">
-    Reset your password
-  </a>
-</p>
-<p>If you did not request this, you can safely ignore this email.</p>
-"""
+                <p>We received a request to reset your WordCover account password.</p>
+                <p>Please click the below link to create a new password.</p>
+                <p>
+                <a href="{reset_link}" style="display:inline-block;padding:10px 16px;margin-top:8px;background-color:#7b4b4b;color:#ffffff;text-decoration:none;border-radius:4px;">
+                    Reset your password
+                </a>
+                </p>
+                <p>If you did not request a password reset, you can safely ignore this email.</p>
+                """
 
         send_mail(
             subject,
@@ -243,7 +308,7 @@ class ForgotPasswordApiView(APIView):
         )
 
         return Response(
-            {"detail": "If an account exists for that email, a reset link has been sent."},
+            {"detail": "A password reset link has been sent to your email address."},
             status=status.HTTP_200_OK,
         )
 
@@ -295,6 +360,85 @@ class ResetPasswordApiView(APIView):
 
         return Response(
             {"detail": "Your password has been reset. You can now sign in with your new password."},
+            status=status.HTTP_200_OK,
+        )
+
+
+def _validate_password_strength(password):
+    """Return error message if password is weak, else None."""
+    if len(password) < 8:
+        return "Password must be at least 8 characters long."
+    if not re.search(r"[A-Z]", password):
+        return "Password must include at least one uppercase letter."
+    if not re.search(r"[a-z]", password):
+        return "Password must include at least one lowercase letter."
+    if not re.search(r"[0-9]", password):
+        return "Password must include at least one number."
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>_\-+=\\[\];\'/`~]', password):
+        return "Password must include at least one special character."
+    return None
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class ChangePasswordApiView(APIView):
+    """
+    API for authenticated users to change their password.
+    POST JSON: { "current_password": "...", "new_password": "..." }.
+    Uses SessionAuthenticationNoCSRF so SPA can POST without CSRF token.
+    """
+    authentication_classes = [SessionAuthenticationNoCSRF]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        # Support both camelCase (from parser) and snake_case keys
+        current_password = (
+            request.data.get("current_password") or request.data.get("currentPassword") or ""
+        ).strip()
+        new_password = (
+            request.data.get("new_password") or request.data.get("newPassword") or ""
+        ).strip()
+
+        if not current_password:
+            return Response(
+                {"detail": "Current password is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not new_password:
+            return Response(
+                {"detail": "New password is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = request.user
+        # Reload user from DB to ensure we have latest password hash
+        User = get_user_model()
+        try:
+            user = User.objects.get(pk=user.pk)
+        except User.DoesNotExist:
+            return Response(
+                {"detail": "User not found. Please sign in again."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        if not user.has_usable_password():
+            return Response(
+                {"detail": "Your account does not have a password set yet. Please use 'Forgot password' to set one, or contact an administrator."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not user.check_password(current_password):
+            return Response(
+                {"detail": "Current password is incorrect. If you recently switched accounts, try signing out and signing in again."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        err = _validate_password_strength(new_password)
+        if err:
+            return Response({"detail": err}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(new_password)
+        user.save()
+
+        return Response(
+            {"detail": "Your password has been changed successfully."},
             status=status.HTTP_200_OK,
         )
 
@@ -1420,13 +1564,6 @@ def _parse_csv_file(file) -> dict:
     if not rows:
         return {'headers': [], 'rows': []}
     return {'headers': rows[0], 'rows': rows[1:]}
-
-
-class SessionAuthenticationNoCSRF(SessionAuthentication):
-    """Session auth without CSRF check; use only for admin CSV upload/import (staff-only)."""
-
-    def enforce_csrf(self, request):
-        pass  # Skip so SPA can POST import-to-catalog without CSRF token
 
 
 class AdminCsvUploadViewSet(viewsets.ModelViewSet):

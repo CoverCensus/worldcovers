@@ -41,7 +41,7 @@ def _send_activation_email(to_email):
         frontend_base = f"https://{frontend_base.lstrip('/')}"
     login_url = f"{frontend_base.rstrip('/')}/auth"
 
-    subject = "Your WorldCovers account is now active"
+    subject = "Your WorldCovers Account Is Now Active"
     message_lines = [
         "Hello,",
         "",
@@ -55,16 +55,24 @@ def _send_activation_email(to_email):
 
     # HTML version with a clickable login link/button
     html_message = f"""
-<p>Hello,</p>
-<p>Good news — your WorldCovers account has just been activated.</p>
-<p>
-  You can now sign in here:<br/>
-  <a href="{login_url}" style="display:inline-block;padding:10px 16px;margin-top:8px;background-color:#7b4b4b;color:#ffffff;text-decoration:none;border-radius:4px;">
-    Open WorldCovers
-  </a>
-</p>
-<p>If you did not expect this change, please contact the site administrator.</p>
-"""
+            <p>Hello,</p>
+
+            <p>Good news! Your <strong>WorldCovers</strong> account has been successfully activated.</p>
+
+            <p>You can now sign in using the link below:</p>
+
+            <p>
+            <a href="{login_url}" 
+                style="display:inline-block;padding:10px 16px;margin-top:8px;background-color:#7b4b4b;color:#ffffff;text-decoration:none;border-radius:4px;">
+                Sign in to WorldCovers
+            </a>
+            </p>
+
+            <p>If you did not expect this change or believe this was done in error, please contact the site administrator immediately.</p>
+
+            <p>Best regards,<br>
+            WorldCovers Team</p>
+            """
 
     from_email = getattr(settings, "DEFAULT_FROM_EMAIL", None) or "no-reply@worldcovers.org"
     send_mail(

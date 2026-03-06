@@ -1,14 +1,24 @@
 import { NavLink } from "@/components/NavLink";
 import { Button } from "@/components/ui/button";
-import { Menu, X, LogOut } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Menu, X, LogOut, KeyRound, ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { clearStoredUser } from "@/lib/auth";
+import { capitalizeFirst } from "@/lib/utils";
+import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 
 export const Navigation = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const user = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -41,6 +51,28 @@ export const Navigation = () => {
       setMobileMenuOpen(false);
     } catch (error: unknown) {
       clearStoredUser();
+      toast({
+        title: "Error signing out",
+        description: error instanceof Error ? error.message : "Could not sign out",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleSignOutAndSignIn = async () => {
+    setChangePasswordOpen(false);
+    try {
+      await fetch("/api/logout/", { method: "POST", credentials: "include" });
+      clearStoredUser();
+      toast({
+        title: "Signed out",
+        description: "Please sign in again with your correct account.",
+      });
+      navigate("/auth");
+      setMobileMenuOpen(false);
+    } catch (error: unknown) {
+      clearStoredUser();
+      navigate("/auth");
       toast({
         title: "Error signing out",
         description: error instanceof Error ? error.message : "Could not sign out",
@@ -115,15 +147,33 @@ export const Navigation = () => {
               </NavLink>
             )}
             {user && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleLogout}
-                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground"
-              >
-                <LogOut className="h-4 w-4 mr-2" />
-                Logout
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-transparent transition-colors"
+                  >
+                    <Avatar className="h-7 w-7">
+                      <AvatarFallback className="text-xs bg-primary/10 text-primary">
+                        {(user.username || user.email || "U").charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span className="max-w-[120px] truncate">{capitalizeFirst(user.username || user.email || "")}</span>
+                    <ChevronDown className="h-4 w-4 shrink-0 opacity-70" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem onClick={() => setChangePasswordOpen(true)}>
+                    <KeyRound className="mr-2 h-4 w-4" />
+                    Change password
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleLogout}>
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Logout
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
 
@@ -196,19 +246,43 @@ export const Navigation = () => {
               </NavLink>
             )}
             {user && (
-              <button
-                onClick={() => {
-                  handleLogout();
-                }}
-                className="w-full flex items-center px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
-              >
-                <LogOut className="h-4 w-4 mr-2" />
-                Logout
-              </button>
+              <>
+                <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
+                  <Avatar className="h-8 w-8">
+                    <AvatarFallback className="text-sm bg-primary/10 text-primary">
+                      {(user.username || user.email || "U").charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="text-sm font-medium truncate">{user.username || user.email}</span>
+                </div>
+                <button
+                  onClick={() => {
+                    setChangePasswordOpen(true);
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full flex items-center px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md text-left"
+                >
+                  <KeyRound className="h-4 w-4 mr-2 shrink-0" />
+                  Change password
+                </button>
+                <button
+                  onClick={() => handleLogout()}
+                  className="w-full flex items-center px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md text-left"
+                >
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Logout
+                </button>
+              </>
             )}
           </div>
         </div>
       )}
+
+      <ChangePasswordForm
+        open={changePasswordOpen}
+        onOpenChange={setChangePasswordOpen}
+        onSignOut={handleSignOutAndSignIn}
+      />
     </nav>
   );
 };
