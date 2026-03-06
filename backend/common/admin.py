@@ -980,13 +980,40 @@ except NotRegistered:
     pass
 
 
+class UserChangeFormWithLocationsMessage(DjangoUserAdmin.form):
+    """Add a readonly message when UserLocationAssignments table is missing so the Locations section is visible."""
+    locations_setup_message = forms.CharField(
+        required=False,
+        label="Locations (states)",
+        widget=forms.TextInput(attrs={"readonly": "readonly", "style": "border: none; background: none; width: 100%;"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not _user_location_assignments_table_exists():
+            self.fields["locations_setup_message"].initial = (
+                "To assign locations to this user, run on the server: python manage.py migrate common"
+            )
+        else:
+            # Hide this field when the table exists (inline will show instead)
+            del self.fields["locations_setup_message"]
+
+
 @admin.register(User)
 class CustomUserAdmin(DjangoUserAdmin):
     """
     User admin with optional location (state) assignment.
-    The locations inline is only shown when the UserLocationAssignments table exists
-    (after running: python manage.py migrate common).
+    Locations section is always visible: either the inline (when table exists) or a message to run migrations.
     """
+    form = UserChangeFormWithLocationsMessage
+
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = list(super().get_fieldsets(request, obj))
+        # When table is missing, show a "Locations" section with the setup message so the section is visible
+        if not _user_location_assignments_table_exists():
+            fieldsets.append(("Locations (states)", {"fields": ["locations_setup_message"]}))
+        return fieldsets
+
     def get_inlines(self, request, obj=None):
         inlines = list(super().get_inlines(request, obj))
         if _user_location_assignments_table_exists():
