@@ -13,6 +13,8 @@ python backend/manage.py migrate --noinput
 echo "[3/4] Building frontend (creates frontend/dist/)..."
 # Load frontend/.env if present (not in git; create on server or set env vars in host dashboard).
 if [ -f frontend/.env ]; then set -a; . frontend/.env; set +a; fi
+# Clear dist so Vite can recreate it (avoids EACCES if dist was left by another user)
+rm -rf frontend/dist
 (cd frontend && npm ci && npm run build)
 
 echo "[4/4] Collecting static files (Django)..."
