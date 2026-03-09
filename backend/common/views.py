@@ -1483,7 +1483,9 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     def my_assigned(self, request):
         """
         Get catalog listings for all states assigned to the current user.
-        Uses UserLocationAssignment-based helpers rather than group responsibilities.
+        Uses UserLocationAssignment-based helpers rather than group responsibilities
+        and matches listings either by their direct state pointer or by the
+        jurisdiction of their postal facility.
         """
         user = request.user
         assigned_units = _get_user_assigned_units(user)
@@ -1496,8 +1498,12 @@ class PostmarkViewSet(viewsets.ModelViewSet):
                 return self.get_paginated_response(serializer.data)
             serializer = self.get_serializer(empty_qs, many=True)
             return Response(serializer.data)
-
-        qs = self.get_queryset().filter(state__in=assigned_units).order_by('-created_date')
+        qs = self.get_queryset().filter(
+            Q(state__in=assigned_units)
+            | Q(
+                postal_facility_identity__jurisdictions__administrative_unit__in=assigned_units
+            )
+        ).distinct().order_by('-created_date')
         page = self.paginate_queryset(qs)
         if page is not None:
             serializer = self.get_serializer(page, many=True)

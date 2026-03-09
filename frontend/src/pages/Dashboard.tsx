@@ -179,7 +179,7 @@ const Dashboard = () => {
             type: item.shapeName || "",
             color: item.colorsDisplay || "",
             is_manuscript: item.isManuscript === true,
-            status: "approved" as const,
+            status: item.contributionApprovalStatus || "pending",
             created_at: item.createdDate || new Date().toISOString(),
             description: undefined,
             image_url: imageUrl,
