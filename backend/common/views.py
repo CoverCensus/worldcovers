@@ -702,7 +702,6 @@ def _create_postmark_in_catalog(payload):
             rate_value="",
             is_manuscript=is_manuscript,
             source_catalog="User contribution",
-            contribution_approval_status="pending",
             other_characteristics=other_characteristics[:10000] if other_characteristics else "",
             created_by=user,
             modified_by=user,
@@ -771,17 +770,11 @@ def _create_postmark_in_catalog(payload):
 def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
     """
     Update an existing user-contribution Postmark in place.
-    Verifies the submitter matches. Returns the updated Postmark or None.
+    Verifies permissions and updates in place. Returns the updated Postmark or None.
     """
     try:
         postmark = Postmark.objects.filter(postmark_id=postmark_id).first()
-        if not postmark or postmark.source_catalog != "User contribution":
-            return None
-        oc = postmark.other_characteristics or ""
-        needle = (submitter_name or "").strip().lower()
-        if not needle:
-            return None
-        if f"submitted by: {needle}" not in oc.lower():
+        if not postmark:
             return None
 
         user = _get_contribution_user()
@@ -1093,12 +1086,29 @@ class DeleteMySubmissionView(APIView):
             return Response({"detail": "Invalid catalog ID."}, status=status.HTTP_400_BAD_REQUEST)
 
         postmark = Postmark.objects.filter(postmark_id=postmark_id).first()
-        if not postmark or postmark.source_catalog != "User contribution":
+        if not postmark:
+            return Response({"detail": "Catalog entry not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        user = request.user
+
+        # 1. Superusers can always delete
+        if getattr(user, "is_superuser", False):
+            postmark.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        # 2. Users assigned to this postmark's state can delete any listing in that state
+        assigned_units = _get_user_assigned_units(user)
+        if postmark.state_id and assigned_units.filter(pk=postmark.state_id).exists():
+            postmark.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        # 3. Fallback: original submitter of a user-contribution listing can delete their own
+        if postmark.source_catalog != "User contribution":
             return Response({"detail": "Catalog entry not found."}, status=status.HTTP_404_NOT_FOUND)
 
         other = (postmark.other_characteristics or "") or ""
-        username = (getattr(request.user, "username", "") or "").strip()
-        email = (getattr(request.user, "email", "") or "").strip()
+        username = (getattr(user, "username", "") or "").strip()
+        email = (getattr(user, "email", "") or "").strip()
 
         submitter_needles = []
         if username:
