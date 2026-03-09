@@ -85,7 +85,7 @@ function getAssignedAdministrativeUnitsApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  return `${base}/api/assigned-states/`;
+  return `${base}/api/assigned-states`;
 }
 
 /**
@@ -99,20 +99,7 @@ export async function getAssignedAdministrativeUnits(): Promise<StateOption[]> {
   if (!res.ok) {
     throw new Error(`Assigned states API error: ${res.status} ${res.statusText}`);
   }
-  const contentType = res.headers.get("content-type") ?? "";
-  if (!contentType.includes("application/json")) {
-    throw new Error(
-      "Assigned states API returned non-JSON (check VITE_API_URL and that the backend is running)."
-    );
-  }
-  let data: unknown;
-  try {
-    data = await res.json();
-  } catch {
-    throw new Error(
-      "Assigned states API returned invalid JSON (check VITE_API_URL and that the backend is running)."
-    );
-  }
+  const data = await res.json();
   if (!Array.isArray(data)) {
     throw new Error("Assigned states API: invalid response");
   }

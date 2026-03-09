@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { ColorOption } from '@/lib/api';
 import { getColors } from '@/services/colors';
 import { getPostmarkShapes } from '@/services/postmarkShapes';
-import { getAdministrativeUnits, getAssignedAdministrativeUnits } from '@/services/administrativeUnits';
+import { getAdministrativeUnits } from '@/services/administrativeUnits';
 
 interface ShapeOption {
   value: string;
@@ -48,7 +48,7 @@ export const useFilterOptions = (options?: UseFilterOptionsOptions): UseFilterOp
       const [colors, shapes, states] = await Promise.all([
         getColors(),
         getPostmarkShapes(),
-        assignedStatesOnly ? getAssignedAdministrativeUnits() : getAdministrativeUnits(false),
+        getAdministrativeUnits(assignedStatesOnly),
       ]);
       setColorOptions(colors.map((c) => ({ value: c.name, label: c.name })));
       setShapeOptions(shapes.map((s) => ({ value: String(s.id), label: s.name })));
