@@ -147,7 +147,13 @@ class AssignedStatesView(APIView):
 
     def get(self, request):
         user = request.user
-        units = _get_user_assigned_units(user)
+        # For the Contribute/Dashboard UI we want *only* explicitly assigned states,
+        # even for staff/superusers. If no assignments exist, return an empty list.
+        units = AdministrativeUnit.objects.filter(
+            user_location_assignments__user=user
+        ).distinct()
+        if not units.exists():
+            return Response([])
         identities = AdministrativeUnitIdentity.objects.filter(
             administrative_unit__in=units,
             effective_to_date__isnull=True,
@@ -475,6 +481,26 @@ def _get_contribution_user():
     """User for creating Postmark and related TimestampedModel from a contribution (no request user)."""
     User = get_user_model()
     return User.objects.filter(is_superuser=True).first() or User.objects.first()
+
+
+def _check_contribute_readiness():
+    """
+    Return a list of missing requirements for catalog contribution.
+    Empty list means the database is ready for contributions.
+    """
+    User = get_user_model()
+    missing = []
+    if not (User.objects.filter(is_superuser=True).first() or User.objects.first()):
+        missing.append("at least one user")
+    if not PostmarkShape.objects.exists():
+        missing.append("shapes (PostmarkShape)")
+    if not LetteringStyle.objects.exists():
+        missing.append("lettering (LetteringStyle)")
+    if not FramingStyle.objects.exists():
+        missing.append("framing (FramingStyle)")
+    if not DateFormat.objects.exists():
+        missing.append("date format (DateFormat)")
+    return missing
 
 
 def _save_contribution_image(uploaded_file):
@@ -1031,8 +1057,19 @@ class ContributionView(APIView):
 
         postmark = _create_postmark_in_catalog(payload)
         if not postmark:
+            missing = _check_contribute_readiness()
+            if missing:
+                detail = (
+                    "Could not add entry to catalog. Missing: "
+                    + ", ".join(missing)
+                    + ". Run: python manage.py seed_contribute_reference_data"
+                )
+                return Response(
+                    {"detail": detail},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
             return Response(
-                {"detail": "Could not add entry to catalog. Ensure the database has at least one user and reference data (shapes, lettering, framing, date format)."},
+                {"detail": "Could not add entry to catalog. An unexpected error occurred; check server logs."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         return Response(

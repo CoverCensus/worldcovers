@@ -12,7 +12,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { ArrowLeft, Loader2, Upload } from "lucide-react";
 import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
 import { getColors, type ColorOption } from "@/services/colors";
-import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
+import { getAssignedAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
 import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -118,16 +118,22 @@ const EditCatalogEntry = () => {
   }, []);
 
   useEffect(() => {
+    if (!user) {
+      setStateOptions([]);
+      setStateOptionsError(null);
+      setLoadingStates(false);
+      return;
+    }
     setLoadingStates(true);
     setStateOptionsError(null);
-    getAdministrativeUnits(true)
+    getAssignedAdministrativeUnits()
       .then(setStateOptions)
       .catch((err) => {
-        setStateOptionsError(err instanceof Error ? err.message : "Failed to load states");
+        setStateOptionsError(err instanceof Error ? err.message : "Failed to load assigned states");
         setStateOptions([]);
       })
       .finally(() => setLoadingStates(false));
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     setLoadingTypes(true);

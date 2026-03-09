@@ -12,7 +12,7 @@ import { Upload, CheckCircle, XCircle, Clock } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
-import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
+import { getAssignedAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
 import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -100,9 +100,15 @@ const Contribute = () => {
   }, []);
 
   useEffect(() => {
+    if (!user) {
+      setStateOptions([]);
+      setStateOptionsError(null);
+      setLoadingStates(false);
+      return;
+    }
     setLoadingStates(true);
     setStateOptionsError(null);
-    getAdministrativeUnits(true)
+    getAssignedAdministrativeUnits()
       .then(setStateOptions)
       .catch((err) => {
         setStateOptionsError(err instanceof Error ? err.message : "Failed to load assigned states");
