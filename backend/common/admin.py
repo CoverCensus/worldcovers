@@ -548,43 +548,13 @@ class ExampleCoverInline(admin.TabularInline):
     exclude = ["created_by", "modified_by", "created_date", "modified_date"]
 
 
-def _set_contribution_approval_status(modeladmin, request, queryset, status):
-    """
-    Set contribution_approval_status on the selected listings.
-    Admins should normally run this from the Catalog requests view,
-    which already shows only user-contributed entries.
-    """
-    n = queryset.update(contribution_approval_status=status)
-    return n
-
-
-def approve_catalog_request(modeladmin, request, queryset):
-    n = _set_contribution_approval_status(modeladmin, request, queryset, "approved")
-    messages.success(request, f"{n} catalog request(s) approved. They will now appear in /search.")
-
-
-def reject_catalog_request(modeladmin, request, queryset):
-    n = _set_contribution_approval_status(modeladmin, request, queryset, "rejected")
-    messages.success(request, f"{n} catalog request(s) rejected.")
-
-
-def need_revision_catalog_request(modeladmin, request, queryset):
-    n = _set_contribution_approval_status(modeladmin, request, queryset, "needs_revision")
-    messages.success(request, f"{n} catalog request(s) marked as needing revision.")
-
-
-approve_catalog_request.short_description = "Approve selected catalog requests"
-reject_catalog_request.short_description = "Reject selected catalog requests"
-need_revision_catalog_request.short_description = "Need revision (selected catalog requests)"
-
-
 class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     resource_class = PostmarkResource
     list_display = [
         'postmark_key', 'get_postmark_shape_display', 'state', 'rate_value', 'visibility',
-        'source_catalog', 'contribution_approval_status',
+        'source_catalog',
     ]
-    list_filter = ['state', 'source_catalog', 'contribution_approval_status']
+    list_filter = ['state', 'source_catalog']
     search_fields = ['postmark_key', 'postal_facility_identity__facility_name', 'rate_value', 'public_slug', 'raw_state_data_id']
     actions = [approve_catalog_request, reject_catalog_request, need_revision_catalog_request]
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
@@ -606,7 +576,7 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
             'fields': ('postmark_key', 'site', 'postal_facility_identity', 'state')
         }),
         ('Listing Status & Source', {
-            'fields': ('visibility', 'public_slug', 'source_catalog', 'source_page', 'contribution_approval_status', 'last_public_update_at')
+            'fields': ('visibility', 'public_slug', 'source_catalog', 'source_page', 'last_public_update_at')
         }),
         ('Import Linkage', {
             'fields': ('raw_state_data_id', 'raw_import_payload'),

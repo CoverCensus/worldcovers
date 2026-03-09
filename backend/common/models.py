@@ -624,23 +624,6 @@ class Postmark(TimestampedModel):
         blank=True,
         db_column='OtherCharacteristics'
     )
-    # For user contributions (source_catalog='User contribution'): pending until admin approves.
-    # Only approved entries are shown in /search. Null for non-contributions.
-    CONTRIBUTION_APPROVAL_CHOICES = [
-        ('pending', 'Pending'),
-        ('approved', 'Approved'),
-        ('rejected', 'Rejected'),
-        ('needs_revision', 'Need revision'),
-    ]
-    contribution_approval_status = models.CharField(
-        max_length=20,
-        choices=CONTRIBUTION_APPROVAL_CHOICES,
-        null=True,
-        blank=True,
-        db_column='ContributionApprovalStatus',
-        help_text="Approval status for user-contributed catalog entries. Only 'approved' appear in public search.",
-    )
-
     class Meta:
         db_table = 'Postmarks'
         verbose_name = 'Listing'
