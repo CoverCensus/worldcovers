@@ -506,6 +506,12 @@ class Postmark(TimestampedModel):
         ('DRAFT', 'Draft'),
         ('ARCHIVED', 'Archived'),
     ]
+    CONTRIBUTION_APPROVAL_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('needs_revision', 'Needs revision'),
+    ]
 
     postmark_id = models.AutoField(primary_key=True, db_column='PostmarkID')
     site = models.ForeignKey(
@@ -582,6 +588,14 @@ class Postmark(TimestampedModel):
         choices=VISIBILITY_CHOICES,
         default='PUBLIC',
         db_column='Visibility'
+    )
+    contribution_approval_status = models.CharField(
+        max_length=20,
+        choices=CONTRIBUTION_APPROVAL_CHOICES,
+        null=True,
+        blank=True,
+        db_column='ContributionApprovalStatus',
+        help_text="Approval status for user-contributed catalog entries. Only 'approved' appear in public search.",
     )
     source_catalog = models.CharField(
         max_length=255,

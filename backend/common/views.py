@@ -702,6 +702,7 @@ def _create_postmark_in_catalog(payload):
             rate_value="",
             is_manuscript=is_manuscript,
             source_catalog="User contribution",
+            contribution_approval_status="pending",
             other_characteristics=other_characteristics[:10000] if other_characteristics else "",
             created_by=user,
             modified_by=user,
@@ -938,8 +939,10 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
 @method_decorator(csrf_exempt, name="dispatch")
 class ContributionView(APIView):
     """
-    Public API to submit a catalog entry. Writes directly into the catalog tables
-    (Postmark and related) so the entry appears in catalog search. No separate contribution table.
+    Public API to submit a catalog entry.
+    Writes directly into the catalog tables (Postmark and related).
+    New user-contributed entries start as contribution_approval_status='pending'
+    and will only appear in public catalog search once approved by an admin.
     Accepts JSON or multipart/form-data; when 'image' file is present, saves it and links to the new postmark.
     """
     authentication_classes = [SessionAuthenticationNoCSRF]
@@ -948,9 +951,9 @@ class ContributionView(APIView):
 
     def post(self, request):
         data = request.data or {}
-        edit_postmark_id = data.get("editPostmarkId") or data.get("edit_postmark_id")
+        edit_postmark_id_raw = data.get("editPostmarkId") or data.get("edit_postmark_id")
         try:
-            edit_postmark_id = int(edit_postmark_id) if edit_postmark_id is not None else None
+            edit_postmark_id = int(edit_postmark_id_raw) if edit_postmark_id_raw is not None else None
         except (TypeError, ValueError):
             edit_postmark_id = None
 
@@ -970,7 +973,10 @@ class ContributionView(APIView):
         assigned_admin_unit = None
         if not user.is_authenticated:
             return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
-        if not getattr(user, "is_superuser", False):
+
+        # For new submissions, enforce state assignment; for edits, allow any catalog
+        # entry to be updated by an authenticated user.
+        if edit_postmark_id is None and not getattr(user, "is_superuser", False):
             assigned_admin_unit = _resolve_assigned_admin_unit(user, state)
             if not assigned_admin_unit:
                 return Response(
@@ -1007,7 +1013,7 @@ class ContributionView(APIView):
             postmark = _update_postmark_in_catalog(edit_postmark_id, payload, submitter_name)
             if not postmark:
                 return Response(
-                    {"detail": "You can only update catalog entries that you originally submitted, or the entry was not found."},
+                    {"detail": "Update failed: catalog entry not found or there was an internal error."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
             return Response(
@@ -1450,9 +1456,17 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly, IsResponsibleForRegion]
 
     def get_queryset(self):
-        # Simple optimized queryset; no approval-status filtering so legacy data and
-        # user contributions all remain visible in catalog/search.
-        return _postmark_list_queryset()
+        """
+        Optimized queryset for catalog/search.
+        Legacy/seeded listings are always visible.
+        User-contributed listings are visible only when contribution_approval_status='approved'.
+        """
+        base_qs = _postmark_list_queryset()
+        return base_qs.filter(
+            Q(source_catalog__isnull=True)
+            | ~Q(source_catalog="User contribution")
+            | Q(source_catalog="User contribution", contribution_approval_status="approved")
+        )
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = PostmarkListFilter
     # Search only by name (postmark_key); town, state, type, color have their own filters
