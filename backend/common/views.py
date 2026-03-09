@@ -534,11 +534,7 @@ def _save_contribution_image(uploaded_file):
 
 
 def _get_user_assigned_units(user):
-    """Return queryset of AdministrativeUnits assigned to this user.
-    Staff/superusers can access all units.
-    """
-    if getattr(user, "is_superuser", False):
-        return AdministrativeUnit.objects.all()
+    """Return queryset of AdministrativeUnits explicitly assigned to this user."""
     return AdministrativeUnit.objects.filter(
         user_location_assignments__user=user
     ).distinct()
@@ -1225,10 +1221,8 @@ class AdministrativeUnitViewSet(viewsets.ModelViewSet):
         # assigned_only requires auth; unauthenticated gets empty (avoids inconsistent "all" when session missing)
         if not user or not user.is_authenticated:
             return qs.none()
-        # Staff/superuser see all states everywhere (Contribute, Dashboard, Search)
-        if getattr(user, 'is_staff', False) or getattr(user, 'is_superuser', False):
-            return qs
-        # Filter to logged-in user's assigned locations; no assignments = show all
+        # For Contribute/Dashboard, always restrict to the user's explicit assignments.
+        # If the user has no assignments, show none (they can't contribute anywhere yet).
         assigned_ids = list(
             UserLocationAssignment.objects.filter(user=user).values_list(
                 'administrative_unit_id', flat=True
@@ -1236,7 +1230,7 @@ class AdministrativeUnitViewSet(viewsets.ModelViewSet):
         )
         if assigned_ids:
             return qs.filter(pk__in=assigned_ids)
-        return qs
+        return qs.none()
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
