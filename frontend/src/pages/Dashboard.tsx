@@ -6,7 +6,16 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Filter, Search as SearchIcon } from "lucide-react";
+import { Filter, Grid3x3, List, Search as SearchIcon } from "lucide-react";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer";
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
@@ -33,6 +42,22 @@ function getCsrfTokenFromCookie(): string | null {
 }
 
 const noImageClassName = "w-full h-full min-w-0 min-h-0 object-cover bg-muted";
+
+/** Build compact page numbers for pagination (handles many pages) */
+function getPaginationPages(currentPage: number, totalPages: number): (number | "ellipsis")[] {
+  const delta = 2;
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  const pages: (number | "ellipsis")[] = [1];
+  if (currentPage > delta + 2) pages.push("ellipsis");
+  const start = Math.max(2, currentPage - delta);
+  const end = Math.min(totalPages - 1, currentPage + delta);
+  for (let i = start; i <= end; i++) pages.push(i);
+  if (currentPage < totalPages - delta - 1) pages.push("ellipsis");
+  pages.push(totalPages);
+  return pages;
+}
 
 /** Placeholder when image is missing or fails to load. Matches Catalog Search. */
 function ImageOrPlaceholder({
@@ -73,6 +98,11 @@ const Dashboard = () => {
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtersOpen, setFiltersOpen] = useState(true);
+
+  const [viewMode, setViewMode] = useState<"gallery" | "list">("list");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [goToPageInput, setGoToPageInput] = useState("");
+  const itemsPerPage = 10;
 
   // Filter states (mirror Catalog Search)
   const [searchQuery, setSearchQuery] = useState("");
@@ -258,6 +288,34 @@ const Dashboard = () => {
     dateFrom,
     dateTo,
   ]);
+
+  // Reset to first page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [
+    searchQuery,
+    statusFilter,
+    stateFilter,
+    townFilter,
+    typeFilter,
+    colorFilter,
+    dateFrom,
+    dateTo,
+  ]);
+
+  // Keep current page within bounds when result count changes
+  useEffect(() => {
+    const total = filteredSubmissions.length;
+    const totalPages = Math.max(1, Math.ceil(total / itemsPerPage));
+    setCurrentPage((prev) => Math.min(prev, totalPages));
+  }, [filteredSubmissions.length, itemsPerPage]);
+
+  const totalResults = filteredSubmissions.length;
+  const totalPages = Math.max(1, Math.ceil(totalResults / itemsPerPage));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * itemsPerPage;
+  const endIndex = Math.min(startIndex + itemsPerPage, totalResults);
+  const paginatedSubmissions = filteredSubmissions.slice(startIndex, endIndex);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -591,45 +649,185 @@ const Dashboard = () => {
                   </Button>
                 </CardContent>
               </Card>
-            ) : filteredSubmissions.length === 0 ? (
-              <Card className="flex-1 flex items-center justify-center min-h-[60vh]">
-                <CardContent className="text-center">
-                  <p className="text-muted-foreground mb-4">
-                    {submissions.length === 0
-                      ? "You haven't submitted anything yet."
-                      : "No submissions found matching your filters."}
-                  </p>
-                  {submissions.length === 0 && (
-                    <Button variant="outline" onClick={() => navigate("/contribute")}>
-                      Go to Contribute
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
             ) : (
-              <div className="space-y-4">
-                {filteredSubmissions.map((submission) => (
-                  <Card
-                    key={submission.id}
-                    className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
-                    onClick={() => navigate(`/record/${submission.id}`)}
-                  >
-                    <CardContent className="p-6">
-                      <div className="flex gap-6">
+              <div className="flex-1 flex flex-col space-y-4">
+                {/* Results header with count + view toggle */}
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      {totalResults === 0 ? (
+                        "0 results"
+                      ) : (
+                        <>
+                          Showing{" "}
+                          <span className="font-semibold text-foreground">
+                            {startIndex + 1}-{endIndex}
+                          </span>{" "}
+                          of{" "}
+                          <span className="font-semibold text-foreground">
+                            {totalResults.toLocaleString()}
+                          </span>{" "}
+                          results
+                        </>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex border border-border rounded-md">
+                      <Button
+                        variant={viewMode === "list" ? "secondary" : "ghost"}
+                        size="sm"
+                        onClick={() => setViewMode("list")}
+                        className="rounded-r-none"
+                      >
+                        <List className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant={viewMode === "gallery" ? "secondary" : "ghost"}
+                        size="sm"
+                        onClick={() => setViewMode("gallery")}
+                        className="rounded-l-none"
+                      >
+                        <Grid3x3 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Results content */}
+                {totalResults === 0 ? (
+                  <Card className="flex-1 flex items-center justify-center min-h-[60vh]">
+                    <CardContent className="text-center">
+                      <p className="text-muted-foreground mb-4">
+                        {submissions.length === 0
+                          ? "You haven't submitted anything yet."
+                          : "No submissions found matching your filters."}
+                      </p>
+                      {submissions.length === 0 && (
+                        <Button variant="outline" onClick={() => navigate("/contribute")}>
+                          Go to Contribute
+                        </Button>
+                      )}
+                    </CardContent>
+                  </Card>
+                ) : viewMode === "list" ? (
+                  <div className="space-y-4">
+                    {paginatedSubmissions.map((submission) => (
+                      <Card
+                        key={submission.id}
+                        className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
+                        onClick={() => navigate(`/record/${submission.id}`)}
+                      >
+                        <CardContent className="p-6">
+                          <div className="flex gap-6">
+                            <ImageOrPlaceholder
+                              src={submission.image_url}
+                              alt={submission.name}
+                              className="w-32 h-32 object-cover rounded border border-border shrink-0"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-2 mb-2">
+                                <h3 className="font-heading text-xl font-semibold text-foreground">
+                                  {submission.name}
+                                </h3>
+                                {getStatusBadge(submission.status)}
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                                {(submission.town || submission.state) && (
+                                  <div>
+                                    <span className="text-muted-foreground">Location:</span>{" "}
+                                    <span className="text-foreground">
+                                      {submission.town ? `${submission.town}, ${submission.state}` : submission.state}
+                                    </span>
+                                  </div>
+                                )}
+                                {submission.date_range && (
+                                  <div>
+                                    <span className="text-muted-foreground">Date Range:</span>{" "}
+                                    <span className="text-foreground">{submission.date_range}</span>
+                                  </div>
+                                )}
+                                {submission.color && (
+                                  <div>
+                                    <span className="text-muted-foreground">Color:</span>{" "}
+                                    <span className="text-foreground">{submission.color}</span>
+                                  </div>
+                                )}
+                                <div>
+                                  <span className="text-muted-foreground">Submitted:</span>{" "}
+                                  <span className="text-foreground">
+                                    {new Date(submission.created_at).toLocaleDateString()}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {submission.description && (
+                                <p className="text-sm text-muted-foreground line-clamp-2 mt-2">
+                                  {submission.description}
+                                </p>
+                              )}
+
+                              <div className="mt-3 flex gap-2 justify-end">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigate(`/record/${submission.id}`);
+                                  }}
+                                >
+                                  View details
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigate(`/edit/${submission.id}`);
+                                  }}
+                                >
+                                  Edit
+                                </Button>
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteSubmission(submission.id);
+                                  }}
+                                >
+                                  Delete
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {paginatedSubmissions.map((submission) => (
+                      <Card
+                        key={submission.id}
+                        className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden"
+                        onClick={() => navigate(`/record/${submission.id}`)}
+                      >
                         <ImageOrPlaceholder
                           src={submission.image_url}
                           alt={submission.name}
-                          className="w-32 h-32 object-cover rounded border border-border shrink-0"
+                          className="w-full h-48 object-cover border-b border-border"
                         />
-                        <div className="flex-1 min-w-0">
+                        <CardContent className="p-4">
                           <div className="flex items-start justify-between gap-2 mb-2">
-                            <h3 className="font-heading text-xl font-semibold text-foreground">
+                            <h3 className="font-heading text-lg font-semibold text-foreground">
                               {submission.name}
                             </h3>
                             {getStatusBadge(submission.status)}
                           </div>
 
-                          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                          <div className="space-y-1 text-sm">
                             {(submission.town || submission.state) && (
                               <div>
                                 <span className="text-muted-foreground">Location:</span>{" "}
@@ -657,12 +855,6 @@ const Dashboard = () => {
                               </span>
                             </div>
                           </div>
-
-                          {submission.description && (
-                            <p className="text-sm text-muted-foreground line-clamp-2 mt-2">
-                              {submission.description}
-                            </p>
-                          )}
 
                           <div className="mt-3 flex gap-2 justify-end">
                             <Button
@@ -696,11 +888,109 @@ const Dashboard = () => {
                               Delete
                             </Button>
                           </div>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+
+                {/* Pagination */}
+                {totalPages > 1 && totalResults > 0 && (
+                  <div className="mt-4 flex flex-col items-center gap-4">
+                    <Pagination>
+                      <PaginationContent>
+                        <PaginationItem>
+                          <PaginationPrevious
+                            onClick={() => {
+                              setCurrentPage((p) => Math.max(1, p - 1));
+                            }}
+                            className={safeCurrentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                          />
+                        </PaginationItem>
+
+                        {getPaginationPages(safeCurrentPage, totalPages).map((p, i) =>
+                          p === "ellipsis" ? (
+                            <PaginationItem key={`ellipsis-${i}`}>
+                              <PaginationEllipsis />
+                            </PaginationItem>
+                          ) : (
+                            <PaginationItem key={p}>
+                              <PaginationLink
+                                onClick={() => {
+                                  setCurrentPage(p);
+                                }}
+                                isActive={safeCurrentPage === p}
+                                className="cursor-pointer"
+                              >
+                                {p}
+                              </PaginationLink>
+                            </PaginationItem>
+                          )
+                        )}
+
+                        <PaginationItem>
+                          <PaginationNext
+                            onClick={() => {
+                              setCurrentPage((p) => Math.min(totalPages, p + 1));
+                            }}
+                            className={
+                              safeCurrentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"
+                            }
+                          />
+                        </PaginationItem>
+                      </PaginationContent>
+                    </Pagination>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Go to page</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={totalPages}
+                        placeholder="Page"
+                        value={goToPageInput}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === "") {
+                            setGoToPageInput("");
+                            return;
+                          }
+                          const n = parseInt(raw, 10);
+                          if (Number.isNaN(n)) return;
+                          const clamped = Math.max(1, Math.min(totalPages, n));
+                          setGoToPageInput(String(clamped));
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            const n = parseInt(goToPageInput, 10);
+                            if (!Number.isNaN(n)) {
+                              setCurrentPage(Math.max(1, Math.min(totalPages, n)));
+                              setGoToPageInput("");
+                            }
+                          }
+                        }}
+                        className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        aria-label="Go to page number"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9"
+                        onClick={() => {
+                          const n = parseInt(goToPageInput, 10);
+                          if (!Number.isNaN(n)) {
+                            setCurrentPage(Math.max(1, Math.min(totalPages, n)));
+                            setGoToPageInput("");
+                          }
+                        }}
+                      >
+                        Go
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -160,13 +160,6 @@ const EditCatalogEntry = () => {
         const firstSize = data.sizes?.[0];
         const firstVal = data.valuations?.[0];
         const parsed = parseOtherCharacteristics(data.otherCharacteristics);
-        const submitterName = parsed.submitterName?.trim();
-        const currentUserId = (user?.username || user?.email || "").trim();
-
-        if (!submitterName || !currentUserId || submitterName.toLowerCase() !== currentUserId.toLowerCase()) {
-          setRecordError("You can only edit catalog entries that you originally submitted.");
-          return;
-        }
         const rarityFromValuation = firstVal?.estimatedValue ? `$${firstVal.estimatedValue}` : "";
         const rarityFromOther = parsed.rarityLabel || "";
         const dimStr =

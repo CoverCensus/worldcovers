@@ -575,7 +575,14 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
             'fields': ('postmark_key', 'site', 'postal_facility_identity', 'state')
         }),
         ('Listing Status & Source', {
-            'fields': ('visibility', 'public_slug', 'source_catalog', 'source_page', 'last_public_update_at')
+            'fields': (
+                'visibility',
+                'contribution_approval_status',
+                'public_slug',
+                'source_catalog',
+                'source_page',
+                'last_public_update_at',
+            )
         }),
         ('Import Linkage', {
             'fields': ('raw_state_data_id', 'raw_import_payload'),
