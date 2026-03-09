@@ -1455,6 +1455,33 @@ class PostmarkViewSet(viewsets.ModelViewSet):
             return PostmarkListSerializer
         return PostmarkSerializer
     
+    @action(detail=False, methods=['get'], url_path='my-assigned', permission_classes=[IsAuthenticated])
+    def my_assigned(self, request):
+        """
+        Get catalog listings for all states assigned to the current user.
+        Uses UserLocationAssignment-based helpers rather than group responsibilities.
+        """
+        user = request.user
+        assigned_units = _get_user_assigned_units(user)
+        if not assigned_units.exists():
+            # Still return a paginated response structure for consistency
+            empty_qs = self.get_queryset().none()
+            page = self.paginate_queryset(empty_qs)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            serializer = self.get_serializer(empty_qs, many=True)
+            return Response(serializer.data)
+
+        qs = self.get_queryset().filter(state__in=assigned_units).order_by('-created_date')
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+    
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, modified_by=self.request.user)
     

@@ -88,7 +88,7 @@ const Dashboard = () => {
   const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } =
     useFilterOptions({ assignedStatesOnly: true });
 
-  // Fetch only current user's catalog submissions (from Django postmarks API)
+  // Fetch catalog listings for all states assigned to the current user (from Django postmarks API)
   useEffect(() => {
     if (!user) {
       setSubmissions([]);
@@ -110,7 +110,7 @@ const Dashboard = () => {
           return;
         }
         const base = apiUrl.replace(/\/+$/, "");
-        const url = `${base}/my-submissions/`;
+        const url = `${base}/my-assigned/`;
         const res = await fetch(url);
         if (!res.ok) {
           throw new Error(`API error: ${res.status} ${res.statusText}`);
