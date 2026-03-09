@@ -556,7 +556,6 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     ]
     list_filter = ['state', 'source_catalog']
     search_fields = ['postmark_key', 'postal_facility_identity__facility_name', 'rate_value', 'public_slug', 'raw_state_data_id']
-    actions = [approve_catalog_request, reject_catalog_request, need_revision_catalog_request]
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
     raw_id_fields = ['site', 'postal_facility_identity', 'state', 'postmark_shape', 'lettering_style',
                      'framing_style', 'date_format']
