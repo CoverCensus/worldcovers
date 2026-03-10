@@ -57,6 +57,36 @@ function getPostmarkShapesApiUrl(): string | null {
 }
 
 /**
+ * Fetch all pages from the paginated /api/postmark-shapes/ endpoint so we
+ * can show every postmark type in dropdowns, not just the first page.
+ */
+async function getAllPostmarkShapesFromApi(apiUrl: string): Promise<PostmarkShapeOption[]> {
+  const firstUrl = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
+  let nextUrl: string | null = firstUrl;
+  const allResults: PostmarkShapeOption[] = [];
+  let safetyCounter = 0;
+
+  while (nextUrl && safetyCounter < 50) {
+    const res = await fetch(nextUrl);
+    if (!res.ok) {
+      throw new Error(`Postmark shapes API error: ${res.status} ${res.statusText}`);
+    }
+    const data: PostmarkShapeApiResponse = await res.json();
+    if (!Array.isArray(data.results)) {
+      throw new Error("Postmark shapes API: invalid response (missing results array)");
+    }
+
+    allResults.push(...data.results.map(mapApiResultToOption));
+
+    nextUrl =
+      typeof data.next === "string" && data.next.trim() !== "" ? data.next : null;
+    safetyCounter += 1;
+  }
+
+  return allResults;
+}
+
+/**
  * Fetches distinct type from Supabase catalog_records and submissions.
  * Mapped to PostmarkShapeOption (id = index, name = type, description = "").
  */
@@ -90,16 +120,7 @@ async function getPostmarkShapesFromSupabase(): Promise<PostmarkShapeOption[]> {
 export async function getPostmarkShapes(): Promise<PostmarkShapeOption[]> {
   const apiUrl = getPostmarkShapesApiUrl();
   if (apiUrl) {
-    const url = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`Postmark shapes API error: ${res.status} ${res.statusText}`);
-    }
-    const data: PostmarkShapeApiResponse = await res.json();
-    if (!Array.isArray(data.results)) {
-      throw new Error("Postmark shapes API: invalid response (missing results array)");
-    }
-    return data.results.map(mapApiResultToOption);
+    return getAllPostmarkShapesFromApi(apiUrl);
   }
 
   return getPostmarkShapesFromSupabase();

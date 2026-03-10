@@ -54,6 +54,36 @@ function getColorsApiUrl(): string | null {
 }
 
 /**
+ * Fetch all pages from the paginated /api/colors/ endpoint so dropdowns get
+ * the complete list of colors instead of just the first page.
+ */
+async function getAllColorsFromApi(apiUrl: string): Promise<ColorOption[]> {
+  const firstUrl = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
+  let nextUrl: string | null = firstUrl;
+  const allResults: ColorOption[] = [];
+  let safetyCounter = 0;
+
+  while (nextUrl && safetyCounter < 50) {
+    const res = await fetch(nextUrl);
+    if (!res.ok) {
+      throw new Error(`Colors API error: ${res.status} ${res.statusText}`);
+    }
+    const data: ColorsApiResponse = await res.json();
+    if (!Array.isArray(data.results)) {
+      throw new Error("Colors API: invalid response (missing results array)");
+    }
+
+    allResults.push(...data.results.map(mapApiResultToOption));
+
+    nextUrl =
+      typeof data.next === "string" && data.next.trim() !== "" ? data.next : null;
+    safetyCounter += 1;
+  }
+
+  return allResults;
+}
+
+/**
  * Fetches distinct colors from Supabase (catalog_records + submissions).
  * Returns ColorOption[] with id = index, name = color string, value = "".
  */
@@ -87,16 +117,7 @@ function getColorsApiUrl(): string | null {
 export async function getColors(): Promise<ColorOption[]> {
   const apiUrl = getColorsApiUrl();
   if (apiUrl) {
-    const url = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`Colors API error: ${res.status} ${res.statusText}`);
-    }
-    const data: ColorsApiResponse = await res.json();
-    if (!Array.isArray(data.results)) {
-      throw new Error("Colors API: invalid response (missing results array)");
-    }
-    return data.results.map(mapApiResultToOption);
+    return getAllColorsFromApi(apiUrl);
   }
 
   // return getColorsFromSupabase();

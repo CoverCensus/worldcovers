@@ -59,6 +59,40 @@ function getPaginationPages(currentPage: number, totalPages: number): (number | 
   return pages;
 }
 
+/** Fetch all pages from a DRF-paginated endpoint (or plain array endpoint). */
+async function fetchAllPostmarkPages(url: string): Promise<any[]> {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`);
+  }
+  const data = await res.json();
+
+  if (Array.isArray(data)) {
+    return data;
+  }
+
+  let allResults: any[] = Array.isArray(data.results) ? data.results : [];
+  let nextUrl: string | null =
+    typeof data.next === "string" && data.next.trim() !== "" ? data.next : null;
+  let safetyCounter = 0;
+
+  while (nextUrl && safetyCounter < 50) {
+    const pageRes = await fetch(nextUrl);
+    if (!pageRes.ok) {
+      throw new Error(`API error (page): ${pageRes.status} ${pageRes.statusText}`);
+    }
+    const pageData = await pageRes.json();
+    const pageResults = Array.isArray(pageData.results) ? pageData.results : [];
+    allResults = allResults.concat(pageResults);
+
+    nextUrl =
+      typeof pageData.next === "string" && pageData.next.trim() !== "" ? pageData.next : null;
+    safetyCounter += 1;
+  }
+
+  return allResults;
+}
+
 /** Placeholder when image is missing or fails to load. Matches Catalog Search. */
 function ImageOrPlaceholder({
   src,
@@ -118,7 +152,9 @@ const Dashboard = () => {
   const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } =
     useFilterOptions({ assignedStatesOnly: true });
 
-  // Fetch catalog listings for all states assigned to the current user (from Django postmarks API)
+  // Fetch catalog listings:
+  // - All entries submitted via Contributor Dashboard (my-submissions), including pending/rejected/revision
+  // - All catalog listings for states assigned to the current user (my-assigned)
   useEffect(() => {
     if (!user) {
       setSubmissions([]);
@@ -140,14 +176,38 @@ const Dashboard = () => {
           return;
         }
         const base = apiUrl.replace(/\/+$/, "");
-        const url = `${base}/my-assigned/`;
-        const res = await fetch(url);
-        if (!res.ok) {
-          throw new Error(`API error: ${res.status} ${res.statusText}`);
+
+        // 1) All submissions created via the dashboard (can be pending/rejected/revision/approved)
+        const mySubmissionsUrl = `${base}/my-submissions/`;
+        // 2) All catalog entries in states assigned to this user (legacy + approved contributions)
+        const myAssignedUrl = `${base}/my-assigned/`;
+
+        const [mySubmissionsRaw, myAssignedRaw] = await Promise.all([
+          fetchAllPostmarkPages(mySubmissionsUrl),
+          fetchAllPostmarkPages(myAssignedUrl),
+        ]);
+
+        // Merge and deduplicate by postmarkId so entries that are both "my-submission"
+        // and in an assigned state only appear once.
+        const seen = new Set<number>();
+        const combinedRaw: any[] = [];
+
+        for (const item of [...mySubmissionsRaw, ...myAssignedRaw]) {
+          const id = (item as any).postmarkId;
+          if (typeof id !== "number") continue;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          combinedRaw.push(item);
         }
-        const data = await res.json();
-        const results = Array.isArray(data.results) ? data.results : [];
-        const mapped = results.map((item: any) => {
+
+        // Sort newest-first by createdDate to match backend ordering expectations.
+        combinedRaw.sort((a, b) => {
+          const aDate = new Date((a as any).createdDate ?? 0).getTime();
+          const bDate = new Date((b as any).createdDate ?? 0).getTime();
+          return bDate - aDate;
+        });
+
+        const mapped = combinedRaw.map((item: any) => {
           // Prefer list-style mainImage when present; otherwise derive from images[] (full serializer).
           const mainImageFromList =
             (item as any).mainImage?.imageUrl ??

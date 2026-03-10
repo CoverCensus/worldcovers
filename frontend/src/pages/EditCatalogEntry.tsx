@@ -344,12 +344,10 @@ const EditCatalogEntry = () => {
         throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
 
-      const result = await res.json().catch(() => ({}));
-      const updatedId = result?.postmarkId;
-
       toast({
-        title: "Entry updated",
-        description: "Your catalog entry has been updated.",
+        title: "Correction submitted",
+        description:
+          "Your changes have been submitted for approval. The catalog will update after an admin approves them.",
       });
 
       const fromDashboard = location.state?.fromDashboard;
@@ -359,14 +357,6 @@ const EditCatalogEntry = () => {
 
       if (fromDashboardDirect) {
         navigate("/dashboard");
-      } else if (fromDashboardViaDetail && updatedId) {
-        navigate(`/record/api-${updatedId}`, {
-          state: { fromDashboard: true },
-        });
-      } else if (updatedId) {
-        navigate(`/record/api-${updatedId}`, {
-          state: fromSearch ? { fromSearch: true } : undefined,
-        });
       } else if (fromDashboard) {
         navigate("/dashboard");
       } else if (fromSearch) {

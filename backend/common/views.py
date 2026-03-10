@@ -601,6 +601,7 @@ def _create_postmark_in_catalog(payload):
         description_str = (payload.get("description") or "").strip()
         references_str = (payload.get("references") or "").strip()
         rarity_str = (payload.get("rarity") or "").strip()
+        original_postmark_id = payload.get("original_postmark_id")
 
         # State: get or create AdministrativeUnit + Identity
         state_slug = slugify(state_str)[:40] or "unknown"
@@ -684,6 +685,8 @@ def _create_postmark_in_catalog(payload):
             other_parts.append(f"Citation references: {references_str}")
         if rarity_str:
             other_parts.append(f"Rarity: {rarity_str}")
+        if original_postmark_id:
+            other_parts.append(f"Correction to catalog ID: {original_postmark_id}")
         submitter_str = (payload.get("submitter_name") or "").strip()
         if submitter_str:
             other_parts.append(f"Submitted by: {submitter_str}")
@@ -1010,18 +1013,26 @@ class ContributionView(APIView):
                 payload["image_meta"] = image_meta
 
         if edit_postmark_id is not None:
-            postmark = _update_postmark_in_catalog(edit_postmark_id, payload, submitter_name)
+            # For edits to existing catalog entries, create a new pending
+            # contribution record instead of updating the catalog in place.
+            # The new record will only appear in public catalog search once
+            # an admin approves it, ensuring the current catalog data remains
+            # unchanged until approval.
+            payload["original_postmark_id"] = edit_postmark_id
+            postmark = _create_postmark_in_catalog(payload)
             if not postmark:
                 return Response(
-                    {"detail": "Update failed: catalog entry not found or there was an internal error."},
-                    status=status.HTTP_403_FORBIDDEN,
+                    {
+                        "detail": "Could not submit correction. Ensure required reference data exists or try again later."
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
             return Response(
                 {
-                    "detail": "Your entry has been updated in the catalog.",
+                    "detail": "Correction submitted. Your changes will appear in the catalog after an admin approves them.",
                     "postmarkId": postmark.postmark_id,
                 },
-                status=status.HTTP_200_OK,
+                status=status.HTTP_201_CREATED,
             )
 
         postmark = _create_postmark_in_catalog(payload)
