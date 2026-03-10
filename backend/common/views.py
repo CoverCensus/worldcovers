@@ -28,6 +28,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated, IsAdminUser, BasePermission, AllowAny
 from rest_framework.views import APIView
+from rest_framework.renderers import JSONRenderer
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from django_filters.rest_framework import DjangoFilterBackend
@@ -144,6 +145,7 @@ class CurrentUserView(APIView):
 class AssignedStatesView(APIView):
     """Return state options assigned to the current user."""
     permission_classes = [IsAuthenticated]
+    renderer_classes = [JSONRenderer]
 
     def get(self, request):
         user = request.user
@@ -1470,6 +1472,7 @@ def _postmark_list_queryset():
         'state',
     ).prefetch_related(
         'postmark_colors__color', 'dates_seen', 'valuations', 'images',
+        Prefetch('sizes', queryset=PostmarkSize.objects.order_by('-created_date')),
         Prefetch('postal_facility_identity__jurisdictions', queryset=current_jurisdictions),
         Prefetch('state__identities', queryset=current_identities),
     )

@@ -189,7 +189,9 @@ const EditCatalogEntry = () => {
         setDimensions(dimStr);
         setManuscript(data.isManuscript ? "Yes" : "No");
         setRarity(rarityFromValuation || rarityFromOther);
-        setDescription(parsed.description || data.otherCharacteristics || "");
+        // Only prefill the textarea with an actual description, not raw otherCharacteristics
+        // so users don't have to clear default "Submitted by: ..." lines.
+        setDescription(parsed.description || "");
         setReferences(parsed.citationReferences || "");
       })
       .catch(() => {

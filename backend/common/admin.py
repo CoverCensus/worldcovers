@@ -488,6 +488,44 @@ class ColorAdmin(TimestampedModelAdmin):
     list_display = ['color_name', 'color_value']
     search_fields = ['color_name', 'color_value']
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
+    actions = ['delete_colors_keep_listings']
+
+    @admin.action(description='Delete selected colors (keep listings)')
+    def delete_colors_keep_listings(self, request, queryset):
+        """
+        Admin action to delete Color records without deleting any Postmark listings.
+        It first removes all PostmarkColor links that use the selected colors,
+        then deletes the Color rows themselves.
+        """
+        from django.db import transaction
+
+        total_colors = queryset.count()
+        total_links = 0
+
+        with transaction.atomic():
+            for color in queryset:
+                links_qs = PostmarkColor.objects.filter(color=color)
+                link_count = links_qs.count()
+                total_links += link_count
+                links_qs.delete()
+                color.delete()
+
+        messages.success(
+            request,
+            f"Deleted {total_colors} color(s) and {total_links} postmark color link(s). "
+            "All catalog listings were kept; they just no longer reference these colors."
+        )
+
+    def get_actions(self, request):
+        """
+        Hide Django's default 'delete_selected' action so staff use the
+        safer custom delete_colors_keep_listings action instead, which
+        preserves Postmark listings.
+        """
+        actions = super().get_actions(request)
+        if 'delete_selected' in actions:
+            del actions['delete_selected']
+        return actions
 
 
 class DateFormatAdmin(TimestampedModelAdmin):

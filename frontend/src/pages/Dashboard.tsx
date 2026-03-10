@@ -187,6 +187,7 @@ const Dashboard = () => {
             town: item.town || "",
             state: item.state || "",
             date_range: item.dateRange || "",
+            size: item.sizeDisplay || "",
             type: item.shapeName || "",
             color: item.colorsDisplay || "",
             is_manuscript: item.isManuscript === true,
@@ -763,6 +764,12 @@ const Dashboard = () => {
                                     <span className="text-foreground">{submission.date_range}</span>
                                   </div>
                                 )}
+                                {submission.size && (
+                                  <div>
+                                    <span className="text-muted-foreground">Size:</span>{" "}
+                                    <span className="text-foreground">{submission.size}</span>
+                                  </div>
+                                )}
                                 {submission.color && (
                                   <div>
                                     <span className="text-muted-foreground">Color:</span>{" "}
@@ -855,6 +862,12 @@ const Dashboard = () => {
                               <div>
                                 <span className="text-muted-foreground">Date Range:</span>{" "}
                                 <span className="text-foreground">{submission.date_range}</span>
+                              </div>
+                            )}
+                            {submission.size && (
+                              <div>
+                                <span className="text-muted-foreground">Size:</span>{" "}
+                                <span className="text-foreground">{submission.size}</span>
                               </div>
                             )}
                             {submission.color && (

@@ -339,6 +339,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
     date_range = serializers.SerializerMethodField()
     colors_display = serializers.SerializerMethodField()
     valuation_display = serializers.SerializerMethodField()
+    size_display = serializers.SerializerMethodField()
 
     class Meta:
         model = Postmark
@@ -356,6 +357,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
             'state_id',
             'town',
             'date_range',
+            'size_display',
             'colors_display',
             'valuation_display',
             'contribution_approval_status',
@@ -404,6 +406,28 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         if obj.postal_facility_identity_id:
             return getattr(obj.postal_facility_identity, 'facility_name', None) or ''
         return ''
+
+    def get_size_display(self, obj):
+        """
+        Compact size string for catalog list, derived from the most recent
+        PostmarkSize entry when available.
+        """
+        sizes_qs = getattr(obj, "sizes", None)
+        if sizes_qs is None:
+            return None
+        latest = sizes_qs.order_by("-created_date").first()
+        if not latest:
+            return None
+        width = latest.width
+        height = latest.height
+        # Prefer explicit width/height; fall back to notes if needed
+        if width and height:
+            return f"{width}×{height}"
+        if width:
+            return str(width)
+        if height:
+            return str(height)
+        return latest.size_notes or None
 
     def get_date_range(self, obj):
         """Earliest–latest date seen as string (e.g. '1850-1860')."""

@@ -131,7 +131,8 @@ const RecordDetail = () => {
             manuscript: data.isManuscript ? "Yes" : "No",
             rarity: rarityFromValuation || rarityFromOther,
             // Only show description text the contributor actually provided
-            description: parsed.description || data.otherCharacteristics || "",
+            // Do NOT fall back to raw otherCharacteristics (which may only contain submitter info)
+            description: parsed.description || "",
             submitterName: parsed.submitterName || "",
             citationReferences: parsed.citationReferences || "",
             images,
