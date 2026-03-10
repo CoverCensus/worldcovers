@@ -1522,6 +1522,81 @@ class PostmarkViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='my-dashboard', permission_classes=[IsAuthenticated])
+    def my_dashboard(self, request):
+        """
+        Paginated dashboard view combining:
+        - All catalog listings in the user's assigned states (legacy + approved contributions),
+        - All of this user's own contributed listings for their assigned states, in any approval status.
+        Results are ordered newest-first and use the same pagination behavior as the main catalog.
+        """
+        user = request.user
+        assigned_units = _get_user_assigned_units(user)
+        if not assigned_units.exists() and not getattr(user, "is_superuser", False):
+            empty_qs = _postmark_list_queryset().none()
+            page = self.paginate_queryset(empty_qs)
+            if page is not None:
+                serializer = PostmarkListSerializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            serializer = PostmarkListSerializer(empty_qs, many=True)
+            return Response(serializer.data)
+
+        base_qs = _postmark_list_queryset()
+
+        # Public catalog listings: legacy + only approved user contributions (matches main search behavior)
+        public_qs = base_qs.filter(
+            Q(source_catalog__isnull=True)
+            | ~Q(source_catalog="User contribution")
+            | Q(source_catalog="User contribution", contribution_approval_status="approved")
+        )
+
+        # All public listings in the user's assigned states/regions
+        qs_assigned = public_qs.filter(
+            Q(state__in=assigned_units)
+            | Q(
+                postal_facility_identity__jurisdictions__administrative_unit__in=assigned_units
+            )
+        )
+
+        # User's own contributed listings for their assigned states, in any approval status.
+        username = (getattr(user, "username", "") or "").strip()
+        email = (getattr(user, "email", "") or "").strip()
+        needles = []
+        if username:
+            needles.append(f"Submitted by: {username}")
+        if email and email != username:
+            needles.append(f"Submitted by: {email}")
+
+        needle_q = Q()
+        for needle in needles:
+            needle_q |= Q(other_characteristics__icontains=needle)
+
+        qs_my_contrib = base_qs.filter(
+            source_catalog="User contribution",
+        )
+        if needles:
+            qs_my_contrib = qs_my_contrib.filter(needle_q)
+
+        if not getattr(user, "is_superuser", False):
+            if assigned_units.exists():
+                qs_my_contrib = qs_my_contrib.filter(state__in=assigned_units)
+            else:
+                qs_my_contrib = qs_my_contrib.none()
+
+        qs = (qs_assigned | qs_my_contrib).distinct().order_by('-created_date')
+
+        # Apply standard filters (state, town, color, etc.) and ordering if query params are present
+        qs = self.filter_queryset(qs)
+
+        page = self.paginate_queryset(qs)
+        serializer_class = PostmarkListSerializer
+        if page is not None:
+            serializer = serializer_class(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = serializer_class(qs, many=True)
+        return Response(serializer.data)
     
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, modified_by=self.request.user)

@@ -59,40 +59,6 @@ function getPaginationPages(currentPage: number, totalPages: number): (number | 
   return pages;
 }
 
-/** Fetch all pages from a DRF-paginated endpoint (or plain array endpoint). */
-async function fetchAllPostmarkPages(url: string): Promise<any[]> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
-  }
-  const data = await res.json();
-
-  if (Array.isArray(data)) {
-    return data;
-  }
-
-  let allResults: any[] = Array.isArray(data.results) ? data.results : [];
-  let nextUrl: string | null =
-    typeof data.next === "string" && data.next.trim() !== "" ? data.next : null;
-  let safetyCounter = 0;
-
-  while (nextUrl && safetyCounter < 50) {
-    const pageRes = await fetch(nextUrl);
-    if (!pageRes.ok) {
-      throw new Error(`API error (page): ${pageRes.status} ${pageRes.statusText}`);
-    }
-    const pageData = await pageRes.json();
-    const pageResults = Array.isArray(pageData.results) ? pageData.results : [];
-    allResults = allResults.concat(pageResults);
-
-    nextUrl =
-      typeof pageData.next === "string" && pageData.next.trim() !== "" ? pageData.next : null;
-    safetyCounter += 1;
-  }
-
-  return allResults;
-}
-
 /** Placeholder when image is missing or fails to load. Matches Catalog Search. */
 function ImageOrPlaceholder({
   src,
@@ -152,9 +118,10 @@ const Dashboard = () => {
   const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } =
     useFilterOptions({ assignedStatesOnly: true });
 
-  // Fetch catalog listings:
-  // - All entries submitted via Contributor Dashboard (my-submissions), including pending/rejected/revision
-  // - All catalog listings for states assigned to the current user (my-assigned)
+  // Fetch dashboard listings from backend:
+  // - All entries submitted via Contributor Dashboard for this user (all statuses)
+  // - All catalog listings for states assigned to the current user
+  // The backend combines and paginates these via /api/postmarks/my-dashboard/.
   useEffect(() => {
     if (!user) {
       setSubmissions([]);
@@ -177,37 +144,21 @@ const Dashboard = () => {
         }
         const base = apiUrl.replace(/\/+$/, "");
 
-        // 1) All submissions created via the dashboard (can be pending/rejected/revision/approved)
-        const mySubmissionsUrl = `${base}/my-submissions/`;
-        // 2) All catalog entries in states assigned to this user (legacy + approved contributions)
-        const myAssignedUrl = `${base}/my-assigned/`;
-
-        const [mySubmissionsRaw, myAssignedRaw] = await Promise.all([
-          fetchAllPostmarkPages(mySubmissionsUrl),
-          fetchAllPostmarkPages(myAssignedUrl),
-        ]);
-
-        // Merge and deduplicate by postmarkId so entries that are both "my-submission"
-        // and in an assigned state only appear once.
-        const seen = new Set<number>();
-        const combinedRaw: any[] = [];
-
-        for (const item of [...mySubmissionsRaw, ...myAssignedRaw]) {
-          const id = (item as any).postmarkId;
-          if (typeof id !== "number") continue;
-          if (seen.has(id)) continue;
-          seen.add(id);
-          combinedRaw.push(item);
-        }
-
-        // Sort newest-first by createdDate to match backend ordering expectations.
-        combinedRaw.sort((a, b) => {
-          const aDate = new Date((a as any).createdDate ?? 0).getTime();
-          const bDate = new Date((b as any).createdDate ?? 0).getTime();
-          return bDate - aDate;
+        const params = new URLSearchParams({
+          page: String(currentPage),
+          page_size: String(itemsPerPage),
         });
 
-        const mapped = combinedRaw.map((item: any) => {
+        const url = `${base}/my-dashboard/?${params.toString()}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          throw new Error(`API error: ${res.status} ${res.statusText}`);
+        }
+
+        const data = await res.json();
+        const results = Array.isArray(data.results) ? data.results : [];
+
+        const mapped = results.map((item: any) => {
           // Prefer list-style mainImage when present; otherwise derive from images[] (full serializer).
           const mainImageFromList =
             (item as any).mainImage?.imageUrl ??
@@ -246,6 +197,9 @@ const Dashboard = () => {
           };
         });
         setSubmissions(mapped);
+
+        const total = typeof data.count === "number" && !Number.isNaN(data.count) ? data.count : mapped.length;
+        setTotalCount(total);
       } catch (error: unknown) {
         toast({
           title: "Error loading submissions",
@@ -258,7 +212,9 @@ const Dashboard = () => {
     };
 
     fetchSubmissions();
-  }, [user, toast]);
+  }, [user, toast, currentPage, itemsPerPage]);
+
+  const [totalCount, setTotalCount] = useState(0);
 
   const handleDeleteSubmission = async (submissionId: number) => {
     if (!window.confirm("Are you sure you want to delete this submission from the catalog? This cannot be undone.")) {
@@ -363,14 +319,7 @@ const Dashboard = () => {
     dateTo,
   ]);
 
-  // Keep current page within bounds when result count changes
-  useEffect(() => {
-    const total = filteredSubmissions.length;
-    const totalPages = Math.max(1, Math.ceil(total / itemsPerPage));
-    setCurrentPage((prev) => Math.min(prev, totalPages));
-  }, [filteredSubmissions.length, itemsPerPage]);
-
-  const totalResults = filteredSubmissions.length;
+  const totalResults = totalCount || filteredSubmissions.length;
   const totalPages = Math.max(1, Math.ceil(totalResults / itemsPerPage));
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const startIndex = (safeCurrentPage - 1) * itemsPerPage;
