@@ -12,7 +12,7 @@ import { Upload, CheckCircle, XCircle, Clock } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
-import { getAssignedAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
+import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
 import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -48,21 +48,17 @@ const MANUSCRIPT_OPTIONS = [
 const MIN_YEAR = 1661;
 const CURRENT_YEAR = new Date().getFullYear();
 
-function getYearError(value: string, opts: { required: boolean; label: string }): string | null {
-  const v = value.trim();
-  if (!v) {
-    return opts.required ? `${opts.label} is required` : null;
-  }
-  if (v.length !== 4) {
-    return `${opts.label} must be 4 digits`;
-  }
+function validateYearString(raw: string): string | null {
+  const v = raw.trim();
+  if (!v) return null;
+  if (v.length !== 4) return null; // wait until user types 4 digits
   const n = Number(v);
-  if (Number.isNaN(n) || n < MIN_YEAR || n > CURRENT_YEAR) {
-    return `${opts.label} must be between ${MIN_YEAR} and ${CURRENT_YEAR}`;
+  if (Number.isNaN(n)) return "Year must be a number";
+  if (n < MIN_YEAR || n > CURRENT_YEAR) {
+    return `Year must be between ${MIN_YEAR} and ${CURRENT_YEAR}`;
   }
   return null;
 }
-
 interface MySubmission {
   id: string;
   name: string;
@@ -89,7 +85,7 @@ const Contribute = () => {
 
   // Form state – all fields shown on Submission Detail
   const [state, setState] = useState("");
-  const [stateOther, setStateOther] = useState("");
+
   const [town, setTown] = useState("");
   const [firstSeen, setFirstSeen] = useState("");
   const [lastSeen, setLastSeen] = useState("");
@@ -108,10 +104,12 @@ const Contribute = () => {
     state?: string;
     town?: string;
     firstSeen?: string;
-    lastSeen?: string;
+
     type?: string;
     color?: string;
   }>({});
+  const [firstSeenError, setFirstSeenError] = useState<string | null>(null);
+  const [lastSeenError, setLastSeenError] = useState<string | null>(null);
 
   useEffect(() => {
     getColors()
@@ -120,18 +118,12 @@ const Contribute = () => {
   }, []);
 
   useEffect(() => {
-    if (!user) {
-      setStateOptions([]);
-      setStateOptionsError(null);
-      setLoadingStates(false);
-      return;
-    }
     setLoadingStates(true);
     setStateOptionsError(null);
-    getAssignedAdministrativeUnits()
+    getAdministrativeUnits(true)
       .then(setStateOptions)
       .catch((err) => {
-        setStateOptionsError(err instanceof Error ? err.message : "Failed to load states");
+        setStateOptionsError(err instanceof Error ? err.message : "Failed to load assigned states");
         setStateOptions([]);
       })
       .finally(() => setLoadingStates(false));
@@ -207,7 +199,7 @@ const Contribute = () => {
       return;
     }
 
-    const stateVal = state === "__other__" ? stateOther.trim() : state.trim();
+    const stateVal = state.trim();
     const townVal = town.trim();
     const firstVal = firstSeen.trim();
     const typeVal = type === TYPE_OTHER_VALUE ? typeOther.trim() : type.trim();
@@ -220,14 +212,8 @@ const Contribute = () => {
     if (!townVal) {
       errors.town = "Town/City is required";
     }
-
-    const firstSeenError = getYearError(firstSeen, { required: true, label: "First Seen Year" });
-    const lastSeenError = getYearError(lastSeen, { required: false, label: "Last Seen Year" });
-    if (firstSeenError) {
-      errors.firstSeen = firstSeenError;
-    }
-    if (lastSeenError) {
-      errors.lastSeen = lastSeenError;
+    if (!firstVal) {
+      errors.firstSeen = "First Seen Year is required"
     }
     if (!typeVal) {
       errors.type = "Postmark Type is required";
@@ -237,6 +223,22 @@ const Contribute = () => {
     }
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
+      return;
+    }
+
+    const firstRangeError = validateYearString(firstVal);
+    const lastRangeError = validateYearString(lastSeen.trim());
+    setFirstSeenError(firstRangeError);
+    setLastSeenError(lastRangeError);
+    if (firstRangeError || lastRangeError) {
+      toast({
+        title: "Invalid year",
+        description:
+          firstRangeError ||
+          lastRangeError ||
+          "Please correct the First Seen and Last Seen years.",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -320,7 +322,7 @@ const Contribute = () => {
       });
 
       setState("");
-      setStateOther("");
+
       setTown("");
       setFirstSeen("");
       setLastSeen("");
@@ -431,16 +433,6 @@ const Contribute = () => {
                       {fieldErrors.state && (
                         <p className="text-sm text-destructive">{fieldErrors.state}</p>
                       )}
-                      {state === "__other__" && (
-                        <Input
-                          id="state-other"
-                          placeholder="e.g. Virginia Territory"
-                          value={stateOther}
-                          onChange={(e) => setStateOther(e.target.value)}
-                          className="mt-2"
-                          aria-label="State (other)"
-                        />
-                      )}
                     </div>
 
                     <div className="space-y-2">
@@ -469,14 +461,15 @@ const Contribute = () => {
                           id="firstSeen"
                           type="text"
                           inputMode="numeric"
-                          placeholder={String(MIN_YEAR)}
+                          placeholder="1825"
                           value={firstSeen}
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                             setFirstSeen(v);
-                            const err = getYearError(v, { required: true, label: "First Seen Year" });
-                            setFieldErrors((prev) => ({ ...prev, firstSeen: err || undefined }));
-
+                            if (fieldErrors.firstSeen) {
+                              setFieldErrors((prev) => ({ ...prev, firstSeen: undefined }));
+                            }
+                            setFirstSeenError(validateYearString(v));
                           }}
                           maxLength={5}
                           aria-label="First seen year (numbers only, up to 5 digits)"
@@ -485,6 +478,9 @@ const Contribute = () => {
                         {fieldErrors.firstSeen && (
                           <p className="text-sm text-destructive">{fieldErrors.firstSeen}</p>
                         )}
+                        {firstSeenError && !fieldErrors.firstSeen && (
+                          <p className="text-sm text-destructive">{firstSeenError}</p>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="lastSeen">Last Seen Year</Label>
@@ -492,20 +488,19 @@ const Contribute = () => {
                           id="lastSeen"
                           type="text"
                           inputMode="numeric"
-                          placeholder={String(CURRENT_YEAR)}
+                          placeholder="1845"
                           value={lastSeen}
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                             setLastSeen(v);
-                            const err = getYearError(v, { required: false, label: "Last Seen Year" });
-                            setFieldErrors((prev) => ({ ...prev, lastSeen: err || undefined }));
+                            setLastSeenError(validateYearString(v));
                           }}
                           maxLength={5}
                           aria-label="Last seen year (numbers only, up to 5 digits)"
-                          className={fieldErrors.lastSeen ? "border-destructive" : ""}
+
                         />
-                        {fieldErrors.lastSeen && (
-                          <p className="text-sm text-destructive">{fieldErrors.lastSeen}</p>
+                        {lastSeenError && (
+                          <p className="text-sm text-destructive">{lastSeenError}</p>
                         )}
                       </div>
                     </div>
