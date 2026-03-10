@@ -12,7 +12,7 @@ import { Upload, CheckCircle, XCircle, Clock } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
-import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
+import { getAssignedAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
 import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -45,6 +45,24 @@ const MANUSCRIPT_OPTIONS = [
   { value: "No", label: "No" },
 ];
 
+const MIN_YEAR = 1661;
+const CURRENT_YEAR = new Date().getFullYear();
+
+function getYearError(value: string, opts: { required: boolean; label: string }): string | null {
+  const v = value.trim();
+  if (!v) {
+    return opts.required ? `${opts.label} is required` : null;
+  }
+  if (v.length !== 4) {
+    return `${opts.label} must be 4 digits`;
+  }
+  const n = Number(v);
+  if (Number.isNaN(n) || n < MIN_YEAR || n > CURRENT_YEAR) {
+    return `${opts.label} must be between ${MIN_YEAR} and ${CURRENT_YEAR}`;
+  }
+  return null;
+}
+
 interface MySubmission {
   id: string;
   name: string;
@@ -71,6 +89,7 @@ const Contribute = () => {
 
   // Form state – all fields shown on Submission Detail
   const [state, setState] = useState("");
+  const [stateOther, setStateOther] = useState("");
   const [town, setTown] = useState("");
   const [firstSeen, setFirstSeen] = useState("");
   const [lastSeen, setLastSeen] = useState("");
@@ -89,6 +108,7 @@ const Contribute = () => {
     state?: string;
     town?: string;
     firstSeen?: string;
+    lastSeen?: string;
     type?: string;
     color?: string;
   }>({});
@@ -100,12 +120,18 @@ const Contribute = () => {
   }, []);
 
   useEffect(() => {
+    if (!user) {
+      setStateOptions([]);
+      setStateOptionsError(null);
+      setLoadingStates(false);
+      return;
+    }
     setLoadingStates(true);
     setStateOptionsError(null);
-    getAdministrativeUnits(true)
+    getAssignedAdministrativeUnits()
       .then(setStateOptions)
       .catch((err) => {
-        setStateOptionsError(err instanceof Error ? err.message : "Failed to load assigned states");
+        setStateOptionsError(err instanceof Error ? err.message : "Failed to load states");
         setStateOptions([]);
       })
       .finally(() => setLoadingStates(false));
@@ -181,7 +207,7 @@ const Contribute = () => {
       return;
     }
 
-    const stateVal = state.trim();
+    const stateVal = state === "__other__" ? stateOther.trim() : state.trim();
     const townVal = town.trim();
     const firstVal = firstSeen.trim();
     const typeVal = type === TYPE_OTHER_VALUE ? typeOther.trim() : type.trim();
@@ -194,8 +220,14 @@ const Contribute = () => {
     if (!townVal) {
       errors.town = "Town/City is required";
     }
-    if (!firstVal) {
-      errors.firstSeen = "First Seen Year is required";
+
+    const firstSeenError = getYearError(firstSeen, { required: true, label: "First Seen Year" });
+    const lastSeenError = getYearError(lastSeen, { required: false, label: "Last Seen Year" });
+    if (firstSeenError) {
+      errors.firstSeen = firstSeenError;
+    }
+    if (lastSeenError) {
+      errors.lastSeen = lastSeenError;
     }
     if (!typeVal) {
       errors.type = "Postmark Type is required";
@@ -288,6 +320,7 @@ const Contribute = () => {
       });
 
       setState("");
+      setStateOther("");
       setTown("");
       setFirstSeen("");
       setLastSeen("");
@@ -398,6 +431,16 @@ const Contribute = () => {
                       {fieldErrors.state && (
                         <p className="text-sm text-destructive">{fieldErrors.state}</p>
                       )}
+                      {state === "__other__" && (
+                        <Input
+                          id="state-other"
+                          placeholder="e.g. Virginia Territory"
+                          value={stateOther}
+                          onChange={(e) => setStateOther(e.target.value)}
+                          className="mt-2"
+                          aria-label="State (other)"
+                        />
+                      )}
                     </div>
 
                     <div className="space-y-2">
@@ -426,14 +469,14 @@ const Contribute = () => {
                           id="firstSeen"
                           type="text"
                           inputMode="numeric"
-                          placeholder="1825"
+                          placeholder={String(MIN_YEAR)}
                           value={firstSeen}
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                             setFirstSeen(v);
-                            if (fieldErrors.firstSeen) {
-                              setFieldErrors((prev) => ({ ...prev, firstSeen: undefined }));
-                            }
+                            const err = getYearError(v, { required: true, label: "First Seen Year" });
+                            setFieldErrors((prev) => ({ ...prev, firstSeen: err || undefined }));
+
                           }}
                           maxLength={5}
                           aria-label="First seen year (numbers only, up to 5 digits)"
@@ -449,15 +492,21 @@ const Contribute = () => {
                           id="lastSeen"
                           type="text"
                           inputMode="numeric"
-                          placeholder="1845"
+                          placeholder={String(CURRENT_YEAR)}
                           value={lastSeen}
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                             setLastSeen(v);
+                            const err = getYearError(v, { required: false, label: "Last Seen Year" });
+                            setFieldErrors((prev) => ({ ...prev, lastSeen: err || undefined }));
                           }}
                           maxLength={5}
                           aria-label="Last seen year (numbers only, up to 5 digits)"
+                          className={fieldErrors.lastSeen ? "border-destructive" : ""}
                         />
+                        {fieldErrors.lastSeen && (
+                          <p className="text-sm text-destructive">{fieldErrors.lastSeen}</p>
+                        )}
                       </div>
                     </div>
 

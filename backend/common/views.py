@@ -867,14 +867,37 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
             other_parts.append(f"Submitted by: {submitter_name.strip()}")
         other_characteristics = "\n".join(other_parts) if other_parts else ""
 
-        # Update Postmark
+        # If this listing has already been approved at least once, capture that fact
+        # by ensuring last_public_update_at is populated before we move it back to
+        # a pending approval state. This lets catalog/search keep showing the
+        # previously-approved listing while new edits await review.
+        if (
+            postmark.source_catalog == "User contribution"
+            and postmark.contribution_approval_status == "approved"
+            and not postmark.last_public_update_at
+        ):
+            postmark.last_public_update_at = timezone.now()
+
+        # Update Postmark; mark as pending again so admin can re-approve
         postmark.postal_facility_identity = identity
         postmark.state = admin_unit
         postmark.postmark_shape = shape
         postmark.is_manuscript = is_manuscript
         postmark.other_characteristics = other_characteristics[:10000] if other_characteristics else ""
+        postmark.contribution_approval_status = "pending"
         postmark.modified_by = user
-        postmark.save(update_fields=["postal_facility_identity", "state", "postmark_shape", "is_manuscript", "other_characteristics", "modified_by"])
+        postmark.save(
+            update_fields=[
+                "postal_facility_identity",
+                "state",
+                "postmark_shape",
+                "is_manuscript",
+                "other_characteristics",
+                "contribution_approval_status",
+                "last_public_update_at",
+                "modified_by",
+            ]
+        )
 
         # Replace dimensions
         PostmarkSize.objects.filter(postmark=postmark).delete()
@@ -1013,26 +1036,23 @@ class ContributionView(APIView):
                 payload["image_meta"] = image_meta
 
         if edit_postmark_id is not None:
-            # For edits to existing catalog entries, create a new pending
-            # contribution record instead of updating the catalog in place.
-            # The new record will only appear in public catalog search once
-            # an admin approves it, ensuring the current catalog data remains
-            # unchanged until approval.
-            payload["original_postmark_id"] = edit_postmark_id
-            postmark = _create_postmark_in_catalog(payload)
+            # For edits requested from the dashboard, update the existing
+            # user-contribution catalog entry in place instead of creating
+            # a brand new pending catalog record.
+            postmark = _update_postmark_in_catalog(edit_postmark_id, payload, submitter_name)
             if not postmark:
                 return Response(
                     {
-                        "detail": "Could not submit correction. Ensure required reference data exists or try again later."
+                        "detail": "Could not apply catalog edit. Ensure the target listing exists and try again."
                     },
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
             return Response(
                 {
-                    "detail": "Correction submitted. Your changes will appear in the catalog after an admin approves them.",
+                    "detail": "Catalog entry updated successfully.",
                     "postmarkId": postmark.postmark_id,
                 },
-                status=status.HTTP_201_CREATED,
+                status=status.HTTP_200_OK,
             )
 
         postmark = _create_postmark_in_catalog(payload)
@@ -1468,15 +1488,46 @@ class PostmarkViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
-        Optimized queryset for catalog/search.
-        Legacy/seeded listings are always visible.
-        User-contributed listings are visible only when contribution_approval_status='approved'.
+        Base queryset for postmarks.
+
+        - For list-like actions (catalog/search endpoints), only show:
+          * Legacy/seeded listings, plus
+          * User-contributed listings that are approved or have a previous
+            approved version (last_public_update_at is set).
+        - For detail actions (retrieve/update/partial_update/destroy and any
+          custom detail routes), allow accessing the full catalog including
+          pending user-contributed entries. This is required so that:
+          * Contributor Dashboard can open "View details" for a newly
+            submitted catalog entry that is still pending approval.
+          * The Edit Catalog Entry form can load the record being edited.
         """
         base_qs = _postmark_list_queryset()
+
+        # Detail actions should be able to see the full catalog, including
+        # pending user-contribution records. Permissions (IsResponsibleForRegion)
+        # still apply for write operations.
+        if getattr(self, "action", None) in {
+            "retrieve",
+            "update",
+            "partial_update",
+            "destroy",
+        }:
+            return base_qs
+
+        # List-style actions (including the default `list`) should only expose
+        # approved or previously approved user-contributed entries so that
+        # pending submissions do not appear in public catalog search.
         return base_qs.filter(
             Q(source_catalog__isnull=True)
             | ~Q(source_catalog="User contribution")
-            | Q(source_catalog="User contribution", contribution_approval_status="approved")
+            | Q(
+                source_catalog="User contribution",
+                contribution_approval_status="approved",
+            )
+            | Q(
+                source_catalog="User contribution",
+                last_public_update_at__isnull=False,
+            )
         )
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = PostmarkListFilter
@@ -1544,11 +1595,18 @@ class PostmarkViewSet(viewsets.ModelViewSet):
 
         base_qs = _postmark_list_queryset()
 
-        # Public catalog listings: legacy + only approved user contributions (matches main search behavior)
+        # Public catalog listings: legacy + only approved/previously approved user contributions (matches main search behavior)
         public_qs = base_qs.filter(
             Q(source_catalog__isnull=True)
             | ~Q(source_catalog="User contribution")
-            | Q(source_catalog="User contribution", contribution_approval_status="approved")
+            | Q(
+                source_catalog="User contribution",
+                contribution_approval_status="approved",
+            )
+            | Q(
+                source_catalog="User contribution",
+                last_public_update_at__isnull=False,
+            )
         )
 
         # All public listings in the user's assigned states/regions

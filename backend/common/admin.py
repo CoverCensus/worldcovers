@@ -13,6 +13,7 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.models import Group
 from django.urls import reverse
 from django.utils.html import format_html
+from django.utils import timezone
 from django.core.paginator import Paginator
 from django.utils.functional import cached_property
 from django import forms
@@ -602,6 +603,33 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+    def save_model(self, request, obj, form, change):
+        """
+        When an admin approves a user-contribution listing, record the time
+        of that approval in last_public_update_at. This marks the listing as
+        having at least one approved public version so that catalog/search
+        can continue to show it even if later edits are pending re-approval.
+        """
+        # Determine previous status so we can detect transition → approved
+        previous_status = None
+        if change and obj.pk:
+            try:
+                previous = obj.__class__.objects.only("contribution_approval_status").get(pk=obj.pk)
+                previous_status = previous.contribution_approval_status
+            except obj.__class__.DoesNotExist:
+                previous_status = None
+
+        super().save_model(request, obj, form, change)
+
+        if (
+            obj.source_catalog == "User contribution"
+            and obj.contribution_approval_status == "approved"
+        ):
+            # First time this listing is approved, or a re-approval after edits.
+            if not obj.last_public_update_at:
+                obj.last_public_update_at = timezone.now()
+                obj.save(update_fields=["last_public_update_at"])
     
     def get_postmark_shape_display(self, obj):
         """Safe list_display for postmark_shape so one bad FK does not break the changelist."""

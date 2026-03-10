@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
 import { Grid3x3, List, Search as SearchIcon, SlidersHorizontal, Loader2 } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
@@ -19,6 +19,20 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 400;
+const MIN_YEAR = 1661;
+const CURRENT_YEAR = new Date().getFullYear();
+
+function validateYearString(raw: string): string | null {
+  const v = raw.trim();
+  if (!v) return null;
+  if (v.length !== 4) return null; // wait until user types 4 digits
+  const n = Number(v);
+  if (Number.isNaN(n)) return "Year must be a number";
+  if (n < MIN_YEAR || n > CURRENT_YEAR) {
+    return `Year must be between ${MIN_YEAR} and ${CURRENT_YEAR}`;
+  }
+  return null;
+}
 
 /** Read a single search param with default */
 function getSearchParam(params: URLSearchParams, key: string, defaultValue: string): string {
@@ -118,20 +132,26 @@ const Search = () => {
   const prevColorFilterRef = useRef(colorFilter);
   const prevStateFilterRef = useRef(stateFilter);
   const prevTownFilterRef = useRef(debouncedTownFilter);
-  const prevBeginYearRef = useRef(debouncedBeginYear);
-  const prevEndYearRef = useRef(debouncedEndYear);
+  const prevBeginYearRef = useRef(debouncedBeginYear.trim().length === 4 ? debouncedBeginYear.trim() : "");
+  const prevEndYearRef = useRef(debouncedEndYear.trim().length === 4 ? debouncedEndYear.trim() : "");
   const prevImagesOnlyRef = useRef(imagesOnly);
   const prevExcludeManuscriptsRef = useRef(excludeManuscripts);
 
+  const beginYearError = useMemo(() => validateYearString(beginYear), [beginYear]);
+  const endYearError = useMemo(() => validateYearString(endYear), [endYear]);
+
   // Reset page to 1 when filters change
   useEffect(() => {
+    const currentNormalizedBegin = debouncedBeginYear.trim().length === 4 ? debouncedBeginYear.trim() : "";
+    const currentNormalizedEnd = debouncedEndYear.trim().length === 4 ? debouncedEndYear.trim() : "";
+
     const searchJustChanged = prevKeywordRef.current !== debouncedKeywordSearch;
     const typeFilterJustChanged = prevTypeFilterRef.current !== typeFilter;
     const colorFilterJustChanged = prevColorFilterRef.current !== colorFilter;
     const stateFilterJustChanged = prevStateFilterRef.current !== stateFilter;
     const townFilterJustChanged = prevTownFilterRef.current !== debouncedTownFilter;
-    const beginYearJustChanged = prevBeginYearRef.current !== debouncedBeginYear;
-    const endYearJustChanged = prevEndYearRef.current !== debouncedEndYear;
+    const beginYearJustChanged = prevBeginYearRef.current !== currentNormalizedBegin;
+    const endYearJustChanged = prevEndYearRef.current !== currentNormalizedEnd;
     const imagesOnlyJustChanged = prevImagesOnlyRef.current !== imagesOnly;
     const excludeManuscriptsJustChanged = prevExcludeManuscriptsRef.current !== excludeManuscripts;
     if (searchJustChanged) prevKeywordRef.current = debouncedKeywordSearch;
@@ -139,8 +159,8 @@ const Search = () => {
     if (colorFilterJustChanged) prevColorFilterRef.current = colorFilter;
     if (stateFilterJustChanged) prevStateFilterRef.current = stateFilter;
     if (townFilterJustChanged) prevTownFilterRef.current = debouncedTownFilter;
-    if (beginYearJustChanged) prevBeginYearRef.current = debouncedBeginYear;
-    if (endYearJustChanged) prevEndYearRef.current = debouncedEndYear;
+    if (beginYearJustChanged) prevBeginYearRef.current = currentNormalizedBegin;
+    if (endYearJustChanged) prevEndYearRef.current = currentNormalizedEnd;
     if (imagesOnlyJustChanged) prevImagesOnlyRef.current = imagesOnly;
     if (excludeManuscriptsJustChanged) prevExcludeManuscriptsRef.current = excludeManuscripts;
 
@@ -159,6 +179,14 @@ const Search = () => {
     }
   }, [debouncedKeywordSearch, typeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, excludeManuscripts]);
 
+  // Treat years as active filters only when they are valid and 4 digits.
+  const normalizedBeginYear = useMemo(() => {
+    return validateYearString(debouncedBeginYear) ? "" : (debouncedBeginYear.trim().length === 4 ? debouncedBeginYear.trim() : "");
+  }, [debouncedBeginYear]);
+  const normalizedEndYear = useMemo(() => {
+    return validateYearString(debouncedEndYear) ? "" : (debouncedEndYear.trim().length === 4 ? debouncedEndYear.trim() : "");
+  }, [debouncedEndYear]);
+
   // Fetch postmarks with React Query - cached so Back shows previous results immediately
   const {
     data: queryData,
@@ -173,14 +201,19 @@ const Search = () => {
       typeFilter,
       stateFilter,
       debouncedTownFilter,
-      debouncedBeginYear,
-      debouncedEndYear,
+      normalizedBeginYear,
+      normalizedEndYear,
       imagesOnly,
       colorFilter,
       excludeManuscripts,
       itemsPerPage,
     ],
     queryFn: async () => {
+      const normalizedFrom =
+        debouncedBeginYear.trim().length === 4 ? debouncedBeginYear.trim() : undefined;
+      const normalizedTo =
+        debouncedEndYear.trim().length === 4 ? debouncedEndYear.trim() : undefined;
+
       const { results, count, count_capped } = await getPostmarksPage(
         currentPage,
         itemsPerPage,
@@ -190,8 +223,8 @@ const Search = () => {
         colorFilter !== "all" ? colorFilter : null,
         stateFilter !== "all" ? stateFilter : undefined,
         debouncedTownFilter.trim() || undefined,
-        debouncedBeginYear.trim() || undefined,
-        debouncedEndYear.trim() || undefined,
+        normalizedFrom,
+        normalizedTo,
         imagesOnly
       );
       const apiTransformed = results.map((record: any) => ({
@@ -207,6 +240,7 @@ const Search = () => {
         state: record.state || "",
         town: record.town || "",
         dateRange: record.dateRange || "",
+        size: (record as any).sizeDisplay || "",
         color: record.colorsDisplay || "",
         type: record.shapeName || "",
         valuation: record.rateValue,
@@ -244,8 +278,9 @@ const Search = () => {
     if (debouncedKeywordSearch.trim()) params.set("q", debouncedKeywordSearch.trim());
     if (stateFilter !== "all") params.set("state", stateFilter);
     if (debouncedTownFilter.trim()) params.set("town", debouncedTownFilter.trim());
-    if (debouncedBeginYear.trim()) params.set("from", debouncedBeginYear.trim());
-    if (debouncedEndYear.trim()) params.set("to", debouncedEndYear.trim());
+    // Only persist valid years (normalized values) to the URL
+    if (normalizedBeginYear) params.set("from", normalizedBeginYear);
+    if (normalizedEndYear) params.set("to", normalizedEndYear);
     if (typeFilter !== "all") params.set("type", typeFilter);
     if (colorFilter !== "all") params.set("color", colorFilter);
     if (excludeManuscripts) params.set("noManuscripts", "true");
@@ -256,7 +291,7 @@ const Search = () => {
     if (next !== current) {
       setSearchParams(next ? params : {}, { replace: true });
     }
-  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, typeFilter, colorFilter, excludeManuscripts, imagesOnly, searchParams, setSearchParams]);
+  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, typeFilter, colorFilter, excludeManuscripts, imagesOnly, searchParams, setSearchParams]);
 
   // Enforce exactly itemsPerPage (10) per page — slice in case API returns more
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
@@ -364,7 +399,7 @@ const Search = () => {
                       <Input
                         id="beginYear"
                         type="number"
-                        placeholder="1776"
+                        placeholder={String(MIN_YEAR)}
                         inputMode="numeric"
                         value={beginYear}
                         onChange={(e) => {
@@ -372,15 +407,21 @@ const Search = () => {
                           setBeginYear(v);
                         }}
                         disabled={filtersDisabled}
-                        className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className={cn(
+                          "[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
+                          beginYearError ? "border-destructive" : ""
+                        )}
                       />
+                      {beginYearError && (
+                        <p className="text-xs text-destructive">{beginYearError}</p>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="endYear">End Year</Label>
                       <Input
                         id="endYear"
                         type="number"
-                        placeholder="1900"
+                        placeholder={String(CURRENT_YEAR)}
                         inputMode="numeric"
                         value={endYear}
                         onChange={(e) => {
@@ -388,8 +429,14 @@ const Search = () => {
                           setEndYear(v);
                         }}
                         disabled={filtersDisabled}
-                        className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className={cn(
+                          "[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
+                          endYearError ? "border-destructive" : ""
+                        )}
                       />
+                      {endYearError && (
+                        <p className="text-xs text-destructive">{endYearError}</p>
+                      )}
                     </div>
                   </div>
 
@@ -570,18 +617,33 @@ const Search = () => {
                             <h3 className="font-heading text-xl font-semibold text-foreground mb-2">
                               {result.name}
                             </h3>
-                            
+
                             <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                              {(result.town || result.state) && (
+                              {result.town && (
                                 <div>
-                                  <span className="text-muted-foreground">Location:</span>{" "}
-                                  <span className="text-foreground">{result.town ? `${result.town}, ${result.state}` : result.state}</span>
+                                  <span className="text-muted-foreground">Town:</span>{" "}
+                                  <span className="text-foreground">{result.town}</span>
                                 </div>
                               )}
+                              {result.state && (
+                                <div>
+                                  <span className="text-muted-foreground">State:</span>{" "}
+                                  <span className="text-foreground">{result.state}</span>
+                                </div>
+                              )}
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
                               {result.dateRange && (
                                 <div>
-                                  <span className="text-muted-foreground">Date Range:</span>{" "}
+                                  <span className="text-muted-foreground">Date Seen:</span>{" "}
                                   <span className="text-foreground">{result.dateRange}</span>
+                                </div>
+                              )}
+                              {result.size && (
+                                <div>
+                                  <span className="text-muted-foreground">Size:</span>{" "}
+                                  <span className="text-foreground">{result.size}</span>
                                 </div>
                               )}
                               {result.color && (
@@ -614,18 +676,30 @@ const Search = () => {
                         <h3 className="font-heading text-lg font-semibold text-foreground mb-2">
                           {result.name}
                         </h3>
-                        
+
                         <div className="space-y-1 text-sm">
-                          {(result.town || result.state) && (
+                          {result.town && (
                             <div>
-                              <span className="text-muted-foreground">Location:</span>{" "}
-                              <span className="text-foreground">{result.town ? `${result.town}, ${result.state}` : result.state}</span>
+                              <span className="text-muted-foreground">Town:</span>{" "}
+                              <span className="text-foreground">{result.town}</span>
+                            </div>
+                          )}
+                             {result.state && (
+                            <div>
+                              <span className="text-muted-foreground">State:</span>{" "}
+                              <span className="text-foreground">{result.state}</span>
                             </div>
                           )}
                           {result.dateRange && (
                             <div>
-                              <span className="text-muted-foreground">Date:</span>{" "}
+                              <span className="text-muted-foreground">Date Seen:</span>{" "}
                               <span className="text-foreground">{result.dateRange}</span>
+                            </div>
+                          )}
+                          {result.size && (
+                            <div>
+                              <span className="text-muted-foreground">Size:</span>{" "}
+                              <span className="text-foreground">{result.size}</span>
                             </div>
                           )}
                           {result.color && (

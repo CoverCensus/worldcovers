@@ -322,9 +322,15 @@ const Dashboard = () => {
   const totalResults = totalCount || filteredSubmissions.length;
   const totalPages = Math.max(1, Math.ceil(totalResults / itemsPerPage));
   const safeCurrentPage = Math.min(currentPage, totalPages);
-  const startIndex = (safeCurrentPage - 1) * itemsPerPage;
-  const endIndex = Math.min(startIndex + itemsPerPage, totalResults);
-  const paginatedSubmissions = filteredSubmissions.slice(startIndex, endIndex);
+
+  // Backend already paginates; filteredSubmissions is just the current page
+  const paginatedSubmissions = filteredSubmissions;
+
+  const pageStart =
+    totalResults === 0 ? 0 : (safeCurrentPage - 1) * itemsPerPage + 1;
+  const pageEnd = totalResults === 0
+    ? 0
+    : Math.min(safeCurrentPage * itemsPerPage, totalResults);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -670,7 +676,7 @@ const Dashboard = () => {
                         <>
                           Showing{" "}
                           <span className="font-semibold text-foreground">
-                            {startIndex + 1}-{endIndex}
+                            {pageStart}-{pageEnd}
                           </span>{" "}
                           of{" "}
                           <span className="font-semibold text-foreground">
