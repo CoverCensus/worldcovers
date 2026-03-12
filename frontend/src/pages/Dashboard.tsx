@@ -130,6 +130,9 @@ const Dashboard = () => {
   const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } =
     useFilterOptions({ assignedStatesOnly: true });
 
+  // Total count from backend (all dashboard records, unfiltered)
+  const [apiTotalCount, setApiTotalCount] = useState(0);
+
   // Disable filters while submissions or filter options are loading
   const filtersDisabled = loading || isLoadingFilters;
   // Fetch only current user's catalog submissions (from Django postmarks API)
@@ -207,6 +210,10 @@ const Dashboard = () => {
           };
         });
         setSubmissions(mapped);
+
+        const total =
+          typeof data.count === "number" && !Number.isNaN(data.count) ? data.count : mapped.length;
+        setApiTotalCount(total);
       } catch (error: unknown) {
         toast({
           title: "Error loading submissions",
@@ -219,7 +226,7 @@ const Dashboard = () => {
     };
 
     fetchSubmissions();
-  }, [user, toast]);
+  }, [user, toast, currentPage, itemsPerPage]);
 
   const handleDeleteSubmission = async () => {
     if (!deleteTarget) return;
@@ -315,12 +322,43 @@ const Dashboard = () => {
     dateTo,
   ]);
 
-  const totalCount = filteredSubmissions.length;
-  const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
-  const paginatedSubmissions = filteredSubmissions.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage,
-  );
+  const anyFilterActive =
+    searchQuery.trim() !== "" ||
+    statusFilter !== "all" ||
+    stateFilter !== "all" ||
+    townFilter.trim() !== "" ||
+    typeFilter !== "all" ||
+    colorFilter !== "all" ||
+    dateFrom !== "" ||
+    dateTo !== "";
+
+  const effectiveTotalCount =
+    anyFilterActive && filteredSubmissions.length > 0
+      ? filteredSubmissions.length
+      : apiTotalCount || filteredSubmissions.length;
+
+  const totalPages = Math.max(1, Math.ceil(effectiveTotalCount / itemsPerPage));
+
+  let paginatedSubmissions = filteredSubmissions;
+  let pageStart = 0;
+  let pageEnd = 0;
+
+  if (effectiveTotalCount === 0) {
+    paginatedSubmissions = filteredSubmissions;
+    pageStart = 0;
+    pageEnd = 0;
+  } else if (anyFilterActive) {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    paginatedSubmissions = filteredSubmissions.slice(startIndex, endIndex);
+    pageStart = Math.min(startIndex + 1, filteredSubmissions.length);
+    pageEnd = Math.min(endIndex, filteredSubmissions.length);
+  } else {
+    // No filters: backend already paginates, so use current page as-is
+    paginatedSubmissions = filteredSubmissions;
+    pageStart = (currentPage - 1) * itemsPerPage + 1;
+    pageEnd = Math.min(currentPage * itemsPerPage, effectiveTotalCount);
+  }
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -335,10 +373,10 @@ const Dashboard = () => {
     }
   };
 
-  // Reset to first page when filters or submissions change
+  // Reset to first page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [submissions, searchQuery, statusFilter, stateFilter, townFilter, typeFilter, colorFilter, dateFrom, dateTo]);
+  }, [searchQuery, statusFilter, stateFilter, townFilter, typeFilter, colorFilter, dateFrom, dateTo]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -548,19 +586,18 @@ const Dashboard = () => {
               {/* Results Header */}
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
                 <div>
-                  <p className="text-sm text-muted-foreground">
-                    {totalCount === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                    {effectiveTotalCount === 0 ? (
                       "0 results"
                     ) : (
                       <>
                         Showing{" "}
                         <span className="font-semibold text-foreground">
-                          {((currentPage - 1) * itemsPerPage + 1).toLocaleString()}-
-                          {Math.min(currentPage * itemsPerPage, totalCount).toLocaleString()}
+                          {pageStart.toLocaleString()}-{pageEnd.toLocaleString()}
                         </span>{" "}
                         of{" "}
                         <span className="font-semibold text-foreground">
-                          {totalCount.toLocaleString()}
+                          {effectiveTotalCount.toLocaleString()}
                         </span>{" "}
                         results
                       </>
