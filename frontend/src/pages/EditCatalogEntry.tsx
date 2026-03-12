@@ -35,6 +35,24 @@ const MANUSCRIPT_OPTIONS = [
   { value: "No", label: "No" },
 ];
 
+const MIN_YEAR = 1661;
+const CURRENT_YEAR = new Date().getFullYear();
+
+function getYearError(value: string, opts: { required: boolean; label: string }): string | null {
+  const v = value.trim();
+  if (!v) {
+    return opts.required ? `${opts.label} is required` : null;
+  }
+  if (v.length !== 4) {
+    return `${opts.label} must be 4 digits`;
+  }
+  const n = Number(v);
+  if (Number.isNaN(n) || n < MIN_YEAR || n > CURRENT_YEAR) {
+    return `${opts.label} must be between ${MIN_YEAR} and ${CURRENT_YEAR}`;
+  }
+  return null;
+}
+
 function parseOtherCharacteristics(raw: string | null | undefined) {
   const result = {
     submitterName: "",
@@ -107,6 +125,7 @@ const EditCatalogEntry = () => {
     state?: string;
     town?: string;
     firstSeen?: string;
+    lastSeen?: string;
     type?: string;
     color?: string;
   }>({});
@@ -257,8 +276,14 @@ const EditCatalogEntry = () => {
     if (!townVal) {
       errors.town = "Town/City is required";
     }
-    if (!firstVal) {
-      errors.firstSeen = "First Seen Year is required";
+
+    const firstSeenError = getYearError(firstSeen, { required: true, label: "First Seen Year" });
+    const lastSeenError = getYearError(lastSeen, { required: false, label: "Last Seen Year" });
+    if (firstSeenError) {
+      errors.firstSeen = firstSeenError;
+    }
+    if (lastSeenError) {
+      errors.lastSeen = lastSeenError;
     }
     if (!typeVal) {
       errors.type = "Postmark Type is required";
@@ -346,10 +371,12 @@ const EditCatalogEntry = () => {
         throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
 
+      const result = await res.json().catch(() => ({}));
+      const updatedId = result?.postmarkId;
+
       toast({
-        title: "Correction submitted",
-        description:
-          "Your changes have been submitted for approval. The catalog will update after an admin approves them.",
+        title: "Entry updated",
+        description: "Your catalog entry has been updated.",
       });
 
       const fromDashboard = location.state?.fromDashboard;
@@ -359,6 +386,14 @@ const EditCatalogEntry = () => {
 
       if (fromDashboardDirect) {
         navigate("/dashboard");
+      } else if (fromDashboardViaDetail && updatedId) {
+        navigate(`/record/api-${updatedId}`, {
+          state: { fromDashboard: true },
+        });
+      } else if (updatedId) {
+        navigate(`/record/api-${updatedId}`, {
+          state: fromSearch ? { fromSearch: true } : undefined,
+        });
       } else if (fromDashboard) {
         navigate("/dashboard");
       } else if (fromSearch) {
@@ -525,14 +560,13 @@ const EditCatalogEntry = () => {
                           id="edit-firstSeen"
                           type="text"
                           inputMode="numeric"
-                          placeholder="1825"
+                          placeholder={String(MIN_YEAR)}
                           value={firstSeen}
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                             setFirstSeen(v);
-                            if (fieldErrors.firstSeen) {
-                              setFieldErrors((prev) => ({ ...prev, firstSeen: undefined }));
-                            }
+                            const err = getYearError(v, { required: true, label: "First Seen Year" });
+                            setFieldErrors((prev) => ({ ...prev, firstSeen: err || undefined }));
                           }}
                           maxLength={5}
                           className={fieldErrors.firstSeen ? "border-destructive" : ""}
@@ -547,14 +581,20 @@ const EditCatalogEntry = () => {
                           id="edit-lastSeen"
                           type="text"
                           inputMode="numeric"
-                          placeholder="1845"
+                          placeholder={String(CURRENT_YEAR)}
                           value={lastSeen}
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                             setLastSeen(v);
+                            const err = getYearError(v, { required: false, label: "Last Seen Year" });
+                            setFieldErrors((prev) => ({ ...prev, lastSeen: err || undefined }));
                           }}
                           maxLength={5}
+                          className={fieldErrors.lastSeen ? "border-destructive" : ""}
                         />
+                        {fieldErrors.lastSeen && (
+                          <p className="text-sm text-destructive">{fieldErrors.lastSeen}</p>
+                        )}
                       </div>
                     </div>
 

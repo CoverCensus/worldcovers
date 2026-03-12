@@ -110,7 +110,7 @@ const Auth = () => {
 
       <div className="flex-1 bg-background flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
         <Card className="w-full max-w-md shadow-archival-lg">
-          <CardHeader className="space-y-1">
+          <CardHeader className="space-y-1 p-4 sm:p-6">
             <CardTitle className="font-heading text-2xl text-center">
               WorldCovers Account
             </CardTitle>
@@ -118,7 +118,7 @@ const Auth = () => {
               Sign in to access the catalog
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-4 sm:p-6 pt-0">
             <Formik
               initialValues={{ email: "", password: "" }}
               validate={validateAuth}
@@ -126,8 +126,8 @@ const Auth = () => {
               onSubmit={handleSubmit}
             >
               {({ errors, touched, isSubmitting, isValid }) => (
-                <Form className="space-y-4 pt-4">
-                  <div className="space-y-2">
+                <Form className="space-y-2 sm:space-y-4 pt-2 sm:pt-4">
+                  <div className="space-y-1 sm:space-y-2">
                     <Label htmlFor="signin-email">Email</Label>
                     <Field
                       as={Input}
@@ -145,7 +145,7 @@ const Auth = () => {
                       </p>
                     )}
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1 sm:space-y-2">
                     <Label htmlFor="signin-password">Password</Label>
                     <div className="relative">
                       <Field

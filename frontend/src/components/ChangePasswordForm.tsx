@@ -142,7 +142,7 @@ export const ChangePasswordForm = ({ open, onOpenChange, onSignOut }: ChangePass
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>Change password</DialogTitle>
           <DialogDescription>
@@ -157,8 +157,8 @@ export const ChangePasswordForm = ({ open, onOpenChange, onSignOut }: ChangePass
           onSubmit={handleSubmit}
         >
           {({ errors, touched, isSubmitting, isValid }) => (
-            <Form className="space-y-4">
-              <div className="space-y-2">
+            <Form className="space-y-2 sm:space-y-4">
+              <div className="space-y-1 sm:space-y-2">
                 <Label htmlFor="current-password">Current password</Label>
                 <div className="relative">
                   <Field
@@ -182,7 +182,7 @@ export const ChangePasswordForm = ({ open, onOpenChange, onSignOut }: ChangePass
                 </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-1 sm:space-y-2">
                 <Label htmlFor="new-password">New password</Label>
                 <div className="relative">
                   <Field
@@ -217,7 +217,7 @@ export const ChangePasswordForm = ({ open, onOpenChange, onSignOut }: ChangePass
                 )}
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-1 sm:space-y-2">
                 <Label htmlFor="confirm-password">Confirm new password</Label>
                 <div className="relative">
                   <Field
@@ -252,7 +252,7 @@ export const ChangePasswordForm = ({ open, onOpenChange, onSignOut }: ChangePass
                 )}
               </div>
 
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="flex justify-end gap-3 pt-2 sm:pt-4">
                 <Button
                   type="button"
                   variant="outline"

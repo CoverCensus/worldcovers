@@ -99,7 +99,7 @@ export const ForgotPasswordForm = ({ open, onOpenChange }: ForgotPasswordFormPro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>Forgot password</DialogTitle>
           <DialogDescription>
@@ -114,8 +114,8 @@ export const ForgotPasswordForm = ({ open, onOpenChange }: ForgotPasswordFormPro
           onSubmit={handleSubmit}
         >
           {({ errors, touched, isSubmitting, isValid }) => (
-            <Form className="space-y-4">
-              <div className="space-y-2">
+            <Form className="space-y-2 sm:space-y-4">
+              <div className="space-y-1 sm:space-y-2">
                 <Label htmlFor="forgot-email">Email</Label>
                 <Field
                   as={Input}
@@ -134,7 +134,7 @@ export const ForgotPasswordForm = ({ open, onOpenChange }: ForgotPasswordFormPro
                 )}
               </div>
 
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="flex justify-end gap-3 pt-2 sm:pt-4">
                 <Button
                   type="button"
                   variant="outline"

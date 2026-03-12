@@ -108,6 +108,15 @@ All colors MUST be HSL.
     font-weight: 600;
   }
 
+  /* Hide native date input calendar icon when using custom icon */
+  .date-input-hide-native-icon::-webkit-calendar-picker-indicator {
+    display: none;
+    -webkit-appearance: none;
+  }
+  .date-input-hide-native-icon::-webkit-inner-spin-button {
+    display: none;
+  }
+
   /* Keep browser autofill from changing input background color */
   input:-webkit-autofill,
   input:-webkit-autofill:hover,

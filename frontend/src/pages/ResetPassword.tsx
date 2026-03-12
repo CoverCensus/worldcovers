@@ -173,7 +173,7 @@ const ResetPassword = () => {
 
       <div className="flex-1 bg-background flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
         <Card className="w-full max-w-md shadow-archival-lg">
-          <CardHeader className="space-y-1">
+          <CardHeader className="space-y-1 p-4 sm:p-6">
             <CardTitle className="font-heading text-2xl text-center">
               Reset your password
             </CardTitle>
@@ -181,7 +181,7 @@ const ResetPassword = () => {
               Choose a new password for your WorldCovers account.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-4 sm:p-6 pt-0">
             <Formik
               initialValues={{ password: "", confirmPassword: "" }}
               validate={validateResetPassword}
@@ -189,8 +189,8 @@ const ResetPassword = () => {
               onSubmit={handleSubmit}
             >
               {({ errors, touched, isSubmitting, isValid }) => (
-                <Form className="space-y-4 pt-4">
-                  <div className="space-y-2">
+                <Form className="space-y-2 sm:space-y-4 pt-2 sm:pt-4">
+                  <div className="space-y-1 sm:space-y-2">
                     <Label htmlFor="new-password">New password</Label>
                     <Field
                       as={Input}
@@ -209,7 +209,7 @@ const ResetPassword = () => {
                     )}
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="space-y-1 sm:space-y-2">
                     <Label htmlFor="confirm-password">Confirm password</Label>
                     <Field
                       as={Input}

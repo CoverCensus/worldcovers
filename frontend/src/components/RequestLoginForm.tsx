@@ -91,7 +91,7 @@ export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>Request Login Access</DialogTitle>
           <DialogDescription>
@@ -106,8 +106,8 @@ export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) 
           onSubmit={handleSubmit}
         >
           {({ errors, touched, isSubmitting, isValid }) => (
-            <Form className="space-y-4">
-                <div className="space-y-2">
+            <Form className="space-y-2 sm:space-y-4">
+                <div className="space-y-1 sm:space-y-2">
                   <Label htmlFor="request-firstName">First Name</Label>
                   <Field
                     as={Input}
@@ -125,7 +125,7 @@ export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) 
                   )}
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-1 sm:space-y-2">
                   <Label htmlFor="request-lastName">Last Name</Label>
                   <Field
                     as={Input}
@@ -142,9 +142,8 @@ export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) 
                     </p>
                   )}
                 </div>
-              
 
-              <div className="space-y-2">
+              <div className="space-y-1 sm:space-y-2">
                 <Label htmlFor="request-email">Email</Label>
                 <Field
                   as={Input}
@@ -163,7 +162,7 @@ export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) 
                 )}
               </div>
 
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="flex justify-end gap-3 pt-2 sm:pt-4">
                 <Button
                   type="button"
                   variant="outline"
