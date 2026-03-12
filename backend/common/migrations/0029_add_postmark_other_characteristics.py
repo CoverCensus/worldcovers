@@ -1,6 +1,6 @@
 # Add OtherCharacteristics column to Postmarks if missing (legacy schema compatibility)
 
-from django.db import migrations, models
+from django.db import migrations
 
 
 class Migration(migrations.Migration):
@@ -9,10 +9,7 @@ class Migration(migrations.Migration):
         ("common", "0028_contribution_align_schema"),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name="postmark",
-            name="other_characteristics",
-            field=models.TextField(blank=True, db_column="OtherCharacteristics", default=""),
-        ),
-    ]
+    # No-op migration: the OtherCharacteristics column already exists
+    # in the current database schema. We keep this migration so that
+    # Django can record it as applied without altering the DB.
+    operations = []

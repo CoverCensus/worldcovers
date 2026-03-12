@@ -703,7 +703,7 @@ class Contribution(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
         related_name="contributions",
-        db_column="SubmitterUserID",
+        db_column="ContributorUserID",
     )
     postmark = models.OneToOneField(
         Postmark,
@@ -717,7 +717,7 @@ class Contribution(models.Model):
     submitted_data = models.JSONField(
         default=dict,
         blank=True,
-        db_column="SubmissionData",
+        db_column="SubmittedData",
         help_text="Proposed changes (state, town, type, color, description, etc.)",
     )
     status = models.CharField(
@@ -734,9 +734,9 @@ class Contribution(models.Model):
         related_name="reviewed_contributions",
         db_column="ReviewerUserID",
     )
-    review_notes = models.TextField(blank=True, db_column="ReviewerNotes")
-    created_at = models.DateTimeField(auto_now_add=True, db_column="CreatedDate")
-    updated_at = models.DateTimeField(auto_now=True, db_column="ModifiedDate")
+    review_notes = models.TextField(blank=True, db_column="ReviewNotes")
+    created_at = models.DateTimeField(auto_now_add=True, db_column="CreatedAt")
+    updated_at = models.DateTimeField(auto_now=True, db_column="UpdatedAt")
 
     class Meta:
         db_table = "Contributions"
