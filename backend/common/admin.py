@@ -37,7 +37,7 @@ from .models import (
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
     LegacyAbbreviation, LegacyRateLocation, LegacyRateValue,
     LegacyParseStep, LegacyUserState, LegacyRawStateDataPendingUpdate, LegacyCover,
-    AdminCsvUpload, UserLocationAssignment,
+    AdminCsvUpload, UserLocationAssignment, Contribution,
 )
 from .csv_import import IMPORTERS
 from .utils import get_canonical_location_reference_codes
@@ -1151,6 +1151,25 @@ class CustomUserAdmin(DjangoUserAdmin):
         _base_fieldsets.insert(_important_idx, ('Locations', {'fields': ('locations',)}))
 
     fieldsets = tuple(_base_fieldsets)
+
+
+# ========== CONTRIBUTION ADMIN ==========
+
+
+@admin.register(Contribution)
+class ContributionAdmin(admin.ModelAdmin):
+    list_display = ["id", "contributor", "status", "get_state", "get_town", "reviewer", "created_at"]
+    list_filter = ["status"]
+    search_fields = ["contributor__username", "submitted_data"]
+    readonly_fields = ["created_at", "updated_at"]
+
+    def get_state(self, obj):
+        return (obj.submitted_data or {}).get("state", "-")
+    get_state.short_description = "State"
+
+    def get_town(self, obj):
+        return (obj.submitted_data or {}).get("town", "-")
+    get_town.short_description = "Town"
 
 
 ###################################################################################################
