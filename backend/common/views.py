@@ -44,7 +44,7 @@ from .models import (
     Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
-    AdminCsvUpload, UserLocationAssignment,
+    AdminCsvUpload, UserLocationAssignment, Contribution,
 )
 
 from .serializers import (
@@ -61,6 +61,7 @@ from .serializers import (
     PostcoverImageSerializer,
     AdminCsvUploadListSerializer, AdminCsvUploadSerializer,
     LoginRequestSerializer,
+    ContributionListSerializer, ContributionDetailSerializer, ContributionApproveRejectSerializer,
 )
 from .filters import PostmarkListFilter
 from .csv_import import IMPORTERS
@@ -582,6 +583,61 @@ def _resolve_assigned_admin_unit(user, state_str):
     return None
 
 
+def _create_contribution_only(payload, contributor):
+    """
+    Create a Contribution record only (no Postmark). Acts as a moderation ticket.
+    Postmark is created when a State Editor approves. Returns the Contribution or None.
+    """
+    if not contributor:
+        return None
+    try:
+        submitted_data = {
+            "state": (payload.get("state") or "").strip(),
+            "town": (payload.get("town") or "").strip(),
+            "date_range": (payload.get("date_range") or "").strip(),
+            "type": (payload.get("type") or "").strip(),
+            "color": (payload.get("color") or "").strip(),
+            "manuscript": (payload.get("manuscript") or "").strip(),
+            "dimensions": (payload.get("dimensions") or "").strip(),
+            "description": (payload.get("description") or "").strip(),
+            "references": (payload.get("references") or "").strip(),
+            "rarity": (payload.get("rarity") or "").strip(),
+            "submitter_name": (payload.get("submitter_name") or "").strip(),
+            "original_postmark_id": str(payload.get("original_postmark_id", "")),
+        }
+        if payload.get("image_meta"):
+            submitted_data["image_meta"] = payload["image_meta"]
+        contrib = Contribution.objects.create(
+            contributor=contributor,
+            postmark=None,
+            status=Contribution.STATUS_PENDING,
+            submitted_data=submitted_data,
+        )
+        return contrib
+    except Exception:
+        return None
+
+
+def _apply_contribution_to_catalog(contrib):
+    """
+    Apply a Contribution's submitted_data to the catalog.
+    For new entries (postmark=None): create Postmark via _create_postmark_in_catalog.
+    For edits (postmark set): update Postmark via _update_postmark_in_catalog.
+    Returns the Postmark or None on failure.
+    """
+    payload = contrib.submitted_data or {}
+    if not payload.get("state") or not payload.get("town"):
+        return None
+    submitter_name = payload.get("submitter_name", "")
+    if contrib.postmark_id:
+        return _update_postmark_in_catalog(contrib.postmark_id, payload, submitter_name)
+    postmark = _create_postmark_in_catalog(payload)
+    if postmark:
+        contrib.postmark = postmark
+        contrib.save(update_fields=["postmark", "updated_at"])
+    return postmark
+
+
 def _create_postmark_in_catalog(payload):
     """
     Create a Postmark (and related records) directly in the catalog tables from
@@ -967,23 +1023,35 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
 @method_decorator(csrf_exempt, name="dispatch")
 class ContributionView(APIView):
     """
-    Public API to submit a catalog entry.
-    Writes directly into the catalog tables (Postmark and related).
-    New user-contributed entries start as contribution_approval_status='pending'
-    and will only appear in public catalog search once approved by an admin.
-    Accepts JSON or multipart/form-data; when 'image' file is present, saves it and links to the new postmark.
+    API for contributors to submit catalog entries.
+    GET: List the current user's contributions.
+    POST: Create a Contribution (moderation ticket) instead of writing directly to the catalog.
+    On approval by a State Editor, submitted_data is applied to the Postmark.
     """
     authentication_classes = [SessionAuthenticationNoCSRF]
     permission_classes = [IsAuthenticated]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
+    def get(self, request):
+        """List the current user's contributions."""
+        qs = Contribution.objects.filter(contributor=request.user).select_related(
+            "contributor", "reviewer", "postmark"
+        ).order_by("-created_at")
+        serializer = ContributionListSerializer(qs, many=True)
+        return Response(serializer.data)
+
     def post(self, request):
         data = request.data or {}
         edit_postmark_id_raw = data.get("editPostmarkId") or data.get("edit_postmark_id")
+        edit_contribution_id_raw = data.get("editContributionId") or data.get("edit_contribution_id")
         try:
             edit_postmark_id = int(edit_postmark_id_raw) if edit_postmark_id_raw is not None else None
         except (TypeError, ValueError):
             edit_postmark_id = None
+        try:
+            edit_contribution_id = int(edit_contribution_id_raw) if edit_contribution_id_raw is not None else None
+        except (TypeError, ValueError):
+            edit_contribution_id = None
 
         state = (data.get("state") or "").strip()
         town = (data.get("town") or "").strip()
@@ -996,15 +1064,12 @@ class ContributionView(APIView):
                 {"detail": "Missing required fields: state, town, firstSeen, type, color."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Enforce assigned-state access for logged-in users
         user = request.user
         assigned_admin_unit = None
         if not user.is_authenticated:
             return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
 
-        # For new submissions, enforce state assignment; for edits, allow any catalog
-        # entry to be updated by an authenticated user.
-        if edit_postmark_id is None and not getattr(user, "is_superuser", False):
+        if edit_postmark_id is None and edit_contribution_id is None and not getattr(user, "is_superuser", False):
             assigned_admin_unit = _resolve_assigned_admin_unit(user, state)
             if not assigned_admin_unit:
                 return Response(
@@ -1030,45 +1095,173 @@ class ContributionView(APIView):
         }
         if assigned_admin_unit is not None:
             payload["admin_unit"] = assigned_admin_unit
-        # Optional image upload
         image_file = request.FILES.get("image")
         if image_file:
             image_meta = _save_contribution_image(image_file)
             if image_meta:
                 payload["image_meta"] = image_meta
 
-        if edit_postmark_id is not None:
-            # For edits requested from the dashboard, update the existing
-            # user-contribution catalog entry in place instead of creating
-            # a brand new pending catalog record.
-            postmark = _update_postmark_in_catalog(edit_postmark_id, payload, submitter_name)
-            if not postmark:
+        if edit_contribution_id is not None and edit_postmark_id is None:
+            contrib = Contribution.objects.filter(
+                id=edit_contribution_id,
+                contributor=user,
+                postmark__isnull=True,
+            ).first()
+            if not contrib:
                 return Response(
-                    {
-                        "detail": "Could not apply catalog edit. Ensure the target listing exists and try again."
-                    },
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    {"detail": "Contribution not found or you cannot edit it."},
+                    status=status.HTTP_404_NOT_FOUND,
                 )
+            submitted_data = {k: v for k, v in payload.items() if k != "admin_unit"}
+            contrib.submitted_data = submitted_data
+            contrib.status = Contribution.STATUS_PENDING
+            contrib.save(update_fields=["submitted_data", "status", "updated_at"])
             return Response(
-                {
-                    "detail": "Catalog entry updated successfully.",
-                    "postmarkId": postmark.postmark_id,
-                },
+                {"detail": "Submission updated successfully.", "contributionId": contrib.id},
                 status=status.HTTP_200_OK,
             )
 
-        postmark = _create_postmark_in_catalog(payload)
-        if not postmark:
+        if edit_postmark_id is not None:
+            postmark = _update_postmark_in_catalog(edit_postmark_id, payload, submitter_name)
+            if not postmark:
+                return Response(
+                    {"detail": "Could not apply catalog edit. Ensure the target listing exists and try again."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
             return Response(
-                {"detail": "Could not add entry to catalog. Ensure the database has at least one user and reference data (shapes, lettering, framing, date format)."},
+                {"detail": "Catalog entry updated successfully.", "postmarkId": postmark.postmark_id},
+                status=status.HTTP_200_OK,
+            )
+
+        contrib = _create_contribution_only(payload, contributor=user)
+        if not contrib:
+            return Response(
+                {"detail": "Could not save your submission. Please try again."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         return Response(
             {
-                "detail": "Submission sent. Your entry has been added to the catalog.",
-                "postmarkId": postmark.postmark_id,
+                "detail": "Submission sent. Your entry will appear in the catalog after review.",
+                "contributionId": contrib.id,
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+# ========== CONTRIBUTION MODERATION VIEWSET ==========
+
+
+def _can_review_contribution(user, contrib):
+    """True if user can approve/reject this contribution (State Editor)."""
+    if getattr(user, "is_superuser", False):
+        return True
+    sd = contrib.submitted_data or {}
+    state_str = (sd.get("state") or "").strip()
+    assigned = _get_user_assigned_units(user)
+    if not assigned.exists():
+        return False
+    return _resolve_assigned_admin_unit(user, state_str) is not None
+
+
+class IsStateEditorOrContributor(BasePermission):
+    """Contributors can view their own; State Editors can list/review all in their region."""
+    def has_permission(self, request, view):
+        return request.user and request.user.is_authenticated
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            if obj.contributor_id == request.user.id:
+                return True
+            return _can_review_contribution(request.user, obj)
+        if request.method in ("POST",):  # approve/reject
+            return _can_review_contribution(request.user, obj)
+        return False
+
+
+class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Moderation queue for contributions.
+    - Contributors: list/retrieve their own contributions.
+    - State Editors: list/retrieve all in their region, approve, reject.
+    """
+    permission_classes = [IsAuthenticated, IsStateEditorOrContributor]
+    serializer_class = ContributionDetailSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["status"]
+    search_fields = ["submitted_data"]
+    ordering = ["-created_at"]
+
+    def get_queryset(self):
+        user = self.request.user
+        if getattr(user, "is_superuser", False):
+            return Contribution.objects.all().select_related("contributor", "reviewer", "postmark")
+        assigned = _get_user_assigned_units(user)
+        state_names = []
+        for u in assigned:
+            ident = u.get_current_identity()
+            if ident and ident.unit_name:
+                state_names.append(ident.unit_name)
+        if state_names:
+            qs = Contribution.objects.filter(
+                Q(contributor=user) | Q(submitted_data__state__in=state_names)
+            )
+        else:
+            qs = Contribution.objects.filter(contributor=user)
+        return qs.select_related("contributor", "reviewer", "postmark").distinct()
+
+    def get_serializer_class(self):
+        if self.action == "list":
+            return ContributionListSerializer
+        return ContributionDetailSerializer
+
+    @action(detail=True, methods=["post"], url_path="approve")
+    def approve(self, request, pk=None):
+        """Approve a contribution; apply submitted_data to catalog."""
+        contrib = self.get_object()
+        if contrib.status != Contribution.STATUS_PENDING:
+            return Response(
+                {"detail": f"Contribution is not pending (status: {contrib.status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        review_notes = serializer.validated_data.get("review_notes", "")
+        postmark = _apply_contribution_to_catalog(contrib)
+        if not postmark:
+            return Response(
+                {"detail": "Could not apply contribution to catalog. Check submitted_data."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        contrib.status = Contribution.STATUS_APPROVED
+        contrib.reviewer = request.user
+        contrib.review_notes = review_notes
+        contrib.save(update_fields=["status", "reviewer", "review_notes", "postmark", "updated_at"])
+        postmark.contribution_approval_status = "approved"
+        postmark.save(update_fields=["contribution_approval_status"])
+        return Response(
+            {"detail": "Contribution approved.", "postmarkId": postmark.postmark_id},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"], url_path="reject")
+    def reject(self, request, pk=None):
+        """Reject a contribution; catalog remains unchanged."""
+        contrib = self.get_object()
+        if contrib.status != Contribution.STATUS_PENDING:
+            return Response(
+                {"detail": f"Contribution is not pending (status: {contrib.status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        review_notes = serializer.validated_data.get("review_notes", "")
+        contrib.status = Contribution.STATUS_REJECTED
+        contrib.reviewer = request.user
+        contrib.review_notes = review_notes
+        contrib.save(update_fields=["status", "reviewer", "review_notes", "updated_at"])
+        return Response(
+            {"detail": "Contribution rejected."},
+            status=status.HTTP_200_OK,
         )
 
 

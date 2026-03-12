@@ -72,6 +72,7 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
 
       const res = await fetch(`${apiBase}/api/contributions/`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -83,8 +84,8 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
       }
 
       toast({
-        title: "Updated version submitted",
-        description: "Your edited entry has been added to the catalog as a new record.",
+        title: "Submission sent",
+        description: "Your entry has been submitted for approval. It will appear in the catalog after review.",
       });
       onOpenChange(false);
     } catch (err: unknown) {

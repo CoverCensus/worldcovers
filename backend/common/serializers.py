@@ -13,7 +13,7 @@ from .models import (
     Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
-    AdminCsvUpload,
+    AdminCsvUpload, Contribution,
 )
 
 User = get_user_model()
@@ -687,5 +687,74 @@ class AdminCsvUploadSerializer(serializers.ModelSerializer):
 
     def get_uploaded_by_username(self, obj):
         return obj.uploaded_by.username if obj.uploaded_by else None
+
+
+# ========== CONTRIBUTION SERIALIZERS ==========
+
+
+class ContributionListSerializer(serializers.ModelSerializer):
+    """List view for contributions (moderation queue)."""
+    contributor_username = serializers.CharField(source="contributor.username", read_only=True)
+    reviewer_username = serializers.CharField(source="reviewer.username", read_only=True, allow_null=True)
+    postmark_id = serializers.SerializerMethodField()
+    state_display = serializers.SerializerMethodField()
+    town_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Contribution
+        fields = [
+            "id",
+            "contributor",
+            "contributor_username",
+            "postmark",
+            "postmark_id",
+            "status",
+            "reviewer",
+            "reviewer_username",
+            "review_notes",
+            "created_at",
+            "updated_at",
+            "state_display",
+            "town_display",
+        ]
+
+    def get_postmark_id(self, obj):
+        return obj.postmark_id if obj.postmark_id else None
+
+    def get_state_display(self, obj):
+        sd = obj.submitted_data or {}
+        return sd.get("state", "-")
+
+    def get_town_display(self, obj):
+        sd = obj.submitted_data or {}
+        return sd.get("town", "-")
+
+
+class ContributionDetailSerializer(serializers.ModelSerializer):
+    """Detail view for a single contribution."""
+    contributor_username = serializers.CharField(source="contributor.username", read_only=True)
+    reviewer_username = serializers.CharField(source="reviewer.username", read_only=True, allow_null=True)
+
+    class Meta:
+        model = Contribution
+        fields = [
+            "id",
+            "contributor",
+            "contributor_username",
+            "postmark",
+            "submitted_data",
+            "status",
+            "reviewer",
+            "reviewer_username",
+            "review_notes",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "contributor", "postmark", "created_at"]
+
+
+class ContributionApproveRejectSerializer(serializers.Serializer):
+    """Payload for approve/reject actions."""
+    review_notes = serializers.CharField(required=False, allow_blank=True)
 
 ###################################################################################################

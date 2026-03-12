@@ -678,6 +678,76 @@ class Postmark(TimestampedModel):
         return f"{self.postmark_key} - {facility_name}"
 
 
+# ========== CONTRIBUTION (MODERATION TICKET) ==========
+
+
+class Contribution(models.Model):
+    """
+    Moderation ticket for catalog contributions.
+    Submissions create a Contribution instead of directly updating the catalog.
+    State Editors approve/reject; on approval, submitted_data is applied to Postmark.
+    """
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+    STATUS_NEEDS_REVISION = "needs_revision"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_NEEDS_REVISION, "Needs revision"),
+    ]
+
+    id = models.AutoField(primary_key=True, db_column="ContributionID")
+    contributor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="contributions",
+        db_column="SubmitterUserID",
+    )
+    postmark = models.OneToOneField(
+        Postmark,
+        on_delete=models.CASCADE,
+        related_name="contribution",
+        db_column="PostmarkID",
+        null=True,
+        blank=True,
+        help_text="Set when approved; Postmark created from submitted_data for new entries",
+    )
+    submitted_data = models.JSONField(
+        default=dict,
+        blank=True,
+        db_column="SubmissionData",
+        help_text="Proposed changes (state, town, type, color, description, etc.)",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_column="Status",
+    )
+    reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewed_contributions",
+        db_column="ReviewerUserID",
+    )
+    review_notes = models.TextField(blank=True, db_column="ReviewerNotes")
+    created_at = models.DateTimeField(auto_now_add=True, db_column="CreatedDate")
+    updated_at = models.DateTimeField(auto_now=True, db_column="ModifiedDate")
+
+    class Meta:
+        db_table = "Contributions"
+        verbose_name = "Contribution"
+        verbose_name_plural = "Contributions"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Contribution #{self.id} ({self.status})"
+
+
 class PostmarkColor(TimestampedModel):
     """Many-to-many relationship between postmarks and colors"""
     postmark_color_id = models.AutoField(primary_key=True, db_column='PostmarkColorID')
