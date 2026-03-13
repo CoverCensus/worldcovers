@@ -11,6 +11,7 @@ import RecordDetail from "./pages/RecordDetail";
 import Contribute from "./pages/Contribute";
 import EditCatalogEntry from "./pages/EditCatalogEntry";
 import Dashboard from "./pages/Dashboard";
+import MySuggestions from "./pages/MySuggestions";
 import SubmissionDetail from "./pages/SubmissionDetail";
 import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
@@ -67,6 +68,14 @@ const App = () => (
               element={(
                 <RequireAuth>
                   <Dashboard />
+                </RequireAuth>
+              )}
+            />
+            <Route
+              path="/suggestions"
+              element={(
+                <RequireAuth>
+                  <MySuggestions />
                 </RequireAuth>
               )}
             />

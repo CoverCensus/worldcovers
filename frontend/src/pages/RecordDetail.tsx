@@ -188,6 +188,15 @@ const RecordDetail = () => {
   const fromDashboard = location.state?.fromDashboard;
   const fromSearch = location.state?.fromSearch;
 
+  const isContributor = user?.role === "contributor";
+  const isStateEditor = user?.role === "state_editor";
+  const isOwner =
+    !!user &&
+    !!record.submitterName &&
+    [user.username, user.email]
+      .filter(Boolean)
+      .some((id) => id && id.toLowerCase() === record.submitterName!.toLowerCase());
+
   const handleBack = () => {
     if (fromDashboard) {
       navigate("/dashboard");
@@ -225,30 +234,26 @@ const RecordDetail = () => {
               <ArrowLeft className="mr-2 h-4 w-4" />
               {fromDashboard ? "Back to Dashboard" : "Back to Search"}
             </Button>
-            {user &&
-              record.submitterName &&
-              [user.username, user.email]
-                .filter(Boolean)
-                .some(
-                  (id) => id && id.toLowerCase() === record.submitterName!.toLowerCase()
-                ) && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    navigate(`/edit/${record.id}`, {
-                      state: {
-                        fromSearch,
-                        fromDashboard,
-                        fromDashboardViaDetail: !!fromDashboard,
-                      },
-                    })
-                  }
-                >
-                  <Pencil className="mr-2 h-4 w-4" />
-                  Edit entry
-                </Button>
-              )}
+            {user && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  navigate(`/edit/${record.id}`, {
+                    state: {
+                      fromSearch,
+                      fromDashboard,
+                      fromDashboardViaDetail: !!fromDashboard,
+                      // Let the edit page know whether this is a direct edit or a suggestion
+                      mode: isStateEditor && isOwner ? "direct_edit" : "suggestion",
+                    },
+                  })
+                }
+              >
+                <Pencil className="mr-2 h-4 w-4" />
+                {isStateEditor && isOwner ? "Edit entry" : "Suggest an edit"}
+              </Button>
+            )}
           </div>
 
           {/* Main Content */}

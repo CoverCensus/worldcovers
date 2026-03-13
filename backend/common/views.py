@@ -70,6 +70,22 @@ from .csv_import import IMPORTERS
 _password_reset_token_generator = PasswordResetTokenGenerator()
 
 
+def _get_user_role(user):
+    """
+    Derive a simple role string for the frontend from Django auth state.
+
+    Role is driven by group membership so that the admin "Role" dropdown
+    (which adds/removes the State Editors group) is the single source
+    of truth for UI behavior.
+
+    - Users in the "State Editors" group are state editors.
+    - Everyone else (including superusers without that group) is a contributor.
+    """
+    if user.groups.filter(name__iexact="State Editors").exists():
+        return "state_editor"
+    return "contributor"
+
+
 class SessionAuthenticationNoCSRF(SessionAuthentication):
     """Session auth without CSRF check; for SPA endpoints that use csrf_exempt."""
 
@@ -121,6 +137,7 @@ class LoginView(APIView):
                 "username": user.username,
                 "email": getattr(user, "email", "") or "",
                 "is_staff": getattr(user, "is_staff", False),
+                "role": _get_user_role(user),
             },
         })
 
@@ -139,22 +156,35 @@ class CurrentUserView(APIView):
                 "username": user.username,
                 "email": getattr(user, "email", "") or "",
                 "is_staff": getattr(user, "is_staff", False),
+                "role": _get_user_role(user),
             },
         })
 
 
 class AssignedStatesView(APIView):
-    """Return state options assigned to the current user."""
+    """Return state options assigned to the current user.
+
+    - For State Editors: only their assigned states.
+    - For Contributors/others: all current states.
+    """
     permission_classes = [IsAuthenticated]
     renderer_classes = [JSONRenderer]
 
     def get(self, request):
         user = request.user
-        units = _get_user_assigned_units(user)
-        identities = AdministrativeUnitIdentity.objects.filter(
-            administrative_unit__in=units,
-            effective_to_date__isnull=True,
-        )
+        role = _get_user_role(user)
+
+        if role == "state_editor":
+            units = _get_user_assigned_units(user)
+            identities = AdministrativeUnitIdentity.objects.filter(
+                administrative_unit__in=units,
+                effective_to_date__isnull=True,
+            )
+        else:
+            # Contributors can submit to any state; return all current identities
+            identities = AdministrativeUnitIdentity.objects.filter(
+                effective_to_date__isnull=True,
+            )
         seen = set()
         items = []
         for ident in identities:
@@ -1069,13 +1099,18 @@ class ContributionView(APIView):
         if not user.is_authenticated:
             return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
 
-        if edit_postmark_id is None and edit_contribution_id is None and not getattr(user, "is_superuser", False):
-            assigned_admin_unit = _resolve_assigned_admin_unit(user, state)
-            if not assigned_admin_unit:
-                return Response(
-                    {"detail": "You are not assigned to submit listings for this state."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+        # New submissions:
+        # - Contributors can submit to any state (no location restriction).
+        # - State Editors must be explicitly assigned to the chosen state.
+        if edit_postmark_id is None and edit_contribution_id is None:
+            role = _get_user_role(user)
+            if role == "state_editor" and not getattr(user, "is_superuser", False):
+                assigned_admin_unit = _resolve_assigned_admin_unit(user, state)
+                if not assigned_admin_unit:
+                    return Response(
+                        {"detail": "You are not assigned to submit listings for this state."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
         date_range = f"{first_seen}-{last_seen}" if last_seen else first_seen
         submitter_name = (data.get("submitterName") or "").strip()
         if user.is_authenticated:
@@ -1122,6 +1157,51 @@ class ContributionView(APIView):
             )
 
         if edit_postmark_id is not None:
+            # Suggested edits to an existing catalog entry (S6).
+            # - Contributors: create a Contribution ticket for expert review.
+            # - State Editors / superusers: apply directly to the catalog.
+            role = _get_user_role(user)
+            if role == "contributor" and not getattr(user, "is_superuser", False):
+                from .models import Contribution  # local import to avoid circulars at top
+
+                try:
+                    submitted_data = {
+                        "state": payload.get("state", ""),
+                        "town": payload.get("town", ""),
+                        "date_range": payload.get("date_range", ""),
+                        "type": payload.get("type", ""),
+                        "color": payload.get("color", ""),
+                        "manuscript": payload.get("manuscript", ""),
+                        "dimensions": payload.get("dimensions", ""),
+                        "description": payload.get("description", ""),
+                        "references": payload.get("references", ""),
+                        "rarity": payload.get("rarity", ""),
+                        "submitter_name": submitter_name,
+                        "original_postmark_id": str(edit_postmark_id),
+                    }
+                    if payload.get("image_meta"):
+                        submitted_data["image_meta"] = payload["image_meta"]
+
+                    contrib = Contribution.objects.create(
+                        contributor=user,
+                        postmark_id=edit_postmark_id,
+                        status=Contribution.STATUS_PENDING,
+                        submitted_data=submitted_data,
+                    )
+                    return Response(
+                        {
+                            "detail": "Correction submitted for review. A State Editor will review and apply it.",
+                            "contributionId": contrib.id,
+                        },
+                        status=status.HTTP_201_CREATED,
+                    )
+                except Exception:
+                    return Response(
+                        {"detail": "Could not save your correction. Please try again."},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
+
+            # State Editors and superusers: update catalog directly.
             postmark = _update_postmark_in_catalog(edit_postmark_id, payload, submitter_name)
             if not postmark:
                 return Response(
@@ -1195,19 +1275,21 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         user = self.request.user
         if getattr(user, "is_superuser", False):
             return Contribution.objects.all().select_related("contributor", "reviewer", "postmark")
-        assigned = _get_user_assigned_units(user)
-        state_names = []
-        for u in assigned:
-            ident = u.get_current_identity()
-            if ident and ident.unit_name:
-                state_names.append(ident.unit_name)
-        if state_names:
-            qs = Contribution.objects.filter(
-                Q(contributor=user) | Q(submitted_data__state__in=state_names)
-            )
-        else:
-            qs = Contribution.objects.filter(contributor=user)
-        return qs.select_related("contributor", "reviewer", "postmark").distinct()
+        role = _get_user_role(user)
+        base_qs = Contribution.objects.select_related("contributor", "reviewer", "postmark")
+        if role == "state_editor":
+            assigned = _get_user_assigned_units(user)
+            state_names = []
+            for u in assigned:
+                ident = u.get_current_identity()
+                if ident and ident.unit_name:
+                    state_names.append(ident.unit_name)
+            if state_names:
+                return base_qs.filter(
+                    Q(contributor=user) | Q(submitted_data__state__in=state_names)
+                ).distinct()
+        # Contributors: only their own contributions
+        return base_qs.filter(contributor=user).distinct()
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -1463,16 +1545,19 @@ class AdministrativeUnitViewSet(viewsets.ModelViewSet):
         # assigned_only requires auth; unauthenticated gets empty (avoids inconsistent "all" when session missing)
         if not user or not user.is_authenticated:
             return qs.none()
-        # For Contribute/Dashboard, always restrict to the user's explicit assignments.
-        # If the user has no assignments, show none (they can't contribute anywhere yet).
-        assigned_ids = list(
-            UserLocationAssignment.objects.filter(user=user).values_list(
-                'administrative_unit_id', flat=True
+        role = _get_user_role(user)
+        if role == "state_editor":
+            # For State Editors, restrict to their explicit assignments.
+            assigned_ids = list(
+                UserLocationAssignment.objects.filter(user=user).values_list(
+                    'administrative_unit_id', flat=True
+                )
             )
-        )
-        if assigned_ids:
-            return qs.filter(pk__in=assigned_ids)
-        return qs.none()
+            if assigned_ids:
+                return qs.filter(pk__in=assigned_ids)
+            return qs.none()
+        # Contributors (and others) can see all states when assigned_only=true
+        return qs
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
@@ -1773,47 +1858,15 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='my-dashboard', permission_classes=[IsAuthenticated])
     def my_dashboard(self, request):
         """
-        Paginated dashboard view combining:
-        - All catalog listings in the user's assigned states (legacy + approved contributions),
-        - All of this user's own contributed listings for their assigned states, in any approval status.
-        Results are ordered newest-first and use the same pagination behavior as the main catalog.
+        Dashboard view showing catalog entries created from the current user's
+        Contributor Dashboard submissions.
+
+        Behavior is the same for Contributors and State Editors:
+        - Only Postmarks with source_catalog='User contribution'
+        - And other_characteristics containing "Submitted by: <username/email>"
+        - Any state, any approval status.
         """
         user = request.user
-        assigned_units = _get_user_assigned_units(user)
-        if not assigned_units.exists() and not getattr(user, "is_superuser", False):
-            empty_qs = _postmark_list_queryset().none()
-            page = self.paginate_queryset(empty_qs)
-            if page is not None:
-                serializer = PostmarkListSerializer(page, many=True)
-                return self.get_paginated_response(serializer.data)
-            serializer = PostmarkListSerializer(empty_qs, many=True)
-            return Response(serializer.data)
-
-        base_qs = _postmark_list_queryset()
-
-        # Public catalog listings: legacy + only approved/previously approved user contributions (matches main search behavior)
-        public_qs = base_qs.filter(
-            Q(source_catalog__isnull=True)
-            | ~Q(source_catalog="User contribution")
-            | Q(
-                source_catalog="User contribution",
-                contribution_approval_status="approved",
-            )
-            | Q(
-                source_catalog="User contribution",
-                last_public_update_at__isnull=False,
-            )
-        )
-
-        # All public listings in the user's assigned states/regions
-        qs_assigned = public_qs.filter(
-            Q(state__in=assigned_units)
-            | Q(
-                postal_facility_identity__jurisdictions__administrative_unit__in=assigned_units
-            )
-        )
-
-        # User's own contributed listings for their assigned states, in any approval status.
         username = (getattr(user, "username", "") or "").strip()
         email = (getattr(user, "email", "") or "").strip()
         needles = []
@@ -1826,19 +1879,15 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         for needle in needles:
             needle_q |= Q(other_characteristics__icontains=needle)
 
-        qs_my_contrib = base_qs.filter(
+        base_qs = _postmark_list_queryset()
+
+        qs = base_qs.filter(
             source_catalog="User contribution",
         )
         if needles:
-            qs_my_contrib = qs_my_contrib.filter(needle_q)
+            qs = qs.filter(needle_q)
 
-        if not getattr(user, "is_superuser", False):
-            if assigned_units.exists():
-                qs_my_contrib = qs_my_contrib.filter(state__in=assigned_units)
-            else:
-                qs_my_contrib = qs_my_contrib.none()
-
-        qs = (qs_assigned | qs_my_contrib).distinct().order_by('-created_date')
+        qs = qs.distinct().order_by('-created_date')
 
         # Apply standard filters (state, town, color, etc.) and ordering if query params are present
         qs = self.filter_queryset(qs)

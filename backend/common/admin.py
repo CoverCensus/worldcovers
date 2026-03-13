@@ -41,6 +41,7 @@ from .models import (
 )
 from .csv_import import IMPORTERS
 from .utils import get_canonical_location_reference_codes
+from .views import _apply_contribution_to_catalog
 
 User = get_user_model()
 
@@ -1032,6 +1033,15 @@ class UserLocationAssignmentInline(admin.TabularInline):
     verbose_name_plural = 'Locations'
 
 
+ROLE_CONTRIBUTOR = "contributor"
+ROLE_STATE_EDITOR = "state_editor"
+
+ROLE_CHOICES = (
+    (ROLE_CONTRIBUTOR, "Contributor"),
+    (ROLE_STATE_EDITOR, "State Editor"),
+)
+
+
 class UserLocationUserChangeForm(DjangoUserAdmin.form):
     """
     Extend the base User change form to manage locations via a two-column selector,
@@ -1046,13 +1056,20 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
         help_text='Select which locations this user is associated with.',
     )
 
+    role = forms.ChoiceField(
+        label='Role',
+        choices=ROLE_CHOICES,
+        required=False,
+        help_text='High-level role used for UI and default permissions (Contributor or State Editor).',
+    )
+
     class Meta(DjangoUserAdmin.form.Meta):
         _parent_fields = DjangoUserAdmin.form.Meta.fields
         if _parent_fields == '__all__':
             # Can't add to __all__; use concrete User field names + locations
-            fields = [f.name for f in User._meta.get_fields() if f.concrete] + ['locations']
+            fields = [f.name for f in User._meta.get_fields() if f.concrete] + ['locations', 'role']
         else:
-            fields = tuple(_parent_fields) + ('locations',)
+            fields = tuple(_parent_fields) + ('locations', 'role')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1072,6 +1089,13 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
             self.fields['locations'].initial = location_qs.filter(
                 user_location_assignments__user=self.instance
             )
+
+        # Initialise role based solely on existing group membership so that
+        # choosing "Contributor" persists even for superusers.
+        role_initial = ROLE_CONTRIBUTOR
+        if self.instance.pk and self.instance.groups.filter(name__iexact="State Editors").exists():
+            role_initial = ROLE_STATE_EDITOR
+        self.fields['role'].initial = role_initial or ROLE_CONTRIBUTOR
 
     def _save_locations(self):
         """Save chosen locations to UserLocationAssignments for this user."""
@@ -1105,11 +1129,66 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
             ]
         )
 
+    def _save_role_groups(self):
+        """Map the selected role to Django auth groups."""
+        if not self.instance.pk:
+            return
+
+        role = self.cleaned_data.get("role")
+        if not role:
+            return
+
+        # Ensure the role groups exist
+        contributor_group, _ = Group.objects.get_or_create(name="Contributors")
+        state_editor_group, _ = Group.objects.get_or_create(name="State Editors")
+
+        user = self.instance
+
+        # Remove from both role groups first
+        user.groups.remove(contributor_group, state_editor_group)
+
+        # Then add the appropriate one
+        if role == ROLE_CONTRIBUTOR:
+            user.groups.add(contributor_group)
+        elif role == ROLE_STATE_EDITOR:
+            user.groups.add(state_editor_group)
+
+    def clean(self):
+        """
+        Enforce relationship between role and locations:
+        - Contributors: locations are always cleared (no assignments).
+        - State Editors: must have at least one location selected.
+        """
+        cleaned = super().clean()
+        role = cleaned.get("role") or ROLE_CONTRIBUTOR
+        locations = cleaned.get("locations")
+
+        from django.core.exceptions import ValidationError
+
+        if role == ROLE_CONTRIBUTOR:
+            # Contributors should not carry any explicit location assignments
+            cleaned["locations"] = AdministrativeUnit.objects.none()
+        elif role == ROLE_STATE_EDITOR:
+            # State Editors must have at least one location
+            if not locations or not list(locations):
+                self.add_error(
+                    "locations",
+                    ValidationError("State Editors must have at least one location assigned."),
+                )
+        return cleaned
+
     def save_m2m(self):
         # Let the base form handle its M2M fields (groups, permissions, etc.)
         super().save_m2m()
         # Then sync our custom locations selection to the through model
         self._save_locations()
+        # And keep role/group mapping in sync with the selected role
+        self._save_role_groups()
+
+    class Media:
+        # Small bit of JavaScript to hide the Locations selector
+        # unless role="state_editor" is selected.
+        js = ("common/admin_user_role.js",)
 
 
 try:
@@ -1134,7 +1213,7 @@ class CustomUserAdmin(DjangoUserAdmin):
         if hasattr(form, '_save_locations'):
             form._save_locations()
 
-    # Add a dedicated fieldset for locations, positioned between the built-in
+    # Add a dedicated fieldset for role + locations, positioned between the built-in
     # "Permissions" and "Important dates" sections on the user detail page.
     _base_fieldsets = list(DjangoUserAdmin.fieldsets)
     try:
@@ -1146,9 +1225,9 @@ class CustomUserAdmin(DjangoUserAdmin):
     except StopIteration:
         # Fallback: if Django's UserAdmin ever renames/removes "Important dates",
         # just append Locations at the end (better than breaking).
-        _base_fieldsets.append(('Locations', {'fields': ('locations',)}))
+        _base_fieldsets.append(('Role & Locations', {'fields': ('role', 'locations')}))
     else:
-        _base_fieldsets.insert(_important_idx, ('Locations', {'fields': ('locations',)}))
+        _base_fieldsets.insert(_important_idx, ('Role & Locations', {'fields': ('role', 'locations')}))
 
     fieldsets = tuple(_base_fieldsets)
 
@@ -1161,7 +1240,8 @@ class ContributionAdmin(admin.ModelAdmin):
     list_display = ["id", "contributor", "status", "get_state", "get_town", "reviewer", "created_at"]
     list_filter = ["status"]
     search_fields = ["contributor__username", "submitted_data"]
-    readonly_fields = ["created_at", "updated_at"]
+    readonly_fields = ["created_at", "updated_at", "postmark"]
+    actions = ["approve_contributions", "reject_contributions"]
 
     def get_state(self, obj):
         return (obj.submitted_data or {}).get("state", "-")
@@ -1170,6 +1250,119 @@ class ContributionAdmin(admin.ModelAdmin):
     def get_town(self, obj):
         return (obj.submitted_data or {}).get("town", "-")
     get_town.short_description = "Town"
+
+    def save_model(self, request, obj, form, change):
+        """
+        When a staff member edits a single Contribution in the admin and
+        changes its status from pending → approved, automatically apply the
+        submitted data to the catalog (create/update Postmark) so that the
+        listing appears in the main catalog/search.
+        """
+        previous_status = None
+        if change and obj.pk:
+            try:
+                previous = Contribution.objects.only("status").get(pk=obj.pk)
+                previous_status = previous.status
+            except Contribution.DoesNotExist:
+                previous_status = None
+
+        super().save_model(request, obj, form, change)
+
+        # Only act on a fresh transition from pending -> approved
+        if previous_status == Contribution.STATUS_PENDING and obj.status == Contribution.STATUS_APPROVED:
+            try:
+                postmark = _apply_contribution_to_catalog(obj)
+                if not postmark:
+                    self.message_user(
+                        request,
+                        "Could not apply contribution to catalog. Check submitted data.",
+                        level=messages.ERROR,
+                    )
+                    return
+
+                # Ensure the Contribution is linked to the Postmark (for new entries)
+                if obj.postmark_id != postmark.postmark_id:
+                    obj.postmark = postmark
+                    obj.save(update_fields=["postmark", "updated_at"])
+
+                # Mark the Postmark as approved so it appears in listings/search
+                postmark.contribution_approval_status = "approved"
+                postmark.save(update_fields=["contribution_approval_status"])
+            except Exception:
+                self.message_user(
+                    request,
+                    "An error occurred while applying this contribution to the catalog.",
+                    level=messages.ERROR,
+                )
+
+    @admin.action(description="Approve selected contributions and create/update catalog listings")
+    def approve_contributions(self, request, queryset):
+        """
+        Admin bulk action to approve pending contributions.
+        Mirrors the API behaviour:
+        - Applies submitted_data to the catalog via _apply_contribution_to_catalog
+          (creates a Postmark for new entries or updates the existing one).
+        - Marks the Contribution as approved and links it to the Postmark.
+        - Marks the Postmark's contribution_approval_status as 'approved' so it
+          appears in the public catalog/search listing.
+        """
+        approved = 0
+        failed = 0
+
+        for contrib in queryset.select_related("postmark"):
+            if contrib.status != Contribution.STATUS_PENDING:
+                continue
+            try:
+                postmark = _apply_contribution_to_catalog(contrib)
+                if not postmark:
+                    failed += 1
+                    continue
+                contrib.status = Contribution.STATUS_APPROVED
+                contrib.reviewer = request.user
+                contrib.postmark = postmark
+                contrib.save(update_fields=["status", "reviewer", "postmark", "updated_at"])
+
+                postmark.contribution_approval_status = "approved"
+                postmark.save(update_fields=["contribution_approval_status"])
+                approved += 1
+            except Exception:
+                failed += 1
+
+        if approved:
+            self.message_user(
+                request,
+                f"Approved {approved} contribution(s) and applied them to the catalog.",
+                level=messages.SUCCESS,
+            )
+        if failed:
+            self.message_user(
+                request,
+                f"{failed} contribution(s) could not be applied to the catalog. "
+                "Check submitted data and try again.",
+                level=messages.WARNING,
+            )
+
+    @admin.action(description="Reject selected contributions (no catalog change)")
+    def reject_contributions(self, request, queryset):
+        """
+        Admin bulk action to reject pending contributions.
+        Does not change the catalog; only updates Contribution.status.
+        """
+        rejected = 0
+        for contrib in queryset:
+            if contrib.status != Contribution.STATUS_PENDING:
+                continue
+            contrib.status = Contribution.STATUS_REJECTED
+            contrib.reviewer = request.user
+            contrib.save(update_fields=["status", "reviewer", "updated_at"])
+            rejected += 1
+
+        if rejected:
+            self.message_user(
+                request,
+                f"Rejected {rejected} contribution(s).",
+                level=messages.SUCCESS,
+            )
 
 
 ###################################################################################################
