@@ -747,7 +747,7 @@ const Dashboard = () => {
                                   });
                                 }}
                               >
-                                View details
+                                View
                               </Button>
                               <Button
                                 variant="outline"
@@ -842,7 +842,7 @@ const Dashboard = () => {
                           </div>
                         </div>
 
-                        <div className="mt-2 flex gap-2 justify-end">
+                        <div className="mt-2 flex gap-2 justify-center">
                           <Button
                             variant="outline"
                             size="sm"
@@ -853,7 +853,7 @@ const Dashboard = () => {
                               });
                             }}
                           >
-                            View details
+                            View
                           </Button>
                           <Button
                             variant="outline"
