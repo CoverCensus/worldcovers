@@ -30,6 +30,13 @@ const STATE_OTHER_VALUE = "__other__";
 const COLOR_OTHER_VALUE = "__other__";
 const TYPE_OTHER_VALUE = "__other__";
 
+const RARITY_OPTIONS = [
+  { value: "Common", label: "Common" },
+  { value: "Scarce", label: "Scarce" },
+  { value: "Rare", label: "Rare" },
+  { value: "Very Rare", label: "Very Rare" },
+];
+
 const MANUSCRIPT_OPTIONS = [
   { value: "Yes", label: "Yes" },
   { value: "No", label: "No" },
@@ -128,7 +135,13 @@ const EditCatalogEntry = () => {
     lastSeen?: string;
     type?: string;
     color?: string;
+    dimensions?: string;
   }>({});
+
+  /** Town/City: letters, spaces, hyphens, apostrophes only */
+  const sanitizeTown = (v: string) => v.replace(/[^a-zA-Z\s\-']/g, "");
+  /** Dimensions: max 4 digits, numbers only */
+  const sanitizeDimensions = (v: string) => v.replace(/\D/g, "").slice(0, 4);
 
   useEffect(() => {
     getColors()
@@ -179,13 +192,19 @@ const EditCatalogEntry = () => {
         const firstSize = data.sizes?.[0];
         const firstVal = data.valuations?.[0];
         const parsed = parseOtherCharacteristics(data.otherCharacteristics);
-        const rarityFromValuation = firstVal?.estimatedValue ? `$${firstVal.estimatedValue}` : "";
-        const rarityFromOther = parsed.rarityLabel || "";
-        const dimStr =
+        const rarityFromOther = parsed.rarityLabel?.trim() || "";
+        const rarityMatch = RARITY_OPTIONS.find(
+          (opt) =>
+            opt.value === rarityFromOther ||
+            rarityFromOther.toLowerCase() === opt.value.toLowerCase()
+        );
+        const initialRarity = rarityMatch ? rarityMatch.value : "";
+        const dimRaw =
           firstSize?.sizeNotes?.trim() ||
           (firstSize?.width != null && firstSize?.height != null
             ? `${firstSize.width}×${firstSize.height} mm`
             : "");
+        const dimStr = dimRaw ? dimRaw.replace(/\D/g, "").slice(0, 4) : "";
 
         const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
         const firstImage = data.images?.[0];
@@ -200,14 +219,14 @@ const EditCatalogEntry = () => {
 
         setExistingImageUrl(existingUrl);
         setState(data.state || "");
-        setTown(data.town || "");
+        setTown(sanitizeTown(data.town || ""));
         setFirstSeen(datesSeen?.earliestDateSeen?.slice(0, 4) || "");
         setLastSeen(datesSeen?.latestDateSeen?.slice(0, 4) || "");
         setType(data?.postmarkShape?.shapeName || "");
         setColor(data.colorsDisplay || "");
         setDimensions(dimStr);
         setManuscript(data.isManuscript ? "Yes" : "No");
-        setRarity(rarityFromValuation || rarityFromOther);
+        setRarity(initialRarity);
         // Only prefill the textarea with an actual description, not raw otherCharacteristics
         // so users don't have to clear default "Submitted by: ..." lines.
         setDescription(parsed.description || "");
@@ -538,15 +557,17 @@ const EditCatalogEntry = () => {
                       <Label htmlFor="edit-town">Town/City *</Label>
                       <Input
                         id="edit-town"
+                        type="text"
                         placeholder="e.g., Boston"
                         value={town}
                         onChange={(e) => {
-                          setTown(e.target.value);
+                          setTown(sanitizeTown(e.target.value));
                           if (fieldErrors.town) {
                             setFieldErrors((prev) => ({ ...prev, town: undefined }));
                           }
                         }}
                         className={fieldErrors.town ? "border-destructive" : ""}
+                        aria-label="Town or city (letters and spaces only)"
                       />
                       {fieldErrors.town && (
                         <p className="text-sm text-destructive">{fieldErrors.town}</p>
@@ -682,10 +703,23 @@ const EditCatalogEntry = () => {
                       <Label htmlFor="edit-dimensions">Dimensions</Label>
                       <Input
                         id="edit-dimensions"
+                        type="text"
+                        inputMode="numeric"
                         placeholder="e.g., 32mm diameter"
+                        maxLength={4}
                         value={dimensions}
-                        onChange={(e) => setDimensions(e.target.value)}
+                        onChange={(e) => {
+                          setDimensions(sanitizeDimensions(e.target.value));
+                          if (fieldErrors.dimensions) {
+                            setFieldErrors((prev) => ({ ...prev, dimensions: undefined }));
+                          }
+                        }}
+                        className={fieldErrors.dimensions ? "border-destructive" : ""}
+                        aria-label="Dimensions (numbers only, max 4 digits)"
                       />
+                      {fieldErrors.dimensions && (
+                        <p className="text-sm text-destructive">{fieldErrors.dimensions}</p>
+                      )}
                     </div>
 
                     <div className="space-y-2">
@@ -706,12 +740,18 @@ const EditCatalogEntry = () => {
 
                     <div className="space-y-2">
                       <Label htmlFor="edit-rarity">Rarity</Label>
-                      <Input
-                        id="edit-rarity"
-                        placeholder="e.g. Rare, $50, Very Rare"
-                        value={rarity}
-                        onChange={(e) => setRarity(e.target.value)}
-                      />
+                      <Select value={rarity} onValueChange={setRarity}>
+                        <SelectTrigger id="edit-rarity">
+                          <SelectValue placeholder="Select..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {RARITY_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     <div className="space-y-2">

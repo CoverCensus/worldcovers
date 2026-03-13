@@ -104,13 +104,17 @@ const Contribute = () => {
     state?: string;
     town?: string;
     firstSeen?: string;
-
     type?: string;
     color?: string;
+    dimensions?: string;
   }>({});
   const [firstSeenError, setFirstSeenError] = useState<string | null>(null);
   const [lastSeenError, setLastSeenError] = useState<string | null>(null);
 
+  /** Town/City: letters, spaces, hyphens, apostrophes only */
+  const sanitizeTown = (v: string) => v.replace(/[^a-zA-Z\s\-']/g, "");
+  /** Dimensions: max 4 digits, numbers only */
+  const sanitizeDimensions = (v: string) => v.replace(/\D/g, "").slice(0, 4);
   useEffect(() => {
     getColors()
       .then(setColorOptions)
@@ -211,6 +215,8 @@ const Contribute = () => {
     }
     if (!townVal) {
       errors.town = "Town/City is required";
+    } else if (/[0-9]/.test(townVal)) {
+      errors.town = "Town/City must contain only letters and spaces";
     }
     if (!firstVal) {
       errors.firstSeen = "First Seen Year is required"
@@ -220,6 +226,10 @@ const Contribute = () => {
     }
     if (!colorVal) {
       errors.color = "Color is required";
+    }
+    const dimensionsVal = dimensions.trim();
+    if (dimensionsVal && !/^\d{1,4}$/.test(dimensionsVal)) {
+      errors.dimensions = "Dimensions must be numeric only, max 4 digits";
     }
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
@@ -439,15 +449,17 @@ const Contribute = () => {
                       <Label htmlFor="town">Town/City *</Label>
                       <Input
                         id="town"
+                        type="text"
                         placeholder="e.g., Boston"
                         value={town}
                         onChange={(e) => {
-                          setTown(e.target.value);
+                          setTown(sanitizeTown(e.target.value));
                           if (fieldErrors.town) {
                             setFieldErrors((prev) => ({ ...prev, town: undefined }));
                           }
                         }}
                         className={fieldErrors.town ? "border-destructive" : ""}
+                        aria-label="Town or city (letters and spaces only)"
                       />
                       {fieldErrors.town && (
                         <p className="text-sm text-destructive">{fieldErrors.town}</p>
@@ -591,10 +603,23 @@ const Contribute = () => {
                       <Label htmlFor="dimensions">Dimensions</Label>
                       <Input
                         id="dimensions"
+                        type="text"
+                        inputMode="numeric"
                         placeholder="e.g., 32mm diameter"
+                        maxLength={4}
                         value={dimensions}
-                        onChange={(e) => setDimensions(e.target.value)}
+                        onChange={(e) => {
+                          setDimensions(sanitizeDimensions(e.target.value));
+                          if (fieldErrors.dimensions) {
+                            setFieldErrors((prev) => ({ ...prev, dimensions: undefined }));
+                          }
+                        }}
+                        className={fieldErrors.dimensions ? "border-destructive" : ""}
+                        aria-label="Dimensions (numbers only, max 4 digits)"
                       />
+                      {fieldErrors.dimensions && (
+                        <p className="text-sm text-destructive">{fieldErrors.dimensions}</p>
+                      )}
                     </div>
 
                     <div className="space-y-2">
