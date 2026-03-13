@@ -341,9 +341,10 @@ if not DEBUG:
     SECURE_HSTS_PRELOAD = True
 
 # Email configuration (used for password reset and notifications)
+# Default to real SMTP so staging behaves like production unless explicitly overridden.
 EMAIL_BACKEND = config(
     "EMAIL_BACKEND",
-    default="django.core.mail.backends.console.EmailBackend",
+    default="django.core.mail.backends.smtp.EmailBackend",
 )
 EMAIL_HOST = config("EMAIL_HOST", default="")
 EMAIL_PORT = config("EMAIL_PORT", cast=int, default=587)
