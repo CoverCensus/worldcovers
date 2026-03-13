@@ -164,7 +164,7 @@ const Dashboard = () => {
         });
 
         const url = `${base}/my-dashboard/?${params.toString()}`;
-        const res = await fetch(url);
+        const res = await fetch(url, {credentials: "include"});
         if (!res.ok) {
           throw new Error(`API error: ${res.status} ${res.statusText}`);
         }

@@ -390,13 +390,26 @@ const EditCatalogEntry = () => {
         throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
 
-      const result = await res.json().catch(() => ({}));
-      const updatedId = result?.postmarkId;
+      const result = await res.json().catch(() => ({} as any));
+      const updatedId = (result as any)?.postmarkId as number | undefined;
+      const contributionId = (result as any)?.contributionId as number | undefined;
 
-      toast({
-        title: "Entry updated",
-        description: "Your catalog entry has been updated.",
-      });
+      if (updatedId) {
+        toast({
+          title: "Entry updated",
+          description: "Your catalog entry has been updated.",
+        });
+      } else if (contributionId) {
+        toast({
+          title: "Correction submitted",
+          description: "Your suggested edit has been sent for review by a State Editor.",
+        });
+      } else {
+        toast({
+          title: "Submitted",
+          description: "Your changes have been submitted.",
+        });
+      }
 
       const fromDashboard = location.state?.fromDashboard;
       const fromDashboardDirect = location.state?.fromDashboardDirect;
@@ -473,6 +486,10 @@ const EditCatalogEntry = () => {
     );
   }
 
+  const role = user?.role;
+  const isStateEditor = role === "state_editor";
+  const isContributor = role === "contributor";
+
   return (
     <div className="min-h-screen flex flex-col">
       <Navigation />
@@ -489,7 +506,9 @@ const EditCatalogEntry = () => {
               Edit Catalog Entry
             </h1>
             <p className="text-muted-foreground">
-              Update the record and submit as a corrected entry. All fields are prefilled where data exists.
+              {isStateEditor
+                ? "Update the catalog entry directly. All fields are prefilled where data exists."
+                : "Suggest corrections to this catalog entry. Your suggestion will be reviewed by a State Editor before it appears in the catalog."}
             </p>
           </div>
 
@@ -858,7 +877,11 @@ const EditCatalogEntry = () => {
                       className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
                       disabled={submitting}
                     >
-                      {submitting ? "Submitting..." : "Submit Corrected Entry"}
+                      {submitting
+                        ? "Submitting..."
+                        : isStateEditor
+                          ? "Save Changes"
+                          : "Submit Suggestion"}
                     </Button>
                   </form>
 
@@ -875,10 +898,17 @@ const EditCatalogEntry = () => {
                   <CardTitle className="font-heading text-lg">About editing</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm text-muted-foreground">
-                  <p className="leading-relaxed">
-                    Submitting this form creates a new catalog entry with your corrections. The original record
-                    remains; reviewers can merge or replace as needed.
-                  </p>
+                  {isStateEditor ? (
+                    <p className="leading-relaxed">
+                      As a State Editor, your changes are applied directly to the catalog entry. Please review
+                      carefully before saving.
+                    </p>
+                  ) : (
+                    <p className="leading-relaxed">
+                      Submitting this form sends your suggested corrections to a State Editor. The original
+                      record remains unchanged until your suggestion is reviewed and approved.
+                    </p>
+                  )}
                 </CardContent>
               </Card>
             </div>

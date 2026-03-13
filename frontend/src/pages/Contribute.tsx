@@ -59,13 +59,6 @@ function validateYearString(raw: string): string | null {
   }
   return null;
 }
-interface MySubmission {
-  id: string;
-  name: string;
-  status: string;
-  created_at: string;
-}
-
 const Contribute = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -79,8 +72,6 @@ const Contribute = () => {
   const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
   const [loadingTypes, setLoadingTypes] = useState(true);
   const [typeOptionsError, setTypeOptionsError] = useState<string | null>(null);
-  const [mySubmissions, setMySubmissions] = useState<MySubmission[]>([]);
-  const [loadingSubmissions, setLoadingSubmissions] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Form state – all fields shown on Submission Detail
@@ -124,13 +115,25 @@ const Contribute = () => {
   useEffect(() => {
     setLoadingStates(true);
     setStateOptionsError(null);
-    getAdministrativeUnits(true)
-      .then(setStateOptions)
-      .catch((err) => {
-        setStateOptionsError(err instanceof Error ? err.message : "Failed to load assigned states");
+
+    const loadStates = async () => {
+      try {
+        // Contributors can submit to any state: load full list (assignedOnly = false).
+        // State Editors see only their assigned states.
+        const isStateEditor = user?.role === "state_editor";
+        const options = await getAdministrativeUnits(isStateEditor);
+        setStateOptions(options);
+      } catch (err) {
+        setStateOptionsError(
+          err instanceof Error ? err.message : "Failed to load states"
+        );
         setStateOptions([]);
-      })
-      .finally(() => setLoadingStates(false));
+      } finally {
+        setLoadingStates(false);
+      }
+    };
+
+    loadStates();
   }, [user]);
 
   useEffect(() => {
@@ -145,10 +148,12 @@ const Contribute = () => {
       .finally(() => setLoadingTypes(false));
   }, []);
 
-  // Submissions are now stored in Django; "My Submissions" list can be added via Django API later if needed.
-
   const noAssignedStates =
-    !!user && !loadingStates && !stateOptionsError && stateOptions.length === 0;
+    !!user &&
+    user.role === "state_editor" &&
+    !loadingStates &&
+    !stateOptionsError &&
+    stateOptions.length === 0;
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -266,7 +271,7 @@ const Contribute = () => {
     if (!apiBase) {
       toast({
         title: "Configuration error",
-        description: "VITE_API_URL is not set. Cannot submit to catalog.",
+        description: "VITE_API_URL is not set. Cannot submit postmark.",
         variant: "destructive",
       });
       return;
@@ -316,6 +321,7 @@ const Contribute = () => {
 
       const res = await fetch(`${apiBase}/api/contributions/`, {
         method: "POST",
+        credentials: "include",
         headers,
         body,
       });
@@ -356,28 +362,6 @@ const Contribute = () => {
       });
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "approved":
-        return <CheckCircle className="h-4 w-4 text-green-600" />;
-      case "rejected":
-        return <XCircle className="h-4 w-4 text-destructive" />;
-      default:
-        return <Clock className="h-4 w-4 text-yellow-600" />;
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "approved":
-        return <Badge className="bg-green-100 text-green-800 border-green-200">Approved</Badge>;
-      case "rejected":
-        return <Badge variant="destructive">Rejected</Badge>;
-      default:
-        return <Badge variant="secondary">Pending Review</Badge>;
     }
   };
 
@@ -719,7 +703,7 @@ const Contribute = () => {
                       className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
                       disabled={submitting || noAssignedStates}
                     >
-                      {submitting ? "Submitting..." : "Submit to Catalog"}
+                      {submitting ? "Submitting..." : "Submit Postmark"}
                     </Button>
                   </form>
 
@@ -751,37 +735,8 @@ const Contribute = () => {
                 </CardContent>
               </Card>
 
-              {/* <Card className="shadow-archival-md">
-                <CardHeader>
-                  <CardTitle className="font-heading text-lg">My Submissions</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {!user ? (
-                    <p className="text-sm text-muted-foreground">Sign in to see your submissions.</p>
-                  ) : loadingSubmissions ? (
-                    <p className="text-sm text-muted-foreground">Loading...</p>
-                  ) : mySubmissions.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No submissions yet.</p>
-                  ) : (
-                    mySubmissions.map((submission) => (
-                      <div key={submission.id} className="p-3 border border-border rounded-lg">
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex-1">
-                            <p className="text-sm font-medium text-foreground">{submission.name}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {new Date(submission.created_at).toLocaleDateString()}
-                            </p>
-                          </div>
-                          {getStatusIcon(submission.status)}
-                        </div>
-                        <div className="flex items-center justify-between">
-                          {getStatusBadge(submission.status)}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </CardContent>
-              </Card> */}
+              {/* My Submissions list intentionally lives on the separate /dashboard page.
+                  Keep this card reserved or remove entirely as needed. */}
             </div>
           </div>
         </div>

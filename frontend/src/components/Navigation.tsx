@@ -134,7 +134,16 @@ export const Navigation = () => {
                 className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
                 activeClassName="text-primary font-semibold"
               >
-                Dashboard
+                My Submissions
+              </NavLink>
+            )}
+            {user && (
+              <NavLink
+                to="/suggestions"
+                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                activeClassName="text-primary font-semibold"
+              >
+                My Suggestions
               </NavLink>
             )}
             {!user && (
@@ -232,7 +241,17 @@ export const Navigation = () => {
                 activeClassName="text-primary bg-secondary font-semibold"
                 onClick={() => setMobileMenuOpen(false)}
               >
-                Dashboard
+                My Submissions
+              </NavLink>
+            )}
+            {user && (
+              <NavLink
+                to="/suggestions"
+                className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
+                activeClassName="text-primary bg-secondary font-semibold"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                My Suggestions
               </NavLink>
             )}
             {!user && (

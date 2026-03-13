@@ -10,6 +10,8 @@ export interface AuthUser {
   username: string;
   email: string;
   is_staff: boolean;
+  // Backend-derived high-level role: "contributor" or "state_editor"
+  role?: string;
 }
 
 export function getStoredUser(): AuthUser | null {

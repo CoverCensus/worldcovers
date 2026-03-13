@@ -83,7 +83,7 @@ const Auth = () => {
         return;
       }
 
-      const userData = (data as { user?: { id: number; username: string; email: string; is_staff: boolean } }).user;
+      const userData = (data as { user?: { id: number; username: string; email: string; is_staff: boolean; role?: string } }).user;
       if (userData) {
         setStoredUser(userData);
       }

@@ -128,6 +128,11 @@ router.register(
     views.AdminCsvUploadViewSet,
     basename="admin-csv-upload",
 )
+router.register(
+    r"contributions",
+    views.ContributionViewSet,
+    basename="contribution",
+)
 
 # The API URLs are now determined automatically by the router
 # csrf_exempt on login/logout/login-requests so the SPA can POST without a CSRF token
