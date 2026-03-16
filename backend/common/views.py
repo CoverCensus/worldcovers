@@ -1628,15 +1628,27 @@ class DeleteMySubmissionView(APIView):
             postmark.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
 
-        # 2. Users assigned to this postmark's state can delete any listing in that state
+        # 2. Users assigned to this postmark's state (or its facility's jurisdiction) can delete
         assigned_units = _get_user_assigned_units(user)
-        if postmark.state_id and assigned_units.filter(pk=postmark.state_id).exists():
-            postmark.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
+        if assigned_units.exists():
+            if postmark.state_id and assigned_units.filter(pk=postmark.state_id).exists():
+                postmark.delete()
+                return Response(status=status.HTTP_204_NO_CONTENT)
+            # Also allow when postmark is in assigned region via facility jurisdiction (e.g. state_id is null)
+            if postmark.postal_facility_identity_id:
+                if assigned_units.filter(
+                    governed_facilities__postal_facility_identity_id=postmark.postal_facility_identity_id,
+                    governed_facilities__effective_to_date__isnull=True,
+                ).exists():
+                    postmark.delete()
+                    return Response(status=status.HTTP_204_NO_CONTENT)
 
         # 3. Fallback: original submitter of a user-contribution listing can delete their own
         if postmark.source_catalog != "User contribution":
-            return Response({"detail": "Catalog entry not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "You do not have permission to delete this catalog entry."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         other = (postmark.other_characteristics or "") or ""
         username = (getattr(user, "username", "") or "").strip()
@@ -2083,6 +2095,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
             "partial_update",
             "destroy",
             "my_assigned",
+            "delete_mine",
         }:
             return base_qs
 
@@ -2112,6 +2125,49 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         if self.action in ('list', 'my_assigned'):
             return PostmarkListSerializer
         return PostmarkSerializer
+
+    @action(detail=True, methods=['delete'], url_path='delete-mine', permission_classes=[IsAuthenticated])
+    def delete_mine(self, request, pk=None):
+        """
+        Allow authenticated users to delete their own user-contribution entries,
+        or state editors to delete any entry in their assigned states.
+        Same logic as DeleteMySubmissionView; exposed as ViewSet action so the URL is routed correctly.
+        """
+        postmark = self.get_object()
+        user = request.user
+        # 1. Superusers can always delete
+        if getattr(user, "is_superuser", False):
+            postmark.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        # 2. State editors: delete if in assigned state or facility jurisdiction
+        assigned_units = _get_user_assigned_units(user)
+        if assigned_units.exists():
+            if postmark.state_id and assigned_units.filter(pk=postmark.state_id).exists():
+                postmark.delete()
+                return Response(status=status.HTTP_204_NO_CONTENT)
+            if postmark.postal_facility_identity_id and assigned_units.filter(
+                governed_facilities__postal_facility_identity_id=postmark.postal_facility_identity_id,
+                governed_facilities__effective_to_date__isnull=True,
+            ).exists():
+                postmark.delete()
+                return Response(status=status.HTTP_204_NO_CONTENT)
+        # 3. Original submitter of a user-contribution listing
+        if postmark.source_catalog != "User contribution":
+            return Response(
+                {"detail": "You do not have permission to delete this catalog entry."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        other = (postmark.other_characteristics or "") or ""
+        username = (getattr(user, "username", "") or "").strip()
+        email = (getattr(user, "email", "") or "").strip()
+        submitter_needles = [f"Submitted by: {x}" for x in (username, email) if x]
+        if not submitter_needles or not any(needle in other for needle in submitter_needles):
+            return Response(
+                {"detail": "You can only delete catalog entries that you originally submitted."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        postmark.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False, methods=['get'], url_path='my-assigned', permission_classes=[IsAuthenticated])
     def my_assigned(self, request):

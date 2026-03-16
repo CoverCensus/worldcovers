@@ -149,7 +149,6 @@ urlpatterns = [
     path("reset-password/", csrf_exempt(views.ResetPasswordApiView.as_view()), name="reset-password"),
     path("change-password/", csrf_exempt(views.ChangePasswordApiView.as_view()), name="change-password"),
     path("contributions/", csrf_exempt(views.ContributionView.as_view()), name="contribution"),
-    path("postmarks/<int:pk>/delete-mine/", views.DeleteMySubmissionView.as_view(), name="postmark-delete-mine"),
     path("me/", views.CurrentUserView.as_view(), name="current-user"),
     path("assigned-states/", views.AssignedStatesView.as_view(), name="assigned-states"),
     path("postmarks-range/", views.PostmarkDateRangeView.as_view(), name="postmarks-range"),

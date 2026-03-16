@@ -87,8 +87,9 @@ const Index = () => {
     const loadStats = async () => {
       // Fetch all stats in parallel; use allSettled so one failure doesn't block the rest
       // (e.g. catalog count from postmarks API should show even if facilities/units fail)
+      // Same API as catalog: GET /api/postmarks/?page=1&page_size=10 → use response.count for total
       const [postmarksResult, facilitiesResult, unitsResult, dateRangeResult] = await Promise.allSettled([
-        getPostmarksPage(1, 1),
+        getPostmarksPage(1, 10),
         getPostalFacilities(),
         getAdministrativeUnits(false),
         getPostmarksDateRange(),
