@@ -1063,10 +1063,75 @@ class ContributionView(APIView):
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get(self, request):
-        """List the current user's contributions."""
-        qs = Contribution.objects.filter(contributor=request.user).select_related(
+        """
+        List contributions for dashboards.
+
+        Default (Contributor Dashboard):
+        - Lists only the current user's contributions.
+        - Optional query param:
+          * kind=submission   -> only new submissions (no linked postmark, original_postmark_id empty)
+          * kind=suggestion   -> only suggestions/corrections (linked postmark or original_postmark_id set)
+          * kind omitted/other -> all of the user's contributions (existing behavior).
+
+        Editor Dashboard (state editors / superusers):
+        - When mode=editor, returns a moderation queue limited to the editor's
+          assigned states (or all contributions for superusers).
+        - Optional query param:
+          * status=pending/approved/rejected -> filter by contribution status.
+        """
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        mode = (request.query_params.get("mode") or "").strip().lower()
+
+        # Editor moderation queue: state editors / superusers requesting mode=editor
+        if mode == "editor" and (getattr(user, "is_superuser", False) or _get_user_role(user) == "state_editor"):
+            qs = Contribution.objects.select_related(
+                "contributor", "reviewer", "postmark"
+            ).order_by("-created_at")
+
+            # Limit to editor's assigned states unless superuser
+            if not getattr(user, "is_superuser", False):
+                assigned = _get_user_assigned_units(user)
+                state_names = []
+                for u in assigned:
+                    ident = u.get_current_identity()
+                    if ident and ident.unit_name:
+                        state_names.append(ident.unit_name)
+                if state_names:
+                    qs = qs.filter(submitted_data__state__in=state_names)
+                else:
+                    qs = qs.none()
+
+            status_param = (request.query_params.get("status") or "").strip().lower()
+            if status_param in {Contribution.STATUS_PENDING, Contribution.STATUS_APPROVED, Contribution.STATUS_REJECTED}:
+                qs = qs.filter(status=status_param)
+
+            serializer = ContributionListSerializer(qs, many=True)
+            return Response(serializer.data)
+
+        # Default: contributor-centric listing (Contributor Dashboard)
+        kind = (request.query_params.get("kind") or "").strip().lower()
+
+        qs = Contribution.objects.filter(contributor=user).select_related(
             "contributor", "reviewer", "postmark"
         ).order_by("-created_at")
+
+        # Split into "submissions" vs "suggestions" without changing stored data:
+        # - New submissions created from the Contribute form have:
+        #     postmark is NULL
+        #     submitted_data["original_postmark_id"] == ""
+        # - Suggestions/corrections to existing catalog entries have either:
+        #     a linked postmark (postmark_id not NULL), or
+        #     submitted_data["original_postmark_id"] set to the target postmark id.
+        if kind == "submission":
+            qs = qs.filter(postmark__isnull=True, submitted_data__original_postmark_id="")
+        elif kind == "suggestion":
+            qs = qs.filter(
+                Q(postmark__isnull=False) | ~Q(submitted_data__original_postmark_id="")
+            )
+
         serializer = ContributionListSerializer(qs, many=True)
         return Response(serializer.data)
 

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Pagination,
@@ -52,7 +53,7 @@ function getCsrfTokenFromCookie(): string | null {
 
 const noImageClassName = "w-full h-full min-w-0 min-h-0 object-cover bg-muted";
 
-type DashboardTab = "submissions" | "suggestions";
+type DashboardTab = "submissions" | "suggestions" | "editor";
 
 interface DashboardItem {
   id: number;
@@ -68,6 +69,22 @@ interface DashboardItem {
   description?: string;
   image_url: string | null;
   postmark_id?: number | null;
+}
+
+interface EditorQueueItem {
+  id: number;
+  contributor: number;
+  contributor_username: string;
+  postmark: number | null;
+  postmark_id: number | null;
+  status: string;
+  reviewer: number | null;
+  reviewer_username: string | null;
+  review_notes: string | null;
+  created_at: string;
+  updated_at: string;
+  state_display: string;
+  town_display: string;
 }
 
 /** Build compact page numbers for pagination (shared with Catalog Search) */
@@ -145,6 +162,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [suggestionsGoToInput, setSuggestionsGoToInput] = useState("");
   const suggestionsPageSize = 10;
 
+  // Editor moderation queue state
+  const [editorItems, setEditorItems] = useState<EditorQueueItem[]>([]);
+  const [editorLoading, setEditorLoading] = useState(false);
+  const [editorError, setEditorError] = useState<string | null>(null);
+  const [editorDecisionTarget, setEditorDecisionTarget] = useState<EditorQueueItem | null>(null);
+  const [editorDecisionKind, setEditorDecisionKind] = useState<"approve" | "reject" | "revision">("approve");
+  const [editorReviewNotes, setEditorReviewNotes] = useState("");
+  const [editorSubmittingDecision, setEditorSubmittingDecision] = useState(false);
+
   // Filter states (mirror Catalog Search)
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -163,7 +189,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   // Disable filters while submissions or filter options are loading
   const filtersDisabled = loading || isLoadingFilters;
-  // Fetch current user's contributions for "My Submissions"
+  const isStateEditor = user?.role === "state_editor";
+  // Fetch current user's contributions for "My Submissions" (new catalog entries)
   useEffect(() => {
     if (!user) {
       setSubmissions([]);
@@ -190,7 +217,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           return;
         }
 
-        const res = await fetch(`${apiBase}/api/contributions/`, {
+        const res = await fetch(`${apiBase}/api/contributions/?kind=submission`, {
           method: "GET",
           credentials: "include",
           headers: { Accept: "application/json" },
@@ -276,7 +303,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     fetchSubmissions();
   }, [user, toast]);
 
-  // Fetch suggestions (contributions) for the current user
+  // Fetch suggestions (corrections) for the current user
   useEffect(() => {
     const apiEnv = import.meta.env.VITE_API_URL;
     const apiBase =
@@ -293,7 +320,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     const load = async () => {
       setSuggestionsLoading(true);
       try {
-        const res = await fetch(`${apiBase}/api/contributions/`, {
+        const res = await fetch(`${apiBase}/api/contributions/?kind=suggestion`, {
           method: "GET",
           credentials: "include",
           headers: { Accept: "application/json" },
@@ -379,6 +406,53 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
     load();
   }, [user, toast]);
+
+  // Fetch editor moderation queue when Editor tab is active
+  useEffect(() => {
+    if (!isStateEditor || activeTab !== "editor") {
+      return;
+    }
+
+    const apiEnv = import.meta.env.VITE_API_URL;
+    const apiBase =
+      apiEnv && typeof apiEnv === "string" && apiEnv.trim() !== ""
+        ? apiEnv.trim().replace(/\/+$/, "")
+        : null;
+
+    if (!apiBase) {
+      setEditorError("VITE_API_URL is not set, cannot load editor queue.");
+      setEditorItems([]);
+      return;
+    }
+
+    const loadEditorQueue = async () => {
+      setEditorLoading(true);
+      setEditorError(null);
+      try {
+        const res = await fetch(`${apiBase}/api/contributions/?mode=editor&status=pending`, {
+          method: "GET",
+          credentials: "include",
+          headers: { Accept: "application/json" },
+        });
+        if (!res.ok) {
+          throw new Error(`API error: ${res.status} ${res.statusText}`);
+        }
+        const data: EditorQueueItem[] = await res.json();
+        if (!Array.isArray(data)) {
+          setEditorItems([]);
+          return;
+        }
+        setEditorItems(data);
+      } catch (err) {
+        setEditorError(err instanceof Error ? err.message : "Could not load editor queue.");
+        setEditorItems([]);
+      } finally {
+        setEditorLoading(false);
+      }
+    };
+
+    loadEditorQueue();
+  }, [isStateEditor, activeTab]);
 
   const handleDeleteSubmission = async () => {
     if (!deleteTarget) return;
@@ -584,10 +658,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
               <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">
-                Contributor Dashboard
+                {isStateEditor && activeTab === "editor" ? "Editor Dashboard" : "Contributor Dashboard"}
               </h1>
               <p className="text-muted-foreground">
-                View and track your submissions and suggestions.
+                {isStateEditor && activeTab === "editor"
+                  ? "Review and decide on submissions for your assigned states."
+                  : "View and track your submissions and suggestions."}
               </p>
             </div>
 
@@ -610,6 +686,17 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               >
                 My Suggestions
               </Button>
+              {isStateEditor && (
+                <Button
+                  type="button"
+                  variant={activeTab === "editor" ? "secondary" : "ghost"}
+                  size="sm"
+                  className="rounded-l-none"
+                  onClick={() => setActiveTab("editor")}
+                >
+                  Editor Queue
+                </Button>
+              )}
             </div>
           </div>
 
@@ -1060,7 +1147,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                   navigate(`/record/${submission.postmark_id}`)
                                 }
                               >
-                                View Catalog Entry
+                                View
                               </Button>
                               <Button
                                 variant="outline"
@@ -1071,14 +1158,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                   })
                                 }
                               >
-                                Edit Catalog Entry
+                                Edit
                               </Button>
                               <Button
                                 variant="destructive"
                                 size="sm"
                                 onClick={() => setDeleteTarget(submission)}
                               >
-                                Delete Catalog Entry
+                                Delete
                               </Button>
                             </>
                           )}
@@ -1529,7 +1616,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                     size="sm"
                                     onClick={() => navigate(`/record/api-${item.postmark_id}`)}
                                   >
-                                    View Catalog Entry
+                                    View
                                   </Button>
                                 )}
                               </div>
@@ -1605,7 +1692,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                 size="sm"
                                 onClick={() => navigate(`/record/api-${item.postmark_id}`)}
                               >
-                                View Catalog Entry
+                                View
                               </Button>
                             )}
                           </div>
@@ -1723,6 +1810,128 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               </main>
             </div>
           )}
+
+          {activeTab === "editor" && isStateEditor && (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
+                <div>
+                  <p className="text-sm text-muted-foreground">
+                    {editorLoading
+                      ? "Loading pending submissions for your assigned states..."
+                      : `${editorItems.length.toLocaleString()} pending submission${editorItems.length === 1 ? "" : "s"} in your assigned states`}
+                  </p>
+                  {editorError && (
+                    <p className="text-xs text-destructive mt-1">
+                      {editorError}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {editorLoading ? (
+                <div className="flex flex-col justify-center items-center gap-3 py-12 text-muted-foreground">
+                  <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
+                  <p>Loading editor queue...</p>
+                </div>
+              ) : editorItems.length === 0 ? (
+                <Card className="flex-1 flex items-center justify-center min-h-[200px]">
+                  <CardContent className="text-center">
+                    <p className="text-muted-foreground mb-1">
+                      There are no pending submissions for your assigned states.
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      New submissions will appear here as contributors submit them.
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="space-y-4">
+                  {editorItems.map((item) => (
+                    <Card
+                      key={item.id}
+                      className="shadow-archival-md hover:shadow-archival-lg transition-shadow"
+                    >
+                      <CardContent className="p-6">
+                        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="font-heading text-lg font-semibold text-foreground">
+                                {item.town_display && item.state_display
+                                  ? `${item.town_display}, ${item.state_display}`
+                                  : item.state_display || item.town_display || `Submission #${item.id}`}
+                              </h3>
+                              {getStatusBadge(item.status)}
+                            </div>
+                            <div className="text-sm text-muted-foreground space-y-1">
+                              <div>
+                                <span className="font-medium text-foreground">Contributor:</span>{" "}
+                                <span>{item.contributor_username}</span>
+                              </div>
+                              <div>
+                                <span className="font-medium text-foreground">Submitted:</span>{" "}
+                                <span>{new Date(item.created_at).toLocaleString()}</span>
+                              </div>
+                              {item.review_notes && (
+                                <div>
+                                  <span className="font-medium text-foreground">Previous notes:</span>{" "}
+                                  <span>{item.review_notes}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row gap-2 justify-end">
+                            {item.postmark_id && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => navigate(`/record/${item.postmark_id}`)}
+                              >
+                                View Catalog Entry
+                              </Button>
+                            )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setEditorDecisionTarget(item);
+                                setEditorDecisionKind("approve");
+                                setEditorReviewNotes("");
+                              }}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setEditorDecisionTarget(item);
+                                setEditorDecisionKind("reject");
+                                setEditorReviewNotes("");
+                              }}
+                            >
+                              Reject
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setEditorDecisionTarget(item);
+                                setEditorDecisionKind("revision");
+                                setEditorReviewNotes("Needs revision: ");
+                              }}
+                            >
+                              Needs Revision
+                            </Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
       </div>
       <Footer />
 
@@ -1757,8 +1966,130 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog
+        open={!!editorDecisionTarget}
+        onOpenChange={(open) => {
+          if (!open && !editorSubmittingDecision) {
+            setEditorDecisionTarget(null);
+            setEditorReviewNotes("");
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {editorDecisionKind === "approve"
+                ? "Approve submission"
+                : editorDecisionKind === "reject"
+                  ? "Reject submission"
+                  : "Request revisions"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {editorDecisionKind === "approve"
+                ? "This will apply the contributor's data to the catalog."
+                : editorDecisionKind === "reject"
+                  ? "This will reject the submission. The catalog will remain unchanged."
+                  : "This will reject the submission but your notes should explain what needs to be revised so the contributor can resubmit."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="editor-review-notes">Feedback to contributor (optional but recommended)</Label>
+            <Textarea
+              id="editor-review-notes"
+              value={editorReviewNotes}
+              onChange={(e) => setEditorReviewNotes(e.target.value)}
+              rows={4}
+              placeholder={
+                editorDecisionKind === "approve"
+                  ? "Optional note about your decision..."
+                  : "Explain what is incorrect, missing, or needs clarification..."
+              }
+              disabled={editorSubmittingDecision}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={editorSubmittingDecision}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={editorSubmittingDecision}
+              onClick={async () => {
+                if (!editorDecisionTarget || !isStateEditor) return;
+
+                const apiEnv = import.meta.env.VITE_API_URL;
+                const apiBase =
+                  apiEnv && typeof apiEnv === "string" && apiEnv.trim() !== ""
+                    ? apiEnv.trim().replace(/\/+$/, "")
+                    : null;
+                if (!apiBase) {
+                  toast({
+                    title: "Configuration error",
+                    description: "VITE_API_URL is not set, cannot submit decision.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
+
+                const actionPath =
+                  editorDecisionKind === "approve"
+                    ? "approve"
+                    : "reject";
+
+                setEditorSubmittingDecision(true);
+                try {
+                  const res = await fetch(
+                    `${apiBase}/api/contributions/${editorDecisionTarget.id}/${actionPath}/`,
+                    {
+                      method: "POST",
+                      credentials: "include",
+                      headers: {
+                        "Content-Type": "application/json",
+                        Accept: "application/json",
+                      },
+                      body: JSON.stringify({ review_notes: editorReviewNotes || "" }),
+                    },
+                  );
+                  if (!res.ok) {
+                    const body = await res.json().catch(() => ({}));
+                    const msg = body?.detail || res.statusText || "Could not submit decision.";
+                    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+                  }
+
+                  toast({
+                    title:
+                      editorDecisionKind === "approve"
+                        ? "Submission approved"
+                        : editorDecisionKind === "reject"
+                          ? "Submission rejected"
+                          : "Revisions requested",
+                  });
+
+                  setEditorItems((prev) => prev.filter((i) => i.id !== editorDecisionTarget.id));
+                  setEditorDecisionTarget(null);
+                  setEditorReviewNotes("");
+                } catch (err) {
+                  toast({
+                    title: "Decision failed",
+                    description: err instanceof Error ? err.message : "Could not submit decision. Try again.",
+                    variant: "destructive",
+                  });
+                } finally {
+                  setEditorSubmittingDecision(false);
+                }
+              }}
+            >
+              {editorSubmittingDecision
+                ? "Submitting..."
+                : editorDecisionKind === "approve"
+                  ? "Approve"
+                  : editorDecisionKind === "reject"
+                    ? "Reject"
+                    : "Request revisions"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
-    </div>
+  </div>
   );
 };
 
