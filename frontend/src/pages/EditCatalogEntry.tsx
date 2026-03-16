@@ -380,6 +380,7 @@ const EditCatalogEntry = () => {
 
       const res = await fetch(`${apiBase}/api/contributions/`, {
         method: "POST",
+        credentials: "include",
         headers,
         body,
       });
