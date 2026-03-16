@@ -13,7 +13,6 @@ import {
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import heroImage from "@/assets/hero-cover.jpg";
-import { getPostmarksPage } from "@/services/postmarks";
 import { getAdministrativeUnits } from "@/services/administrativeUnits";
 import { getPostalFacilities } from "@/services/postalFacilities";
 import { getPostmarksDateRange } from "@/services/postmarkRange";
@@ -65,16 +64,15 @@ const Index = () => {
     void fetchFaqs();
   }, []);
 
+  /** Static display for postmarks cataloged (no API fetch). */
+  const postmarksStatDisplay = "52,000+";
+
   const [stats, setStats] = useState<{
-    postmarks: number | null;
-    postmarksCapped: boolean;
     towns: number | null;
     states: number | null;
     earliestYear: number | null;
     latestYear: number | null;
   }>({
-    postmarks: null,
-    postmarksCapped: false,
     towns: null,
     states: null,
     earliestYear: null,
@@ -85,11 +83,7 @@ const Index = () => {
     let cancelled = false;
 
     const loadStats = async () => {
-      // Fetch all stats in parallel; use allSettled so one failure doesn't block the rest
-      // (e.g. catalog count from postmarks API should show even if facilities/units fail)
-      // Same API as catalog: GET /api/postmarks/?page=1&page_size=10 → use response.count for total
-      const [postmarksResult, facilitiesResult, unitsResult, dateRangeResult] = await Promise.allSettled([
-        getPostmarksPage(1, 10),
+      const [facilitiesResult, unitsResult, dateRangeResult] = await Promise.allSettled([
         getPostalFacilities(),
         getAdministrativeUnits(false),
         getPostmarksDateRange(),
@@ -97,8 +91,6 @@ const Index = () => {
 
       if (cancelled) return;
 
-      const postmarksPage =
-        postmarksResult.status === "fulfilled" ? postmarksResult.value : null;
       const facilities =
         facilitiesResult.status === "fulfilled" ? facilitiesResult.value : [];
       const administrativeUnits =
@@ -107,8 +99,6 @@ const Index = () => {
         dateRangeResult.status === "fulfilled" ? dateRangeResult.value : null;
 
       setStats({
-        postmarks: postmarksPage?.count ?? null,
-        postmarksCapped: !!(postmarksPage?.count_capped),
         towns: Array.isArray(facilities) ? facilities.length : null,
         states: Array.isArray(administrativeUnits) ? administrativeUnits.length : null,
         earliestYear: dateRange?.earliest_year ?? null,
@@ -150,9 +140,7 @@ const Index = () => {
               American Stampless Cover Catalog
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground mb-8 leading-relaxed">
-              Explore over {stats.postmarks != null
-                  ? `${stats.postmarks.toLocaleString()}${stats.postmarksCapped ? "+" : ""}`
-                  : "—"} historical postal markings from across America. A comprehensive, open-access archive for researchers, collectors, and philatelic enthusiasts.
+              Explore over {postmarksStatDisplay} historical postal markings from across America. A comprehensive, open-access archive for researchers, collectors, and philatelic enthusiasts.
             </p>
             <div className="flex flex-col sm:flex-row gap-4">
               <Button 
@@ -183,9 +171,7 @@ const Index = () => {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             <div className="text-center">
               <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">
-                {stats.postmarks != null
-                  ? `${stats.postmarks.toLocaleString()}${stats.postmarksCapped ? "+" : ""}`
-                  : "—"}
+                {postmarksStatDisplay}
               </div>
               <div className="text-sm text-muted-foreground">Postmarks Cataloged</div>
             </div>
