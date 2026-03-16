@@ -171,6 +171,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [assignedCatalogLoading, setAssignedCatalogLoading] = useState(false);
   const [assignedCatalogError, setAssignedCatalogError] = useState<string | null>(null);
   const assignedCatalogPageSize = 10;
+  const [editorGoToPageInput, setEditorGoToPageInput] = useState("");
 
   // Pending review (state editor): contributions awaiting approve/reject/revision – comment required
   const [pendingReviewItems, setPendingReviewItems] = useState<PendingReviewItem[]>([]);
@@ -435,7 +436,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     let cancelled = false;
     setAssignedCatalogError(null);
     setAssignedCatalogLoading(true);
-    getAssignedCatalogPage(assignedCatalogPage, assignedCatalogPageSize)
+    getAssignedCatalogPage(assignedCatalogPage, assignedCatalogPageSize, {
+      filters: {
+        state: stateFilter !== "all" ? stateFilter : undefined,
+        town: townFilter.trim() || undefined,
+        type: typeFilter !== "all" ? typeFilter : undefined,
+        color: colorFilter !== "all" ? colorFilter : undefined,
+        search: searchQuery.trim() || undefined,
+      },
+    })
       .then(({ results, count }) => {
         if (!cancelled) {
           setAssignedCatalogItems(results);
@@ -455,7 +464,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     return () => {
       cancelled = true;
     };
-  }, [isStateEditor, activeTab, assignedCatalogPage]);
+  }, [isStateEditor, activeTab, assignedCatalogPage, stateFilter, townFilter, typeFilter, colorFilter, searchQuery]);
+
+  // Reset User Submissions pagination when filters change
+  useEffect(() => {
+    if (activeTab === "editor" && isStateEditor) {
+      setAssignedCatalogPage(1);
+    }
+  }, [activeTab, isStateEditor, stateFilter, townFilter, typeFilter, colorFilter, searchQuery]);
 
   // Load pending contributions for editor review (approve/reject/request revision)
   useEffect(() => {
@@ -598,7 +614,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       return;
     }
     const base = apiUrl.replace(/\/+$/, "");
-    const url = `${base}/${postmarkId}/`;
+    const url = `${base}/${postmarkId}/delete-mine/`;
     const csrfToken = getCsrfTokenFromCookie();
     const headers: HeadersInit = {};
     if (csrfToken) {
@@ -802,6 +818,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   ? "Manage catalog entries for your assigned states — view, edit, and delete."
                   : "View and track your submissions and suggestions."}
               </p>
+              {isStateEditor && user?.assigned_locations && user.assigned_locations.length > 0 && (
+                <p className="text-muted-foreground text-sm mt-1">
+                  Role: State Editor — Assigned: {user.assigned_locations.map((loc) => loc.name).join(", ")}
+                </p>
+              )}
             </div>
 
             <div className="inline-flex rounded-md border border-border bg-card p-1">
@@ -1429,114 +1450,264 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           */}
 
           {activeTab === "editor" && isStateEditor && (
-            <div className="flex flex-col gap-6">
-              {/* Pending submissions to review — approve / reject / request revision with required comment */}
-              {(pendingReviewLoading || pendingReviewItems.length > 0) && (
+            <div className="flex flex-col lg:flex-row gap-6">
+              {/* Filters sidebar — same layout as My Submissions (Search, State, Town, Type, Color) */}
+              <aside className={`lg:w-80 space-y-6 ${filtersOpen ? "block" : "hidden lg:block"}`}>
                 <Card className="shadow-archival-md">
-                  <CardContent className="pt-6">
-                    <h2 className="font-heading text-lg font-semibold text-foreground mb-2">
-                      Pending review
-                    </h2>
-                    <p className="text-sm text-muted-foreground mb-4">
-                      When you change status, add a comment so the contributor knows the outcome (e.g. quality note for
-                      approved, reason for reject, or what to fix for revision).
-                    </p>
-                    {pendingReviewLoading ? (
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        <span>Loading pending submissions...</span>
+                  <CardContent className="pt-6 space-y-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="font-heading text-lg font-semibold">Filters</h2>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="lg:hidden"
+                        onClick={() => setFiltersOpen(false)}
+                      >
+                        Close
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Search</Label>
+                      <div className="relative">
+                        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          type="search"
+                          placeholder="Name, town, state, type..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="pl-9 bg-background"
+                          aria-label="Search catalog by name, town, state, or type"
+                          disabled={assignedCatalogLoading || isLoadingFilters}
+                        />
                       </div>
-                    ) : pendingReviewError ? (
-                      <p className="text-sm text-destructive">{pendingReviewError}</p>
-                    ) : (
-                      <ul className="space-y-3">
-                        {pendingReviewItems.map((item) => (
-                          <li
-                            key={item.id}
-                            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-muted/30"
-                          >
-                            <div>
-                              <span className="font-medium text-foreground">
-                                {item.town_display && item.state_display
-                                  ? `${item.town_display}, ${item.state_display}`
-                                  : item.state_display || item.town_display || `Submission #${item.id}`}
-                              </span>
-                              <span className="text-muted-foreground text-sm ml-2">
-                                by {item.contributor_username}
-                              </span>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setStatusDecisionTarget(item);
-                                  setStatusDecisionKind("approve");
-                                  setStatusComment("");
-                                }}
-                              >
-                                Approve
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setStatusDecisionTarget(item);
-                                  setStatusDecisionKind("reject");
-                                  setStatusComment("");
-                                }}
-                              >
-                                Reject
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setStatusDecisionTarget(item);
-                                  setStatusDecisionKind("revision");
-                                  setStatusComment("");
-                                }}
-                              >
-                                Request revision
-                              </Button>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="editor-state">State</Label>
+                      <SearchableSelect
+                        id="editor-state"
+                        value={stateFilter}
+                        onValueChange={setStateFilter}
+                        placeholder="All States"
+                        allOption={{ value: "all", label: "All States" }}
+                        options={Array.isArray(stateOptions) ? stateOptions : []}
+                        loading={isLoadingFilters}
+                        error={!!filterError}
+                        errorMessage="Failed to load states"
+                        searchPlaceholder="Search states..."
+                        emptyMessage="No state found."
+                        aria-label="Filter by state"
+                        disabled={assignedCatalogLoading || isLoadingFilters}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="editor-town">Town</Label>
+                      <Input
+                        id="editor-town"
+                        placeholder="Enter town name..."
+                        value={townFilter}
+                        onChange={(e) => setTownFilter(e.target.value)}
+                        className="bg-background"
+                        disabled={assignedCatalogLoading || isLoadingFilters}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="editor-type">Postmark Type</Label>
+                      <SearchableSelect
+                        id="editor-type"
+                        value={typeFilter}
+                        onValueChange={setTypeFilter}
+                        placeholder="All Types"
+                        allOption={{ value: "all", label: "All Types" }}
+                        options={Array.isArray(shapeOptions) ? shapeOptions : []}
+                        loading={isLoadingFilters}
+                        error={!!filterError}
+                        errorMessage="Failed to load types"
+                        searchPlaceholder="Search types..."
+                        emptyMessage="No type found."
+                        aria-label="Filter by postmark type"
+                        disabled={assignedCatalogLoading || isLoadingFilters}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="editor-color">Color</Label>
+                      <SearchableSelect
+                        id="editor-color"
+                        value={colorFilter}
+                        onValueChange={setColorFilter}
+                        placeholder="All Colors"
+                        allOption={{ value: "all", label: "All Colors" }}
+                        options={Array.isArray(colorOptions) ? colorOptions : []}
+                        loading={isLoadingFilters}
+                        error={!!filterError}
+                        errorMessage="Failed to load colors"
+                        searchPlaceholder="Search colors..."
+                        emptyMessage="No color found."
+                        aria-label="Filter by color"
+                        disabled={assignedCatalogLoading || isLoadingFilters}
+                      />
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => {
+                        setSearchQuery("");
+                        setStateFilter("all");
+                        setTownFilter("");
+                        setTypeFilter("all");
+                        setColorFilter("all");
+                      }}
+                      disabled={assignedCatalogLoading || isLoadingFilters}
+                    >
+                      Clear Filters
+                    </Button>
                   </CardContent>
                 </Card>
-              )}
+              </aside>
+
+              <div className="flex-1 flex flex-col gap-6">
+                {/* Pending submissions to review — approve / reject / request revision with required comment */}
+                {(pendingReviewLoading || pendingReviewItems.length > 0) && (
+                  <Card className="shadow-archival-md">
+                    <CardContent className="pt-6">
+                      <h2 className="font-heading text-lg font-semibold text-foreground mb-2">
+                        Pending review
+                      </h2>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        When you change status, add a comment so the contributor knows the outcome (e.g. quality note for
+                        approved, reason for reject, or what to fix for revision).
+                      </p>
+                      {pendingReviewLoading ? (
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>Loading pending submissions...</span>
+                        </div>
+                      ) : pendingReviewError ? (
+                        <p className="text-sm text-destructive">{pendingReviewError}</p>
+                      ) : (
+                        <ul className="space-y-3">
+                          {pendingReviewItems.map((item) => (
+                            <li
+                              key={item.id}
+                              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-muted/30"
+                            >
+                              <div>
+                                <span className="font-medium text-foreground">
+                                  {item.town_display && item.state_display
+                                    ? `${item.town_display}, ${item.state_display}`
+                                    : item.state_display || item.town_display || `Submission #${item.id}`}
+                                </span>
+                                <span className="text-muted-foreground text-sm ml-2">
+                                  by {item.contributor_username}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setStatusDecisionTarget(item);
+                                    setStatusDecisionKind("approve");
+                                    setStatusComment("");
+                                  }}
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setStatusDecisionTarget(item);
+                                    setStatusDecisionKind("reject");
+                                    setStatusComment("");
+                                  }}
+                                >
+                                  Reject
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setStatusDecisionTarget(item);
+                                    setStatusDecisionKind("revision");
+                                    setStatusComment("");
+                                  }}
+                                >
+                                  Request revision
+                                </Button>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
 
               <main className="flex-1 space-y-4">
+                {/* Results Header — same as My Submissions */}
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
                   <div>
                     <p className="text-sm text-muted-foreground">
-                      {assignedCatalogLoading
-                        ? "Loading catalog for your assigned states..."
-                        : `${assignedCatalogTotal != null ? assignedCatalogTotal.toLocaleString() : assignedCatalogItems.length} catalog entr${assignedCatalogTotal === 1 ? "y" : "ies"} in your assigned states`}
+                      {assignedCatalogLoading ? (
+                        "Loading catalog..."
+                      ) : assignedCatalogTotal != null && assignedCatalogTotal > 0 ? (
+                        <>
+                          Showing{" "}
+                          <span className="font-semibold text-foreground">
+                            {((assignedCatalogPage - 1) * assignedCatalogPageSize + 1).toLocaleString()}-
+                            {Math.min(
+                              assignedCatalogPage * assignedCatalogPageSize,
+                              assignedCatalogTotal,
+                            ).toLocaleString()}
+                          </span>{" "}
+                          of{" "}
+                          <span className="font-semibold text-foreground">
+                            {assignedCatalogTotal.toLocaleString()}
+                          </span>{" "}
+                          results
+                        </>
+                      ) : (
+                        "0 results"
+                      )}
                     </p>
                     {assignedCatalogError && (
                       <p className="text-xs text-destructive mt-1">{assignedCatalogError}</p>
                     )}
                   </div>
-                  <div className="flex border border-border rounded-md">
+                  <div className="flex items-center gap-2">
                     <Button
-                      variant={viewMode === "list" ? "secondary" : "ghost"}
+                      variant="ghost"
                       size="sm"
-                      onClick={() => setViewMode("list")}
-                      className="rounded-r-none"
+                      className="lg:hidden"
+                      onClick={() => setFiltersOpen((open) => !open)}
                     >
-                      <List className="h-4 w-4" />
+                      <SlidersHorizontal className="h-4 w-4 mr-2" />
+                      Filters
                     </Button>
-                    <Button
-                      variant={viewMode === "gallery" ? "secondary" : "ghost"}
-                      size="sm"
-                      onClick={() => setViewMode("gallery")}
-                      className="rounded-l-none"
-                    >
-                      <Grid3x3 className="h-4 w-4" />
-                    </Button>
+                    <div className="flex border border-border rounded-md">
+                      <Button
+                        variant={viewMode === "list" ? "secondary" : "ghost"}
+                        size="sm"
+                        onClick={() => setViewMode("list")}
+                        className="rounded-r-none"
+                      >
+                        <List className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant={viewMode === "gallery" ? "secondary" : "ghost"}
+                        size="sm"
+                        onClick={() => setViewMode("gallery")}
+                        className="rounded-l-none"
+                      >
+                        <Grid3x3 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
@@ -1697,32 +1868,129 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   </div>
                 )}
 
-                {assignedCatalogTotalPages > 1 && (
-                  <div className="flex flex-wrap items-center justify-center gap-2 pt-4">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={assignedCatalogPage <= 1}
-                      onClick={() => setAssignedCatalogPage((p) => Math.max(1, p - 1))}
-                    >
-                      Previous
-                    </Button>
-                    <span className="text-sm text-muted-foreground px-2">
-                      Page {assignedCatalogPage} of {assignedCatalogTotalPages}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={assignedCatalogPage >= assignedCatalogTotalPages}
-                      onClick={() =>
-                        setAssignedCatalogPage((p) => Math.min(assignedCatalogTotalPages, p + 1))
-                      }
-                    >
-                      Next
-                    </Button>
-                  </div>
-                )}
+                {assignedCatalogTotalPages > 1 &&
+                  !assignedCatalogLoading &&
+                  assignedCatalogItems.length > 0 && (
+                    <div className="mt-8 flex flex-col items-center gap-4">
+                      <Pagination>
+                        <PaginationContent>
+                          <PaginationItem>
+                            <PaginationPrevious
+                              onClick={() => {
+                                setAssignedCatalogPage((p) => Math.max(1, p - 1));
+                                window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                              }}
+                              className={
+                                assignedCatalogPage === 1
+                                  ? "pointer-events-none opacity-50"
+                                  : "cursor-pointer"
+                              }
+                            />
+                          </PaginationItem>
+
+                          {getPaginationPages(
+                            assignedCatalogPage,
+                            assignedCatalogTotalPages,
+                          ).map((p, i) =>
+                            p === "ellipsis" ? (
+                              <PaginationItem key={`editor-ellipsis-${i}`}>
+                                <PaginationEllipsis />
+                              </PaginationItem>
+                            ) : (
+                              <PaginationItem key={p}>
+                                <PaginationLink
+                                  onClick={() => {
+                                    setAssignedCatalogPage(p);
+                                    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                                  }}
+                                  isActive={assignedCatalogPage === p}
+                                  className="cursor-pointer"
+                                >
+                                  {p}
+                                </PaginationLink>
+                              </PaginationItem>
+                            ),
+                          )}
+
+                          <PaginationItem>
+                            <PaginationNext
+                              onClick={() => {
+                                setAssignedCatalogPage((p) =>
+                                  Math.min(assignedCatalogTotalPages, p + 1),
+                                );
+                                window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                              }}
+                              className={
+                                assignedCatalogPage === assignedCatalogTotalPages
+                                  ? "pointer-events-none opacity-50"
+                                  : "cursor-pointer"
+                              }
+                            />
+                          </PaginationItem>
+                        </PaginationContent>
+                      </Pagination>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">Go to page</span>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={assignedCatalogTotalPages}
+                          placeholder="Page"
+                          value={editorGoToPageInput}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (raw === "") {
+                              setEditorGoToPageInput("");
+                              return;
+                            }
+                            const n = parseInt(raw, 10);
+                            if (Number.isNaN(n)) return;
+                            const clamped = Math.max(
+                              1,
+                              Math.min(assignedCatalogTotalPages, n),
+                            );
+                            setEditorGoToPageInput(String(clamped));
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              const n = parseInt(editorGoToPageInput, 10);
+                              if (!Number.isNaN(n)) {
+                                setAssignedCatalogPage(
+                                  Math.max(1, Math.min(assignedCatalogTotalPages, n)),
+                                );
+                                window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                                setEditorGoToPageInput("");
+                              }
+                            }
+                          }}
+                          className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          aria-label="Go to page number"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-9"
+                          onClick={() => {
+                            const n = parseInt(editorGoToPageInput, 10);
+                            if (!Number.isNaN(n)) {
+                              setAssignedCatalogPage(
+                                Math.max(1, Math.min(assignedCatalogTotalPages, n)),
+                              );
+                              window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                              setEditorGoToPageInput("");
+                            }
+                          }}
+                        >
+                          Go
+                        </Button>
+                      </div>
+                    </div>
+                  )}
               </main>
+              </div>
             </div>
           )}
       </div>

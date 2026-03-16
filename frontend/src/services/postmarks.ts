@@ -88,11 +88,15 @@ export interface PostmarkApiResponse {
    * Fetches a single page of catalog entries for the current user's assigned states.
    * Used by state editors to manage (view, edit, delete) all catalog entries in their states.
    * Requires authentication; returns paginated results.
+   * Optional filters match catalog list (state, town, type/postmark_shape, color, search).
    */
   export async function getAssignedCatalogPage(
     page: number = 1,
     pageSize: number = 10,
-    options?: { credentials?: RequestCredentials }
+    options?: {
+      credentials?: RequestCredentials;
+      filters?: { state?: string; town?: string; type?: string; color?: string; search?: string };
+    }
   ): Promise<GetPostmarksPageResult> {
     const apiUrl = getPostmarksApiUrl();
     if (!apiUrl) {
@@ -100,6 +104,12 @@ export interface PostmarkApiResponse {
     }
     const base = apiUrl.replace(/\/+$/, "");
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+    const f = options?.filters;
+    if (f?.state && f.state !== "all") params.set("state", f.state);
+    if (f?.town?.trim()) params.set("town", f.town.trim());
+    if (f?.type && f.type !== "all") params.set("postmark_shape", f.type);
+    if (f?.color && f.color !== "all") params.set("color", f.color);
+    if (f?.search?.trim()) params.set("search", f.search.trim());
     const url = `${base}/my-assigned/?${params.toString()}`;
     const res = await fetch(url, {
       method: "GET",

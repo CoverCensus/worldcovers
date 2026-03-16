@@ -85,29 +85,34 @@ const Index = () => {
     let cancelled = false;
 
     const loadStats = async () => {
-      try {
-        const [postmarksPage, facilities, administrativeUnits, dateRange] = await Promise.all([
-          getPostmarksPage(1, 1),
-          getPostalFacilities(),
-          getAdministrativeUnits(false),
-          getPostmarksDateRange(),
-        ]);
+      // Fetch all stats in parallel; use allSettled so one failure doesn't block the rest
+      // (e.g. catalog count from postmarks API should show even if facilities/units fail)
+      const [postmarksResult, facilitiesResult, unitsResult, dateRangeResult] = await Promise.allSettled([
+        getPostmarksPage(1, 1),
+        getPostalFacilities(),
+        getAdministrativeUnits(false),
+        getPostmarksDateRange(),
+      ]);
 
-        if (cancelled) return;
+      if (cancelled) return;
 
-        setStats({
-          postmarks: postmarksPage.count ?? null,
-          postmarksCapped: !!postmarksPage.count_capped,
-          towns: facilities.length,
-          states: administrativeUnits.length,
-          earliestYear: dateRange?.earliest_year ?? null,
-          latestYear: dateRange?.latest_year ?? null,
-        });
-      } catch {
-        if (!cancelled) {
-          setStats((current) => current);
-        }
-      }
+      const postmarksPage =
+        postmarksResult.status === "fulfilled" ? postmarksResult.value : null;
+      const facilities =
+        facilitiesResult.status === "fulfilled" ? facilitiesResult.value : [];
+      const administrativeUnits =
+        unitsResult.status === "fulfilled" ? unitsResult.value : [];
+      const dateRange =
+        dateRangeResult.status === "fulfilled" ? dateRangeResult.value : null;
+
+      setStats({
+        postmarks: postmarksPage?.count ?? null,
+        postmarksCapped: !!(postmarksPage?.count_capped),
+        towns: Array.isArray(facilities) ? facilities.length : null,
+        states: Array.isArray(administrativeUnits) ? administrativeUnits.length : null,
+        earliestYear: dateRange?.earliest_year ?? null,
+        latestYear: dateRange?.latest_year ?? null,
+      });
     };
 
     loadStats();
@@ -197,9 +202,7 @@ const Index = () => {
             </div>
             <div className="text-center">
               <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">
-                {stats.earliestYear != null && stats.latestYear != null
-                  ? `${stats.earliestYear}-${stats.latestYear}`
-                  : "—"}
+                1661–1989
               </div>
               <div className="text-sm text-muted-foreground">Historical Range</div>
             </div>

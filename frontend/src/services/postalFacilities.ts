@@ -14,6 +14,8 @@ export interface PostalFacilitiesApiResultItem {
   currentType: string;
   latitude: number | null;
   longitude: number | null;
+  /** State name from jurisdiction (for town dropdown filtering) */
+  stateName?: string | null;
 }
 
 /** Paginated response from GET /api/postal-facilities/ */
@@ -41,10 +43,12 @@ function mapApiResultToOption(item: PostalFacilitiesApiResultItem): PostalFacili
   return {
     id: item.postalFacilityId,
     referenceCode: item.referenceCode,
-    name: item.currentName,
-    type: item.currentType,
+    name: item.currentName ?? "",
+    type: item.currentType ?? "",
     latitude: item.latitude,
     longitude: item.longitude,
+    town: (item.currentName ?? "").trim() || undefined,
+    state: (item.stateName ?? "").trim() || undefined,
   };
 }
 
@@ -99,23 +103,40 @@ async function getPostalFacilitiesFromSupabase(): Promise<PostalFacilityOption[]
   return options.map((o, i) => ({ ...o, id: i }));
 }
 
+/** One item from GET /api/postal-facilities/town-options/ */
+export interface TownOptionItem {
+  town: string;
+  state: string;
+}
+
 /**
- * Fetches postal facilities. When VITE_POSTAL_FACILITIES_API_URL is set, uses GET /api/postal-facilities/.
+ * Fetches postal facilities for dropdowns. When VITE_API_URL is set, uses
+ * GET /api/postal-facilities/town-options/ (merged from facilities + postmarks).
  * Otherwise uses Supabase (distinct town + state from catalog_records and submissions).
  */
 export async function getPostalFacilities(): Promise<PostalFacilityOption[]> {
   const apiUrl = getPostalFacilitiesApiUrl();
   if (apiUrl) {
-    const url = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
-    const res = await fetch(url);
+    const base = apiUrl.replace(/\/+$/, "");
+    const townOptionsUrl = `${base}/town-options/`;
+    const res = await fetch(townOptionsUrl);
     if (!res.ok) {
       throw new Error(`Postal facilities API error: ${res.status} ${res.statusText}`);
     }
-    const data: PostalFacilitiesApiResponse = await res.json();
-    if (!Array.isArray(data.results)) {
-      throw new Error("Postal facilities API: invalid response (missing results array)");
+    const data: TownOptionItem[] = await res.json();
+    if (!Array.isArray(data)) {
+      throw new Error("Postal facilities API: invalid town-options response");
     }
-    return data.results.map(mapApiResultToOption);
+    return data.map((item, i) => ({
+      id: i,
+      referenceCode: "",
+      name: `${item.town}, ${item.state}`,
+      type: "",
+      latitude: null,
+      longitude: null,
+      town: item.town.trim(),
+      state: item.state.trim(),
+    }));
   }
 
   return getPostalFacilitiesFromSupabase();

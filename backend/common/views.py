@@ -14,6 +14,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core.mail import send_mail
+from django.db import ProgrammingError
 from django.db.models import Q, Count, Prefetch
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
@@ -128,6 +129,30 @@ def _get_user_role(user):
     return "contributor"
 
 
+def _build_user_payload(user):
+    """Build the user dict for login/me responses (id, username, email, is_staff, role, assigned_locations)."""
+    role = _get_user_role(user)
+    payload = {
+        "id": user.pk,
+        "username": user.username,
+        "email": getattr(user, "email", "") or "",
+        "is_staff": getattr(user, "is_staff", False),
+        "role": role,
+    }
+    if role == "state_editor":
+        units = _get_user_assigned_units(user)
+        assigned_locations = []
+        for unit in units:
+            ident = unit.get_current_identity()
+            name = (ident.unit_name or unit.reference_code or "").strip() or unit.reference_code
+            assigned_locations.append({
+                "name": name,
+                "reference_code": unit.reference_code or "",
+            })
+        payload["assigned_locations"] = assigned_locations
+    return payload
+
+
 class SessionAuthenticationNoCSRF(SessionAuthentication):
     """Session auth without CSRF check; for SPA endpoints that use csrf_exempt."""
 
@@ -173,15 +198,7 @@ class LoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
         login(request, user)
-        return Response({
-            "user": {
-                "id": user.pk,
-                "username": user.username,
-                "email": getattr(user, "email", "") or "",
-                "is_staff": getattr(user, "is_staff", False),
-                "role": _get_user_role(user),
-            },
-        })
+        return Response({"user": _build_user_payload(user)})
 
 
 class CurrentUserView(APIView):
@@ -191,16 +208,7 @@ class CurrentUserView(APIView):
     def get(self, request):
         if not request.user.is_authenticated:
             return Response(status=status.HTTP_401_UNAUTHORIZED)
-        user = request.user
-        return Response({
-            "user": {
-                "id": user.pk,
-                "username": user.username,
-                "email": getattr(user, "email", "") or "",
-                "is_staff": getattr(user, "is_staff", False),
-                "role": _get_user_role(user),
-            },
-        })
+        return Response({"user": _build_user_payload(request.user)})
 
 
 class AssignedStatesView(APIView):
@@ -252,6 +260,19 @@ class FAQEntryViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = FAQEntry.objects.filter(is_active=True).order_by("display_order", "faq_entry_id")
     serializer_class = FAQEntrySerializer
     permission_classes = [AllowAny]
+
+    def list(self, request, *args, **kwargs):
+        """Return FAQ list; if table is missing (migration not applied), return empty list."""
+        try:
+            return super().list(request, *args, **kwargs)
+        except ProgrammingError:
+            # FAQEntries table may not exist yet; return empty paginated response
+            return Response({
+                "count": 0,
+                "next": None,
+                "previous": None,
+                "results": [],
+            })
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -1705,6 +1726,75 @@ class PostalFacilityViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    @action(detail=False, methods=['get'], url_path='town-options')
+    def town_options(self, request):
+        """
+        Return distinct (town, state) for dropdowns, from both PostalFacility
+        records and from Postmarks that have facility + state. Ensures the town
+        list is populated even when no facilities were created by the seed migration.
+        """
+        seen = set()
+        options = []
+
+        # 1) From PostalFacility: current identity name + state from jurisdiction
+        for facility in PostalFacility.objects.all().prefetch_related(
+            'identities__jurisdictions__administrative_unit__identities',
+        ):
+            identity = facility.get_current_identity()
+            if not identity:
+                continue
+            town = (identity.facility_name or "").strip()
+            state_name = None
+            aff = (
+                identity.jurisdictions.filter(effective_to_date__isnull=True)
+                .select_related("administrative_unit")
+                .first()
+            )
+            if aff and aff.administrative_unit:
+                curr = aff.administrative_unit.get_current_identity()
+                state_name = (curr.unit_name if curr else None) or aff.administrative_unit.reference_code
+            if not town or not state_name:
+                continue
+            key = (town.lower(), state_name.lower())
+            if key not in seen:
+                seen.add(key)
+                options.append({"town": town, "state": state_name})
+
+        # 2) From Postmarks: facility_name + state's current identity name
+        postmark_rows = (
+            Postmark.objects.filter(
+                postal_facility_identity__isnull=False,
+                state__isnull=False,
+            )
+            .values_list("postal_facility_identity__facility_name", "state_id")
+            .distinct()
+        )
+        state_ids = list({r[1] for r in postmark_rows})
+        if state_ids:
+            state_id_to_name = {}
+            for ident in (
+                AdministrativeUnitIdentity.objects.filter(
+                    administrative_unit_id__in=state_ids,
+                    effective_to_date__isnull=True,
+                )
+                .order_by("administrative_unit_id", "-effective_from_date")
+                .values_list("administrative_unit_id", "unit_name")
+            ):
+                if ident[0] not in state_id_to_name:
+                    state_id_to_name[ident[0]] = ident[1] or ""
+            for facility_name, state_id in postmark_rows:
+                town = (facility_name or "").strip()
+                state_name = (state_id_to_name.get(state_id) or "").strip()
+                if not town or not state_name:
+                    continue
+                key = (town.lower(), state_name.lower())
+                if key not in seen:
+                    seen.add(key)
+                    options.append({"town": town, "state": state_name})
+
+        options.sort(key=lambda x: (x["state"].lower(), x["town"].lower()))
+        return Response(options)
+
 
 class PostalFacilityIdentityViewSet(viewsets.ModelViewSet):
     """ViewSet for postal facility identities"""
@@ -2045,6 +2135,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
                 postal_facility_identity__jurisdictions__administrative_unit__in=assigned_units
             )
         ).distinct().order_by('-created_date')
+        qs = self.filter_queryset(qs)
         page = self.paginate_queryset(qs)
         if page is not None:
             serializer = self.get_serializer(page, many=True)

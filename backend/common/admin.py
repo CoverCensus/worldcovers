@@ -1113,11 +1113,14 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
                 user_location_assignments__user=self.instance
             )
 
-        # Initialise role based solely on existing group membership so that
-        # choosing "Contributor" persists even for superusers.
+        # Initialise role from group membership or from location assignments, so that
+        # opening a state editor always shows "State Editor" with their assigned locations.
         role_initial = ROLE_CONTRIBUTOR
-        if self.instance.pk and self.instance.groups.filter(name__iexact="State Editors").exists():
-            role_initial = ROLE_STATE_EDITOR
+        if self.instance.pk:
+            if self.instance.groups.filter(name__iexact="State Editors").exists():
+                role_initial = ROLE_STATE_EDITOR
+            elif _user_location_table_available() and UserLocationAssignment.objects.filter(user=self.instance).exists():
+                role_initial = ROLE_STATE_EDITOR
         self.fields['role'].initial = role_initial or ROLE_CONTRIBUTOR
 
     def _save_locations(self):
