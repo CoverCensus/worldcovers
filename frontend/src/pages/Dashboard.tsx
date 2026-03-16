@@ -52,6 +52,24 @@ function getCsrfTokenFromCookie(): string | null {
 
 const noImageClassName = "w-full h-full min-w-0 min-h-0 object-cover bg-muted";
 
+type DashboardTab = "submissions" | "suggestions";
+
+interface DashboardItem {
+  id: number;
+  name: string;
+  town: string;
+  state: string;
+  dateRange?: string;
+  size?: string;
+  type?: string;
+  color?: string;
+  status: string;
+  created_at: string;
+  description?: string;
+  image_url: string | null;
+  postmark_id?: number | null;
+}
+
 /** Build compact page numbers for pagination (shared with Catalog Search) */
 function getPaginationPages(currentPage: number, totalPages: number): (number | "ellipsis")[] {
   const delta = 2;
@@ -100,11 +118,17 @@ function ImageOrPlaceholder({
   return <img src={src} alt={alt} className={className} onError={() => setError(true)} />;
 }
 
-const Dashboard = () => {
+interface DashboardProps {
+  initialTab?: DashboardTab;
+}
+
+const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const user = useAuth();
-  const [submissions, setSubmissions] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<DashboardTab>(initialTab);
+
+  const [submissions, setSubmissions] = useState<DashboardItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"gallery" | "list">("list");
@@ -113,6 +137,13 @@ const Dashboard = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [goToPageInput, setGoToPageInput] = useState("");
   const itemsPerPage = 10;
+
+  // Suggestions state
+  const [suggestions, setSuggestions] = useState<DashboardItem[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(true);
+  const [suggestionsPage, setSuggestionsPage] = useState(1);
+  const [suggestionsGoToInput, setSuggestionsGoToInput] = useState("");
+  const suggestionsPageSize = 10;
 
   // Filter states (mirror Catalog Search)
   const [searchQuery, setSearchQuery] = useState("");
@@ -130,12 +161,9 @@ const Dashboard = () => {
   const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } =
     useFilterOptions({ assignedStatesOnly: true });
 
-  // Total count from backend (all dashboard records, unfiltered)
-  const [apiTotalCount, setApiTotalCount] = useState(0);
-
   // Disable filters while submissions or filter options are loading
   const filtersDisabled = loading || isLoadingFilters;
-  // Fetch only current user's catalog submissions (from Django postmarks API)
+  // Fetch current user's contributions for "My Submissions"
   useEffect(() => {
     if (!user) {
       setSubmissions([]);
@@ -146,8 +174,13 @@ const Dashboard = () => {
     const fetchSubmissions = async () => {
       setLoading(true);
       try {
-        const apiUrl = getPostmarksApiUrl();
-        if (!apiUrl) {
+        const apiEnv = import.meta.env.VITE_API_URL;
+        const apiBase =
+          apiEnv && typeof apiEnv === "string" && apiEnv.trim() !== ""
+            ? apiEnv.trim().replace(/\/+$/, "")
+            : null;
+
+        if (!apiBase) {
           toast({
             title: "Configuration error",
             description: "VITE_API_URL is not set, cannot load submissions.",
@@ -156,64 +189,79 @@ const Dashboard = () => {
           setSubmissions([]);
           return;
         }
-        const base = apiUrl.replace(/\/+$/, "");
 
-        const params = new URLSearchParams({
-          page: String(currentPage),
-          page_size: String(itemsPerPage),
+        const res = await fetch(`${apiBase}/api/contributions/`, {
+          method: "GET",
+          credentials: "include",
+          headers: { Accept: "application/json" },
         });
-
-        const url = `${base}/my-dashboard/?${params.toString()}`;
-        const res = await fetch(url, {credentials: "include"});
         if (!res.ok) {
           throw new Error(`API error: ${res.status} ${res.statusText}`);
         }
-        const data = await res.json();
-        const results = Array.isArray(data.results) ? data.results : [];
-        const mapped = results.map((item: any) => {
-          // Prefer list-style mainImage when present; otherwise derive from images[] (full serializer).
+        const data: any[] = await res.json();
+        if (!Array.isArray(data)) {
+          setSubmissions([]);
+          return;
+        }
+        const mapped: DashboardItem[] = data.map((c) => {
+          const state = (c.stateDisplay || c.state_display || c.submittedData?.state || "").trim();
+          const town = (c.townDisplay || c.town_display || c.submittedData?.town || "").trim();
+
           const mainImageFromList =
-            (item as any).mainImage?.imageUrl ??
-            (typeof (item as any).mainImage === "string" ? (item as any).mainImage : null);
+            c.mainImage?.imageUrl ??
+            (typeof c.mainImage === "string" ? c.mainImage : null);
 
-          const mainImageFromImages =
-            (item as any).images?.find?.((img: any) => img.displayOrder === 0)?.imageUrl ??
-            ((item as any).images && (item as any).images.length > 0
-              ? (item as any).images[0].imageUrl
-              : null);
-
-          const imageUrl = normalizeImageUrl(mainImageFromList ?? mainImageFromImages);
+          const imageUrl = normalizeImageUrl(
+            mainImageFromList ??
+              c.imageUrl ??
+              c.image_url ??
+              null,
+          );
 
           const displayName =
             [
-              [item.town, item.state].filter(Boolean).join(", "),
-              item.shapeName,
+              [town, state].filter(Boolean).join(", "),
+              c.shapeName || c.typeDisplay || c.type || c.submittedData?.type,
             ]
               .filter(Boolean)
-              .join(" — ") || item.postmarkKey;
+              .join(" — ") || `Submission #${c.id}`;
+
+          const dateRange =
+            c.dateRange ||
+            c.date_range ||
+            c.submittedData?.dateRange ||
+            (c.submittedData?.firstSeen
+              ? c.submittedData.lastSeen
+                ? `${c.submittedData.firstSeen}-${c.submittedData.lastSeen}`
+                : String(c.submittedData.firstSeen)
+              : "");
 
           return {
-            // API uses camelCase keys via Postmark* serializers + renderer
-            id: item.postmarkId,
+            id: c.id,
             name: displayName,
-            town: item.town || "",
-            state: item.state || "",
-            date_range: item.dateRange || "",
-            size: item.sizeDisplay || "",
-            type: item.shapeName || "",
-            color: item.colorsDisplay || "",
-            is_manuscript: item.isManuscript === true,
-            status: item.contributionApprovalStatus || "pending",
-            created_at: item.createdDate || new Date().toISOString(),
-            description: undefined,
+            town,
+            state,
+            dateRange,
+            size: c.sizeDisplay || c.size || c.submittedData?.dimensions || "",
+            type: c.shapeName || c.typeDisplay || c.type || c.submittedData?.type || "",
+            color: c.colorsDisplay || c.colorDisplay || c.color || c.submittedData?.color || "",
+            status: String(c.status || "pending"),
+            created_at: String(c.createdAt || c.created_at || ""),
+            description: c.description || c.submittedData?.description || "",
             image_url: imageUrl,
-          };
+            postmark_id:
+              typeof c.postmarkId === "number"
+                ? c.postmarkId
+                : typeof c.postmark_id === "number"
+                  ? c.postmark_id
+                  : typeof c.catalogPostmarkId === "number"
+                    ? c.catalogPostmarkId
+                    : typeof c.postmark?.id === "number"
+                      ? c.postmark.id
+                      : null,
+          } as DashboardItem;
         });
         setSubmissions(mapped);
-
-        const total =
-          typeof data.count === "number" && !Number.isNaN(data.count) ? data.count : mapped.length;
-        setApiTotalCount(total);
       } catch (error: unknown) {
         toast({
           title: "Error loading submissions",
@@ -226,31 +274,135 @@ const Dashboard = () => {
     };
 
     fetchSubmissions();
-  }, [user, toast, currentPage, itemsPerPage]);
+  }, [user, toast]);
+
+  // Fetch suggestions (contributions) for the current user
+  useEffect(() => {
+    const apiEnv = import.meta.env.VITE_API_URL;
+    const apiBase =
+      apiEnv && typeof apiEnv === "string" && apiEnv.trim() !== ""
+        ? apiEnv.trim().replace(/\/+$/, "")
+        : null;
+
+    if (!apiBase || !user) {
+      setSuggestions([]);
+      setSuggestionsLoading(false);
+      return;
+    }
+
+    const load = async () => {
+      setSuggestionsLoading(true);
+      try {
+        const res = await fetch(`${apiBase}/api/contributions/`, {
+          method: "GET",
+          credentials: "include",
+          headers: { Accept: "application/json" },
+        });
+        if (!res.ok) {
+          throw new Error(`API error: ${res.status} ${res.statusText}`);
+        }
+        const data: any[] = await res.json();
+        if (!Array.isArray(data)) {
+          setSuggestions([]);
+          return;
+        }
+        const mapped: DashboardItem[] = data.map((c) => {
+          const state = (c.stateDisplay || c.state_display || c.submittedData?.state || "").trim();
+          const town = (c.townDisplay || c.town_display || c.submittedData?.town || "").trim();
+
+          const mainImageFromList =
+            c.mainImage?.imageUrl ??
+            (typeof c.mainImage === "string" ? c.mainImage : null);
+
+          const imageUrl = normalizeImageUrl(
+            mainImageFromList ??
+              c.imageUrl ??
+              c.image_url ??
+              null,
+          );
+
+          const displayName =
+            [
+              [town, state].filter(Boolean).join(", "),
+              c.shapeName || c.typeDisplay || c.type || c.submittedData?.type,
+            ]
+              .filter(Boolean)
+              .join(" — ") || `Suggestion #${c.id}`;
+
+          const dateRange =
+            c.dateRange ||
+            c.date_range ||
+            c.submittedData?.dateRange ||
+            (c.submittedData?.firstSeen
+              ? c.submittedData.lastSeen
+                ? `${c.submittedData.firstSeen}-${c.submittedData.lastSeen}`
+                : String(c.submittedData.firstSeen)
+              : "");
+
+          return {
+            id: c.id,
+            name: displayName,
+            town,
+            state,
+            dateRange,
+            size: c.sizeDisplay || c.size || c.submittedData?.dimensions || "",
+            type: c.shapeName || c.typeDisplay || c.type || c.submittedData?.type || "",
+            color: c.colorsDisplay || c.colorDisplay || c.color || c.submittedData?.color || "",
+            status: String(c.status || "pending"),
+            created_at: String(c.createdAt || c.created_at || ""),
+            description: c.description || c.submittedData?.description || "",
+            image_url: imageUrl,
+            postmark_id:
+              typeof c.postmarkId === "number"
+                ? c.postmarkId
+                : typeof c.postmark_id === "number"
+                  ? c.postmark_id
+                  : typeof c.catalogPostmarkId === "number"
+                    ? c.catalogPostmarkId
+                    : typeof c.postmark?.id === "number"
+                      ? c.postmark.id
+                      : null,
+          } as DashboardItem;
+        });
+        setSuggestions(mapped);
+      } catch (err) {
+        toast({
+          title: "Error loading suggestions",
+          description: err instanceof Error ? err.message : "Could not load your suggestions.",
+          variant: "destructive",
+        });
+        setSuggestions([]);
+      } finally {
+        setSuggestionsLoading(false);
+      }
+    };
+
+    load();
+  }, [user, toast]);
 
   const handleDeleteSubmission = async () => {
     if (!deleteTarget) return;
-    const submissionId = deleteTarget.id as number | undefined;
-    if (!submissionId) return;
+    const postmarkId = deleteTarget.postmark_id as number | undefined;
+    if (!postmarkId) return;
 
     const apiUrl = getPostmarksApiUrl();
     if (!apiUrl) {
       toast({
         title: "Configuration error",
-        description: "VITE_API_URL is not set, cannot delete submission.",
+        description: "VITE_API_URL is not set, cannot delete catalog entry.",
         variant: "destructive",
       });
       return;
     }
     const base = apiUrl.replace(/\/+$/, "");
-    const url = `${base}/${submissionId}/`;
+    const url = `${base}/${postmarkId}/`;
     const csrfToken = getCsrfTokenFromCookie();
     const headers: HeadersInit = {};
     if (csrfToken) {
       headers["X-CSRFToken"] = csrfToken;
     }
     try {
-      setDeletingId(submissionId);
+      setDeletingId(postmarkId);
       const res = await fetch(url, {
         method: "DELETE",
         credentials: "include",
@@ -259,15 +411,20 @@ const Dashboard = () => {
       if (!res.ok) {
         throw new Error(`Delete failed: ${res.status} ${res.statusText}`);
       }
-      setSubmissions(prev => prev.filter(s => s.id !== submissionId));
+      // Keep the submission row but clear the catalog link
+      setSubmissions(prev =>
+        prev.map((s) =>
+          s.postmark_id === postmarkId ? { ...s, postmark_id: null } : s,
+        ),
+      );
       setDeleteTarget(null);
       toast({
-        title: "Submission deleted",
-        description: "The catalog entry has been removed.",
+        title: "Catalog entry deleted",
+        description: "The catalog entry linked to this submission has been removed.",
       });
     } catch (error: unknown) {
       toast({
-        title: "Could not delete submission",
+        title: "Could not delete catalog entry",
         description: error instanceof Error ? error.message : "Please try again or contact an admin.",
         variant: "destructive",
       });
@@ -322,42 +479,24 @@ const Dashboard = () => {
     dateTo,
   ]);
 
-  const anyFilterActive =
-    searchQuery.trim() !== "" ||
-    statusFilter !== "all" ||
-    stateFilter !== "all" ||
-    townFilter.trim() !== "" ||
-    typeFilter !== "all" ||
-    colorFilter !== "all" ||
-    dateFrom !== "" ||
-    dateTo !== "";
-
-  const effectiveTotalCount =
-    anyFilterActive && filteredSubmissions.length > 0
-      ? filteredSubmissions.length
-      : apiTotalCount || filteredSubmissions.length;
+  const effectiveTotalCount = filteredSubmissions.length;
 
   const totalPages = Math.max(1, Math.ceil(effectiveTotalCount / itemsPerPage));
 
-  let paginatedSubmissions = filteredSubmissions;
+  let paginatedSubmissions: DashboardItem[] = [];
   let pageStart = 0;
   let pageEnd = 0;
 
   if (effectiveTotalCount === 0) {
-    paginatedSubmissions = filteredSubmissions;
+    paginatedSubmissions = [];
     pageStart = 0;
     pageEnd = 0;
-  } else if (anyFilterActive) {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    paginatedSubmissions = filteredSubmissions.slice(startIndex, endIndex);
-    pageStart = Math.min(startIndex + 1, filteredSubmissions.length);
-    pageEnd = Math.min(endIndex, filteredSubmissions.length);
   } else {
-    // No filters: backend already paginates, so use current page as-is
-    paginatedSubmissions = filteredSubmissions;
-    pageStart = (currentPage - 1) * itemsPerPage + 1;
-    pageEnd = Math.min(currentPage * itemsPerPage, effectiveTotalCount);
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = Math.min(startIndex + itemsPerPage, filteredSubmissions.length);
+    paginatedSubmissions = filteredSubmissions.slice(startIndex, endIndex);
+    pageStart = startIndex + 1;
+    pageEnd = endIndex;
   }
 
   const getStatusBadge = (status: string) => {
@@ -373,9 +512,71 @@ const Dashboard = () => {
     }
   };
 
-  // Reset to first page when filters change
+  // Reset submissions pagination when filters change
   useEffect(() => {
     setCurrentPage(1);
+  }, [searchQuery, statusFilter, stateFilter, townFilter, typeFilter, colorFilter, dateFrom, dateTo]);
+
+  // Suggestions derived state – reuse same filter semantics as submissions
+  const filteredSuggestions = useMemo(() => {
+    return suggestions.filter((suggestion) => {
+      // Text search (name, town, state, type, color)
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const nameMatch =
+          suggestion.name != null && String(suggestion.name).toLowerCase().includes(q);
+        if (!nameMatch) return false;
+      }
+
+      // Status filter
+      if (statusFilter !== "all" && suggestion.status !== statusFilter) return false;
+
+      // State filter
+      if (stateFilter !== "all" && suggestion.state !== stateFilter) return false;
+
+      // Town filter
+      if (townFilter.trim()) {
+        const tq = townFilter.trim().toLowerCase();
+        if (!suggestion.town || !suggestion.town.toLowerCase().includes(tq)) return false;
+      }
+
+      // Type filter
+      if (typeFilter !== "all" && suggestion.type !== typeFilter) return false;
+
+      // Color filter
+      if (colorFilter !== "all" && suggestion.color !== colorFilter) return false;
+
+      // Created date range filter
+      if (dateFrom && new Date(suggestion.created_at) < new Date(dateFrom)) return false;
+      if (dateTo && new Date(suggestion.created_at) > new Date(dateTo)) return false;
+
+      return true;
+    });
+  }, [
+    suggestions,
+    searchQuery,
+    statusFilter,
+    stateFilter,
+    townFilter,
+    typeFilter,
+    colorFilter,
+    dateFrom,
+    dateTo,
+  ]);
+
+  const suggestionsTotal = filteredSuggestions.length;
+  const suggestionsTotalPages = Math.max(1, Math.ceil(suggestionsTotal / suggestionsPageSize));
+  const suggestionsStartIndex = (suggestionsPage - 1) * suggestionsPageSize;
+  const suggestionsPageItems = filteredSuggestions.slice(
+    suggestionsStartIndex,
+    suggestionsStartIndex + suggestionsPageSize,
+  );
+  const suggestionsPageStart = suggestionsTotal === 0 ? 0 : suggestionsStartIndex + 1;
+  const suggestionsPageEnd = Math.min(suggestionsStartIndex + suggestionsPageSize, suggestionsTotal);
+
+  // Reset suggestions pagination when shared filters change
+  useEffect(() => {
+    setSuggestionsPage(1);
   }, [searchQuery, statusFilter, stateFilter, townFilter, typeFilter, colorFilter, dateFrom, dateTo]);
 
   return (
@@ -384,17 +585,41 @@ const Dashboard = () => {
 
       <div className="flex-1 bg-background">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="mb-8">
-            <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">
-              My Submissions
-            </h1>
-            <p className="text-muted-foreground">
-            View and track your contributions and their status
-            </p>
+          <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">
+                Contributor Dashboard
+              </h1>
+              <p className="text-muted-foreground">
+                View and track your submissions and suggestions.
+              </p>
+            </div>
+
+            <div className="inline-flex rounded-md border border-border bg-card p-1">
+              <Button
+                type="button"
+                variant={activeTab === "submissions" ? "secondary" : "ghost"}
+                size="sm"
+                className="rounded-r-none"
+                onClick={() => setActiveTab("submissions")}
+              >
+                My Submissions
+              </Button>
+              <Button
+                type="button"
+                variant={activeTab === "suggestions" ? "secondary" : "ghost"}
+                size="sm"
+                className="rounded-l-none"
+                onClick={() => setActiveTab("suggestions")}
+              >
+                My Suggestions
+              </Button>
+            </div>
           </div>
 
-          <div className="flex flex-col lg:flex-row gap-6">
-            <aside className={`lg:w-80 space-y-6 ${filtersOpen ? "block" : "hidden lg:block"}`}>
+          {activeTab === "submissions" && (
+            <div className="flex flex-col lg:flex-row gap-6">
+              <aside className={`lg:w-80 space-y-6 ${filtersOpen ? "block" : "hidden lg:block"}`}>
               <Card className="shadow-archival-md">
                 <CardContent className="pt-6 space-y-4">
                   <div className="flex items-center justify-between mb-4">
@@ -580,9 +805,9 @@ const Dashboard = () => {
                   </Button>
                 </CardContent>
               </Card>
-            </aside>
+              </aside>
 
-            <main className="flex-1 space-y-4">
+              <main className="flex-1 space-y-4">
               {/* Results Header */}
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
                 <div>
@@ -640,7 +865,7 @@ const Dashboard = () => {
                 </div>
               </div>
 
-              {/* Submissions List */}
+              {/* Submissions List (backed by contributions; can manage linked catalog entry when present) */}
               {loading ? (
                  <div className="flex flex-col justify-center items-center gap-3 py-12 text-muted-foreground">
                  <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
@@ -666,12 +891,7 @@ const Dashboard = () => {
                   {paginatedSubmissions.map((submission) => (
                     <Card
                       key={submission.id}
-                      className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
-                      onClick={() =>
-                        navigate(`/record/${submission.id}`, {
-                          state: { fromDashboard: true },
-                        })
-                      }
+                      className="shadow-archival-md hover:shadow-archival-lg transition-shadow"
                     >
                       <CardContent className="p-6">
                         <div className="flex gap-6 md:flex-row flex-col">
@@ -736,41 +956,38 @@ const Dashboard = () => {
                               </p>
                             )}
 
-                            <div className="mt-3 flex gap-2 justify-end">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  navigate(`/record/${submission.id}`, {
-                                    state: { fromDashboard: true },
-                                  });
-                                }}
-                              >
-                                View
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  navigate(`/edit/${submission.id}`, {
-                                    state: { fromDashboard: true, fromDashboardDirect: true },
-                                  });
-                                }}
-                              >
-                                Edit
-                              </Button>
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setDeleteTarget(submission);
-                                }}
-                              >
-                                Delete
-                              </Button>
+                            <div className="mt-3 flex flex-wrap gap-2 justify-end">
+                              {submission.postmark_id && (
+                                <>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() =>
+                                      navigate(`/record/api-${submission.postmark_id}`)
+                                    }
+                                  >
+                                    View Catalog Entry
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() =>
+                                      navigate(`/edit/api-${submission.postmark_id}`, {
+                                        state: { fromDashboard: true, fromDashboardDirect: true },
+                                      })
+                                    }
+                                  >
+                                    Edit Catalog Entry
+                                  </Button>
+                                  <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    onClick={() => setDeleteTarget(submission)}
+                                  >
+                                    Delete Catalog Entry
+                                  </Button>
+                                </>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -783,12 +1000,7 @@ const Dashboard = () => {
                   {paginatedSubmissions.map((submission) => (
                     <Card
                       key={submission.id}
-                      className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden"
-                      onClick={() =>
-                        navigate(`/record/${submission.id}`, {
-                          state: { fromDashboard: true },
-                        })
-                      }
+                      className="shadow-archival-md hover:shadow-archival-lg transition-shadow overflow-hidden"
                     >
                       <ImageOrPlaceholder
                         src={submission.image_url}
@@ -842,41 +1054,38 @@ const Dashboard = () => {
                           </div>
                         </div>
 
-                        <div className="mt-2 flex gap-2 justify-center">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigate(`/record/${submission.id}`, {
-                                state: { fromDashboard: true },
-                              });
-                            }}
-                          >
-                            View
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigate(`/edit/${submission.id}`, {
-                                state: { fromDashboard: true, fromDashboardDirect: true },
-                              });
-                            }}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteTarget(submission);
-                            }}
-                          >
-                            Delete
-                          </Button>
+                        <div className="mt-2 flex flex-wrap gap-2 justify-center">
+                          {submission.postmark_id && (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  navigate(`/record/api-${submission.postmark_id}`)
+                                }
+                              >
+                                View Catalog Entry
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  navigate(`/edit/api-${submission.postmark_id}`, {
+                                    state: { fromDashboard: true, fromDashboardDirect: true },
+                                  })
+                                }
+                              >
+                                Edit Catalog Entry
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => setDeleteTarget(submission)}
+                              >
+                                Delete Catalog Entry
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </CardContent>
                     </Card>
@@ -985,8 +1194,539 @@ const Dashboard = () => {
                   </div>
                 </div>
               )}
-            </main>
-          </div>
+              </main>
+            </div>
+          )}
+
+          {activeTab === "suggestions" && (
+            <div className="flex flex-col lg:flex-row gap-6">
+              <aside className={`lg:w-80 space-y-6 ${filtersOpen ? "block" : "hidden lg:block"}`}>
+                <Card className="shadow-archival-md">
+                  <CardContent className="pt-6 space-y-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="font-heading text-lg font-semibold">Filters</h2>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="lg:hidden"
+                        onClick={() => setFiltersOpen(false)}
+                      >
+                        Close
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Search</Label>
+                      <div className="relative">
+                        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          type="search"
+                          placeholder="Name, town, state, type..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="pl-9 bg-background"
+                          aria-label="Search suggestions by name, town, state, or type"
+                          disabled={filtersDisabled}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Status</Label>
+                      <Select value={statusFilter} onValueChange={setStatusFilter} disabled={filtersDisabled}>
+                        <SelectTrigger className="bg-background">
+                          <SelectValue placeholder="All Statuses" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Statuses</SelectItem>
+                          <SelectItem value="pending">Pending</SelectItem>
+                          <SelectItem value="approved">Approved</SelectItem>
+                          <SelectItem value="rejected">Rejected</SelectItem>
+                          <SelectItem value="revision">Needs Revision</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="state-suggestions">State</Label>
+                      <SearchableSelect
+                        id="state-suggestions"
+                        value={stateFilter}
+                        onValueChange={setStateFilter}
+                        placeholder="All States"
+                        allOption={{ value: "all", label: "All States" }}
+                        options={Array.isArray(stateOptions) ? stateOptions : []}
+                        loading={isLoadingFilters}
+                        error={!!filterError}
+                        errorMessage="Failed to load states"
+                        searchPlaceholder="Search states..."
+                        emptyMessage="No state found."
+                        aria-label="Filter suggestions by state"
+                        disabled={filtersDisabled}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="town-suggestions">Town</Label>
+                      <Input
+                        id="town-suggestions"
+                        placeholder="Enter town name..."
+                        value={townFilter}
+                        onChange={(e) => setTownFilter(e.target.value)}
+                        className="bg-background"
+                        disabled={filtersDisabled}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="type-suggestions">Postmark Type</Label>
+                      <SearchableSelect
+                        id="type-suggestions"
+                        value={typeFilter}
+                        onValueChange={setTypeFilter}
+                        placeholder="All Types"
+                        allOption={{ value: "all", label: "All Types" }}
+                        options={Array.isArray(shapeOptions) ? shapeOptions : []}
+                        loading={isLoadingFilters}
+                        error={!!filterError}
+                        errorMessage="Failed to load types"
+                        searchPlaceholder="Search types..."
+                        emptyMessage="No type found."
+                        aria-label="Filter suggestions by postmark type"
+                        disabled={filtersDisabled}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="color-suggestions">Color</Label>
+                      <SearchableSelect
+                        id="color-suggestions"
+                        value={colorFilter}
+                        onValueChange={setColorFilter}
+                        placeholder="All Colors"
+                        allOption={{ value: "all", label: "All Colors" }}
+                        options={Array.isArray(colorOptions) ? colorOptions : []}
+                        loading={isLoadingFilters}
+                        error={!!filterError}
+                        errorMessage="Failed to load colors"
+                        searchPlaceholder="Search colors..."
+                        emptyMessage="No color found."
+                        aria-label="Filter suggestions by color"
+                        disabled={filtersDisabled}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4">
+                      <div className="space-y-2">
+                        <Label>Submitted Date From</Label>
+                        <div className="relative">
+                          <Input
+                            type="date"
+                            value={dateFrom}
+                            onChange={(e) => setDateFrom(e.target.value)}
+                            className="bg-background pr-10 date-input-hide-native-icon"
+                            disabled={filtersDisabled}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                            disabled={filtersDisabled}
+                            aria-label="Open date picker"
+                          >
+                            <Calendar className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Submitted Date To</Label>
+                        <div className="relative">
+                          <Input
+                            type="date"
+                            value={dateTo}
+                            onChange={(e) => setDateTo(e.target.value)}
+                            className="bg-background pr-10 date-input-hide-native-icon"
+                            disabled={filtersDisabled}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                            disabled={filtersDisabled}
+                            aria-label="Open date picker"
+                          >
+                            <Calendar className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => {
+                        setSearchQuery("");
+                        setStatusFilter("all");
+                        setStateFilter("all");
+                        setTownFilter("");
+                        setTypeFilter("all");
+                        setColorFilter("all");
+                        setDateFrom("");
+                        setDateTo("");
+                      }}
+                      disabled={filtersDisabled}
+                    >
+                      Clear Filters
+                    </Button>
+                  </CardContent>
+                </Card>
+              </aside>
+
+              <main className="flex-1 space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      {suggestionsTotal === 0 ? (
+                        "0 suggestions"
+                      ) : (
+                        <>
+                          Showing{" "}
+                          <span className="font-semibold text-foreground">
+                            {suggestionsPageStart.toLocaleString()}-{suggestionsPageEnd.toLocaleString()}
+                          </span>{" "}
+                          of{" "}
+                          <span className="font-semibold text-foreground">
+                            {suggestionsTotal.toLocaleString()}
+                          </span>{" "}
+                          suggestions
+                        </>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="lg:hidden"
+                      onClick={() => setFiltersOpen((open) => !open)}
+                    >
+                      <SlidersHorizontal className="h-4 w-4 mr-2" />
+                      Filters
+                    </Button>
+                    <div className="flex border border-border rounded-md">
+                      <Button
+                        variant={viewMode === "list" ? "secondary" : "ghost"}
+                        size="sm"
+                        onClick={() => setViewMode("list")}
+                        className="rounded-r-none"
+                      >
+                        <List className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant={viewMode === "gallery" ? "secondary" : "ghost"}
+                        size="sm"
+                        onClick={() => setViewMode("gallery")}
+                        className="rounded-l-none"
+                      >
+                        <Grid3x3 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {suggestionsLoading ? (
+                  <div className="flex flex-col justify-center items-center gap-3 py-12 text-muted-foreground">
+                    <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
+                    <p>Loading suggestions...</p>
+                  </div>
+                ) : filteredSuggestions.length === 0 ? (
+                  <Card className="flex-1 flex items-center justify-center min-h-[200px]">
+                    <CardContent className="text-center">
+                      <p className="text-muted-foreground mb-4">
+                        {suggestions.length === 0
+                          ? "You have not submitted any suggestions yet."
+                          : "No suggestions found matching your filters."}
+                      </p>
+                      {suggestions.length === 0 && (
+                        <Button variant="outline" onClick={() => navigate("/contribute")}>
+                          Go to Contribute
+                        </Button>
+                      )}
+                    </CardContent>
+                  </Card>
+                ) : viewMode === "list" ? (
+                  <div className="space-y-4">
+                    {suggestionsPageItems.map((item) => (
+                      <Card
+                        key={item.id}
+                        className="shadow-archival-md hover:shadow-archival-lg transition-shadow"
+                      >
+                        <CardContent className="p-6">
+                          <div className="flex gap-6 md:flex-row flex-col">
+                            <ImageOrPlaceholder
+                              src={item.image_url}
+                              alt={item.name}
+                              className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border shrink-0"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-2 mb-2">
+                                <h3 className="font-heading text-xl font-semibold text-foreground">
+                                  {item.name}
+                                </h3>
+                                {getStatusBadge(item.status)}
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                                {item.town && (
+                                  <div>
+                                    <span className="text-muted-foreground">Town:</span>{" "}
+                                    <span className="text-foreground">{item.town}</span>
+                                  </div>
+                                )}
+                                {item.state && (
+                                  <div>
+                                    <span className="text-muted-foreground">State:</span>{" "}
+                                    <span className="text-foreground">{item.state}</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                                {item.dateRange && (
+                                  <div>
+                                    <span className="text-muted-foreground">Date Seen:</span>{" "}
+                                    <span className="text-foreground">{item.dateRange}</span>
+                                  </div>
+                                )}
+                                {item.size && (
+                                  <div>
+                                    <span className="text-muted-foreground">Size:</span>{" "}
+                                    <span className="text-foreground">{item.size}</span>
+                                  </div>
+                                )}
+                                {item.color && (
+                                  <div>
+                                    <span className="text-muted-foreground">Color:</span>{" "}
+                                    <span className="text-foreground">{item.color}</span>
+                                  </div>
+                                )}
+                                <div>
+                                  <span className="text-muted-foreground">Submitted:</span>{" "}
+                                  <span className="text-foreground">
+                                    {new Date(item.created_at).toLocaleDateString()}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {item.description && (
+                                <p className="text-sm text-muted-foreground line-clamp-2 mt-2">
+                                  {item.description}
+                                </p>
+                              )}
+
+                              <div className="mt-3 flex gap-2 justify-end">
+                                {item.postmark_id && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => navigate(`/record/api-${item.postmark_id}`)}
+                                  >
+                                    View Catalog Entry
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {suggestionsPageItems.map((item) => (
+                      <Card
+                        key={item.id}
+                        className="shadow-archival-md hover:shadow-archival-lg transition-shadow overflow-hidden"
+                      >
+                        <ImageOrPlaceholder
+                          src={item.image_url}
+                          alt={item.name}
+                          className="w-full h-48 object-cover"
+                        />
+                        <CardContent className="p-4 flex flex-col gap-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <h3 className="font-heading text-lg font-semibold text-foreground">
+                              {item.name}
+                            </h3>
+                            {getStatusBadge(item.status)}
+                          </div>
+
+                          <div className="space-y-1 text-sm flex-1">
+                            {item.town && (
+                              <div>
+                                <span className="text-muted-foreground">Town:</span>{" "}
+                                <span className="text-foreground">{item.town}</span>
+                              </div>
+                            )}
+                            {item.state && (
+                              <div>
+                                <span className="text-muted-foreground">State:</span>{" "}
+                                <span className="text-foreground">{item.state}</span>
+                              </div>
+                            )}
+                            {item.dateRange && (
+                              <div>
+                                <span className="text-muted-foreground">Date Seen:</span>{" "}
+                                <span className="text-foreground">{item.dateRange}</span>
+                              </div>
+                            )}
+                            {item.size && (
+                              <div>
+                                <span className="text-muted-foreground">Size:</span>{" "}
+                                <span className="text-foreground">{item.size}</span>
+                              </div>
+                            )}
+                            {item.color && (
+                              <div>
+                                <span className="text-muted-foreground">Color:</span>{" "}
+                                <span className="text-foreground">{item.color}</span>
+                              </div>
+                            )}
+                            <div>
+                              <span className="text-muted-foreground">Submitted:</span>{" "}
+                              <span className="text-foreground">
+                                {new Date(item.created_at).toLocaleDateString()}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="mt-2 flex gap-2 justify-center">
+                            {item.postmark_id && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => navigate(`/record/api-${item.postmark_id}`)}
+                              >
+                                View Catalog Entry
+                              </Button>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+
+                {suggestionsTotalPages > 1 && !suggestionsLoading && filteredSuggestions.length > 0 && (
+                  <div className="mt-8 flex flex-col items-center gap-4">
+                    <Pagination>
+                      <PaginationContent>
+                        <PaginationItem>
+                          <PaginationPrevious
+                            onClick={() => {
+                              setSuggestionsPage((p) => Math.max(1, p - 1));
+                              window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                            }}
+                            className={
+                              suggestionsPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"
+                            }
+                          />
+                        </PaginationItem>
+
+                        {getPaginationPages(suggestionsPage, suggestionsTotalPages).map((p, i) =>
+                          p === "ellipsis" ? (
+                            <PaginationItem key={`ellipsis-${i}`}>
+                              <PaginationEllipsis />
+                            </PaginationItem>
+                          ) : (
+                            <PaginationItem key={p}>
+                              <PaginationLink
+                                onClick={() => {
+                                  setSuggestionsPage(p);
+                                  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                                }}
+                                isActive={suggestionsPage === p}
+                                className="cursor-pointer"
+                              >
+                                {p}
+                              </PaginationLink>
+                            </PaginationItem>
+                          ),
+                        )}
+
+                        <PaginationItem>
+                          <PaginationNext
+                            onClick={() => {
+                              setSuggestionsPage((p) => Math.min(suggestionsTotalPages, p + 1));
+                              window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                            }}
+                            className={
+                              suggestionsPage === suggestionsTotalPages
+                                ? "pointer-events-none opacity-50"
+                                : "cursor-pointer"
+                            }
+                          />
+                        </PaginationItem>
+                      </PaginationContent>
+                    </Pagination>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Go to page</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={suggestionsTotalPages}
+                        placeholder="Page"
+                        value={suggestionsGoToInput}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === "") {
+                            setSuggestionsGoToInput("");
+                            return;
+                          }
+                          const n = parseInt(raw, 10);
+                          if (Number.isNaN(n)) return;
+                          const clamped = Math.max(1, Math.min(suggestionsTotalPages, n));
+                          setSuggestionsGoToInput(String(clamped));
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            const n = parseInt(suggestionsGoToInput, 10);
+                            if (!Number.isNaN(n)) {
+                              setSuggestionsPage(Math.max(1, Math.min(suggestionsTotalPages, n)));
+                              window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                              setSuggestionsGoToInput("");
+                            }
+                          }
+                        }}
+                        className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        aria-label="Go to page number"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9"
+                        onClick={() => {
+                          const n = parseInt(suggestionsGoToInput, 10);
+                          if (!Number.isNaN(n)) {
+                            setSuggestionsPage(Math.max(1, Math.min(suggestionsTotalPages, n)));
+                            window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                            setSuggestionsGoToInput("");
+                          }
+                        }}
+                      >
+                        Go
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </main>
+            </div>
+          )}
       </div>
       <Footer />
 
