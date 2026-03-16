@@ -411,12 +411,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       if (!res.ok) {
         throw new Error(`Delete failed: ${res.status} ${res.statusText}`);
       }
-      // Keep the submission row but clear the catalog link
-      setSubmissions(prev =>
-        prev.map((s) =>
-          s.postmark_id === postmarkId ? { ...s, postmark_id: null } : s,
-        ),
-      );
+      // Remove this submission from the visible list
+      setSubmissions(prev => prev.filter((s) => s.id !== deleteTarget.id));
       setDeleteTarget(null);
       toast({
         title: "Catalog entry deleted",
@@ -963,28 +959,28 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                     variant="outline"
                                     size="sm"
                                     onClick={() =>
-                                      navigate(`/record/api-${submission.postmark_id}`)
+                                      navigate(`/record/${submission.postmark_id}`)
                                     }
                                   >
-                                    View Catalog Entry
+                                    View
                                   </Button>
                                   <Button
                                     variant="outline"
                                     size="sm"
                                     onClick={() =>
-                                      navigate(`/edit/api-${submission.postmark_id}`, {
+                                      navigate(`/edit/${submission.postmark_id}`, {
                                         state: { fromDashboard: true, fromDashboardDirect: true },
                                       })
                                     }
                                   >
-                                    Edit Catalog Entry
+                                    Edit
                                   </Button>
                                   <Button
                                     variant="destructive"
                                     size="sm"
                                     onClick={() => setDeleteTarget(submission)}
                                   >
-                                    Delete Catalog Entry
+                                    Delete
                                   </Button>
                                 </>
                               )}
@@ -1061,7 +1057,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                 variant="outline"
                                 size="sm"
                                 onClick={() =>
-                                  navigate(`/record/api-${submission.postmark_id}`)
+                                  navigate(`/record/${submission.postmark_id}`)
                                 }
                               >
                                 View Catalog Entry
@@ -1070,7 +1066,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                 variant="outline"
                                 size="sm"
                                 onClick={() =>
-                                  navigate(`/edit/api-${submission.postmark_id}`, {
+                                  navigate(`/edit/${submission.postmark_id}`, {
                                     state: { fromDashboard: true, fromDashboardDirect: true },
                                   })
                                 }
