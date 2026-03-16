@@ -42,9 +42,17 @@ export interface PostmarkApiResponse {
     }
   }
   
+  /** Normalize API item (snake_case or camelCase) to PostmarkRecord. */
   function mapApiResultToRecord(item: any): PostmarkRecord {
+    const id = item.postmark_id ?? item.postmarkId;
+    const facilityName = item.facility_name ?? item.facilityName;
+    const shapeName = item.shape_name ?? item.shapeName;
+    const mainImage = item.main_image ?? item.mainImage;
+    const colorsDisplay = item.colors_display ?? item.colorsDisplay;
+    const dateRange = item.date_range ?? item.dateRange;
+    const sizeDisplayApi = item.size_display ?? item.sizeDisplay ?? item.sizeNotes;
     // Derive a human-readable size string from various possible fields
-    let sizeDisplay: string | undefined = item.sizeDisplay || item.sizeNotes || "";
+    let sizeDisplay: string | undefined = sizeDisplayApi || "";
     if (!sizeDisplay && Array.isArray(item.sizes) && item.sizes.length > 0) {
       const firstSize = item.sizes[0];
       const w = firstSize?.width;
@@ -59,20 +67,58 @@ export interface PostmarkApiResponse {
     }
   
     return {
-      id: item.postmarkId,
-      postmarkKey: item.postmarkKey,
-      facilityName: item.facilityName,
-      shapeName: item.shapeName,
-      rateLocation: item.rateLocation,
-      rateValue: item.rateValue,
-      isManuscript: item.isManuscript,
-      mainImage: item.mainImage,
-      colorsDisplay: item.colorsDisplay,
-      state: item.state,
-      dateRange: item.dateRange,
-      town: item.town,
+      id,
+      postmarkKey: item.postmark_key ?? item.postmarkKey,
+      facilityName: facilityName ?? "",
+      shapeName: shapeName ?? "",
+      rateLocation: item.rate_location ?? item.rateLocation,
+      rateValue: item.rate_value ?? item.rateValue,
+      isManuscript: item.is_manuscript ?? item.isManuscript,
+      mainImage: mainImage ?? null,
+      colorsDisplay: colorsDisplay ?? "",
+      state: item.state ?? "",
+      dateRange: dateRange ?? "",
+      town: item.town ?? "",
       sizeDisplay,
-      responsibleGroups: item.responsibleGroups ?? [],
+      responsibleGroups: item.responsible_groups ?? item.responsibleGroups ?? [],
+    };
+  }
+
+  /**
+   * Fetches a single page of catalog entries for the current user's assigned states.
+   * Used by state editors to manage (view, edit, delete) all catalog entries in their states.
+   * Requires authentication; returns paginated results.
+   */
+  export async function getAssignedCatalogPage(
+    page: number = 1,
+    pageSize: number = 10,
+    options?: { credentials?: RequestCredentials }
+  ): Promise<GetPostmarksPageResult> {
+    const apiUrl = getPostmarksApiUrl();
+    if (!apiUrl) {
+      return { results: [], count: 0, next: null, previous: null };
+    }
+    const base = apiUrl.replace(/\/+$/, "");
+    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+    const url = `${base}/my-assigned/?${params.toString()}`;
+    const res = await fetch(url, {
+      method: "GET",
+      credentials: options?.credentials ?? "include",
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      throw new Error(`Assigned catalog API error: ${res.status} ${res.statusText}`);
+    }
+    const data: PostmarkApiResponse = await res.json();
+    if (!Array.isArray(data.results)) {
+      throw new Error("Assigned catalog API: invalid response (missing results array)");
+    }
+    return {
+      results: data.results.map(mapApiResultToRecord),
+      count: data.count ?? null,
+      next: data.next ?? null,
+      previous: data.previous ?? null,
+      count_capped: data.count_capped,
     };
   }
   

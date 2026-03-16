@@ -32,6 +32,9 @@ export interface PostalFacilityOption {
   type: string;
   latitude: number | null;
   longitude: number | null;
+  /** Optional structured fields when available (e.g. Supabase source) */
+  town?: string;
+  state?: string;
 }
 
 function mapApiResultToOption(item: PostalFacilitiesApiResultItem): PostalFacilityOption {
@@ -72,6 +75,8 @@ async function getPostalFacilitiesFromSupabase(): Promise<PostalFacilityOption[]
       type: "",
       latitude: null,
       longitude: null,
+      town: town.trim(),
+      state: state.trim(),
     });
   };
 

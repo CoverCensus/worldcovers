@@ -1409,4 +1409,29 @@ class UserLocationAssignment(models.Model):
         return f"{self.user} → {self.administrative_unit}"
 
 
+class FAQEntry(TimestampedModel):
+    """
+    Simple FAQ entry for the public site, managed in Django admin
+    and exposed to the SPA via a read-only API.
+    """
+    faq_entry_id = models.AutoField(primary_key=True, db_column="FAQEntryID")
+    question = models.CharField(max_length=500, db_column="Question")
+    answer = models.TextField(db_column="Answer")
+    is_active = models.BooleanField(default=True, db_column="IsActive")
+    display_order = models.PositiveIntegerField(
+        default=0,
+        db_column="DisplayOrder",
+        help_text="Lower numbers appear first.",
+    )
+
+    class Meta:
+        db_table = "FAQEntries"
+        verbose_name = "FAQ entry"
+        verbose_name_plural = "FAQ entries"
+        ordering = ["display_order", "faq_entry_id"]
+
+    def __str__(self):
+        return self.question[:100]
+
+
 ###################################################################################################

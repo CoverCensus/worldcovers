@@ -78,6 +78,10 @@ const RecordDetail = () => {
     citationReferences?: string;
     images: (string | { imageUrl?: string })[];
     valuations?: Array<{ estimatedValue?: string; condition?: string }>;
+    /** Physical characteristics from the postmark (shape, lettering, framing, date format) */
+    letteringStyle?: string;
+    framingStyle?: string;
+    dateFormat?: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -101,8 +105,18 @@ const RecordDetail = () => {
           const firstVal = data.valuations?.[0];
           const parsed = parseOtherCharacteristics(data.otherCharacteristics);
           const locationLabel = [data.town, data.state].filter(Boolean).join(", ");
-          const shapeLabel = data?.postmarkShape?.shapeName || "";
-          const displayName = [locationLabel, shapeLabel].filter(Boolean).join(" — ") || data.postmarkKey;
+          const shapeLabel =
+            data?.postmark_shape?.shape_name ?? data?.postmarkShape?.shapeName ?? "";
+          const letteringStyle =
+            data?.lettering_style?.lettering_style_name ?? data?.letteringStyle?.letteringStyleName ?? "";
+          const framingStyle =
+            data?.framing_style?.framing_style_name ?? data?.framingStyle?.framingStyleName ?? "";
+          const dateFormat =
+            data?.date_format?.format_name ?? data?.dateFormat?.formatName ?? "";
+          const displayParts = [locationLabel, shapeLabel].filter(
+            (x) => x && String(x).trim().toLowerCase() !== "unknown"
+          );
+          const displayName = displayParts.join(" — ") || data.postmarkKey;
           const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
           const rarityFromValuation = firstVal?.estimatedValue ? `$${firstVal.estimatedValue}` : "";
           const rarityFromOther = parsed.rarityLabel || "";
@@ -126,9 +140,12 @@ const RecordDetail = () => {
             dateFirstSeen: datesSeen?.earliestDateSeen?.slice(0, 4) || "",
             dateLastSeen: datesSeen?.latestDateSeen?.slice(0, 4) || "",
             color: data.colorsDisplay || "",
-            type: data?.postmarkShape?.shapeName || "",
+            type: shapeLabel || data?.postmarkShape?.shapeName || "",
             dimensions: firstSize ? `${firstSize.width}×${firstSize.height} mm` : "",
-            manuscript: data.isManuscript ? "Yes" : "No",
+            manuscript: data.is_manuscript ?? data.isManuscript ? "Yes" : "No",
+            letteringStyle: letteringStyle || undefined,
+            framingStyle: framingStyle || undefined,
+            dateFormat: dateFormat || undefined,
             rarity: rarityFromValuation || rarityFromOther,
             // Only show description text the contributor actually provided
             // Do NOT fall back to raw otherCharacteristics (which may only contain submitter info)
@@ -400,29 +417,56 @@ const RecordDetail = () => {
           {/* Additional Information Tabs */}
           <Card className="shadow-archival-lg">
             <CardContent className="p-6">
-              <Tabs defaultValue="valuations">
-              <TabsList className="mt-1 grid w-full grid-cols-3 gap-1 rounded-md bg-muted p-1">
-                  <TabsTrigger value="references">References</TabsTrigger>
+              <Tabs defaultValue="physical">
+              <TabsList className={`mt-1 grid w-full gap-1 rounded-md bg-muted p-1 ${record.citationReferences ? "grid-cols-3" : "grid-cols-2"}`}>
+                  <TabsTrigger value="physical">Physical Characteristics</TabsTrigger>
                   <TabsTrigger value="valuations">Valuations</TabsTrigger>
-                  {record.citationReferences && (
+                  {record.citationReferences ? (
                     <TabsTrigger value="citations">Citations</TabsTrigger>
-                  )}
+                  ) : null}
                 </TabsList>
-                <TabsContent value="references" className="mt-6">
-                  <div className="space-y-4">
-                    <div className="border-l-4 border-primary pl-4">
-                      <p className="text-sm font-medium text-foreground">Skinner-Eno (SE-MA-1825-01)</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Listed in Skinner-Eno catalog of U.S. stampless covers, page 142.
-                      </p>
-                    </div>
-                    <div className="border-l-4 border-primary pl-4">
-                      <p className="text-sm font-medium text-foreground">Ashbrook Special Service (1956)</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Documented example sold at auction for $85.
-                      </p>
-                    </div>
-                  </div>
+                <TabsContent value="physical" className="mt-6">
+                  <dl className="space-y-3 text-sm">
+                    {record.type ? (
+                      <div className="flex gap-3">
+                        <dt className="font-medium text-muted-foreground min-w-[8rem]">Shape</dt>
+                        <dd className="text-foreground">{record.type}</dd>
+                      </div>
+                    ) : null}
+                    {record.letteringStyle ? (
+                      <div className="flex gap-3">
+                        <dt className="font-medium text-muted-foreground min-w-[8rem]">Lettering style</dt>
+                        <dd className="text-foreground">{record.letteringStyle}</dd>
+                      </div>
+                    ) : null}
+                    {record.framingStyle ? (
+                      <div className="flex gap-3">
+                        <dt className="font-medium text-muted-foreground min-w-[8rem]">Framing style</dt>
+                        <dd className="text-foreground">{record.framingStyle}</dd>
+                      </div>
+                    ) : null}
+                    {record.dateFormat ? (
+                      <div className="flex gap-3">
+                        <dt className="font-medium text-muted-foreground min-w-[8rem]">Date format</dt>
+                        <dd className="text-foreground">{record.dateFormat}</dd>
+                      </div>
+                    ) : null}
+                    {record.color ? (
+                      <div className="flex gap-3">
+                        <dt className="font-medium text-muted-foreground min-w-[8rem]">Color(s)</dt>
+                        <dd className="text-foreground">{record.color}</dd>
+                      </div>
+                    ) : null}
+                    {record.dimensions ? (
+                      <div className="flex gap-3">
+                        <dt className="font-medium text-muted-foreground min-w-[8rem]">Dimensions</dt>
+                        <dd className="text-foreground">{record.dimensions}</dd>
+                      </div>
+                    ) : null}
+                    {!record.type && !record.letteringStyle && !record.framingStyle && !record.dateFormat && !record.color && !record.dimensions ? (
+                      <p className="text-muted-foreground py-2">No additional physical characteristics recorded for this postmark.</p>
+                    ) : null}
+                  </dl>
                 </TabsContent>
                 <TabsContent value="valuations" className="mt-6">
                   <div className="space-y-4">

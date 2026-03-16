@@ -37,31 +37,68 @@ from django.contrib.auth import get_user_model
 from woco.pagination import PageSizePagination, LargePageSizePagination, PostmarkListPagination
 
 from .models import (
-    PostalFacility, PostalFacilityIdentity,
-    AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
+    PostalFacility,
+    PostalFacilityIdentity,
+    AdministrativeUnit,
+    AdministrativeUnitIdentity,
+    AdministrativeUnitResponsibility,
     JurisdictionalAffiliation,
-    PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
-    Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
-    PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
-    PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
-    AdminCsvUpload, UserLocationAssignment, Contribution,
+    PostmarkShape,
+    LetteringStyle,
+    FramingStyle,
+    Color,
+    DateFormat,
+    Postmark,
+    PostmarkColor,
+    PostmarkDatesSeen,
+    PostmarkSize,
+    PostmarkValuation,
+    PostmarkPublication,
+    PostmarkPublicationReference,
+    PostmarkImage,
+    Postcover,
+    PostcoverPostmark,
+    PostcoverImage,
+    AdminCsvUpload,
+    UserLocationAssignment,
+    Contribution,
+    FAQEntry,
 )
 
 from .serializers import (
-    PostalFacilitySerializer, PostalFacilityListSerializer,
-    PostalFacilityIdentitySerializer, AdministrativeUnitSerializer,
-    AdministrativeUnitListSerializer, AdministrativeUnitIdentitySerializer,
-    AdministrativeUnitResponsibilitySerializer, JurisdictionalAffiliationSerializer,
-    PostmarkShapeSerializer, LetteringStyleSerializer, FramingStyleSerializer,
-    ColorSerializer, DateFormatSerializer, PostmarkSerializer,
-    PostmarkListSerializer, PostmarkColorSerializer, PostmarkDatesSeenSerializer,
-    PostmarkSizeSerializer, PostmarkValuationSerializer, PostmarkPublicationSerializer,
-    PostmarkPublicationReferenceSerializer, PostmarkImageSerializer,
-    PostcoverSerializer, PostcoverListSerializer, PostcoverPostmarkSerializer,
+    PostalFacilitySerializer,
+    PostalFacilityListSerializer,
+    PostalFacilityIdentitySerializer,
+    AdministrativeUnitSerializer,
+    AdministrativeUnitListSerializer,
+    AdministrativeUnitIdentitySerializer,
+    AdministrativeUnitResponsibilitySerializer,
+    JurisdictionalAffiliationSerializer,
+    PostmarkShapeSerializer,
+    LetteringStyleSerializer,
+    FramingStyleSerializer,
+    ColorSerializer,
+    DateFormatSerializer,
+    PostmarkSerializer,
+    PostmarkListSerializer,
+    PostmarkColorSerializer,
+    PostmarkDatesSeenSerializer,
+    PostmarkSizeSerializer,
+    PostmarkValuationSerializer,
+    PostmarkPublicationSerializer,
+    PostmarkPublicationReferenceSerializer,
+    PostmarkImageSerializer,
+    PostcoverSerializer,
+    PostcoverListSerializer,
+    PostcoverPostmarkSerializer,
     PostcoverImageSerializer,
-    AdminCsvUploadListSerializer, AdminCsvUploadSerializer,
+    AdminCsvUploadListSerializer,
+    AdminCsvUploadSerializer,
     LoginRequestSerializer,
-    ContributionListSerializer, ContributionDetailSerializer, ContributionApproveRejectSerializer,
+    ContributionListSerializer,
+    ContributionDetailSerializer,
+    ContributionApproveRejectSerializer,
+    FAQEntrySerializer,
 )
 from .filters import PostmarkListFilter
 from .csv_import import IMPORTERS
@@ -74,15 +111,20 @@ def _get_user_role(user):
     """
     Derive a simple role string for the frontend from Django auth state.
 
-    Role is driven by group membership so that the admin "Role" dropdown
-    (which adds/removes the State Editors group) is the single source
-    of truth for UI behavior.
-
-    - Users in the "State Editors" group are state editors.
-    - Everyone else (including superusers without that group) is a contributor.
+    Primary signal is the "State Editors" group, but we also treat users
+    with explicit location assignments as state editors so that the admin
+    Role & Locations UI remains the single source of truth even if group
+    membership is temporarily out of sync.
     """
+    # State Editors group → editor role
     if user.groups.filter(name__iexact="State Editors").exists():
         return "state_editor"
+
+    # Fallback: any explicit UserLocationAssignment implies state editor responsibilities
+    if UserLocationAssignment.objects.filter(user=user).exists():
+        return "state_editor"
+
+    # Default: contributor
     return "contributor"
 
 
@@ -200,6 +242,16 @@ class AssignedStatesView(APIView):
             })
         items.sort(key=lambda x: x["label"].lower())
         return Response(items)
+
+
+class FAQEntryViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only API for FAQ entries used by the public SPA homepage.
+    Only active entries are returned, ordered for display.
+    """
+    queryset = FAQEntry.objects.filter(is_active=True).order_by("display_order", "faq_entry_id")
+    serializer_class = FAQEntrySerializer
+    permission_classes = [AllowAny]
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -1376,7 +1428,7 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="approve")
     def approve(self, request, pk=None):
-        """Approve a contribution; apply submitted_data to catalog."""
+        """Approve a contribution; apply submitted_data to catalog. Editor must supply shape, lettering, framing, date format, and value."""
         contrib = self.get_object()
         if contrib.status != Contribution.STATUS_PENDING:
             return Response(
@@ -1385,19 +1437,65 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
             )
         serializer = ContributionApproveRejectSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
-        review_notes = serializer.validated_data.get("review_notes", "")
+        data = serializer.validated_data
+        review_notes = data.get("review_notes", "")
+
+        # Editor must fill catalog metadata before approving
+        shape_id = data.get("postmark_shape_id")
+        lettering_id = data.get("lettering_style_id")
+        framing_id = data.get("framing_style_id")
+        date_fmt_id = data.get("date_format_id")
+        estimated_value = data.get("estimated_value")
+        missing = []
+        if shape_id is None: missing.append("postmark_shape_id (Shape)")
+        if lettering_id is None: missing.append("lettering_style_id (Lettering style)")
+        if framing_id is None: missing.append("framing_style_id (Framing style)")
+        if date_fmt_id is None: missing.append("date_format_id (Date format)")
+        if estimated_value is None: missing.append("estimated_value (Value)")
+        if missing:
+            return Response(
+                {"detail": "When approving, the editor must provide: " + ", ".join(missing) + "."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not PostmarkShape.objects.filter(pk=shape_id).exists():
+            return Response({"detail": "Invalid postmark_shape_id."}, status=status.HTTP_400_BAD_REQUEST)
+        if not LetteringStyle.objects.filter(pk=lettering_id).exists():
+            return Response({"detail": "Invalid lettering_style_id."}, status=status.HTTP_400_BAD_REQUEST)
+        if not FramingStyle.objects.filter(pk=framing_id).exists():
+            return Response({"detail": "Invalid framing_style_id."}, status=status.HTTP_400_BAD_REQUEST)
+        if not DateFormat.objects.filter(pk=date_fmt_id).exists():
+            return Response({"detail": "Invalid date_format_id."}, status=status.HTTP_400_BAD_REQUEST)
+
         postmark = _apply_contribution_to_catalog(contrib)
         if not postmark:
             return Response(
                 {"detail": "Could not apply contribution to catalog. Check submitted_data."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        # Set editor-provided catalog fields
+        postmark.postmark_shape_id = shape_id
+        postmark.lettering_style_id = lettering_id
+        postmark.framing_style_id = framing_id
+        postmark.date_format_id = date_fmt_id
+        postmark.contribution_approval_status = "approved"
+        postmark.save(update_fields=[
+            "postmark_shape_id", "lettering_style_id", "framing_style_id", "date_format_id",
+            "contribution_approval_status",
+        ])
+
+        # Create valuation
+        PostmarkValuation.objects.create(
+            postmark=postmark,
+            valued_by_user=request.user,
+            estimated_value=estimated_value,
+            valuation_date=timezone.now().date(),
+        )
+
         contrib.status = Contribution.STATUS_APPROVED
         contrib.reviewer = request.user
         contrib.review_notes = review_notes
         contrib.save(update_fields=["status", "reviewer", "review_notes", "postmark", "updated_at"])
-        postmark.contribution_approval_status = "approved"
-        postmark.save(update_fields=["contribution_approval_status"])
         return Response(
             {"detail": "Contribution approved.", "postmarkId": postmark.postmark_id},
             status=status.HTTP_200_OK,
@@ -1421,6 +1519,27 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         contrib.save(update_fields=["status", "reviewer", "review_notes", "updated_at"])
         return Response(
             {"detail": "Contribution rejected."},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"], url_path="request-revision")
+    def request_revision(self, request, pk=None):
+        """Set contribution to needs_revision; reviewer must add comment for the contributor."""
+        contrib = self.get_object()
+        if contrib.status != Contribution.STATUS_PENDING:
+            return Response(
+                {"detail": f"Contribution is not pending (status: {contrib.status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        review_notes = serializer.validated_data.get("review_notes", "")
+        contrib.status = Contribution.STATUS_NEEDS_REVISION
+        contrib.reviewer = request.user
+        contrib.review_notes = review_notes
+        contrib.save(update_fields=["status", "reviewer", "review_notes", "updated_at"])
+        return Response(
+            {"detail": "Revision requested; contributor can see your feedback and resubmit."},
             status=status.HTTP_200_OK,
         )
 
@@ -1525,8 +1644,13 @@ class PostalFacilityViewSet(viewsets.ModelViewSet):
     ViewSet for postal facilities (stable containers)
     """
     queryset = PostalFacility.objects.all().select_related(
-        'created_by', 'modified_by'
-    ).prefetch_related('identities')
+        'created_by',
+        'modified_by',
+    ).prefetch_related(
+        'identities',
+        # For deriving state_name efficiently in the list serializer
+        'identities__jurisdictions__administrative_unit__identities',
+    )
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['reference_code']
@@ -1862,14 +1986,13 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         """
         base_qs = _postmark_list_queryset()
 
-        # Detail actions should be able to see the full catalog, including
-        # pending user-contribution records. Permissions (IsResponsibleForRegion)
-        # still apply for write operations.
+        # Detail actions and my_assigned (state editor catalog) see full catalog including pending.
         if getattr(self, "action", None) in {
             "retrieve",
             "update",
             "partial_update",
             "destroy",
+            "my_assigned",
         }:
             return base_qs
 
@@ -1896,22 +2019,19 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     ordering = ['-created_date']  # Newest first for catalog search list
     
     def get_serializer_class(self):
-        if self.action == 'list':
+        if self.action in ('list', 'my_assigned'):
             return PostmarkListSerializer
         return PostmarkSerializer
-    
+
     @action(detail=False, methods=['get'], url_path='my-assigned', permission_classes=[IsAuthenticated])
     def my_assigned(self, request):
         """
         Get catalog listings for all states assigned to the current user.
-        Uses UserLocationAssignment-based helpers rather than group responsibilities
-        and matches listings either by their direct state pointer or by the
-        jurisdiction of their postal facility.
+        State editors can view, edit, and delete any catalog entry in their assigned states.
         """
         user = request.user
         assigned_units = _get_user_assigned_units(user)
         if not assigned_units.exists():
-            # Still return a paginated response structure for consistency
             empty_qs = self.get_queryset().none()
             page = self.paginate_queryset(empty_qs)
             if page is not None:
@@ -1929,91 +2049,36 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
-
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=['get'], url_path='my-dashboard', permission_classes=[IsAuthenticated])
-    def my_dashboard(self, request):
-        """
-        Dashboard view showing catalog entries created from the current user's
-        Contributor Dashboard submissions.
-
-        Behavior is the same for Contributors and State Editors:
-        - Only Postmarks with source_catalog='User contribution'
-        - And other_characteristics containing "Submitted by: <username/email>"
-        - Any state, any approval status.
-        """
-        user = request.user
-        username = (getattr(user, "username", "") or "").strip()
-        email = (getattr(user, "email", "") or "").strip()
-        needles = []
-        if username:
-            needles.append(f"Submitted by: {username}")
-        if email and email != username:
-            needles.append(f"Submitted by: {email}")
-
-        needle_q = Q()
-        for needle in needles:
-            needle_q |= Q(other_characteristics__icontains=needle)
-
-        base_qs = _postmark_list_queryset()
-
-        qs = base_qs.filter(
-            source_catalog="User contribution",
-        )
-        if needles:
-            qs = qs.filter(needle_q)
-
-        qs = qs.distinct().order_by('-created_date')
-
-        # Apply standard filters (state, town, color, etc.) and ordering if query params are present
-        qs = self.filter_queryset(qs)
-
-        page = self.paginate_queryset(qs)
-        serializer_class = PostmarkListSerializer
-        if page is not None:
-            serializer = serializer_class(page, many=True)
-            return self.get_paginated_response(serializer.data)
-
-        serializer = serializer_class(qs, many=True)
-        return Response(serializer.data)
-    
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, modified_by=self.request.user)
-    
+
     def perform_update(self, serializer):
         serializer.save(modified_by=self.request.user)
-    
+
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def my_region(self, request):
         """Get postmarks from regions the user's groups are responsible for"""
         user_groups = request.user.groups.all()
-        
-        # Get administrative units user's groups are responsible for
         responsibilities = AdministrativeUnitResponsibility.objects.filter(
             group__in=user_groups,
             is_active=True
         )
         responsible_units = [resp.administrative_unit for resp in responsibilities]
-        
-        # Get current affiliations for these units
         affiliations = JurisdictionalAffiliation.objects.filter(
             administrative_unit__in=responsible_units,
             effective_to_date__isnull=True
         ).select_related('postal_facility_identity')
-        
-        # Get postmarks from these facility identities
         facility_identities = [aff.postal_facility_identity for aff in affiliations]
         postmarks = self.get_queryset().filter(
             postal_facility_identity__in=facility_identities
         )
-        
         page = self.paginate_queryset(postmarks)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
-        
         serializer = self.get_serializer(postmarks, many=True)
         return Response(serializer.data)
 
@@ -2043,31 +2108,26 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         qs = self.get_queryset().filter(
             source_catalog="User contribution",
         ).filter(needle_q).order_by('-created_date')
-
         if not getattr(user, "is_superuser", False):
             assigned_units = _get_user_assigned_units(user)
             if assigned_units.exists():
                 qs = qs.filter(state__in=assigned_units)
             else:
                 qs = qs.none()
-
         page = self.paginate_queryset(qs)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
-
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
-    
+
     @action(detail=True, methods=['post'])
     def add_color(self, request, pk=None):
         """Add a color to a postmark"""
         postmark = self.get_object()
         color_id = request.data.get('color_id')
-        
         if not color_id:
             return Response({'error': 'color_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        
         try:
             color = Color.objects.get(pk=color_id)
             PostmarkColor.objects.create(
@@ -2080,18 +2140,17 @@ class PostmarkViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Color not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
+
     @action(detail=True, methods=['post'])
     def add_date_range(self, request, pk=None):
         """Add a date range to a postmark"""
         postmark = self.get_object()
         serializer = PostmarkDatesSeenSerializer(data=request.data)
-        
         if serializer.is_valid():
             serializer.save(postmark=postmark, created_by=request.user)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
     @action(detail=False, methods=['get'])
     def by_facility(self, request):
         """Get postmarks grouped by facility"""
@@ -2099,16 +2158,26 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         if not facility_id:
             return Response({'error': 'facility_id parameter is required'},
                           status=status.HTTP_400_BAD_REQUEST)
-        
-        # Get all identities for this facility
         identities = PostalFacilityIdentity.objects.filter(postal_facility_id=facility_id)
         postmarks = self.get_queryset().filter(postal_facility_identity__in=identities)
         serializer = self.get_serializer(postmarks, many=True)
         return Response(serializer.data)
 
-    # Catalog action commented out: keep only list + pagination (PageSizePagination in settings)
-    # @action(detail=False, methods=['get'], url_path='catalog')
-    # def catalog(self, request): ...
+
+class PostmarkDateRangeView(APIView):
+    """
+    Returns the overall earliest and latest years seen for any cataloged postmark.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        agg = PostmarkDatesSeen.objects.aggregate(
+            earliest_year=models.Min("earliest_date_seen__year"),
+            latest_year=models.Max("latest_date_seen__year"),
+        )
+        earliest = int(agg["earliest_year"]) if agg["earliest_year"] is not None else None
+        latest = int(agg["latest_year"]) if agg["latest_year"] is not None else None
+        return Response({"earliest_year": earliest, "latest_year": latest})
 
 
 class PostmarkImageViewSet(viewsets.ModelViewSet):

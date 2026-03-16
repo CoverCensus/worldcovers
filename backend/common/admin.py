@@ -28,16 +28,39 @@ from reversion.admin import VersionAdmin
 from reversion_compare.admin import CompareVersionAdmin
 
 from .models import (
-    PostalFacility, PostalFacilityIdentity,
-    AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
+    PostalFacility,
+    PostalFacilityIdentity,
+    AdministrativeUnit,
+    AdministrativeUnitIdentity,
+    AdministrativeUnitResponsibility,
     JurisdictionalAffiliation,
-    PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
-    Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
-    PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
-    PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
-    LegacyAbbreviation, LegacyRateLocation, LegacyRateValue,
-    LegacyParseStep, LegacyUserState, LegacyRawStateDataPendingUpdate, LegacyCover,
-    AdminCsvUpload, UserLocationAssignment, Contribution,
+    PostmarkShape,
+    LetteringStyle,
+    FramingStyle,
+    Color,
+    DateFormat,
+    Postmark,
+    PostmarkColor,
+    PostmarkDatesSeen,
+    PostmarkSize,
+    PostmarkValuation,
+    PostmarkPublication,
+    PostmarkPublicationReference,
+    PostmarkImage,
+    Postcover,
+    PostcoverPostmark,
+    PostcoverImage,
+    LegacyAbbreviation,
+    LegacyRateLocation,
+    LegacyRateValue,
+    LegacyParseStep,
+    LegacyUserState,
+    LegacyRawStateDataPendingUpdate,
+    LegacyCover,
+    AdminCsvUpload,
+    UserLocationAssignment,
+    Contribution,
+    FAQEntry,
 )
 from .csv_import import IMPORTERS
 from .utils import get_canonical_location_reference_codes
@@ -1363,6 +1386,14 @@ class ContributionAdmin(admin.ModelAdmin):
                 f"Rejected {rejected} contribution(s).",
                 level=messages.SUCCESS,
             )
+
+
+@admin.register(FAQEntry)
+class FAQEntryAdmin(TimestampedModelAdmin, ReversionAdminBase):
+    list_display = ("question", "is_active", "display_order")
+    list_filter = ("is_active",)
+    search_fields = ("question", "answer")
+    ordering = ("display_order", "faq_entry_id")
 
 
 ###################################################################################################

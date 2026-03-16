@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Navigation } from "@/components/Navigation";
@@ -12,10 +13,109 @@ import {
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import heroImage from "@/assets/hero-cover.jpg";
+import { getPostmarksPage } from "@/services/postmarks";
+import { getAdministrativeUnits } from "@/services/administrativeUnits";
+import { getPostalFacilities } from "@/services/postalFacilities";
+import { getPostmarksDateRange } from "@/services/postmarkRange";
+
+type FAQItem = {
+  id: string;
+  question: string;
+  answer: string;
+};
 
 const Index = () => {
   const navigate = useNavigate();
   const user = useAuth();
+  const [faqs, setFaqs] = useState<FAQItem[]>([]);
+  const [isLoadingFaqs, setIsLoadingFaqs] = useState(false);
+
+  useEffect(() => {
+    const fetchFaqs = async () => {
+      setIsLoadingFaqs(true);
+      try {
+        const response = await fetch("/api/faq-entries/");
+        if (!response.ok) {
+          throw new Error(`Failed to load FAQs (${response.status})`);
+        }
+        const data = await response.json();
+        const rawItems = Array.isArray(data) ? data : data?.results || [];
+        const items: FAQItem[] = rawItems
+          .map((item: any, index: number) => {
+            if (!item) return null;
+            const question = item.question ?? "";
+            const answer = item.answer ?? "";
+            if (!question || !answer) return null;
+            return {
+              id: String(item.faq_entry_id ?? item.id ?? index),
+              question,
+              answer,
+            };
+          })
+          .filter(Boolean) as FAQItem[];
+
+        setFaqs(items);
+      } catch {
+        // If FAQ API fails, leave FAQs empty so the section stays hidden
+      } finally {
+        setIsLoadingFaqs(false);
+      }
+    };
+
+    void fetchFaqs();
+  }, []);
+
+  const [stats, setStats] = useState<{
+    postmarks: number | null;
+    postmarksCapped: boolean;
+    towns: number | null;
+    states: number | null;
+    earliestYear: number | null;
+    latestYear: number | null;
+  }>({
+    postmarks: null,
+    postmarksCapped: false,
+    towns: null,
+    states: null,
+    earliestYear: null,
+    latestYear: null,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadStats = async () => {
+      try {
+        const [postmarksPage, facilities, administrativeUnits, dateRange] = await Promise.all([
+          getPostmarksPage(1, 1),
+          getPostalFacilities(),
+          getAdministrativeUnits(false),
+          getPostmarksDateRange(),
+        ]);
+
+        if (cancelled) return;
+
+        setStats({
+          postmarks: postmarksPage.count ?? null,
+          postmarksCapped: !!postmarksPage.count_capped,
+          towns: facilities.length,
+          states: administrativeUnits.length,
+          earliestYear: dateRange?.earliest_year ?? null,
+          latestYear: dateRange?.latest_year ?? null,
+        });
+      } catch {
+        if (!cancelled) {
+          setStats((current) => current);
+        }
+      }
+    };
+
+    loadStats();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleContributeClick = () => {
     if (user) {
@@ -44,7 +144,9 @@ const Index = () => {
               American Stampless Cover Catalog
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground mb-8 leading-relaxed">
-              Explore over 52,000 historical postal markings from across America. A comprehensive, open-access archive for researchers, collectors, and philatelic enthusiasts.
+              Explore over {stats.postmarks != null
+                  ? `${stats.postmarks.toLocaleString()}${stats.postmarksCapped ? "+" : ""}`
+                  : "—"} historical postal markings from across America. A comprehensive, open-access archive for researchers, collectors, and philatelic enthusiasts.
             </p>
             <div className="flex flex-col sm:flex-row gap-4">
               <Button 
@@ -74,19 +176,31 @@ const Index = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             <div className="text-center">
-              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">52,000+</div>
+              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">
+                {stats.postmarks != null
+                  ? `${stats.postmarks.toLocaleString()}${stats.postmarksCapped ? "+" : ""}`
+                  : "—"}
+              </div>
               <div className="text-sm text-muted-foreground">Postmarks Cataloged</div>
             </div>
             <div className="text-center">
-              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">13,000+</div>
+              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">
+                {stats.towns != null ? stats.towns.toLocaleString() : "—"}
+              </div>
               <div className="text-sm text-muted-foreground">Towns Documented</div>
             </div>
             <div className="text-center">
-              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">53</div>
+              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">
+                {stats.states != null ? stats.states.toLocaleString() : "—"}
+              </div>
               <div className="text-sm text-muted-foreground">States/Territories Covered</div>
             </div>
             <div className="text-center">
-              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">1700-1870</div>
+              <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">
+                {stats.earliestYear != null && stats.latestYear != null
+                  ? `${stats.earliestYear}-${stats.latestYear}`
+                  : "—"}
+              </div>
               <div className="text-sm text-muted-foreground">Historical Range</div>
             </div>
           </div>
@@ -164,66 +278,37 @@ const Index = () => {
         </div>
       </section>
 
-      {/* FAQ Section */}
-      <section id="faq" className="py-16 md:py-24 scroll-mt-16">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12">
-            <h2 className="font-heading text-3xl md:text-4xl font-semibold text-foreground mb-4">
-              Frequently Asked Questions
-            </h2>
-            <p className="text-lg text-foreground">
-              Learn more about the American Postal Markings Catalog
-            </p>
+      {faqs.length > 0 && (
+        <section id="faq" className="py-16 md:py-24 scroll-mt-16">
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="text-center mb-12">
+              <h2 className="font-heading text-3xl md:text-4xl font-semibold text-foreground mb-4">
+                Frequently Asked Questions
+              </h2>
+              <p className="text-lg text-foreground">
+                Learn more about the American Postal Markings Catalog
+              </p>
+            </div>
+
+            <Accordion type="single" collapsible className="space-y-4">
+              {faqs.map((faq) => (
+                <AccordionItem
+                  key={faq.id}
+                  value={faq.id}
+                  className="border border-border rounded-lg px-6 bg-card"
+                >
+                  <AccordionTrigger className="text-left font-semibold">
+                    {faq.question}
+                  </AccordionTrigger>
+                  <AccordionContent className="text-foreground leading-relaxed whitespace-pre-line">
+                    {faq.answer}
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
           </div>
-
-          <Accordion type="single" collapsible className="space-y-4">
-            <AccordionItem value="what-is-apmc" className="border border-border rounded-lg px-6 bg-card">
-              <AccordionTrigger className="text-left font-semibold">
-                What is the American Postal Markings Catalog?
-              </AccordionTrigger>
-              <AccordionContent className="text-foreground leading-relaxed">
-                Welcome to the American Postal Markings Catalog (APMC). This online resource builds upon the American Stampless Cover Catalog, last published in 1997. Our goal is to provide a resource for philatelists and postal historians listing the postal markings found on folded letters and covers from settlement until the Civil War.
-              </AccordionContent>
-            </AccordionItem>
-
-            <AccordionItem value="database-origin" className="border border-border rounded-lg px-6 bg-card">
-              <AccordionTrigger className="text-left font-semibold">
-                Where does the database information come from?
-              </AccordionTrigger>
-              <AccordionContent className="text-foreground leading-relaxed">
-                The database in front of you started with the information and images in volume 1 of the ASSC with additions and corrections provided by an army of volunteers. It is and will remain a work-in-progress, with further refinements and images provided by users and students of the subject.
-              </AccordionContent>
-            </AccordionItem>
-
-            <AccordionItem value="catalog-scope" className="border border-border rounded-lg px-6 bg-card">
-              <AccordionTrigger className="text-left font-semibold">
-                What time period and markings does the catalog cover?
-              </AccordionTrigger>
-              <AccordionContent className="text-foreground leading-relaxed">
-                This catalog is a listing of American handstamps and manuscript town postmarks by states, including Colonial and Territorial periods, U.S. Possessions and Unorganized Territories, from the early 1700's through May 30, 1861 (the last day of a unified postal system before the Civil War). Markings are generally listed based upon their current state location (Virginia/West Virginia is an exception to this, as all markings prior to 1861 were in Virginia).
-              </AccordionContent>
-            </AccordionItem>
-
-            <AccordionItem value="how-to-contribute" className="border border-border rounded-lg px-6 bg-card">
-              <AccordionTrigger className="text-left font-semibold">
-                How can I contribute to the catalog?
-              </AccordionTrigger>
-              <AccordionContent className="text-foreground leading-relaxed">
-                If you see an error, wish to add an image to a listed marking, or report a new marking, please use the forms within the database. All submissions will be reviewed by State administrators and added to the database when appropriate.
-              </AccordionContent>
-            </AccordionItem>
-
-            <AccordionItem value="data-organization" className="border border-border rounded-lg px-6 bg-card">
-              <AccordionTrigger className="text-left font-semibold">
-                How is the data organized in the catalog?
-              </AccordionTrigger>
-              <AccordionContent className="text-foreground leading-relaxed">
-                Markings are organized by state, town, date range, and type. You can search and filter the catalog using our advanced search features to find specific postmarks by location, time period, color, and other attributes.
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-        </div>
-      </section>
+        </section>
+      )}
 
       <Footer />
     </div>

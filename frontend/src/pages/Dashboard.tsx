@@ -33,9 +33,12 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { cn } from "@/lib/utils";
-import { normalizeImageUrl } from "@/services/postmarks";
+import { normalizeImageUrl, getAssignedCatalogPage, type PostmarkRecord } from "@/services/postmarks";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
+import { getLetteringStyles } from "@/services/letteringStyles";
+import { getFramingStyles } from "@/services/framingStyles";
+import { getDateFormats } from "@/services/dateFormats";
 
 function getPostmarksApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
@@ -71,20 +74,19 @@ interface DashboardItem {
   postmark_id?: number | null;
 }
 
-interface EditorQueueItem {
+/** Catalog entry for User Submissions (state editor): postmarks in assigned states. */
+type AssignedCatalogEntry = PostmarkRecord;
+
+/** Pending contribution for editor review (approve / reject / request revision). */
+interface PendingReviewItem {
   id: number;
-  contributor: number;
   contributor_username: string;
-  postmark: number | null;
-  postmark_id: number | null;
-  status: string;
-  reviewer: number | null;
-  reviewer_username: string | null;
-  review_notes: string | null;
-  created_at: string;
-  updated_at: string;
   state_display: string;
   town_display: string;
+  postmark_id: number | null;
+  status: string;
+  created_at: string;
+  review_notes: string | null;
 }
 
 /** Build compact page numbers for pagination (shared with Catalog Search) */
@@ -162,14 +164,34 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [suggestionsGoToInput, setSuggestionsGoToInput] = useState("");
   const suggestionsPageSize = 10;
 
-  // Editor moderation queue state
-  const [editorItems, setEditorItems] = useState<EditorQueueItem[]>([]);
-  const [editorLoading, setEditorLoading] = useState(false);
-  const [editorError, setEditorError] = useState<string | null>(null);
-  const [editorDecisionTarget, setEditorDecisionTarget] = useState<EditorQueueItem | null>(null);
-  const [editorDecisionKind, setEditorDecisionKind] = useState<"approve" | "reject" | "revision">("approve");
-  const [editorReviewNotes, setEditorReviewNotes] = useState("");
-  const [editorSubmittingDecision, setEditorSubmittingDecision] = useState(false);
+  // User Submissions (state editor): catalog entries for assigned states – view, edit, delete
+  const [assignedCatalogItems, setAssignedCatalogItems] = useState<AssignedCatalogEntry[]>([]);
+  const [assignedCatalogPage, setAssignedCatalogPage] = useState(1);
+  const [assignedCatalogTotal, setAssignedCatalogTotal] = useState<number | null>(null);
+  const [assignedCatalogLoading, setAssignedCatalogLoading] = useState(false);
+  const [assignedCatalogError, setAssignedCatalogError] = useState<string | null>(null);
+  const assignedCatalogPageSize = 10;
+
+  // Pending review (state editor): contributions awaiting approve/reject/revision – comment required
+  const [pendingReviewItems, setPendingReviewItems] = useState<PendingReviewItem[]>([]);
+  const [pendingReviewLoading, setPendingReviewLoading] = useState(false);
+  const [pendingReviewError, setPendingReviewError] = useState<string | null>(null);
+  const [statusDecisionTarget, setStatusDecisionTarget] = useState<PendingReviewItem | null>(null);
+  const [statusDecisionKind, setStatusDecisionKind] = useState<"approve" | "reject" | "revision">("approve");
+  const [statusComment, setStatusComment] = useState("");
+  const [statusSubmitting, setStatusSubmitting] = useState(false);
+  // Editor-required fields when approving (Shape, Lettering, Framing, Date format, Value)
+  const [approveShapeId, setApproveShapeId] = useState<string>("");
+  const [approveLetteringId, setApproveLetteringId] = useState<string>("");
+  const [approveFramingId, setApproveFramingId] = useState<string>("");
+  const [approveDateFormatId, setApproveDateFormatId] = useState<string>("");
+  const [approveValue, setApproveValue] = useState("");
+  const [approveOptions, setApproveOptions] = useState<{
+    lettering: { id: number; name: string }[];
+    framing: { id: number; name: string }[];
+    dateFormats: { id: number; name: string }[];
+  }>({ lettering: [], framing: [], dateFormats: [] });
+  const [approveOptionsLoading, setApproveOptionsLoading] = useState(false);
 
   // Filter states (mirror Catalog Search)
   const [searchQuery, setSearchQuery] = useState("");
@@ -250,7 +272,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               [town, state].filter(Boolean).join(", "),
               c.shapeName || c.typeDisplay || c.type || c.submittedData?.type,
             ]
-              .filter(Boolean)
+              .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
               .join(" — ") || `Submission #${c.id}`;
 
           const dateRange =
@@ -353,7 +375,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               [town, state].filter(Boolean).join(", "),
               c.shapeName || c.typeDisplay || c.type || c.submittedData?.type,
             ]
-              .filter(Boolean)
+              .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
               .join(" — ") || `Suggestion #${c.id}`;
 
           const dateRange =
@@ -407,57 +429,164 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     load();
   }, [user, toast]);
 
-  // Fetch editor moderation queue when Editor tab is active
+  // Load assigned-state catalog for User Submissions tab (state editors)
   useEffect(() => {
-    if (!isStateEditor || activeTab !== "editor") {
-      return;
-    }
-
-    const apiEnv = import.meta.env.VITE_API_URL;
-    const apiBase =
-      apiEnv && typeof apiEnv === "string" && apiEnv.trim() !== ""
-        ? apiEnv.trim().replace(/\/+$/, "")
-        : null;
-
-    if (!apiBase) {
-      setEditorError("VITE_API_URL is not set, cannot load editor queue.");
-      setEditorItems([]);
-      return;
-    }
-
-    const loadEditorQueue = async () => {
-      setEditorLoading(true);
-      setEditorError(null);
-      try {
-        const res = await fetch(`${apiBase}/api/contributions/?mode=editor&status=pending`, {
-          method: "GET",
-          credentials: "include",
-          headers: { Accept: "application/json" },
-        });
-        if (!res.ok) {
-          throw new Error(`API error: ${res.status} ${res.statusText}`);
+    if (!isStateEditor || activeTab !== "editor") return;
+    let cancelled = false;
+    setAssignedCatalogError(null);
+    setAssignedCatalogLoading(true);
+    getAssignedCatalogPage(assignedCatalogPage, assignedCatalogPageSize)
+      .then(({ results, count }) => {
+        if (!cancelled) {
+          setAssignedCatalogItems(results);
+          setAssignedCatalogTotal(count ?? results.length);
         }
-        const data: EditorQueueItem[] = await res.json();
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setAssignedCatalogError(err instanceof Error ? err.message : "Could not load catalog.");
+          setAssignedCatalogItems([]);
+          setAssignedCatalogTotal(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAssignedCatalogLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isStateEditor, activeTab, assignedCatalogPage]);
+
+  // Load pending contributions for editor review (approve/reject/request revision)
+  useEffect(() => {
+    if (!isStateEditor || activeTab !== "editor") return;
+    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
+    if (!apiBase) {
+      setPendingReviewError("VITE_API_URL is not set.");
+      setPendingReviewItems([]);
+      return;
+    }
+    setPendingReviewError(null);
+    setPendingReviewLoading(true);
+    fetch(`${apiBase}/api/contributions/?mode=editor&status=pending`, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText || "Failed to load pending submissions");
+        return res.json();
+      })
+      .then((data: any[]) => {
         if (!Array.isArray(data)) {
-          setEditorItems([]);
+          setPendingReviewItems([]);
           return;
         }
-        setEditorItems(data);
-      } catch (err) {
-        setEditorError(err instanceof Error ? err.message : "Could not load editor queue.");
-        setEditorItems([]);
-      } finally {
-        setEditorLoading(false);
-      }
-    };
-
-    loadEditorQueue();
+        setPendingReviewItems(
+          data.map((c) => ({
+            id: c.id,
+            contributor_username: c.contributor_username ?? "",
+            state_display: c.state_display ?? "",
+            town_display: c.town_display ?? "",
+            postmark_id: c.postmark_id ?? null,
+            status: String(c.status ?? "pending"),
+            created_at: String(c.created_at ?? ""),
+            review_notes: c.review_notes ?? null,
+          })),
+        );
+      })
+      .catch((err) => {
+        setPendingReviewError(err instanceof Error ? err.message : "Could not load pending submissions.");
+        setPendingReviewItems([]);
+      })
+      .finally(() => setPendingReviewLoading(false));
   }, [isStateEditor, activeTab]);
+
+  // Load lettering/framing/date-format options when approve dialog opens
+  useEffect(() => {
+    if (!statusDecisionTarget || statusDecisionKind !== "approve") return;
+    setApproveOptionsLoading(true);
+    Promise.all([getLetteringStyles(), getFramingStyles(), getDateFormats()])
+      .then(([lettering, framing, dateFormats]) => {
+        setApproveOptions({
+          lettering: lettering.map((o) => ({ id: o.id, name: o.name })),
+          framing: framing.map((o) => ({ id: o.id, name: o.name })),
+          dateFormats: dateFormats.map((o) => ({ id: o.id, name: o.name })),
+        });
+      })
+      .catch(() => {
+        setApproveOptions({ lettering: [], framing: [], dateFormats: [] });
+      })
+      .finally(() => setApproveOptionsLoading(false));
+  }, [statusDecisionTarget, statusDecisionKind]);
+
+  const submitStatusDecision = async () => {
+    if (!statusDecisionTarget || !statusComment.trim()) return;
+    if (statusDecisionKind === "approve") {
+      const shapeId = approveShapeId ? Number(approveShapeId) : NaN;
+      const letteringId = approveLetteringId ? Number(approveLetteringId) : NaN;
+      const framingId = approveFramingId ? Number(approveFramingId) : NaN;
+      const dateFormatId = approveDateFormatId ? Number(approveDateFormatId) : NaN;
+      const valueNum = approveValue.trim() === "" ? NaN : parseFloat(approveValue);
+      if (!Number.isInteger(shapeId) || !Number.isInteger(letteringId) || !Number.isInteger(framingId) || !Number.isInteger(dateFormatId) || Number.isNaN(valueNum) || valueNum < 0) {
+        toast({ title: "Missing required fields", description: "Please fill Shape, Lettering style, Framing style, Date format, and Value before approving.", variant: "destructive" });
+        return;
+      }
+    }
+    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
+    if (!apiBase) {
+      toast({ title: "Configuration error", description: "VITE_API_URL is not set.", variant: "destructive" });
+      return;
+    }
+    const actionPath =
+      statusDecisionKind === "approve" ? "approve" : statusDecisionKind === "reject" ? "reject" : "request-revision";
+    const body: Record<string, unknown> = { review_notes: statusComment.trim() };
+    if (statusDecisionKind === "approve") {
+      body.postmark_shape_id = Number(approveShapeId);
+      body.lettering_style_id = Number(approveLetteringId);
+      body.framing_style_id = Number(approveFramingId);
+      body.date_format_id = Number(approveDateFormatId);
+      body.estimated_value = parseFloat(approveValue);
+    }
+    setStatusSubmitting(true);
+    try {
+      const res = await fetch(`${apiBase}/api/contributions/${statusDecisionTarget.id}/${actionPath}/`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const resBody = await res.json().catch(() => ({}));
+        const msg = resBody?.review_notes?.[0] ?? resBody?.detail ?? res.statusText;
+        throw new Error(typeof msg === "string" ? msg : "Request failed");
+      }
+      const actionLabel =
+        statusDecisionKind === "approve" ? "Approved" : statusDecisionKind === "reject" ? "Rejected" : "Revision requested";
+      toast({ title: actionLabel, description: "Your comment was saved for the contributor." });
+      setPendingReviewItems((prev) => prev.filter((i) => i.id !== statusDecisionTarget.id));
+      setStatusDecisionTarget(null);
+      setStatusComment("");
+      setApproveShapeId("");
+      setApproveLetteringId("");
+      setApproveFramingId("");
+      setApproveDateFormatId("");
+      setApproveValue("");
+    } catch (err) {
+      toast({
+        title: "Could not submit",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setStatusSubmitting(false);
+    }
+  };
 
   const handleDeleteSubmission = async () => {
     if (!deleteTarget) return;
-    const postmarkId = deleteTarget.postmark_id as number | undefined;
-    if (!postmarkId) return;
+    const postmarkId = (deleteTarget as { postmark_id?: number }).postmark_id ?? (deleteTarget as { id?: number }).id;
+    if (postmarkId == null) return;
 
     const apiUrl = getPostmarksApiUrl();
     if (!apiUrl) {
@@ -485,8 +614,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       if (!res.ok) {
         throw new Error(`Delete failed: ${res.status} ${res.statusText}`);
       }
-      // Remove this submission from the visible list
-      setSubmissions(prev => prev.filter((s) => s.id !== deleteTarget.id));
+      // Remove from the visible list (submissions or assigned catalog)
+      const targetId = (deleteTarget as { id?: number }).id ?? (deleteTarget as { postmark_id?: number }).postmark_id;
+      setSubmissions(prev => prev.filter((s) => s.id !== targetId && s.postmark_id !== postmarkId));
+      setAssignedCatalogItems(prev => prev.filter((e) => e.id !== postmarkId));
+      setAssignedCatalogTotal((prev) => (prev != null && prev > 0 ? prev - 1 : null));
       setDeleteTarget(null);
       toast({
         title: "Catalog entry deleted",
@@ -649,6 +781,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     setSuggestionsPage(1);
   }, [searchQuery, statusFilter, stateFilter, townFilter, typeFilter, colorFilter, dateFrom, dateTo]);
 
+  const assignedCatalogTotalPages = Math.max(
+    1,
+    Math.ceil((assignedCatalogTotal ?? 0) / assignedCatalogPageSize),
+  );
+
   return (
     <div className="min-h-screen flex flex-col">
       <Navigation />
@@ -662,7 +799,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               </h1>
               <p className="text-muted-foreground">
                 {isStateEditor && activeTab === "editor"
-                  ? "Review and decide on submissions for your assigned states."
+                  ? "Manage catalog entries for your assigned states — view, edit, and delete."
                   : "View and track your submissions and suggestions."}
               </p>
             </div>
@@ -677,6 +814,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               >
                 My Submissions
               </Button>
+              {/* My Suggestions – commented out for now
               <Button
                 type="button"
                 variant={activeTab === "suggestions" ? "secondary" : "ghost"}
@@ -686,6 +824,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               >
                 My Suggestions
               </Button>
+              */}
               {isStateEditor && (
                 <Button
                   type="button"
@@ -694,7 +833,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   className="rounded-l-none"
                   onClick={() => setActiveTab("editor")}
                 >
-                  Editor Queue
+                  User Submissions
                 </Button>
               )}
             </div>
@@ -1281,655 +1420,309 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             </div>
           )}
 
+          {/* My Suggestions – commented out for now
           {activeTab === "suggestions" && (
             <div className="flex flex-col lg:flex-row gap-6">
-              <aside className={`lg:w-80 space-y-6 ${filtersOpen ? "block" : "hidden lg:block"}`}>
+              ...suggestions filters and list...
+            </div>
+          )}
+          */}
+
+          {activeTab === "editor" && isStateEditor && (
+            <div className="flex flex-col gap-6">
+              {/* Pending submissions to review — approve / reject / request revision with required comment */}
+              {(pendingReviewLoading || pendingReviewItems.length > 0) && (
                 <Card className="shadow-archival-md">
-                  <CardContent className="pt-6 space-y-4">
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="font-heading text-lg font-semibold">Filters</h2>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="lg:hidden"
-                        onClick={() => setFiltersOpen(false)}
-                      >
-                        Close
-                      </Button>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Search</Label>
-                      <div className="relative">
-                        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          type="search"
-                          placeholder="Name, town, state, type..."
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          className="pl-9 bg-background"
-                          aria-label="Search suggestions by name, town, state, or type"
-                          disabled={filtersDisabled}
-                        />
+                  <CardContent className="pt-6">
+                    <h2 className="font-heading text-lg font-semibold text-foreground mb-2">
+                      Pending review
+                    </h2>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      When you change status, add a comment so the contributor knows the outcome (e.g. quality note for
+                      approved, reason for reject, or what to fix for revision).
+                    </p>
+                    {pendingReviewLoading ? (
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Loading pending submissions...</span>
                       </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Status</Label>
-                      <Select value={statusFilter} onValueChange={setStatusFilter} disabled={filtersDisabled}>
-                        <SelectTrigger className="bg-background">
-                          <SelectValue placeholder="All Statuses" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Statuses</SelectItem>
-                          <SelectItem value="pending">Pending</SelectItem>
-                          <SelectItem value="approved">Approved</SelectItem>
-                          <SelectItem value="rejected">Rejected</SelectItem>
-                          <SelectItem value="revision">Needs Revision</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="state-suggestions">State</Label>
-                      <SearchableSelect
-                        id="state-suggestions"
-                        value={stateFilter}
-                        onValueChange={setStateFilter}
-                        placeholder="All States"
-                        allOption={{ value: "all", label: "All States" }}
-                        options={Array.isArray(stateOptions) ? stateOptions : []}
-                        loading={isLoadingFilters}
-                        error={!!filterError}
-                        errorMessage="Failed to load states"
-                        searchPlaceholder="Search states..."
-                        emptyMessage="No state found."
-                        aria-label="Filter suggestions by state"
-                        disabled={filtersDisabled}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="town-suggestions">Town</Label>
-                      <Input
-                        id="town-suggestions"
-                        placeholder="Enter town name..."
-                        value={townFilter}
-                        onChange={(e) => setTownFilter(e.target.value)}
-                        className="bg-background"
-                        disabled={filtersDisabled}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="type-suggestions">Postmark Type</Label>
-                      <SearchableSelect
-                        id="type-suggestions"
-                        value={typeFilter}
-                        onValueChange={setTypeFilter}
-                        placeholder="All Types"
-                        allOption={{ value: "all", label: "All Types" }}
-                        options={Array.isArray(shapeOptions) ? shapeOptions : []}
-                        loading={isLoadingFilters}
-                        error={!!filterError}
-                        errorMessage="Failed to load types"
-                        searchPlaceholder="Search types..."
-                        emptyMessage="No type found."
-                        aria-label="Filter suggestions by postmark type"
-                        disabled={filtersDisabled}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="color-suggestions">Color</Label>
-                      <SearchableSelect
-                        id="color-suggestions"
-                        value={colorFilter}
-                        onValueChange={setColorFilter}
-                        placeholder="All Colors"
-                        allOption={{ value: "all", label: "All Colors" }}
-                        options={Array.isArray(colorOptions) ? colorOptions : []}
-                        loading={isLoadingFilters}
-                        error={!!filterError}
-                        errorMessage="Failed to load colors"
-                        searchPlaceholder="Search colors..."
-                        emptyMessage="No color found."
-                        aria-label="Filter suggestions by color"
-                        disabled={filtersDisabled}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-4">
-                      <div className="space-y-2">
-                        <Label>Submitted Date From</Label>
-                        <div className="relative">
-                          <Input
-                            type="date"
-                            value={dateFrom}
-                            onChange={(e) => setDateFrom(e.target.value)}
-                            className="bg-background pr-10 date-input-hide-native-icon"
-                            disabled={filtersDisabled}
-                          />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:bg-transparent hover:text-foreground"
-                            disabled={filtersDisabled}
-                            aria-label="Open date picker"
+                    ) : pendingReviewError ? (
+                      <p className="text-sm text-destructive">{pendingReviewError}</p>
+                    ) : (
+                      <ul className="space-y-3">
+                        {pendingReviewItems.map((item) => (
+                          <li
+                            key={item.id}
+                            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-muted/30"
                           >
-                            <Calendar className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Submitted Date To</Label>
-                        <div className="relative">
-                          <Input
-                            type="date"
-                            value={dateTo}
-                            onChange={(e) => setDateTo(e.target.value)}
-                            className="bg-background pr-10 date-input-hide-native-icon"
-                            disabled={filtersDisabled}
-                          />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:bg-transparent hover:text-foreground"
-                            disabled={filtersDisabled}
-                            aria-label="Open date picker"
-                          >
-                            <Calendar className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      onClick={() => {
-                        setSearchQuery("");
-                        setStatusFilter("all");
-                        setStateFilter("all");
-                        setTownFilter("");
-                        setTypeFilter("all");
-                        setColorFilter("all");
-                        setDateFrom("");
-                        setDateTo("");
-                      }}
-                      disabled={filtersDisabled}
-                    >
-                      Clear Filters
-                    </Button>
+                            <div>
+                              <span className="font-medium text-foreground">
+                                {item.town_display && item.state_display
+                                  ? `${item.town_display}, ${item.state_display}`
+                                  : item.state_display || item.town_display || `Submission #${item.id}`}
+                              </span>
+                              <span className="text-muted-foreground text-sm ml-2">
+                                by {item.contributor_username}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setStatusDecisionTarget(item);
+                                  setStatusDecisionKind("approve");
+                                  setStatusComment("");
+                                }}
+                              >
+                                Approve
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setStatusDecisionTarget(item);
+                                  setStatusDecisionKind("reject");
+                                  setStatusComment("");
+                                }}
+                              >
+                                Reject
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setStatusDecisionTarget(item);
+                                  setStatusDecisionKind("revision");
+                                  setStatusComment("");
+                                }}
+                              >
+                                Request revision
+                              </Button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </CardContent>
                 </Card>
-              </aside>
+              )}
 
               <main className="flex-1 space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
                   <div>
                     <p className="text-sm text-muted-foreground">
-                      {suggestionsTotal === 0 ? (
-                        "0 suggestions"
-                      ) : (
-                        <>
-                          Showing{" "}
-                          <span className="font-semibold text-foreground">
-                            {suggestionsPageStart.toLocaleString()}-{suggestionsPageEnd.toLocaleString()}
-                          </span>{" "}
-                          of{" "}
-                          <span className="font-semibold text-foreground">
-                            {suggestionsTotal.toLocaleString()}
-                          </span>{" "}
-                          suggestions
-                        </>
-                      )}
+                      {assignedCatalogLoading
+                        ? "Loading catalog for your assigned states..."
+                        : `${assignedCatalogTotal != null ? assignedCatalogTotal.toLocaleString() : assignedCatalogItems.length} catalog entr${assignedCatalogTotal === 1 ? "y" : "ies"} in your assigned states`}
                     </p>
+                    {assignedCatalogError && (
+                      <p className="text-xs text-destructive mt-1">{assignedCatalogError}</p>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex border border-border rounded-md">
                     <Button
-                      variant="ghost"
+                      variant={viewMode === "list" ? "secondary" : "ghost"}
                       size="sm"
-                      className="lg:hidden"
-                      onClick={() => setFiltersOpen((open) => !open)}
+                      onClick={() => setViewMode("list")}
+                      className="rounded-r-none"
                     >
-                      <SlidersHorizontal className="h-4 w-4 mr-2" />
-                      Filters
+                      <List className="h-4 w-4" />
                     </Button>
-                    <div className="flex border border-border rounded-md">
-                      <Button
-                        variant={viewMode === "list" ? "secondary" : "ghost"}
-                        size="sm"
-                        onClick={() => setViewMode("list")}
-                        className="rounded-r-none"
-                      >
-                        <List className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant={viewMode === "gallery" ? "secondary" : "ghost"}
-                        size="sm"
-                        onClick={() => setViewMode("gallery")}
-                        className="rounded-l-none"
-                      >
-                        <Grid3x3 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    <Button
+                      variant={viewMode === "gallery" ? "secondary" : "ghost"}
+                      size="sm"
+                      onClick={() => setViewMode("gallery")}
+                      className="rounded-l-none"
+                    >
+                      <Grid3x3 className="h-4 w-4" />
+                    </Button>
                   </div>
                 </div>
 
-                {suggestionsLoading ? (
+                {assignedCatalogLoading ? (
                   <div className="flex flex-col justify-center items-center gap-3 py-12 text-muted-foreground">
                     <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
-                    <p>Loading suggestions...</p>
+                    <p>Loading catalog...</p>
                   </div>
-                ) : filteredSuggestions.length === 0 ? (
+                ) : assignedCatalogItems.length === 0 ? (
                   <Card className="flex-1 flex items-center justify-center min-h-[200px]">
                     <CardContent className="text-center">
-                      <p className="text-muted-foreground mb-4">
-                        {suggestions.length === 0
-                          ? "You have not submitted any suggestions yet."
-                          : "No suggestions found matching your filters."}
+                      <p className="text-muted-foreground mb-1">
+                        {assignedCatalogTotal === 0
+                          ? "No catalog entries in your assigned states."
+                          : "No catalog entries on this page."}
                       </p>
-                      {suggestions.length === 0 && (
-                        <Button variant="outline" onClick={() => navigate("/contribute")}>
-                          Go to Contribute
-                        </Button>
-                      )}
+                      <p className="text-xs text-muted-foreground">
+                        You can view, edit, and delete any catalog entry in states assigned to you.
+                      </p>
                     </CardContent>
                   </Card>
                 ) : viewMode === "list" ? (
                   <div className="space-y-4">
-                    {suggestionsPageItems.map((item) => (
-                      <Card
-                        key={item.id}
-                        className="shadow-archival-md hover:shadow-archival-lg transition-shadow"
-                      >
-                        <CardContent className="p-6">
-                          <div className="flex gap-6 md:flex-row flex-col">
-                            <ImageOrPlaceholder
-                              src={item.image_url}
-                              alt={item.name}
-                              className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border shrink-0"
-                            />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-start justify-between gap-2 mb-2">
-                                <h3 className="font-heading text-xl font-semibold text-foreground">
-                                  {item.name}
+                    {assignedCatalogItems.map((entry) => {
+                      const imageUrl = normalizeImageUrl(
+                        (entry.mainImage as { imageUrl?: string })?.imageUrl ??
+                          (typeof entry.mainImage === "string" ? entry.mainImage : null),
+                      );
+                      const title =
+                        [entry.town, entry.state].filter(Boolean).join(", ") ||
+                        entry.facilityName ||
+                        entry.postmarkKey ||
+                        `Entry #${entry.id}`;
+                      return (
+                        <Card
+                          key={entry.id}
+                          className="shadow-archival-md hover:shadow-archival-lg transition-shadow"
+                        >
+                          <CardContent className="p-6">
+                            <div className="flex flex-col md:flex-row md:items-center gap-4">
+                              {imageUrl && (
+                                <div className="flex-shrink-0 w-20 h-20 rounded overflow-hidden bg-muted">
+                                  <ImageOrPlaceholder
+                                    src={imageUrl}
+                                    alt=""
+                                    className="w-full h-full object-cover"
+                                  />
+                                </div>
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <h3 className="font-heading text-lg font-semibold text-foreground">
+                                  {title}
                                 </h3>
-                                {getStatusBadge(item.status)}
-                              </div>
-
-                              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                                {item.town && (
-                                  <div>
-                                    <span className="text-muted-foreground">Town:</span>{" "}
-                                    <span className="text-foreground">{item.town}</span>
-                                  </div>
-                                )}
-                                {item.state && (
-                                  <div>
-                                    <span className="text-muted-foreground">State:</span>{" "}
-                                    <span className="text-foreground">{item.state}</span>
-                                  </div>
-                                )}
-                              </div>
-
-                              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                                {item.dateRange && (
-                                  <div>
-                                    <span className="text-muted-foreground">Date Seen:</span>{" "}
-                                    <span className="text-foreground">{item.dateRange}</span>
-                                  </div>
-                                )}
-                                {item.size && (
-                                  <div>
-                                    <span className="text-muted-foreground">Size:</span>{" "}
-                                    <span className="text-foreground">{item.size}</span>
-                                  </div>
-                                )}
-                                {item.color && (
-                                  <div>
-                                    <span className="text-muted-foreground">Color:</span>{" "}
-                                    <span className="text-foreground">{item.color}</span>
-                                  </div>
-                                )}
-                                <div>
-                                  <span className="text-muted-foreground">Submitted:</span>{" "}
-                                  <span className="text-foreground">
-                                    {new Date(item.created_at).toLocaleDateString()}
-                                  </span>
+                                <div className="text-sm text-muted-foreground mt-1">
+                                  {entry.shapeName && <span>{entry.shapeName}</span>}
+                                  {entry.dateRange && (
+                                    <span className={entry.shapeName ? " ml-2" : ""}>{entry.dateRange}</span>
+                                  )}
+                                  {entry.colorsDisplay && (
+                                    <span className="ml-2">{entry.colorsDisplay}</span>
+                                  )}
                                 </div>
                               </div>
-
-                              {item.description && (
-                                <p className="text-sm text-muted-foreground line-clamp-2 mt-2">
-                                  {item.description}
-                                </p>
-                              )}
-
-                              <div className="mt-3 flex gap-2 justify-end">
-                                {item.postmark_id && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => navigate(`/record/api-${item.postmark_id}`)}
-                                  >
-                                    View
-                                  </Button>
-                                )}
+                              <div className="flex flex-col sm:flex-row gap-2 justify-end">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => navigate(`/record/${entry.id}`)}
+                                >
+                                  View
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => navigate(`/edit/${entry.id}`)}
+                                >
+                                  Edit
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-destructive hover:text-destructive"
+                                  onClick={() =>
+                                    setDeleteTarget({ id: entry.id, postmark_id: entry.id, name: title })
+                                  }
+                                >
+                                  Delete
+                                </Button>
                               </div>
                             </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {suggestionsPageItems.map((item) => (
-                      <Card
-                        key={item.id}
-                        className="shadow-archival-md hover:shadow-archival-lg transition-shadow overflow-hidden"
-                      >
-                        <ImageOrPlaceholder
-                          src={item.image_url}
-                          alt={item.name}
-                          className="w-full h-48 object-cover"
-                        />
-                        <CardContent className="p-4 flex flex-col gap-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <h3 className="font-heading text-lg font-semibold text-foreground">
-                              {item.name}
+                    {assignedCatalogItems.map((entry) => {
+                      const imageUrl = normalizeImageUrl(
+                        (entry.mainImage as { imageUrl?: string })?.imageUrl ??
+                          (typeof entry.mainImage === "string" ? entry.mainImage : null),
+                      );
+                      const title =
+                        [entry.town, entry.state].filter(Boolean).join(", ") ||
+                        entry.facilityName ||
+                        entry.postmarkKey ||
+                        `Entry #${entry.id}`;
+                      return (
+                        <Card
+                          key={entry.id}
+                          className="shadow-archival-md hover:shadow-archival-lg transition-shadow overflow-hidden"
+                        >
+                          <div className="aspect-[4/3] bg-muted">
+                            <ImageOrPlaceholder
+                              src={imageUrl}
+                              alt=""
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          <CardContent className="p-4 flex flex-col gap-3">
+                            <h3 className="font-heading font-semibold text-foreground line-clamp-2">
+                              {title}
                             </h3>
-                            {getStatusBadge(item.status)}
-                          </div>
-
-                          <div className="space-y-1 text-sm flex-1">
-                            {item.town && (
-                              <div>
-                                <span className="text-muted-foreground">Town:</span>{" "}
-                                <span className="text-foreground">{item.town}</span>
-                              </div>
-                            )}
-                            {item.state && (
-                              <div>
-                                <span className="text-muted-foreground">State:</span>{" "}
-                                <span className="text-foreground">{item.state}</span>
-                              </div>
-                            )}
-                            {item.dateRange && (
-                              <div>
-                                <span className="text-muted-foreground">Date Seen:</span>{" "}
-                                <span className="text-foreground">{item.dateRange}</span>
-                              </div>
-                            )}
-                            {item.size && (
-                              <div>
-                                <span className="text-muted-foreground">Size:</span>{" "}
-                                <span className="text-foreground">{item.size}</span>
-                              </div>
-                            )}
-                            {item.color && (
-                              <div>
-                                <span className="text-muted-foreground">Color:</span>{" "}
-                                <span className="text-foreground">{item.color}</span>
-                              </div>
-                            )}
-                            <div>
-                              <span className="text-muted-foreground">Submitted:</span>{" "}
-                              <span className="text-foreground">
-                                {new Date(item.created_at).toLocaleDateString()}
-                              </span>
+                            <div className="text-sm text-muted-foreground">
+                              {entry.shapeName}
+                              {entry.dateRange ? ` · ${entry.dateRange}` : ""}
                             </div>
-                          </div>
-
-                          <div className="mt-2 flex gap-2 justify-center">
-                            {item.postmark_id && (
+                            <div className="mt-2 flex flex-wrap gap-2">
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => navigate(`/record/api-${item.postmark_id}`)}
+                                onClick={() => navigate(`/record/${entry.id}`)}
                               >
                                 View
                               </Button>
-                            )}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-
-                {suggestionsTotalPages > 1 && !suggestionsLoading && filteredSuggestions.length > 0 && (
-                  <div className="mt-8 flex flex-col items-center gap-4">
-                    <Pagination>
-                      <PaginationContent>
-                        <PaginationItem>
-                          <PaginationPrevious
-                            onClick={() => {
-                              setSuggestionsPage((p) => Math.max(1, p - 1));
-                              window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                            }}
-                            className={
-                              suggestionsPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"
-                            }
-                          />
-                        </PaginationItem>
-
-                        {getPaginationPages(suggestionsPage, suggestionsTotalPages).map((p, i) =>
-                          p === "ellipsis" ? (
-                            <PaginationItem key={`ellipsis-${i}`}>
-                              <PaginationEllipsis />
-                            </PaginationItem>
-                          ) : (
-                            <PaginationItem key={p}>
-                              <PaginationLink
-                                onClick={() => {
-                                  setSuggestionsPage(p);
-                                  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                                }}
-                                isActive={suggestionsPage === p}
-                                className="cursor-pointer"
-                              >
-                                {p}
-                              </PaginationLink>
-                            </PaginationItem>
-                          ),
-                        )}
-
-                        <PaginationItem>
-                          <PaginationNext
-                            onClick={() => {
-                              setSuggestionsPage((p) => Math.min(suggestionsTotalPages, p + 1));
-                              window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                            }}
-                            className={
-                              suggestionsPage === suggestionsTotalPages
-                                ? "pointer-events-none opacity-50"
-                                : "cursor-pointer"
-                            }
-                          />
-                        </PaginationItem>
-                      </PaginationContent>
-                    </Pagination>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">Go to page</span>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={suggestionsTotalPages}
-                        placeholder="Page"
-                        value={suggestionsGoToInput}
-                        onChange={(e) => {
-                          const raw = e.target.value;
-                          if (raw === "") {
-                            setSuggestionsGoToInput("");
-                            return;
-                          }
-                          const n = parseInt(raw, 10);
-                          if (Number.isNaN(n)) return;
-                          const clamped = Math.max(1, Math.min(suggestionsTotalPages, n));
-                          setSuggestionsGoToInput(String(clamped));
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            const n = parseInt(suggestionsGoToInput, 10);
-                            if (!Number.isNaN(n)) {
-                              setSuggestionsPage(Math.max(1, Math.min(suggestionsTotalPages, n)));
-                              window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                              setSuggestionsGoToInput("");
-                            }
-                          }
-                        }}
-                        className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                        aria-label="Go to page number"
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-9"
-                        onClick={() => {
-                          const n = parseInt(suggestionsGoToInput, 10);
-                          if (!Number.isNaN(n)) {
-                            setSuggestionsPage(Math.max(1, Math.min(suggestionsTotalPages, n)));
-                            window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                            setSuggestionsGoToInput("");
-                          }
-                        }}
-                      >
-                        Go
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </main>
-            </div>
-          )}
-
-          {activeTab === "editor" && isStateEditor && (
-            <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    {editorLoading
-                      ? "Loading pending submissions for your assigned states..."
-                      : `${editorItems.length.toLocaleString()} pending submission${editorItems.length === 1 ? "" : "s"} in your assigned states`}
-                  </p>
-                  {editorError && (
-                    <p className="text-xs text-destructive mt-1">
-                      {editorError}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {editorLoading ? (
-                <div className="flex flex-col justify-center items-center gap-3 py-12 text-muted-foreground">
-                  <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
-                  <p>Loading editor queue...</p>
-                </div>
-              ) : editorItems.length === 0 ? (
-                <Card className="flex-1 flex items-center justify-center min-h-[200px]">
-                  <CardContent className="text-center">
-                    <p className="text-muted-foreground mb-1">
-                      There are no pending submissions for your assigned states.
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      New submissions will appear here as contributors submit them.
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="space-y-4">
-                  {editorItems.map((item) => (
-                    <Card
-                      key={item.id}
-                      className="shadow-archival-md hover:shadow-archival-lg transition-shadow"
-                    >
-                      <CardContent className="p-6">
-                        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-                          <div className="space-y-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="font-heading text-lg font-semibold text-foreground">
-                                {item.town_display && item.state_display
-                                  ? `${item.town_display}, ${item.state_display}`
-                                  : item.state_display || item.town_display || `Submission #${item.id}`}
-                              </h3>
-                              {getStatusBadge(item.status)}
-                            </div>
-                            <div className="text-sm text-muted-foreground space-y-1">
-                              <div>
-                                <span className="font-medium text-foreground">Contributor:</span>{" "}
-                                <span>{item.contributor_username}</span>
-                              </div>
-                              <div>
-                                <span className="font-medium text-foreground">Submitted:</span>{" "}
-                                <span>{new Date(item.created_at).toLocaleString()}</span>
-                              </div>
-                              {item.review_notes && (
-                                <div>
-                                  <span className="font-medium text-foreground">Previous notes:</span>{" "}
-                                  <span>{item.review_notes}</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="flex flex-col sm:flex-row gap-2 justify-end">
-                            {item.postmark_id && (
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => navigate(`/record/${item.postmark_id}`)}
+                                onClick={() => navigate(`/edit/${entry.id}`)}
                               >
-                                View Catalog Entry
+                                Edit
                               </Button>
-                            )}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setEditorDecisionTarget(item);
-                                setEditorDecisionKind("approve");
-                                setEditorReviewNotes("");
-                              }}
-                            >
-                              Approve
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setEditorDecisionTarget(item);
-                                setEditorDecisionKind("reject");
-                                setEditorReviewNotes("");
-                              }}
-                            >
-                              Reject
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setEditorDecisionTarget(item);
-                                setEditorDecisionKind("revision");
-                                setEditorReviewNotes("Needs revision: ");
-                              }}
-                            >
-                              Needs Revision
-                            </Button>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() =>
+                                  setDeleteTarget({ id: entry.id, postmark_id: entry.id, name: title })
+                                }
+                              >
+                                Delete
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {assignedCatalogTotalPages > 1 && (
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={assignedCatalogPage <= 1}
+                      onClick={() => setAssignedCatalogPage((p) => Math.max(1, p - 1))}
+                    >
+                      Previous
+                    </Button>
+                    <span className="text-sm text-muted-foreground px-2">
+                      Page {assignedCatalogPage} of {assignedCatalogTotalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={assignedCatalogPage >= assignedCatalogTotalPages}
+                      onClick={() =>
+                        setAssignedCatalogPage((p) => Math.min(assignedCatalogTotalPages, p + 1))
+                      }
+                    >
+                      Next
+                    </Button>
+                  </div>
+                )}
+              </main>
             </div>
           )}
       </div>
@@ -1967,127 +1760,150 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Status decision (approve / reject / request revision) — comment required; approve requires catalog fields */}
       <AlertDialog
-        open={!!editorDecisionTarget}
+        open={!!statusDecisionTarget}
         onOpenChange={(open) => {
-          if (!open && !editorSubmittingDecision) {
-            setEditorDecisionTarget(null);
-            setEditorReviewNotes("");
+          if (!open && !statusSubmitting) {
+            setStatusDecisionTarget(null);
+            setStatusComment("");
+            setApproveShapeId("");
+            setApproveLetteringId("");
+            setApproveFramingId("");
+            setApproveDateFormatId("");
+            setApproveValue("");
           }
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {editorDecisionKind === "approve"
+              {statusDecisionKind === "approve"
                 ? "Approve submission"
-                : editorDecisionKind === "reject"
+                : statusDecisionKind === "reject"
                   ? "Reject submission"
-                  : "Request revisions"}
+                  : "Request revision"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {editorDecisionKind === "approve"
-                ? "This will apply the contributor's data to the catalog."
-                : editorDecisionKind === "reject"
-                  ? "This will reject the submission. The catalog will remain unchanged."
-                  : "This will reject the submission but your notes should explain what needs to be revised so the contributor can resubmit."}
+              {statusDecisionKind === "approve"
+                ? "Fill catalog fields and add a comment. The contributor will see your comment."
+                : statusDecisionKind === "reject"
+                  ? "Add a comment so the contributor knows why it was rejected and can improve."
+                  : "Add a comment explaining what to fix so the contributor can resubmit."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2 py-2">
-            <Label htmlFor="editor-review-notes">Feedback to contributor (optional but recommended)</Label>
-            <Textarea
-              id="editor-review-notes"
-              value={editorReviewNotes}
-              onChange={(e) => setEditorReviewNotes(e.target.value)}
-              rows={4}
-              placeholder={
-                editorDecisionKind === "approve"
-                  ? "Optional note about your decision..."
-                  : "Explain what is incorrect, missing, or needs clarification..."
-              }
-              disabled={editorSubmittingDecision}
-            />
+            {statusDecisionKind === "approve" && (
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Shape <span className="text-destructive">*</span></Label>
+                  <Select value={approveShapeId} onValueChange={setApproveShapeId} disabled={statusSubmitting || approveOptionsLoading}>
+                    <SelectTrigger><SelectValue placeholder="Select shape" /></SelectTrigger>
+                    <SelectContent>
+                      {shapeOptions.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Lettering style <span className="text-destructive">*</span></Label>
+                  <Select value={approveLetteringId} onValueChange={setApproveLetteringId} disabled={statusSubmitting || approveOptionsLoading}>
+                    <SelectTrigger><SelectValue placeholder={approveOptionsLoading ? "Loading..." : "Select lettering style"} /></SelectTrigger>
+                    <SelectContent>
+                      {approveOptions.lettering.map((o) => (
+                        <SelectItem key={o.id} value={String(o.id)}>{o.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Framing style <span className="text-destructive">*</span></Label>
+                  <Select value={approveFramingId} onValueChange={setApproveFramingId} disabled={statusSubmitting || approveOptionsLoading}>
+                    <SelectTrigger><SelectValue placeholder={approveOptionsLoading ? "Loading..." : "Select framing style"} /></SelectTrigger>
+                    <SelectContent>
+                      {approveOptions.framing.map((o) => (
+                        <SelectItem key={o.id} value={String(o.id)}>{o.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Date format <span className="text-destructive">*</span></Label>
+                  <Select value={approveDateFormatId} onValueChange={setApproveDateFormatId} disabled={statusSubmitting || approveOptionsLoading}>
+                    <SelectTrigger><SelectValue placeholder={approveOptionsLoading ? "Loading..." : "Select date format"} /></SelectTrigger>
+                    <SelectContent>
+                      {approveOptions.dateFormats.map((o) => (
+                        <SelectItem key={o.id} value={String(o.id)}>{o.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="approve-value">Value (of this postmark) <span className="text-destructive">*</span></Label>
+                  <Input
+                    id="approve-value"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="e.g. 0 or 12.50"
+                    value={approveValue}
+                    onChange={(e) => setApproveValue(e.target.value)}
+                    disabled={statusSubmitting}
+                  />
+                </div>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="status-comment">
+                Comment <span className="text-destructive">(required)</span>
+              </Label>
+              <Textarea
+                id="status-comment"
+                value={statusComment}
+                onChange={(e) => setStatusComment(e.target.value)}
+                rows={4}
+                placeholder={
+                  statusDecisionKind === "approve"
+                    ? "e.g. Good quality image and details."
+                    : statusDecisionKind === "reject"
+                      ? "e.g. Image too blurry; please resubmit with a clearer scan."
+                      : "e.g. Please add the date range and correct the town name."
+                }
+                disabled={statusSubmitting}
+                className="resize-none"
+              />
+            </div>
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={editorSubmittingDecision}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={statusSubmitting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              disabled={editorSubmittingDecision}
-              onClick={async () => {
-                if (!editorDecisionTarget || !isStateEditor) return;
-
-                const apiEnv = import.meta.env.VITE_API_URL;
-                const apiBase =
-                  apiEnv && typeof apiEnv === "string" && apiEnv.trim() !== ""
-                    ? apiEnv.trim().replace(/\/+$/, "")
-                    : null;
-                if (!apiBase) {
-                  toast({
-                    title: "Configuration error",
-                    description: "VITE_API_URL is not set, cannot submit decision.",
-                    variant: "destructive",
-                  });
-                  return;
-                }
-
-                const actionPath =
-                  editorDecisionKind === "approve"
-                    ? "approve"
-                    : "reject";
-
-                setEditorSubmittingDecision(true);
-                try {
-                  const res = await fetch(
-                    `${apiBase}/api/contributions/${editorDecisionTarget.id}/${actionPath}/`,
-                    {
-                      method: "POST",
-                      credentials: "include",
-                      headers: {
-                        "Content-Type": "application/json",
-                        Accept: "application/json",
-                      },
-                      body: JSON.stringify({ review_notes: editorReviewNotes || "" }),
-                    },
-                  );
-                  if (!res.ok) {
-                    const body = await res.json().catch(() => ({}));
-                    const msg = body?.detail || res.statusText || "Could not submit decision.";
-                    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
-                  }
-
-                  toast({
-                    title:
-                      editorDecisionKind === "approve"
-                        ? "Submission approved"
-                        : editorDecisionKind === "reject"
-                          ? "Submission rejected"
-                          : "Revisions requested",
-                  });
-
-                  setEditorItems((prev) => prev.filter((i) => i.id !== editorDecisionTarget.id));
-                  setEditorDecisionTarget(null);
-                  setEditorReviewNotes("");
-                } catch (err) {
-                  toast({
-                    title: "Decision failed",
-                    description: err instanceof Error ? err.message : "Could not submit decision. Try again.",
-                    variant: "destructive",
-                  });
-                } finally {
-                  setEditorSubmittingDecision(false);
-                }
-              }}
+              disabled={
+                statusSubmitting ||
+                !statusComment.trim() ||
+                (statusDecisionKind === "approve" &&
+                  (!approveShapeId ||
+                    !approveLetteringId ||
+                    !approveFramingId ||
+                    !approveDateFormatId ||
+                    approveValue.trim() === "" ||
+                    Number.isNaN(parseFloat(approveValue)) ||
+                    parseFloat(approveValue) < 0))
+              }
+              onClick={submitStatusDecision}
             >
-              {editorSubmittingDecision
+              {statusSubmitting
                 ? "Submitting..."
-                : editorDecisionKind === "approve"
+                : statusDecisionKind === "approve"
                   ? "Approve"
-                  : editorDecisionKind === "reject"
+                  : statusDecisionKind === "reject"
                     ? "Reject"
-                    : "Request revisions"}
+                    : "Request revision"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
     </div>
   </div>
   );

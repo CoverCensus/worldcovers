@@ -234,7 +234,7 @@ const Search = () => {
             [record.town, record.state].filter(Boolean).join(", "),
             record.shapeName,
           ]
-            .filter(Boolean)
+            .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
             .join(" — ") || record.postmarkKey,
         postmarkKey: record.postmarkKey,
         state: record.state || "",

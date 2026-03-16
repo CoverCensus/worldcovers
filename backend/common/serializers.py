@@ -6,14 +6,31 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from .models import (
-    PostalFacility, PostalFacilityIdentity,
-    AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
+    PostalFacility,
+    PostalFacilityIdentity,
+    AdministrativeUnit,
+    AdministrativeUnitIdentity,
+    AdministrativeUnitResponsibility,
     JurisdictionalAffiliation,
-    PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
-    Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
-    PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
-    PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
-    AdminCsvUpload, Contribution,
+    PostmarkShape,
+    LetteringStyle,
+    FramingStyle,
+    Color,
+    DateFormat,
+    Postmark,
+    PostmarkColor,
+    PostmarkDatesSeen,
+    PostmarkSize,
+    PostmarkValuation,
+    PostmarkPublication,
+    PostmarkPublicationReference,
+    PostmarkImage,
+    Postcover,
+    PostcoverPostmark,
+    PostcoverImage,
+    AdminCsvUpload,
+    Contribution,
+    FAQEntry,
 )
 
 User = get_user_model()
@@ -50,6 +67,15 @@ class LoginRequestSerializer(serializers.Serializer):
                 "A user with this email already exists."
             )
         return value
+
+
+class FAQEntrySerializer(serializers.ModelSerializer):
+    """Public FAQ entry serializer for the SPA."""
+
+    class Meta:
+        model = FAQEntry
+        fields = ["faq_entry_id", "question", "answer", "is_active", "display_order"]
+        read_only_fields = ["faq_entry_id", "is_active", "display_order"]
 
 
 # ========== GEOGRAPHIC HIERARCHY SERIALIZERS ==========
@@ -133,11 +159,19 @@ class PostalFacilityListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for lists"""
     current_name = serializers.SerializerMethodField()
     current_type = serializers.SerializerMethodField()
+    state_name = serializers.SerializerMethodField()
     
     class Meta:
         model = PostalFacility
-        fields = ['postal_facility_id', 'reference_code', 'current_name', 'current_type', 
-                  'latitude', 'longitude']
+        fields = [
+            'postal_facility_id',
+            'reference_code',
+            'current_name',
+            'current_type',
+            'latitude',
+            'longitude',
+            'state_name',
+        ]
     
     def get_current_name(self, obj):
         identity = obj.get_current_identity()
@@ -146,6 +180,26 @@ class PostalFacilityListSerializer(serializers.ModelSerializer):
     def get_current_type(self, obj):
         identity = obj.get_current_identity()
         return identity.facility_type if identity else None
+
+    def get_state_name(self, obj):
+        """
+        Derive the current state/location name for this facility from its
+        active jurisdictional affiliations, if any.
+        """
+        identity = obj.get_current_identity()
+        if not identity:
+            return None
+        # Look for a current jurisdiction (no effective_to_date) and use the
+        # administrative unit's current identity name.
+        aff = identity.jurisdictions.filter(
+            effective_to_date__isnull=True
+        ).select_related('administrative_unit').first()
+        if not aff or not aff.administrative_unit:
+            return None
+        admin_identity = aff.administrative_unit.get_current_identity()
+        if admin_identity and admin_identity.unit_name:
+            return admin_identity.unit_name
+        return aff.administrative_unit.reference_code
 
 
 class PostalFacilityIdentitySerializer(serializers.ModelSerializer):
@@ -754,7 +808,15 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
 
 
 class ContributionApproveRejectSerializer(serializers.Serializer):
-    """Payload for approve/reject actions."""
-    review_notes = serializers.CharField(required=False, allow_blank=True)
+    """Payload for approve/reject/request_revision. Comment required. For approve, editor must also send catalog metadata."""
+    review_notes = serializers.CharField(required=True, allow_blank=False)
+    # Required when approving: editor must set shape, lettering, framing, date format, and value
+    postmark_shape_id = serializers.IntegerField(required=False, allow_null=True)
+    lettering_style_id = serializers.IntegerField(required=False, allow_null=True)
+    framing_style_id = serializers.IntegerField(required=False, allow_null=True)
+    date_format_id = serializers.IntegerField(required=False, allow_null=True)
+    estimated_value = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True
+    )
 
 ###################################################################################################

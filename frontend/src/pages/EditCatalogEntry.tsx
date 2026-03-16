@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
@@ -14,6 +14,7 @@ import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
 import { getColors, type ColorOption } from "@/services/colors";
 import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
 import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
+import { getPostalFacilities, type PostalFacilityOption } from "@/services/postalFacilities";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -103,10 +104,13 @@ const EditCatalogEntry = () => {
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [stateOptions, setStateOptions] = useState<StateOption[]>([]);
   const [typeOptions, setTypeOptions] = useState<PostmarkShapeOption[]>([]);
+  const [postalFacilities, setPostalFacilities] = useState<PostalFacilityOption[]>([]);
   const [loadingStates, setLoadingStates] = useState(true);
   const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
   const [loadingTypes, setLoadingTypes] = useState(true);
   const [typeOptionsError, setTypeOptionsError] = useState<string | null>(null);
+  const [loadingTowns, setLoadingTowns] = useState(false);
+  const [townOptionsError, setTownOptionsError] = useState<string | null>(null);
   const [loadingRecord, setLoadingRecord] = useState(true);
   const [recordError, setRecordError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -147,6 +151,18 @@ const EditCatalogEntry = () => {
     getColors()
       .then(setColorOptions)
       .catch(() => setColorOptions([{ id: 0, name: "Black", value: "" }]));
+  }, []);
+
+  useEffect(() => {
+    setLoadingTowns(true);
+    setTownOptionsError(null);
+    getPostalFacilities()
+      .then(setPostalFacilities)
+      .catch((err) => {
+        setTownOptionsError(err instanceof Error ? err.message : "Failed to load towns");
+        setPostalFacilities([]);
+      })
+      .finally(() => setLoadingTowns(false));
   }, []);
 
   useEffect(() => {
@@ -242,6 +258,24 @@ const EditCatalogEntry = () => {
       cancelled = true;
     };
   }, [postmarkId]);
+
+  const townOptions = useMemo(() => {
+    const normalizedState = state.trim().toLowerCase();
+    if (!normalizedState) return [];
+    const seen = new Set<string>();
+    const towns: { value: string; label: string }[] = [];
+    for (const facility of postalFacilities) {
+      const facilityState = (facility.state || "").trim().toLowerCase();
+      const facilityTown = (facility.town || "").trim();
+      if (!facilityTown || facilityState !== normalizedState) continue;
+      const key = facilityTown.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      towns.push({ value: facilityTown, label: facilityTown });
+    }
+    towns.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+    return towns;
+  }, [postalFacilities, state]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -541,6 +575,11 @@ const EditCatalogEntry = () => {
                         value={state}
                         onValueChange={(value) => {
                           setState(value);
+                          // Reset town if it's no longer valid for the newly selected state
+                          const hasTown = townOptions.some((opt) => opt.value === town);
+                          if (!hasTown) {
+                            setTown("");
+                          }
                           if (fieldErrors.state) {
                             setFieldErrors((prev) => ({ ...prev, state: undefined }));
                           }
@@ -575,19 +614,28 @@ const EditCatalogEntry = () => {
 
                     <div className="space-y-2">
                       <Label htmlFor="edit-town">Town/City *</Label>
-                      <Input
+                      <SearchableSelect
                         id="edit-town"
-                        type="text"
-                        placeholder="e.g., Boston"
                         value={town}
-                        onChange={(e) => {
-                          setTown(sanitizeTown(e.target.value));
+                        onValueChange={(value) => {
+                          setTown(value);
                           if (fieldErrors.town) {
                             setFieldErrors((prev) => ({ ...prev, town: undefined }));
                           }
                         }}
-                        className={fieldErrors.town ? "border-destructive" : ""}
-                        aria-label="Town or city (letters and spaces only)"
+                        placeholder={state ? "Select town/city..." : "Select a state first"}
+                        options={townOptions}
+                        loading={loadingTowns}
+                        error={!!townOptionsError}
+                        errorMessage={
+                          townOptionsError ??
+                          (state ? "Failed to load towns" : "Select a state first")
+                        }
+                        searchPlaceholder="Search towns..."
+                        emptyMessage={state ? "No towns found for this state." : "Select a state first."}
+                        aria-label="Town or city"
+                        triggerClassName={fieldErrors.town ? "border-destructive" : ""}
+                        disabled={!state || townOptions.length === 0}
                       />
                       {fieldErrors.town && (
                         <p className="text-sm text-destructive">{fieldErrors.town}</p>
