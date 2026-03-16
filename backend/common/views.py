@@ -1182,18 +1182,31 @@ class ContributionView(APIView):
                     if payload.get("image_meta"):
                         submitted_data["image_meta"] = payload["image_meta"]
 
-                    contrib = Contribution.objects.create(
-                        contributor=user,
+                    # Because Contribution.postmark is OneToOne, there can only be
+                    # one contribution row per catalog postmark. If one already
+                    # exists for this postmark, update it instead of creating a
+                    # new row to avoid IntegrityError on the unique constraint.
+                    contrib, created = Contribution.objects.update_or_create(
                         postmark_id=edit_postmark_id,
-                        status=Contribution.STATUS_PENDING,
-                        submitted_data=submitted_data,
+                        defaults={
+                            "contributor": user,
+                            "status": Contribution.STATUS_PENDING,
+                            "submitted_data": submitted_data,
+                        },
                     )
+
+                    detail_msg = (
+                        "Correction submitted for review. A State Editor will review and apply it."
+                        if created
+                        else "Correction updated. A State Editor will review and apply it."
+                    )
+
                     return Response(
                         {
-                            "detail": "Correction submitted for review. A State Editor will review and apply it.",
+                            "detail": detail_msg,
                             "contributionId": contrib.id,
                         },
-                        status=status.HTTP_201_CREATED,
+                        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
                     )
                 except Exception:
                     return Response(
