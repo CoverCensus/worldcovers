@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Calendar, Grid3x3, List, Loader2, Search as SearchIcon, SlidersHorizontal } from "lucide-react";
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
@@ -143,9 +143,18 @@ interface DashboardProps {
 
 const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   const user = useAuth();
   const [activeTab, setActiveTab] = useState<DashboardTab>(initialTab);
+
+  // When returning from contribution detail, switch to editor tab if requested
+  useEffect(() => {
+    const tab = (location.state as { tab?: DashboardTab } | null)?.tab;
+    if (tab === "editor" || tab === "submissions" || tab === "suggestions") {
+      setActiveTab(tab);
+    }
+  }, [location.state]);
 
   const [submissions, setSubmissions] = useState<DashboardItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -170,6 +179,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [assignedCatalogTotal, setAssignedCatalogTotal] = useState<number | null>(null);
   const [assignedCatalogLoading, setAssignedCatalogLoading] = useState(false);
   const [assignedCatalogError, setAssignedCatalogError] = useState<string | null>(null);
+  const [assignedCatalogRefetchKey, setAssignedCatalogRefetchKey] = useState(0);
   const assignedCatalogPageSize = 10;
   const [editorGoToPageInput, setEditorGoToPageInput] = useState("");
 
@@ -181,8 +191,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [statusDecisionKind, setStatusDecisionKind] = useState<"approve" | "reject" | "revision">("approve");
   const [statusComment, setStatusComment] = useState("");
   const [statusSubmitting, setStatusSubmitting] = useState(false);
-  // Editor-required fields when approving (Shape, Lettering, Framing, Date format, Value)
-  const [approveShapeId, setApproveShapeId] = useState<string>("");
+  // Editor-required fields when approving (Lettering, Framing, Date format, Value; shape comes from contribution as postmark type)
   const [approveLetteringId, setApproveLetteringId] = useState<string>("");
   const [approveFramingId, setApproveFramingId] = useState<string>("");
   const [approveDateFormatId, setApproveDateFormatId] = useState<string>("");
@@ -464,7 +473,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     return () => {
       cancelled = true;
     };
-  }, [isStateEditor, activeTab, assignedCatalogPage, stateFilter, townFilter, typeFilter, colorFilter, searchQuery]);
+  }, [isStateEditor, activeTab, assignedCatalogPage, stateFilter, townFilter, typeFilter, colorFilter, searchQuery, assignedCatalogRefetchKey]);
 
   // Reset User Submissions pagination when filters change
   useEffect(() => {
@@ -539,13 +548,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const submitStatusDecision = async () => {
     if (!statusDecisionTarget || !statusComment.trim()) return;
     if (statusDecisionKind === "approve") {
-      const shapeId = approveShapeId ? Number(approveShapeId) : NaN;
       const letteringId = approveLetteringId ? Number(approveLetteringId) : NaN;
       const framingId = approveFramingId ? Number(approveFramingId) : NaN;
       const dateFormatId = approveDateFormatId ? Number(approveDateFormatId) : NaN;
       const valueNum = approveValue.trim() === "" ? NaN : parseFloat(approveValue);
-      if (!Number.isInteger(shapeId) || !Number.isInteger(letteringId) || !Number.isInteger(framingId) || !Number.isInteger(dateFormatId) || Number.isNaN(valueNum) || valueNum < 0) {
-        toast({ title: "Missing required fields", description: "Please fill Shape, Lettering style, Framing style, Date format, and Value before approving.", variant: "destructive" });
+      if (!Number.isInteger(letteringId) || !Number.isInteger(framingId) || !Number.isInteger(dateFormatId) || Number.isNaN(valueNum) || valueNum < 0) {
+        toast({ title: "Missing required fields", description: "Please fill Lettering style, Framing style, Date format, and Value before approving.", variant: "destructive" });
         return;
       }
     }
@@ -558,18 +566,20 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       statusDecisionKind === "approve" ? "approve" : statusDecisionKind === "reject" ? "reject" : "request-revision";
     const body: Record<string, unknown> = { review_notes: statusComment.trim() };
     if (statusDecisionKind === "approve") {
-      body.postmark_shape_id = Number(approveShapeId);
       body.lettering_style_id = Number(approveLetteringId);
       body.framing_style_id = Number(approveFramingId);
       body.date_format_id = Number(approveDateFormatId);
       body.estimated_value = parseFloat(approveValue);
     }
     setStatusSubmitting(true);
+    const csrfToken = getCsrfTokenFromCookie();
+    const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
+    if (csrfToken) headers["X-CSRFToken"] = csrfToken;
     try {
       const res = await fetch(`${apiBase}/api/contributions/${statusDecisionTarget.id}/${actionPath}/`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        headers,
         body: JSON.stringify(body),
       });
       if (!res.ok) {
@@ -583,7 +593,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       setPendingReviewItems((prev) => prev.filter((i) => i.id !== statusDecisionTarget.id));
       setStatusDecisionTarget(null);
       setStatusComment("");
-      setApproveShapeId("");
       setApproveLetteringId("");
       setApproveFramingId("");
       setApproveDateFormatId("");
@@ -636,6 +645,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       setAssignedCatalogItems(prev => prev.filter((e) => e.id !== postmarkId));
       setAssignedCatalogTotal((prev) => (prev != null && prev > 0 ? prev - 1 : null));
       setDeleteTarget(null);
+      // Refetch catalog so total and list stay in sync with server
+      setAssignedCatalogRefetchKey((k) => k + 1);
       toast({
         title: "Catalog entry deleted",
         description: "The catalog entry linked to this submission has been removed.",
@@ -1200,6 +1211,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             )}
 
                             <div className="mt-3 flex flex-wrap gap-2 justify-end">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  navigate(`/contribution/${submission.id}`, { state: { fromDashboard: true } })
+                                }
+                              >
+                                View details
+                              </Button>
                               {submission.postmark_id && (
                                 <>
                                   <Button
@@ -1209,7 +1229,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                       navigate(`/record/${submission.postmark_id}`)
                                     }
                                   >
-                                    View
+                                    View record
                                   </Button>
                                   <Button
                                     variant="outline"
@@ -1298,6 +1318,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         </div>
 
                         <div className="mt-2 flex flex-wrap gap-2 justify-center">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              navigate(`/contribution/${submission.id}`, { state: { fromDashboard: true } })
+                            }
+                          >
+                            View details
+                          </Button>
                           {submission.postmark_id && (
                             <>
                               <Button
@@ -1307,7 +1336,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                   navigate(`/record/${submission.postmark_id}`)
                                 }
                               >
-                                View
+                                View record
                               </Button>
                               <Button
                                 variant="outline"
@@ -1608,6 +1637,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               </div>
                               <div className="flex flex-wrap gap-2">
                                 <Button
+                                  variant="default"
+                                  size="sm"
+                                  onClick={() =>
+                                    navigate(`/contribution/${item.id}`, { state: { fromDashboard: true } })
+                                  }
+                                >
+                                  View
+                                </Button>
+                                <Button
                                   variant="outline"
                                   size="sm"
                                   onClick={() => {
@@ -1747,55 +1785,75 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           className="shadow-archival-md hover:shadow-archival-lg transition-shadow"
                         >
                           <CardContent className="p-6">
-                            <div className="flex flex-col md:flex-row md:items-center gap-4">
-                              {imageUrl && (
-                                <div className="flex-shrink-0 w-20 h-20 rounded overflow-hidden bg-muted">
-                                  <ImageOrPlaceholder
-                                    src={imageUrl}
-                                    alt=""
-                                    className="w-full h-full object-cover"
-                                  />
-                                </div>
-                              )}
+                            <div className="flex gap-6 md:flex-row flex-col">
+                              <ImageOrPlaceholder
+                                src={imageUrl}
+                                alt={title}
+                                className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border shrink-0"
+                              />
                               <div className="flex-1 min-w-0">
-                                <h3 className="font-heading text-lg font-semibold text-foreground">
+                                <h3 className="font-heading text-xl font-semibold text-foreground">
                                   {title}
                                 </h3>
-                                <div className="text-sm text-muted-foreground mt-1">
-                                  {entry.shapeName && <span>{entry.shapeName}</span>}
-                                  {entry.dateRange && (
-                                    <span className={entry.shapeName ? " ml-2" : ""}>{entry.dateRange}</span>
+                                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm mt-2">
+                                  {entry.town && (
+                                    <div>
+                                      <span className="text-muted-foreground">Town:</span>{" "}
+                                      <span className="text-foreground">{entry.town}</span>
+                                    </div>
                                   )}
-                                  {entry.colorsDisplay && (
-                                    <span className="ml-2">{entry.colorsDisplay}</span>
+                                  {entry.state && (
+                                    <div>
+                                      <span className="text-muted-foreground">State:</span>{" "}
+                                      <span className="text-foreground">{entry.state}</span>
+                                    </div>
                                   )}
                                 </div>
-                              </div>
-                              <div className="flex flex-col sm:flex-row gap-2 justify-end">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => navigate(`/record/${entry.id}`)}
-                                >
-                                  View
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => navigate(`/edit/${entry.id}`)}
-                                >
-                                  Edit
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="text-destructive hover:text-destructive"
-                                  onClick={() =>
-                                    setDeleteTarget({ id: entry.id, postmark_id: entry.id, name: title })
-                                  }
-                                >
-                                  Delete
-                                </Button>
+                                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                                  {entry.dateRange && (
+                                    <div>
+                                      <span className="text-muted-foreground">Date range:</span>{" "}
+                                      <span className="text-foreground">{entry.dateRange}</span>
+                                    </div>
+                                  )}
+                                  {entry.shapeName && (
+                                    <div>
+                                      <span className="text-muted-foreground">Type:</span>{" "}
+                                      <span className="text-foreground">{entry.shapeName}</span>
+                                    </div>
+                                  )}
+                                  {entry.colorsDisplay && (
+                                    <div>
+                                      <span className="text-muted-foreground">Color:</span>{" "}
+                                      <span className="text-foreground">{entry.colorsDisplay}</span>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-2 justify-end">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => navigate(`/record/${entry.id}`)}
+                                  >
+                                    View record
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => navigate(`/edit/${entry.id}`)}
+                                  >
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    onClick={() =>
+                                      setDeleteTarget({ id: entry.id, postmark_id: entry.id, name: title })
+                                    }
+                                  >
+                                    Delete
+                                  </Button>
+                                </div>
                               </div>
                             </div>
                           </CardContent>
@@ -1820,28 +1878,54 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           key={entry.id}
                           className="shadow-archival-md hover:shadow-archival-lg transition-shadow overflow-hidden"
                         >
-                          <div className="aspect-[4/3] bg-muted">
-                            <ImageOrPlaceholder
-                              src={imageUrl}
-                              alt=""
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
+                          <ImageOrPlaceholder
+                            src={imageUrl}
+                            alt={title}
+                            className="w-full h-48 object-cover"
+                          />
                           <CardContent className="p-4 flex flex-col gap-3">
-                            <h3 className="font-heading font-semibold text-foreground line-clamp-2">
+                            <h3 className="font-heading text-lg font-semibold text-foreground line-clamp-2">
                               {title}
                             </h3>
-                            <div className="text-sm text-muted-foreground">
-                              {entry.shapeName}
-                              {entry.dateRange ? ` · ${entry.dateRange}` : ""}
+                            <div className="space-y-1 text-sm flex-1">
+                              {entry.town && (
+                                <div>
+                                  <span className="text-muted-foreground">Town:</span>{" "}
+                                  <span className="text-foreground">{entry.town}</span>
+                                </div>
+                              )}
+                              {entry.state && (
+                                <div>
+                                  <span className="text-muted-foreground">State:</span>{" "}
+                                  <span className="text-foreground">{entry.state}</span>
+                                </div>
+                              )}
+                              {entry.dateRange && (
+                                <div>
+                                  <span className="text-muted-foreground">Date range:</span>{" "}
+                                  <span className="text-foreground">{entry.dateRange}</span>
+                                </div>
+                              )}
+                              {entry.shapeName && (
+                                <div>
+                                  <span className="text-muted-foreground">Type:</span>{" "}
+                                  <span className="text-foreground">{entry.shapeName}</span>
+                                </div>
+                              )}
+                              {entry.colorsDisplay && (
+                                <div>
+                                  <span className="text-muted-foreground">Color:</span>{" "}
+                                  <span className="text-foreground">{entry.colorsDisplay}</span>
+                                </div>
+                              )}
                             </div>
-                            <div className="mt-2 flex flex-wrap gap-2">
+                            <div className="mt-2 flex flex-wrap gap-2 justify-center">
                               <Button
                                 variant="outline"
                                 size="sm"
                                 onClick={() => navigate(`/record/${entry.id}`)}
                               >
-                                View
+                                View record
                               </Button>
                               <Button
                                 variant="outline"
@@ -1851,9 +1935,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                 Edit
                               </Button>
                               <Button
-                                variant="outline"
+                                variant="destructive"
                                 size="sm"
-                                className="text-destructive hover:text-destructive"
                                 onClick={() =>
                                   setDeleteTarget({ id: entry.id, postmark_id: entry.id, name: title })
                                 }
@@ -2035,7 +2118,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           if (!open && !statusSubmitting) {
             setStatusDecisionTarget(null);
             setStatusComment("");
-            setApproveShapeId("");
             setApproveLetteringId("");
             setApproveFramingId("");
             setApproveDateFormatId("");
@@ -2063,17 +2145,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           <div className="space-y-2 py-2">
             {statusDecisionKind === "approve" && (
               <div className="grid gap-2 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label>Shape <span className="text-destructive">*</span></Label>
-                  <Select value={approveShapeId} onValueChange={setApproveShapeId} disabled={statusSubmitting || approveOptionsLoading}>
-                    <SelectTrigger><SelectValue placeholder="Select shape" /></SelectTrigger>
-                    <SelectContent>
-                      {shapeOptions.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
                 <div className="space-y-1.5">
                   <Label>Lettering style <span className="text-destructive">*</span></Label>
                   <Select value={approveLetteringId} onValueChange={setApproveLetteringId} disabled={statusSubmitting || approveOptionsLoading}>
@@ -2150,8 +2221,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 statusSubmitting ||
                 !statusComment.trim() ||
                 (statusDecisionKind === "approve" &&
-                  (!approveShapeId ||
-                    !approveLetteringId ||
+                  (!approveLetteringId ||
                     !approveFramingId ||
                     !approveDateFormatId ||
                     approveValue.trim() === "" ||

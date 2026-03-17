@@ -834,7 +834,7 @@ const EditCatalogEntry = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="edit-references">Citation References (Optional)</Label>
+                      <Label htmlFor="edit-references">Citation References</Label>
                       <Textarea
                         id="edit-references"
                         placeholder="Catalog numbers, publications..."

@@ -19,6 +19,7 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
     description: "",
     citationReferences: "",
     rarityLabel: "",
+    comment: "",
   };
 
   if (!raw) return result;
@@ -40,6 +41,8 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
         .trim();
     } else if (trimmed.startsWith("Rarity:")) {
       result.rarityLabel = trimmed.slice("Rarity:".length).trim();
+    } else if (trimmed.startsWith("Comment:")) {
+      result.comment = trimmed.slice("Comment:".length).trim();
     } else {
       extraDescriptionLines.push(trimmed);
     }
@@ -77,11 +80,18 @@ const RecordDetail = () => {
     submitterName?: string;
     citationReferences?: string;
     images: (string | { imageUrl?: string })[];
-    valuations?: Array<{ estimatedValue?: string; condition?: string }>;
+    valuations?: Array<{
+      estimatedValue?: string;
+      condition?: string;
+      valuationDate?: string;
+      valuedBy?: { username?: string; firstName?: string; lastName?: string };
+    }>;
     /** Physical characteristics from the postmark (shape, lettering, framing, date format) */
     letteringStyle?: string;
     framingStyle?: string;
     dateFormat?: string;
+    /** Editor comment (from review when approved) */
+    comment?: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,7 +128,8 @@ const RecordDetail = () => {
           );
           const displayName = displayParts.join(" — ") || data.postmarkKey;
           const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
-          const rarityFromValuation = firstVal?.estimatedValue ? `$${firstVal.estimatedValue}` : "";
+          const firstValEst = firstVal?.estimatedValue ?? (firstVal as any)?.estimated_value;
+          const rarityFromValuation = firstValEst ? `$${firstValEst}` : "";
           const rarityFromOther = parsed.rarityLabel || "";
           const images =
             data.images?.length
@@ -146,6 +157,7 @@ const RecordDetail = () => {
             letteringStyle: letteringStyle || undefined,
             framingStyle: framingStyle || undefined,
             dateFormat: dateFormat || undefined,
+            comment: parsed.comment || undefined,
             rarity: rarityFromValuation || rarityFromOther,
             // Only show description text the contributor actually provided
             // Do NOT fall back to raw otherCharacteristics (which may only contain submitter info)
@@ -153,9 +165,11 @@ const RecordDetail = () => {
             submitterName: parsed.submitterName || "",
             citationReferences: parsed.citationReferences || "",
             images,
-            valuations: data.valuations?.map((v) => ({
-              estimatedValue: v.estimatedValue,
+            valuations: data.valuations?.map((v: any) => ({
+              estimatedValue: v.estimatedValue ?? v.estimated_value,
               condition: "Average condition",
+              valuationDate: v.valuationDate ?? v.valuation_date,
+              valuedBy: v.valuedBy ?? v.valued_by,
             })),
           });
         } else {
@@ -358,9 +372,19 @@ const RecordDetail = () => {
                 </h1>
                 
                 <div className="flex flex-wrap gap-2">
-                  {record?.type && <Badge variant="secondary">{record?.type}</Badge>}
-                  {record?.color && <Badge variant="secondary">{record.color}</Badge>}
-                  {record?.rarity && <Badge variant="outline">{record.rarity}</Badge>}
+                  {(() => {
+                    const show = (v: string | undefined) => {
+                      const s = (v ?? "").trim();
+                      return s !== "" && s.toLowerCase() !== "unknown";
+                    };
+                    return (
+                      <>
+                        {show(record?.type) ? <Badge variant="secondary">{record.type}</Badge> : null}
+                        {show(record?.color) ? <Badge variant="secondary">{record.color}</Badge> : null}
+                        {show(record?.rarity) ? <Badge variant="outline">{record.rarity}</Badge> : null}
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -371,6 +395,10 @@ const RecordDetail = () => {
                 <CardContent>
                   <dl className="space-y-0 text-sm">
                     {(() => {
+                      const hasValue = (v: unknown) => {
+                        const s = v != null ? String(v).trim() : "";
+                        return s !== "" && s.toLowerCase() !== "unknown";
+                      };
                       const details = [
                         { label: "State", value: record.state },
                         { label: "Town", value: record.town },
@@ -379,7 +407,7 @@ const RecordDetail = () => {
                         { label: "Dimensions", value: record.dimensions },
                         { label: "Manuscript", value: record.manuscript },
                         { label: "Rarity", value: record.rarity },
-                      ].filter(({ value }) => value != null && String(value).trim() !== "");
+                      ].filter(({ value }) => hasValue(value));
                       if (details.length === 0) {
                         return (
                           <p className="text-sm text-muted-foreground py-2">No record details available.</p>
@@ -395,6 +423,53 @@ const RecordDetail = () => {
                         </div>
                       ));
                     })()}
+                  </dl>
+                </CardContent>
+              </Card>
+
+              {/* Lettering style, Framing style, Date format, Value, Comment */}
+              <Card className="shadow-archival-md">
+                <CardHeader>
+                  <CardTitle className="font-heading text-lg">Lettering, framing, date format & value</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <dl className="space-y-0 text-sm">
+                    {record.letteringStyle ? (
+                      <div className="flex justify-between py-2 border-b border-border">
+                        <dt className="text-muted-foreground font-medium">Lettering style</dt>
+                        <dd className="text-foreground">{record.letteringStyle}</dd>
+                      </div>
+                    ) : null}
+                    {record.framingStyle ? (
+                      <div className="flex justify-between py-2 border-b border-border">
+                        <dt className="text-muted-foreground font-medium">Framing style</dt>
+                        <dd className="text-foreground">{record.framingStyle}</dd>
+                      </div>
+                    ) : null}
+                    {record.dateFormat ? (
+                      <div className="flex justify-between py-2 border-b border-border">
+                        <dt className="text-muted-foreground font-medium">Date format</dt>
+                        <dd className="text-foreground">{record.dateFormat}</dd>
+                      </div>
+                    ) : null}
+                    {record.valuations?.some((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "") ? (
+                      <div className="flex justify-between py-2 border-b border-border">
+                        <dt className="text-muted-foreground font-medium">Value (of this postmark)</dt>
+                        <dd className="text-foreground">
+                          ${record.valuations.find((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "")?.estimatedValue ?? "—"}
+                        </dd>
+                      </div>
+                    ) : null}
+                    {record.comment ? (
+                      <div className="py-2">
+                        <dt className="text-muted-foreground font-medium mb-1">Comment</dt>
+                        <dd className="text-foreground whitespace-pre-line">{record.comment}</dd>
+                      </div>
+                    ) : null}
+                    {!record.letteringStyle && !record.framingStyle && !record.dateFormat &&
+                     !record.valuations?.some((v) => v.estimatedValue != null) && !record.comment ? (
+                      <p className="text-sm text-muted-foreground py-2">No lettering, framing, date format, value, or comment recorded for this postmark.</p>
+                    ) : null}
                   </dl>
                 </CardContent>
               </Card>
@@ -427,45 +502,41 @@ const RecordDetail = () => {
                 </TabsList>
                 <TabsContent value="physical" className="mt-6">
                   <dl className="space-y-3 text-sm">
-                    {record.type ? (
-                      <div className="flex gap-3">
-                        <dt className="font-medium text-muted-foreground min-w-[8rem]">Shape</dt>
-                        <dd className="text-foreground">{record.type}</dd>
-                      </div>
-                    ) : null}
-                    {record.letteringStyle ? (
-                      <div className="flex gap-3">
-                        <dt className="font-medium text-muted-foreground min-w-[8rem]">Lettering style</dt>
-                        <dd className="text-foreground">{record.letteringStyle}</dd>
-                      </div>
-                    ) : null}
-                    {record.framingStyle ? (
-                      <div className="flex gap-3">
-                        <dt className="font-medium text-muted-foreground min-w-[8rem]">Framing style</dt>
-                        <dd className="text-foreground">{record.framingStyle}</dd>
-                      </div>
-                    ) : null}
-                    {record.dateFormat ? (
-                      <div className="flex gap-3">
-                        <dt className="font-medium text-muted-foreground min-w-[8rem]">Date format</dt>
-                        <dd className="text-foreground">{record.dateFormat}</dd>
-                      </div>
-                    ) : null}
-                    {record.color ? (
-                      <div className="flex gap-3">
-                        <dt className="font-medium text-muted-foreground min-w-[8rem]">Color(s)</dt>
-                        <dd className="text-foreground">{record.color}</dd>
-                      </div>
-                    ) : null}
-                    {record.dimensions ? (
-                      <div className="flex gap-3">
-                        <dt className="font-medium text-muted-foreground min-w-[8rem]">Dimensions</dt>
-                        <dd className="text-foreground">{record.dimensions}</dd>
-                      </div>
-                    ) : null}
-                    {!record.type && !record.letteringStyle && !record.framingStyle && !record.dateFormat && !record.color && !record.dimensions ? (
-                      <p className="text-muted-foreground py-2">No additional physical characteristics recorded for this postmark.</p>
-                    ) : null}
+                    {(() => {
+                      const hasValue = (v: string | undefined) => {
+                        const s = (v ?? "").trim();
+                        return s !== "" && s.toLowerCase() !== "unknown";
+                      };
+                      const showLettering = hasValue(record.letteringStyle);
+                      const showFraming = hasValue(record.framingStyle);
+                      const showDateFormat = hasValue(record.dateFormat);
+                      const none = !showLettering && !showFraming && !showDateFormat;
+                      return (
+                        <>
+                          {showLettering ? (
+                            <div className="flex gap-3">
+                              <dt className="font-medium text-muted-foreground min-w-[8rem]">Lettering style</dt>
+                              <dd className="text-foreground">{record.letteringStyle}</dd>
+                            </div>
+                          ) : null}
+                          {showFraming ? (
+                            <div className="flex gap-3">
+                              <dt className="font-medium text-muted-foreground min-w-[8rem]">Framing style</dt>
+                              <dd className="text-foreground">{record.framingStyle}</dd>
+                            </div>
+                          ) : null}
+                          {showDateFormat ? (
+                            <div className="flex gap-3">
+                              <dt className="font-medium text-muted-foreground min-w-[8rem]">Date format</dt>
+                              <dd className="text-foreground">{record.dateFormat}</dd>
+                            </div>
+                          ) : null}
+                          {none ? (
+                            <p className="text-muted-foreground py-2">No additional physical characteristics recorded for this postmark.</p>
+                          ) : null}
+                        </>
+                      );
+                    })()}
                   </dl>
                 </TabsContent>
                 <TabsContent value="valuations" className="mt-6">
@@ -476,9 +547,16 @@ const RecordDetail = () => {
                         .map((v, i) => (
                           <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
                             <div>
-                              <p className="text-sm font-medium text-foreground">On Cover</p>
+                              <p className="text-sm font-medium text-foreground">Value (of this postmark)</p>
                               {v.condition ? (
                                 <p className="text-xs text-muted-foreground">{v.condition}</p>
+                              ) : null}
+                              {(v.valuationDate || v.valuedBy) ? (
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                  {v.valuationDate ? `Dated ${v.valuationDate.slice(0, 10)}` : ""}
+                                  {v.valuationDate && v.valuedBy ? " · " : ""}
+                                  {v.valuedBy?.username || [v.valuedBy?.firstName, v.valuedBy?.lastName].filter(Boolean).join(" ") || ""}
+                                </p>
                               ) : null}
                             </div>
                             <p className="text-lg font-heading font-semibold text-primary">
@@ -487,7 +565,7 @@ const RecordDetail = () => {
                           </div>
                         ))
                     ) : (
-                      <p className="text-sm text-muted-foreground py-2">No valuations recorded.</p>
+                      <p className="text-sm text-muted-foreground py-2">No valuations recorded. The value given by an editor when adding or approving this postmark is shown here.</p>
                     )}
                   </div>
                 </TabsContent>

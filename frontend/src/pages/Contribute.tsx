@@ -15,6 +15,9 @@ import { getColors, type ColorOption } from "@/services/colors";
 import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
 import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
 import { getPostalFacilities, type PostalFacilityOption } from "@/services/postalFacilities";
+import { getLetteringStyles, type LetteringStyleOption } from "@/services/letteringStyles";
+import { getFramingStyles, type FramingStyleOption } from "@/services/framingStyles";
+import { getDateFormats, type DateFormatOption } from "@/services/dateFormats";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -95,6 +98,9 @@ const Contribute = () => {
   const [references, setReferences] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [letteringId, setLetteringId] = useState("");
+  const [framingId, setFramingId] = useState("");
+  const [dateFormatId, setDateFormatId] = useState("");
   const [fieldErrors, setFieldErrors] = useState<{
     state?: string;
     town?: string;
@@ -102,9 +108,25 @@ const Contribute = () => {
     type?: string;
     color?: string;
     dimensions?: string;
+    lettering?: string;
+    framing?: string;
+    dateFormat?: string;
+    editorValue?: string;
+    editorComment?: string;
   }>({});
   const [firstSeenError, setFirstSeenError] = useState<string | null>(null);
   const [lastSeenError, setLastSeenError] = useState<string | null>(null);
+
+  // Contributor: lettering, framing, date format (loaded for all)
+  const [letteringOptions, setLetteringOptions] = useState<LetteringStyleOption[]>([]);
+  const [framingOptions, setFramingOptions] = useState<FramingStyleOption[]>([]);
+  const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
+  const [catalogOptionsLoading, setCatalogOptionsLoading] = useState(false);
+
+  // Editor-only: value and comment when approving (direct add to catalog)
+  const isStateEditor = user?.role === "state_editor";
+  const [editorValue, setEditorValue] = useState("");
+  const [editorComment, setEditorComment] = useState("");
 
   /** Town/City: letters, spaces, hyphens, apostrophes only */
   const sanitizeTown = (v: string) => v.replace(/[^a-zA-Z\s\-']/g, "");
@@ -162,6 +184,22 @@ const Contribute = () => {
         setTypeOptions([]);
       })
       .finally(() => setLoadingTypes(false));
+  }, []);
+
+  useEffect(() => {
+    setCatalogOptionsLoading(true);
+    Promise.all([getLetteringStyles(), getFramingStyles(), getDateFormats()])
+      .then(([lettering, framing, dateFmt]) => {
+        setLetteringOptions(lettering);
+        setFramingOptions(framing);
+        setDateFormatOptions(dateFmt);
+      })
+      .catch(() => {
+        setLetteringOptions([]);
+        setFramingOptions([]);
+        setDateFormatOptions([]);
+      })
+      .finally(() => setCatalogOptionsLoading(false));
   }, []);
 
   const noAssignedStates =
@@ -270,6 +308,15 @@ const Contribute = () => {
     if (dimensionsVal && !/^\d{1,4}$/.test(dimensionsVal)) {
       errors.dimensions = "Dimensions must be numeric only, max 4 digits";
     }
+    if (!letteringId) errors.lettering = "Lettering style is required";
+    if (!framingId) errors.framing = "Framing style is required";
+    if (!dateFormatId) errors.dateFormat = "Date format is required";
+    if (isStateEditor) {
+      if (editorValue.trim() === "" || Number.isNaN(parseFloat(editorValue)) || parseFloat(editorValue) < 0) {
+        errors.editorValue = "Value is required when approving (adding to catalog) and must be a non-negative number";
+      }
+      if (!editorComment.trim()) errors.editorComment = "Comment is required when adding to catalog";
+    }
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       return;
@@ -318,6 +365,17 @@ const Contribute = () => {
       let body: string | FormData;
       let headers: Record<string, string> = {};
 
+      const derivedShapeId = isStateEditor && type && type !== TYPE_OTHER_VALUE
+        ? typeOptions.find((t) => t.name === type)?.id
+        : undefined;
+      const editorPayload = isStateEditor
+        ? {
+            postmark_shape_id: derivedShapeId,
+            estimated_value: parseFloat(editorValue),
+            review_notes: editorComment.trim() || undefined,
+          }
+        : {};
+
       if (imageFile) {
         const form = new FormData();
         form.append("state", stateVal);
@@ -332,6 +390,14 @@ const Contribute = () => {
         if (description.trim()) form.append("description", description.trim());
         if (references.trim()) form.append("references", references.trim());
         if (submitterName) form.append("submitterName", submitterName);
+        form.append("lettering_style_id", letteringId);
+        form.append("framing_style_id", framingId);
+        form.append("date_format_id", dateFormatId);
+        if (isStateEditor) {
+          if (derivedShapeId != null) form.append("postmark_shape_id", String(derivedShapeId));
+          form.append("estimated_value", editorValue.trim());
+          form.append("review_notes", editorComment.trim());
+        }
         form.append("image", imageFile, imageFile.name);
         body = form;
         // Do not set Content-Type so browser sets multipart/form-data with boundary
@@ -349,6 +415,10 @@ const Contribute = () => {
           description: description.trim() || undefined,
           references: references.trim() || undefined,
           submitterName: submitterName || undefined,
+          lettering_style_id: letteringId ? Number(letteringId) : undefined,
+          framing_style_id: framingId ? Number(framingId) : undefined,
+          date_format_id: dateFormatId ? Number(dateFormatId) : undefined,
+          ...editorPayload,
         });
         headers["Content-Type"] = "application/json";
       }
@@ -366,13 +436,17 @@ const Contribute = () => {
         throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
 
+      const resData = (await res.json().catch(() => ({}))) as { postmarkId?: number; detail?: string };
+      const directAdd = resData?.postmarkId != null;
+
       toast({
-        title: "Submission sent",
-        description: "Your catalog entry has been submitted for approval. It will appear in Search after an admin approves it.",
+        title: directAdd ? "Catalog entry added" : "Submission sent",
+        description: directAdd
+          ? "The postmark has been added to the catalog and is now visible in Search."
+          : "Your catalog entry has been submitted for approval. It will appear in Search after an admin approves it.",
       });
 
       setState("");
-
       setTown("");
       setFirstSeen("");
       setLastSeen("");
@@ -387,6 +461,13 @@ const Contribute = () => {
       setReferences("");
       setImageFile(null);
       setImagePreview(null);
+      setLetteringId("");
+      setFramingId("");
+      setDateFormatId("");
+      if (directAdd) {
+        setEditorValue("");
+        setEditorComment("");
+      }
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err: unknown) {
       toast({
@@ -407,10 +488,12 @@ const Contribute = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="mb-8">
             <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">
-              Contributor Dashboard
+              {isStateEditor ? "Editor: Add to catalog" : "Contributor Dashboard"}
             </h1>
             <p className="text-muted-foreground">
-              Submit new postmark records or corrections. All fields match what reviewers see on the Submission Detail page.
+              {isStateEditor
+                ? "Fill the form and the catalog details below to add a postmark directly to Search. Entries you submit here appear in the catalog immediately."
+                : "Submit new postmark records or corrections. All fields match what reviewers see on the Submission Detail page."}
             </p>
           </div>
 
@@ -438,7 +521,7 @@ const Contribute = () => {
 
                   <form onSubmit={handleSubmit} className="space-y-6" noValidate>
                     <div className="space-y-2">
-                      <Label htmlFor="state">State *</Label>
+                      <Label htmlFor="state">State <span className="text-destructive">*</span></Label>
                       <SearchableSelect
                         id="state"
                         value={state}
@@ -469,7 +552,7 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="town">Town/City *</Label>
+                      <Label htmlFor="town">Town/City <span className="text-destructive">*</span></Label>
                       <SearchableSelect
                         id="town"
                         value={town}
@@ -500,7 +583,7 @@ const Contribute = () => {
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="firstSeen">First Seen Year *</Label>
+                        <Label htmlFor="firstSeen">First Seen Year <span className="text-destructive">*</span></Label>
                         <Input
                           id="firstSeen"
                           type="text"
@@ -550,7 +633,7 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="type">Postmark Type *</Label>
+                      <Label htmlFor="type">Postmark Type <span className="text-destructive">*</span></Label>
                       <SearchableSelect
                         id="type"
                         value={type}
@@ -589,7 +672,7 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="color">Color *</Label>
+                      <Label htmlFor="color">Color <span className="text-destructive">*</span></Label>
                       <Select
                         value={color}
                         onValueChange={(value) => {
@@ -629,6 +712,49 @@ const Contribute = () => {
                           aria-label="Color (other)"
                         />
                       )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Lettering style <span className="text-destructive">*</span></Label>
+                      <Select value={letteringId} onValueChange={(v) => { setLetteringId(v); setFieldErrors((prev) => ({ ...prev, lettering: undefined })); }} disabled={catalogOptionsLoading}>
+                        <SelectTrigger className={fieldErrors.lettering ? "border-destructive" : ""}>
+                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select lettering style"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {letteringOptions.map((opt) => (
+                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {fieldErrors.lettering && <p className="text-sm text-destructive">{fieldErrors.lettering}</p>}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Framing style <span className="text-destructive">*</span></Label>
+                      <Select value={framingId} onValueChange={(v) => { setFramingId(v); setFieldErrors((prev) => ({ ...prev, framing: undefined })); }} disabled={catalogOptionsLoading}>
+                        <SelectTrigger className={fieldErrors.framing ? "border-destructive" : ""}>
+                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select framing style"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {framingOptions.map((opt) => (
+                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {fieldErrors.framing && <p className="text-sm text-destructive">{fieldErrors.framing}</p>}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Date format <span className="text-destructive">*</span></Label>
+                      <Select value={dateFormatId} onValueChange={(v) => { setDateFormatId(v); setFieldErrors((prev) => ({ ...prev, dateFormat: undefined })); }} disabled={catalogOptionsLoading}>
+                        <SelectTrigger className={fieldErrors.dateFormat ? "border-destructive" : ""}>
+                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select date format"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {dateFormatOptions.map((opt) => (
+                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
                     </div>
 
                     <div className="space-y-2">
@@ -698,7 +824,7 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="references">Citation References (Optional)</Label>
+                      <Label htmlFor="references">Citation References</Label>
                       <Textarea
                         id="references"
                         placeholder="List any catalog numbers, publications, or other references..."
@@ -707,6 +833,38 @@ const Contribute = () => {
                         onChange={(e) => setReferences(e.target.value)}
                       />
                     </div>
+
+                    {isStateEditor && (
+                      <div className="border-t pt-6 mt-6 space-y-4">
+                        <p className="text-sm text-muted-foreground">When approving (adding directly to the catalog), Value and Comment are required.</p>
+                        <div className="space-y-2">
+                          <Label htmlFor="editor-value">Value (of this postmark) <span className="text-destructive">*</span></Label>
+                          <Input
+                            id="editor-value"
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            placeholder="e.g. 25.00 (required when approving)"
+                            value={editorValue}
+                            onChange={(e) => { setEditorValue(e.target.value); setFieldErrors((prev) => ({ ...prev, editorValue: undefined })); }}
+                            className={fieldErrors.editorValue ? "border-destructive" : ""}
+                          />
+                          {fieldErrors.editorValue && <p className="text-sm text-destructive">{fieldErrors.editorValue}</p>}
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="editor-comment">Comment <span className="text-destructive">*</span></Label>
+                          <Textarea
+                            id="editor-comment"
+                            placeholder="Add a comment for this catalog entry (required when adding to catalog)..."
+                            rows={2}
+                            value={editorComment}
+                            onChange={(e) => { setEditorComment(e.target.value); setFieldErrors((prev) => ({ ...prev, editorComment: undefined })); }}
+                            className={fieldErrors.editorComment ? "border-destructive" : ""}
+                          />
+                          {fieldErrors.editorComment && <p className="text-sm text-destructive">{fieldErrors.editorComment}</p>}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="space-y-2">
                       <Label>Upload Image</Label>
@@ -756,7 +914,7 @@ const Contribute = () => {
                   </form>
 
                   <p className="text-xs text-muted-foreground">
-                    * Required: State, Town/City, First Seen Year, Postmark Type, Color. All other fields match Submission Detail.
+                    <span className="text-destructive">*</span> Required: State, Town/City, First Seen Year, Postmark Type, Color, Lettering style, Framing style, Date format. When approving (adding to catalog), editors must also add Value and Comment.
                   </p>
                 </CardContent>
               </Card>

@@ -130,13 +130,14 @@ def _get_user_role(user):
 
 
 def _build_user_payload(user):
-    """Build the user dict for login/me responses (id, username, email, is_staff, role, assigned_locations)."""
+    """Build the user dict for login/me responses (id, username, email, is_staff, is_superuser, role, assigned_locations)."""
     role = _get_user_role(user)
     payload = {
         "id": user.pk,
         "username": user.username,
         "email": getattr(user, "email", "") or "",
         "is_staff": getattr(user, "is_staff", False),
+        "is_superuser": getattr(user, "is_superuser", False),
         "role": role,
     }
     if role == "state_editor":
@@ -708,6 +709,12 @@ def _create_contribution_only(payload, contributor):
             "submitter_name": (payload.get("submitter_name") or "").strip(),
             "original_postmark_id": str(payload.get("original_postmark_id", "")),
         }
+        if payload.get("lettering_style_id") is not None:
+            submitted_data["lettering_style_id"] = payload["lettering_style_id"]
+        if payload.get("framing_style_id") is not None:
+            submitted_data["framing_style_id"] = payload["framing_style_id"]
+        if payload.get("date_format_id") is not None:
+            submitted_data["date_format_id"] = payload["date_format_id"]
         if payload.get("image_meta"):
             submitted_data["image_meta"] = payload["image_meta"]
         contrib = Contribution.objects.create(
@@ -741,14 +748,17 @@ def _apply_contribution_to_catalog(contrib):
     return postmark
 
 
-def _create_postmark_in_catalog(payload):
+def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None):
     """
     Create a Postmark (and related records) directly in the catalog tables from
     the contribute form payload. No separate contribution table; data goes into
     the same tables that catalog search uses.
-    Uses a system user for created_by/modified_by. Returns the Postmark or None on failure.
+    Uses created_by_user if provided (editor direct-add), else a system user for created_by/modified_by.
+    When editor_data is provided (dict with postmark_shape_id, lettering_style_id, framing_style_id,
+    date_format_id, estimated_value, review_notes), uses those for catalog fields and sets
+    contribution_approval_status='approved', and creates PostmarkValuation. Returns the Postmark or None on failure.
     """
-    user = _get_contribution_user()
+    user = created_by_user or _get_contribution_user()
     if not user:
         return None
     try:
@@ -824,16 +834,35 @@ def _create_postmark_in_catalog(payload):
                 created_by=user,
                 modified_by=user,
             )
-        # Shape by type name; fallback to first
-        shape = PostmarkShape.objects.filter(shape_name=type_str).first()
-        if not shape:
+        # Shape: from editor_data if present, else from type_str
+        if editor_data and editor_data.get("postmark_shape_id") is not None:
+            shape = PostmarkShape.objects.filter(pk=editor_data.get("postmark_shape_id")).first()
+        else:
+            shape = None
+        if shape is None:
+            shape = PostmarkShape.objects.filter(shape_name=type_str).first()
+        if shape is None:
             shape = PostmarkShape.objects.first()
-        if not shape:
-            return None
-        lettering = LetteringStyle.objects.first()
-        framing = FramingStyle.objects.first()
-        date_fmt = DateFormat.objects.first()
-        if not lettering or not framing or not date_fmt:
+        # Lettering, framing, date format: from payload (contributor-provided), else editor_data, else defaults
+        lettering_id = payload.get("lettering_style_id")
+        framing_id = payload.get("framing_style_id")
+        date_fmt_id = payload.get("date_format_id")
+        if lettering_id is None and editor_data:
+            lettering_id = editor_data.get("lettering_style_id")
+        if framing_id is None and editor_data:
+            framing_id = editor_data.get("framing_style_id")
+        if date_fmt_id is None and editor_data:
+            date_fmt_id = editor_data.get("date_format_id")
+        lettering = LetteringStyle.objects.filter(pk=lettering_id).first() if lettering_id is not None else None
+        framing = FramingStyle.objects.filter(pk=framing_id).first() if framing_id is not None else None
+        date_fmt = DateFormat.objects.filter(pk=date_fmt_id).first() if date_fmt_id is not None else None
+        if lettering is None:
+            lettering = LetteringStyle.objects.first()
+        if framing is None:
+            framing = FramingStyle.objects.first()
+        if date_fmt is None:
+            date_fmt = DateFormat.objects.first()
+        if not shape or not lettering or not framing or not date_fmt:
             return None
         # Unique key
         postmark_key = f"CONTRIB-{uuid.uuid4().hex[:12]}"
@@ -851,8 +880,11 @@ def _create_postmark_in_catalog(payload):
         submitter_str = (payload.get("submitter_name") or "").strip()
         if submitter_str:
             other_parts.append(f"Submitted by: {submitter_str}")
+        if editor_data and (editor_data.get("review_notes") or "").strip():
+            other_parts.append(f"Comment: {(editor_data.get('review_notes') or '').strip()}")
         other_characteristics = "\n".join(other_parts) if other_parts else ""
 
+        approval_status = "approved" if editor_data else "pending"
         postmark = Postmark.objects.create(
             site_id=1,
             postal_facility_identity=identity,
@@ -866,7 +898,7 @@ def _create_postmark_in_catalog(payload):
             rate_value="",
             is_manuscript=is_manuscript,
             source_catalog="User contribution",
-            contribution_approval_status="pending",
+            contribution_approval_status=approval_status,
             other_characteristics=other_characteristics[:10000] if other_characteristics else "",
             created_by=user,
             modified_by=user,
@@ -927,6 +959,21 @@ def _create_postmark_in_catalog(payload):
                 created_by=user,
                 modified_by=user,
             )
+        # Editor direct-add: create valuation with estimated_value
+        if editor_data and created_by_user is not None and editor_data.get("estimated_value") is not None:
+            try:
+                from decimal import Decimal
+                val = editor_data["estimated_value"]
+                if not isinstance(val, Decimal):
+                    val = Decimal(str(val))
+                PostmarkValuation.objects.create(
+                    postmark=postmark,
+                    valued_by_user=created_by_user,
+                    estimated_value=val,
+                    valuation_date=timezone.now().date(),
+                )
+            except Exception:
+                pass
         return postmark
     except Exception:
         return None
@@ -1253,6 +1300,16 @@ class ContributionView(APIView):
         submitter_name = (data.get("submitterName") or "").strip()
         if user.is_authenticated:
             submitter_name = user.username or getattr(user, "email", "") or submitter_name
+        def _payload_int(key, alt_key=None):
+            raw = data.get(key) or (data.get(alt_key) if alt_key else None)
+            if raw is None or raw == "":
+                return None
+            if isinstance(raw, (list, tuple)):
+                raw = raw[0] if raw else None
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return None
         payload = {
             "state": state,
             "town": town,
@@ -1266,6 +1323,15 @@ class ContributionView(APIView):
             "rarity": (data.get("rarity") or "").strip(),
             "submitter_name": submitter_name,
         }
+        lettering_payload = _payload_int("lettering_style_id", "letteringStyleId")
+        framing_payload = _payload_int("framing_style_id", "framingStyleId")
+        date_fmt_payload = _payload_int("date_format_id", "dateFormatId")
+        if lettering_payload is not None:
+            payload["lettering_style_id"] = lettering_payload
+        if framing_payload is not None:
+            payload["framing_style_id"] = framing_payload
+        if date_fmt_payload is not None:
+            payload["date_format_id"] = date_fmt_payload
         if assigned_admin_unit is not None:
             payload["admin_unit"] = assigned_admin_unit
         image_file = request.FILES.get("image")
@@ -1294,6 +1360,87 @@ class ContributionView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        # New submission by state editor or superuser with catalog fields: add directly to catalog (no approval queue)
+        if edit_postmark_id is None and edit_contribution_id is None:
+            role = _get_user_role(user)
+            if role == "state_editor" or getattr(user, "is_superuser", False):
+                def _get_int(data, *keys):
+                    raw = None
+                    for k in keys:
+                        raw = data.get(k)
+                        if raw is not None and raw != "":
+                            break
+                    if raw is None or raw == "":
+                        return None
+                    if isinstance(raw, (list, tuple)):
+                        raw = raw[0] if raw else None
+                    try:
+                        return int(raw)
+                    except (TypeError, ValueError):
+                        return None
+                def _get_decimal(data, *keys):
+                    raw = None
+                    for k in keys:
+                        raw = data.get(k)
+                        if raw is not None and raw != "":
+                            break
+                    if raw is None or raw == "":
+                        return None
+                    if isinstance(raw, (list, tuple)):
+                        raw = raw[0] if raw else None
+                    try:
+                        from decimal import Decimal
+                        return Decimal(str(raw))
+                    except (TypeError, ValueError):
+                        return None
+                def _get_str(data, *keys):
+                    raw = None
+                    for k in keys:
+                        raw = data.get(k)
+                        if raw is not None:
+                            break
+                    if raw is None:
+                        return ""
+                    if isinstance(raw, (list, tuple)):
+                        raw = (raw[0] or "") if raw else ""
+                    return str(raw).strip()
+                shape_id = _get_int(data, "postmark_shape_id", "postmarkShapeId")
+                estimated_val = _get_decimal(data, "estimated_value", "estimatedValue")
+                review_notes_val = _get_str(data, "review_notes", "reviewNotes", "comment")
+                lettering_id = payload.get("lettering_style_id")
+                framing_id = payload.get("framing_style_id")
+                date_fmt_id = payload.get("date_format_id")
+                if lettering_id is not None and framing_id is not None and date_fmt_id is not None and estimated_val is not None and review_notes_val:
+                    if shape_id is not None and not PostmarkShape.objects.filter(pk=shape_id).exists():
+                        return Response({"detail": "Invalid postmark_shape_id (Shape)."}, status=status.HTTP_400_BAD_REQUEST)
+                    if not LetteringStyle.objects.filter(pk=lettering_id).exists():
+                        return Response({"detail": "Invalid lettering_style_id (Lettering style)."}, status=status.HTTP_400_BAD_REQUEST)
+                    if not FramingStyle.objects.filter(pk=framing_id).exists():
+                        return Response({"detail": "Invalid framing_style_id (Framing style)."}, status=status.HTTP_400_BAD_REQUEST)
+                    if not DateFormat.objects.filter(pk=date_fmt_id).exists():
+                        return Response({"detail": "Invalid date_format_id (Date format)."}, status=status.HTTP_400_BAD_REQUEST)
+                    editor_data = {
+                        "review_notes": review_notes_val,
+                        "estimated_value": estimated_val,
+                    }
+                    if shape_id is not None:
+                        editor_data["postmark_shape_id"] = int(shape_id)
+                    postmark = _create_postmark_in_catalog(payload, editor_data=editor_data, created_by_user=user)
+                    if not postmark:
+                        return Response(
+                            {"detail": "Could not add catalog entry. Please check the data and try again."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        )
+                    return Response(
+                        {"detail": "Catalog entry added. It is now visible in Search.", "postmarkId": postmark.postmark_id},
+                        status=status.HTTP_201_CREATED,
+                    )
+                elif role == "state_editor" and not getattr(user, "is_superuser", False):
+                    return Response(
+                        {"detail": "To add directly to the catalog (approve), fill the form and add Value and Comment (both required)."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
         if edit_postmark_id is not None:
             # Suggested edits to an existing catalog entry (S6).
             # - Contributors: create a Contribution ticket for expert review.
@@ -1317,6 +1464,12 @@ class ContributionView(APIView):
                         "submitter_name": submitter_name,
                         "original_postmark_id": str(edit_postmark_id),
                     }
+                    if payload.get("lettering_style_id") is not None:
+                        submitted_data["lettering_style_id"] = payload["lettering_style_id"]
+                    if payload.get("framing_style_id") is not None:
+                        submitted_data["framing_style_id"] = payload["framing_style_id"]
+                    if payload.get("date_format_id") is not None:
+                        submitted_data["date_format_id"] = payload["date_format_id"]
                     if payload.get("image_meta"):
                         submitted_data["image_meta"] = payload["image_meta"]
 
@@ -1449,7 +1602,7 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="approve")
     def approve(self, request, pk=None):
-        """Approve a contribution; apply submitted_data to catalog. Editor must supply shape, lettering, framing, date format, and value."""
+        """Approve a contribution; apply submitted_data to catalog. Editor must supply lettering, framing, date format, and value. Shape comes from contribution form (postmark type)."""
         contrib = self.get_object()
         if contrib.status != Contribution.STATUS_PENDING:
             return Response(
@@ -1461,14 +1614,13 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         data = serializer.validated_data
         review_notes = data.get("review_notes", "")
 
-        # Editor must fill catalog metadata before approving
+        # Editor must fill catalog metadata before approving (shape comes from contribution form as postmark type)
         shape_id = data.get("postmark_shape_id")
         lettering_id = data.get("lettering_style_id")
         framing_id = data.get("framing_style_id")
         date_fmt_id = data.get("date_format_id")
         estimated_value = data.get("estimated_value")
         missing = []
-        if shape_id is None: missing.append("postmark_shape_id (Shape)")
         if lettering_id is None: missing.append("lettering_style_id (Lettering style)")
         if framing_id is None: missing.append("framing_style_id (Framing style)")
         if date_fmt_id is None: missing.append("date_format_id (Date format)")
@@ -1478,7 +1630,7 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
                 {"detail": "When approving, the editor must provide: " + ", ".join(missing) + "."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if not PostmarkShape.objects.filter(pk=shape_id).exists():
+        if shape_id is not None and not PostmarkShape.objects.filter(pk=shape_id).exists():
             return Response({"detail": "Invalid postmark_shape_id."}, status=status.HTTP_400_BAD_REQUEST)
         if not LetteringStyle.objects.filter(pk=lettering_id).exists():
             return Response({"detail": "Invalid lettering_style_id."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1494,16 +1646,16 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # Set editor-provided catalog fields
-        postmark.postmark_shape_id = shape_id
+        # Set editor-provided catalog fields (shape already set from contribution form as postmark type)
         postmark.lettering_style_id = lettering_id
         postmark.framing_style_id = framing_id
         postmark.date_format_id = date_fmt_id
         postmark.contribution_approval_status = "approved"
-        postmark.save(update_fields=[
-            "postmark_shape_id", "lettering_style_id", "framing_style_id", "date_format_id",
-            "contribution_approval_status",
-        ])
+        update_fields = ["lettering_style_id", "framing_style_id", "date_format_id", "contribution_approval_status"]
+        if shape_id is not None:
+            postmark.postmark_shape_id = shape_id
+            update_fields.append("postmark_shape_id")
+        postmark.save(update_fields=update_fields)
 
         # Create valuation
         PostmarkValuation.objects.create(

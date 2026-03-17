@@ -15,6 +15,7 @@ export interface AuthUser {
   username: string;
   email: string;
   is_staff: boolean;
+  is_superuser?: boolean;
   // Backend-derived high-level role: "contributor" or "state_editor"
   role?: string;
   // For state_editor: locations assigned in admin (only present when role is state_editor)

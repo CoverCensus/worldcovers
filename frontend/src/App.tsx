@@ -8,6 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import Index from "./pages/Index";
 import Search from "./pages/Search";
 import RecordDetail from "./pages/RecordDetail";
+import ContributionDetail from "./pages/ContributionDetail";
 import Contribute from "./pages/Contribute";
 import EditCatalogEntry from "./pages/EditCatalogEntry";
 import Dashboard from "./pages/Dashboard";
@@ -47,6 +48,14 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/search" element={<Search />} />
             <Route path="/record/:id" element={<RecordDetail />} />
+            <Route
+              path="/contribution/:id"
+              element={(
+                <RequireAuth>
+                  <ContributionDetail />
+                </RequireAuth>
+              )}
+            />
             <Route
               path="/contribute"
               element={(
