@@ -80,6 +80,7 @@ type AssignedCatalogEntry = PostmarkRecord;
 interface PendingReviewItem {
   id: number;
   contributor_username: string;
+  display_name: string;
   state_display: string;
   town_display: string;
   type_display: string;
@@ -522,14 +523,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         setPendingReviewItems(
           data.map((c) => ({
             id: c.id,
-            contributor_username: c.contributor_username ?? "",
-            state_display: c.state_display ?? "",
-            town_display: c.town_display ?? "",
-            type_display: c.type_display ?? "",
-            postmark_id: c.postmark_id ?? null,
+            contributor_username: c.contributor_username ?? (c as { contributorUsername?: string }).contributorUsername ?? "",
+            display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
+            state_display: c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "",
+            town_display: c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "",
+            type_display: c.type_display ?? (c as { typeDisplay?: string }).typeDisplay ?? "",
+            postmark_id: c.postmark_id ?? (c as { postmarkId?: number | null }).postmarkId ?? null,
             status: String(c.status ?? "pending"),
-            created_at: String(c.created_at ?? ""),
-            review_notes: c.review_notes ?? null,
+            created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
+            review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
           })),
         );
       })
@@ -1629,10 +1631,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           {pendingReviewItems.map((item) => {
                             const title = [item.town_display, item.state_display].filter(Boolean).join(", ");
                             const typeStr = (item.type_display || "").trim();
-                            const postmarkName =
+                            const fallbackName =
                               [title, typeStr].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") ||
                               title ||
                               `Submission #${item.id}`;
+                            const displayLabel = item.display_name || fallbackName;
                             return (
                             <li
                               key={item.id}
@@ -1640,7 +1643,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             >
                               <div>
                                 <span className="font-medium text-foreground">
-                                  {postmarkName}
+                                  {displayLabel}
                                 </span>
                                 <span className="text-muted-foreground text-sm ml-2">
                                   by {item.contributor_username}
@@ -2158,6 +2161,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={statusSubmitting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              type="button"
               disabled={
                 statusSubmitting ||
                 !statusComment.trim() ||
@@ -2166,7 +2170,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     Number.isNaN(parseFloat(approveValue)) ||
                     parseFloat(approveValue) < 0))
               }
-              onClick={submitStatusDecision}
+              onClick={(e) => {
+                e.preventDefault();
+                submitStatusDecision();
+              }}
             >
               {statusSubmitting
                 ? "Submitting..."

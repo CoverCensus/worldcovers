@@ -1684,7 +1684,15 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         if not DateFormat.objects.filter(pk=date_fmt_id).exists():
             return Response({"detail": "Invalid date_format_id."}, status=status.HTTP_400_BAD_REQUEST)
 
-        postmark = _apply_contribution_to_catalog(contrib)
+        try:
+            postmark = _apply_contribution_to_catalog(contrib)
+        except Exception as e:
+            logger.exception("approve: _apply_contribution_to_catalog failed for contribution id=%s: %s", contrib.id, e)
+            return Response(
+                {"detail": "Could not apply contribution to catalog. See server logs for details."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
         if not postmark:
             logger.warning("approve: _apply_contribution_to_catalog returned None for contribution id=%s", contrib.id)
             return Response(
@@ -1692,29 +1700,37 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # Set editor-provided catalog fields (shape already set from contribution form as postmark type)
-        postmark.lettering_style_id = lettering_id
-        postmark.framing_style_id = framing_id
-        postmark.date_format_id = date_fmt_id
-        postmark.contribution_approval_status = "approved"
-        update_fields = ["lettering_style_id", "framing_style_id", "date_format_id", "contribution_approval_status"]
-        if shape_id is not None:
-            postmark.postmark_shape_id = shape_id
-            update_fields.append("postmark_shape_id")
-        postmark.save(update_fields=update_fields)
+        try:
+            # Set editor-provided catalog fields (shape already set from contribution form as postmark type)
+            postmark.lettering_style_id = lettering_id
+            postmark.framing_style_id = framing_id
+            postmark.date_format_id = date_fmt_id
+            postmark.contribution_approval_status = "approved"
+            update_fields = ["lettering_style_id", "framing_style_id", "date_format_id", "contribution_approval_status"]
+            if shape_id is not None:
+                postmark.postmark_shape_id = shape_id
+                update_fields.append("postmark_shape_id")
+            postmark.save(update_fields=update_fields)
 
-        # Create valuation
-        PostmarkValuation.objects.create(
-            postmark=postmark,
-            valued_by_user=request.user,
-            estimated_value=estimated_value,
-            valuation_date=timezone.now().date(),
-        )
+            # Create valuation
+            PostmarkValuation.objects.create(
+                postmark=postmark,
+                valued_by_user=request.user,
+                estimated_value=estimated_value,
+                valuation_date=timezone.now().date(),
+            )
 
-        contrib.status = Contribution.STATUS_APPROVED
-        contrib.reviewer = request.user
-        contrib.review_notes = review_notes
-        contrib.save(update_fields=["status", "reviewer", "review_notes", "postmark", "updated_at"])
+            contrib.status = Contribution.STATUS_APPROVED
+            contrib.reviewer = request.user
+            contrib.review_notes = review_notes
+            contrib.save(update_fields=["status", "reviewer", "review_notes", "postmark", "updated_at"])
+        except Exception as e:
+            logger.exception("approve: failed after creating postmark for contribution id=%s: %s", contrib.id, e)
+            return Response(
+                {"detail": "Approval failed while updating catalog. See server logs for details."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
         return Response(
             {"detail": "Contribution approved.", "postmarkId": postmark.postmark_id},
             status=status.HTTP_200_OK,

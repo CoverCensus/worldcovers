@@ -498,6 +498,7 @@ const ContributionDetail = () => {
                 </div>
                 <div className="flex flex-wrap gap-2 pt-2">
                   <Button
+                    type="button"
                     onClick={() => submitDecision("approve")}
                     disabled={
                       submitting ||
@@ -512,6 +513,7 @@ const ContributionDetail = () => {
                     {submitting ? "Submitting..." : "Approve"}
                   </Button>
                   <Button
+                    type="button"
                     variant="destructive"
                     onClick={() => submitDecision("reject")}
                     disabled={submitting || !comment.trim()}
@@ -520,6 +522,7 @@ const ContributionDetail = () => {
                     Reject
                   </Button>
                   <Button
+                    type="button"
                     variant="outline"
                     onClick={() => submitDecision("revision")}
                     disabled={submitting || !comment.trim()}
