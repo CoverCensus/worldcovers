@@ -196,6 +196,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Editor-required when approving: Value and Comment (lettering/framing/date format come from contribution's submitted_data)
   const [approveValue, setApproveValue] = useState("");
 
+  // Editor tab: history of user suggestions (all contributions in assigned states), not full catalog
+  const [editorHistoryItems, setEditorHistoryItems] = useState<PendingReviewItem[]>([]);
+  const [editorHistoryLoading, setEditorHistoryLoading] = useState(false);
+  const [editorHistoryError, setEditorHistoryError] = useState<string | null>(null);
+  const [editorHistoryStatusFilter, setEditorHistoryStatusFilter] = useState("all");
+
   // Filter states (mirror Catalog Search)
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -452,9 +458,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     load();
   }, [user, toast]);
 
-  // Load assigned-state catalog for User Submissions tab (state editors)
+  // Load assigned-state catalog (not used on editor tab — editor sees history of suggestions instead)
   useEffect(() => {
     if (!isStateEditor || activeTab !== "editor") return;
+    // Editor tab shows history of user suggestions, not catalog; skip catalog fetch
+    if (activeTab === "editor") return;
     let cancelled = false;
     setAssignedCatalogError(null);
     setAssignedCatalogLoading(true);
@@ -541,6 +549,59 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       })
       .finally(() => setPendingReviewLoading(false));
   }, [isStateEditor, activeTab]);
+
+  // Load editor history (all user suggestions in assigned states) for the Editor tab
+  useEffect(() => {
+    if (!isStateEditor || activeTab !== "editor") return;
+    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
+    if (!apiBase) {
+      setEditorHistoryError("VITE_API_URL is not set.");
+      setEditorHistoryItems([]);
+      return;
+    }
+    setEditorHistoryError(null);
+    setEditorHistoryLoading(true);
+    const statusParam =
+      editorHistoryStatusFilter !== "all" && ["pending", "approved", "rejected"].includes(editorHistoryStatusFilter)
+        ? `&status=${editorHistoryStatusFilter}`
+        : "";
+    fetch(`${apiBase}/api/contributions/?mode=editor${statusParam}`, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText || "Failed to load history");
+        return res.json();
+      })
+      .then((data: any[]) => {
+        if (!Array.isArray(data)) {
+          setEditorHistoryItems([]);
+          return;
+        }
+        let list = data.map((c) => ({
+          id: c.id,
+          contributor_username: c.contributor_username ?? (c as { contributorUsername?: string }).contributorUsername ?? "",
+          display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
+          state_display: c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "",
+          town_display: c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "",
+          type_display: c.type_display ?? (c as { typeDisplay?: string }).typeDisplay ?? "",
+          postmark_id: c.postmark_id ?? (c as { postmarkId?: number | null }).postmarkId ?? null,
+          status: String(c.status ?? "pending"),
+          created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
+          review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
+        }));
+        if (editorHistoryStatusFilter === "needs_revision") {
+          list = list.filter((i) => i.status === "needs_revision");
+        }
+        setEditorHistoryItems(list);
+      })
+      .catch((err) => {
+        setEditorHistoryError(err instanceof Error ? err.message : "Could not load history.");
+        setEditorHistoryItems([]);
+      })
+      .finally(() => setEditorHistoryLoading(false));
+  }, [isStateEditor, activeTab, editorHistoryStatusFilter, submissionsRefetchKey]);
 
   const submitStatusDecision = async () => {
     if (!statusDecisionTarget || !statusComment.trim()) return;
@@ -824,7 +885,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               </h1>
               <p className="text-muted-foreground">
                 {isStateEditor && activeTab === "editor"
-                  ? "Manage catalog entries for your assigned states — view, edit, and delete."
+                  ? "Review pending submissions and see history of user suggestions in your assigned states."
                   : "View and track your submissions and suggestions."}
               </p>
               {isStateEditor && user?.assigned_locations && user.assigned_locations.length > 0 && (
@@ -1492,7 +1553,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
           {activeTab === "editor" && isStateEditor && (
             <div className="flex flex-col lg:flex-row gap-6">
-              {/* Filters sidebar — same layout as My Submissions (Search, State, Town, Type, Color) */}
+              {/* Filters sidebar — Status filter for history of user suggestions */}
               <aside className={`lg:w-80 space-y-6 ${filtersOpen ? "block" : "hidden lg:block"}`}>
                 <Card className="shadow-archival-md">
                   <CardContent className="pt-6 space-y-4">
@@ -1509,104 +1570,24 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label>Search</Label>
-                      <div className="relative">
-                        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          type="search"
-                          placeholder="Name, town, state, type..."
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          className="pl-9 bg-background"
-                          aria-label="Search catalog by name, town, state, or type"
-                          disabled={assignedCatalogLoading || isLoadingFilters}
-                        />
-                      </div>
+                      <Label htmlFor="editor-history-status">Status</Label>
+                      <Select
+                        value={editorHistoryStatusFilter}
+                        onValueChange={setEditorHistoryStatusFilter}
+                        disabled={editorHistoryLoading}
+                      >
+                        <SelectTrigger id="editor-history-status" className="bg-background">
+                          <SelectValue placeholder="All statuses" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All statuses</SelectItem>
+                          <SelectItem value="pending">Pending</SelectItem>
+                          <SelectItem value="approved">Approved</SelectItem>
+                          <SelectItem value="rejected">Rejected</SelectItem>
+                          <SelectItem value="needs_revision">Needs revision</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="editor-state">State</Label>
-                      <SearchableSelect
-                        id="editor-state"
-                        value={stateFilter}
-                        onValueChange={setStateFilter}
-                        placeholder="All States"
-                        allOption={{ value: "all", label: "All States" }}
-                        options={Array.isArray(stateOptions) ? stateOptions : []}
-                        loading={isLoadingFilters}
-                        error={!!filterError}
-                        errorMessage="Failed to load states"
-                        searchPlaceholder="Search states..."
-                        emptyMessage="No state found."
-                        aria-label="Filter by state"
-                        disabled={assignedCatalogLoading || isLoadingFilters}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="editor-town">Town</Label>
-                      <Input
-                        id="editor-town"
-                        placeholder="Enter town name..."
-                        value={townFilter}
-                        onChange={(e) => setTownFilter(e.target.value)}
-                        className="bg-background"
-                        disabled={assignedCatalogLoading || isLoadingFilters}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="editor-type">Postmark Type</Label>
-                      <SearchableSelect
-                        id="editor-type"
-                        value={typeFilter}
-                        onValueChange={setTypeFilter}
-                        placeholder="All Types"
-                        allOption={{ value: "all", label: "All Types" }}
-                        options={Array.isArray(shapeOptions) ? shapeOptions : []}
-                        loading={isLoadingFilters}
-                        error={!!filterError}
-                        errorMessage="Failed to load types"
-                        searchPlaceholder="Search types..."
-                        emptyMessage="No type found."
-                        aria-label="Filter by postmark type"
-                        disabled={assignedCatalogLoading || isLoadingFilters}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="editor-color">Color</Label>
-                      <SearchableSelect
-                        id="editor-color"
-                        value={colorFilter}
-                        onValueChange={setColorFilter}
-                        placeholder="All Colors"
-                        allOption={{ value: "all", label: "All Colors" }}
-                        options={Array.isArray(colorOptions) ? colorOptions : []}
-                        loading={isLoadingFilters}
-                        error={!!filterError}
-                        errorMessage="Failed to load colors"
-                        searchPlaceholder="Search colors..."
-                        emptyMessage="No color found."
-                        aria-label="Filter by color"
-                        disabled={assignedCatalogLoading || isLoadingFilters}
-                      />
-                    </div>
-
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      onClick={() => {
-                        setSearchQuery("");
-                        setStateFilter("all");
-                        setTownFilter("");
-                        setTypeFilter("all");
-                        setColorFilter("all");
-                      }}
-                      disabled={assignedCatalogLoading || isLoadingFilters}
-                    >
-                      Clear Filters
-                    </Button>
                   </CardContent>
                 </Card>
               </aside>
@@ -1670,390 +1651,114 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 )}
 
               <main className="flex-1 space-y-4">
-                {/* Results Header — same as My Submissions */}
+                {/* History of user suggestions (contributions in assigned states) */}
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
                   <div>
                     <p className="text-sm text-muted-foreground">
-                      {assignedCatalogLoading ? (
-                        "Loading catalog..."
-                      ) : assignedCatalogTotal != null && assignedCatalogTotal > 0 ? (
+                      {editorHistoryLoading ? (
+                        "Loading history..."
+                      ) : (
                         <>
                           Showing{" "}
                           <span className="font-semibold text-foreground">
-                            {((assignedCatalogPage - 1) * assignedCatalogPageSize + 1).toLocaleString()}-
-                            {Math.min(
-                              assignedCatalogPage * assignedCatalogPageSize,
-                              assignedCatalogTotal,
-                            ).toLocaleString()}
+                            {editorHistoryItems.length.toLocaleString()}
                           </span>{" "}
-                          of{" "}
-                          <span className="font-semibold text-foreground">
-                            {assignedCatalogTotal.toLocaleString()}
-                          </span>{" "}
-                          results
+                          submission{editorHistoryItems.length !== 1 ? "s" : ""} in history
                         </>
-                      ) : (
-                        "0 results"
                       )}
                     </p>
-                    {assignedCatalogError && (
-                      <p className="text-xs text-destructive mt-1">{assignedCatalogError}</p>
+                    {editorHistoryError && (
+                      <p className="text-xs text-destructive mt-1">{editorHistoryError}</p>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="lg:hidden"
-                      onClick={() => setFiltersOpen((open) => !open)}
-                    >
-                      <SlidersHorizontal className="h-4 w-4 mr-2" />
-                      Filters
-                    </Button>
-                    <div className="flex border border-border rounded-md">
-                      <Button
-                        variant={viewMode === "list" ? "secondary" : "ghost"}
-                        size="sm"
-                        onClick={() => setViewMode("list")}
-                        className="rounded-r-none"
-                      >
-                        <List className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant={viewMode === "gallery" ? "secondary" : "ghost"}
-                        size="sm"
-                        onClick={() => setViewMode("gallery")}
-                        className="rounded-l-none"
-                      >
-                        <Grid3x3 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="lg:hidden"
+                    onClick={() => setFiltersOpen((open) => !open)}
+                  >
+                    <SlidersHorizontal className="h-4 w-4 mr-2" />
+                    Filters
+                  </Button>
                 </div>
 
-                {assignedCatalogLoading ? (
+                {editorHistoryLoading ? (
                   <div className="flex flex-col justify-center items-center gap-3 py-12 text-muted-foreground">
                     <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
-                    <p>Loading catalog...</p>
+                    <p>Loading history...</p>
                   </div>
-                ) : assignedCatalogItems.length === 0 ? (
+                ) : editorHistoryItems.length === 0 ? (
                   <Card className="flex-1 flex items-center justify-center min-h-[200px]">
                     <CardContent className="text-center">
                       <p className="text-muted-foreground mb-1">
-                        {assignedCatalogTotal === 0
-                          ? "No catalog entries in your assigned states."
-                          : "No catalog entries on this page."}
+                        No submissions in history for the selected status.
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        You can view, edit, and delete any catalog entry in states assigned to you.
+                        User suggestions (pending, approved, rejected, or needs revision) in your assigned states will appear here.
                       </p>
                     </CardContent>
                   </Card>
-                ) : viewMode === "list" ? (
-                  <div className="space-y-4">
-                    {assignedCatalogItems.map((entry) => {
-                      const imageUrl = normalizeImageUrl(
-                        (entry.mainImage as { imageUrl?: string })?.imageUrl ??
-                          (typeof entry.mainImage === "string" ? entry.mainImage : null),
-                      );
-                      const title =
-                        [entry.town, entry.state].filter(Boolean).join(", ") ||
-                        entry.facilityName ||
-                        entry.postmarkKey ||
-                        `Entry #${entry.id}`;
-                      return (
-                        <Card
-                          key={entry.id}
-                          className="shadow-archival-md hover:shadow-archival-lg transition-shadow"
-                        >
-                          <CardContent className="p-6">
-                            <div className="flex gap-6 md:flex-row flex-col">
-                              <ImageOrPlaceholder
-                                src={imageUrl}
-                                alt={title}
-                                className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border shrink-0"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <h3 className="font-heading text-xl font-semibold text-foreground">
-                                  {title}
-                                </h3>
-                                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm mt-2">
-                                  {entry.town && (
-                                    <div>
-                                      <span className="text-muted-foreground">Town:</span>{" "}
-                                      <span className="text-foreground">{entry.town}</span>
-                                    </div>
-                                  )}
-                                  {entry.state && (
-                                    <div>
-                                      <span className="text-muted-foreground">State:</span>{" "}
-                                      <span className="text-foreground">{entry.state}</span>
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                                  {entry.dateRange && (
-                                    <div>
-                                      <span className="text-muted-foreground">Date range:</span>{" "}
-                                      <span className="text-foreground">{entry.dateRange}</span>
-                                    </div>
-                                  )}
-                                  {entry.shapeName && (
-                                    <div>
-                                      <span className="text-muted-foreground">Type:</span>{" "}
-                                      <span className="text-foreground">{entry.shapeName}</span>
-                                    </div>
-                                  )}
-                                  {entry.colorsDisplay && (
-                                    <div>
-                                      <span className="text-muted-foreground">Color:</span>{" "}
-                                      <span className="text-foreground">{entry.colorsDisplay}</span>
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="mt-3 flex flex-wrap gap-2 justify-end">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => navigate(`/record/${entry.id}`)}
-                                  >
-                                    View record
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => navigate(`/edit/${entry.id}`)}
-                                  >
-                                    Edit
-                                  </Button>
-                                  <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    onClick={() =>
-                                      setDeleteTarget({ id: entry.id, postmark_id: entry.id, name: title })
-                                    }
-                                  >
-                                    Delete
-                                  </Button>
-                                </div>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
-                  </div>
                 ) : (
-                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {assignedCatalogItems.map((entry) => {
-                      const imageUrl = normalizeImageUrl(
-                        (entry.mainImage as { imageUrl?: string })?.imageUrl ??
-                          (typeof entry.mainImage === "string" ? entry.mainImage : null),
-                      );
-                      const title =
-                        [entry.town, entry.state].filter(Boolean).join(", ") ||
-                        entry.facilityName ||
-                        entry.postmarkKey ||
-                        `Entry #${entry.id}`;
+                  <ul className="space-y-3">
+                    {editorHistoryItems.map((item) => {
+                      const title = [item.town_display, item.state_display].filter(Boolean).join(", ");
+                      const typeStr = (item.type_display || "").trim();
+                      const fallbackName =
+                        [title, typeStr].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") ||
+                        title ||
+                        `Submission #${item.id}`;
+                      const displayLabel = item.display_name || fallbackName;
+                      const statusVariant =
+                        item.status === "approved"
+                          ? "default"
+                          : item.status === "rejected"
+                            ? "destructive"
+                            : item.status === "needs_revision"
+                              ? "secondary"
+                              : "outline";
                       return (
-                        <Card
-                          key={entry.id}
-                          className="shadow-archival-md hover:shadow-archival-lg transition-shadow overflow-hidden"
+                        <li
+                          key={item.id}
+                          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-card hover:shadow-archival-sm transition-shadow"
                         >
-                          <ImageOrPlaceholder
-                            src={imageUrl}
-                            alt={title}
-                            className="w-full h-48 object-cover"
-                          />
-                          <CardContent className="p-4 flex flex-col gap-3">
-                            <h3 className="font-heading text-lg font-semibold text-foreground line-clamp-2">
-                              {title}
-                            </h3>
-                            <div className="space-y-1 text-sm flex-1">
-                              {entry.town && (
-                                <div>
-                                  <span className="text-muted-foreground">Town:</span>{" "}
-                                  <span className="text-foreground">{entry.town}</span>
-                                </div>
-                              )}
-                              {entry.state && (
-                                <div>
-                                  <span className="text-muted-foreground">State:</span>{" "}
-                                  <span className="text-foreground">{entry.state}</span>
-                                </div>
-                              )}
-                              {entry.dateRange && (
-                                <div>
-                                  <span className="text-muted-foreground">Date range:</span>{" "}
-                                  <span className="text-foreground">{entry.dateRange}</span>
-                                </div>
-                              )}
-                              {entry.shapeName && (
-                                <div>
-                                  <span className="text-muted-foreground">Type:</span>{" "}
-                                  <span className="text-foreground">{entry.shapeName}</span>
-                                </div>
-                              )}
-                              {entry.colorsDisplay && (
-                                <div>
-                                  <span className="text-muted-foreground">Color:</span>{" "}
-                                  <span className="text-foreground">{entry.colorsDisplay}</span>
-                                </div>
-                              )}
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-2 justify-center">
+                          <div className="min-w-0">
+                            <span className="font-medium text-foreground block truncate">
+                              {displayLabel}
+                            </span>
+                            <span className="text-muted-foreground text-sm">
+                              by {item.contributor_username}
+                              {" · "}
+                              {new Date(item.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            <Badge variant={statusVariant}>
+                              {item.status === "needs_revision" ? "Needs revision" : item.status}
+                            </Badge>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                navigate(`/contribution/${item.id}`, { state: { fromDashboard: true } })
+                              }
+                            >
+                              View details
+                            </Button>
+                            {item.postmark_id && (
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => navigate(`/record/${entry.id}`)}
+                                onClick={() => navigate(`/record/${item.postmark_id}`)}
                               >
                                 View record
                               </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => navigate(`/edit/${entry.id}`)}
-                              >
-                                Edit
-                              </Button>
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                onClick={() =>
-                                  setDeleteTarget({ id: entry.id, postmark_id: entry.id, name: title })
-                                }
-                              >
-                                Delete
-                              </Button>
-                            </div>
-                          </CardContent>
-                        </Card>
+                            )}
+                          </div>
+                        </li>
                       );
                     })}
-                  </div>
+                  </ul>
                 )}
-
-                {assignedCatalogTotalPages > 1 &&
-                  !assignedCatalogLoading &&
-                  assignedCatalogItems.length > 0 && (
-                    <div className="mt-8 flex flex-col items-center gap-4">
-                      <Pagination>
-                        <PaginationContent>
-                          <PaginationItem>
-                            <PaginationPrevious
-                              onClick={() => {
-                                setAssignedCatalogPage((p) => Math.max(1, p - 1));
-                                window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                              }}
-                              className={
-                                assignedCatalogPage === 1
-                                  ? "pointer-events-none opacity-50"
-                                  : "cursor-pointer"
-                              }
-                            />
-                          </PaginationItem>
-
-                          {getPaginationPages(
-                            assignedCatalogPage,
-                            assignedCatalogTotalPages,
-                          ).map((p, i) =>
-                            p === "ellipsis" ? (
-                              <PaginationItem key={`editor-ellipsis-${i}`}>
-                                <PaginationEllipsis />
-                              </PaginationItem>
-                            ) : (
-                              <PaginationItem key={p}>
-                                <PaginationLink
-                                  onClick={() => {
-                                    setAssignedCatalogPage(p);
-                                    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                                  }}
-                                  isActive={assignedCatalogPage === p}
-                                  className="cursor-pointer"
-                                >
-                                  {p}
-                                </PaginationLink>
-                              </PaginationItem>
-                            ),
-                          )}
-
-                          <PaginationItem>
-                            <PaginationNext
-                              onClick={() => {
-                                setAssignedCatalogPage((p) =>
-                                  Math.min(assignedCatalogTotalPages, p + 1),
-                                );
-                                window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                              }}
-                              className={
-                                assignedCatalogPage === assignedCatalogTotalPages
-                                  ? "pointer-events-none opacity-50"
-                                  : "cursor-pointer"
-                              }
-                            />
-                          </PaginationItem>
-                        </PaginationContent>
-                      </Pagination>
-
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-muted-foreground">Go to page</span>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={assignedCatalogTotalPages}
-                          placeholder="Page"
-                          value={editorGoToPageInput}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (raw === "") {
-                              setEditorGoToPageInput("");
-                              return;
-                            }
-                            const n = parseInt(raw, 10);
-                            if (Number.isNaN(n)) return;
-                            const clamped = Math.max(
-                              1,
-                              Math.min(assignedCatalogTotalPages, n),
-                            );
-                            setEditorGoToPageInput(String(clamped));
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              const n = parseInt(editorGoToPageInput, 10);
-                              if (!Number.isNaN(n)) {
-                                setAssignedCatalogPage(
-                                  Math.max(1, Math.min(assignedCatalogTotalPages, n)),
-                                );
-                                window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                                setEditorGoToPageInput("");
-                              }
-                            }
-                          }}
-                          className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                          aria-label="Go to page number"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-9"
-                          onClick={() => {
-                            const n = parseInt(editorGoToPageInput, 10);
-                            if (!Number.isNaN(n)) {
-                              setAssignedCatalogPage(
-                                Math.max(1, Math.min(assignedCatalogTotalPages, n)),
-                              );
-                              window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                              setEditorGoToPageInput("");
-                            }
-                          }}
-                        >
-                          Go
-                        </Button>
-                      </div>
-                    </div>
-                  )}
               </main>
               </div>
             </div>

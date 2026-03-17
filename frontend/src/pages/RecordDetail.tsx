@@ -112,7 +112,6 @@ const RecordDetail = () => {
         if (data) {
           const datesSeen = data.datesSeen?.[0];
           const firstSize = data.sizes?.[0];
-          const firstVal = data.valuations?.[0];
           const parsed = parseOtherCharacteristics(data.otherCharacteristics);
           const locationLabel = [data.town, data.state].filter(Boolean).join(", ");
           const shapeLabel =
@@ -128,9 +127,8 @@ const RecordDetail = () => {
           );
           const displayName = displayParts.join(" — ") || data.postmarkKey;
           const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
-          const firstValEst = firstVal?.estimatedValue ?? (firstVal as any)?.estimated_value;
-          const rarityFromValuation = firstValEst ? `$${firstValEst}` : "";
-          const rarityFromOther = parsed.rarityLabel || "";
+          // Rarity in Record Details is the label (Common/Scarce/Rare/Very Rare), not the dollar valuation
+          const rarityLabel = (parsed.rarityLabel || "").trim();
           const images =
             data.images?.length
               ? data.images.map((img: any) => ({
@@ -158,7 +156,7 @@ const RecordDetail = () => {
             framingStyle: framingStyle || undefined,
             dateFormat: dateFormat || undefined,
             comment: parsed.comment || undefined,
-            rarity: rarityFromValuation || rarityFromOther,
+            rarity: rarityLabel,
             // Only show description text the contributor actually provided
             // Do NOT fall back to raw otherCharacteristics (which may only contain submitter info)
             description: parsed.description || "",
@@ -167,9 +165,6 @@ const RecordDetail = () => {
             images,
             valuations: data.valuations?.map((v: any) => ({
               estimatedValue: v.estimatedValue ?? v.estimated_value,
-              condition: "Average condition",
-              valuationDate: v.valuationDate ?? v.valuation_date,
-              valuedBy: v.valuedBy ?? v.valued_by,
             })),
           });
         } else {
@@ -265,7 +260,8 @@ const RecordDetail = () => {
               <ArrowLeft className="mr-2 h-4 w-4" />
               {fromDashboard ? "Back to Dashboard" : "Back to Search"}
             </Button>
-            {user && (
+            {/* Editor cannot directly edit postmarks from user suggestions; only "Suggest" is allowed. */}
+            {user && !(isStateEditor && isOwner) && (
               <Button
                 variant="outline"
                 size="sm"
@@ -275,14 +271,13 @@ const RecordDetail = () => {
                       fromSearch,
                       fromDashboard,
                       fromDashboardViaDetail: !!fromDashboard,
-                      // Let the edit page know whether this is a direct edit or a suggestion
-                      mode: isStateEditor && isOwner ? "direct_edit" : "suggestion",
+                      mode: "suggestion",
                     },
                   })
                 }
               >
                 <Pencil className="mr-2 h-4 w-4" />
-                {isStateEditor && isOwner ? "Edit entry" : "Suggest"}
+                Suggest
               </Button>
             )}
           </div>
@@ -480,9 +475,7 @@ const RecordDetail = () => {
                           const showLettering = hasValue(record.letteringStyle);
                           const showFraming = hasValue(record.framingStyle);
                           const showDateFormat = hasValue(record.dateFormat);
-                          const valueEntry = record.valuations?.find((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "");
-                          const showValue = !!valueEntry;
-                          const none = !showLettering && !showFraming && !showDateFormat && !showValue;
+                          const none = !showLettering && !showFraming && !showDateFormat;
                           return (
                             <>
                               {showLettering ? (
@@ -503,12 +496,6 @@ const RecordDetail = () => {
                                   <dd className="text-foreground">{record.dateFormat}</dd>
                                 </div>
                               ) : null}
-                              {showValue ? (
-                                <div className="flex gap-3">
-                                  <dt className="font-medium text-muted-foreground min-w-[8rem]">Value (of this postmark)</dt>
-                                  <dd className="text-foreground">${valueEntry?.estimatedValue}</dd>
-                                </div>
-                              ) : null}
                               {none ? (
                                 <p className="text-muted-foreground py-2">No physical characteristics recorded for this postmark.</p>
                               ) : null}
@@ -524,19 +511,7 @@ const RecordDetail = () => {
                             ?.filter((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "")
                             .map((v, i) => (
                               <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                                <div>
-                                  <p className="text-sm font-medium text-foreground">Value (of this postmark)</p>
-                                  {v.condition ? (
-                                    <p className="text-xs text-muted-foreground">{v.condition}</p>
-                                  ) : null}
-                                  {(v.valuationDate || v.valuedBy) ? (
-                                    <p className="text-xs text-muted-foreground mt-0.5">
-                                      {v.valuationDate ? `Dated ${v.valuationDate.slice(0, 10)}` : ""}
-                                      {v.valuationDate && v.valuedBy ? " · " : ""}
-                                      {v.valuedBy?.username || [v.valuedBy?.firstName, v.valuedBy?.lastName].filter(Boolean).join(" ") || ""}
-                                    </p>
-                                  ) : null}
-                                </div>
+                                <p className="text-sm font-medium text-muted-foreground">Valuation</p>
                                 <p className="text-lg font-heading font-semibold text-primary">
                                   ${v.estimatedValue}
                                 </p>
