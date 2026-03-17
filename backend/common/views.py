@@ -3,6 +3,7 @@
 ## MPC: 2025/11/15
 ###################################################################################################
 import csv
+import logging
 import hashlib
 import io
 import os
@@ -15,7 +16,7 @@ from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core.mail import send_mail
 from django.db import ProgrammingError
-from django.db.models import Q, Count, Prefetch
+from django.db.models import Q, Count, Prefetch, Min, Max
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
@@ -36,6 +37,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 
 from django.contrib.auth import get_user_model
 from woco.pagination import PageSizePagination, LargePageSizePagination, PostmarkListPagination
+
+logger = logging.getLogger(__name__)
 
 from .models import (
     PostalFacility,
@@ -737,6 +740,7 @@ def _apply_contribution_to_catalog(contrib):
     """
     payload = contrib.submitted_data or {}
     if not payload.get("state") or not payload.get("town"):
+        logger.warning("_apply_contribution_to_catalog: contribution %s missing state or town in submitted_data", contrib.id)
         return None
     submitter_name = payload.get("submitter_name", "")
     if contrib.postmark_id:
@@ -975,7 +979,8 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
             except Exception:
                 pass
         return postmark
-    except Exception:
+    except Exception as e:
+        logger.exception("_create_postmark_in_catalog failed: %s", e)
         return None
 
 
@@ -1166,7 +1171,8 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
                 modified_by=user,
             )
         return postmark
-    except Exception:
+    except Exception as e:
+        logger.exception("_update_postmark_in_catalog failed (postmark_id=%s): %s", postmark_id, e)
         return None
 
 
@@ -1641,8 +1647,9 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
 
         postmark = _apply_contribution_to_catalog(contrib)
         if not postmark:
+            logger.warning("approve: _apply_contribution_to_catalog returned None for contribution id=%s", contrib.id)
             return Response(
-                {"detail": "Could not apply contribution to catalog. Check submitted_data."},
+                {"detail": "Could not apply contribution to catalog. Check submitted_data (state, town required). See server logs for details."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -2471,8 +2478,8 @@ class PostmarkDateRangeView(APIView):
 
     def get(self, request):
         agg = PostmarkDatesSeen.objects.aggregate(
-            earliest_year=models.Min("earliest_date_seen__year"),
-            latest_year=models.Max("latest_date_seen__year"),
+            earliest_year=Min("earliest_date_seen__year"),
+            latest_year=Max("latest_date_seen__year"),
         )
         earliest = int(agg["earliest_year"]) if agg["earliest_year"] is not None else None
         latest = int(agg["latest_year"]) if agg["latest_year"] is not None else None

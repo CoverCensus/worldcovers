@@ -8,15 +8,11 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowLeft, Loader2, CheckCircle, XCircle, MessageSquare, ExternalLink } from "lucide-react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { getLetteringStyles } from "@/services/letteringStyles";
-import { getFramingStyles } from "@/services/framingStyles";
-import { getDateFormats } from "@/services/dateFormats";
 import { normalizeImageUrl } from "@/services/postmarks";
 
 function getCsrfTokenFromCookie(): string | null {
@@ -58,6 +54,10 @@ interface SubmittedData {
     storage_filename?: string;
     original_filename?: string;
   };
+  /** Contributor-provided; used when editor approves (editor only fills value + comment). */
+  lettering_style_id?: number;
+  framing_style_id?: number;
+  date_format_id?: number;
 }
 
 interface Contribution {
@@ -82,19 +82,14 @@ const ContributionDetail = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Editor form state
+  // Editor form state (only Value and Comment; lettering/framing/date format come from contributor's submitted_data)
+  const [value, setValue] = useState("");
+  const [comment, setComment] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  // Contributor-provided IDs, set from submitted_data when contribution loads (used when approving)
   const [letteringId, setLetteringId] = useState("");
   const [framingId, setFramingId] = useState("");
   const [dateFormatId, setDateFormatId] = useState("");
-  const [value, setValue] = useState("");
-  const [comment, setComment] = useState("");
-  const [options, setOptions] = useState<{
-    lettering: { id: number; name: string }[];
-    framing: { id: number; name: string }[];
-    dateFormats: { id: number; name: string }[];
-  }>({ lettering: [], framing: [], dateFormats: [] });
-  const [optionsLoading, setOptionsLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
 
   const fromDashboard = location.state?.fromDashboard === true;
   const isStateEditor = user?.role === "state_editor" || user?.is_superuser;
@@ -138,20 +133,14 @@ const ContributionDetail = () => {
     };
   }, [id]);
 
+  // Pre-fill lettering/framing/date_format from contributor's submitted_data (used when approving)
   useEffect(() => {
-    if (!isStateEditor || !contribution) return;
-    setOptionsLoading(true);
-    Promise.all([getLetteringStyles(), getFramingStyles(), getDateFormats()])
-      .then(([lettering, framing, dateFormats]) => {
-        setOptions({
-          lettering: lettering.map((o) => ({ id: o.id, name: o.name })),
-          framing: framing.map((o) => ({ id: o.id, name: o.name })),
-          dateFormats: dateFormats.map((o) => ({ id: o.id, name: o.name })),
-        });
-      })
-      .catch(() => setOptions({ lettering: [], framing: [], dateFormats: [] }))
-      .finally(() => setOptionsLoading(false));
-  }, [isStateEditor, contribution]);
+    if (!contribution?.submitted_data) return;
+    const sd = contribution.submitted_data;
+    if (sd.lettering_style_id != null) setLetteringId(String(sd.lettering_style_id));
+    if (sd.framing_style_id != null) setFramingId(String(sd.framing_style_id));
+    if (sd.date_format_id != null) setDateFormatId(String(sd.date_format_id));
+  }, [contribution]);
 
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
     if (!contribution || !comment.trim()) return;
@@ -163,7 +152,7 @@ const ContributionDetail = () => {
       if (!Number.isInteger(letteringNum) || !Number.isInteger(framingNum) || !Number.isInteger(dateFormatNum) || Number.isNaN(valueNum) || valueNum < 0) {
         toast({
           title: "Missing required fields",
-          description: "Please fill Lettering style, Framing style, Date format, and Value before approving.",
+          description: "Value is required to approve. Lettering style, Framing style, and Date format must have been provided by the contributor.",
           variant: "destructive",
         });
         return;
@@ -256,21 +245,29 @@ const ContributionDetail = () => {
     );
   }
 
-  const sd = contribution.submitted_data || {};
-  const state = (sd.state || "").trim();
-  const town = (sd.town || "").trim();
-  const dateRange = (sd.date_range || "").trim();
+  // Support both snake_case (API) and camelCase in case response is transformed
+  const rawSubmitted =
+    contribution.submitted_data ??
+    (contribution as unknown as Record<string, unknown>).submittedData ??
+    {};
+  const sd: Record<string, unknown> =
+    typeof rawSubmitted === "object" && rawSubmitted !== null
+      ? (rawSubmitted as Record<string, unknown>)
+      : {};
+  const state = String(sd.state ?? "").trim();
+  const town = String(sd.town ?? "").trim();
+  const dateRange = String(sd.date_range ?? "").trim();
   const { firstSeen, lastSeen } = parseDateRange(dateRange);
-  const type = (sd.type || "").trim();
-  const color = (sd.color || "").trim();
-  const dimensions = (sd.dimensions || "").trim();
-  const manuscript = (sd.manuscript || "").trim();
-  const rarity = (sd.rarity || "").trim();
-  const references = (sd.references || "").trim();
+  const type = String(sd.type ?? "").trim();
+  const color = String(sd.color ?? "").trim();
+  const dimensions = String(sd.dimensions ?? "").trim();
+  const manuscript = String(sd.manuscript ?? "").trim();
+  const rarity = String(sd.rarity ?? "").trim();
+  const references = String(sd.references ?? "").trim();
   const title = [town, state].filter(Boolean).join(", ") || `Submission #${contribution.id}`;
   const displayName = [title, type].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") || title;
   const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
-  const imageMeta = sd.image_meta;
+  const imageMeta = sd.image_meta as SubmittedData["image_meta"] | undefined;
   const imageUrl =
     imageMeta?.storage_filename && baseImageUrl
       ? normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${imageMeta.storage_filename}`)
@@ -376,6 +373,84 @@ const ContributionDetail = () => {
                 </CardContent>
               </Card>
 
+              {/* Submitted data as received — so editors always see what was submitted even if structured display is empty */}
+              <Card className="shadow-archival-md border-primary/10">
+                <CardHeader>
+                  <CardTitle className="font-heading text-lg">Submitted data</CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Raw payload from the contributor. Use this to review and approve, reject, or request revision.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  {Object.keys(sd).length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-2">
+                      No submitted data returned for this contribution. If you expect to see it, the record may have been created before this field was stored, or there may be an API issue.
+                    </p>
+                  ) : (
+                    <dl className="space-y-0 text-sm">
+                      {Object.entries(sd)
+                        .filter(([k]) => k !== "image_meta" || (sd.image_meta != null && typeof sd.image_meta === "object"))
+                        .map(([key, val]) => {
+                          let display: React.ReactNode = val == null ? "" : String(val);
+                          if (key === "image_meta" && val != null && typeof val === "object") {
+                            const meta = val as { storage_filename?: string; original_filename?: string };
+                            display = (
+                              <span className="text-muted-foreground">
+                                {meta.original_filename ?? meta.storage_filename ?? "—"}
+                              </span>
+                            );
+                          }
+                          return (
+                            <div
+                              key={key}
+                              className="flex justify-between py-2 border-b border-border last:border-0 gap-4"
+                            >
+                              <dt className="text-muted-foreground font-medium shrink-0">{key}</dt>
+                              <dd className="text-foreground break-all text-right">{display}</dd>
+                            </div>
+                          );
+                        })}
+                    </dl>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Raw submitted data so editors always see what was submitted */}
+              <Card className="shadow-archival-md border-primary/10">
+                <CardHeader>
+                  <CardTitle className="font-heading text-lg">Submitted data</CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Payload from the contributor for review. Use this to approve, reject, or request revision.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  {Object.keys(sd).length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-2">
+                      No submitted data returned. If you expect data here, the record may have been created before this field was stored, or there may be an API issue.
+                    </p>
+                  ) : (
+                    <dl className="space-y-0 text-sm">
+                      {Object.entries(sd).map(([key, val]) => {
+                        let display: React.ReactNode = val == null ? "" : String(val);
+                        if (key === "image_meta" && val != null && typeof val === "object") {
+                          const meta = val as { storage_filename?: string; original_filename?: string };
+                          display = meta.original_filename ?? meta.storage_filename ?? "—";
+                        }
+                        return (
+                          <div
+                            key={key}
+                            className="flex justify-between py-2 border-b border-border last:border-0 gap-4"
+                          >
+                            <dt className="text-muted-foreground font-medium shrink-0">{key}</dt>
+                            <dd className="text-foreground break-all text-right">{display}</dd>
+                          </div>
+                        );
+                      })}
+                    </dl>
+                  )}
+                </CardContent>
+              </Card>
+
               <Card className="shadow-archival-md">
                 <CardHeader>
                   <CardTitle className="font-heading text-lg">Lettering, framing, date format & value</CardTitle>
@@ -393,14 +468,14 @@ const ContributionDetail = () => {
                 </CardContent>
               </Card>
 
-              {sd.description?.trim() ? (
+              {String(sd.description ?? "").trim() ? (
                 <Card className="shadow-archival-md">
                   <CardHeader>
                     <CardTitle className="font-heading text-lg">Description</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
-                      {sd.description}
+                      {String(sd.description ?? "")}
                     </p>
                   </CardContent>
                 </Card>
@@ -464,69 +539,28 @@ const ContributionDetail = () => {
             </CardContent>
           </Card>
 
-          {/* Editor: Lettering, Framing, Date format, Value, Comment + Approve / Reject / Request revision */}
+          {/* Editor: only Value and Comment (lettering/framing/date format come from contributor) */}
           {canReview && (
             <Card className="shadow-archival-lg border-primary/20">
               <CardHeader>
                 <CardTitle className="font-heading text-lg">Review this submission</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  Fill the fields below and add a comment, then choose Approve, Reject, or Request revision.
+                  Add value and a comment, then choose Approve, Reject, or Request revision. Lettering style, framing style, and date format are taken from the contributor&apos;s submission.
                 </p>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <div className="space-y-2">
-                    <Label>Lettering style <span className="text-destructive">*</span></Label>
-                    <Select value={letteringId} onValueChange={setLetteringId} disabled={submitting || optionsLoading}>
-                      <SelectTrigger>
-                        <SelectValue placeholder={optionsLoading ? "Loading..." : "Select lettering style"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {options.lettering.map((o) => (
-                          <SelectItem key={o.id} value={String(o.id)}>{o.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Framing style <span className="text-destructive">*</span></Label>
-                    <Select value={framingId} onValueChange={setFramingId} disabled={submitting || optionsLoading}>
-                      <SelectTrigger>
-                        <SelectValue placeholder={optionsLoading ? "Loading..." : "Select framing style"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {options.framing.map((o) => (
-                          <SelectItem key={o.id} value={String(o.id)}>{o.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Date format <span className="text-destructive">*</span></Label>
-                    <Select value={dateFormatId} onValueChange={setDateFormatId} disabled={submitting || optionsLoading}>
-                      <SelectTrigger>
-                        <SelectValue placeholder={optionsLoading ? "Loading..." : "Select date format"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {options.dateFormats.map((o) => (
-                          <SelectItem key={o.id} value={String(o.id)}>{o.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="contribution-value">Value (of this postmark) <span className="text-destructive">*</span></Label>
-                    <Input
-                      id="contribution-value"
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      placeholder="e.g. 25.00"
-                      value={value}
-                      onChange={(e) => setValue(e.target.value)}
-                      disabled={submitting}
-                    />
-                  </div>
+                <div className="space-y-2 max-w-xs">
+                  <Label htmlFor="contribution-value">Value (of this postmark) <span className="text-destructive">*</span></Label>
+                  <Input
+                    id="contribution-value"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="e.g. 25.00"
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    disabled={submitting}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="contribution-comment">Comment (required) <span className="text-destructive">*</span></Label>
@@ -540,6 +574,11 @@ const ContributionDetail = () => {
                     className="resize-none"
                   />
                 </div>
+                {(!letteringId || !framingId || !dateFormatId) && (
+                  <p className="text-sm text-amber-600 dark:text-amber-500">
+                    This submission is missing lettering style, framing style, or date format from the contributor. Approve is disabled until the contributor resubmits with those fields.
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-2 pt-2">
                   <Button
                     onClick={() => submitDecision("approve")}
@@ -551,8 +590,7 @@ const ContributionDetail = () => {
                       !dateFormatId ||
                       value.trim() === "" ||
                       Number.isNaN(parseFloat(value)) ||
-                      parseFloat(value) < 0 ||
-                      optionsLoading
+                      parseFloat(value) < 0
                     }
                     className="bg-green-600 hover:bg-green-700"
                   >
