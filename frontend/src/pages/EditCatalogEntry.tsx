@@ -15,6 +15,9 @@ import { getColors, type ColorOption } from "@/services/colors";
 import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
 import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
 import { getPostalFacilities, type PostalFacilityOption } from "@/services/postalFacilities";
+import { getLetteringStyles, type LetteringStyleOption } from "@/services/letteringStyles";
+import { getFramingStyles, type FramingStyleOption } from "@/services/framingStyles";
+import { getDateFormats, type DateFormatOption } from "@/services/dateFormats";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -132,6 +135,13 @@ const EditCatalogEntry = () => {
   const [existingImageUrl, setExistingImageUrl] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [letteringId, setLetteringId] = useState("");
+  const [framingId, setFramingId] = useState("");
+  const [dateFormatId, setDateFormatId] = useState("");
+  const [letteringOptions, setLetteringOptions] = useState<LetteringStyleOption[]>([]);
+  const [framingOptions, setFramingOptions] = useState<FramingStyleOption[]>([]);
+  const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
+  const [catalogOptionsLoading, setCatalogOptionsLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{
     state?: string;
     town?: string;
@@ -140,6 +150,9 @@ const EditCatalogEntry = () => {
     type?: string;
     color?: string;
     dimensions?: string;
+    lettering?: string;
+    framing?: string;
+    dateFormat?: string;
   }>({});
 
   /** Town/City: letters, spaces, hyphens, apostrophes only */
@@ -187,6 +200,22 @@ const EditCatalogEntry = () => {
         setTypeOptions([]);
       })
       .finally(() => setLoadingTypes(false));
+  }, []);
+
+  useEffect(() => {
+    setCatalogOptionsLoading(true);
+    Promise.all([getLetteringStyles(), getFramingStyles(), getDateFormats()])
+      .then(([lettering, framing, dateFmt]) => {
+        setLetteringOptions(lettering);
+        setFramingOptions(framing);
+        setDateFormatOptions(dateFmt);
+      })
+      .catch(() => {
+        setLetteringOptions([]);
+        setFramingOptions([]);
+        setDateFormatOptions([]);
+      })
+      .finally(() => setCatalogOptionsLoading(false));
   }, []);
 
   useEffect(() => {
@@ -247,6 +276,12 @@ const EditCatalogEntry = () => {
         // so users don't have to clear default "Submitted by: ..." lines.
         setDescription(parsed.description || "");
         setReferences(parsed.citationReferences || "");
+        const letteringIdRaw = data.lettering_style_id ?? data.letteringStyleId ?? data.lettering_style?.lettering_style_id ?? data.lettering_style?.letteringStyleId;
+        const framingIdRaw = data.framing_style_id ?? data.framingStyleId ?? data.framing_style?.framing_style_id ?? data.framing_style?.framingStyleId;
+        const dateFormatIdRaw = data.date_format_id ?? data.dateFormatId ?? data.date_format?.date_format_id ?? data.date_format?.dateFormatId;
+        setLetteringId(letteringIdRaw != null ? String(letteringIdRaw) : "");
+        setFramingId(framingIdRaw != null ? String(framingIdRaw) : "");
+        setDateFormatId(dateFormatIdRaw != null ? String(dateFormatIdRaw) : "");
       })
       .catch(() => {
         if (!cancelled) setRecordError("Failed to load record");
@@ -344,6 +379,13 @@ const EditCatalogEntry = () => {
     if (!colorVal) {
       errors.color = "Color is required";
     }
+    if (!letteringId) errors.lettering = "Lettering style is required";
+    if (!framingId) errors.framing = "Framing style is required";
+    if (!dateFormatId) errors.dateFormat = "Date format is required";
+    const dimensionsVal = dimensions.trim();
+    if (dimensionsVal && !/^\d{1,4}$/.test(dimensionsVal)) {
+      errors.dimensions = "Dimensions must be numeric only, max 4 digits";
+    }
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       return;
@@ -385,6 +427,9 @@ const EditCatalogEntry = () => {
         form.append("lastSeen", lastSeen.trim());
         form.append("type", typeVal);
         form.append("color", colorVal);
+        form.append("lettering_style_id", letteringId);
+        form.append("framing_style_id", framingId);
+        form.append("date_format_id", dateFormatId);
         if (dimensions.trim()) form.append("dimensions", dimensions.trim());
         if (manuscript.trim()) form.append("manuscript", manuscript.trim());
         if (rarity.trim()) form.append("rarity", rarity.trim());
@@ -402,6 +447,9 @@ const EditCatalogEntry = () => {
           lastSeen: lastSeen.trim(),
           type: typeVal,
           color: colorVal,
+          lettering_style_id: letteringId ? Number(letteringId) : undefined,
+          framing_style_id: framingId ? Number(framingId) : undefined,
+          date_format_id: dateFormatId ? Number(dateFormatId) : undefined,
           dimensions: dimensions.trim() || undefined,
           manuscript: manuscript.trim() || undefined,
           rarity: rarity.trim() || undefined,
@@ -768,6 +816,49 @@ const EditCatalogEntry = () => {
                     </div>
 
                     <div className="space-y-2">
+                      <Label>Lettering style <span className="text-destructive">*</span></Label>
+                      <Select value={letteringId} onValueChange={(v) => { setLetteringId(v); setFieldErrors((prev) => ({ ...prev, lettering: undefined })); }} disabled={catalogOptionsLoading}>
+                        <SelectTrigger className={fieldErrors.lettering ? "border-destructive" : ""}>
+                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select lettering style"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {letteringOptions.map((opt) => (
+                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {fieldErrors.lettering && <p className="text-sm text-destructive">{fieldErrors.lettering}</p>}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Framing style <span className="text-destructive">*</span></Label>
+                      <Select value={framingId} onValueChange={(v) => { setFramingId(v); setFieldErrors((prev) => ({ ...prev, framing: undefined })); }} disabled={catalogOptionsLoading}>
+                        <SelectTrigger className={fieldErrors.framing ? "border-destructive" : ""}>
+                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select framing style"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {framingOptions.map((opt) => (
+                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {fieldErrors.framing && <p className="text-sm text-destructive">{fieldErrors.framing}</p>}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Date format <span className="text-destructive">*</span></Label>
+                      <Select value={dateFormatId} onValueChange={(v) => { setDateFormatId(v); setFieldErrors((prev) => ({ ...prev, dateFormat: undefined })); }} disabled={catalogOptionsLoading}>
+                        <SelectTrigger className={fieldErrors.dateFormat ? "border-destructive" : ""}>
+                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select date format"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {dateFormatOptions.map((opt) => (
+                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
+                    </div>
+
+                    <div className="space-y-2">
                       <Label htmlFor="edit-dimensions">Dimensions</Label>
                       <Input
                         id="edit-dimensions"
@@ -935,7 +1026,7 @@ const EditCatalogEntry = () => {
                   </form>
 
                   <p className="text-xs text-muted-foreground">
-                    * Required: State, Town/City, First Seen Year, Postmark Type, Color.
+                    * Required: State, Town/City, First Seen Year, Postmark Type, Color, Lettering style, Framing style, Date format.
                   </p>
                 </CardContent>
               </Card>

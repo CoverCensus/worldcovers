@@ -427,52 +427,16 @@ const RecordDetail = () => {
                 </CardContent>
               </Card>
 
-              {/* Lettering style, Framing style, Date format, Value, Comment */}
-              <Card className="shadow-archival-md">
-                <CardHeader>
-                  <CardTitle className="font-heading text-lg">Lettering, framing, date format & value</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <dl className="space-y-0 text-sm">
-                    {record.letteringStyle ? (
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <dt className="text-muted-foreground font-medium">Lettering style</dt>
-                        <dd className="text-foreground">{record.letteringStyle}</dd>
-                      </div>
-                    ) : null}
-                    {record.framingStyle ? (
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <dt className="text-muted-foreground font-medium">Framing style</dt>
-                        <dd className="text-foreground">{record.framingStyle}</dd>
-                      </div>
-                    ) : null}
-                    {record.dateFormat ? (
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <dt className="text-muted-foreground font-medium">Date format</dt>
-                        <dd className="text-foreground">{record.dateFormat}</dd>
-                      </div>
-                    ) : null}
-                    {record.valuations?.some((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "") ? (
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <dt className="text-muted-foreground font-medium">Value (of this postmark)</dt>
-                        <dd className="text-foreground">
-                          ${record.valuations.find((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "")?.estimatedValue ?? "—"}
-                        </dd>
-                      </div>
-                    ) : null}
-                    {record.comment ? (
-                      <div className="py-2">
-                        <dt className="text-muted-foreground font-medium mb-1">Comment</dt>
-                        <dd className="text-foreground whitespace-pre-line">{record.comment}</dd>
-                      </div>
-                    ) : null}
-                    {!record.letteringStyle && !record.framingStyle && !record.dateFormat &&
-                     !record.valuations?.some((v) => v.estimatedValue != null) && !record.comment ? (
-                      <p className="text-sm text-muted-foreground py-2">No lettering, framing, date format, value, or comment recorded for this postmark.</p>
-                    ) : null}
-                  </dl>
-                </CardContent>
-              </Card>
+              {record.comment ? (
+                <Card className="shadow-archival-md">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">Comment</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">{record.comment}</p>
+                  </CardContent>
+                </Card>
+              ) : null}
 
               {record.description?.trim() ? (
                 <Card className="shadow-archival-md">
@@ -492,91 +456,105 @@ const RecordDetail = () => {
           {/* Additional Information Tabs */}
           <Card className="shadow-archival-lg">
             <CardContent className="p-6">
-              <Tabs defaultValue="physical">
-              <TabsList className={`mt-1 grid w-full gap-1 rounded-md bg-muted p-1 ${record.citationReferences ? "grid-cols-3" : "grid-cols-2"}`}>
-                  <TabsTrigger value="physical">Physical Characteristics</TabsTrigger>
-                  <TabsTrigger value="valuations">Valuations</TabsTrigger>
-                  {record.citationReferences ? (
-                    <TabsTrigger value="citations">Citations</TabsTrigger>
-                  ) : null}
-                </TabsList>
-                <TabsContent value="physical" className="mt-6">
-                  <dl className="space-y-3 text-sm">
-                    {(() => {
-                      const hasValue = (v: string | undefined) => {
-                        const s = (v ?? "").trim();
-                        return s !== "" && s.toLowerCase() !== "unknown";
-                      };
-                      const showLettering = hasValue(record.letteringStyle);
-                      const showFraming = hasValue(record.framingStyle);
-                      const showDateFormat = hasValue(record.dateFormat);
-                      const none = !showLettering && !showFraming && !showDateFormat;
-                      return (
-                        <>
-                          {showLettering ? (
-                            <div className="flex gap-3">
-                              <dt className="font-medium text-muted-foreground min-w-[8rem]">Lettering style</dt>
-                              <dd className="text-foreground">{record.letteringStyle}</dd>
-                            </div>
-                          ) : null}
-                          {showFraming ? (
-                            <div className="flex gap-3">
-                              <dt className="font-medium text-muted-foreground min-w-[8rem]">Framing style</dt>
-                              <dd className="text-foreground">{record.framingStyle}</dd>
-                            </div>
-                          ) : null}
-                          {showDateFormat ? (
-                            <div className="flex gap-3">
-                              <dt className="font-medium text-muted-foreground min-w-[8rem]">Date format</dt>
-                              <dd className="text-foreground">{record.dateFormat}</dd>
-                            </div>
-                          ) : null}
-                          {none ? (
-                            <p className="text-muted-foreground py-2">No additional physical characteristics recorded for this postmark.</p>
-                          ) : null}
-                        </>
-                      );
-                    })()}
-                  </dl>
-                </TabsContent>
-                <TabsContent value="valuations" className="mt-6">
-                  <div className="space-y-4">
-                    {record.valuations?.filter((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "").length ? (
-                      record.valuations
-                        .filter((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "")
-                        .map((v, i) => (
-                          <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                            <div>
-                              <p className="text-sm font-medium text-foreground">Value (of this postmark)</p>
-                              {v.condition ? (
-                                <p className="text-xs text-muted-foreground">{v.condition}</p>
+              {(() => {
+                const hasValuations = !!record.valuations?.some((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "");
+                const tabCount = 1 + (hasValuations ? 1 : 0) + (record.citationReferences ? 1 : 0);
+                return (
+                  <Tabs defaultValue="physical">
+                    <TabsList className={`mt-1 grid w-full gap-1 rounded-md bg-muted p-1 grid-cols-${tabCount}`} style={{ gridTemplateColumns: `repeat(${tabCount}, minmax(0, 1fr))` }}>
+                      <TabsTrigger value="physical">Physical Characteristics</TabsTrigger>
+                      {hasValuations ? (
+                        <TabsTrigger value="valuations">Valuations</TabsTrigger>
+                      ) : null}
+                      {record.citationReferences ? (
+                        <TabsTrigger value="citations">Citations</TabsTrigger>
+                      ) : null}
+                    </TabsList>
+                    <TabsContent value="physical" className="mt-6">
+                      <dl className="space-y-3 text-sm">
+                        {(() => {
+                          const hasValue = (v: string | undefined) => {
+                            const s = (v ?? "").trim();
+                            return s !== "" && s.toLowerCase() !== "unknown";
+                          };
+                          const showLettering = hasValue(record.letteringStyle);
+                          const showFraming = hasValue(record.framingStyle);
+                          const showDateFormat = hasValue(record.dateFormat);
+                          const valueEntry = record.valuations?.find((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "");
+                          const showValue = !!valueEntry;
+                          const none = !showLettering && !showFraming && !showDateFormat && !showValue;
+                          return (
+                            <>
+                              {showLettering ? (
+                                <div className="flex gap-3">
+                                  <dt className="font-medium text-muted-foreground min-w-[8rem]">Lettering style</dt>
+                                  <dd className="text-foreground">{record.letteringStyle}</dd>
+                                </div>
                               ) : null}
-                              {(v.valuationDate || v.valuedBy) ? (
-                                <p className="text-xs text-muted-foreground mt-0.5">
-                                  {v.valuationDate ? `Dated ${v.valuationDate.slice(0, 10)}` : ""}
-                                  {v.valuationDate && v.valuedBy ? " · " : ""}
-                                  {v.valuedBy?.username || [v.valuedBy?.firstName, v.valuedBy?.lastName].filter(Boolean).join(" ") || ""}
+                              {showFraming ? (
+                                <div className="flex gap-3">
+                                  <dt className="font-medium text-muted-foreground min-w-[8rem]">Framing style</dt>
+                                  <dd className="text-foreground">{record.framingStyle}</dd>
+                                </div>
+                              ) : null}
+                              {showDateFormat ? (
+                                <div className="flex gap-3">
+                                  <dt className="font-medium text-muted-foreground min-w-[8rem]">Date format</dt>
+                                  <dd className="text-foreground">{record.dateFormat}</dd>
+                                </div>
+                              ) : null}
+                              {showValue ? (
+                                <div className="flex gap-3">
+                                  <dt className="font-medium text-muted-foreground min-w-[8rem]">Value (of this postmark)</dt>
+                                  <dd className="text-foreground">${valueEntry?.estimatedValue}</dd>
+                                </div>
+                              ) : null}
+                              {none ? (
+                                <p className="text-muted-foreground py-2">No physical characteristics recorded for this postmark.</p>
+                              ) : null}
+                            </>
+                          );
+                        })()}
+                      </dl>
+                    </TabsContent>
+                    {hasValuations ? (
+                      <TabsContent value="valuations" className="mt-6">
+                        <div className="space-y-4">
+                          {record.valuations
+                            ?.filter((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "")
+                            .map((v, i) => (
+                              <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
+                                <div>
+                                  <p className="text-sm font-medium text-foreground">Value (of this postmark)</p>
+                                  {v.condition ? (
+                                    <p className="text-xs text-muted-foreground">{v.condition}</p>
+                                  ) : null}
+                                  {(v.valuationDate || v.valuedBy) ? (
+                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                      {v.valuationDate ? `Dated ${v.valuationDate.slice(0, 10)}` : ""}
+                                      {v.valuationDate && v.valuedBy ? " · " : ""}
+                                      {v.valuedBy?.username || [v.valuedBy?.firstName, v.valuedBy?.lastName].filter(Boolean).join(" ") || ""}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <p className="text-lg font-heading font-semibold text-primary">
+                                  ${v.estimatedValue}
                                 </p>
-                              ) : null}
-                            </div>
-                            <p className="text-lg font-heading font-semibold text-primary">
-                              ${v.estimatedValue}
-                            </p>
-                          </div>
-                        ))
-                    ) : (
-                      <p className="text-sm text-muted-foreground py-2">No valuations recorded. The value given by an editor when adding or approving this postmark is shown here.</p>
-                    )}
-                  </div>
-                </TabsContent>
-                {record.citationReferences && (
+                              </div>
+                            ))}
+                        </div>
+                      </TabsContent>
+                    ) : null}
+                {record.citationReferences ? (
                   <TabsContent value="citations" className="mt-6">
                     <div className="space-y-3 text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
                       {record.citationReferences}
                     </div>
                   </TabsContent>
-                )}
-              </Tabs>
+                ) : null}
+                  </Tabs>
+                );
+              })()}
             </CardContent>
           </Card>
         </div>
