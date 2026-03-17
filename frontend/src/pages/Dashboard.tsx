@@ -83,6 +83,7 @@ interface PendingReviewItem {
   contributor_username: string;
   state_display: string;
   town_display: string;
+  type_display: string;
   postmark_id: number | null;
   status: string;
   created_at: string;
@@ -158,6 +159,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   const [submissions, setSubmissions] = useState<DashboardItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [submissionsRefetchKey, setSubmissionsRefetchKey] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"gallery" | "list">("list");
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
@@ -333,7 +335,18 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     };
 
     fetchSubmissions();
-  }, [user, toast]);
+  }, [user, toast, submissionsRefetchKey]);
+
+  // Refetch My Submissions when user returns to the tab so status updates are visible
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible" && user && location.pathname === "/dashboard") {
+        setSubmissionsRefetchKey((k) => k + 1);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [user, location.pathname]);
 
   // Fetch suggestions (corrections) for the current user
   useEffect(() => {
@@ -513,6 +526,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             contributor_username: c.contributor_username ?? "",
             state_display: c.state_display ?? "",
             town_display: c.town_display ?? "",
+            type_display: c.type_display ?? "",
             postmark_id: c.postmark_id ?? null,
             status: String(c.status ?? "pending"),
             created_at: String(c.created_at ?? ""),
@@ -597,6 +611,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       setApproveFramingId("");
       setApproveDateFormatId("");
       setApproveValue("");
+      setSubmissionsRefetchKey((k) => k + 1);
     } catch (err) {
       toast({
         title: "Could not submit",
@@ -672,8 +687,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         if (!nameMatch) return false;
       }
 
-      // Status filter
-      if (statusFilter !== "all" && submission.status !== statusFilter) return false;
+      // Status filter (API uses "needs_revision"; filter value matches)
+      if (statusFilter !== "all") {
+        const statusNorm = String(submission.status || "").toLowerCase();
+        const filterNorm = statusFilter.toLowerCase();
+        if (statusNorm !== filterNorm) return false;
+      }
 
       // State filter
       if (stateFilter !== "all" && submission.state !== stateFilter) return false;
@@ -729,11 +748,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   }
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
+    switch (String(status || "").toLowerCase()) {
       case "approved":
         return <Badge className="bg-green-500">Approved</Badge>;
       case "rejected":
         return <Badge variant="destructive">Rejected</Badge>;
+      case "needs_revision":
       case "revision":
         return <Badge variant="secondary">Needs Revision</Badge>;
       default:
@@ -757,8 +777,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         if (!nameMatch) return false;
       }
 
-      // Status filter
-      if (statusFilter !== "all" && suggestion.status !== statusFilter) return false;
+      // Status filter (API uses "needs_revision"; filter value matches)
+      if (statusFilter !== "all") {
+        const statusNorm = String(suggestion.status || "").toLowerCase();
+        const filterNorm = statusFilter.toLowerCase();
+        if (statusNorm !== filterNorm) return false;
+      }
 
       // State filter
       if (stateFilter !== "all" && suggestion.state !== stateFilter) return false;
@@ -915,7 +939,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         <SelectItem value="pending">Pending</SelectItem>
                         <SelectItem value="approved">Approved</SelectItem>
                         <SelectItem value="rejected">Rejected</SelectItem>
-                        <SelectItem value="revision">Needs Revision</SelectItem>
+                        <SelectItem value="needs_revision">Needs Revision</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1607,10 +1631,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       <h2 className="font-heading text-lg font-semibold text-foreground mb-2">
                         Pending review
                       </h2>
-                      <p className="text-sm text-muted-foreground mb-4">
-                        When you change status, add a comment so the contributor knows the outcome (e.g. quality note for
-                        approved, reason for reject, or what to fix for revision).
-                      </p>
                       {pendingReviewLoading ? (
                         <div className="flex items-center gap-2 text-muted-foreground">
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -1620,16 +1640,21 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         <p className="text-sm text-destructive">{pendingReviewError}</p>
                       ) : (
                         <ul className="space-y-3">
-                          {pendingReviewItems.map((item) => (
+                          {pendingReviewItems.map((item) => {
+                            const title = [item.town_display, item.state_display].filter(Boolean).join(", ");
+                            const typeStr = (item.type_display || "").trim();
+                            const postmarkName =
+                              [title, typeStr].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") ||
+                              title ||
+                              `Submission #${item.id}`;
+                            return (
                             <li
                               key={item.id}
                               className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-muted/30"
                             >
                               <div>
                                 <span className="font-medium text-foreground">
-                                  {item.town_display && item.state_display
-                                    ? `${item.town_display}, ${item.state_display}`
-                                    : item.state_display || item.town_display || `Submission #${item.id}`}
+                                  {postmarkName}
                                 </span>
                                 <span className="text-muted-foreground text-sm ml-2">
                                   by {item.contributor_username}
@@ -1645,42 +1670,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                 >
                                   View
                                 </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    setStatusDecisionTarget(item);
-                                    setStatusDecisionKind("approve");
-                                    setStatusComment("");
-                                  }}
-                                >
-                                  Approve
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    setStatusDecisionTarget(item);
-                                    setStatusDecisionKind("reject");
-                                    setStatusComment("");
-                                  }}
-                                >
-                                  Reject
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    setStatusDecisionTarget(item);
-                                    setStatusDecisionKind("revision");
-                                    setStatusComment("");
-                                  }}
-                                >
-                                  Request revision
-                                </Button>
                               </div>
                             </li>
-                          ))}
+                            );
+                          })}
                         </ul>
                       )}
                     </CardContent>

@@ -753,6 +753,7 @@ class ContributionListSerializer(serializers.ModelSerializer):
     postmark_id = serializers.SerializerMethodField()
     state_display = serializers.SerializerMethodField()
     town_display = serializers.SerializerMethodField()
+    type_display = serializers.SerializerMethodField()
 
     class Meta:
         model = Contribution
@@ -770,6 +771,7 @@ class ContributionListSerializer(serializers.ModelSerializer):
             "updated_at",
             "state_display",
             "town_display",
+            "type_display",
         ]
 
     def get_postmark_id(self, obj):
@@ -777,11 +779,15 @@ class ContributionListSerializer(serializers.ModelSerializer):
 
     def get_state_display(self, obj):
         sd = obj.submitted_data or {}
-        return sd.get("state", "-")
+        return sd.get("state", "")
 
     def get_town_display(self, obj):
         sd = obj.submitted_data or {}
-        return sd.get("town", "-")
+        return sd.get("town", "")
+
+    def get_type_display(self, obj):
+        sd = obj.submitted_data or {}
+        return sd.get("type", "")
 
 
 class ContributionDetailSerializer(serializers.ModelSerializer):
