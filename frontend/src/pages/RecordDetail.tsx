@@ -282,7 +282,7 @@ const RecordDetail = () => {
                 }
               >
                 <Pencil className="mr-2 h-4 w-4" />
-                {isStateEditor && isOwner ? "Edit entry" : "Suggest an edit"}
+                {isStateEditor && isOwner ? "Edit entry" : "Suggest"}
               </Button>
             )}
           </div>

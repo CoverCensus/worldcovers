@@ -751,9 +751,11 @@ class ContributionListSerializer(serializers.ModelSerializer):
     contributor_username = serializers.CharField(source="contributor.username", read_only=True)
     reviewer_username = serializers.CharField(source="reviewer.username", read_only=True, allow_null=True)
     postmark_id = serializers.SerializerMethodField()
+    is_suggestion = serializers.SerializerMethodField()
     state_display = serializers.SerializerMethodField()
     town_display = serializers.SerializerMethodField()
     type_display = serializers.SerializerMethodField()
+    display_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Contribution
@@ -763,6 +765,7 @@ class ContributionListSerializer(serializers.ModelSerializer):
             "contributor_username",
             "postmark",
             "postmark_id",
+            "is_suggestion",
             "status",
             "reviewer",
             "reviewer_username",
@@ -772,10 +775,19 @@ class ContributionListSerializer(serializers.ModelSerializer):
             "state_display",
             "town_display",
             "type_display",
+            "display_name",
         ]
 
     def get_postmark_id(self, obj):
         return obj.postmark_id if obj.postmark_id else None
+
+    def get_is_suggestion(self, obj):
+        """True if this is a suggested edit to an existing catalog entry (not a new submission)."""
+        if obj.postmark_id is not None:
+            return True
+        sd = obj.submitted_data or {}
+        orig = sd.get("original_postmark_id")
+        return orig is not None and str(orig).strip() != ""
 
     def get_state_display(self, obj):
         sd = obj.submitted_data or {}
@@ -788,6 +800,19 @@ class ContributionListSerializer(serializers.ModelSerializer):
     def get_type_display(self, obj):
         sd = obj.submitted_data or {}
         return sd.get("type", "")
+
+    def get_display_name(self, obj):
+        """Postmaker-style title: "Town, State — Type" or "Submission #id" if missing."""
+        sd = obj.submitted_data or {}
+        town = (sd.get("town") or "").strip()
+        state = (sd.get("state") or "").strip()
+        type_val = (sd.get("type") or "").strip()
+        title = ", ".join(x for x in [town, state] if x)
+        if not title:
+            return f"Submission #{obj.id}"
+        if type_val and type_val.lower() != "unknown":
+            return f"{title} — {type_val}"
+        return title
 
 
 class ContributionDetailSerializer(serializers.ModelSerializer):

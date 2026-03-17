@@ -96,8 +96,8 @@ const Contribute = () => {
   const [rarity, setRarity] = useState("");
   const [description, setDescription] = useState("");
   const [references, setReferences] = useState("");
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [letteringId, setLetteringId] = useState("");
   const [framingId, setFramingId] = useState("");
   const [dateFormatId, setDateFormatId] = useState("");
@@ -228,32 +228,61 @@ const Contribute = () => {
   }, [postalFacilities, state]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) {
-      setImageFile(null);
-      setImagePreview(null);
-      return;
+    const files = e.target.files;
+    if (!files?.length) return;
+    const toAdd: File[] = [];
+    const rejectedType: string[] = [];
+    const rejectedSize: string[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+        rejectedType.push(file.name);
+        continue;
+      }
+      if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
+        rejectedSize.push(file.name);
+        continue;
+      }
+      toAdd.push(file);
     }
-    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    if (rejectedType.length) {
       toast({
         title: "Invalid file type",
-        description: "Only PNG, JPG, or TIFF are allowed.",
+        description: `Only PNG, JPG, or TIFF are allowed. Skipped: ${rejectedType.join(", ")}`,
         variant: "destructive",
       });
-      return;
     }
-    if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
+    if (rejectedSize.length) {
       toast({
         title: "File too large",
-        description: `Maximum size is ${MAX_IMAGE_SIZE_MB}MB.`,
+        description: `Maximum size is ${MAX_IMAGE_SIZE_MB}MB per file. Skipped: ${rejectedSize.join(", ")}`,
         variant: "destructive",
       });
+    }
+    if (toAdd.length === 0) {
+      e.target.value = "";
       return;
     }
-    setImageFile(file);
-    const reader = new FileReader();
-    reader.onloadend = () => setImagePreview(reader.result as string);
-    reader.readAsDataURL(file);
+    setImageFiles((prev) => [...prev, ...toAdd]);
+    Promise.all(
+      toAdd.map(
+        (file) =>
+          new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(file);
+          })
+      )
+    ).then((newPreviews) => {
+      setImagePreviews((prev) => [...prev, ...newPreviews]);
+    });
+    e.target.value = "";
+  };
+
+  const removeImageAt = (index: number) => {
+    setImageFiles((prev) => prev.filter((_, i) => i !== index));
+    setImagePreviews((prev) => prev.filter((_, i) => i !== index));
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const buildName = () => {
@@ -358,6 +387,16 @@ const Contribute = () => {
       return;
     }
 
+    const oversized = imageFiles.filter((f) => f.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
+    if (oversized.length) {
+      toast({
+        title: "Image too large",
+        description: `Please remove or replace images over ${MAX_IMAGE_SIZE_MB}MB.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSubmitting(true);
     try {
       const submitterName = user?.username || user?.email || undefined;
@@ -376,7 +415,7 @@ const Contribute = () => {
           }
         : {};
 
-      if (imageFile) {
+      if (imageFiles.length > 0) {
         const form = new FormData();
         form.append("state", stateVal);
         form.append("town", townVal);
@@ -398,7 +437,9 @@ const Contribute = () => {
           form.append("estimated_value", editorValue.trim());
           form.append("review_notes", editorComment.trim());
         }
-        form.append("image", imageFile, imageFile.name);
+        for (const file of imageFiles) {
+          form.append("image", file, file.name);
+        }
         body = form;
         // Do not set Content-Type so browser sets multipart/form-data with boundary
       } else {
@@ -431,6 +472,14 @@ const Contribute = () => {
       });
 
       if (!res.ok) {
+        if (res.status === 413) {
+          toast({
+            title: "Image too large",
+            description: `The image file is too large for the server to accept. Please use an image under ${MAX_IMAGE_SIZE_MB}MB. If your image is already under ${MAX_IMAGE_SIZE_MB}MB, the server may have a lower limit—try a smaller file.`,
+            variant: "destructive",
+          });
+          return;
+        }
         const errBody = await res.json().catch(() => ({}));
         const msg = errBody?.detail || res.statusText || "Could not submit.";
         throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
@@ -459,8 +508,8 @@ const Contribute = () => {
       setRarity("");
       setDescription("");
       setReferences("");
-      setImageFile(null);
-      setImagePreview(null);
+      setImageFiles([]);
+      setImagePreviews([]);
       setLetteringId("");
       setFramingId("");
       setDateFormatId("");
@@ -867,11 +916,12 @@ const Contribute = () => {
                     )}
 
                     <div className="space-y-2">
-                      <Label>Upload Image</Label>
+                      <Label>Upload Images</Label>
                       <input
                         ref={fileInputRef}
                         type="file"
                         accept={ALLOWED_IMAGE_TYPES.join(",")}
+                        multiple
                         className="hidden"
                         onChange={handleImageChange}
                       />
@@ -882,22 +932,37 @@ const Contribute = () => {
                         onKeyDown={(e) => e.key === "Enter" && fileInputRef.current?.click()}
                         className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
                       >
-                        {imagePreview ? (
-                          <div className="space-y-2">
-                            <img src={imagePreview} alt="Preview" className="mx-auto max-h-40 rounded object-contain" />
-                            <p className="text-sm text-muted-foreground">{imageFile?.name}</p>
-                            <Button type="button" variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setImageFile(null); setImagePreview(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}>
-                              Remove
+                        {imagePreviews.length > 0 ? (
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                              {imagePreviews.map((preview, i) => (
+                                <div key={i} className="relative rounded border bg-muted/30 overflow-hidden">
+                                  <img src={preview} alt={`Preview ${i + 1}`} className="w-full aspect-square object-contain max-h-32" />
+                                  <p className="text-xs text-muted-foreground truncate px-2 py-1">{imageFiles[i]?.name}</p>
+                                  <Button
+                                    type="button"
+                                    variant="destructive"
+                                    size="sm"
+                                    className="absolute top-1 right-1 h-7 w-7 p-0"
+                                    onClick={(e) => { e.stopPropagation(); removeImageAt(i); }}
+                                  >
+                                    ×
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                            <Button type="button" variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}>
+                              Add more images
                             </Button>
                           </div>
                         ) : (
                           <>
                             <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
                             <p className="text-sm text-muted-foreground mb-2">
-                              Click to upload or drag and drop
+                              Click to upload or drag and drop (multiple allowed)
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              PNG, JPG, or TIFF up to {MAX_IMAGE_SIZE_MB}MB
+                              PNG, JPG, or TIFF up to {MAX_IMAGE_SIZE_MB}MB each
                             </p>
                           </>
                         )}

@@ -12,7 +12,12 @@ def process_view(request, view_func, view_args, view_kwargs):
         "/api/login", "/api/login/", "/api/logout", "/api/logout/",
         "/api/login-requests", "/api/login-requests/",
     )
-    if path in exempt_paths or path.startswith("/api/admin-csv-uploads/"):
+    contrib_action = path.startswith("/api/contributions/") and (
+        path.rstrip("/").endswith("/approve")
+        or path.rstrip("/").endswith("/reject")
+        or path.rstrip("/").endswith("/request-revision")
+    )
+    if path in exempt_paths or path.startswith("/api/admin-csv-uploads/") or contrib_action:
         setattr(view_func, "csrf_exempt", True)
     return None
 

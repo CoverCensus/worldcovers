@@ -57,9 +57,12 @@ export const Navigation = () => {
     setMobileMenuOpen(false);
   };
 
+  const apiBase = (import.meta.env.VITE_API_URL ?? "").trim().replace(/\/+$/, "");
+  const logoutUrl = apiBase ? `${apiBase}/api/logout/` : "/api/logout/";
+
   const handleLogout = async () => {
     try {
-      await fetch("/api/logout/", { method: "POST", credentials: "include" });
+      await fetch(logoutUrl, { method: "POST", credentials: "include" });
       clearStoredUser();
 
       toast({
@@ -82,7 +85,7 @@ export const Navigation = () => {
   const handleSignOutAndSignIn = async () => {
     setChangePasswordOpen(false);
     try {
-      await fetch("/api/logout/", { method: "POST", credentials: "include" });
+      await fetch(logoutUrl, { method: "POST", credentials: "include" });
       clearStoredUser();
       toast({
         title: "Signed out",

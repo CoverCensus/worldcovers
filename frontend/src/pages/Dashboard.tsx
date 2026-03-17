@@ -69,6 +69,8 @@ interface DashboardItem {
   description?: string;
   image_url: string | null;
   postmark_id?: number | null;
+  /** True when this is a suggested edit to an existing catalog entry (not a new submission). */
+  isSuggestion?: boolean;
 }
 
 /** Catalog entry for User Submissions (state editor): postmarks in assigned states. */
@@ -239,7 +241,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           return;
         }
 
-        const res = await fetch(`${apiBase}/api/contributions/?kind=submission`, {
+        // Fetch all contributions (new submissions + suggestions) so both appear in My Submissions
+        const res = await fetch(`${apiBase}/api/contributions/`, {
           method: "GET",
           credentials: "include",
           headers: { Accept: "application/json" },
@@ -268,12 +271,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           );
 
           const displayName =
+            (c.display_name || c.displayName || "").trim() ||
             [
               [town, state].filter(Boolean).join(", "),
               c.shapeName || c.typeDisplay || c.type || c.submittedData?.type,
             ]
               .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
-              .join(" — ") || `Submission #${c.id}`;
+              .join(" — ") ||
+            `Submission #${c.id}`;
 
           const dateRange =
             c.dateRange ||
@@ -284,6 +289,20 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 ? `${c.submittedData.firstSeen}-${c.submittedData.lastSeen}`
                 : String(c.submittedData.firstSeen)
               : "");
+
+          const postmarkId =
+            typeof c.postmarkId === "number"
+              ? c.postmarkId
+              : typeof c.postmark_id === "number"
+                ? c.postmark_id
+                : typeof c.catalogPostmarkId === "number"
+                  ? c.catalogPostmarkId
+                  : typeof c.postmark?.id === "number"
+                    ? c.postmark.id
+                    : null;
+          const isSuggestion =
+            c.is_suggestion === true ||
+            !!(postmarkId || (c.submittedData?.original_postmark_id ?? c.original_postmark_id));
 
           return {
             id: c.id,
@@ -298,16 +317,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             created_at: String(c.createdAt || c.created_at || ""),
             description: c.description || c.submittedData?.description || "",
             image_url: imageUrl,
-            postmark_id:
-              typeof c.postmarkId === "number"
-                ? c.postmarkId
-                : typeof c.postmark_id === "number"
-                  ? c.postmark_id
-                  : typeof c.catalogPostmarkId === "number"
-                    ? c.catalogPostmarkId
-                    : typeof c.postmark?.id === "number"
-                      ? c.postmark.id
-                      : null,
+            postmark_id: postmarkId ?? null,
+            isSuggestion,
           } as DashboardItem;
         });
         setSubmissions(mapped);
@@ -1141,9 +1152,16 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between gap-2 mb-2">
-                              <h3 className="font-heading text-xl font-semibold text-foreground">
-                                {submission.name}
-                              </h3>
+                              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                                <h3 className="font-heading text-xl font-semibold text-foreground">
+                                  {submission.name}
+                                </h3>
+                                {submission.isSuggestion && (
+                                  <Badge variant="outline" className="shrink-0 text-xs">
+                                    Suggestion
+                                  </Badge>
+                                )}
+                              </div>
                               {getStatusBadge(submission.status)}
                             </div>
 
@@ -1257,9 +1275,16 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       />
                       <CardContent className="p-4 flex flex-col gap-3">
                         <div className="flex items-start justify-between gap-2">
-                          <h3 className="font-heading text-lg font-semibold text-foreground">
-                            {submission.name}
-                          </h3>
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
+                            <h3 className="font-heading text-lg font-semibold text-foreground">
+                              {submission.name}
+                            </h3>
+                            {submission.isSuggestion && (
+                              <Badge variant="outline" className="shrink-0 text-xs">
+                                Suggestion
+                              </Badge>
+                            )}
+                          </div>
                           {getStatusBadge(submission.status)}
                         </div>
 

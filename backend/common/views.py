@@ -587,6 +587,17 @@ def _get_contribution_user():
     return User.objects.filter(is_superuser=True).first() or User.objects.first()
 
 
+def _get_payload_value(payload, *keys, default=None):
+    """Get value from payload supporting both snake_case and camelCase keys. Tries each key in order."""
+    if not payload or not isinstance(payload, dict):
+        return default
+    for k in keys:
+        v = payload.get(k)
+        if v is not None and v != "":
+            return v
+    return default
+
+
 def _save_contribution_image(uploaded_file):
     """
     Save uploaded image to media/postmarks/contributions/ and return metadata for PostmarkImage.
@@ -718,7 +729,9 @@ def _create_contribution_only(payload, contributor):
             submitted_data["framing_style_id"] = payload["framing_style_id"]
         if payload.get("date_format_id") is not None:
             submitted_data["date_format_id"] = payload["date_format_id"]
-        if payload.get("image_meta"):
+        if payload.get("image_metas"):
+            submitted_data["image_metas"] = payload["image_metas"]
+        elif payload.get("image_meta"):
             submitted_data["image_meta"] = payload["image_meta"]
         contrib = Contribution.objects.create(
             contributor=contributor,
@@ -739,10 +752,12 @@ def _apply_contribution_to_catalog(contrib):
     Returns the Postmark or None on failure.
     """
     payload = contrib.submitted_data or {}
-    if not payload.get("state") or not payload.get("town"):
+    state = (_get_payload_value(payload, "state", "State") or "").strip()
+    town = (_get_payload_value(payload, "town", "Town") or "").strip()
+    if not state or not town:
         logger.warning("_apply_contribution_to_catalog: contribution %s missing state or town in submitted_data", contrib.id)
         return None
-    submitter_name = payload.get("submitter_name", "")
+    submitter_name = (_get_payload_value(payload, "submitter_name", "submitterName") or "").strip()
     if contrib.postmark_id:
         return _update_postmark_in_catalog(contrib.postmark_id, payload, submitter_name)
     postmark = _create_postmark_in_catalog(payload)
@@ -766,17 +781,17 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
     if not user:
         return None
     try:
-        state_str = (payload.get("state") or "").strip()
-        town_str = (payload.get("town") or "").strip()
-        date_range_str = (payload.get("date_range") or "").strip()
-        type_str = (payload.get("type") or "").strip()
-        color_str = (payload.get("color") or "").strip()
-        manuscript_str = (payload.get("manuscript") or "").strip()
-        dimensions_str = (payload.get("dimensions") or "").strip()
-        description_str = (payload.get("description") or "").strip()
-        references_str = (payload.get("references") or "").strip()
-        rarity_str = (payload.get("rarity") or "").strip()
-        original_postmark_id = payload.get("original_postmark_id")
+        state_str = (_get_payload_value(payload, "state", "State") or "").strip()
+        town_str = (_get_payload_value(payload, "town", "Town") or "").strip()
+        date_range_str = (_get_payload_value(payload, "date_range", "dateRange") or "").strip()
+        type_str = (_get_payload_value(payload, "type", "Type") or "").strip()
+        color_str = (_get_payload_value(payload, "color", "Color") or "").strip()
+        manuscript_str = (_get_payload_value(payload, "manuscript", "Manuscript") or "").strip()
+        dimensions_str = (_get_payload_value(payload, "dimensions", "Dimensions") or "").strip()
+        description_str = (_get_payload_value(payload, "description", "Description") or "").strip()
+        references_str = (_get_payload_value(payload, "references", "References") or "").strip()
+        rarity_str = (_get_payload_value(payload, "rarity", "Rarity") or "").strip()
+        original_postmark_id = _get_payload_value(payload, "original_postmark_id", "originalPostmarkId")
 
         # State: get or create AdministrativeUnit + Identity
         state_slug = slugify(state_str)[:40] or "unknown"
@@ -848,9 +863,9 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
         if shape is None:
             shape = PostmarkShape.objects.first()
         # Lettering, framing, date format: from payload (contributor-provided), else editor_data, else defaults
-        lettering_id = payload.get("lettering_style_id")
-        framing_id = payload.get("framing_style_id")
-        date_fmt_id = payload.get("date_format_id")
+        lettering_id = _get_payload_value(payload, "lettering_style_id", "letteringStyleId")
+        framing_id = _get_payload_value(payload, "framing_style_id", "framingStyleId")
+        date_fmt_id = _get_payload_value(payload, "date_format_id", "dateFormatId")
         if lettering_id is None and editor_data:
             lettering_id = editor_data.get("lettering_style_id")
         if framing_id is None and editor_data:
@@ -881,7 +896,7 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
             other_parts.append(f"Rarity: {rarity_str}")
         if original_postmark_id:
             other_parts.append(f"Correction to catalog ID: {original_postmark_id}")
-        submitter_str = (payload.get("submitter_name") or "").strip()
+        submitter_str = (_get_payload_value(payload, "submitter_name", "submitterName") or "").strip()
         if submitter_str:
             other_parts.append(f"Submitted by: {submitter_str}")
         if editor_data and (editor_data.get("review_notes") or "").strip():
@@ -945,24 +960,26 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
             created_by=user,
             modified_by=user,
         )
-        # Optional: attach uploaded image
-        image_meta = payload.get("image_meta")
+        # Optional: attach uploaded image (support both snake_case and camelCase keys)
+        image_meta = payload.get("image_meta") or payload.get("imageMeta")
         if image_meta and isinstance(image_meta, dict):
-            PostmarkImage.objects.create(
-                postmark=postmark,
-                original_filename=image_meta.get("original_filename", "image")[:255],
-                storage_filename=image_meta["storage_filename"],
-                file_checksum=image_meta.get("file_checksum", "")[:64],
-                mime_type=image_meta.get("mime_type", "image/jpeg")[:50],
-                image_width=image_meta.get("image_width", 0),
-                image_height=image_meta.get("image_height", 0),
-                file_size_bytes=image_meta.get("file_size_bytes", 0),
-                image_view="FULL",
-                display_order=0,
-                uploaded_by=user,
-                created_by=user,
-                modified_by=user,
-            )
+            storage_fn = image_meta.get("storage_filename") or image_meta.get("storageFilename")
+            if storage_fn:
+                PostmarkImage.objects.create(
+                    postmark=postmark,
+                    original_filename=(image_meta.get("original_filename") or image_meta.get("originalFilename") or "image")[:255],
+                    storage_filename=storage_fn,
+                    file_checksum=(image_meta.get("file_checksum") or image_meta.get("fileChecksum") or "")[:64],
+                    mime_type=(image_meta.get("mime_type") or image_meta.get("mimeType") or "image/jpeg")[:50],
+                    image_width=image_meta.get("image_width") or image_meta.get("imageWidth") or 0,
+                    image_height=image_meta.get("image_height") or image_meta.get("imageHeight") or 0,
+                    file_size_bytes=image_meta.get("file_size_bytes") or image_meta.get("fileSizeBytes") or 0,
+                    image_view="FULL",
+                    display_order=0,
+                    uploaded_by=user,
+                    created_by=user,
+                    modified_by=user,
+                )
         # Editor direct-add: create valuation with estimated_value
         if editor_data and created_by_user is not None and editor_data.get("estimated_value") is not None:
             try:
@@ -998,16 +1015,16 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
         if not user:
             return None
 
-        state_str = (payload.get("state") or "").strip()
-        town_str = (payload.get("town") or "").strip()
-        date_range_str = (payload.get("date_range") or "").strip()
-        type_str = (payload.get("type") or "").strip()
-        color_str = (payload.get("color") or "").strip()
-        manuscript_str = (payload.get("manuscript") or "").strip()
-        dimensions_str = (payload.get("dimensions") or "").strip()
-        description_str = (payload.get("description") or "").strip()
-        references_str = (payload.get("references") or "").strip()
-        rarity_str = (payload.get("rarity") or "").strip()
+        state_str = (_get_payload_value(payload, "state", "State") or "").strip()
+        town_str = (_get_payload_value(payload, "town", "Town") or "").strip()
+        date_range_str = (_get_payload_value(payload, "date_range", "dateRange") or "").strip()
+        type_str = (_get_payload_value(payload, "type", "Type") or "").strip()
+        color_str = (_get_payload_value(payload, "color", "Color") or "").strip()
+        manuscript_str = (_get_payload_value(payload, "manuscript", "Manuscript") or "").strip()
+        dimensions_str = (_get_payload_value(payload, "dimensions", "Dimensions") or "").strip()
+        description_str = (_get_payload_value(payload, "description", "Description") or "").strip()
+        references_str = (_get_payload_value(payload, "references", "References") or "").strip()
+        rarity_str = (_get_payload_value(payload, "rarity", "Rarity") or "").strip()
 
         # State / facility / identity (same as create)
         state_slug = slugify(state_str)[:40] or "unknown"
@@ -1151,25 +1168,27 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
             modified_by=user,
         )
 
-        # Replace image if new one provided
-        image_meta = payload.get("image_meta")
+        # Replace image if new one provided (support both snake_case and camelCase keys)
+        image_meta = payload.get("image_meta") or payload.get("imageMeta")
         if image_meta and isinstance(image_meta, dict):
-            PostmarkImage.objects.filter(postmark=postmark).delete()
-            PostmarkImage.objects.create(
-                postmark=postmark,
-                original_filename=image_meta.get("original_filename", "image")[:255],
-                storage_filename=image_meta["storage_filename"],
-                file_checksum=image_meta.get("file_checksum", "")[:64],
-                mime_type=image_meta.get("mime_type", "image/jpeg")[:50],
-                image_width=image_meta.get("image_width", 0),
-                image_height=image_meta.get("image_height", 0),
-                file_size_bytes=image_meta.get("file_size_bytes", 0),
-                image_view="FULL",
-                display_order=0,
-                uploaded_by=user,
-                created_by=user,
-                modified_by=user,
-            )
+            storage_fn = image_meta.get("storage_filename") or image_meta.get("storageFilename")
+            if storage_fn:
+                PostmarkImage.objects.filter(postmark=postmark).delete()
+                PostmarkImage.objects.create(
+                    postmark=postmark,
+                    original_filename=(image_meta.get("original_filename") or image_meta.get("originalFilename") or "image")[:255],
+                    storage_filename=storage_fn,
+                    file_checksum=(image_meta.get("file_checksum") or image_meta.get("fileChecksum") or "")[:64],
+                    mime_type=(image_meta.get("mime_type") or image_meta.get("mimeType") or "image/jpeg")[:50],
+                    image_width=image_meta.get("image_width") or image_meta.get("imageWidth") or 0,
+                    image_height=image_meta.get("image_height") or image_meta.get("imageHeight") or 0,
+                    file_size_bytes=image_meta.get("file_size_bytes") or image_meta.get("fileSizeBytes") or 0,
+                    image_view="FULL",
+                    display_order=0,
+                    uploaded_by=user,
+                    created_by=user,
+                    modified_by=user,
+                )
         return postmark
     except Exception as e:
         logger.exception("_update_postmark_in_catalog failed (postmark_id=%s): %s", postmark_id, e)
@@ -1476,7 +1495,9 @@ class ContributionView(APIView):
                         submitted_data["framing_style_id"] = payload["framing_style_id"]
                     if payload.get("date_format_id") is not None:
                         submitted_data["date_format_id"] = payload["date_format_id"]
-                    if payload.get("image_meta"):
+                    if payload.get("image_metas"):
+                        submitted_data["image_metas"] = payload["image_metas"]
+                    elif payload.get("image_meta"):
                         submitted_data["image_meta"] = payload["image_meta"]
 
                     # Because Contribution.postmark is OneToOne, there can only be

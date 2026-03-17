@@ -39,6 +39,9 @@ interface SubmittedData {
   image_meta?: {
     storage_filename?: string;
     original_filename?: string;
+    /** API may return camelCase */
+    storageFilename?: string;
+    originalFilename?: string;
   };
   /** Contributor-provided; used when editor approves (editor only fills value + comment). */
   lettering_style_id?: number;
@@ -275,14 +278,15 @@ const ContributionDetail = () => {
   const dimensions = String(sd.dimensions ?? "").trim();
   const manuscript = String(sd.manuscript ?? "").trim();
   const rarity = String(sd.rarity ?? "").trim();
-  const references = String(sd.references ?? "").trim();
   const title = [town, state].filter(Boolean).join(", ") || `Submission #${contribution.id}`;
   const displayName = [title, type].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") || title;
   const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
   const imageMeta = sd.image_meta as SubmittedData["image_meta"] | undefined;
+  const storageFilename = imageMeta?.storage_filename ?? imageMeta?.storageFilename;
+  const originalFilename = imageMeta?.original_filename ?? imageMeta?.originalFilename;
   const imageUrl =
-    imageMeta?.storage_filename && baseImageUrl
-      ? normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${imageMeta.storage_filename}`)
+    storageFilename && baseImageUrl
+      ? normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${storageFilename}`)
       : null;
 
   const isPending = contribution.status === "pending";
@@ -330,7 +334,7 @@ const ContributionDetail = () => {
                 <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
                   <img
                     src={imageUrl || imageNotAvailable}
-                    alt={imageMeta?.original_filename || "Submission"}
+                    alt={originalFilename || "Submission"}
                     className="w-full h-full object-contain"
                   />
                 </div>
@@ -419,19 +423,6 @@ const ContributionDetail = () => {
                 </CardContent>
               </Card>
 
-              {String(sd.description ?? "").trim() ? (
-                <Card className="shadow-archival-md">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg">Description</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
-                      {String(sd.description ?? "")}
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : null}
-
               {/* Editor feedback — show outcome (approved/rejected/revision) and comment so contributor knows the result */}
               {(contribution.status !== "pending" || (contribution.review_notes && contribution.review_notes.trim())) ? (
                 <Card className="shadow-archival-md border-amber-500/20 bg-amber-500/5">
@@ -469,20 +460,6 @@ const ContributionDetail = () => {
               ) : null}
             </div>
           </div>
-
-          {/* Citations only (from submitted data). Physical characteristics are in Submitted data; value is set by editor on approve. */}
-          {references ? (
-            <Card className="shadow-archival-lg">
-              <CardHeader>
-                <CardTitle className="font-heading text-lg">Citations</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3 text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
-                  {references}
-                </div>
-              </CardContent>
-            </Card>
-          ) : null}
 
           {/* Editor: only Value and Comment (lettering/framing/date format come from contributor) */}
           {canReview && (
