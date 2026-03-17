@@ -1608,7 +1608,7 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="approve")
     def approve(self, request, pk=None):
-        """Approve a contribution; apply submitted_data to catalog. Editor must supply lettering, framing, date format, and value. Shape comes from contribution form (postmark type)."""
+        """Approve a contribution; apply submitted_data to catalog. Editor must supply value and comment. Lettering style, framing style, and date format come from the contribution's submitted_data (required on the contribution form)."""
         contrib = self.get_object()
         if contrib.status != Contribution.STATUS_PENDING:
             return Response(
@@ -1620,20 +1620,38 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         data = serializer.validated_data
         review_notes = data.get("review_notes", "")
 
-        # Editor must fill catalog metadata before approving (shape comes from contribution form as postmark type)
+        # Editor must supply value; lettering/framing/date_format come from payload or from contribution's submitted_data
         shape_id = data.get("postmark_shape_id")
         lettering_id = data.get("lettering_style_id")
         framing_id = data.get("framing_style_id")
         date_fmt_id = data.get("date_format_id")
         estimated_value = data.get("estimated_value")
+        sd = contrib.submitted_data or {}
+        if lettering_id is None:
+            lettering_id = sd.get("lettering_style_id") or sd.get("letteringStyleId")
+        if framing_id is None:
+            framing_id = sd.get("framing_style_id") or sd.get("framingStyleId")
+        if date_fmt_id is None:
+            date_fmt_id = sd.get("date_format_id") or sd.get("dateFormatId")
+
         missing = []
-        if lettering_id is None: missing.append("lettering_style_id (Lettering style)")
-        if framing_id is None: missing.append("framing_style_id (Framing style)")
-        if date_fmt_id is None: missing.append("date_format_id (Date format)")
-        if estimated_value is None: missing.append("estimated_value (Value)")
+        if estimated_value is None:
+            missing.append("estimated_value (Value)")
         if missing:
             return Response(
                 {"detail": "When approving, the editor must provide: " + ", ".join(missing) + "."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        missing_from_contribution = []
+        if lettering_id is None:
+            missing_from_contribution.append("lettering_style_id (Lettering style)")
+        if framing_id is None:
+            missing_from_contribution.append("framing_style_id (Framing style)")
+        if date_fmt_id is None:
+            missing_from_contribution.append("date_format_id (Date format)")
+        if missing_from_contribution:
+            return Response(
+                {"detail": "Contribution is missing required submitted data: " + ", ".join(missing_from_contribution) + ". These are required on the contribution form."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if shape_id is not None and not PostmarkShape.objects.filter(pk=shape_id).exists():

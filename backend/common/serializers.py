@@ -794,6 +794,7 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
     """Detail view for a single contribution."""
     contributor_username = serializers.CharField(source="contributor.username", read_only=True)
     reviewer_username = serializers.CharField(source="reviewer.username", read_only=True, allow_null=True)
+    display_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Contribution
@@ -803,6 +804,7 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
             "contributor_username",
             "postmark",
             "submitted_data",
+            "display_name",
             "status",
             "reviewer",
             "reviewer_username",
@@ -812,11 +814,24 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "contributor", "postmark", "created_at"]
 
+    def get_display_name(self, obj):
+        """Postmaker-style title: "Town, State — Type" or "Submission #id" if missing."""
+        sd = obj.submitted_data or {}
+        town = (sd.get("town") or "").strip()
+        state = (sd.get("state") or "").strip()
+        type_val = (sd.get("type") or "").strip()
+        title = ", ".join(x for x in [town, state] if x)
+        if not title:
+            return f"Submission #{obj.id}"
+        if type_val and type_val.lower() != "unknown":
+            return f"{title} — {type_val}"
+        return title
+
 
 class ContributionApproveRejectSerializer(serializers.Serializer):
-    """Payload for approve/reject/request_revision. Comment required. For approve, editor must also send catalog metadata."""
+    """Payload for approve/reject/request_revision. Comment required. For approve, editor must send value; lettering/framing/date_format come from contribution's submitted_data if not sent."""
     review_notes = serializers.CharField(required=True, allow_blank=False)
-    # Required when approving: editor must set shape, lettering, framing, date format, and value
+    # When approving: editor must set value; shape optional; lettering/framing/date_format optional (taken from submitted_data)
     postmark_shape_id = serializers.IntegerField(required=False, allow_null=True)
     lettering_style_id = serializers.IntegerField(required=False, allow_null=True)
     framing_style_id = serializers.IntegerField(required=False, allow_null=True)

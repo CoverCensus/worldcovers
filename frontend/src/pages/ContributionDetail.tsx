@@ -57,6 +57,8 @@ interface Contribution {
   review_notes: string | null;
   created_at: string;
   submitted_data: SubmittedData;
+  /** Postmaker-style title from API: "Town, State — Type" or "Submission #id" */
+  display_name?: string;
   postmark_id?: number | null;
   /** When approved, FK to catalog postmark (API may return as postmark or postmark_id) */
   postmark?: number | null;
@@ -72,14 +74,10 @@ const ContributionDetail = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Editor form state (only Value and Comment; lettering/framing/date format come from contributor's submitted_data)
+  // Editor form state (only Value and Comment; lettering/framing/date format come from contribution's submitted_data when approving)
   const [value, setValue] = useState("");
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  // Contributor-provided IDs, set from submitted_data when contribution loads (used when approving)
-  const [letteringId, setLetteringId] = useState("");
-  const [framingId, setFramingId] = useState("");
-  const [dateFormatId, setDateFormatId] = useState("");
   // Options to display names for lettering/framing/date format in Submitted data
   const [letteringOptions, setLetteringOptions] = useState<LetteringStyleOption[]>([]);
   const [framingOptions, setFramingOptions] = useState<FramingStyleOption[]>([]);
@@ -113,8 +111,21 @@ const ContributionDetail = () => {
         if (!res.ok) throw new Error(res.status === 404 ? "Contribution not found" : res.statusText);
         return res.json();
       })
-      .then((data: Contribution) => {
-        if (!cancelled) setContribution(data);
+      .then((data: Record<string, unknown>) => {
+        if (cancelled) return;
+        // API returns camelCase (CamelCaseJSONRenderer); normalize so component can use snake_case
+        const normalized: Contribution = {
+          id: data.id as number,
+          status: (data.status as string) ?? "pending",
+          contributor_username: (data.contributor_username ?? data.contributorUsername) as string,
+          review_notes: (data.review_notes ?? data.reviewNotes) as string | null,
+          created_at: (data.created_at ?? data.createdAt) as string,
+          submitted_data: (data.submitted_data ?? data.submittedData) as SubmittedData,
+          display_name: (data.display_name ?? data.displayName) as string | undefined,
+          postmark_id: (data.postmark_id ?? data.postmarkId ?? data.postmark) as number | null | undefined,
+          postmark: (data.postmark ?? data.postmark_id ?? data.postmarkId) as number | null | undefined,
+        };
+        setContribution(normalized);
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load");
@@ -126,18 +137,6 @@ const ContributionDetail = () => {
       cancelled = true;
     };
   }, [id]);
-
-  // Pre-fill lettering/framing/date_format from contributor's submitted_data (used when approving; support both snake_case and camelCase from API)
-  useEffect(() => {
-    if (!contribution?.submitted_data) return;
-    const sd = contribution.submitted_data;
-    const lid = sd.lettering_style_id ?? sd.letteringStyleId;
-    const fid = sd.framing_style_id ?? sd.framingStyleId;
-    const did = sd.date_format_id ?? sd.dateFormatId;
-    if (lid != null) setLetteringId(String(lid));
-    if (fid != null) setFramingId(String(fid));
-    if (did != null) setDateFormatId(String(did));
-  }, [contribution]);
 
   // Fetch lettering/framing/date format options to show names instead of IDs in Submitted data
   useEffect(() => {
@@ -186,9 +185,7 @@ const ContributionDetail = () => {
     const body: Record<string, unknown> = { review_notes: comment.trim() };
     if (kind === "approve") {
       body.estimated_value = parseFloat(value);
-      if (letteringId) body.lettering_style_id = Number(letteringId);
-      if (framingId) body.framing_style_id = Number(framingId);
-      if (dateFormatId) body.date_format_id = Number(dateFormatId);
+      // lettering_style_id, framing_style_id, date_format_id come from contribution's submitted_data (required on form)
     }
 
     setSubmitting(true);
@@ -290,7 +287,8 @@ const ContributionDetail = () => {
 
   const isPending = contribution.status === "pending";
   const canReview = isStateEditor && isPending;
-  const postmarkId = contribution.postmark_id ?? contribution.postmark ?? null;
+  const postmarkId =
+    contribution.postmark_id ?? contribution.postmark ?? (contribution as unknown as Record<string, unknown>).postmarkId ?? null;
   const hasValue = (v: unknown) => {
     const s = v != null ? String(v).trim() : "";
     return s !== "" && s.toLowerCase() !== "unknown";
@@ -434,8 +432,8 @@ const ContributionDetail = () => {
                 </Card>
               ) : null}
 
-              {/* Editor feedback — show comment to contributor so they know the outcome and can add a new postmark if needed */}
-              {contribution.review_notes?.trim() ? (
+              {/* Editor feedback — show outcome (approved/rejected/revision) and comment so contributor knows the result */}
+              {(contribution.status !== "pending" || (contribution.review_notes && contribution.review_notes.trim())) ? (
                 <Card className="shadow-archival-md border-amber-500/20 bg-amber-500/5">
                   <CardHeader>
                     <CardTitle className="font-heading text-lg flex items-center gap-2">
@@ -443,13 +441,29 @@ const ContributionDetail = () => {
                       Editor feedback
                     </CardTitle>
                     <p className="text-sm text-muted-foreground">
-                      The reviewer left a comment for you. Use this feedback to improve your submission or add a new postmark if requested.
+                      {contribution.status === "approved"
+                        ? "Your submission was approved and added to the catalog."
+                        : contribution.status === "rejected"
+                          ? "Your submission was not accepted. See the comment below for details."
+                          : contribution.status === "needs_revision"
+                            ? "The editor requested changes. Please update and resubmit or submit a new postmark."
+                            : "The reviewer left a comment for you. Use this feedback to improve your submission or add a new postmark if requested."}
                     </p>
                   </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
-                      {contribution.review_notes.trim()}
-                    </p>
+                  <CardContent className="space-y-3">
+                    {contribution.status !== "pending" && (
+                      <p className="text-sm font-medium text-foreground">
+                        Outcome:{" "}
+                        <Badge variant={contribution.status === "approved" ? "default" : contribution.status === "rejected" ? "destructive" : "secondary"}>
+                          {contribution.status === "approved" ? "Approved" : contribution.status === "rejected" ? "Rejected" : "Needs revision"}
+                        </Badge>
+                      </p>
+                    )}
+                    {contribution.review_notes?.trim() ? (
+                      <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
+                        {contribution.review_notes.trim()}
+                      </p>
+                    ) : null}
                   </CardContent>
                 </Card>
               ) : null}

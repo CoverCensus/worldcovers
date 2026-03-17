@@ -36,9 +36,6 @@ import { cn } from "@/lib/utils";
 import { normalizeImageUrl, getAssignedCatalogPage, type PostmarkRecord } from "@/services/postmarks";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
-import { getLetteringStyles } from "@/services/letteringStyles";
-import { getFramingStyles } from "@/services/framingStyles";
-import { getDateFormats } from "@/services/dateFormats";
 
 function getPostmarksApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
@@ -193,17 +190,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [statusDecisionKind, setStatusDecisionKind] = useState<"approve" | "reject" | "revision">("approve");
   const [statusComment, setStatusComment] = useState("");
   const [statusSubmitting, setStatusSubmitting] = useState(false);
-  // Editor-required fields when approving (Lettering, Framing, Date format, Value; shape comes from contribution as postmark type)
-  const [approveLetteringId, setApproveLetteringId] = useState<string>("");
-  const [approveFramingId, setApproveFramingId] = useState<string>("");
-  const [approveDateFormatId, setApproveDateFormatId] = useState<string>("");
+  // Editor-required when approving: Value and Comment (lettering/framing/date format come from contribution's submitted_data)
   const [approveValue, setApproveValue] = useState("");
-  const [approveOptions, setApproveOptions] = useState<{
-    lettering: { id: number; name: string }[];
-    framing: { id: number; name: string }[];
-    dateFormats: { id: number; name: string }[];
-  }>({ lettering: [], framing: [], dateFormats: [] });
-  const [approveOptionsLoading, setApproveOptionsLoading] = useState(false);
 
   // Filter states (mirror Catalog Search)
   const [searchQuery, setSearchQuery] = useState("");
@@ -541,33 +529,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       .finally(() => setPendingReviewLoading(false));
   }, [isStateEditor, activeTab]);
 
-  // Load lettering/framing/date-format options when approve dialog opens
-  useEffect(() => {
-    if (!statusDecisionTarget || statusDecisionKind !== "approve") return;
-    setApproveOptionsLoading(true);
-    Promise.all([getLetteringStyles(), getFramingStyles(), getDateFormats()])
-      .then(([lettering, framing, dateFormats]) => {
-        setApproveOptions({
-          lettering: lettering.map((o) => ({ id: o.id, name: o.name })),
-          framing: framing.map((o) => ({ id: o.id, name: o.name })),
-          dateFormats: dateFormats.map((o) => ({ id: o.id, name: o.name })),
-        });
-      })
-      .catch(() => {
-        setApproveOptions({ lettering: [], framing: [], dateFormats: [] });
-      })
-      .finally(() => setApproveOptionsLoading(false));
-  }, [statusDecisionTarget, statusDecisionKind]);
-
   const submitStatusDecision = async () => {
     if (!statusDecisionTarget || !statusComment.trim()) return;
     if (statusDecisionKind === "approve") {
-      const letteringId = approveLetteringId ? Number(approveLetteringId) : NaN;
-      const framingId = approveFramingId ? Number(approveFramingId) : NaN;
-      const dateFormatId = approveDateFormatId ? Number(approveDateFormatId) : NaN;
       const valueNum = approveValue.trim() === "" ? NaN : parseFloat(approveValue);
-      if (!Number.isInteger(letteringId) || !Number.isInteger(framingId) || !Number.isInteger(dateFormatId) || Number.isNaN(valueNum) || valueNum < 0) {
-        toast({ title: "Missing required fields", description: "Please fill Lettering style, Framing style, Date format, and Value before approving.", variant: "destructive" });
+      if (Number.isNaN(valueNum) || valueNum < 0) {
+        toast({ title: "Missing required fields", description: "Please fill Value (number ≥ 0) before approving.", variant: "destructive" });
         return;
       }
     }
@@ -580,9 +547,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       statusDecisionKind === "approve" ? "approve" : statusDecisionKind === "reject" ? "reject" : "request-revision";
     const body: Record<string, unknown> = { review_notes: statusComment.trim() };
     if (statusDecisionKind === "approve") {
-      body.lettering_style_id = Number(approveLetteringId);
-      body.framing_style_id = Number(approveFramingId);
-      body.date_format_id = Number(approveDateFormatId);
       body.estimated_value = parseFloat(approveValue);
     }
     setStatusSubmitting(true);
@@ -607,9 +571,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       setPendingReviewItems((prev) => prev.filter((i) => i.id !== statusDecisionTarget.id));
       setStatusDecisionTarget(null);
       setStatusComment("");
-      setApproveLetteringId("");
-      setApproveFramingId("");
-      setApproveDateFormatId("");
       setApproveValue("");
       setSubmissionsRefetchKey((k) => k + 1);
     } catch (err) {
@@ -2104,16 +2065,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Status decision (approve / reject / request revision) — comment required; approve requires catalog fields */}
+      {/* Status decision (approve / reject / request revision) — comment required; approve requires value (lettering/framing/date from submission) */}
       <AlertDialog
         open={!!statusDecisionTarget}
         onOpenChange={(open) => {
           if (!open && !statusSubmitting) {
             setStatusDecisionTarget(null);
             setStatusComment("");
-            setApproveLetteringId("");
-            setApproveFramingId("");
-            setApproveDateFormatId("");
             setApproveValue("");
           }
         }}
@@ -2129,7 +2087,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {statusDecisionKind === "approve"
-                ? "Fill catalog fields and add a comment. The contributor will see your comment."
+                ? "Add value and a comment. Lettering style, framing style, and date format come from the submission."
                 : statusDecisionKind === "reject"
                   ? "Add a comment so the contributor knows why it was rejected and can improve."
                   : "Add a comment explaining what to fix so the contributor can resubmit."}
@@ -2137,53 +2095,18 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           </AlertDialogHeader>
           <div className="space-y-2 py-2">
             {statusDecisionKind === "approve" && (
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label>Lettering style <span className="text-destructive">*</span></Label>
-                  <Select value={approveLetteringId} onValueChange={setApproveLetteringId} disabled={statusSubmitting || approveOptionsLoading}>
-                    <SelectTrigger><SelectValue placeholder={approveOptionsLoading ? "Loading..." : "Select lettering style"} /></SelectTrigger>
-                    <SelectContent>
-                      {approveOptions.lettering.map((o) => (
-                        <SelectItem key={o.id} value={String(o.id)}>{o.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Framing style <span className="text-destructive">*</span></Label>
-                  <Select value={approveFramingId} onValueChange={setApproveFramingId} disabled={statusSubmitting || approveOptionsLoading}>
-                    <SelectTrigger><SelectValue placeholder={approveOptionsLoading ? "Loading..." : "Select framing style"} /></SelectTrigger>
-                    <SelectContent>
-                      {approveOptions.framing.map((o) => (
-                        <SelectItem key={o.id} value={String(o.id)}>{o.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Date format <span className="text-destructive">*</span></Label>
-                  <Select value={approveDateFormatId} onValueChange={setApproveDateFormatId} disabled={statusSubmitting || approveOptionsLoading}>
-                    <SelectTrigger><SelectValue placeholder={approveOptionsLoading ? "Loading..." : "Select date format"} /></SelectTrigger>
-                    <SelectContent>
-                      {approveOptions.dateFormats.map((o) => (
-                        <SelectItem key={o.id} value={String(o.id)}>{o.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5 sm:col-span-2">
-                  <Label htmlFor="approve-value">Value (of this postmark) <span className="text-destructive">*</span></Label>
-                  <Input
-                    id="approve-value"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder="e.g. 0 or 12.50"
-                    value={approveValue}
-                    onChange={(e) => setApproveValue(e.target.value)}
-                    disabled={statusSubmitting}
-                  />
-                </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="approve-value">Value (of this postmark) <span className="text-destructive">*</span></Label>
+                <Input
+                  id="approve-value"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder="e.g. 0 or 12.50"
+                  value={approveValue}
+                  onChange={(e) => setApproveValue(e.target.value)}
+                  disabled={statusSubmitting}
+                />
               </div>
             )}
             <div className="space-y-2">
@@ -2214,10 +2137,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 statusSubmitting ||
                 !statusComment.trim() ||
                 (statusDecisionKind === "approve" &&
-                  (!approveLetteringId ||
-                    !approveFramingId ||
-                    !approveDateFormatId ||
-                    approveValue.trim() === "" ||
+                  (approveValue.trim() === "" ||
                     Number.isNaN(parseFloat(approveValue)) ||
                     parseFloat(approveValue) < 0))
               }
