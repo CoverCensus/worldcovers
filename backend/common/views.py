@@ -980,7 +980,7 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
                     created_by=user,
                     modified_by=user,
                 )
-        # Editor direct-add: create valuation with estimated_value
+        # Editor direct-add: create valuation with estimated_value (TimestampedModel requires created_by, modified_by)
         if editor_data and created_by_user is not None and editor_data.get("estimated_value") is not None:
             try:
                 from decimal import Decimal
@@ -992,6 +992,8 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
                     valued_by_user=created_by_user,
                     estimated_value=val,
                     valuation_date=timezone.now().date(),
+                    created_by=created_by_user,
+                    modified_by=created_by_user,
                 )
             except Exception:
                 pass
@@ -1712,12 +1714,14 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
                 update_fields.append("postmark_shape_id")
             postmark.save(update_fields=update_fields)
 
-            # Create valuation
+            # Create valuation (TimestampedModel requires created_by, modified_by)
             PostmarkValuation.objects.create(
                 postmark=postmark,
                 valued_by_user=request.user,
                 estimated_value=estimated_value,
                 valuation_date=timezone.now().date(),
+                created_by=request.user,
+                modified_by=request.user,
             )
 
             contrib.status = Contribution.STATUS_APPROVED
