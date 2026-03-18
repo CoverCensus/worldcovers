@@ -781,6 +781,22 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
     if not user:
         return None
     try:
+        # Determine owning Site robustly. Some environments may not have Site(id=1),
+        # and hardcoding it can cause an integrity error (500) on create.
+        try:
+            from django.contrib.sites.models import Site
+            configured_site_id = getattr(settings, "SITE_ID", None)
+            site_obj = None
+            if configured_site_id:
+                site_obj = Site.objects.filter(pk=configured_site_id).first()
+            if site_obj is None:
+                site_obj = Site.objects.order_by("id").first()
+        except Exception:
+            site_obj = None
+        if site_obj is None:
+            logger.error("_create_postmark_in_catalog failed: no Site rows exist (SITE_ID=%s)", getattr(settings, "SITE_ID", None))
+            return None
+
         state_str = (_get_payload_value(payload, "state", "State") or "").strip()
         town_str = (_get_payload_value(payload, "town", "Town") or "").strip()
         date_range_str = (_get_payload_value(payload, "date_range", "dateRange") or "").strip()
@@ -905,7 +921,7 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
 
         approval_status = "approved" if editor_data else "pending"
         postmark = Postmark.objects.create(
-            site_id=1,
+            site=site_obj,
             postal_facility_identity=identity,
             state=admin_unit,
             postmark_shape=shape,
@@ -1193,15 +1209,28 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
             modified_by=user,
         )
 
-        # Replace images if new ones provided (support image_metas array or single image_meta)
+        # Append new images if provided (do NOT delete existing catalog images).
+        # Supports image_metas array or single image_meta.
         image_metas = payload.get("image_metas") or payload.get("imageMetas") or []
+        single_image_meta = payload.get("image_meta") or payload.get("imageMeta")
+        if not (isinstance(image_metas, list) and len(image_metas) > 0) and isinstance(single_image_meta, dict):
+            image_metas = [single_image_meta]
+
         if isinstance(image_metas, list) and len(image_metas) > 0:
-            PostmarkImage.objects.filter(postmark=postmark).delete()
-            for idx, image_meta in enumerate(image_metas):
+            existing_storage = set(
+                PostmarkImage.objects.filter(postmark=postmark).values_list("storage_filename", flat=True)
+            )
+            next_order = (
+                (PostmarkImage.objects.filter(postmark=postmark).aggregate(Max("display_order")).get("display_order__max") or -1)
+                + 1
+            )
+            for image_meta in image_metas:
                 if not isinstance(image_meta, dict):
                     continue
-                storage_fn = image_meta.get("storage_filename") or image_meta.get("storageFilename")
-                if storage_fn:
+                storage_fn = (image_meta.get("storage_filename") or image_meta.get("storageFilename") or "").strip()
+                if not storage_fn or storage_fn in existing_storage:
+                    continue
+                try:
                     PostmarkImage.objects.create(
                         postmark=postmark,
                         original_filename=(image_meta.get("original_filename") or image_meta.get("originalFilename") or "image")[:255],
@@ -1212,32 +1241,16 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
                         image_height=image_meta.get("image_height") or image_meta.get("imageHeight") or 0,
                         file_size_bytes=image_meta.get("file_size_bytes") or image_meta.get("fileSizeBytes") or 0,
                         image_view="FULL",
-                        display_order=idx,
+                        display_order=next_order,
                         uploaded_by=user,
                         created_by=user,
                         modified_by=user,
                     )
-        else:
-            image_meta = payload.get("image_meta") or payload.get("imageMeta")
-            if image_meta and isinstance(image_meta, dict):
-                storage_fn = image_meta.get("storage_filename") or image_meta.get("storageFilename")
-                if storage_fn:
-                    PostmarkImage.objects.filter(postmark=postmark).delete()
-                    PostmarkImage.objects.create(
-                        postmark=postmark,
-                        original_filename=(image_meta.get("original_filename") or image_meta.get("originalFilename") or "image")[:255],
-                        storage_filename=storage_fn,
-                        file_checksum=(image_meta.get("file_checksum") or image_meta.get("fileChecksum") or "")[:64],
-                        mime_type=(image_meta.get("mime_type") or image_meta.get("mimeType") or "image/jpeg")[:50],
-                        image_width=image_meta.get("image_width") or image_meta.get("imageWidth") or 0,
-                        image_height=image_meta.get("image_height") or image_meta.get("imageHeight") or 0,
-                        file_size_bytes=image_meta.get("file_size_bytes") or image_meta.get("fileSizeBytes") or 0,
-                        image_view="FULL",
-                        display_order=0,
-                        uploaded_by=user,
-                        created_by=user,
-                        modified_by=user,
-                    )
+                except Exception:
+                    # storage_filename is globally unique; skip if already used elsewhere
+                    continue
+                existing_storage.add(storage_fn)
+                next_order += 1
         return postmark
     except Exception as e:
         logger.exception("_update_postmark_in_catalog failed (postmark_id=%s): %s", postmark_id, e)
@@ -1492,9 +1505,23 @@ class ContributionView(APIView):
                     submitted_data["image_metas"] = existing["image_metas"]
                 elif existing.get("image_meta"):
                     submitted_data["image_meta"] = existing["image_meta"]
-            contrib.submitted_data = submitted_data
-            contrib.status = Contribution.STATUS_PENDING
-            contrib.save(update_fields=["submitted_data", "status", "updated_at"])
+            try:
+                contrib.submitted_data = submitted_data
+                contrib.status = Contribution.STATUS_PENDING
+                # Use a full save() here for maximum compatibility across DB schemas/ORM configs.
+                # update_fields can be brittle if columns/fields diverge across environments.
+                contrib.save()
+            except Exception as e:
+                logger.exception(
+                    "Failed to resubmit contribution (id=%s, user_id=%s): %s",
+                    edit_contribution_id,
+                    getattr(user, "pk", None),
+                    e,
+                )
+                return Response(
+                    {"detail": "Could not resubmit this contribution. Please try again."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
             return Response(
                 {"detail": "Submission updated successfully.", "contributionId": contrib.id},
                 status=status.HTTP_200_OK,
