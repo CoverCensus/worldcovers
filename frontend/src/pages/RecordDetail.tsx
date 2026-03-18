@@ -456,7 +456,10 @@ const RecordDetail = () => {
                 const tabCount = 1 + (hasValuations ? 1 : 0) + (record.citationReferences ? 1 : 0);
                 return (
                   <Tabs defaultValue="physical">
-                    <TabsList className={`mt-1 grid w-full gap-1 rounded-md bg-muted p-1 grid-cols-${tabCount}`} style={{ gridTemplateColumns: `repeat(${tabCount}, minmax(0, 1fr))` }}>
+                    <TabsList
+                      className={`mt-1 w-full gap-1 rounded-md bg-muted p-1 flex flex-wrap justify-start h-auto sm:grid sm:h-10 grid-cols-${tabCount}`}
+                      style={{ gridTemplateColumns: `repeat(${tabCount}, minmax(0, 1fr))` }}
+                    >
                       <TabsTrigger value="physical">Physical Characteristics</TabsTrigger>
                       {hasValuations ? (
                         <TabsTrigger value="valuations">Valuations</TabsTrigger>

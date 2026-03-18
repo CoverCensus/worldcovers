@@ -1647,8 +1647,6 @@ class ContributionView(APIView):
             # - State Editors / superusers: apply directly to the catalog.
             role = _get_user_role(user)
             if role == "contributor" and not getattr(user, "is_superuser", False):
-                from .models import Contribution  # local import to avoid circulars at top
-
                 try:
                     submitted_data = {
                         "state": payload.get("state", ""),

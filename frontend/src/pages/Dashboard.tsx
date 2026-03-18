@@ -236,6 +236,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Disable filters while submissions or filter options are loading
   const filtersDisabled = loading || isLoadingFilters;
   const isStateEditor = user?.role === "state_editor";
+
+  // Prevent duplicate fetches during rapid re-renders / user rehydration.
+  const submissionsInFlightKey = useRef<string | null>(null);
+  const suggestionsInFlightKey = useRef<string | null>(null);
+
   // Fetch current user's contributions for "My Submissions" (new catalog entries)
   useEffect(() => {
     if (!user) {
@@ -243,6 +248,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       setLoading(false);
       return;
     }
+
+    const fetchKey = `${user.id}:${submissionsRefetchKey}`;
+    if (submissionsInFlightKey.current === fetchKey) return;
+    submissionsInFlightKey.current = fetchKey;
 
     const fetchSubmissions = async () => {
       setLoading(true);
@@ -352,6 +361,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         });
       } finally {
         setLoading(false);
+        if (submissionsInFlightKey.current === fetchKey) {
+          submissionsInFlightKey.current = null;
+        }
       }
     };
 
@@ -384,6 +396,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     }
 
     const load = async () => {
+      const fetchKey = `${user.id}:suggestions`;
+      if (suggestionsInFlightKey.current === fetchKey) return;
+      suggestionsInFlightKey.current = fetchKey;
+
       setSuggestionsLoading(true);
       try {
         const res = await fetch(`${apiBase}/api/contributions/?kind=suggestion`, {
@@ -467,6 +483,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         setSuggestions([]);
       } finally {
         setSuggestionsLoading(false);
+        if (suggestionsInFlightKey.current === fetchKey) {
+          suggestionsInFlightKey.current = null;
+        }
       }
     };
 
@@ -1362,15 +1381,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                     variant="outline"
                                     size="sm"
                                     onClick={() =>
-                                      navigate(`/record/${submission.postmark_id}`)
-                                    }
-                                  >
-                                    View record
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() =>
                                       navigate(`/edit/${submission.postmark_id}`, {
                                         state: { fromDashboard: true, fromDashboardDirect: true },
                                       })
@@ -1472,15 +1482,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           </Button>
                           {submission.postmark_id && (
                             <>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() =>
-                                  navigate(`/record/${submission.postmark_id}`)
-                                }
-                              >
-                                View record
-                              </Button>
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1943,15 +1944,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                 }
                               >
                                 View details
-                              </Button>
-                            )}
-                            {item.postmark_id && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => navigate(`/record/${item.postmark_id}`)}
-                              >
-                                View record
                               </Button>
                             )}
                           </div>

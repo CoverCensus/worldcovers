@@ -49,16 +49,41 @@ function getApiBase(): string {
   return base ? String(base).replace(/\/+$/, "") : "";
 }
 
+type CachedCurrentUser = { user: AuthUser | null; fetchedAtMs: number };
+
+// Dedupes /api/me/ across the whole app (Navigation, Dashboard, etc.)
+let currentUserInFlight: Promise<AuthUser | null> | null = null;
+let currentUserCache: CachedCurrentUser | null = null;
+const CURRENT_USER_CACHE_TTL_MS = 30_000;
+
 /**
  * Fetch current user from the server (session). Use to sync role and assigned_locations
  * so the UI shows State Editor with correct locations instead of defaulting to Contributor.
  */
 export async function fetchCurrentUser(): Promise<AuthUser | null> {
+  const now = Date.now();
+  if (currentUserCache && now - currentUserCache.fetchedAtMs < CURRENT_USER_CACHE_TTL_MS) {
+    return currentUserCache.user;
+  }
+
+  if (currentUserInFlight) return currentUserInFlight;
+
   const url = getApiBase() ? `${getApiBase()}/api/me/` : "/api/me/";
-  const res = await fetch(url, { credentials: "include" });
-  if (!res.ok) return null;
-  const data = (await res.json()) as { user?: AuthUser };
-  const user = data?.user;
-  if (!user || typeof user.id !== "number") return null;
+  currentUserInFlight = (async () => {
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { user?: AuthUser };
+      const user = data?.user;
+      if (!user || typeof user.id !== "number") return null;
+      return user;
+    } finally {
+      // Clear inflight no matter what.
+      currentUserInFlight = null;
+    }
+  })();
+
+  const user = await currentUserInFlight;
+  currentUserCache = { user, fetchedAtMs: now };
   return user;
 }

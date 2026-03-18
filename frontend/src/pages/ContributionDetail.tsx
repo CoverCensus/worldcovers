@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Loader2, CheckCircle, XCircle, MessageSquare, ExternalLink, RefreshCw } from "lucide-react";
-import { useNavigate, useParams, useLocation } from "react-router-dom";
+import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -357,23 +357,21 @@ const ContributionDetail = () => {
       <div className="flex-1 bg-background">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Breadcrumb + View record when approved — same as RecordDetail */}
-          <div className="flex items-center justify-between mb-6">
-            <Button variant="ghost" onClick={handleBack} className="-ml-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+            <Button variant="ghost" onClick={handleBack} className="sm:-ml-4">
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back to Dashboard
             </Button>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <Badge variant={isPending ? "secondary" : contribution.status === "approved" ? "default" : "destructive"}>
                 {contribution.status}
               </Badge>
               {postmarkId != null && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => navigate(`/record/${postmarkId}`, { state: { fromDashboard: true } })}
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  View record
+                <Button variant="outline" size="sm" asChild>
+                  <Link to={`/record/${postmarkId}`} state={{ fromDashboard: true }}>
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    View record
+                  </Link>
                 </Button>
               )}
             </div>
@@ -381,60 +379,136 @@ const ContributionDetail = () => {
 
           {/* Main Content — same layout as RecordDetail */}
           <div className="grid items-start lg:grid-cols-2 gap-8 mb-8">
-            {/* Image(s) carousel — same as RecordDetail */}
-            <Card className="shadow-archival-lg">
-              <CardContent className="p-6">
-                <Carousel setApi={setCarouselApi} className="w-full">
-                  <CarouselContent>
-                    {images.length > 0 ? (
-                      images.map((img, index) => (
-                        <CarouselItem key={index}>
+            <div className="space-y-6">
+              {/* Image(s) carousel — same as RecordDetail */}
+              <Card className="shadow-archival-lg">
+                <CardContent className="p-6">
+                  <Carousel setApi={setCarouselApi} className="w-full">
+                    <CarouselContent>
+                      {images.length > 0 ? (
+                        images.map((img, index) => (
+                          <CarouselItem key={index}>
+                            <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
+                              <img
+                                src={img.imageUrl}
+                                alt={img.originalFilename || `Submission image ${index + 1}`}
+                                className="w-full h-full object-contain"
+                              />
+                            </div>
+                          </CarouselItem>
+                        ))
+                      ) : (
+                        <CarouselItem>
                           <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
                             <img
-                              src={img.imageUrl}
-                              alt={img.originalFilename || `Submission image ${index + 1}`}
-                              className="w-full h-full object-contain"
+                              src={imageNotAvailable}
+                              alt="No image available"
+                              className="w-full h-full object-cover"
                             />
                           </div>
                         </CarouselItem>
-                      ))
-                    ) : (
-                      <CarouselItem>
-                        <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
-                          <img
-                            src={imageNotAvailable}
-                            alt="No image available"
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                      </CarouselItem>
+                      )}
+                    </CarouselContent>
+                    {images.length > 1 && (
+                      <>
+                        <CarouselPrevious className="left-2" />
+                        <CarouselNext className="right-2" />
+                      </>
                     )}
-                  </CarouselContent>
+                  </Carousel>
                   {images.length > 1 && (
-                    <>
-                      <CarouselPrevious className="left-2" />
-                      <CarouselNext className="right-2" />
-                    </>
+                    <div className="flex justify-center gap-2 mt-4 mb-4">
+                      {images.map((_, index) => (
+                        <button
+                          key={index}
+                          onClick={() => carouselApi?.scrollTo(index)}
+                          className={`h-2 rounded-full transition-all ${
+                            index === carouselCurrent
+                              ? "w-6 bg-primary"
+                              : "w-2 bg-muted-foreground/30 hover:bg-muted-foreground/50"
+                          }`}
+                          aria-label={`Go to image ${index + 1}`}
+                        />
+                      ))}
+                    </div>
                   )}
-                </Carousel>
-                {images.length > 1 && (
-                  <div className="flex justify-center gap-2 mt-4 mb-4">
-                    {images.map((_, index) => (
-                      <button
-                        key={index}
-                        onClick={() => carouselApi?.scrollTo(index)}
-                        className={`h-2 rounded-full transition-all ${
-                          index === carouselCurrent
-                            ? "w-6 bg-primary"
-                            : "w-2 bg-muted-foreground/30 hover:bg-muted-foreground/50"
-                        }`}
-                        aria-label={`Go to image ${index + 1}`}
+                </CardContent>
+              </Card>
+
+              {/* Editor: only Value and Comment (lettering/framing/date format come from contributor) */}
+              {canReview && (
+                <Card className="shadow-archival-lg border-primary/20">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">Review this submission</CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      Add value and a comment, then choose Approve, Reject, or Request revision.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2 max-w-xs">
+                      <Label htmlFor="contribution-value">Value (of this postmark) <span className="text-destructive">*</span></Label>
+                      <Input
+                        id="contribution-value"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="e.g. 25.00"
+                        value={value}
+                        onChange={(e) => setValue(e.target.value)}
+                        disabled={submitting}
                       />
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="contribution-comment">Comment (required) <span className="text-destructive">*</span></Label>
+                      <Textarea
+                        id="contribution-comment"
+                        placeholder="Add a comment for the contributor (required for approve, reject, or revision)."
+                        rows={4}
+                        value={comment}
+                        onChange={(e) => setComment(e.target.value)}
+                        disabled={submitting}
+                        className="resize-none"
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      <Button
+                        type="button"
+                        onClick={() => submitDecision("approve")}
+                        disabled={
+                          submitting ||
+                          !comment.trim() ||
+                          value.trim() === "" ||
+                          Number.isNaN(parseFloat(value)) ||
+                          parseFloat(value) < 0
+                        }
+                        className="bg-green-600 hover:bg-green-700"
+                      >
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                        {submitting ? "Submitting..." : "Approve"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        onClick={() => submitDecision("reject")}
+                        disabled={submitting || !comment.trim()}
+                      >
+                        <XCircle className="mr-2 h-4 w-4" />
+                        Reject
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => submitDecision("revision")}
+                        disabled={submitting || !comment.trim()}
+                      >
+                        <MessageSquare className="mr-2 h-4 w-4" />
+                        Request revision
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
 
             {/* Metadata — same structure as RecordDetail */}
             <div className="space-y-6">
@@ -570,80 +644,6 @@ const ContributionDetail = () => {
               ) : null}
             </div>
           </div>
-
-          {/* Editor: only Value and Comment (lettering/framing/date format come from contributor) */}
-          {canReview && (
-            <Card className="shadow-archival-lg border-primary/20">
-              <CardHeader>
-                <CardTitle className="font-heading text-lg">Review this submission</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Add value and a comment, then choose Approve, Reject, or Request revision.
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2 max-w-xs">
-                  <Label htmlFor="contribution-value">Value (of this postmark) <span className="text-destructive">*</span></Label>
-                  <Input
-                    id="contribution-value"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder="e.g. 25.00"
-                    value={value}
-                    onChange={(e) => setValue(e.target.value)}
-                    disabled={submitting}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="contribution-comment">Comment (required) <span className="text-destructive">*</span></Label>
-                  <Textarea
-                    id="contribution-comment"
-                    placeholder="Add a comment for the contributor (required for approve, reject, or revision)."
-                    rows={4}
-                    value={comment}
-                    onChange={(e) => setComment(e.target.value)}
-                    disabled={submitting}
-                    className="resize-none"
-                  />
-                </div>
-                <div className="flex flex-wrap gap-2 pt-2">
-                  <Button
-                    type="button"
-                    onClick={() => submitDecision("approve")}
-                    disabled={
-                      submitting ||
-                      !comment.trim() ||
-                      value.trim() === "" ||
-                      Number.isNaN(parseFloat(value)) ||
-                      parseFloat(value) < 0
-                    }
-                    className="bg-green-600 hover:bg-green-700"
-                  >
-                    <CheckCircle className="mr-2 h-4 w-4" />
-                    {submitting ? "Submitting..." : "Approve"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    onClick={() => submitDecision("reject")}
-                    disabled={submitting || !comment.trim()}
-                  >
-                    <XCircle className="mr-2 h-4 w-4" />
-                    Reject
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => submitDecision("revision")}
-                    disabled={submitting || !comment.trim()}
-                  >
-                    <MessageSquare className="mr-2 h-4 w-4" />
-                    Request revision
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
 
           {isPending && !isStateEditor && (
             <p className="text-sm text-muted-foreground">This submission is pending review by an editor.</p>
