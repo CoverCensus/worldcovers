@@ -214,14 +214,7 @@ const RecordDetail = () => {
   const fromDashboard = location.state?.fromDashboard;
   const fromSearch = location.state?.fromSearch;
 
-  const isContributor = user?.role === "contributor";
-  const isStateEditor = user?.role === "state_editor";
-  const isOwner =
-    !!user &&
-    !!record.submitterName &&
-    [user.username, user.email]
-      .filter(Boolean)
-      .some((id) => id && id.toLowerCase() === record.submitterName!.toLowerCase());
+  const isSuperuser = !!user?.is_superuser;
 
   const handleBack = () => {
     if (fromDashboard) {
@@ -261,7 +254,7 @@ const RecordDetail = () => {
               {fromDashboard ? "Back to Dashboard" : "Back to Search"}
             </Button>
             {/* Editor cannot directly edit postmarks from user suggestions; only "Suggest" is allowed. */}
-            {user && !(isStateEditor && isOwner) && (
+            {isSuperuser && (
               <Button
                 variant="outline"
                 size="sm"

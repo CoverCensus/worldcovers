@@ -132,6 +132,8 @@ const EditCatalogEntry = () => {
   const [rarity, setRarity] = useState("");
   const [description, setDescription] = useState("");
   const [references, setReferences] = useState("");
+  // Contributor -> editor note for suggestions/corrections
+  const [contributorComment, setContributorComment] = useState("");
   const [existingImageUrl, setExistingImageUrl] = useState<string | null>(null);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
@@ -484,6 +486,9 @@ const EditCatalogEntry = () => {
         if (rarity.trim()) form.append("rarity", rarity.trim());
         if (description.trim()) form.append("description", description.trim());
         if (references.trim()) form.append("references", references.trim());
+        if (!isStateEditor && contributorComment.trim()) {
+          form.append("contributorComment", contributorComment.trim());
+        }
         if (submitterName) form.append("submitterName", submitterName);
         for (const file of imageFiles) {
           form.append("image", file, file.name);
@@ -506,6 +511,9 @@ const EditCatalogEntry = () => {
           rarity: rarity.trim() || undefined,
           description: description.trim() || undefined,
           references: references.trim() || undefined,
+          ...(isStateEditor || !contributorComment.trim()
+            ? {}
+            : { contributorComment: contributorComment.trim() }),
           submitterName: submitterName || undefined,
         });
         headers["Content-Type"] = "application/json";
@@ -993,6 +1001,19 @@ const EditCatalogEntry = () => {
                         onChange={(e) => setReferences(e.target.value)}
                       />
                     </div>
+
+                    {!isStateEditor && (
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-contributor-comment">Comment for editor</Label>
+                        <Textarea
+                          id="edit-contributor-comment"
+                          placeholder="Explain what you’re changing and why (helps the editor review your suggestion)..."
+                          rows={3}
+                          value={contributorComment}
+                          onChange={(e) => setContributorComment(e.target.value)}
+                        />
+                      </div>
+                    )}
 
                     <div className="space-y-2">
                       <Label>Image</Label>

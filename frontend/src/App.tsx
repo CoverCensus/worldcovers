@@ -36,6 +36,18 @@ const RequireAuth = ({ children }: { children: ReactNode }) => {
   }
   return <>{children}</>;
 };
+// Protect routes that require a superuser (e.g. catalog edit/delete).
+const RequireSuperuser = ({ children }: { children: ReactNode }) => {
+  const user = useAuth();
+  const location = useLocation();
+  if (!user) {
+    return <Navigate to="/auth" replace state={{ from: location }} />;
+  }
+  if (!user.is_superuser) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return <>{children}</>;
+};
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -67,9 +79,9 @@ const App = () => (
             <Route
               path="/edit/:id"
               element={(
-                <RequireAuth>
+                <RequireSuperuser>
                   <EditCatalogEntry />
-                </RequireAuth>
+                </RequireSuperuser>
               )}
             />
             <Route

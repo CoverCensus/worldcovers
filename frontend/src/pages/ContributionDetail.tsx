@@ -7,12 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Loader2, CheckCircle, XCircle, MessageSquare, ExternalLink, RefreshCw } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle, XCircle, MessageSquare, ExternalLink, Pencil } from "lucide-react";
 import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { normalizeImageUrl } from "@/services/postmarks";
+import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { getLetteringStyles, type LetteringStyleOption } from "@/services/letteringStyles";
 import { getFramingStyles, type FramingStyleOption } from "@/services/framingStyles";
@@ -98,6 +98,29 @@ const ContributionDetail = () => {
   const [carouselApi, setCarouselApi] = useState<CarouselApi>();
   const [carouselCurrent, setCarouselCurrent] = useState(0);
   const [carouselCount, setCarouselCount] = useState(0);
+  const [prefillingValue, setPrefillingValue] = useState(false);
+  // Editor direct-edit: editable copy of submitted_data fields (merged after save)
+  const [editorEdits, setEditorEdits] = useState<{
+    state: string;
+    town: string;
+    firstSeen: string;
+    lastSeen: string;
+    type: string;
+    color: string;
+    dimensions: string;
+    manuscript: string;
+    description: string;
+    references: string;
+    rarity: string;
+    lettering_style_id: string;
+    framing_style_id: string;
+    date_format_id: string;
+  }>({
+    state: "", town: "", firstSeen: "", lastSeen: "", type: "", color: "",
+    dimensions: "", manuscript: "", description: "", references: "", rarity: "",
+    lettering_style_id: "", framing_style_id: "", date_format_id: "",
+  });
+  const [savingEdits, setSavingEdits] = useState(false);
 
   const fromDashboard = location.state?.fromDashboard === true;
   const isStateEditor = user?.role === "state_editor" || user?.is_superuser;
@@ -193,6 +216,98 @@ const ContributionDetail = () => {
     };
   }, []);
 
+  // Sync editor-editable fields from contribution when it loads (for editors)
+  useEffect(() => {
+    if (!contribution?.submitted_data) return;
+    const sd = contribution.submitted_data as Record<string, unknown>;
+    const dr = String(sd.date_range ?? sd.dateRange ?? "").trim();
+    const [firstSeen = "", lastSeen = ""] = dr ? dr.split(/[-–—]/).map((s) => s.trim()) : ["", ""];
+    setEditorEdits({
+      state: String(sd.state ?? "").trim(),
+      town: String(sd.town ?? "").trim(),
+      firstSeen: firstSeen || "",
+      lastSeen: lastSeen || "",
+      type: String(sd.type ?? "").trim(),
+      color: String(sd.color ?? "").trim(),
+      dimensions: String(sd.dimensions ?? "").trim(),
+      manuscript: String(sd.manuscript ?? "").trim(),
+      description: String(sd.description ?? "").trim(),
+      references: String(sd.references ?? "").trim(),
+      rarity: String(sd.rarity ?? "").trim(),
+      lettering_style_id: sd.lettering_style_id != null || sd.letteringStyleId != null
+        ? String(sd.lettering_style_id ?? sd.letteringStyleId ?? "")
+        : "",
+      framing_style_id: sd.framing_style_id != null || sd.framingStyleId != null
+        ? String(sd.framing_style_id ?? sd.framingStyleId ?? "")
+        : "",
+      date_format_id: sd.date_format_id != null || sd.dateFormatId != null
+        ? String(sd.date_format_id ?? sd.dateFormatId ?? "")
+        : "",
+    });
+  }, [contribution?.id, contribution?.submitted_data]);
+
+  const saveEditorEdits = async () => {
+    if (!contribution) return;
+    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
+    if (!apiBase) {
+      toast({ title: "Configuration error", description: "VITE_API_URL is not set.", variant: "destructive" });
+      return;
+    }
+    setSavingEdits(true);
+    const csrfToken = getCsrfTokenFromCookie();
+    const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
+    if (csrfToken) headers["X-CSRFToken"] = csrfToken;
+    try {
+      const res = await fetch(`${apiBase}/api/contributions/${contribution.id}/editor-edit/`, {
+        method: "PATCH",
+        credentials: "include",
+        headers,
+        body: JSON.stringify({
+          state: editorEdits.state || undefined,
+          town: editorEdits.town || undefined,
+          firstSeen: editorEdits.firstSeen || undefined,
+          lastSeen: editorEdits.lastSeen || undefined,
+          type: editorEdits.type || undefined,
+          color: editorEdits.color || undefined,
+          dimensions: editorEdits.dimensions || undefined,
+          manuscript: editorEdits.manuscript || undefined,
+          description: editorEdits.description || undefined,
+          references: editorEdits.references || undefined,
+          rarity: editorEdits.rarity || undefined,
+          lettering_style_id: editorEdits.lettering_style_id ? parseInt(editorEdits.lettering_style_id, 10) : undefined,
+          framing_style_id: editorEdits.framing_style_id ? parseInt(editorEdits.framing_style_id, 10) : undefined,
+          date_format_id: editorEdits.date_format_id ? parseInt(editorEdits.date_format_id, 10) : undefined,
+        }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody?.detail ?? res.statusText);
+      }
+      const data = await res.json();
+      const normalized: Contribution = {
+        id: data.id,
+        status: data.status ?? "pending",
+        contributor_username: (data.contributor_username ?? data.contributorUsername) ?? "",
+        review_notes: data.review_notes ?? data.reviewNotes ?? null,
+        created_at: data.created_at ?? data.createdAt ?? "",
+        submitted_data: (data.submitted_data ?? data.submittedData) ?? contribution.submitted_data,
+        display_name: data.display_name ?? data.displayName,
+        postmark_id: data.postmark_id ?? data.postmarkId ?? data.postmark ?? null,
+        postmark: data.postmark ?? data.postmark_id ?? data.postmarkId ?? null,
+      };
+      setContribution(normalized);
+      toast({ title: "Edits saved", description: "Submission data updated. Approve to apply to the catalog." });
+    } catch (err) {
+      toast({
+        title: "Could not save edits",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingEdits(false);
+    }
+  };
+
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
     if (!contribution || !comment.trim()) return;
     if (kind === "approve") {
@@ -257,11 +372,6 @@ const ContributionDetail = () => {
     } finally {
       setSubmitting(false);
     }
-  };
-
-  const handleEditAndResubmit = () => {
-    if (!contribution) return;
-    navigate("/contribute", { state: { editContributionId: contribution.id } });
   };
 
   const handleBack = () => {
@@ -344,12 +454,49 @@ const ContributionDetail = () => {
 
   const isPending = contribution.status === "pending";
   const canReview = isStateEditor && isPending;
-  const postmarkId =
+  const postmarkIdRaw =
     contribution.postmark_id ?? contribution.postmark ?? (contribution as unknown as Record<string, unknown>).postmarkId ?? null;
+  const postmarkId =
+    typeof postmarkIdRaw === "number"
+      ? postmarkIdRaw
+      : postmarkIdRaw != null && String(postmarkIdRaw).trim() !== ""
+        ? parseInt(String(postmarkIdRaw), 10)
+        : null;
   const hasValue = (v: unknown) => {
     const s = v != null ? String(v).trim() : "";
     return s !== "" && s.toLowerCase() !== "unknown";
   };
+
+  // Prefill editor Value from the existing catalog record when this is an edit-suggestion
+  // (i.e., contribution is linked to an existing postmark).
+  useEffect(() => {
+    if (!canReview) return;
+    if (postmarkId == null) return;
+    if (value.trim() !== "") return;
+    let cancelled = false;
+    setPrefillingValue(true);
+    getPostmarkById(postmarkId)
+      .then((pm) => {
+        if (cancelled || !pm) return;
+        const firstVal = (pm as any)?.valuations?.[0];
+        const estimated =
+          firstVal?.estimatedValue ??
+          firstVal?.estimated_value ??
+          (pm as any)?.estimatedValue ??
+          (pm as any)?.estimated_value ??
+          null;
+        const num = typeof estimated === "number" ? estimated : estimated != null ? parseFloat(String(estimated)) : NaN;
+        if (!Number.isNaN(num) && num >= 0) {
+          setValue(String(num));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPrefillingValue(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canReview, postmarkId, value]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -434,80 +581,6 @@ const ContributionDetail = () => {
                   )}
                 </CardContent>
               </Card>
-
-              {/* Editor: only Value and Comment (lettering/framing/date format come from contributor) */}
-              {canReview && (
-                <Card className="shadow-archival-lg border-primary/20">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg">Review this submission</CardTitle>
-                    <p className="text-sm text-muted-foreground">
-                      Add value and a comment, then choose Approve, Reject, or Request revision.
-                    </p>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-2 max-w-xs">
-                      <Label htmlFor="contribution-value">Value (of this postmark) <span className="text-destructive">*</span></Label>
-                      <Input
-                        id="contribution-value"
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        placeholder="e.g. 25.00"
-                        value={value}
-                        onChange={(e) => setValue(e.target.value)}
-                        disabled={submitting}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="contribution-comment">Comment (required) <span className="text-destructive">*</span></Label>
-                      <Textarea
-                        id="contribution-comment"
-                        placeholder="Add a comment for the contributor (required for approve, reject, or revision)."
-                        rows={4}
-                        value={comment}
-                        onChange={(e) => setComment(e.target.value)}
-                        disabled={submitting}
-                        className="resize-none"
-                      />
-                    </div>
-                    <div className="flex flex-wrap gap-2 pt-2">
-                      <Button
-                        type="button"
-                        onClick={() => submitDecision("approve")}
-                        disabled={
-                          submitting ||
-                          !comment.trim() ||
-                          value.trim() === "" ||
-                          Number.isNaN(parseFloat(value)) ||
-                          parseFloat(value) < 0
-                        }
-                        className="bg-green-600 hover:bg-green-700"
-                      >
-                        <CheckCircle className="mr-2 h-4 w-4" />
-                        {submitting ? "Submitting..." : "Approve"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        onClick={() => submitDecision("reject")}
-                        disabled={submitting || !comment.trim()}
-                      >
-                        <XCircle className="mr-2 h-4 w-4" />
-                        Reject
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => submitDecision("revision")}
-                        disabled={submitting || !comment.trim()}
-                      >
-                        <MessageSquare className="mr-2 h-4 w-4" />
-                        Request revision
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
             </div>
 
             {/* Metadata — same structure as RecordDetail */}
@@ -593,6 +666,270 @@ const ContributionDetail = () => {
                 </CardContent>
               </Card>
 
+              {/* Editor: direct edit of submission data (applied to postmark on approve) */}
+              {canReview && (
+                <Card className="shadow-archival-md border-primary/15">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg flex items-center gap-2">
+                      <Pencil className="h-5 w-5" />
+                      Edit submission data
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      Change any fields below; these values will be applied to the catalog when you approve. Save edits before approving.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-state">State</Label>
+                        <Input
+                          id="edit-state"
+                          value={editorEdits.state}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, state: e.target.value }))}
+                          placeholder="State"
+                          disabled={savingEdits}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-town">Town</Label>
+                        <Input
+                          id="edit-town"
+                          value={editorEdits.town}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, town: e.target.value }))}
+                          placeholder="Town"
+                          disabled={savingEdits}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-firstSeen">First seen (year)</Label>
+                        <Input
+                          id="edit-firstSeen"
+                          value={editorEdits.firstSeen}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, firstSeen: e.target.value }))}
+                          placeholder="e.g. 1990"
+                          disabled={savingEdits}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-lastSeen">Last seen (year)</Label>
+                        <Input
+                          id="edit-lastSeen"
+                          value={editorEdits.lastSeen}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, lastSeen: e.target.value }))}
+                          placeholder="e.g. 1995"
+                          disabled={savingEdits}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-type">Type</Label>
+                        <Input
+                          id="edit-type"
+                          value={editorEdits.type}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, type: e.target.value }))}
+                          placeholder="Postmark type"
+                          disabled={savingEdits}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-color">Color</Label>
+                        <Input
+                          id="edit-color"
+                          value={editorEdits.color}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, color: e.target.value }))}
+                          placeholder="Color"
+                          disabled={savingEdits}
+                        />
+                      </div>
+                      <div className="space-y-2 sm:col-span-2">
+                        <Label htmlFor="edit-dimensions">Dimensions</Label>
+                        <Input
+                          id="edit-dimensions"
+                          value={editorEdits.dimensions}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, dimensions: e.target.value }))}
+                          placeholder="Dimensions"
+                          disabled={savingEdits}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-manuscript">Manuscript</Label>
+                        <Input
+                          id="edit-manuscript"
+                          value={editorEdits.manuscript}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, manuscript: e.target.value }))}
+                          placeholder="Yes / No"
+                          disabled={savingEdits}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-rarity">Rarity</Label>
+                        <Input
+                          id="edit-rarity"
+                          value={editorEdits.rarity}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, rarity: e.target.value }))}
+                          placeholder="Rarity"
+                          disabled={savingEdits}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-lettering">Lettering style</Label>
+                        <select
+                          id="edit-lettering"
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          value={editorEdits.lettering_style_id}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, lettering_style_id: e.target.value }))}
+                          disabled={savingEdits}
+                        >
+                          <option value="">—</option>
+                          {letteringOptions.map((o) => (
+                            <option key={o.id} value={o.id}>{o.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-framing">Framing style</Label>
+                        <select
+                          id="edit-framing"
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          value={editorEdits.framing_style_id}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, framing_style_id: e.target.value }))}
+                          disabled={savingEdits}
+                        >
+                          <option value="">—</option>
+                          {framingOptions.map((o) => (
+                            <option key={o.id} value={o.id}>{o.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-dateFormat">Date format</Label>
+                        <select
+                          id="edit-dateFormat"
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          value={editorEdits.date_format_id}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, date_format_id: e.target.value }))}
+                          disabled={savingEdits}
+                        >
+                          <option value="">—</option>
+                          {dateFormatOptions.map((o) => (
+                            <option key={o.id} value={o.id}>{o.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-2 sm:col-span-2">
+                        <Label htmlFor="edit-description">Description</Label>
+                        <Textarea
+                          id="edit-description"
+                          value={editorEdits.description}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, description: e.target.value }))}
+                          placeholder="Description"
+                          rows={2}
+                          disabled={savingEdits}
+                          className="resize-none"
+                        />
+                      </div>
+                      <div className="space-y-2 sm:col-span-2">
+                        <Label htmlFor="edit-references">References</Label>
+                        <Textarea
+                          id="edit-references"
+                          value={editorEdits.references}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, references: e.target.value }))}
+                          placeholder="Citation references"
+                          rows={2}
+                          disabled={savingEdits}
+                          className="resize-none"
+                        />
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={saveEditorEdits}
+                      disabled={savingEdits}
+                    >
+                      {savingEdits ? "Saving..." : "Save edits"}
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Editor: Value and Comment, then Approve / Reject / Request revision */}
+              {canReview && (
+                <Card className="shadow-archival-lg border-primary/20">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">Review this submission</CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      Add value and a comment, then choose Approve, Reject, or Request revision.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2 max-w-xs">
+                      <Label htmlFor="contribution-value">
+                        Value (of this postmark) <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        id="contribution-value"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder={prefillingValue ? "Prefilling..." : "e.g. 25.00"}
+                        value={value}
+                        onChange={(e) => setValue(e.target.value)}
+                        disabled={submitting || prefillingValue}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="contribution-comment">
+                        Comment (required) <span className="text-destructive">*</span>
+                      </Label>
+                      <Textarea
+                        id="contribution-comment"
+                        placeholder="Add a comment for the contributor (required for approve, reject, or revision)."
+                        rows={4}
+                        value={comment}
+                        onChange={(e) => setComment(e.target.value)}
+                        disabled={submitting}
+                        className="resize-none"
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      <Button
+                        type="button"
+                        onClick={() => submitDecision("approve")}
+                        disabled={
+                          submitting ||
+                          !comment.trim() ||
+                          value.trim() === "" ||
+                          Number.isNaN(parseFloat(value)) ||
+                          parseFloat(value) < 0
+                        }
+                        className="bg-green-600 hover:bg-green-700"
+                      >
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                        {submitting ? "Submitting..." : "Approve"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        onClick={() => submitDecision("reject")}
+                        disabled={submitting || !comment.trim()}
+                      >
+                        <XCircle className="mr-2 h-4 w-4" />
+                        Reject
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => submitDecision("revision")}
+                        disabled={submitting || !comment.trim()}
+                      >
+                        <MessageSquare className="mr-2 h-4 w-4" />
+                        Request revision
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Editor feedback — show outcome (approved/rejected/revision) and comment so contributor knows the result */}
               {(contribution.status !== "pending" || (contribution.review_notes && contribution.review_notes.trim())) ? (
                 <Card className="shadow-archival-md border-amber-500/20 bg-amber-500/5">
@@ -625,20 +962,6 @@ const ContributionDetail = () => {
                         {contribution.review_notes.trim()}
                       </p>
                     ) : null}
-                    {isContributor &&
-                      (contribution.status === "rejected" || contribution.status === "needs_revision") && (
-                      <div className="pt-3">
-                        <Button
-                          type="button"
-                          onClick={handleEditAndResubmit}
-                          variant="default"
-                          className="gap-2"
-                        >
-                          <RefreshCw className="h-4 w-4" />
-                          Edit and resubmit
-                        </Button>
-                      </div>
-                    )}
                   </CardContent>
                 </Card>
               ) : null}

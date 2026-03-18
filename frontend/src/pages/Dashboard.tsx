@@ -236,6 +236,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Disable filters while submissions or filter options are loading
   const filtersDisabled = loading || isLoadingFilters;
   const isStateEditor = user?.role === "state_editor";
+  const isSuperuser = !!user?.is_superuser;
 
   // Prevent duplicate fetches during rapid re-renders / user rehydration.
   const submissionsInFlightKey = useRef<string | null>(null);
@@ -1375,7 +1376,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               >
                                 View details
                               </Button>
-                              {submission.postmark_id && (
+                              {isSuperuser && submission.postmark_id && (
                                 <>
                                   <Button
                                     variant="outline"
@@ -1480,7 +1481,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           >
                             View details
                           </Button>
-                          {submission.postmark_id && (
+                          {isSuperuser && submission.postmark_id && (
                             <>
                               <Button
                                 variant="outline"

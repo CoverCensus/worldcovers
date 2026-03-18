@@ -721,6 +721,8 @@ def _create_contribution_only(payload, contributor):
             "references": (payload.get("references") or "").strip(),
             "rarity": (payload.get("rarity") or "").strip(),
             "submitter_name": (payload.get("submitter_name") or "").strip(),
+            # Contributor -> editor note (used mainly for suggestions/corrections).
+            "contributor_comment": (payload.get("contributor_comment") or "").strip(),
             "original_postmark_id": str(payload.get("original_postmark_id", "")),
         }
         if payload.get("lettering_style_id") is not None:
@@ -1455,6 +1457,14 @@ class ContributionView(APIView):
             "references": (data.get("references") or "").strip(),
             "rarity": (data.get("rarity") or "").strip(),
             "submitter_name": submitter_name,
+            # Contributor -> editor note (optional)
+            "contributor_comment": (
+                data.get("contributorComment")
+                or data.get("contributor_comment")
+                or data.get("commentForEditor")
+                or data.get("comment_for_editor")
+                or ""
+            ).strip(),
         }
         lettering_payload = _payload_int("lettering_style_id", "letteringStyleId")
         framing_payload = _payload_int("framing_style_id", "framingStyleId")
@@ -1660,6 +1670,7 @@ class ContributionView(APIView):
                         "references": payload.get("references", ""),
                         "rarity": payload.get("rarity", ""),
                         "submitter_name": submitter_name,
+                        "contributor_comment": payload.get("contributor_comment", ""),
                         "original_postmark_id": str(edit_postmark_id),
                     }
                     if payload.get("lettering_style_id") is not None:
@@ -1957,6 +1968,85 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
             {"detail": "Revision requested; contributor can see your feedback and resubmit."},
             status=status.HTTP_200_OK,
         )
+
+    @action(detail=True, methods=["patch"], url_path="editor-edit")
+    def editor_edit(self, request, pk=None):
+        """
+        State editors: directly edit the contribution's submitted_data (postmark fields).
+        Merges request body over existing submitted_data; approval will then apply these values to the catalog.
+        """
+        contrib = self.get_object()
+        if not _can_review_contribution(request.user, contrib):
+            return Response(
+                {"detail": "Only state editors can edit contribution data."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if contrib.status != Contribution.STATUS_PENDING:
+            return Response(
+                {"detail": "Only pending contributions can be edited."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        data = request.data or {}
+
+        def _get(*keys, default=None):
+            for k in keys:
+                v = data.get(k)
+                if v is not None and v != "":
+                    return v
+            return default
+
+        existing = contrib.submitted_data or {}
+        overlay = dict(existing)
+
+        state = _get("state", "State")
+        if state is not None:
+            overlay["state"] = str(state).strip()
+        town = _get("town", "Town")
+        if town is not None:
+            overlay["town"] = str(town).strip()
+        first_seen = _get("firstSeen", "first_seen")
+        last_seen = _get("lastSeen", "last_seen")
+        if first_seen is not None or last_seen is not None:
+            fs = (str(first_seen or "").strip() or existing.get("date_range", "").split("-")[0].strip()).strip()
+            ls = str(last_seen or "").strip() if last_seen is not None else (existing.get("date_range", "") or "").split("-")[-1].strip()
+            overlay["date_range"] = f"{fs}-{ls}" if ls else fs
+        type_val = _get("type", "Type")
+        if type_val is not None:
+            overlay["type"] = str(type_val).strip()
+        color = _get("color", "Color")
+        if color is not None:
+            overlay["color"] = str(color).strip()
+        dimensions = _get("dimensions", "Dimensions")
+        if dimensions is not None:
+            overlay["dimensions"] = str(dimensions).strip()
+        manuscript = _get("manuscript", "Manuscript")
+        if manuscript is not None:
+            overlay["manuscript"] = str(manuscript).strip()
+        description = _get("description", "Description")
+        if description is not None:
+            overlay["description"] = str(description).strip()
+        references = _get("references", "References")
+        if references is not None:
+            overlay["references"] = str(references).strip()
+        rarity = _get("rarity", "Rarity")
+        if rarity is not None:
+            overlay["rarity"] = str(rarity).strip()
+        for key, payload_key in [
+            ("lettering_style_id", "letteringStyleId"),
+            ("framing_style_id", "framingStyleId"),
+            ("date_format_id", "dateFormatId"),
+        ]:
+            raw = _get(key, payload_key)
+            if raw is not None:
+                try:
+                    overlay[key] = int(raw)
+                except (TypeError, ValueError):
+                    pass
+
+        contrib.submitted_data = overlay
+        contrib.save(update_fields=["submitted_data", "updated_at"])
+        serializer = ContributionDetailSerializer(contrib)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="resubmit")
     def resubmit(self, request, pk=None):
