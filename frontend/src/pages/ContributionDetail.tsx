@@ -7,12 +7,13 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Loader2, CheckCircle, XCircle, MessageSquare, ExternalLink } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle, XCircle, MessageSquare, ExternalLink, RefreshCw } from "lucide-react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { normalizeImageUrl } from "@/services/postmarks";
+import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { getLetteringStyles, type LetteringStyleOption } from "@/services/letteringStyles";
 import { getFramingStyles, type FramingStyleOption } from "@/services/framingStyles";
 import { getDateFormats, type DateFormatOption } from "@/services/dateFormats";
@@ -43,6 +44,15 @@ interface SubmittedData {
     storageFilename?: string;
     originalFilename?: string;
   };
+  /** Multiple images; API may return as image_metas or imageMetas */
+  image_metas?: Array<{
+    storage_filename?: string;
+    original_filename?: string;
+    storageFilename?: string;
+    originalFilename?: string;
+  }>;
+  /** API may return camelCase */
+  imageMetas?: SubmittedData["image_metas"];
   /** Contributor-provided; used when editor approves (editor only fills value + comment). */
   lettering_style_id?: number;
   framing_style_id?: number;
@@ -85,9 +95,16 @@ const ContributionDetail = () => {
   const [letteringOptions, setLetteringOptions] = useState<LetteringStyleOption[]>([]);
   const [framingOptions, setFramingOptions] = useState<FramingStyleOption[]>([]);
   const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
+  const [carouselApi, setCarouselApi] = useState<CarouselApi>();
+  const [carouselCurrent, setCarouselCurrent] = useState(0);
+  const [carouselCount, setCarouselCount] = useState(0);
 
   const fromDashboard = location.state?.fromDashboard === true;
   const isStateEditor = user?.role === "state_editor" || user?.is_superuser;
+  const isContributor =
+    !!user &&
+    !!contribution &&
+    (contribution.contributor_username === user.username || contribution.contributor_username === user.email);
 
   useEffect(() => {
     const contributionId = id ? parseInt(String(id), 10) : null;
@@ -140,6 +157,18 @@ const ContributionDetail = () => {
       cancelled = true;
     };
   }, [id]);
+
+  // Carousel pagination
+  useEffect(() => {
+    if (!carouselApi) return;
+    setCarouselCount(carouselApi.scrollSnapList().length);
+    setCarouselCurrent(carouselApi.selectedScrollSnap());
+    const onSelect = () => setCarouselCurrent(carouselApi.selectedScrollSnap());
+    carouselApi.on("select", onSelect);
+    return () => {
+      carouselApi.off("select", onSelect);
+    };
+  }, [carouselApi]);
 
   // Fetch lettering/framing/date format options to show names instead of IDs in Submitted data
   useEffect(() => {
@@ -230,6 +259,11 @@ const ContributionDetail = () => {
     }
   };
 
+  const handleEditAndResubmit = () => {
+    if (!contribution) return;
+    navigate("/contribute", { state: { editContributionId: contribution.id } });
+  };
+
   const handleBack = () => {
     if (fromDashboard) navigate("/dashboard", { state: { tab: "editor" } });
     else navigate("/dashboard");
@@ -281,13 +315,32 @@ const ContributionDetail = () => {
   const title = [town, state].filter(Boolean).join(", ") || `Submission #${contribution.id}`;
   const displayName = [title, type].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") || title;
   const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
-  const imageMeta = sd.image_meta as SubmittedData["image_meta"] | undefined;
-  const storageFilename = imageMeta?.storage_filename ?? imageMeta?.storageFilename;
-  const originalFilename = imageMeta?.original_filename ?? imageMeta?.originalFilename;
-  const imageUrl =
-    storageFilename && baseImageUrl
-      ? normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${storageFilename}`)
-      : null;
+  const imageMetasRaw = (sd.image_metas ?? sd.imageMetas) as SubmittedData["image_metas"] | undefined;
+  const imageMetaSingle = sd.image_meta as SubmittedData["image_meta"] | undefined;
+  const imageMetaList: Array<{ imageUrl: string; originalFilename?: string }> = [];
+  if (imageMetasRaw && Array.isArray(imageMetasRaw) && imageMetasRaw.length > 0) {
+    for (const meta of imageMetasRaw) {
+      if (meta && typeof meta === "object") {
+        const sf = meta.storage_filename ?? meta.storageFilename;
+        if (sf && baseImageUrl) {
+          imageMetaList.push({
+            imageUrl: normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${sf}`),
+            originalFilename: meta.original_filename ?? meta.originalFilename,
+          });
+        }
+      }
+    }
+  }
+  if (imageMetaList.length === 0 && imageMetaSingle) {
+    const sf = imageMetaSingle.storage_filename ?? imageMetaSingle.storageFilename;
+    if (sf && baseImageUrl) {
+      imageMetaList.push({
+        imageUrl: normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${sf}`),
+        originalFilename: imageMetaSingle.original_filename ?? imageMetaSingle.originalFilename,
+      });
+    }
+  }
+  const images = imageMetaList;
 
   const isPending = contribution.status === "pending";
   const canReview = isStateEditor && isPending;
@@ -328,16 +381,58 @@ const ContributionDetail = () => {
 
           {/* Main Content — same layout as RecordDetail */}
           <div className="grid items-start lg:grid-cols-2 gap-8 mb-8">
-            {/* Image — same card style as RecordDetail */}
+            {/* Image(s) carousel — same as RecordDetail */}
             <Card className="shadow-archival-lg">
               <CardContent className="p-6">
-                <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
-                  <img
-                    src={imageUrl || imageNotAvailable}
-                    alt={originalFilename || "Submission"}
-                    className="w-full h-full object-contain"
-                  />
-                </div>
+                <Carousel setApi={setCarouselApi} className="w-full">
+                  <CarouselContent>
+                    {images.length > 0 ? (
+                      images.map((img, index) => (
+                        <CarouselItem key={index}>
+                          <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
+                            <img
+                              src={img.imageUrl}
+                              alt={img.originalFilename || `Submission image ${index + 1}`}
+                              className="w-full h-full object-contain"
+                            />
+                          </div>
+                        </CarouselItem>
+                      ))
+                    ) : (
+                      <CarouselItem>
+                        <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
+                          <img
+                            src={imageNotAvailable}
+                            alt="No image available"
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      </CarouselItem>
+                    )}
+                  </CarouselContent>
+                  {images.length > 1 && (
+                    <>
+                      <CarouselPrevious className="left-2" />
+                      <CarouselNext className="right-2" />
+                    </>
+                  )}
+                </Carousel>
+                {images.length > 1 && (
+                  <div className="flex justify-center gap-2 mt-4 mb-4">
+                    {images.map((_, index) => (
+                      <button
+                        key={index}
+                        onClick={() => carouselApi?.scrollTo(index)}
+                        className={`h-2 rounded-full transition-all ${
+                          index === carouselCurrent
+                            ? "w-6 bg-primary"
+                            : "w-2 bg-muted-foreground/30 hover:bg-muted-foreground/50"
+                        }`}
+                        aria-label={`Go to image ${index + 1}`}
+                      />
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -369,7 +464,8 @@ const ContributionDetail = () => {
                     <dl className="space-y-0 text-sm">
                       {Object.entries(sd)
                         .filter(([k]) => {
-                          if (k === "image_meta") return sd.image_meta != null && typeof sd.image_meta === "object";
+                          if (k === "image_meta") return false;
+                          if (k === "image_metas" || k === "imageMetas") return false;
                           return true;
                         })
                         .map(([key, val]) => {
@@ -455,6 +551,20 @@ const ContributionDetail = () => {
                         {contribution.review_notes.trim()}
                       </p>
                     ) : null}
+                    {isContributor &&
+                      (contribution.status === "rejected" || contribution.status === "needs_revision") && (
+                      <div className="pt-3">
+                        <Button
+                          type="button"
+                          onClick={handleEditAndResubmit}
+                          variant="default"
+                          className="gap-2"
+                        >
+                          <RefreshCw className="h-4 w-4" />
+                          Edit and resubmit
+                        </Button>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               ) : null}

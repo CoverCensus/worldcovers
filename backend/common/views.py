@@ -960,26 +960,49 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
             created_by=user,
             modified_by=user,
         )
-        # Optional: attach uploaded image (support both snake_case and camelCase keys)
-        image_meta = payload.get("image_meta") or payload.get("imageMeta")
-        if image_meta and isinstance(image_meta, dict):
-            storage_fn = image_meta.get("storage_filename") or image_meta.get("storageFilename")
-            if storage_fn:
-                PostmarkImage.objects.create(
-                    postmark=postmark,
-                    original_filename=(image_meta.get("original_filename") or image_meta.get("originalFilename") or "image")[:255],
-                    storage_filename=storage_fn,
-                    file_checksum=(image_meta.get("file_checksum") or image_meta.get("fileChecksum") or "")[:64],
-                    mime_type=(image_meta.get("mime_type") or image_meta.get("mimeType") or "image/jpeg")[:50],
-                    image_width=image_meta.get("image_width") or image_meta.get("imageWidth") or 0,
-                    image_height=image_meta.get("image_height") or image_meta.get("imageHeight") or 0,
-                    file_size_bytes=image_meta.get("file_size_bytes") or image_meta.get("fileSizeBytes") or 0,
-                    image_view="FULL",
-                    display_order=0,
-                    uploaded_by=user,
-                    created_by=user,
-                    modified_by=user,
-                )
+        # Optional: attach uploaded image(s) (support image_metas array or single image_meta)
+        image_metas = payload.get("image_metas") or payload.get("imageMetas") or []
+        if isinstance(image_metas, list) and len(image_metas) > 0:
+            for idx, image_meta in enumerate(image_metas):
+                if not isinstance(image_meta, dict):
+                    continue
+                storage_fn = image_meta.get("storage_filename") or image_meta.get("storageFilename")
+                if storage_fn:
+                    PostmarkImage.objects.create(
+                        postmark=postmark,
+                        original_filename=(image_meta.get("original_filename") or image_meta.get("originalFilename") or "image")[:255],
+                        storage_filename=storage_fn,
+                        file_checksum=(image_meta.get("file_checksum") or image_meta.get("fileChecksum") or "")[:64],
+                        mime_type=(image_meta.get("mime_type") or image_meta.get("mimeType") or "image/jpeg")[:50],
+                        image_width=image_meta.get("image_width") or image_meta.get("imageWidth") or 0,
+                        image_height=image_meta.get("image_height") or image_meta.get("imageHeight") or 0,
+                        file_size_bytes=image_meta.get("file_size_bytes") or image_meta.get("fileSizeBytes") or 0,
+                        image_view="FULL",
+                        display_order=idx,
+                        uploaded_by=user,
+                        created_by=user,
+                        modified_by=user,
+                    )
+        else:
+            image_meta = payload.get("image_meta") or payload.get("imageMeta")
+            if image_meta and isinstance(image_meta, dict):
+                storage_fn = image_meta.get("storage_filename") or image_meta.get("storageFilename")
+                if storage_fn:
+                    PostmarkImage.objects.create(
+                        postmark=postmark,
+                        original_filename=(image_meta.get("original_filename") or image_meta.get("originalFilename") or "image")[:255],
+                        storage_filename=storage_fn,
+                        file_checksum=(image_meta.get("file_checksum") or image_meta.get("fileChecksum") or "")[:64],
+                        mime_type=(image_meta.get("mime_type") or image_meta.get("mimeType") or "image/jpeg")[:50],
+                        image_width=image_meta.get("image_width") or image_meta.get("imageWidth") or 0,
+                        image_height=image_meta.get("image_height") or image_meta.get("imageHeight") or 0,
+                        file_size_bytes=image_meta.get("file_size_bytes") or image_meta.get("fileSizeBytes") or 0,
+                        image_view="FULL",
+                        display_order=0,
+                        uploaded_by=user,
+                        created_by=user,
+                        modified_by=user,
+                    )
         # Editor direct-add: create valuation with estimated_value (TimestampedModel requires created_by, modified_by)
         if editor_data and created_by_user is not None and editor_data.get("estimated_value") is not None:
             try:
@@ -1170,27 +1193,51 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
             modified_by=user,
         )
 
-        # Replace image if new one provided (support both snake_case and camelCase keys)
-        image_meta = payload.get("image_meta") or payload.get("imageMeta")
-        if image_meta and isinstance(image_meta, dict):
-            storage_fn = image_meta.get("storage_filename") or image_meta.get("storageFilename")
-            if storage_fn:
-                PostmarkImage.objects.filter(postmark=postmark).delete()
-                PostmarkImage.objects.create(
-                    postmark=postmark,
-                    original_filename=(image_meta.get("original_filename") or image_meta.get("originalFilename") or "image")[:255],
-                    storage_filename=storage_fn,
-                    file_checksum=(image_meta.get("file_checksum") or image_meta.get("fileChecksum") or "")[:64],
-                    mime_type=(image_meta.get("mime_type") or image_meta.get("mimeType") or "image/jpeg")[:50],
-                    image_width=image_meta.get("image_width") or image_meta.get("imageWidth") or 0,
-                    image_height=image_meta.get("image_height") or image_meta.get("imageHeight") or 0,
-                    file_size_bytes=image_meta.get("file_size_bytes") or image_meta.get("fileSizeBytes") or 0,
-                    image_view="FULL",
-                    display_order=0,
-                    uploaded_by=user,
-                    created_by=user,
-                    modified_by=user,
-                )
+        # Replace images if new ones provided (support image_metas array or single image_meta)
+        image_metas = payload.get("image_metas") or payload.get("imageMetas") or []
+        if isinstance(image_metas, list) and len(image_metas) > 0:
+            PostmarkImage.objects.filter(postmark=postmark).delete()
+            for idx, image_meta in enumerate(image_metas):
+                if not isinstance(image_meta, dict):
+                    continue
+                storage_fn = image_meta.get("storage_filename") or image_meta.get("storageFilename")
+                if storage_fn:
+                    PostmarkImage.objects.create(
+                        postmark=postmark,
+                        original_filename=(image_meta.get("original_filename") or image_meta.get("originalFilename") or "image")[:255],
+                        storage_filename=storage_fn,
+                        file_checksum=(image_meta.get("file_checksum") or image_meta.get("fileChecksum") or "")[:64],
+                        mime_type=(image_meta.get("mime_type") or image_meta.get("mimeType") or "image/jpeg")[:50],
+                        image_width=image_meta.get("image_width") or image_meta.get("imageWidth") or 0,
+                        image_height=image_meta.get("image_height") or image_meta.get("imageHeight") or 0,
+                        file_size_bytes=image_meta.get("file_size_bytes") or image_meta.get("fileSizeBytes") or 0,
+                        image_view="FULL",
+                        display_order=idx,
+                        uploaded_by=user,
+                        created_by=user,
+                        modified_by=user,
+                    )
+        else:
+            image_meta = payload.get("image_meta") or payload.get("imageMeta")
+            if image_meta and isinstance(image_meta, dict):
+                storage_fn = image_meta.get("storage_filename") or image_meta.get("storageFilename")
+                if storage_fn:
+                    PostmarkImage.objects.filter(postmark=postmark).delete()
+                    PostmarkImage.objects.create(
+                        postmark=postmark,
+                        original_filename=(image_meta.get("original_filename") or image_meta.get("originalFilename") or "image")[:255],
+                        storage_filename=storage_fn,
+                        file_checksum=(image_meta.get("file_checksum") or image_meta.get("fileChecksum") or "")[:64],
+                        mime_type=(image_meta.get("mime_type") or image_meta.get("mimeType") or "image/jpeg")[:50],
+                        image_width=image_meta.get("image_width") or image_meta.get("imageWidth") or 0,
+                        image_height=image_meta.get("image_height") or image_meta.get("imageHeight") or 0,
+                        file_size_bytes=image_meta.get("file_size_bytes") or image_meta.get("fileSizeBytes") or 0,
+                        image_view="FULL",
+                        display_order=0,
+                        uploaded_by=user,
+                        created_by=user,
+                        modified_by=user,
+                    )
         return postmark
     except Exception as e:
         logger.exception("_update_postmark_in_catalog failed (postmark_id=%s): %s", postmark_id, e)
@@ -1232,6 +1279,39 @@ class ContributionView(APIView):
 
         mode = (request.query_params.get("mode") or "").strip().lower()
 
+        def _paginate_if_requested(queryset):
+            """
+            Opt-in pagination (keeps backward compatibility).
+            If 'page' or 'page_size' is provided, return an object:
+              { count, page, page_size, results }
+            Otherwise return None (caller should return legacy list response).
+            """
+            page_raw = request.query_params.get("page")
+            page_size_raw = request.query_params.get("page_size") or request.query_params.get("pageSize")
+            if page_raw is None and page_size_raw is None:
+                return None
+            try:
+                page = int(page_raw) if page_raw is not None and str(page_raw).strip() != "" else 1
+            except (TypeError, ValueError):
+                page = 1
+            try:
+                page_size = int(page_size_raw) if page_size_raw is not None and str(page_size_raw).strip() != "" else 20
+            except (TypeError, ValueError):
+                page_size = 20
+            page = max(1, page)
+            page_size = max(1, min(100, page_size))
+            total = queryset.count()
+            start = (page - 1) * page_size
+            end = start + page_size
+            page_qs = queryset[start:end]
+            serializer = ContributionListSerializer(page_qs, many=True)
+            return {
+                "count": total,
+                "page": page,
+                "page_size": page_size,
+                "results": serializer.data,
+            }
+
         # Editor moderation queue: state editors / superusers requesting mode=editor
         if mode == "editor" and (getattr(user, "is_superuser", False) or _get_user_role(user) == "state_editor"):
             qs = Contribution.objects.select_related(
@@ -1252,8 +1332,17 @@ class ContributionView(APIView):
                     qs = qs.none()
 
             status_param = (request.query_params.get("status") or "").strip().lower()
-            if status_param in {Contribution.STATUS_PENDING, Contribution.STATUS_APPROVED, Contribution.STATUS_REJECTED}:
+            if status_param in {
+                Contribution.STATUS_PENDING,
+                Contribution.STATUS_APPROVED,
+                Contribution.STATUS_REJECTED,
+                Contribution.STATUS_NEEDS_REVISION,
+            }:
                 qs = qs.filter(status=status_param)
+
+            paginated = _paginate_if_requested(qs)
+            if paginated is not None:
+                return Response(paginated)
 
             serializer = ContributionListSerializer(qs, many=True)
             return Response(serializer.data)
@@ -1278,6 +1367,10 @@ class ContributionView(APIView):
             qs = qs.filter(
                 Q(postmark__isnull=False) | ~Q(submitted_data__original_postmark_id="")
             )
+
+        paginated = _paginate_if_requested(qs)
+        if paginated is not None:
+            return Response(paginated)
 
         serializer = ContributionListSerializer(qs, many=True)
         return Response(serializer.data)
@@ -1361,11 +1454,19 @@ class ContributionView(APIView):
             payload["date_format_id"] = date_fmt_payload
         if assigned_admin_unit is not None:
             payload["admin_unit"] = assigned_admin_unit
-        image_file = request.FILES.get("image")
-        if image_file:
-            image_meta = _save_contribution_image(image_file)
-            if image_meta:
-                payload["image_meta"] = image_meta
+        image_files = request.FILES.getlist("image") or []
+        if image_files:
+            image_metas = []
+            for image_file in image_files:
+                image_meta = _save_contribution_image(image_file)
+                if image_meta:
+                    image_metas.append(image_meta)
+            if image_metas:
+                payload["image_metas"] = image_metas
+                if len(image_metas) == 1:
+                    payload["image_meta"] = image_metas[0]
+                else:
+                    payload.pop("image_meta", None)
 
         if edit_contribution_id is not None and edit_postmark_id is None:
             contrib = Contribution.objects.filter(
@@ -1378,7 +1479,19 @@ class ContributionView(APIView):
                     {"detail": "Contribution not found or you cannot edit it."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
+            if contrib.status not in (Contribution.STATUS_REJECTED, Contribution.STATUS_NEEDS_REVISION):
+                return Response(
+                    {"detail": "Only rejected or needs_revision contributions can be edited and resubmitted."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             submitted_data = {k: v for k, v in payload.items() if k != "admin_unit"}
+            # Preserve existing image_metas / image_meta when contributor does not upload new images
+            if "image_metas" not in submitted_data and "image_meta" not in submitted_data:
+                existing = contrib.submitted_data or {}
+                if existing.get("image_metas"):
+                    submitted_data["image_metas"] = existing["image_metas"]
+                elif existing.get("image_meta"):
+                    submitted_data["image_meta"] = existing["image_meta"]
             contrib.submitted_data = submitted_data
             contrib.status = Contribution.STATUS_PENDING
             contrib.save(update_fields=["submitted_data", "status", "updated_at"])
@@ -1458,6 +1571,39 @@ class ContributionView(APIView):
                             {"detail": "Could not add catalog entry. Please check the data and try again."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         )
+                    # Create an approved Contribution so the editor's submission appears in My Submissions
+                    submitted_data = {
+                        "state": (payload.get("state") or "").strip(),
+                        "town": (payload.get("town") or "").strip(),
+                        "date_range": (payload.get("date_range") or "").strip(),
+                        "type": (payload.get("type") or "").strip(),
+                        "color": (payload.get("color") or "").strip(),
+                        "manuscript": (payload.get("manuscript") or "").strip(),
+                        "dimensions": (payload.get("dimensions") or "").strip(),
+                        "description": (payload.get("description") or "").strip(),
+                        "references": (payload.get("references") or "").strip(),
+                        "rarity": (payload.get("rarity") or "").strip(),
+                        "submitter_name": (payload.get("submitter_name") or "").strip(),
+                        "original_postmark_id": "",
+                    }
+                    if payload.get("lettering_style_id") is not None:
+                        submitted_data["lettering_style_id"] = payload["lettering_style_id"]
+                    if payload.get("framing_style_id") is not None:
+                        submitted_data["framing_style_id"] = payload["framing_style_id"]
+                    if payload.get("date_format_id") is not None:
+                        submitted_data["date_format_id"] = payload["date_format_id"]
+                    if payload.get("image_metas"):
+                        submitted_data["image_metas"] = payload["image_metas"]
+                    elif payload.get("image_meta"):
+                        submitted_data["image_meta"] = payload["image_meta"]
+                    Contribution.objects.create(
+                        contributor=user,
+                        postmark=postmark,
+                        status=Contribution.STATUS_APPROVED,
+                        submitted_data=submitted_data,
+                        reviewer=user,
+                        review_notes=review_notes_val or "",
+                    )
                     return Response(
                         {"detail": "Catalog entry added. It is now visible in Search.", "postmarkId": postmark.postmark_id},
                         status=status.HTTP_201_CREATED,
@@ -1577,7 +1723,8 @@ def _can_review_contribution(user, contrib):
 
 
 class IsStateEditorOrContributor(BasePermission):
-    """Contributors can view their own; State Editors can list/review all in their region."""
+    """Contributors can view their own; State Editors can list/review all in their region.
+    Contributors may POST to resubmit their own rejected/needs_revision contributions."""
     def has_permission(self, request, view):
         return request.user and request.user.is_authenticated
 
@@ -1586,7 +1733,11 @@ class IsStateEditorOrContributor(BasePermission):
             if obj.contributor_id == request.user.id:
                 return True
             return _can_review_contribution(request.user, obj)
-        if request.method in ("POST",):  # approve/reject
+        if request.method in ("POST",):
+            # Contributor can resubmit their own denied/needs_revision contribution
+            if getattr(view, "action", None) == "resubmit" and obj.contributor_id == request.user.id:
+                return True
+            # approve / reject / request_revision: editors only
             return _can_review_contribution(request.user, obj)
         return False
 
@@ -1782,6 +1933,29 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    @action(detail=True, methods=["post"], url_path="resubmit")
+    def resubmit(self, request, pk=None):
+        """Allow the contributor to resubmit a previously rejected or needs_revision contribution.
+        Sets status back to pending so it re-enters the review queue. Reviewer and review_notes
+        are kept for audit/history."""
+        contrib = self.get_object()
+        if contrib.contributor_id != request.user.id:
+            return Response(
+                {"detail": "Only the contributor may resubmit this contribution."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if contrib.status not in (Contribution.STATUS_REJECTED, Contribution.STATUS_NEEDS_REVISION):
+            return Response(
+                {"detail": f"Only rejected or needs_revision contributions can be resubmitted (current: {contrib.status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        contrib.status = Contribution.STATUS_PENDING
+        contrib.save(update_fields=["status", "updated_at"])
+        return Response(
+            {"detail": "Contribution resubmitted; it is now pending review again."},
+            status=status.HTTP_200_OK,
+        )
+
 
 # ========== CUSTOM PERMISSIONS ==========
 
@@ -1861,13 +2035,19 @@ class DeleteMySubmissionView(APIView):
                     postmark.delete()
                     return Response(status=status.HTTP_204_NO_CONTENT)
 
-        # 3. Fallback: original submitter of a user-contribution listing can delete their own
+        # 3. Original submitter of a user-contribution listing can delete their own
         if postmark.source_catalog != "User contribution":
             return Response(
                 {"detail": "You do not have permission to delete this catalog entry."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # Allow if this user created the postmark (when their submission was approved)
+        if postmark.created_by_id and postmark.created_by_id == user.pk:
+            postmark.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        # Fallback: match by "Submitted by: {username}" or "Submitted by: {email}" in other_characteristics
         other = (postmark.other_characteristics or "") or ""
         username = (getattr(user, "username", "") or "").strip()
         email = (getattr(user, "email", "") or "").strip()
@@ -2375,6 +2555,10 @@ class PostmarkViewSet(viewsets.ModelViewSet):
                 {"detail": "You do not have permission to delete this catalog entry."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        # Allow if this user created the postmark (when their submission was approved)
+        if postmark.created_by_id and postmark.created_by_id == user.pk:
+            postmark.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
         other = (postmark.other_characteristics or "") or ""
         username = (getattr(user, "username", "") or "").strip()
         email = (getattr(user, "email", "") or "").strip()

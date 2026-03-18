@@ -8,9 +8,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
-import { Upload, CheckCircle, XCircle, Clock } from "lucide-react";
+import { Upload, CheckCircle, XCircle, Clock, Loader2 } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
 import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
 import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
@@ -63,12 +63,34 @@ function validateYearString(raw: string): string | null {
   }
   return null;
 }
+/** Parse date_range "YYYY-YYYY" or "YYYY" into [firstSeen, lastSeen] */
+function parseDateRange(dateRange: string): [string, string] {
+  const s = (dateRange || "").trim();
+  if (!s) return ["", ""];
+  const idx = s.indexOf("-");
+  if (idx === -1) return [s, ""];
+  return [s.slice(0, idx).trim(), s.slice(idx + 1).trim()];
+}
+
 const Contribute = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const user = useAuth();
+  const editContributionIdRaw =
+    location.state?.editContributionId ??
+    (() => {
+      const edit = searchParams.get("edit");
+      if (!edit) return null;
+      const n = parseInt(edit, 10);
+      return Number.isNaN(n) ? null : n;
+    })();
+  const editContributionId = editContributionIdRaw ?? null;
+  const [editLoadDone, setEditLoadDone] = useState(!editContributionId);
+  const [editLoadError, setEditLoadError] = useState<string | null>(null);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [stateOptions, setStateOptions] = useState<StateOption[]>([]);
   const [typeOptions, setTypeOptions] = useState<PostmarkShapeOption[]>([]);
@@ -201,6 +223,89 @@ const Contribute = () => {
       })
       .finally(() => setCatalogOptionsLoading(false));
   }, []);
+
+  // Load contribution for edit-and-resubmit (rejected / needs_revision)
+  useEffect(() => {
+    if (!editContributionId) {
+      setEditLoadDone(true);
+      return;
+    }
+    const apiBase = getApiBaseUrl();
+    if (!apiBase) {
+      setEditLoadError("VITE_API_URL is not set.");
+      setEditLoadDone(true);
+      return;
+    }
+    let cancelled = false;
+    fetch(`${apiBase}/api/contributions/${editContributionId}/`, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(res.status === 404 ? "Contribution not found" : res.statusText);
+        return res.json();
+      })
+      .then((data: Record<string, unknown>) => {
+        if (cancelled) return;
+        const sd = (data.submitted_data ?? data.submittedData) as Record<string, unknown> | undefined;
+        if (!sd || typeof sd !== "object") {
+          setEditLoadDone(true);
+          return;
+        }
+        const getStr = (v: unknown) => (v != null && v !== "" ? String(v).trim() : "");
+        const stateVal = getStr(sd.state);
+        const townVal = getStr(sd.town);
+        const dateRange = getStr(sd.date_range ?? (sd as Record<string, unknown>).dateRange);
+        const [first, last] = parseDateRange(dateRange);
+        const typeVal = getStr(sd.type);
+        const colorVal = getStr(sd.color);
+        setState(stateVal);
+        setTown(townVal);
+        setFirstSeen(first);
+        setLastSeen(last);
+        setType(typeVal || "");
+        setTypeOther("");
+        setColor(colorVal || "");
+        setColorOther("");
+        setDimensions(getStr(sd.dimensions));
+        setManuscript(getStr(sd.manuscript));
+        setRarity(getStr(sd.rarity));
+        setDescription(getStr(sd.description));
+        setReferences(getStr(sd.references));
+        const lid = sd.lettering_style_id ?? (sd as Record<string, unknown>).letteringStyleId;
+        setLetteringId(lid != null ? String(lid) : "");
+        const fid = sd.framing_style_id ?? (sd as Record<string, unknown>).framingStyleId;
+        setFramingId(fid != null ? String(fid) : "");
+        const did = sd.date_format_id ?? (sd as Record<string, unknown>).dateFormatId;
+        setDateFormatId(did != null ? String(did) : "");
+        const metas = (sd.image_metas ?? (sd as Record<string, unknown>).imageMetas) as Array<{ storage_filename?: string; storageFilename?: string }> | undefined;
+        const metaOne = sd.image_meta as { storage_filename?: string; storageFilename?: string } | undefined;
+        const baseUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
+        const previews: string[] = [];
+        if (Array.isArray(metas) && metas.length > 0 && baseUrl) {
+          metas.forEach((m) => {
+            const sf = m?.storage_filename ?? (m as { storageFilename?: string })?.storageFilename;
+            if (sf) previews.push(`${baseUrl}/postmarks/${sf}`);
+          });
+        } else if (metaOne && baseUrl) {
+          const sf = metaOne.storage_filename ?? metaOne.storageFilename;
+          if (sf) previews.push(`${baseUrl}/postmarks/${sf}`);
+        }
+        if (previews.length > 0) setImagePreviews(previews);
+        setEditLoadError(null);
+        setEditLoadDone(true);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setEditLoadError(err instanceof Error ? err.message : "Failed to load contribution");
+          setEditLoadDone(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [editContributionId]); // typeOptions/colorOptions may not be loaded yet; we set type/color as strings
 
   const noAssignedStates =
     !!user &&
@@ -417,6 +522,7 @@ const Contribute = () => {
 
       if (imageFiles.length > 0) {
         const form = new FormData();
+        if (editContributionId != null) form.append("edit_contribution_id", String(editContributionId));
         form.append("state", stateVal);
         form.append("town", townVal);
         form.append("firstSeen", firstVal);
@@ -444,6 +550,7 @@ const Contribute = () => {
         // Do not set Content-Type so browser sets multipart/form-data with boundary
       } else {
         body = JSON.stringify({
+          ...(editContributionId != null ? { edit_contribution_id: editContributionId } : {}),
           state: stateVal,
           town: townVal,
           firstSeen: firstVal,
@@ -485,15 +592,23 @@ const Contribute = () => {
         throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
 
-      const resData = (await res.json().catch(() => ({}))) as { postmarkId?: number; detail?: string };
+      const resData = (await res.json().catch(() => ({}))) as { postmarkId?: number; contributionId?: number; detail?: string };
       const directAdd = resData?.postmarkId != null;
+      const wasEdit = editContributionId != null;
 
       toast({
-        title: directAdd ? "Catalog entry added" : "Submission sent",
+        title: directAdd ? "Catalog entry added" : wasEdit ? "Changes submitted" : "Submission sent",
         description: directAdd
           ? "The postmark has been added to the catalog and is now visible in Search."
-          : "Your catalog entry has been submitted for approval. It will appear in Search after an admin approves it.",
+          : wasEdit
+            ? "Your updated submission has been sent for review again."
+            : "Your catalog entry has been submitted for approval. It will appear in Search after an admin approves it.",
       });
+
+      if (wasEdit && resData?.contributionId != null) {
+        navigate(`/contribution/${resData.contributionId}`, { state: { fromDashboard: true } });
+        return;
+      }
 
       setState("");
       setTown("");
@@ -529,6 +644,8 @@ const Contribute = () => {
     }
   };
 
+  const isEditMode = editContributionId != null;
+
   return (
     <div className="min-h-screen flex flex-col">
       <Navigation />
@@ -537,20 +654,47 @@ const Contribute = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="mb-8">
             <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">
-              {isStateEditor ? "Editor: Add to catalog" : "Contributor Dashboard"}
+              {isEditMode
+                ? "Edit and resubmit"
+                : isStateEditor
+                  ? "Editor: Add to catalog"
+                  : "Contributor Dashboard"}
             </h1>
             <p className="text-muted-foreground">
-              {isStateEditor
-                ? "Fill the form and the catalog details below to add a postmark directly to Search. Entries you submit here appear in the catalog immediately."
-                : "Submit new postmark records or corrections. All fields match what reviewers see on the Submission Detail page."}
+              {isEditMode
+                ? "Update your submission using the editor feedback, then submit to send it back for review."
+                : isStateEditor
+                  ? "Fill the form and the catalog details below to add a postmark directly to Search. Entries you submit here appear in the catalog immediately."
+                  : "Submit new postmark records or corrections. All fields match what reviewers see on the Submission Detail page."}
             </p>
           </div>
 
+          {isEditMode && !editLoadDone && (
+            <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground">
+              <Loader2 className="h-6 w-6 animate-spin" />
+              <span>Loading your submission…</span>
+            </div>
+          )}
+
+          {isEditMode && editLoadDone && editLoadError && (
+            <Card className="border-destructive/50">
+              <CardContent className="pt-6">
+                <p className="text-destructive mb-4">{editLoadError}</p>
+                <Button variant="outline" onClick={() => navigate("/dashboard")}>
+                  Back to Dashboard
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {(!isEditMode || (editLoadDone && !editLoadError)) && (
           <div className="grid lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2">
               <Card className="shadow-archival-lg">
                 <CardHeader>
-                  <CardTitle className="font-heading text-xl">Submit New Entry</CardTitle>
+                  <CardTitle className="font-heading text-xl">
+                    {isEditMode ? "Edit submission" : "Submit New Entry"}
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   {noAssignedStates && (
@@ -1010,6 +1154,7 @@ const Contribute = () => {
                   Keep this card reserved or remove entirely as needed. */}
             </div>
           </div>
+          )}
         </div>
       </div>
 

@@ -90,6 +90,13 @@ interface PendingReviewItem {
   review_notes: string | null;
 }
 
+type PaginatedResponse<T> = {
+  count: number;
+  page: number;
+  page_size: number;
+  results: T[];
+};
+
 /** Build compact page numbers for pagination (shared with Catalog Search) */
 function getPaginationPages(currentPage: number, totalPages: number): (number | "ellipsis")[] {
   const delta = 2;
@@ -189,6 +196,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [pendingReviewItems, setPendingReviewItems] = useState<PendingReviewItem[]>([]);
   const [pendingReviewLoading, setPendingReviewLoading] = useState(false);
   const [pendingReviewError, setPendingReviewError] = useState<string | null>(null);
+  const [pendingReviewPage, setPendingReviewPage] = useState(1);
+  const [pendingReviewTotal, setPendingReviewTotal] = useState<number | null>(null);
+  const [pendingReviewGoToInput, setPendingReviewGoToInput] = useState("");
+  const pendingReviewPageSize = 10;
   const [statusDecisionTarget, setStatusDecisionTarget] = useState<PendingReviewItem | null>(null);
   const [statusDecisionKind, setStatusDecisionKind] = useState<"approve" | "reject" | "revision">("approve");
   const [statusComment, setStatusComment] = useState("");
@@ -201,6 +212,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [editorHistoryLoading, setEditorHistoryLoading] = useState(false);
   const [editorHistoryError, setEditorHistoryError] = useState<string | null>(null);
   const [editorHistoryStatusFilter, setEditorHistoryStatusFilter] = useState("all");
+  const [editorHistoryPage, setEditorHistoryPage] = useState(1);
+  const [editorHistoryTotal, setEditorHistoryTotal] = useState<number | null>(null);
+  const [editorHistoryGoToInput, setEditorHistoryGoToInput] = useState("");
+  const editorHistoryPageSize = 10;
 
   // Filter states (mirror Catalog Search)
   const [searchQuery, setSearchQuery] = useState("");
@@ -510,26 +525,37 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     if (!apiBase) {
       setPendingReviewError("VITE_API_URL is not set.");
       setPendingReviewItems([]);
+      setPendingReviewTotal(null);
       return;
     }
     setPendingReviewError(null);
     setPendingReviewLoading(true);
-    fetch(`${apiBase}/api/contributions/?mode=editor&status=pending`, {
+    fetch(
+      `${apiBase}/api/contributions/?mode=editor&status=pending&page=${pendingReviewPage}&page_size=${pendingReviewPageSize}`,
+      {
       method: "GET",
       credentials: "include",
       headers: { Accept: "application/json" },
-    })
+      },
+    )
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText || "Failed to load pending submissions");
         return res.json();
       })
-      .then((data: any[]) => {
-        if (!Array.isArray(data)) {
+      .then((data: any[] | PaginatedResponse<any>) => {
+        const list = Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : null;
+        const total = Array.isArray(data)
+          ? data.length
+          : typeof (data as PaginatedResponse<any>)?.count === "number"
+            ? (data as PaginatedResponse<any>).count
+            : null;
+        setPendingReviewTotal(total);
+        if (!Array.isArray(list)) {
           setPendingReviewItems([]);
           return;
         }
         setPendingReviewItems(
-          data.map((c) => ({
+          list.map((c) => ({
             id: c.id,
             contributor_username: c.contributor_username ?? (c as { contributorUsername?: string }).contributorUsername ?? "",
             display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
@@ -546,9 +572,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       .catch((err) => {
         setPendingReviewError(err instanceof Error ? err.message : "Could not load pending submissions.");
         setPendingReviewItems([]);
+        setPendingReviewTotal(null);
       })
       .finally(() => setPendingReviewLoading(false));
-  }, [isStateEditor, activeTab]);
+  }, [isStateEditor, activeTab, pendingReviewPage]);
 
   // Load editor history (all user suggestions in assigned states) for the Editor tab
   useEffect(() => {
@@ -557,29 +584,41 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     if (!apiBase) {
       setEditorHistoryError("VITE_API_URL is not set.");
       setEditorHistoryItems([]);
+      setEditorHistoryTotal(null);
       return;
     }
     setEditorHistoryError(null);
     setEditorHistoryLoading(true);
     const statusParam =
-      editorHistoryStatusFilter !== "all" && ["pending", "approved", "rejected"].includes(editorHistoryStatusFilter)
+      editorHistoryStatusFilter !== "all" &&
+      ["pending", "approved", "rejected", "needs_revision"].includes(editorHistoryStatusFilter)
         ? `&status=${editorHistoryStatusFilter}`
         : "";
-    fetch(`${apiBase}/api/contributions/?mode=editor${statusParam}`, {
+    fetch(
+      `${apiBase}/api/contributions/?mode=editor${statusParam}&page=${editorHistoryPage}&page_size=${editorHistoryPageSize}`,
+      {
       method: "GET",
       credentials: "include",
       headers: { Accept: "application/json" },
-    })
+      },
+    )
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText || "Failed to load history");
         return res.json();
       })
-      .then((data: any[]) => {
-        if (!Array.isArray(data)) {
+      .then((data: any[] | PaginatedResponse<any>) => {
+        const list = Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : null;
+        const total = Array.isArray(data)
+          ? data.length
+          : typeof (data as PaginatedResponse<any>)?.count === "number"
+            ? (data as PaginatedResponse<any>).count
+            : null;
+        setEditorHistoryTotal(total);
+        if (!Array.isArray(list)) {
           setEditorHistoryItems([]);
           return;
         }
-        let list = data.map((c) => ({
+        let mapped = list.map((c) => ({
           id: c.id,
           contributor_username: c.contributor_username ?? (c as { contributorUsername?: string }).contributorUsername ?? "",
           display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
@@ -591,17 +630,30 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
           review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
         }));
+        // Backward compatibility / defensive filtering (in case an older backend ignores status=needs_revision)
         if (editorHistoryStatusFilter === "needs_revision") {
-          list = list.filter((i) => i.status === "needs_revision");
+          mapped = mapped.filter((i) => i.status === "needs_revision");
         }
-        setEditorHistoryItems(list);
+        setEditorHistoryItems(mapped);
       })
       .catch((err) => {
         setEditorHistoryError(err instanceof Error ? err.message : "Could not load history.");
         setEditorHistoryItems([]);
+        setEditorHistoryTotal(null);
       })
       .finally(() => setEditorHistoryLoading(false));
-  }, [isStateEditor, activeTab, editorHistoryStatusFilter, submissionsRefetchKey]);
+  }, [isStateEditor, activeTab, editorHistoryStatusFilter, editorHistoryPage, submissionsRefetchKey]);
+
+  // Reset editor pagination when changing history status filter or tab
+  useEffect(() => {
+    if (!isStateEditor || activeTab !== "editor") return;
+    setEditorHistoryPage(1);
+  }, [isStateEditor, activeTab, editorHistoryStatusFilter]);
+
+  useEffect(() => {
+    if (!isStateEditor || activeTab !== "editor") return;
+    setPendingReviewPage(1);
+  }, [isStateEditor, activeTab]);
 
   const submitStatusDecision = async () => {
     if (!statusDecisionTarget || !statusComment.trim()) return;
@@ -871,6 +923,24 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     1,
     Math.ceil((assignedCatalogTotal ?? 0) / assignedCatalogPageSize),
   );
+
+  const pendingReviewTotalCount = pendingReviewTotal ?? pendingReviewItems.length;
+  const pendingReviewTotalPages = Math.max(1, Math.ceil(pendingReviewTotalCount / pendingReviewPageSize));
+  const pendingReviewPageStart =
+    pendingReviewTotalCount === 0 ? 0 : (pendingReviewPage - 1) * pendingReviewPageSize + 1;
+  const pendingReviewPageEnd =
+    pendingReviewTotalCount === 0
+      ? 0
+      : Math.min((pendingReviewPage - 1) * pendingReviewPageSize + pendingReviewItems.length, pendingReviewTotalCount);
+
+  const editorHistoryTotalCount = editorHistoryTotal ?? editorHistoryItems.length;
+  const editorHistoryTotalPages = Math.max(1, Math.ceil(editorHistoryTotalCount / editorHistoryPageSize));
+  const editorHistoryPageStart =
+    editorHistoryTotalCount === 0 ? 0 : (editorHistoryPage - 1) * editorHistoryPageSize + 1;
+  const editorHistoryPageEnd =
+    editorHistoryTotalCount === 0
+      ? 0
+      : Math.min((editorHistoryPage - 1) * editorHistoryPageSize + editorHistoryItems.length, editorHistoryTotalCount);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -1600,6 +1670,25 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       <h2 className="font-heading text-lg font-semibold text-foreground mb-2">
                         Pending review
                       </h2>
+                      {!pendingReviewLoading && !pendingReviewError && (
+                        <p className="text-sm text-muted-foreground mb-3">
+                          {pendingReviewTotalCount === 0 ? (
+                            "0 results"
+                          ) : (
+                            <>
+                              Showing{" "}
+                              <span className="font-semibold text-foreground">
+                                {pendingReviewPageStart.toLocaleString()}-{pendingReviewPageEnd.toLocaleString()}
+                              </span>{" "}
+                              of{" "}
+                              <span className="font-semibold text-foreground">
+                                {pendingReviewTotalCount.toLocaleString()}
+                              </span>{" "}
+                              results
+                            </>
+                          )}
+                        </p>
+                      )}
                       {pendingReviewLoading ? (
                         <div className="flex items-center gap-2 text-muted-foreground">
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -1608,43 +1697,147 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       ) : pendingReviewError ? (
                         <p className="text-sm text-destructive">{pendingReviewError}</p>
                       ) : (
-                        <ul className="space-y-3">
-                          {pendingReviewItems.map((item) => {
-                            const title = [item.town_display, item.state_display].filter(Boolean).join(", ");
-                            const typeStr = (item.type_display || "").trim();
-                            const fallbackName =
-                              [title, typeStr].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") ||
-                              title ||
-                              `Submission #${item.id}`;
-                            const displayLabel = item.display_name || fallbackName;
-                            return (
-                            <li
-                              key={item.id}
-                              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-muted/30"
-                            >
-                              <div>
-                                <span className="font-medium text-foreground">
-                                  {displayLabel}
-                                </span>
-                                <span className="text-muted-foreground text-sm ml-2">
-                                  by {item.contributor_username}
-                                </span>
-                              </div>
-                              <div className="flex flex-wrap gap-2">
+                        <>
+                          <ul className="space-y-3">
+                            {pendingReviewItems.map((item) => {
+                              const title = [item.town_display, item.state_display].filter(Boolean).join(", ");
+                              const typeStr = (item.type_display || "").trim();
+                              const fallbackName =
+                                [title, typeStr].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") ||
+                                title ||
+                                `Submission #${item.id}`;
+                              const displayLabel = item.display_name || fallbackName;
+                              return (
+                              <li
+                                key={item.id}
+                                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-muted/30"
+                              >
+                                <div>
+                                  <span className="font-medium text-foreground">
+                                    {displayLabel}
+                                  </span>
+                                  <span className="text-muted-foreground text-sm ml-2">
+                                    by {item.contributor_username}
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  <Button
+                                    variant="default"
+                                    size="sm"
+                                    onClick={() =>
+                                      navigate(`/contribution/${item.id}`, { state: { fromDashboard: true } })
+                                    }
+                                  >
+                                    View
+                                  </Button>
+                                </div>
+                              </li>
+                              );
+                            })}
+                          </ul>
+
+                          {pendingReviewTotalPages > 1 && (
+                            <div className="mt-5 flex flex-col items-center gap-4">
+                              <Pagination>
+                                <PaginationContent>
+                                  <PaginationItem>
+                                    <PaginationPrevious
+                                      onClick={() => {
+                                        setPendingReviewPage((p) => Math.max(1, p - 1));
+                                        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                                      }}
+                                      className={pendingReviewPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                                    />
+                                  </PaginationItem>
+
+                                  {getPaginationPages(pendingReviewPage, pendingReviewTotalPages).map((p, i) =>
+                                    p === "ellipsis" ? (
+                                      <PaginationItem key={`ellipsis-pending-${i}`}>
+                                        <PaginationEllipsis />
+                                      </PaginationItem>
+                                    ) : (
+                                      <PaginationItem key={`pending-${p}`}>
+                                        <PaginationLink
+                                          onClick={() => {
+                                            setPendingReviewPage(p);
+                                            window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                                          }}
+                                          isActive={pendingReviewPage === p}
+                                          className="cursor-pointer"
+                                        >
+                                          {p}
+                                        </PaginationLink>
+                                      </PaginationItem>
+                                    ),
+                                  )}
+
+                                  <PaginationItem>
+                                    <PaginationNext
+                                      onClick={() => {
+                                        setPendingReviewPage((p) => Math.min(pendingReviewTotalPages, p + 1));
+                                        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                                      }}
+                                      className={
+                                        pendingReviewPage === pendingReviewTotalPages ? "pointer-events-none opacity-50" : "cursor-pointer"
+                                      }
+                                    />
+                                  </PaginationItem>
+                                </PaginationContent>
+                              </Pagination>
+
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm text-muted-foreground">Go to page</span>
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  max={pendingReviewTotalPages}
+                                  placeholder="Page"
+                                  value={pendingReviewGoToInput}
+                                  onChange={(e) => {
+                                    const raw = e.target.value;
+                                    if (raw === "") {
+                                      setPendingReviewGoToInput("");
+                                      return;
+                                    }
+                                    const n = parseInt(raw, 10);
+                                    if (Number.isNaN(n)) return;
+                                    const clamped = Math.max(1, Math.min(pendingReviewTotalPages, n));
+                                    setPendingReviewGoToInput(String(clamped));
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      const n = parseInt(pendingReviewGoToInput, 10);
+                                      if (!Number.isNaN(n)) {
+                                        setPendingReviewPage(Math.max(1, Math.min(pendingReviewTotalPages, n)));
+                                        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                                        setPendingReviewGoToInput("");
+                                      }
+                                    }
+                                  }}
+                                  className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                  aria-label="Go to pending review page number"
+                                />
                                 <Button
-                                  variant="default"
+                                  type="button"
+                                  variant="outline"
                                   size="sm"
-                                  onClick={() =>
-                                    navigate(`/contribution/${item.id}`, { state: { fromDashboard: true } })
-                                  }
+                                  className="h-9"
+                                  onClick={() => {
+                                    const n = parseInt(pendingReviewGoToInput, 10);
+                                    if (!Number.isNaN(n)) {
+                                      setPendingReviewPage(Math.max(1, Math.min(pendingReviewTotalPages, n)));
+                                      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                                      setPendingReviewGoToInput("");
+                                    }
+                                  }}
                                 >
-                                  View
+                                  Go
                                 </Button>
                               </div>
-                            </li>
-                            );
-                          })}
-                        </ul>
+                            </div>
+                          )}
+                        </>
                       )}
                     </CardContent>
                   </Card>
@@ -1661,9 +1854,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         <>
                           Showing{" "}
                           <span className="font-semibold text-foreground">
-                            {editorHistoryItems.length.toLocaleString()}
+                            {editorHistoryTotalCount === 0
+                              ? "0"
+                              : `${editorHistoryPageStart.toLocaleString()}-${editorHistoryPageEnd.toLocaleString()}`}
                           </span>{" "}
-                          submission{editorHistoryItems.length !== 1 ? "s" : ""} in history
+                          of{" "}
+                          <span className="font-semibold text-foreground">
+                            {editorHistoryTotalCount.toLocaleString()}
+                          </span>{" "}
+                          result{editorHistoryTotalCount !== 1 ? "s" : ""} in history
                         </>
                       )}
                     </p>
@@ -1735,15 +1934,17 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             <Badge variant={statusVariant}>
                               {item.status === "needs_revision" ? "Needs revision" : item.status}
                             </Badge>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() =>
-                                navigate(`/contribution/${item.id}`, { state: { fromDashboard: true } })
-                              }
-                            >
-                              View details
-                            </Button>
+                            {item.status !== "approved" && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  navigate(`/contribution/${item.id}`, { state: { fromDashboard: true } })
+                                }
+                              >
+                                View details
+                              </Button>
+                            )}
                             {item.postmark_id && (
                               <Button
                                 variant="outline"
@@ -1758,6 +1959,108 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       );
                     })}
                   </ul>
+                )}
+
+                {editorHistoryTotalPages > 1 && !editorHistoryLoading && !editorHistoryError && (
+                  <div className="mt-8 flex flex-col items-center gap-4">
+                    <Pagination>
+                      <PaginationContent>
+                        <PaginationItem>
+                          <PaginationPrevious
+                            onClick={() => {
+                              setEditorHistoryPage((p) => Math.max(1, p - 1));
+                              window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                            }}
+                            className={editorHistoryPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                          />
+                        </PaginationItem>
+
+                        {getPaginationPages(editorHistoryPage, editorHistoryTotalPages).map((p, i) =>
+                          p === "ellipsis" ? (
+                            <PaginationItem key={`ellipsis-history-${i}`}>
+                              <PaginationEllipsis />
+                            </PaginationItem>
+                          ) : (
+                            <PaginationItem key={`history-${p}`}>
+                              <PaginationLink
+                                onClick={() => {
+                                  setEditorHistoryPage(p);
+                                  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                                }}
+                                isActive={editorHistoryPage === p}
+                                className="cursor-pointer"
+                              >
+                                {p}
+                              </PaginationLink>
+                            </PaginationItem>
+                          ),
+                        )}
+
+                        <PaginationItem>
+                          <PaginationNext
+                            onClick={() => {
+                              setEditorHistoryPage((p) => Math.min(editorHistoryTotalPages, p + 1));
+                              window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                            }}
+                            className={
+                              editorHistoryPage === editorHistoryTotalPages ? "pointer-events-none opacity-50" : "cursor-pointer"
+                            }
+                          />
+                        </PaginationItem>
+                      </PaginationContent>
+                    </Pagination>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Go to page</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={editorHistoryTotalPages}
+                        placeholder="Page"
+                        value={editorHistoryGoToInput}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === "") {
+                            setEditorHistoryGoToInput("");
+                            return;
+                          }
+                          const n = parseInt(raw, 10);
+                          if (Number.isNaN(n)) return;
+                          const clamped = Math.max(1, Math.min(editorHistoryTotalPages, n));
+                          setEditorHistoryGoToInput(String(clamped));
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            const n = parseInt(editorHistoryGoToInput, 10);
+                            if (!Number.isNaN(n)) {
+                              setEditorHistoryPage(Math.max(1, Math.min(editorHistoryTotalPages, n)));
+                              window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                              setEditorHistoryGoToInput("");
+                            }
+                          }
+                        }}
+                        className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        aria-label="Go to history page number"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9"
+                        onClick={() => {
+                          const n = parseInt(editorHistoryGoToInput, 10);
+                          if (!Number.isNaN(n)) {
+                            setEditorHistoryPage(Math.max(1, Math.min(editorHistoryTotalPages, n)));
+                            window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+                            setEditorHistoryGoToInput("");
+                          }
+                        }}
+                      >
+                        Go
+                      </Button>
+                    </div>
+                  </div>
                 )}
               </main>
               </div>

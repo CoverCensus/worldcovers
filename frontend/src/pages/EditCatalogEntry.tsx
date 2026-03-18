@@ -276,9 +276,19 @@ const EditCatalogEntry = () => {
         // so users don't have to clear default "Submitted by: ..." lines.
         setDescription(parsed.description || "");
         setReferences(parsed.citationReferences || "");
-        const letteringIdRaw = data.lettering_style_id ?? data.letteringStyleId ?? data.lettering_style?.lettering_style_id ?? data.lettering_style?.letteringStyleId;
-        const framingIdRaw = data.framing_style_id ?? data.framingStyleId ?? data.framing_style?.framing_style_id ?? data.framing_style?.framingStyleId;
-        const dateFormatIdRaw = data.date_format_id ?? data.dateFormatId ?? data.date_format?.date_format_id ?? data.date_format?.dateFormatId;
+        // API may return snake_case or camelCase (CamelCaseJSONRenderer); support both
+        const letteringIdRaw =
+          data.lettering_style_id ?? data.letteringStyleId
+          ?? data.lettering_style?.lettering_style_id ?? data.lettering_style?.letteringStyleId
+          ?? (data as any).letteringStyle?.lettering_style_id ?? (data as any).letteringStyle?.letteringStyleId;
+        const framingIdRaw =
+          data.framing_style_id ?? data.framingStyleId
+          ?? data.framing_style?.framing_style_id ?? data.framing_style?.framingStyleId
+          ?? (data as any).framingStyle?.framing_style_id ?? (data as any).framingStyle?.framingStyleId;
+        const dateFormatIdRaw =
+          data.date_format_id ?? data.dateFormatId
+          ?? data.date_format?.date_format_id ?? data.date_format?.dateFormatId
+          ?? (data as any).dateFormat?.date_format_id ?? (data as any).dateFormat?.dateFormatId;
         setLetteringId(letteringIdRaw != null ? String(letteringIdRaw) : "");
         setFramingId(framingIdRaw != null ? String(framingIdRaw) : "");
         setDateFormatId(dateFormatIdRaw != null ? String(dateFormatIdRaw) : "");
@@ -986,7 +996,7 @@ const EditCatalogEntry = () => {
 
                     <div className="space-y-2">
                       <Label>Image</Label>
-                      {existingImageUrl && imagePreviews.length === 0 && (
+                      {existingImageUrl && (
                         <div className="space-y-2">
                           <p className="text-sm text-muted-foreground">Current image</p>
                           <div className="rounded-lg border border-border overflow-hidden bg-muted inline-block max-w-sm">
@@ -996,12 +1006,12 @@ const EditCatalogEntry = () => {
                               className="max-h-48 w-full object-contain"
                             />
                           </div>
+                          {imagePreviews.length === 0 && (
+                            <p className="text-sm text-muted-foreground">
+                              Add more images below (optional).
+                            </p>
+                          )}
                         </div>
-                      )}
-                      {existingImageUrl && imagePreviews.length === 0 && (
-                        <p className="text-sm text-muted-foreground">
-                          Add more images below (optional).
-                        </p>
                       )}
                       <Label className={existingImageUrl ? "mt-4 block" : ""}>
                         {existingImageUrl ? "Add more images" : "Upload images (optional, multiple allowed)"}
