@@ -79,9 +79,9 @@ const App = () => (
             <Route
               path="/edit/:id"
               element={(
-                <RequireSuperuser>
+                <RequireAuth>
                   <EditCatalogEntry />
-                </RequireSuperuser>
+                </RequireAuth>
               )}
             />
             <Route

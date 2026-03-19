@@ -246,6 +246,48 @@ const ContributionDetail = () => {
     });
   }, [contribution?.id, contribution?.submitted_data]);
 
+  // Prefill editor Value from the existing catalog record when this is an edit-suggestion
+  // (linked postmark). MUST run before any early return — otherwise hook count changes (React #310).
+  useEffect(() => {
+    if (loading || error || !contribution) return;
+    const isPending = contribution.status === "pending";
+    const canReview = isStateEditor && isPending;
+    if (!canReview) return;
+    const postmarkIdRaw =
+      contribution.postmark_id ?? contribution.postmark ?? (contribution as unknown as Record<string, unknown>).postmarkId ?? null;
+    const postmarkIdResolved =
+      typeof postmarkIdRaw === "number"
+        ? postmarkIdRaw
+        : postmarkIdRaw != null && String(postmarkIdRaw).trim() !== ""
+          ? parseInt(String(postmarkIdRaw), 10)
+          : null;
+    if (postmarkIdResolved == null || Number.isNaN(postmarkIdResolved)) return;
+    if (value.trim() !== "") return;
+    let cancelled = false;
+    setPrefillingValue(true);
+    getPostmarkById(postmarkIdResolved)
+      .then((pm) => {
+        if (cancelled || !pm) return;
+        const firstVal = (pm as any)?.valuations?.[0];
+        const estimated =
+          firstVal?.estimatedValue ??
+          firstVal?.estimated_value ??
+          (pm as any)?.estimatedValue ??
+          (pm as any)?.estimated_value ??
+          null;
+        const num = typeof estimated === "number" ? estimated : estimated != null ? parseFloat(String(estimated)) : NaN;
+        if (!Number.isNaN(num) && num >= 0) {
+          setValue(String(num));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPrefillingValue(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, error, contribution, isStateEditor, value]);
+
   const saveEditorEdits = async () => {
     if (!contribution) return;
     const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
@@ -466,37 +508,6 @@ const ContributionDetail = () => {
     const s = v != null ? String(v).trim() : "";
     return s !== "" && s.toLowerCase() !== "unknown";
   };
-
-  // Prefill editor Value from the existing catalog record when this is an edit-suggestion
-  // (i.e., contribution is linked to an existing postmark).
-  useEffect(() => {
-    if (!canReview) return;
-    if (postmarkId == null) return;
-    if (value.trim() !== "") return;
-    let cancelled = false;
-    setPrefillingValue(true);
-    getPostmarkById(postmarkId)
-      .then((pm) => {
-        if (cancelled || !pm) return;
-        const firstVal = (pm as any)?.valuations?.[0];
-        const estimated =
-          firstVal?.estimatedValue ??
-          firstVal?.estimated_value ??
-          (pm as any)?.estimatedValue ??
-          (pm as any)?.estimated_value ??
-          null;
-        const num = typeof estimated === "number" ? estimated : estimated != null ? parseFloat(String(estimated)) : NaN;
-        if (!Number.isNaN(num) && num >= 0) {
-          setValue(String(num));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setPrefillingValue(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [canReview, postmarkId, value]);
 
   return (
     <div className="min-h-screen flex flex-col">

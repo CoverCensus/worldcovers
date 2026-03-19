@@ -214,8 +214,6 @@ const RecordDetail = () => {
   const fromDashboard = location.state?.fromDashboard;
   const fromSearch = location.state?.fromSearch;
 
-  const isSuperuser = !!user?.is_superuser;
-
   const handleBack = () => {
     if (fromDashboard) {
       navigate("/dashboard");
@@ -253,13 +251,13 @@ const RecordDetail = () => {
               <ArrowLeft className="mr-2 h-4 w-4" />
               {fromDashboard ? "Back to Dashboard" : "Back to Search"}
             </Button>
-            {/* Editor cannot directly edit postmarks from user suggestions; only "Suggest" is allowed. */}
-            {isSuperuser && (
+            {/* Logged-in contributors and editors suggest corrections; they go to the review queue (see submitForReview API). */}
+            {user ? (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() =>
-                  navigate(`/edit/${record.id}`, {
+                  navigate(`/edit/${record.id}?mode=suggestion`, {
                     state: {
                       fromSearch,
                       fromDashboard,
@@ -270,9 +268,9 @@ const RecordDetail = () => {
                 }
               >
                 <Pencil className="mr-2 h-4 w-4" />
-                Suggest
+                Suggest edit
               </Button>
-            )}
+            ) : null}
           </div>
 
           {/* Main Content */}

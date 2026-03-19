@@ -132,6 +132,17 @@ def _get_user_role(user):
     return "contributor"
 
 
+def _truthy_request_flag(value):
+    """True for JSON/boolean true or string 'true'/'1'/'yes'/'on' (case-insensitive)."""
+    if value is True:
+        return True
+    if value is False or value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return False
+
+
 def _build_user_payload(user):
     """Build the user dict for login/me responses (id, username, email, is_staff, is_superuser, role, assigned_locations)."""
     role = _get_user_role(user)
@@ -1403,6 +1414,10 @@ class ContributionView(APIView):
         except (TypeError, ValueError):
             edit_contribution_id = None
 
+        submit_for_review = _truthy_request_flag(
+            data.get("submitForReview") or data.get("submit_for_review")
+        )
+
         state = (data.get("state") or "").strip()
         town = (data.get("town") or "").strip()
         first_seen = (data.get("firstSeen") or "").strip()
@@ -1653,10 +1668,13 @@ class ContributionView(APIView):
 
         if edit_postmark_id is not None:
             # Suggested edits to an existing catalog entry (S6).
-            # - Contributors: create a Contribution ticket for expert review.
-            # - State Editors / superusers: apply directly to the catalog.
+            # - Contributors: always create/update a Contribution for expert review.
+            # - submitForReview: State Editors / superusers use the same review queue
+            #   (e.g. "Suggest" from record detail) instead of applying directly.
+            # - Otherwise State Editors / superusers: apply directly to the catalog.
             role = _get_user_role(user)
-            if role == "contributor" and not getattr(user, "is_superuser", False):
+            is_contributor_only = role == "contributor" and not getattr(user, "is_superuser", False)
+            if is_contributor_only or submit_for_review:
                 try:
                     submitted_data = {
                         "state": payload.get("state", ""),
