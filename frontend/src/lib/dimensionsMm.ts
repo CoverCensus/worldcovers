@@ -4,6 +4,40 @@
 
 const MM_PAIR_RE = /^\d{1,6}(\.\d{1,2})?$/;
 
+/**
+ * Parse legacy free-text size (PostmarkSize.size_notes, or old ``dimensions`` field)
+ * into width × height mm strings. Returns null if not confidently parseable.
+ */
+function legacyDimensionTextToWidthHeight(text: string): { width: string; height: string } | null {
+  const raw = String(text ?? "").trim();
+  if (!raw) return null;
+  const noMm = raw.replace(/\bmm\b/gi, " ").replace(/\s+/g, " ").trim();
+
+  const strictPair = noMm.match(
+    /^(\d{1,6}(?:\.\d{1,2})?)\s*[x×]\s*(\d{1,6}(?:\.\d{1,2})?)$/i
+  );
+  if (strictPair) {
+    return { width: strictPair[1], height: strictPair[2] };
+  }
+
+  // e.g. "34 x 28 " with only digits / separators (no trailing prose)
+  const onlyDimChars = /^[\d.\s×x]+$/i.test(noMm);
+  if (onlyDimChars) {
+    const loose = noMm.match(
+      /(\d{1,6}(?:\.\d{1,2})?)\s*[x×]\s*(\d{1,6}(?:\.\d{1,2})?)/i
+    );
+    if (loose) {
+      return { width: loose[1], height: loose[2] };
+    }
+  }
+
+  if (/^\d{1,6}(?:\.\d{1,2})?$/.test(noMm)) {
+    return { width: noMm, height: noMm };
+  }
+
+  return null;
+}
+
 /** Allow digits and one decimal point; cap integer part at 6 digits, fractional at 2. */
 export function sanitizeMmInput(raw: string): string {
   let s = raw.replace(/[^\d.]/g, "");
@@ -55,7 +89,8 @@ export function submittedDataToWidthHeightStrings(sd: Record<string, unknown> | 
   const h = String(sd.height_mm ?? sd.heightMm ?? "").trim();
   if (w || h) return { width: w, height: h };
   const leg = String(sd.dimensions ?? "").trim();
-  if (/^\d{1,4}$/.test(leg)) return { width: leg, height: leg };
+  const fromLeg = legacyDimensionTextToWidthHeight(leg);
+  if (fromLeg) return fromLeg;
   return { width: "", height: "" };
 }
 
@@ -88,6 +123,7 @@ export function catalogSizeToWidthHeightStrings(firstSize: Record<string, unknow
     return { width: fmt(wn), height: fmt(hn) };
   }
   const notes = String(firstSize.size_notes ?? firstSize.sizeNotes ?? "").trim();
-  if (/^\d{1,4}$/.test(notes)) return { width: notes, height: notes };
+  const fromNotes = legacyDimensionTextToWidthHeight(notes);
+  if (fromNotes) return fromNotes;
   return { width: "", height: "" };
 }

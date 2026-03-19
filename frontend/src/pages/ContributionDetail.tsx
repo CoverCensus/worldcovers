@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { ArrowLeft, Loader2, CheckCircle, XCircle, MessageSquare, ExternalLink, Pencil } from "lucide-react";
 import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
@@ -17,7 +19,44 @@ import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious
 import { getLetteringStyles, type LetteringStyleOption } from "@/services/letteringStyles";
 import { getFramingStyles, type FramingStyleOption } from "@/services/framingStyles";
 import { getDateFormats, type DateFormatOption } from "@/services/dateFormats";
-import { sanitizeMmInput, submittedDataToWidthHeightStrings } from "@/lib/dimensionsMm";
+import { sanitizeMmInput, submittedDataToWidthHeightStrings, validateMmPair } from "@/lib/dimensionsMm";
+import { getAdministrativeUnits } from "@/services/administrativeUnits";
+import { getPostalFacilities, type PostalFacilityOption } from "@/services/postalFacilities";
+import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
+import { getColors, type ColorOption } from "@/services/colors";
+
+const STATE_OTHER_VALUE = "__other__";
+const COLOR_OTHER_VALUE = "__other__";
+const TYPE_OTHER_VALUE = "__other__";
+const MIN_YEAR = 1661;
+const CURRENT_YEAR = new Date().getFullYear();
+
+const RARITY_OPTIONS = [
+  { value: "Common", label: "Common" },
+  { value: "Scarce", label: "Scarce" },
+  { value: "Rare", label: "Rare" },
+  { value: "Very Rare", label: "Very Rare" },
+];
+
+const MANUSCRIPT_OPTIONS = [
+  { value: "Yes", label: "Yes" },
+  { value: "No", label: "No" },
+];
+
+function getYearError(value: string, opts: { required: boolean; label: string }): string | null {
+  const v = value.trim();
+  if (!v) {
+    return opts.required ? `${opts.label} is required` : null;
+  }
+  if (v.length !== 4) {
+    return `${opts.label} must be 4 digits`;
+  }
+  const n = Number(v);
+  if (Number.isNaN(n) || n < MIN_YEAR || n > CURRENT_YEAR) {
+    return `${opts.label} must be between ${MIN_YEAR} and ${CURRENT_YEAR}`;
+  }
+  return null;
+}
 
 function getCsrfTokenFromCookie(): string | null {
   if (typeof document === "undefined") return null;
@@ -106,14 +145,43 @@ const ContributionDetail = () => {
   const [carouselCurrent, setCarouselCurrent] = useState(0);
   const [carouselCount, setCarouselCount] = useState(0);
   const [prefillingValue, setPrefillingValue] = useState(false);
-  // Editor direct-edit: editable copy of submitted_data fields (merged after save)
+  const [savingEdits, setSavingEdits] = useState(false);
+  const [stateOptions, setStateOptions] = useState<{ value: string; label: string }[]>([]);
+  const [loadingStates, setLoadingStates] = useState(false);
+  const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
+  const [postalFacilities, setPostalFacilities] = useState<PostalFacilityOption[]>([]);
+  const [loadingTowns, setLoadingTowns] = useState(false);
+  const [townOptionsError, setTownOptionsError] = useState<string | null>(null);
+  const [typeOptions, setTypeOptions] = useState<PostmarkShapeOption[]>([]);
+  const [loadingTypes, setLoadingTypes] = useState(false);
+  const [typeOptionsError, setTypeOptionsError] = useState<string | null>(null);
+  const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
+  const [catalogOptionsLoading, setCatalogOptionsLoading] = useState(false);
+  const [editorFieldErrors, setEditorFieldErrors] = useState<{
+    state?: string;
+    town?: string;
+    firstSeen?: string;
+    lastSeen?: string;
+    type?: string;
+    color?: string;
+    width_mm?: string;
+    height_mm?: string;
+    lettering?: string;
+    framing?: string;
+    dateFormat?: string;
+  }>({});
+
+  // Editor direct-edit: same field model as Edit Catalog Entry
   const [editorEdits, setEditorEdits] = useState<{
     state: string;
+    stateOther: string;
     town: string;
     firstSeen: string;
     lastSeen: string;
     type: string;
+    typeOther: string;
     color: string;
+    colorOther: string;
     width_mm: string;
     height_mm: string;
     manuscript: string;
@@ -124,18 +192,34 @@ const ContributionDetail = () => {
     framing_style_id: string;
     date_format_id: string;
   }>({
-    state: "", town: "", firstSeen: "", lastSeen: "", type: "", color: "",
-    width_mm: "", height_mm: "", manuscript: "", description: "", references: "", rarity: "",
-    lettering_style_id: "", framing_style_id: "", date_format_id: "",
+    state: "",
+    stateOther: "",
+    town: "",
+    firstSeen: "",
+    lastSeen: "",
+    type: "",
+    typeOther: "",
+    color: "",
+    colorOther: "",
+    width_mm: "",
+    height_mm: "",
+    manuscript: "",
+    description: "",
+    references: "",
+    rarity: "",
+    lettering_style_id: "",
+    framing_style_id: "",
+    date_format_id: "",
   });
-  const [savingEdits, setSavingEdits] = useState(false);
-
   const fromDashboard = location.state?.fromDashboard === true;
   const isStateEditor = user?.role === "state_editor" || user?.is_superuser;
+  /** True if the logged-in user is the person who submitted this contribution (edit/review UI is for other editors only). */
   const isContributor =
     !!user &&
     !!contribution &&
-    (contribution.contributor_username === user.username || contribution.contributor_username === user.email);
+    (contribution.contributor_id === user.id ||
+      contribution.contributor_username === user.username ||
+      contribution.contributor_username === user.email);
 
   useEffect(() => {
     const contributionId = id ? parseInt(String(id), 10) : null;
@@ -207,15 +291,22 @@ const ContributionDetail = () => {
     };
   }, [carouselApi]);
 
-  // Fetch lettering/framing/date format options to show names instead of IDs in Submitted data
+  // Lettering / framing / date format + colors (catalog options)
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getLetteringStyles(), getFramingStyles(), getDateFormats()])
-      .then(([lettering, framing, dateFormat]) => {
+    setCatalogOptionsLoading(true);
+    Promise.all([
+      getLetteringStyles(),
+      getFramingStyles(),
+      getDateFormats(),
+      getColors().catch(() => [] as ColorOption[]),
+    ])
+      .then(([lettering, framing, dateFormat, colors]) => {
         if (!cancelled) {
           setLetteringOptions(lettering);
           setFramingOptions(framing);
           setDateFormatOptions(dateFormat);
+          setColorOptions(colors.length ? colors : [{ id: 0, name: "Black", value: "" }]);
         }
       })
       .catch(() => {
@@ -223,44 +314,138 @@ const ContributionDetail = () => {
           setLetteringOptions([]);
           setFramingOptions([]);
           setDateFormatOptions([]);
+          setColorOptions([{ id: 0, name: "Black", value: "" }]);
         }
+      })
+      .finally(() => {
+        if (!cancelled) setCatalogOptionsLoading(false);
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Sync editor-editable fields from contribution when it loads (for editors)
+  // States (assigned only — same as Edit Catalog Entry for editors)
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingStates(true);
+    setStateOptionsError(null);
+    getAdministrativeUnits(true)
+      .then((opts) => {
+        if (!cancelled) setStateOptions(opts);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setStateOptionsError(err instanceof Error ? err.message : "Failed to load states");
+          setStateOptions([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingStates(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Towns / postal facilities
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingTowns(true);
+    setTownOptionsError(null);
+    getPostalFacilities()
+      .then((rows) => {
+        if (!cancelled) setPostalFacilities(rows);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setTownOptionsError(err instanceof Error ? err.message : "Failed to load towns");
+          setPostalFacilities([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTowns(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Postmark types
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingTypes(true);
+    setTypeOptionsError(null);
+    getPostmarkShapes()
+      .then((rows) => {
+        if (!cancelled) setTypeOptions(rows);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setTypeOptionsError(err instanceof Error ? err.message : "Failed to load types");
+          setTypeOptions([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTypes(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Sync editor form from submitted_data when contribution loads (and when type/color options arrive for "Other" mapping)
   useEffect(() => {
     if (!contribution?.submitted_data) return;
     const sd = contribution.submitted_data as Record<string, unknown>;
     const dr = String(sd.date_range ?? sd.dateRange ?? "").trim();
     const [firstSeen = "", lastSeen = ""] = dr ? dr.split(/[-–—]/).map((s) => s.trim()) : ["", ""];
     const wh = submittedDataToWidthHeightStrings(sd);
+    const rawType = String(sd.type ?? "").trim();
+    const rawColor = String(sd.color ?? "").trim();
+    let typeSel = rawType;
+    let typeOth = "";
+    if (typeOptions.length > 0 && rawType && !typeOptions.some((t) => t.name === rawType)) {
+      typeSel = TYPE_OTHER_VALUE;
+      typeOth = rawType;
+    }
+    let colorSel = rawColor;
+    let colorOth = "";
+    if (colorOptions.length > 0 && rawColor && !colorOptions.some((c) => c.name === rawColor)) {
+      colorSel = COLOR_OTHER_VALUE;
+      colorOth = rawColor;
+    }
     setEditorEdits({
       state: String(sd.state ?? "").trim(),
+      stateOther: "",
       town: String(sd.town ?? "").trim(),
       firstSeen: firstSeen || "",
       lastSeen: lastSeen || "",
-      type: String(sd.type ?? "").trim(),
-      color: String(sd.color ?? "").trim(),
+      type: typeSel,
+      typeOther: typeOth,
+      color: colorSel,
+      colorOther: colorOth,
       width_mm: wh.width,
       height_mm: wh.height,
       manuscript: String(sd.manuscript ?? "").trim(),
       description: String(sd.description ?? "").trim(),
       references: String(sd.references ?? "").trim(),
       rarity: String(sd.rarity ?? "").trim(),
-      lettering_style_id: sd.lettering_style_id != null || sd.letteringStyleId != null
-        ? String(sd.lettering_style_id ?? sd.letteringStyleId ?? "")
-        : "",
-      framing_style_id: sd.framing_style_id != null || sd.framingStyleId != null
-        ? String(sd.framing_style_id ?? sd.framingStyleId ?? "")
-        : "",
-      date_format_id: sd.date_format_id != null || sd.dateFormatId != null
-        ? String(sd.date_format_id ?? sd.dateFormatId ?? "")
-        : "",
+      lettering_style_id:
+        sd.lettering_style_id != null || sd.letteringStyleId != null
+          ? String(sd.lettering_style_id ?? sd.letteringStyleId ?? "")
+          : "",
+      framing_style_id:
+        sd.framing_style_id != null || sd.framingStyleId != null
+          ? String(sd.framing_style_id ?? sd.framingStyleId ?? "")
+          : "",
+      date_format_id:
+        sd.date_format_id != null || sd.dateFormatId != null
+          ? String(sd.date_format_id ?? sd.dateFormatId ?? "")
+          : "",
     });
-  }, [contribution?.id, contribution?.submitted_data]);
+    setEditorFieldErrors({});
+  }, [contribution?.id, contribution?.submitted_data, typeOptions, colorOptions]);
 
   // Prefill editor Value from the existing catalog record when this is an edit-suggestion
   // (linked postmark). MUST run before any early return — otherwise hook count changes (React #310).
@@ -269,9 +454,10 @@ const ContributionDetail = () => {
     const isPending = contribution.status === "pending";
     const isSubmitter =
       !!user &&
-      (contribution.contributor_username === user.username || contribution.contributor_username === user.email);
-    const canReview =
-      isStateEditor && isPending && !!user && (user.is_superuser === true || !isSubmitter);
+      (contribution.contributor_id === user.id ||
+        contribution.contributor_username === user.username ||
+        contribution.contributor_username === user.email);
+    const canReview = isStateEditor && isPending && !!user && !isSubmitter;
     if (!canReview) return;
     const postmarkIdRaw =
       contribution.postmark_id ?? contribution.postmark ?? (contribution as unknown as Record<string, unknown>).postmarkId ?? null;
@@ -308,14 +494,116 @@ const ContributionDetail = () => {
     };
   }, [loading, error, contribution, isStateEditor, value, user]);
 
-  const saveEditorEdits = async () => {
-    if (!contribution) return;
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      toast({ title: "Configuration error", description: "VITE_API_URL is not set.", variant: "destructive" });
-      return;
+  const effectiveStateKey = useMemo(() => {
+    return editorEdits.state === STATE_OTHER_VALUE
+      ? editorEdits.stateOther.trim().toLowerCase()
+      : editorEdits.state.trim().toLowerCase();
+  }, [editorEdits.state, editorEdits.stateOther]);
+
+  const townOptions = useMemo(() => {
+    if (!effectiveStateKey) return [];
+    const seen = new Set<string>();
+    const towns: { value: string; label: string }[] = [];
+    for (const facility of postalFacilities) {
+      const facilityState = (facility.state || "").trim().toLowerCase();
+      const facilityTown = (facility.town || facility.name || "").trim();
+      if (!facilityTown || facilityState !== effectiveStateKey) continue;
+      const key = facilityTown.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      towns.push({ value: facilityTown, label: facilityTown });
     }
-    setSavingEdits(true);
+    towns.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+    return towns;
+  }, [postalFacilities, effectiveStateKey]);
+
+  const stateSelectOptions = useMemo(() => {
+    const base = [...stateOptions, { value: STATE_OTHER_VALUE, label: "Other (type below)" }];
+    const s = editorEdits.state.trim();
+    if (s && s !== STATE_OTHER_VALUE && !base.some((o) => o.value === s)) {
+      return [{ value: s, label: s }, ...base];
+    }
+    return base;
+  }, [stateOptions, editorEdits.state]);
+
+  const townSelectOptions = useMemo(() => {
+    const t = editorEdits.town.trim();
+    const base = townOptions;
+    if (t && !base.some((o) => o.value === t)) {
+      return [{ value: t, label: `${t} (from submission)` }, ...base];
+    }
+    return base;
+  }, [townOptions, editorEdits.town]);
+
+  /** Validate editor fields (same rules as Edit Catalog Entry) and build PATCH body; returns null if invalid. */
+  const buildValidatedEditorPatch = (): Record<string, unknown> | null => {
+    const stateVal =
+      editorEdits.state === STATE_OTHER_VALUE ? editorEdits.stateOther.trim() : editorEdits.state.trim();
+    const townVal = editorEdits.town.trim();
+    const typeVal = editorEdits.type === TYPE_OTHER_VALUE ? editorEdits.typeOther.trim() : editorEdits.type.trim();
+    const colorVal =
+      editorEdits.color === COLOR_OTHER_VALUE ? editorEdits.colorOther.trim() : editorEdits.color.trim();
+
+    const errors: typeof editorFieldErrors = {};
+    if (!stateVal) errors.state = "State is required";
+    if (!townVal) errors.town = "Town/City is required";
+    const fe = getYearError(editorEdits.firstSeen, { required: true, label: "First Seen Year" });
+    if (fe) errors.firstSeen = fe;
+    const le = getYearError(editorEdits.lastSeen, { required: false, label: "Last Seen Year" });
+    if (le) errors.lastSeen = le;
+    if (!typeVal) errors.type = "Postmark type is required";
+    if (!colorVal) errors.color = "Color is required";
+    if (!editorEdits.lettering_style_id) errors.lettering = "Lettering style is required";
+    if (!editorEdits.framing_style_id) errors.framing = "Framing style is required";
+    if (!editorEdits.date_format_id) errors.dateFormat = "Date format is required";
+    const mmErr = validateMmPair(editorEdits.width_mm, editorEdits.height_mm);
+    if (mmErr.width) errors.width_mm = mmErr.width;
+    if (mmErr.height) errors.height_mm = mmErr.height;
+
+    if (Object.keys(errors).length > 0) {
+      setEditorFieldErrors(errors);
+      return null;
+    }
+    setEditorFieldErrors({});
+
+    const first = editorEdits.firstSeen.trim();
+    const last = editorEdits.lastSeen.trim();
+
+    return {
+      state: stateVal,
+      town: townVal,
+      firstSeen: first,
+      lastSeen: last,
+      type: typeVal,
+      color: colorVal,
+      width_mm: editorEdits.width_mm.trim() || undefined,
+      height_mm: editorEdits.height_mm.trim() || undefined,
+      manuscript: editorEdits.manuscript.trim() || undefined,
+      description: editorEdits.description.trim() || undefined,
+      references: editorEdits.references.trim() || undefined,
+      rarity: editorEdits.rarity.trim() || undefined,
+      lettering_style_id: editorEdits.lettering_style_id
+        ? parseInt(editorEdits.lettering_style_id, 10)
+        : undefined,
+      framing_style_id: editorEdits.framing_style_id
+        ? parseInt(editorEdits.framing_style_id, 10)
+        : undefined,
+      date_format_id: editorEdits.date_format_id ? parseInt(editorEdits.date_format_id, 10) : undefined,
+    };
+  };
+
+  /** Persists editor submission-data changes to the server (required before approve applies them). */
+  const persistEditorEdits = async (apiBase: string): Promise<boolean> => {
+    if (!contribution) return false;
+    const patch = buildValidatedEditorPatch();
+    if (!patch) {
+      toast({
+        title: "Fix form errors",
+        description: "Correct the highlighted fields before saving or approving.",
+        variant: "destructive",
+      });
+      return false;
+    }
     const csrfToken = getCsrfTokenFromCookie();
     const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
     if (csrfToken) headers["X-CSRFToken"] = csrfToken;
@@ -324,23 +612,7 @@ const ContributionDetail = () => {
         method: "PATCH",
         credentials: "include",
         headers,
-        body: JSON.stringify({
-          state: editorEdits.state || undefined,
-          town: editorEdits.town || undefined,
-          firstSeen: editorEdits.firstSeen || undefined,
-          lastSeen: editorEdits.lastSeen || undefined,
-          type: editorEdits.type || undefined,
-          color: editorEdits.color || undefined,
-          width_mm: editorEdits.width_mm.trim() || undefined,
-          height_mm: editorEdits.height_mm.trim() || undefined,
-          manuscript: editorEdits.manuscript || undefined,
-          description: editorEdits.description || undefined,
-          references: editorEdits.references || undefined,
-          rarity: editorEdits.rarity || undefined,
-          lettering_style_id: editorEdits.lettering_style_id ? parseInt(editorEdits.lettering_style_id, 10) : undefined,
-          framing_style_id: editorEdits.framing_style_id ? parseInt(editorEdits.framing_style_id, 10) : undefined,
-          date_format_id: editorEdits.date_format_id ? parseInt(editorEdits.date_format_id, 10) : undefined,
-        }),
+        body: JSON.stringify(patch),
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
@@ -365,13 +637,32 @@ const ContributionDetail = () => {
         postmark: data.postmark ?? data.postmark_id ?? data.postmarkId ?? null,
       };
       setContribution(normalized);
-      toast({ title: "Edits saved", description: "Submission data updated. Approve to apply to the catalog." });
+      return true;
     } catch (err) {
       toast({
-        title: "Could not save edits",
+        title: "Could not save submission edits",
         description: err instanceof Error ? err.message : "Please try again.",
         variant: "destructive",
       });
+      return false;
+    }
+  };
+
+  const saveEditorEdits = async () => {
+    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
+    if (!apiBase) {
+      toast({ title: "Configuration error", description: "VITE_API_URL is not set.", variant: "destructive" });
+      return;
+    }
+    setSavingEdits(true);
+    try {
+      const ok = await persistEditorEdits(apiBase);
+      if (ok) {
+        toast({
+          title: "Edits saved",
+          description: "Submission data updated. Approve when ready to apply to the catalog.",
+        });
+      }
     } finally {
       setSavingEdits(false);
     }
@@ -405,6 +696,13 @@ const ContributionDetail = () => {
     }
 
     setSubmitting(true);
+    if (kind === "approve") {
+      const persisted = await persistEditorEdits(apiBase);
+      if (!persisted) {
+        setSubmitting(false);
+        return;
+      }
+    }
     const csrfToken = getCsrfTokenFromCookie();
     const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
     if (csrfToken) headers["X-CSRFToken"] = csrfToken;
@@ -521,8 +819,7 @@ const ContributionDetail = () => {
   const images = imageMetaList;
 
   const isPending = contribution.status === "pending";
-  const canReview =
-    isStateEditor && isPending && !!user && (user.is_superuser === true || !isContributor);
+  const canReview = isStateEditor && isPending && !!user && !isContributor;
   const showPeerReviewNotice = isStateEditor && isPending && isContributor && !user?.is_superuser;
   const postmarkIdRaw =
     contribution.postmark_id ?? contribution.postmark ?? (contribution as unknown as Record<string, unknown>).postmarkId ?? null;
@@ -639,83 +936,88 @@ const ContributionDetail = () => {
                 ) : null}
               </div>
 
-              {/* Single Submitted data card — all contributor data in one place */}
-              <Card className="shadow-archival-md border-primary/10">
-                <CardHeader>
-                  <CardTitle className="font-heading text-lg">Submitted data</CardTitle>
-                  <p className="text-sm text-muted-foreground">
-                    Data from the contributor for review. Use this to approve, reject, or request revision.
-                  </p>
-                </CardHeader>
-                <CardContent>
-                  {Object.keys(sd).length === 0 ? (
-                    <p className="text-sm text-muted-foreground py-2">
-                      No submitted data returned for this contribution. If you expect to see it, the record may have been created before this field was stored, or there may be an API issue.
+              {/* Read-only submitted fields: contributors / non-editors only (editors use prefilled "Edit submission data") */}
+              {!canReview && (
+                <Card className="shadow-archival-md border-primary/10">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">Submitted data</CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      {isContributor
+                        ? "What you submitted. An editor will review this and add a catalog value and comment."
+                        : "Snapshot of fields stored on this contribution."}
                     </p>
-                  ) : (
-                    <dl className="space-y-0 text-sm">
-                      {Object.entries(sd)
-                        .filter(([k]) => {
-                          if (k === "image_meta") return false;
-                          if (k === "image_metas" || k === "imageMetas") return false;
-                          const hasMm =
-                            String(sd.width_mm ?? sd.widthMm ?? "").trim() !== "" ||
-                            String(sd.height_mm ?? sd.heightMm ?? "").trim() !== "";
-                          if (k === "dimensions" && hasMm) return false;
-                          return true;
-                        })
-                        .map(([key, val]) => {
-                          const label = key
-                            .replace(/_/g, " ")
-                            .replace(/\b\w/g, (c) => c.toUpperCase())
-                            .replace(/Id\b/, "") // "Lettering Style Id" -> "Lettering Style"
-                            .replace(/\s+/g, " ")
-                            .trim();
-                          let display: React.ReactNode = val == null ? "—" : String(val);
-                          if (key === "image_meta" && val != null && typeof val === "object") {
-                            const meta = val as { storage_filename?: string; original_filename?: string };
-                            display = (
-                              <span className="text-muted-foreground">
-                                {meta.original_filename ?? meta.storage_filename ?? "—"}
-                              </span>
+                  </CardHeader>
+                  <CardContent>
+                    {Object.keys(sd).length === 0 ? (
+                      <p className="text-sm text-muted-foreground py-2">
+                        No submitted data returned for this contribution. If you expect to see it, the record may have been created before this field was stored, or there may be an API issue.
+                      </p>
+                    ) : (
+                      <dl className="space-y-0 text-sm">
+                        {Object.entries(sd)
+                          .filter(([k]) => {
+                            if (k === "image_meta") return false;
+                            if (k === "image_metas" || k === "imageMetas") return false;
+                            const hasMm =
+                              String(sd.width_mm ?? sd.widthMm ?? "").trim() !== "" ||
+                              String(sd.height_mm ?? sd.heightMm ?? "").trim() !== "";
+                            if (k === "dimensions" && hasMm) return false;
+                            if (k === "original_postmark_id" || k === "originalPostmarkId") return false;
+                            return true;
+                          })
+                          .map(([key, val]) => {
+                            const label = key
+                              .replace(/_/g, " ")
+                              .replace(/\b\w/g, (c) => c.toUpperCase())
+                              .replace(/Id\b/, "")
+                              .replace(/\s+/g, " ")
+                              .trim();
+                            let display: React.ReactNode = val == null ? "—" : String(val);
+                            if (key === "image_meta" && val != null && typeof val === "object") {
+                              const meta = val as { storage_filename?: string; original_filename?: string };
+                              display = (
+                                <span className="text-muted-foreground">
+                                  {meta.original_filename ?? meta.storage_filename ?? "—"}
+                                </span>
+                              );
+                            } else if (key === "lettering_style_id" || key === "letteringStyleId") {
+                              const numVal = typeof val === "number" ? val : typeof val === "string" ? parseInt(val, 10) : NaN;
+                              if (!Number.isNaN(numVal)) {
+                                const opt = letteringOptions.find((o) => o.id === numVal);
+                                display = opt ? opt.name : String(val);
+                              }
+                            } else if (key === "framing_style_id" || key === "framingStyleId") {
+                              const numVal = typeof val === "number" ? val : typeof val === "string" ? parseInt(val, 10) : NaN;
+                              if (!Number.isNaN(numVal)) {
+                                const opt = framingOptions.find((o) => o.id === numVal);
+                                display = opt ? opt.name : String(val);
+                              }
+                            } else if (key === "date_format_id" || key === "dateFormatId") {
+                              const numVal = typeof val === "number" ? val : typeof val === "string" ? parseInt(val, 10) : NaN;
+                              if (!Number.isNaN(numVal)) {
+                                const opt = dateFormatOptions.find((o) => o.id === numVal);
+                                display = opt ? opt.name : String(val);
+                              }
+                            } else if (typeof val === "object" && val !== null) {
+                              display = JSON.stringify(val);
+                            }
+                            return (
+                              <div
+                                key={key}
+                                className="flex justify-between py-2 border-b border-border last:border-0 gap-4"
+                              >
+                                <dt className="text-muted-foreground font-medium shrink-0">{label}</dt>
+                                <dd className="text-foreground break-all text-right">{display}</dd>
+                              </div>
                             );
-                          } else if (key === "lettering_style_id" || key === "letteringStyleId") {
-                            const numVal = typeof val === "number" ? val : typeof val === "string" ? parseInt(val, 10) : NaN;
-                            if (!Number.isNaN(numVal)) {
-                              const opt = letteringOptions.find((o) => o.id === numVal);
-                              display = opt ? opt.name : String(val);
-                            }
-                          } else if (key === "framing_style_id" || key === "framingStyleId") {
-                            const numVal = typeof val === "number" ? val : typeof val === "string" ? parseInt(val, 10) : NaN;
-                            if (!Number.isNaN(numVal)) {
-                              const opt = framingOptions.find((o) => o.id === numVal);
-                              display = opt ? opt.name : String(val);
-                            }
-                          } else if (key === "date_format_id" || key === "dateFormatId") {
-                            const numVal = typeof val === "number" ? val : typeof val === "string" ? parseInt(val, 10) : NaN;
-                            if (!Number.isNaN(numVal)) {
-                              const opt = dateFormatOptions.find((o) => o.id === numVal);
-                              display = opt ? opt.name : String(val);
-                            }
-                          } else if (typeof val === "object" && val !== null) {
-                            display = JSON.stringify(val);
-                          }
-                          return (
-                            <div
-                              key={key}
-                              className="flex justify-between py-2 border-b border-border last:border-0 gap-4"
-                            >
-                              <dt className="text-muted-foreground font-medium shrink-0">{label}</dt>
-                              <dd className="text-foreground break-all text-right">{display}</dd>
-                            </div>
-                          );
-                        })}
-                    </dl>
-                  )}
-                </CardContent>
-              </Card>
+                          })}
+                      </dl>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
-              {/* Editor: direct edit of submission data (applied to postmark on approve) */}
+              {/* Editor: same controls as Edit Catalog Entry — saved via PATCH or on Approve */}
               {canReview && (
                 <Card className="shadow-archival-md border-primary/15">
                   <CardHeader>
@@ -724,190 +1026,425 @@ const ContributionDetail = () => {
                       Edit submission data
                     </CardTitle>
                     <p className="text-sm text-muted-foreground">
-                      Change any fields below; these values will be applied to the catalog when you approve. Save edits before approving.
+                      Same fields as <strong>Edit Catalog Entry</strong>. Save edits before approving, or approval will save automatically after validation.
                     </p>
                   </CardHeader>
-                  <CardContent className="space-y-4">
+                  <CardContent className="space-y-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="contrib-edit-state">
+                        State <span className="text-destructive">*</span>
+                      </Label>
+                      <SearchableSelect
+                        id="contrib-edit-state"
+                        value={editorEdits.state}
+                        onValueChange={(v) => {
+                          setEditorEdits((p) => ({ ...p, state: v }));
+                          setEditorFieldErrors((prev) => ({ ...prev, state: undefined }));
+                        }}
+                        placeholder="Select state..."
+                        options={stateSelectOptions}
+                        loading={loadingStates}
+                        error={!!stateOptionsError}
+                        errorMessage={stateOptionsError ?? "Failed to load states"}
+                        searchPlaceholder="Search states..."
+                        emptyMessage="No state found."
+                        aria-label="State"
+                        disabled={submitting || savingEdits}
+                        triggerClassName={editorFieldErrors.state ? "border-destructive" : ""}
+                      />
+                      {editorFieldErrors.state && (
+                        <p className="text-sm text-destructive">{editorFieldErrors.state}</p>
+                      )}
+                      {editorEdits.state === STATE_OTHER_VALUE && (
+                        <Input
+                          id="contrib-edit-state-other"
+                          placeholder="e.g. Virginia Territory"
+                          value={editorEdits.stateOther}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, stateOther: e.target.value }))}
+                          className="mt-2"
+                          disabled={submitting || savingEdits}
+                          aria-label="State (other)"
+                        />
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="contrib-edit-town">
+                        Town/City <span className="text-destructive">*</span>
+                      </Label>
+                      <SearchableSelect
+                        id="contrib-edit-town"
+                        value={editorEdits.town}
+                        onValueChange={(v) => {
+                          setEditorEdits((p) => ({ ...p, town: v }));
+                          setEditorFieldErrors((prev) => ({ ...prev, town: undefined }));
+                        }}
+                        placeholder={
+                          editorEdits.state || editorEdits.state === STATE_OTHER_VALUE
+                            ? "Select town/city..."
+                            : "Select a state first"
+                        }
+                        options={townSelectOptions}
+                        loading={loadingTowns}
+                        error={!!townOptionsError}
+                        errorMessage={
+                          townOptionsError ??
+                          (editorEdits.state ? "Failed to load towns" : "Select a state first")
+                        }
+                        searchPlaceholder="Search towns..."
+                        emptyMessage={
+                          effectiveStateKey ? "No towns found for this state." : "Select a state first."
+                        }
+                        aria-label="Town or city"
+                        disabled={
+                          submitting ||
+                          savingEdits ||
+                          (!effectiveStateKey && editorEdits.state !== STATE_OTHER_VALUE) ||
+                          townSelectOptions.length === 0
+                        }
+                        triggerClassName={editorFieldErrors.town ? "border-destructive" : ""}
+                      />
+                      {editorFieldErrors.town && (
+                        <p className="text-sm text-destructive">{editorFieldErrors.town}</p>
+                      )}
+                    </div>
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="edit-state">State</Label>
+                        <Label htmlFor="contrib-edit-firstSeen">
+                          First Seen Year <span className="text-destructive">*</span>
+                        </Label>
                         <Input
-                          id="edit-state"
-                          value={editorEdits.state}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, state: e.target.value }))}
-                          placeholder="State"
-                          disabled={savingEdits}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-town">Town</Label>
-                        <Input
-                          id="edit-town"
-                          value={editorEdits.town}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, town: e.target.value }))}
-                          placeholder="Town"
-                          disabled={savingEdits}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-firstSeen">First seen (year)</Label>
-                        <Input
-                          id="edit-firstSeen"
+                          id="contrib-edit-firstSeen"
+                          type="text"
+                          inputMode="numeric"
+                          placeholder={String(MIN_YEAR)}
                           value={editorEdits.firstSeen}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, firstSeen: e.target.value }))}
-                          placeholder="e.g. 1990"
-                          disabled={savingEdits}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                            setEditorEdits((p) => ({ ...p, firstSeen: v }));
+                            const err = getYearError(v, { required: true, label: "First Seen Year" });
+                            setEditorFieldErrors((prev) => ({ ...prev, firstSeen: err || undefined }));
+                          }}
+                          maxLength={5}
+                          disabled={submitting || savingEdits}
+                          className={editorFieldErrors.firstSeen ? "border-destructive" : ""}
                         />
+                        {editorFieldErrors.firstSeen && (
+                          <p className="text-sm text-destructive">{editorFieldErrors.firstSeen}</p>
+                        )}
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="edit-lastSeen">Last seen (year)</Label>
+                        <Label htmlFor="contrib-edit-lastSeen">Last Seen Year</Label>
                         <Input
-                          id="edit-lastSeen"
+                          id="contrib-edit-lastSeen"
+                          type="text"
+                          inputMode="numeric"
+                          placeholder={String(CURRENT_YEAR)}
                           value={editorEdits.lastSeen}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, lastSeen: e.target.value }))}
-                          placeholder="e.g. 1995"
-                          disabled={savingEdits}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                            setEditorEdits((p) => ({ ...p, lastSeen: v }));
+                            const err = getYearError(v, { required: false, label: "Last Seen Year" });
+                            setEditorFieldErrors((prev) => ({ ...prev, lastSeen: err || undefined }));
+                          }}
+                          maxLength={5}
+                          disabled={submitting || savingEdits}
+                          className={editorFieldErrors.lastSeen ? "border-destructive" : ""}
                         />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-type">Type</Label>
-                        <Input
-                          id="edit-type"
-                          value={editorEdits.type}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, type: e.target.value }))}
-                          placeholder="Postmark type"
-                          disabled={savingEdits}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-color">Color</Label>
-                        <Input
-                          id="edit-color"
-                          value={editorEdits.color}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, color: e.target.value }))}
-                          placeholder="Color"
-                          disabled={savingEdits}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-width-mm">Width (mm)</Label>
-                        <Input
-                          id="edit-width-mm"
-                          value={editorEdits.width_mm}
-                          onChange={(e) =>
-                            setEditorEdits((p) => ({ ...p, width_mm: sanitizeMmInput(e.target.value) }))
-                          }
-                          placeholder="Width"
-                          disabled={savingEdits}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-height-mm">Height (mm)</Label>
-                        <Input
-                          id="edit-height-mm"
-                          value={editorEdits.height_mm}
-                          onChange={(e) =>
-                            setEditorEdits((p) => ({ ...p, height_mm: sanitizeMmInput(e.target.value) }))
-                          }
-                          placeholder="Height"
-                          disabled={savingEdits}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-manuscript">Manuscript</Label>
-                        <Input
-                          id="edit-manuscript"
-                          value={editorEdits.manuscript}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, manuscript: e.target.value }))}
-                          placeholder="Yes / No"
-                          disabled={savingEdits}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-rarity">Rarity</Label>
-                        <Input
-                          id="edit-rarity"
-                          value={editorEdits.rarity}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, rarity: e.target.value }))}
-                          placeholder="Rarity"
-                          disabled={savingEdits}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-lettering">Lettering style</Label>
-                        <select
-                          id="edit-lettering"
-                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          value={editorEdits.lettering_style_id}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, lettering_style_id: e.target.value }))}
-                          disabled={savingEdits}
-                        >
-                          <option value="">—</option>
-                          {letteringOptions.map((o) => (
-                            <option key={o.id} value={o.id}>{o.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-framing">Framing style</Label>
-                        <select
-                          id="edit-framing"
-                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          value={editorEdits.framing_style_id}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, framing_style_id: e.target.value }))}
-                          disabled={savingEdits}
-                        >
-                          <option value="">—</option>
-                          {framingOptions.map((o) => (
-                            <option key={o.id} value={o.id}>{o.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-dateFormat">Date format</Label>
-                        <select
-                          id="edit-dateFormat"
-                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          value={editorEdits.date_format_id}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, date_format_id: e.target.value }))}
-                          disabled={savingEdits}
-                        >
-                          <option value="">—</option>
-                          {dateFormatOptions.map((o) => (
-                            <option key={o.id} value={o.id}>{o.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="space-y-2 sm:col-span-2">
-                        <Label htmlFor="edit-description">Description</Label>
-                        <Textarea
-                          id="edit-description"
-                          value={editorEdits.description}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, description: e.target.value }))}
-                          placeholder="Description"
-                          rows={2}
-                          disabled={savingEdits}
-                          className="resize-none"
-                        />
-                      </div>
-                      <div className="space-y-2 sm:col-span-2">
-                        <Label htmlFor="edit-references">References</Label>
-                        <Textarea
-                          id="edit-references"
-                          value={editorEdits.references}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, references: e.target.value }))}
-                          placeholder="Citation references"
-                          rows={2}
-                          disabled={savingEdits}
-                          className="resize-none"
-                        />
+                        {editorFieldErrors.lastSeen && (
+                          <p className="text-sm text-destructive">{editorFieldErrors.lastSeen}</p>
+                        )}
                       </div>
                     </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="contrib-edit-type">
+                        Postmark Type <span className="text-destructive">*</span>
+                      </Label>
+                      <SearchableSelect
+                        id="contrib-edit-type"
+                        value={editorEdits.type}
+                        onValueChange={(v) => {
+                          setEditorEdits((p) => ({ ...p, type: v }));
+                          setEditorFieldErrors((prev) => ({ ...prev, type: undefined }));
+                        }}
+                        placeholder="Select type..."
+                        options={[
+                          ...typeOptions.map((t) => ({ value: t.name, label: t.name })),
+                          { value: TYPE_OTHER_VALUE, label: "Other (type below)" },
+                        ]}
+                        loading={loadingTypes}
+                        error={!!typeOptionsError}
+                        errorMessage={typeOptionsError ?? "Failed to load postmark types"}
+                        searchPlaceholder="Search types..."
+                        emptyMessage="No type found."
+                        aria-label="Postmark type"
+                        disabled={submitting || savingEdits}
+                        triggerClassName={editorFieldErrors.type ? "border-destructive" : ""}
+                      />
+                      {editorFieldErrors.type && (
+                        <p className="text-sm text-destructive">{editorFieldErrors.type}</p>
+                      )}
+                      {editorEdits.type === TYPE_OTHER_VALUE && (
+                        <Input
+                          id="contrib-edit-type-other"
+                          placeholder="e.g. Circular Date Stamp"
+                          value={editorEdits.typeOther}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, typeOther: e.target.value }))}
+                          className="mt-2"
+                          disabled={submitting || savingEdits}
+                          aria-label="Postmark type (other)"
+                        />
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="contrib-edit-color">
+                        Color <span className="text-destructive">*</span>
+                      </Label>
+                      <Select
+                        value={editorEdits.color}
+                        onValueChange={(v) => {
+                          setEditorEdits((p) => ({ ...p, color: v }));
+                          setEditorFieldErrors((prev) => ({ ...prev, color: undefined }));
+                        }}
+                        disabled={submitting || savingEdits}
+                      >
+                        <SelectTrigger
+                          id="contrib-edit-color"
+                          className={editorFieldErrors.color ? "border-destructive" : ""}
+                        >
+                          <SelectValue placeholder="Select color..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {colorOptions.map((c) => (
+                            <SelectItem key={c.id} value={c.name}>
+                              {c.name}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value={COLOR_OTHER_VALUE}>Other (type below)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {editorFieldErrors.color && (
+                        <p className="text-sm text-destructive">{editorFieldErrors.color}</p>
+                      )}
+                      {editorEdits.color === COLOR_OTHER_VALUE && (
+                        <Input
+                          id="contrib-edit-color-other"
+                          placeholder="e.g. Sepia"
+                          value={editorEdits.colorOther}
+                          onChange={(e) => setEditorEdits((p) => ({ ...p, colorOther: e.target.value }))}
+                          className="mt-2"
+                          disabled={submitting || savingEdits}
+                          aria-label="Color (other)"
+                        />
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>
+                        Lettering style <span className="text-destructive">*</span>
+                      </Label>
+                      <Select
+                        value={editorEdits.lettering_style_id}
+                        onValueChange={(v) => {
+                          setEditorEdits((p) => ({ ...p, lettering_style_id: v }));
+                          setEditorFieldErrors((prev) => ({ ...prev, lettering: undefined }));
+                        }}
+                        disabled={submitting || savingEdits || catalogOptionsLoading}
+                      >
+                        <SelectTrigger className={editorFieldErrors.lettering ? "border-destructive" : ""}>
+                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select lettering style"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {letteringOptions.map((opt) => (
+                            <SelectItem key={opt.id} value={String(opt.id)}>
+                              {opt.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {editorFieldErrors.lettering && (
+                        <p className="text-sm text-destructive">{editorFieldErrors.lettering}</p>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>
+                        Framing style <span className="text-destructive">*</span>
+                      </Label>
+                      <Select
+                        value={editorEdits.framing_style_id}
+                        onValueChange={(v) => {
+                          setEditorEdits((p) => ({ ...p, framing_style_id: v }));
+                          setEditorFieldErrors((prev) => ({ ...prev, framing: undefined }));
+                        }}
+                        disabled={submitting || savingEdits || catalogOptionsLoading}
+                      >
+                        <SelectTrigger className={editorFieldErrors.framing ? "border-destructive" : ""}>
+                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select framing style"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {framingOptions.map((opt) => (
+                            <SelectItem key={opt.id} value={String(opt.id)}>
+                              {opt.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {editorFieldErrors.framing && (
+                        <p className="text-sm text-destructive">{editorFieldErrors.framing}</p>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>
+                        Date format <span className="text-destructive">*</span>
+                      </Label>
+                      <Select
+                        value={editorEdits.date_format_id}
+                        onValueChange={(v) => {
+                          setEditorEdits((p) => ({ ...p, date_format_id: v }));
+                          setEditorFieldErrors((prev) => ({ ...prev, dateFormat: undefined }));
+                        }}
+                        disabled={submitting || savingEdits || catalogOptionsLoading}
+                      >
+                        <SelectTrigger className={editorFieldErrors.dateFormat ? "border-destructive" : ""}>
+                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select date format"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {dateFormatOptions.map((opt) => (
+                            <SelectItem key={opt.id} value={String(opt.id)}>
+                              {opt.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {editorFieldErrors.dateFormat && (
+                        <p className="text-sm text-destructive">{editorFieldErrors.dateFormat}</p>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="contrib-edit-width-mm">Width (mm)</Label>
+                        <Input
+                          id="contrib-edit-width-mm"
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="e.g. 34"
+                          value={editorEdits.width_mm}
+                          onChange={(e) => {
+                            setEditorEdits((p) => ({ ...p, width_mm: sanitizeMmInput(e.target.value) }));
+                            setEditorFieldErrors((prev) => ({
+                              ...prev,
+                              width_mm: undefined,
+                              height_mm: undefined,
+                            }));
+                          }}
+                          disabled={submitting || savingEdits}
+                          className={editorFieldErrors.width_mm ? "border-destructive" : ""}
+                        />
+                        {editorFieldErrors.width_mm && (
+                          <p className="text-sm text-destructive">{editorFieldErrors.width_mm}</p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="contrib-edit-height-mm">Height (mm)</Label>
+                        <Input
+                          id="contrib-edit-height-mm"
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="e.g. 28"
+                          value={editorEdits.height_mm}
+                          onChange={(e) => {
+                            setEditorEdits((p) => ({ ...p, height_mm: sanitizeMmInput(e.target.value) }));
+                            setEditorFieldErrors((prev) => ({
+                              ...prev,
+                              width_mm: undefined,
+                              height_mm: undefined,
+                            }));
+                          }}
+                          disabled={submitting || savingEdits}
+                          className={editorFieldErrors.height_mm ? "border-destructive" : ""}
+                        />
+                        {editorFieldErrors.height_mm && (
+                          <p className="text-sm text-destructive">{editorFieldErrors.height_mm}</p>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground -mt-2">
+                      Optional. If you enter one, enter both (mm). Same as catalog edit.
+                    </p>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="contrib-edit-manuscript">Manuscript</Label>
+                      <Select
+                        value={editorEdits.manuscript}
+                        onValueChange={(v) => setEditorEdits((p) => ({ ...p, manuscript: v }))}
+                        disabled={submitting || savingEdits}
+                      >
+                        <SelectTrigger id="contrib-edit-manuscript">
+                          <SelectValue placeholder="Select..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {MANUSCRIPT_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="contrib-edit-rarity">Rarity</Label>
+                      <Select
+                        value={editorEdits.rarity}
+                        onValueChange={(v) => setEditorEdits((p) => ({ ...p, rarity: v }))}
+                        disabled={submitting || savingEdits}
+                      >
+                        <SelectTrigger id="contrib-edit-rarity">
+                          <SelectValue placeholder="Select..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {RARITY_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="contrib-edit-description">Description</Label>
+                      <Textarea
+                        id="contrib-edit-description"
+                        value={editorEdits.description}
+                        onChange={(e) => setEditorEdits((p) => ({ ...p, description: e.target.value }))}
+                        placeholder="Details about the postmark..."
+                        rows={4}
+                        disabled={submitting || savingEdits}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="contrib-edit-references">Citation references</Label>
+                      <Textarea
+                        id="contrib-edit-references"
+                        value={editorEdits.references}
+                        onChange={(e) => setEditorEdits((p) => ({ ...p, references: e.target.value }))}
+                        placeholder="Catalog numbers, publications..."
+                        rows={3}
+                        disabled={submitting || savingEdits}
+                      />
+                    </div>
+
                     <Button
                       type="button"
                       variant="secondary"
                       onClick={saveEditorEdits}
-                      disabled={savingEdits}
+                      disabled={submitting || savingEdits}
                     >
                       {savingEdits ? "Saving..." : "Save edits"}
                     </Button>

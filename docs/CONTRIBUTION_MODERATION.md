@@ -44,6 +44,7 @@ The Contribution model lives in the existing `common` app because:
 | GET | `/api/contributions/<id>/` | Retrieve a contribution |
 | POST | `/api/contributions/<id>/approve/` | Approve; apply `submitted_data` to catalog |
 | POST | `/api/contributions/<id>/reject/` | Reject; catalog unchanged |
+| PATCH | `/api/contributions/<id>/editor-edit/` | State editor merges JSON over `submitted_data` before approve |
 
 ### Query Parameters (List)
 
@@ -63,8 +64,9 @@ The Contribution model lives in the existing `common` app because:
 
 1. **Submit**: User POSTs to `/api/contributions/` → creates `Contribution` with `status=pending`
 2. **Review**: State Editor lists contributions, opens detail
-3. **Approve**: POST to `/api/contributions/<id>/approve/` → `_apply_contribution_to_catalog()` creates/updates Postmark, links to Contribution, sets `status=approved`
-4. **Reject**: POST to `/api/contributions/<id>/reject/` → sets `status=rejected`, catalog unchanged
+3. **Edit data (optional)**: PATCH `/api/contributions/<id>/editor-edit/` with the same field names as the contribute payload (`state`, `town`, `firstSeen`, `lastSeen`, `type`, `color`, `width_mm` / `height_mm`, lettering/framing/date-format IDs, etc.). The **Submission detail** UI uses the same controls as **Edit Catalog Entry** (searchable state/town, type/color, year validation, mm pair).
+4. **Approve**: POST to `/api/contributions/<id>/approve/` → `_apply_contribution_to_catalog()` creates/updates Postmark, links to Contribution, sets `status=approved` (approval also re-validates and persists the editor form when used from the UI).
+5. **Reject**: POST to `/api/contributions/<id>/reject/` → sets `status=rejected`, catalog unchanged
 
 ### State editor peer review (not contributors)
 
