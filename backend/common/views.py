@@ -775,6 +775,20 @@ def _resolve_assigned_admin_unit(user, state_str):
     return None
 
 
+def _is_own_approved_catalog_postmark(user, postmark_id):
+    """
+    True if this catalog postmark is linked to an approved Contribution created by the user.
+    Used so state editors can edit their own published listings without peer review.
+    """
+    if not getattr(user, "is_authenticated", False) or postmark_id is None:
+        return False
+    return Contribution.objects.filter(
+        postmark_id=postmark_id,
+        contributor_id=user.id,
+        status=Contribution.STATUS_APPROVED,
+    ).exists()
+
+
 def _create_contribution_only(payload, contributor):
     """
     Create a Contribution record only (no Postmark). Acts as a moderation ticket.
@@ -1129,10 +1143,15 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
         return None
 
 
-def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
+def _update_postmark_in_catalog(postmark_id, payload, submitter_name, *, keep_public_approved=False):
     """
     Update an existing user-contribution Postmark in place.
     Verifies permissions and updates in place. Returns the updated Postmark or None.
+
+    When keep_public_approved is True, the listing stays contribution_approval_status='approved'
+    and last_public_update_at is refreshed so /search shows the updated data immediately
+    (state editor editing their own approved submission).
+    Otherwise the listing is set back to pending re-approval (existing behavior).
     """
     try:
         postmark = Postmark.objects.filter(postmark_id=postmark_id).first()
@@ -1224,24 +1243,29 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
             other_parts.append(f"Submitted by: {submitter_name.strip()}")
         other_characteristics = "\n".join(other_parts) if other_parts else ""
 
-        # If this listing has already been approved at least once, capture that fact
-        # by ensuring last_public_update_at is populated before we move it back to
-        # a pending approval state. This lets catalog/search keep showing the
-        # previously-approved listing while new edits await review.
-        if (
-            postmark.source_catalog == "User contribution"
-            and postmark.contribution_approval_status == "approved"
-            and not postmark.last_public_update_at
-        ):
-            postmark.last_public_update_at = timezone.now()
-
-        # Update Postmark; mark as pending again so admin can re-approve
+        # Update Postmark core fields
         postmark.postal_facility_identity = identity
         postmark.state = admin_unit
         postmark.postmark_shape = shape
         postmark.is_manuscript = is_manuscript
         postmark.other_characteristics = other_characteristics[:10000] if other_characteristics else ""
-        postmark.contribution_approval_status = "pending"
+
+        if keep_public_approved:
+            postmark.contribution_approval_status = "approved"
+            postmark.last_public_update_at = timezone.now()
+        else:
+            # If this listing has already been approved at least once, capture that fact
+            # by ensuring last_public_update_at is populated before we move it back to
+            # a pending approval state. This lets catalog/search keep showing the
+            # previously-approved listing while new edits await review.
+            if (
+                postmark.source_catalog == "User contribution"
+                and postmark.contribution_approval_status == "approved"
+                and not postmark.last_public_update_at
+            ):
+                postmark.last_public_update_at = timezone.now()
+            postmark.contribution_approval_status = "pending"
+
         postmark.modified_by = user
         postmark.save(
             update_fields=[
@@ -1332,6 +1356,49 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
     except Exception as e:
         logger.exception("_update_postmark_in_catalog failed (postmark_id=%s): %s", postmark_id, e)
         return None
+
+
+def _sync_approved_contribution_submitted_data(postmark_id, user, payload):
+    """
+    After a direct catalog update, align Contribution.submitted_data so dashboard list fields match.
+    """
+    contrib = Contribution.objects.filter(
+        postmark_id=postmark_id,
+        contributor_id=user.id,
+        status=Contribution.STATUS_APPROVED,
+    ).first()
+    if not contrib:
+        return
+    sd = dict(contrib.submitted_data or {})
+    sd["state"] = (payload.get("state") or "").strip()
+    sd["town"] = (payload.get("town") or "").strip()
+    sd["date_range"] = (payload.get("date_range") or "").strip()
+    sd["type"] = (payload.get("type") or "").strip()
+    sd["color"] = (payload.get("color") or "").strip()
+    sd["manuscript"] = (payload.get("manuscript") or "").strip()
+    sd["dimensions"] = (payload.get("dimensions") or "").strip()
+    sd["width_mm"] = (payload.get("width_mm") or "").strip()
+    sd["height_mm"] = (payload.get("height_mm") or "").strip()
+    sd["description"] = (payload.get("description") or "").strip()
+    sd["references"] = (payload.get("references") or "").strip()
+    sd["rarity"] = (payload.get("rarity") or "").strip()
+    sd["submitter_name"] = (payload.get("submitter_name") or "").strip()
+    cc = (payload.get("contributor_comment") or "").strip()
+    if cc:
+        sd["contributor_comment"] = cc
+    for fk in ("lettering_style_id", "framing_style_id", "date_format_id"):
+        v = payload.get(fk)
+        if v is not None:
+            try:
+                sd[fk] = int(v)
+            except (TypeError, ValueError):
+                pass
+    if payload.get("image_metas"):
+        sd["image_metas"] = payload["image_metas"]
+    elif payload.get("image_meta"):
+        sd["image_meta"] = payload["image_meta"]
+    contrib.submitted_data = sd
+    contrib.save(update_fields=["submitted_data", "updated_at"])
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -1753,11 +1820,17 @@ class ContributionView(APIView):
             # - Contributors: always create/update a Contribution for expert review.
             # - submitForReview: State Editors / superusers use the same review queue
             #   (e.g. "Suggest" from record detail) instead of applying directly.
-            # - Otherwise superusers only: apply directly to the catalog.
-            # State editors always queue suggestions for peer review (same-state editor approves).
+            # - State editors editing someone else's entry: peer review (same as contributors).
+            # - State editors editing their own approved listing: apply directly; stays approved for /search.
+            # - Superusers (when not forcing submitForReview): apply directly to the catalog.
             role = _get_user_role(user)
             is_contributor_only = role == "contributor" and not getattr(user, "is_superuser", False)
-            state_editor_needs_peer = role == "state_editor" and not getattr(user, "is_superuser", False)
+            own_approved_catalog = _is_own_approved_catalog_postmark(user, edit_postmark_id)
+            state_editor_needs_peer = (
+                role == "state_editor"
+                and not getattr(user, "is_superuser", False)
+                and not own_approved_catalog
+            )
             if is_contributor_only or submit_for_review or state_editor_needs_peer:
                 try:
                     submitted_data = {
@@ -1820,13 +1893,38 @@ class ContributionView(APIView):
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     )
 
-            # State Editors and superusers: update catalog directly.
-            postmark = _update_postmark_in_catalog(edit_postmark_id, payload, submitter_name)
+            # State Editors (own approved listing) and superusers: update catalog directly.
+            if (
+                role == "state_editor"
+                and not getattr(user, "is_superuser", False)
+                and own_approved_catalog
+            ):
+                if not _resolve_assigned_admin_unit(user, state):
+                    return Response(
+                        {
+                            "detail": "You are not assigned to publish catalog edits for this state.",
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+            keep_public_approved = (
+                own_approved_catalog
+                and role == "state_editor"
+                and not getattr(user, "is_superuser", False)
+            )
+            postmark = _update_postmark_in_catalog(
+                edit_postmark_id,
+                payload,
+                submitter_name,
+                keep_public_approved=keep_public_approved,
+            )
             if not postmark:
                 return Response(
                     {"detail": "Could not apply catalog edit. Ensure the target listing exists and try again."},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
+            if keep_public_approved:
+                _sync_approved_contribution_submitted_data(edit_postmark_id, user, payload)
             return Response(
                 {"detail": "Catalog entry updated successfully.", "postmarkId": postmark.postmark_id},
                 status=status.HTTP_200_OK,

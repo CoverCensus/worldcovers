@@ -71,7 +71,8 @@ The Contribution model lives in the existing `common` app because:
 ### State editor peer review (not contributors)
 
 - **New listings**: State editors no longer publish directly. POST creates a pending `Contribution` (same as contributors). Proposed fields such as `postmark_shape_id`, `proposed_estimated_value` / `review_notes` may be stored on `submitted_data` for the reviewer’s reference.
-- **Suggestions / edits** to an existing postmark: State editors always go through the pending queue (no direct catalog update); another assigned editor for that state applies the change on approve.
+- **Suggestions / edits** to an existing postmark: State editors normally go through the pending queue; another assigned editor for that state applies the change on approve.
+- **Own approved listing**: If the target postmark is linked to an **approved** `Contribution` where `contributor` is the same state editor, `POST /api/contributions/` with `editPostmarkId` applies changes **directly** to the catalog, keeps `contribution_approval_status='approved'`, refreshes `last_public_update_at`, and syncs `submitted_data` so **Search** and **My Submissions** show the update immediately. The edited **state** must still match one of the editor’s assigned locations.
 - **Self-approval**: A state editor **cannot** approve their own contribution; another state editor assigned to the same state (or a superuser) must approve. Superusers may still add new listings directly without peer review.
 
 ---

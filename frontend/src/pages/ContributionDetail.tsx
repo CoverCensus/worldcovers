@@ -123,6 +123,27 @@ interface Contribution {
   postmark?: number | null;
 }
 
+/** True if this ticket targets an existing catalog listing (suggestion/correction), not a brand-new postmark. */
+function contributionIsCatalogSuggestion(c: Contribution): boolean {
+  const rawSubmitted =
+    c.submitted_data ?? (c as unknown as Record<string, unknown>).submittedData ?? {};
+  const sd =
+    typeof rawSubmitted === "object" && rawSubmitted !== null
+      ? (rawSubmitted as Record<string, unknown>)
+      : {};
+  const postmarkIdRaw =
+    c.postmark_id ?? c.postmark ?? (c as unknown as Record<string, unknown>).postmarkId ?? null;
+  const pid =
+    typeof postmarkIdRaw === "number"
+      ? postmarkIdRaw
+      : postmarkIdRaw != null && String(postmarkIdRaw).trim() !== ""
+        ? parseInt(String(postmarkIdRaw), 10)
+        : NaN;
+  const hasLinkedPostmark = pid != null && !Number.isNaN(pid);
+  const origStr = String(sd.original_postmark_id ?? sd.originalPostmarkId ?? "").trim();
+  return hasLinkedPostmark || origStr !== "";
+}
+
 const ContributionDetail = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -145,7 +166,6 @@ const ContributionDetail = () => {
   const [carouselCurrent, setCarouselCurrent] = useState(0);
   const [carouselCount, setCarouselCount] = useState(0);
   const [prefillingValue, setPrefillingValue] = useState(false);
-  const [savingEdits, setSavingEdits] = useState(false);
   const [stateOptions, setStateOptions] = useState<{ value: string; label: string }[]>([]);
   const [loadingStates, setLoadingStates] = useState(false);
   const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
@@ -648,26 +668,6 @@ const ContributionDetail = () => {
     }
   };
 
-  const saveEditorEdits = async () => {
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      toast({ title: "Configuration error", description: "VITE_API_URL is not set.", variant: "destructive" });
-      return;
-    }
-    setSavingEdits(true);
-    try {
-      const ok = await persistEditorEdits(apiBase);
-      if (ok) {
-        toast({
-          title: "Edits saved",
-          description: "Submission data updated. Approve when ready to apply to the catalog.",
-        });
-      }
-    } finally {
-      setSavingEdits(false);
-    }
-  };
-
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
     if (!contribution || !comment.trim()) return;
     if (kind === "approve") {
@@ -696,7 +696,8 @@ const ContributionDetail = () => {
     }
 
     setSubmitting(true);
-    if (kind === "approve") {
+    // New postmark submissions: submitted_data is authoritative; editors do not PATCH catalog fields.
+    if (kind === "approve" && contributionIsCatalogSuggestion(contribution)) {
       const persisted = await persistEditorEdits(apiBase);
       if (!persisted) {
         setSubmitting(false);
@@ -820,6 +821,8 @@ const ContributionDetail = () => {
 
   const isPending = contribution.status === "pending";
   const canReview = isStateEditor && isPending && !!user && !isContributor;
+  const isCatalogSuggestion = contributionIsCatalogSuggestion(contribution);
+  const showSubmittedData = !canReview || !isCatalogSuggestion;
   const showPeerReviewNotice = isStateEditor && isPending && isContributor && !user?.is_superuser;
   const postmarkIdRaw =
     contribution.postmark_id ?? contribution.postmark ?? (contribution as unknown as Record<string, unknown>).postmarkId ?? null;
@@ -833,6 +836,9 @@ const ContributionDetail = () => {
     const s = v != null ? String(v).trim() : "";
     return s !== "" && s.toLowerCase() !== "unknown";
   };
+
+  const showEditorFeedback =
+    contribution.status !== "pending" || (contribution.review_notes && contribution.review_notes.trim());
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -861,8 +867,8 @@ const ContributionDetail = () => {
           </div>
 
           {/* Main Content — same layout as RecordDetail */}
-          <div className="grid items-start lg:grid-cols-2 gap-8 mb-8">
-            <div className="space-y-6">
+          <div className="grid items-start gap-8 mb-8 lg:grid-cols-2">
+            <div className="space-y-6 lg:col-start-1">
               {/* Image(s) carousel — same as RecordDetail */}
               <Card className="shadow-archival-lg">
                 <CardContent className="p-6">
@@ -920,7 +926,7 @@ const ContributionDetail = () => {
             </div>
 
             {/* Metadata — same structure as RecordDetail */}
-            <div className="space-y-6">
+            <div className="space-y-6 lg:col-start-2">
               <div>
                 <h1 className="font-heading text-3xl font-bold text-foreground mb-2">{displayName}</h1>
                 <div className="flex flex-wrap gap-2">
@@ -936,15 +942,17 @@ const ContributionDetail = () => {
                 ) : null}
               </div>
 
-              {/* Read-only submitted fields: contributors / non-editors only (editors use prefilled "Edit submission data") */}
-              {!canReview && (
+              {/* Read-only submitted fields; editors see this for new postmarks (suggestions use "Edit submission data" instead). */}
+              {showSubmittedData && (
                 <Card className="shadow-archival-md border-primary/10">
                   <CardHeader>
                     <CardTitle className="font-heading text-lg">Submitted data</CardTitle>
                     <p className="text-sm text-muted-foreground">
                       {isContributor
                         ? "What you submitted. An editor will review this and add a catalog value and comment."
-                        : "Snapshot of fields stored on this contribution."}
+                        : canReview
+                          ? "Contributor submission (read-only). Use the review section below to add catalog value and comment."
+                          : "Snapshot of fields stored on this contribution."}
                     </p>
                   </CardHeader>
                   <CardContent>
@@ -1017,8 +1025,8 @@ const ContributionDetail = () => {
                 </Card>
               )}
 
-              {/* Editor: same controls as Edit Catalog Entry — saved via PATCH or on Approve */}
-              {canReview && (
+              {/* Editor: catalog suggestions only — new postmark submissions stay read-only above */}
+              {canReview && isCatalogSuggestion && (
                 <Card className="shadow-archival-md border-primary/15">
                   <CardHeader>
                     <CardTitle className="font-heading text-lg flex items-center gap-2">
@@ -1026,7 +1034,7 @@ const ContributionDetail = () => {
                       Edit submission data
                     </CardTitle>
                     <p className="text-sm text-muted-foreground">
-                      Same fields as <strong>Edit Catalog Entry</strong>. Save edits before approving, or approval will save automatically after validation.
+                      Same fields as <strong>Edit Catalog Entry</strong>. Changes are saved automatically when you approve (after validation).
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-6">
@@ -1049,7 +1057,7 @@ const ContributionDetail = () => {
                         searchPlaceholder="Search states..."
                         emptyMessage="No state found."
                         aria-label="State"
-                        disabled={submitting || savingEdits}
+                        disabled={submitting}
                         triggerClassName={editorFieldErrors.state ? "border-destructive" : ""}
                       />
                       {editorFieldErrors.state && (
@@ -1062,7 +1070,7 @@ const ContributionDetail = () => {
                           value={editorEdits.stateOther}
                           onChange={(e) => setEditorEdits((p) => ({ ...p, stateOther: e.target.value }))}
                           className="mt-2"
-                          disabled={submitting || savingEdits}
+                          disabled={submitting}
                           aria-label="State (other)"
                         />
                       )}
@@ -1098,7 +1106,6 @@ const ContributionDetail = () => {
                         aria-label="Town or city"
                         disabled={
                           submitting ||
-                          savingEdits ||
                           (!effectiveStateKey && editorEdits.state !== STATE_OTHER_VALUE) ||
                           townSelectOptions.length === 0
                         }
@@ -1127,7 +1134,7 @@ const ContributionDetail = () => {
                             setEditorFieldErrors((prev) => ({ ...prev, firstSeen: err || undefined }));
                           }}
                           maxLength={5}
-                          disabled={submitting || savingEdits}
+                          disabled={submitting}
                           className={editorFieldErrors.firstSeen ? "border-destructive" : ""}
                         />
                         {editorFieldErrors.firstSeen && (
@@ -1149,7 +1156,7 @@ const ContributionDetail = () => {
                             setEditorFieldErrors((prev) => ({ ...prev, lastSeen: err || undefined }));
                           }}
                           maxLength={5}
-                          disabled={submitting || savingEdits}
+                          disabled={submitting}
                           className={editorFieldErrors.lastSeen ? "border-destructive" : ""}
                         />
                         {editorFieldErrors.lastSeen && (
@@ -1180,7 +1187,7 @@ const ContributionDetail = () => {
                         searchPlaceholder="Search types..."
                         emptyMessage="No type found."
                         aria-label="Postmark type"
-                        disabled={submitting || savingEdits}
+                        disabled={submitting}
                         triggerClassName={editorFieldErrors.type ? "border-destructive" : ""}
                       />
                       {editorFieldErrors.type && (
@@ -1193,7 +1200,7 @@ const ContributionDetail = () => {
                           value={editorEdits.typeOther}
                           onChange={(e) => setEditorEdits((p) => ({ ...p, typeOther: e.target.value }))}
                           className="mt-2"
-                          disabled={submitting || savingEdits}
+                          disabled={submitting}
                           aria-label="Postmark type (other)"
                         />
                       )}
@@ -1209,7 +1216,7 @@ const ContributionDetail = () => {
                           setEditorEdits((p) => ({ ...p, color: v }));
                           setEditorFieldErrors((prev) => ({ ...prev, color: undefined }));
                         }}
-                        disabled={submitting || savingEdits}
+                        disabled={submitting}
                       >
                         <SelectTrigger
                           id="contrib-edit-color"
@@ -1236,7 +1243,7 @@ const ContributionDetail = () => {
                           value={editorEdits.colorOther}
                           onChange={(e) => setEditorEdits((p) => ({ ...p, colorOther: e.target.value }))}
                           className="mt-2"
-                          disabled={submitting || savingEdits}
+                          disabled={submitting}
                           aria-label="Color (other)"
                         />
                       )}
@@ -1252,7 +1259,7 @@ const ContributionDetail = () => {
                           setEditorEdits((p) => ({ ...p, lettering_style_id: v }));
                           setEditorFieldErrors((prev) => ({ ...prev, lettering: undefined }));
                         }}
-                        disabled={submitting || savingEdits || catalogOptionsLoading}
+                        disabled={submitting || catalogOptionsLoading}
                       >
                         <SelectTrigger className={editorFieldErrors.lettering ? "border-destructive" : ""}>
                           <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select lettering style"} />
@@ -1279,7 +1286,7 @@ const ContributionDetail = () => {
                           setEditorEdits((p) => ({ ...p, framing_style_id: v }));
                           setEditorFieldErrors((prev) => ({ ...prev, framing: undefined }));
                         }}
-                        disabled={submitting || savingEdits || catalogOptionsLoading}
+                        disabled={submitting || catalogOptionsLoading}
                       >
                         <SelectTrigger className={editorFieldErrors.framing ? "border-destructive" : ""}>
                           <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select framing style"} />
@@ -1306,7 +1313,7 @@ const ContributionDetail = () => {
                           setEditorEdits((p) => ({ ...p, date_format_id: v }));
                           setEditorFieldErrors((prev) => ({ ...prev, dateFormat: undefined }));
                         }}
-                        disabled={submitting || savingEdits || catalogOptionsLoading}
+                        disabled={submitting || catalogOptionsLoading}
                       >
                         <SelectTrigger className={editorFieldErrors.dateFormat ? "border-destructive" : ""}>
                           <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select date format"} />
@@ -1341,7 +1348,7 @@ const ContributionDetail = () => {
                               height_mm: undefined,
                             }));
                           }}
-                          disabled={submitting || savingEdits}
+                          disabled={submitting}
                           className={editorFieldErrors.width_mm ? "border-destructive" : ""}
                         />
                         {editorFieldErrors.width_mm && (
@@ -1364,7 +1371,7 @@ const ContributionDetail = () => {
                               height_mm: undefined,
                             }));
                           }}
-                          disabled={submitting || savingEdits}
+                          disabled={submitting}
                           className={editorFieldErrors.height_mm ? "border-destructive" : ""}
                         />
                         {editorFieldErrors.height_mm && (
@@ -1381,7 +1388,7 @@ const ContributionDetail = () => {
                       <Select
                         value={editorEdits.manuscript}
                         onValueChange={(v) => setEditorEdits((p) => ({ ...p, manuscript: v }))}
-                        disabled={submitting || savingEdits}
+                        disabled={submitting}
                       >
                         <SelectTrigger id="contrib-edit-manuscript">
                           <SelectValue placeholder="Select..." />
@@ -1401,7 +1408,7 @@ const ContributionDetail = () => {
                       <Select
                         value={editorEdits.rarity}
                         onValueChange={(v) => setEditorEdits((p) => ({ ...p, rarity: v }))}
-                        disabled={submitting || savingEdits}
+                        disabled={submitting}
                       >
                         <SelectTrigger id="contrib-edit-rarity">
                           <SelectValue placeholder="Select..." />
@@ -1424,7 +1431,7 @@ const ContributionDetail = () => {
                         onChange={(e) => setEditorEdits((p) => ({ ...p, description: e.target.value }))}
                         placeholder="Details about the postmark..."
                         rows={4}
-                        disabled={submitting || savingEdits}
+                        disabled={submitting}
                       />
                     </div>
 
@@ -1436,136 +1443,144 @@ const ContributionDetail = () => {
                         onChange={(e) => setEditorEdits((p) => ({ ...p, references: e.target.value }))}
                         placeholder="Catalog numbers, publications..."
                         rows={3}
-                        disabled={submitting || savingEdits}
-                      />
-                    </div>
-
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={saveEditorEdits}
-                      disabled={submitting || savingEdits}
-                    >
-                      {savingEdits ? "Saving..." : "Save edits"}
-                    </Button>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Editor: Value and Comment, then Approve / Reject / Request revision */}
-              {canReview && (
-                <Card className="shadow-archival-lg border-primary/20">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg">Review this submission</CardTitle>
-                    <p className="text-sm text-muted-foreground">
-                      Add value and a comment, then choose Approve, Reject, or Request revision.
-                    </p>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-2 max-w-xs">
-                      <Label htmlFor="contribution-value">
-                        Value (of this postmark) <span className="text-destructive">*</span>
-                      </Label>
-                      <Input
-                        id="contribution-value"
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        placeholder={prefillingValue ? "Prefilling..." : "e.g. 25.00"}
-                        value={value}
-                        onChange={(e) => setValue(e.target.value)}
-                        disabled={submitting || prefillingValue}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="contribution-comment">
-                        Comment (required) <span className="text-destructive">*</span>
-                      </Label>
-                      <Textarea
-                        id="contribution-comment"
-                        placeholder="Add a comment for the contributor (required for approve, reject, or revision)."
-                        rows={4}
-                        value={comment}
-                        onChange={(e) => setComment(e.target.value)}
                         disabled={submitting}
-                        className="resize-none"
                       />
                     </div>
-                    <div className="flex flex-wrap gap-2 pt-2">
-                      <Button
-                        type="button"
-                        onClick={() => submitDecision("approve")}
-                        disabled={
-                          submitting ||
-                          !comment.trim() ||
-                          value.trim() === "" ||
-                          Number.isNaN(parseFloat(value)) ||
-                          parseFloat(value) < 0
-                        }
-                        className="bg-green-600 hover:bg-green-700"
-                      >
-                        <CheckCircle className="mr-2 h-4 w-4" />
-                        {submitting ? "Submitting..." : "Approve"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        onClick={() => submitDecision("reject")}
-                        disabled={submitting || !comment.trim()}
-                      >
-                        <XCircle className="mr-2 h-4 w-4" />
-                        Reject
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => submitDecision("revision")}
-                        disabled={submitting || !comment.trim()}
-                      >
-                        <MessageSquare className="mr-2 h-4 w-4" />
-                        Request revision
-                      </Button>
-                    </div>
+
                   </CardContent>
                 </Card>
               )}
-
-              {/* Editor feedback — show outcome (approved/rejected/revision) and comment so contributor knows the result */}
-              {(contribution.status !== "pending" || (contribution.review_notes && contribution.review_notes.trim())) ? (
-                <Card className="shadow-archival-md border-amber-500/20 bg-amber-500/5">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg flex items-center gap-2">
-                      <MessageSquare className="h-5 w-5 text-amber-600" />
-                      Editor feedback
-                    </CardTitle>
-                    <p className="text-sm text-muted-foreground">
-                      {contribution.status === "approved"
-                        ? "Your submission was approved and added to the catalog. If the editor left a comment below, use it as guidance for future submissions."
-                        : contribution.status === "rejected"
-                          ? "Your submission was not accepted. See the comment below for details."
-                          : contribution.status === "needs_revision"
-                            ? "The editor requested changes. Please update and resubmit or submit a new postmark."
-                            : "The reviewer left a comment for you. Use this feedback to improve your submission or add a new postmark if requested."}
-                    </p>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {contribution.status !== "pending" && (
-                      <p className="text-sm font-medium text-foreground">
-                        Outcome:{" "}
-                        <Badge variant={contribution.status === "approved" ? "default" : contribution.status === "rejected" ? "destructive" : "secondary"}>
-                          {contribution.status === "approved" ? "Approved" : contribution.status === "rejected" ? "Rejected" : "Needs revision"}
-                        </Badge>
-                      </p>
-                    )}
-                    {contribution.review_notes?.trim() ? (
-                      <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
-                        {contribution.review_notes.trim()}
-                      </p>
-                    ) : null}
-                  </CardContent>
-                </Card>
-              ) : null}
             </div>
+
+            {(canReview || showEditorFeedback) && (
+              <div className="space-y-6 lg:col-start-1">
+                {/* Editor: Value and Comment, then Approve / Reject / Request revision */}
+                {canReview && (
+                  <Card className="shadow-archival-lg border-primary/20">
+                    <CardHeader>
+                      <CardTitle className="font-heading text-lg">Review this submission</CardTitle>
+                      <p className="text-sm text-muted-foreground">
+                        Add value and a comment, then choose Approve, Reject, or Request revision.
+                      </p>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-2 max-w-xs">
+                        <Label htmlFor="contribution-value">
+                          Value (of this postmark) <span className="text-destructive">*</span>
+                        </Label>
+                        <Input
+                          id="contribution-value"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder={prefillingValue ? "Prefilling..." : "e.g. 25.00"}
+                          value={value}
+                          onChange={(e) => setValue(e.target.value)}
+                          disabled={submitting || prefillingValue}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="contribution-comment">
+                          Comment (required) <span className="text-destructive">*</span>
+                        </Label>
+                        <Textarea
+                          id="contribution-comment"
+                          placeholder="Add a comment for the contributor (required for approve, reject, or revision)."
+                          rows={4}
+                          value={comment}
+                          onChange={(e) => setComment(e.target.value)}
+                          disabled={submitting}
+                          className="resize-none"
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-2 pt-2">
+                        <Button
+                          type="button"
+                          onClick={() => submitDecision("approve")}
+                          disabled={
+                            submitting ||
+                            !comment.trim() ||
+                            value.trim() === "" ||
+                            Number.isNaN(parseFloat(value)) ||
+                            parseFloat(value) < 0
+                          }
+                          className="bg-green-600 hover:bg-green-700"
+                        >
+                          <CheckCircle className="mr-2 h-4 w-4" />
+                          {submitting ? "Submitting..." : "Approve"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          onClick={() => submitDecision("reject")}
+                          disabled={submitting || !comment.trim()}
+                        >
+                          <XCircle className="mr-2 h-4 w-4" />
+                          Reject
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => submitDecision("revision")}
+                          disabled={submitting || !comment.trim()}
+                        >
+                          <MessageSquare className="mr-2 h-4 w-4" />
+                          Request revision
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Editor feedback — show outcome (approved/rejected/revision) and comment so contributor knows the result */}
+                {showEditorFeedback ? (
+                  <Card className="shadow-archival-md border-amber-500/20 bg-amber-500/5">
+                    <CardHeader>
+                      <CardTitle className="font-heading text-lg flex items-center gap-2">
+                        <MessageSquare className="h-5 w-5 text-amber-600" />
+                        Editor feedback
+                      </CardTitle>
+                      <p className="text-sm text-muted-foreground">
+                        {contribution.status === "approved"
+                          ? "Your submission was approved and added to the catalog. If the editor left a comment below, use it as guidance for future submissions."
+                          : contribution.status === "rejected"
+                            ? "Your submission was not accepted. See the comment below for details."
+                            : contribution.status === "needs_revision"
+                              ? "The editor requested changes. Please update and resubmit or submit a new postmark."
+                              : "The reviewer left a comment for you. Use this feedback to improve your submission or add a new postmark if requested."}
+                      </p>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {contribution.status !== "pending" && (
+                        <p className="text-sm font-medium text-foreground">
+                          Outcome:{" "}
+                          <Badge
+                            variant={
+                              contribution.status === "approved"
+                                ? "default"
+                                : contribution.status === "rejected"
+                                  ? "destructive"
+                                  : "secondary"
+                            }
+                          >
+                            {contribution.status === "approved"
+                              ? "Approved"
+                              : contribution.status === "rejected"
+                                ? "Rejected"
+                                : "Needs revision"}
+                          </Badge>
+                        </p>
+                      )}
+                      {contribution.review_notes?.trim() ? (
+                        <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
+                          {contribution.review_notes.trim()}
+                        </p>
+                      ) : null}
+                    </CardContent>
+                  </Card>
+                ) : null}
+              </div>
+            )}
           </div>
 
           {isPending && !isStateEditor && (

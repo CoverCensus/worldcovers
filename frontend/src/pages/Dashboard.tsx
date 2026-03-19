@@ -1387,7 +1387,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               >
                                 View details
                               </Button>
-                              {isSuperuser && submission.postmark_id && (
+                              {(isSuperuser || isStateEditor) && submission.postmark_id && (
                                 <>
                                   <Button
                                     variant="outline"
@@ -1400,13 +1400,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                   >
                                     Edit
                                   </Button>
-                                  <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    onClick={() => setDeleteTarget(submission)}
-                                  >
-                                    Delete
-                                  </Button>
+                                  {isSuperuser && (
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      onClick={() => setDeleteTarget(submission)}
+                                    >
+                                      Delete
+                                    </Button>
+                                  )}
                                 </>
                               )}
                             </div>
@@ -1492,7 +1494,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           >
                             View details
                           </Button>
-                          {isSuperuser && submission.postmark_id && (
+                          {(isSuperuser || isStateEditor) && submission.postmark_id && (
                             <>
                               <Button
                                 variant="outline"
@@ -1505,13 +1507,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               >
                                 Edit
                               </Button>
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                onClick={() => setDeleteTarget(submission)}
-                              >
-                                Delete
-                              </Button>
+                              {isSuperuser && (
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => setDeleteTarget(submission)}
+                                >
+                                  Delete
+                                </Button>
+                              )}
                             </>
                           )}
                         </div>

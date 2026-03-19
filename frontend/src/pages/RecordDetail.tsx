@@ -306,7 +306,7 @@ const RecordDetail = () => {
                 }
               >
                 <Pencil className="mr-2 h-4 w-4" />
-                Suggest edit
+                Suggest
               </Button>
             ) : null}
           </div>
