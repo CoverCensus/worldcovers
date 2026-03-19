@@ -824,6 +824,8 @@ const ContributionDetail = () => {
   const isCatalogSuggestion = contributionIsCatalogSuggestion(contribution);
   const showSubmittedData = !canReview || !isCatalogSuggestion;
   const showPeerReviewNotice = isStateEditor && isPending && isContributor && !user?.is_superuser;
+  const showEditorFeedbackCard =
+    contribution.status !== "pending" || !!(contribution.review_notes && contribution.review_notes.trim());
   const postmarkIdRaw =
     contribution.postmark_id ?? contribution.postmark ?? (contribution as unknown as Record<string, unknown>).postmarkId ?? null;
   const postmarkId =
@@ -863,11 +865,11 @@ const ContributionDetail = () => {
             </div>
           </div>
 
-          {/* Main Content — image + review + editor feedback in column 1 (fills the gap under the image while editors edit).
-              Single column: image → submission data → review → feedback (DOM order). */}
-          <div className="grid grid-cols-1 gap-8 mb-8 lg:grid-cols-2 lg:items-start">
-            {/* Column 1 (lg): image, then review, then feedback */}
-            <div className="lg:col-start-1 lg:row-start-1">
+          {/* Main Content — max-lg: flex + order → image → meta → review → feedback. lg: 2 columns, 1 row; left cell is a
+              flex stack so Review sits directly under the image (no multi-row grid splitting the form height). */}
+          <div className="flex flex-col gap-8 mb-8 min-w-0 lg:grid lg:grid-cols-2 lg:gap-8 lg:items-start">
+            <div className="contents lg:flex lg:flex-col lg:gap-8 lg:min-w-0">
+            <div className="order-1 min-w-0 lg:order-none">
               <Card className="shadow-archival-lg">
                 <CardContent className="p-6">
                   <Carousel setApi={setCarouselApi} className="w-full">
@@ -923,8 +925,126 @@ const ContributionDetail = () => {
               </Card>
             </div>
 
-            {/* Column 2 (lg): title + submitted data + edit form; spans full height of column 1 stack */}
-            <div className="space-y-6 lg:col-start-2 lg:row-start-1 lg:row-span-full lg:min-h-0">
+
+
+            {canReview && (
+              <div className="order-4 min-w-0 lg:order-none">
+                <Card className="shadow-archival-lg border-primary/20">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">Review this submission</CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      Add value and a comment, then choose Approve, Reject, or Request revision.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2 max-w-xs">
+                      <Label htmlFor="contribution-value">
+                        Value (of this postmark) <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        id="contribution-value"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder={prefillingValue ? "Prefilling..." : "e.g. 25.00"}
+                        value={value}
+                        onChange={(e) => setValue(e.target.value)}
+                        disabled={submitting || prefillingValue}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="contribution-comment">
+                        Comment (required) <span className="text-destructive">*</span>
+                      </Label>
+                      <Textarea
+                        id="contribution-comment"
+                        placeholder="Add a comment for the contributor (required for approve, reject, or revision)."
+                        rows={4}
+                        value={comment}
+                        onChange={(e) => setComment(e.target.value)}
+                        disabled={submitting}
+                        className="resize-none"
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      <Button
+                        type="button"
+                        onClick={() => submitDecision("approve")}
+                        disabled={
+                          submitting ||
+                          !comment.trim() ||
+                          value.trim() === "" ||
+                          Number.isNaN(parseFloat(value)) ||
+                          parseFloat(value) < 0
+                        }
+                        className="bg-green-600 hover:bg-green-700"
+                      >
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                        {submitting ? "Submitting..." : "Approve"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        onClick={() => submitDecision("reject")}
+                        disabled={submitting || !comment.trim()}
+                      >
+                        <XCircle className="mr-2 h-4 w-4" />
+                        Reject
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => submitDecision("revision")}
+                        disabled={submitting || !comment.trim()}
+                      >
+                        <MessageSquare className="mr-2 h-4 w-4" />
+                        Request revision
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {showEditorFeedbackCard ? (
+              <div className="order-5 min-w-0 lg:order-none">
+                <Card className="shadow-archival-md border-amber-500/20 bg-amber-500/5">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg flex items-center gap-2">
+                      <MessageSquare className="h-5 w-5 text-amber-600" />
+                      Editor feedback
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      {contribution.status === "approved"
+                        ? "Your submission was approved and added to the catalog. If the editor left a comment below, use it as guidance for future submissions."
+                        : contribution.status === "rejected"
+                          ? "Your submission was not accepted. See the comment below for details."
+                          : contribution.status === "needs_revision"
+                            ? "The editor requested changes. Please update and resubmit or submit a new postmark."
+                            : "The reviewer left a comment for you. Use this feedback to improve your submission or add a new postmark if requested."}
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {contribution.status !== "pending" && (
+                      <p className="text-sm font-medium text-foreground">
+                        Outcome:{" "}
+                        <Badge variant={contribution.status === "approved" ? "default" : contribution.status === "rejected" ? "destructive" : "secondary"}>
+                          {contribution.status === "approved" ? "Approved" : contribution.status === "rejected" ? "Rejected" : "Needs revision"}
+                        </Badge>
+                      </p>
+                    )}
+                    {contribution.review_notes?.trim() ? (
+                      <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
+                        {contribution.review_notes.trim()}
+                      </p>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              </div>
+            ) : null}
+            </div>
+
+            <div className="order-2 min-w-0 space-y-6 lg:order-none lg:col-start-2 lg:row-start-1">
               <div>
                 <h1 className="font-heading text-3xl font-bold text-foreground mb-2">{displayName}</h1>
                 <div className="flex flex-wrap gap-2">
@@ -1449,123 +1569,6 @@ const ContributionDetail = () => {
                 </Card>
               )}
             </div>
-
-            {/* Below image on lg; after submission data on narrow screens (same DOM order). */}
-            {canReview && (
-              <div className="space-y-6 lg:col-start-1">
-                <Card className="shadow-archival-lg border-primary/20">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg">Review this submission</CardTitle>
-                    <p className="text-sm text-muted-foreground">
-                      Add value and a comment, then choose Approve, Reject, or Request revision.
-                    </p>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-2 max-w-xs">
-                      <Label htmlFor="contribution-value">
-                        Value (of this postmark) <span className="text-destructive">*</span>
-                      </Label>
-                      <Input
-                        id="contribution-value"
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        placeholder={prefillingValue ? "Prefilling..." : "e.g. 25.00"}
-                        value={value}
-                        onChange={(e) => setValue(e.target.value)}
-                        disabled={submitting || prefillingValue}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="contribution-comment">
-                        Comment (required) <span className="text-destructive">*</span>
-                      </Label>
-                      <Textarea
-                        id="contribution-comment"
-                        placeholder="Add a comment for the contributor (required for approve, reject, or revision)."
-                        rows={4}
-                        value={comment}
-                        onChange={(e) => setComment(e.target.value)}
-                        disabled={submitting}
-                        className="resize-none"
-                      />
-                    </div>
-                    <div className="flex flex-wrap gap-2 pt-2">
-                      <Button
-                        type="button"
-                        onClick={() => submitDecision("approve")}
-                        disabled={
-                          submitting ||
-                          !comment.trim() ||
-                          value.trim() === "" ||
-                          Number.isNaN(parseFloat(value)) ||
-                          parseFloat(value) < 0
-                        }
-                        className="bg-green-600 hover:bg-green-700"
-                      >
-                        <CheckCircle className="mr-2 h-4 w-4" />
-                        {submitting ? "Submitting..." : "Approve"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        onClick={() => submitDecision("reject")}
-                        disabled={submitting || !comment.trim()}
-                      >
-                        <XCircle className="mr-2 h-4 w-4" />
-                        Reject
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => submitDecision("revision")}
-                        disabled={submitting || !comment.trim()}
-                      >
-                        <MessageSquare className="mr-2 h-4 w-4" />
-                        Request revision
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
-
-            {(contribution.status !== "pending" || (contribution.review_notes && contribution.review_notes.trim())) ? (
-              <div className="space-y-6 lg:col-start-1">
-                <Card className="shadow-archival-md border-amber-500/20 bg-amber-500/5">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg flex items-center gap-2">
-                      <MessageSquare className="h-5 w-5 text-amber-600" />
-                      Editor feedback
-                    </CardTitle>
-                    <p className="text-sm text-muted-foreground">
-                      {contribution.status === "approved"
-                        ? "Your submission was approved and added to the catalog. If the editor left a comment below, use it as guidance for future submissions."
-                        : contribution.status === "rejected"
-                          ? "Your submission was not accepted. See the comment below for details."
-                          : contribution.status === "needs_revision"
-                            ? "The editor requested changes. Please update and resubmit or submit a new postmark."
-                            : "The reviewer left a comment for you. Use this feedback to improve your submission or add a new postmark if requested."}
-                    </p>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {contribution.status !== "pending" && (
-                      <p className="text-sm font-medium text-foreground">
-                        Outcome:{" "}
-                        <Badge variant={contribution.status === "approved" ? "default" : contribution.status === "rejected" ? "destructive" : "secondary"}>
-                          {contribution.status === "approved" ? "Approved" : contribution.status === "rejected" ? "Rejected" : "Needs revision"}
-                        </Badge>
-                      </p>
-                    )}
-                    {contribution.review_notes?.trim() ? (
-                      <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
-                        {contribution.review_notes.trim()}
-                      </p>
-                    ) : null}
-                  </CardContent>
-                </Card>
-              </div>
-            ) : null}
           </div>
 
           {isPending && !isStateEditor && (
