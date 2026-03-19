@@ -20,6 +20,11 @@ import { getFramingStyles, type FramingStyleOption } from "@/services/framingSty
 import { getDateFormats, type DateFormatOption } from "@/services/dateFormats";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import {
+  sanitizeMmInput,
+  validateMmPair,
+  submittedDataToWidthHeightStrings,
+} from "@/lib/dimensionsMm";
 
 /** Base URL for Django API (contributions, etc.) */
 function getApiBaseUrl(): string | null {
@@ -113,7 +118,8 @@ const Contribute = () => {
   const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
   const [colorOther, setColorOther] = useState("");
-  const [dimensions, setDimensions] = useState("");
+  const [widthMm, setWidthMm] = useState("");
+  const [heightMm, setHeightMm] = useState("");
   const [manuscript, setManuscript] = useState("");
   const [rarity, setRarity] = useState("");
   const [description, setDescription] = useState("");
@@ -129,7 +135,8 @@ const Contribute = () => {
     firstSeen?: string;
     type?: string;
     color?: string;
-    dimensions?: string;
+    widthMm?: string;
+    heightMm?: string;
     lettering?: string;
     framing?: string;
     dateFormat?: string;
@@ -152,8 +159,6 @@ const Contribute = () => {
 
   /** Town/City: letters, spaces, hyphens, apostrophes only */
   const sanitizeTown = (v: string) => v.replace(/[^a-zA-Z\s\-']/g, "");
-  /** Dimensions: max 4 digits, numbers only */
-  const sanitizeDimensions = (v: string) => v.replace(/\D/g, "").slice(0, 4);
   useEffect(() => {
     getColors()
       .then(setColorOptions)
@@ -268,7 +273,9 @@ const Contribute = () => {
         setTypeOther("");
         setColor(colorVal || "");
         setColorOther("");
-        setDimensions(getStr(sd.dimensions));
+        const wh = submittedDataToWidthHeightStrings(sd as Record<string, unknown>);
+        setWidthMm(wh.width);
+        setHeightMm(wh.height);
         setManuscript(getStr(sd.manuscript));
         setRarity(getStr(sd.rarity));
         setDescription(getStr(sd.description));
@@ -438,10 +445,9 @@ const Contribute = () => {
     if (!colorVal) {
       errors.color = "Color is required";
     }
-    const dimensionsVal = dimensions.trim();
-    if (dimensionsVal && !/^\d{1,4}$/.test(dimensionsVal)) {
-      errors.dimensions = "Dimensions must be numeric only, max 4 digits";
-    }
+    const mmErr = validateMmPair(widthMm, heightMm);
+    if (mmErr.width) errors.widthMm = mmErr.width;
+    if (mmErr.height) errors.heightMm = mmErr.height;
     if (!letteringId) errors.lettering = "Lettering style is required";
     if (!framingId) errors.framing = "Framing style is required";
     if (!dateFormatId) errors.dateFormat = "Date format is required";
@@ -529,7 +535,10 @@ const Contribute = () => {
         form.append("lastSeen", lastSeen.trim());
         form.append("type", typeVal);
         form.append("color", colorVal);
-        if (dimensions.trim()) form.append("dimensions", dimensions.trim());
+        if (widthMm.trim() && heightMm.trim()) {
+          form.append("width_mm", widthMm.trim());
+          form.append("height_mm", heightMm.trim());
+        }
         if (manuscript.trim()) form.append("manuscript", manuscript.trim());
         if (rarity.trim()) form.append("rarity", rarity.trim());
         if (description.trim()) form.append("description", description.trim());
@@ -557,7 +566,8 @@ const Contribute = () => {
           lastSeen: lastSeen.trim(),
           type: typeVal,
           color: colorVal,
-          dimensions: dimensions.trim() || undefined,
+          width_mm: widthMm.trim() || undefined,
+          height_mm: heightMm.trim() || undefined,
           manuscript: manuscript.trim() || undefined,
           rarity: rarity.trim() || undefined,
           description: description.trim() || undefined,
@@ -602,7 +612,9 @@ const Contribute = () => {
           ? "The postmark has been added to the catalog and is now visible in Search."
           : wasEdit
             ? "Your updated submission has been sent for review again."
-            : "Your catalog entry has been submitted for approval. It will appear in Search after an admin approves it.",
+            : isStateEditor
+              ? "Your entry was sent for peer review. Another state editor assigned to this state must approve it before it appears in Search."
+              : "Your catalog entry has been submitted for approval. It will appear in Search after an admin approves it.",
       });
 
       if (wasEdit && resData?.contributionId != null) {
@@ -618,7 +630,8 @@ const Contribute = () => {
       setTypeOther("");
       setColor("");
       setColorOther("");
-      setDimensions("");
+      setWidthMm("");
+      setHeightMm("");
       setManuscript("");
       setRarity("");
       setDescription("");
@@ -950,28 +963,61 @@ const Contribute = () => {
                       {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="dimensions">Dimensions</Label>
-                      <Input
-                        id="dimensions"
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="e.g., 32mm diameter"
-                        maxLength={4}
-                        value={dimensions}
-                        onChange={(e) => {
-                          setDimensions(sanitizeDimensions(e.target.value));
-                          if (fieldErrors.dimensions) {
-                            setFieldErrors((prev) => ({ ...prev, dimensions: undefined }));
-                          }
-                        }}
-                        className={fieldErrors.dimensions ? "border-destructive" : ""}
-                        aria-label="Dimensions (numbers only, max 4 digits)"
-                      />
-                      {fieldErrors.dimensions && (
-                        <p className="text-sm text-destructive">{fieldErrors.dimensions}</p>
-                      )}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="width-mm">Width (mm)</Label>
+                        <Input
+                          id="width-mm"
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="e.g. 34"
+                          value={widthMm}
+                          onChange={(e) => {
+                            setWidthMm(sanitizeMmInput(e.target.value));
+                            if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                              setFieldErrors((prev) => ({
+                                ...prev,
+                                widthMm: undefined,
+                                heightMm: undefined,
+                              }));
+                            }
+                          }}
+                          className={fieldErrors.widthMm ? "border-destructive" : ""}
+                          aria-label="Width in millimetres"
+                        />
+                        {fieldErrors.widthMm && (
+                          <p className="text-sm text-destructive">{fieldErrors.widthMm}</p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="height-mm">Height (mm)</Label>
+                        <Input
+                          id="height-mm"
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="e.g. 28"
+                          value={heightMm}
+                          onChange={(e) => {
+                            setHeightMm(sanitizeMmInput(e.target.value));
+                            if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                              setFieldErrors((prev) => ({
+                                ...prev,
+                                widthMm: undefined,
+                                heightMm: undefined,
+                              }));
+                            }
+                          }}
+                          className={fieldErrors.heightMm ? "border-destructive" : ""}
+                          aria-label="Height in millimetres"
+                        />
+                        {fieldErrors.heightMm && (
+                          <p className="text-sm text-destructive">{fieldErrors.heightMm}</p>
+                        )}
+                      </div>
                     </div>
+                    <p className="text-xs text-muted-foreground -mt-2">
+                      Optional. If you enter one, enter both. Stored on the catalog as width × height (mm).
+                    </p>
 
                     <div className="space-y-2">
                       <Label htmlFor="manuscript">Manuscript</Label>

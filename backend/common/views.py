@@ -609,6 +609,69 @@ def _get_payload_value(payload, *keys, default=None):
     return default
 
 
+def _decimal_mm_from_payload(payload, snake_key, camel_key):
+    """
+    Parse a positive millimetre dimension from contribution/catalog payload.
+    PostmarkSize uses DecimalField(max_digits=8, decimal_places=2).
+    """
+    from decimal import Decimal, InvalidOperation
+
+    raw = _get_payload_value(payload, snake_key, camel_key)
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, (list, tuple)):
+        raw = raw[0] if raw else None
+    if raw is None or raw == "":
+        return None
+    try:
+        d = Decimal(str(raw).strip())
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    if d <= 0:
+        return None
+    if d > Decimal("999999.99"):
+        return None
+    return d.quantize(Decimal("0.01"))
+
+
+def _apply_postmark_size_from_contribution_payload(postmark, user, payload):
+    """
+    Replace all PostmarkSize rows for this postmark from contribution payload.
+    Prefers width_mm + height_mm (stored as PostmarkSize.width / .height).
+    Falls back to legacy single-field ``dimensions`` -> size_notes with 0,0.
+    """
+    from decimal import Decimal
+
+    w = _decimal_mm_from_payload(payload, "width_mm", "widthMm")
+    if w is None:
+        w = _decimal_mm_from_payload(payload, "width", "Width")
+    h = _decimal_mm_from_payload(payload, "height_mm", "heightMm")
+    if h is None:
+        h = _decimal_mm_from_payload(payload, "height", "Height")
+    legacy = (_get_payload_value(payload, "dimensions", "Dimensions") or "").strip()
+
+    PostmarkSize.objects.filter(postmark=postmark).delete()
+
+    if w is not None and h is not None:
+        PostmarkSize.objects.create(
+            postmark=postmark,
+            width=w,
+            height=h,
+            size_notes="",
+            created_by=user,
+            modified_by=user,
+        )
+    elif legacy:
+        PostmarkSize.objects.create(
+            postmark=postmark,
+            width=Decimal("0"),
+            height=Decimal("0"),
+            size_notes=legacy[:255],
+            created_by=user,
+            modified_by=user,
+        )
+
+
 def _save_contribution_image(uploaded_file):
     """
     Save uploaded image to media/postmarks/contributions/ and return metadata for PostmarkImage.
@@ -728,6 +791,8 @@ def _create_contribution_only(payload, contributor):
             "color": (payload.get("color") or "").strip(),
             "manuscript": (payload.get("manuscript") or "").strip(),
             "dimensions": (payload.get("dimensions") or "").strip(),
+            "width_mm": (payload.get("width_mm") or payload.get("widthMm") or "").strip(),
+            "height_mm": (payload.get("height_mm") or payload.get("heightMm") or "").strip(),
             "description": (payload.get("description") or "").strip(),
             "references": (payload.get("references") or "").strip(),
             "rarity": (payload.get("rarity") or "").strip(),
@@ -746,6 +811,18 @@ def _create_contribution_only(payload, contributor):
             submitted_data["image_metas"] = payload["image_metas"]
         elif payload.get("image_meta"):
             submitted_data["image_meta"] = payload["image_meta"]
+        # Proposed catalog fields (e.g. state editor peer-review submissions)
+        psid = payload.get("postmark_shape_id")
+        if psid is not None:
+            try:
+                submitted_data["postmark_shape_id"] = int(psid)
+            except (TypeError, ValueError):
+                pass
+        if payload.get("estimated_value") is not None and payload.get("estimated_value") != "":
+            submitted_data["proposed_estimated_value"] = payload.get("estimated_value")
+        rn_raw = payload.get("review_notes")
+        if rn_raw is not None and str(rn_raw).strip():
+            submitted_data["review_notes"] = str(rn_raw).strip()
         contrib = Contribution.objects.create(
             contributor=contributor,
             postmark=None,
@@ -816,7 +893,6 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
         type_str = (_get_payload_value(payload, "type", "Type") or "").strip()
         color_str = (_get_payload_value(payload, "color", "Color") or "").strip()
         manuscript_str = (_get_payload_value(payload, "manuscript", "Manuscript") or "").strip()
-        dimensions_str = (_get_payload_value(payload, "dimensions", "Dimensions") or "").strip()
         description_str = (_get_payload_value(payload, "description", "Description") or "").strip()
         references_str = (_get_payload_value(payload, "references", "References") or "").strip()
         rarity_str = (_get_payload_value(payload, "rarity", "Rarity") or "").strip()
@@ -882,11 +958,17 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
                 created_by=user,
                 modified_by=user,
             )
-        # Shape: from editor_data if present, else from type_str
+        # Shape: editor approve payload, else contribution submitted_data postmark_shape_id, else type name
+        shape = None
         if editor_data and editor_data.get("postmark_shape_id") is not None:
             shape = PostmarkShape.objects.filter(pk=editor_data.get("postmark_shape_id")).first()
-        else:
-            shape = None
+        if shape is None:
+            shape_pk = _get_payload_value(payload, "postmark_shape_id", "postmarkShapeId")
+            if shape_pk is not None and str(shape_pk).strip() != "":
+                try:
+                    shape = PostmarkShape.objects.filter(pk=int(shape_pk)).first()
+                except (TypeError, ValueError):
+                    shape = None
         if shape is None:
             shape = PostmarkShape.objects.filter(shape_name=type_str).first()
         if shape is None:
@@ -951,16 +1033,8 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
             created_by=user,
             modified_by=user,
         )
-        # Dimensions: store in PostmarkSize (size_notes) when provided
-        if dimensions_str:
-            PostmarkSize.objects.create(
-                postmark=postmark,
-                width=0,
-                height=0,
-                size_notes=dimensions_str[:255],
-                created_by=user,
-                modified_by=user,
-            )
+        # Dimensions: width_mm + height_mm on PostmarkSize, or legacy ``dimensions`` -> size_notes
+        _apply_postmark_size_from_contribution_payload(postmark, user, payload)
         # Color
         color_name = color_str or "Black"
         color, _ = Color.objects.get_or_create(
@@ -1075,7 +1149,6 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
         type_str = (_get_payload_value(payload, "type", "Type") or "").strip()
         color_str = (_get_payload_value(payload, "color", "Color") or "").strip()
         manuscript_str = (_get_payload_value(payload, "manuscript", "Manuscript") or "").strip()
-        dimensions_str = (_get_payload_value(payload, "dimensions", "Dimensions") or "").strip()
         description_str = (_get_payload_value(payload, "description", "Description") or "").strip()
         references_str = (_get_payload_value(payload, "references", "References") or "").strip()
         rarity_str = (_get_payload_value(payload, "rarity", "Rarity") or "").strip()
@@ -1183,17 +1256,8 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
             ]
         )
 
-        # Replace dimensions
-        PostmarkSize.objects.filter(postmark=postmark).delete()
-        if dimensions_str:
-            PostmarkSize.objects.create(
-                postmark=postmark,
-                width=0,
-                height=0,
-                size_notes=dimensions_str[:255],
-                created_by=user,
-                modified_by=user,
-            )
+        # Replace dimensions (width_mm/height_mm or legacy dimensions string)
+        _apply_postmark_size_from_contribution_payload(postmark, user, payload)
 
         # Replace color
         PostmarkColor.objects.filter(postmark=postmark).delete()
@@ -1460,6 +1524,8 @@ class ContributionView(APIView):
                 return int(raw)
             except (TypeError, ValueError):
                 return None
+        wm_in = (data.get("width_mm") or data.get("widthMm") or "").strip()
+        hm_in = (data.get("height_mm") or data.get("heightMm") or "").strip()
         payload = {
             "state": state,
             "town": town,
@@ -1468,6 +1534,8 @@ class ContributionView(APIView):
             "color": color,
             "manuscript": (data.get("manuscript") or "").strip(),
             "dimensions": (data.get("dimensions") or "").strip(),
+            "width_mm": wm_in,
+            "height_mm": hm_in,
             "description": (data.get("description") or "").strip(),
             "references": (data.get("references") or "").strip(),
             "rarity": (data.get("rarity") or "").strip(),
@@ -1505,6 +1573,23 @@ class ContributionView(APIView):
                     payload["image_meta"] = image_metas[0]
                 else:
                     payload.pop("image_meta", None)
+
+        # State editors (non-superuser): new listings always go to peer review; preserve proposed catalog fields on the ticket.
+        if edit_postmark_id is None and edit_contribution_id is None:
+            merge_role = _get_user_role(user)
+            if merge_role == "state_editor" and not getattr(user, "is_superuser", False):
+                shape_merge = _payload_int("postmark_shape_id", "postmarkShapeId")
+                if shape_merge is not None:
+                    payload["postmark_shape_id"] = shape_merge
+                ev_raw = data.get("estimated_value")
+                if ev_raw is None:
+                    ev_raw = data.get("estimatedValue")
+                if ev_raw is not None and ev_raw != "":
+                    payload["estimated_value"] = ev_raw
+                rn_merge = data.get("review_notes") or data.get("reviewNotes") or data.get("comment") or ""
+                rn_merge = str(rn_merge).strip() if rn_merge is not None else ""
+                if rn_merge:
+                    payload["review_notes"] = rn_merge
 
         if edit_contribution_id is not None and edit_postmark_id is None:
             contrib = Contribution.objects.filter(
@@ -1552,10 +1637,10 @@ class ContributionView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # New submission by state editor or superuser with catalog fields: add directly to catalog (no approval queue)
+        # New submission by superuser with catalog fields: add directly to catalog (no approval queue).
+        # State editors always use the contribution queue so another assigned editor can approve.
         if edit_postmark_id is None and edit_contribution_id is None:
-            role = _get_user_role(user)
-            if role == "state_editor" or getattr(user, "is_superuser", False):
+            if getattr(user, "is_superuser", False):
                 def _get_int(data, *keys):
                     raw = None
                     for k in keys:
@@ -1632,6 +1717,8 @@ class ContributionView(APIView):
                         "color": (payload.get("color") or "").strip(),
                         "manuscript": (payload.get("manuscript") or "").strip(),
                         "dimensions": (payload.get("dimensions") or "").strip(),
+                        "width_mm": (payload.get("width_mm") or "").strip(),
+                        "height_mm": (payload.get("height_mm") or "").strip(),
                         "description": (payload.get("description") or "").strip(),
                         "references": (payload.get("references") or "").strip(),
                         "rarity": (payload.get("rarity") or "").strip(),
@@ -1660,21 +1747,18 @@ class ContributionView(APIView):
                         {"detail": "Catalog entry added. It is now visible in Search.", "postmarkId": postmark.postmark_id},
                         status=status.HTTP_201_CREATED,
                     )
-                elif role == "state_editor" and not getattr(user, "is_superuser", False):
-                    return Response(
-                        {"detail": "To add directly to the catalog (approve), fill the form and add Value and Comment (both required)."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
 
         if edit_postmark_id is not None:
             # Suggested edits to an existing catalog entry (S6).
             # - Contributors: always create/update a Contribution for expert review.
             # - submitForReview: State Editors / superusers use the same review queue
             #   (e.g. "Suggest" from record detail) instead of applying directly.
-            # - Otherwise State Editors / superusers: apply directly to the catalog.
+            # - Otherwise superusers only: apply directly to the catalog.
+            # State editors always queue suggestions for peer review (same-state editor approves).
             role = _get_user_role(user)
             is_contributor_only = role == "contributor" and not getattr(user, "is_superuser", False)
-            if is_contributor_only or submit_for_review:
+            state_editor_needs_peer = role == "state_editor" and not getattr(user, "is_superuser", False)
+            if is_contributor_only or submit_for_review or state_editor_needs_peer:
                 try:
                     submitted_data = {
                         "state": payload.get("state", ""),
@@ -1684,6 +1768,8 @@ class ContributionView(APIView):
                         "color": payload.get("color", ""),
                         "manuscript": payload.get("manuscript", ""),
                         "dimensions": payload.get("dimensions", ""),
+                        "width_mm": payload.get("width_mm", ""),
+                        "height_mm": payload.get("height_mm", ""),
                         "description": payload.get("description", ""),
                         "references": payload.get("references", ""),
                         "rarity": payload.get("rarity", ""),
@@ -1842,6 +1928,18 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
             return Response(
                 {"detail": f"Contribution is not pending (status: {contrib.status})."},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+        # State editors cannot approve their own submissions; another editor assigned to the state must review.
+        if (
+            not getattr(request.user, "is_superuser", False)
+            and contrib.contributor_id == request.user.id
+            and _get_user_role(request.user) == "state_editor"
+        ):
+            return Response(
+                {
+                    "detail": "You cannot approve your own submission. Another state editor assigned to this state must review it.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
             )
         serializer = ContributionApproveRejectSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
@@ -2037,6 +2135,12 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         dimensions = _get("dimensions", "Dimensions")
         if dimensions is not None:
             overlay["dimensions"] = str(dimensions).strip()
+        width_mm = _get("width_mm", "widthMm")
+        if width_mm is not None:
+            overlay["width_mm"] = str(width_mm).strip()
+        height_mm = _get("height_mm", "heightMm")
+        if height_mm is not None:
+            overlay["height_mm"] = str(height_mm).strip()
         manuscript = _get("manuscript", "Manuscript")
         if manuscript is not None:
             overlay["manuscript"] = str(manuscript).strip()

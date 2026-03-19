@@ -66,6 +66,12 @@ The Contribution model lives in the existing `common` app because:
 3. **Approve**: POST to `/api/contributions/<id>/approve/` → `_apply_contribution_to_catalog()` creates/updates Postmark, links to Contribution, sets `status=approved`
 4. **Reject**: POST to `/api/contributions/<id>/reject/` → sets `status=rejected`, catalog unchanged
 
+### State editor peer review (not contributors)
+
+- **New listings**: State editors no longer publish directly. POST creates a pending `Contribution` (same as contributors). Proposed fields such as `postmark_shape_id`, `proposed_estimated_value` / `review_notes` may be stored on `submitted_data` for the reviewer’s reference.
+- **Suggestions / edits** to an existing postmark: State editors always go through the pending queue (no direct catalog update); another assigned editor for that state applies the change on approve.
+- **Self-approval**: A state editor **cannot** approve their own contribution; another state editor assigned to the same state (or a superuser) must approve. Superusers may still add new listings directly without peer review.
+
 ---
 
 ## Migration Plan

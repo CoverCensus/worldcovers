@@ -17,6 +17,7 @@ import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious
 import { getLetteringStyles, type LetteringStyleOption } from "@/services/letteringStyles";
 import { getFramingStyles, type FramingStyleOption } from "@/services/framingStyles";
 import { getDateFormats, type DateFormatOption } from "@/services/dateFormats";
+import { sanitizeMmInput, submittedDataToWidthHeightStrings } from "@/lib/dimensionsMm";
 
 function getCsrfTokenFromCookie(): string | null {
   if (typeof document === "undefined") return null;
@@ -32,6 +33,10 @@ interface SubmittedData {
   color?: string;
   manuscript?: string;
   dimensions?: string;
+  width_mm?: string | number;
+  height_mm?: string | number;
+  widthMm?: string | number;
+  heightMm?: string | number;
   description?: string;
   references?: string;
   rarity?: string;
@@ -65,6 +70,8 @@ interface SubmittedData {
 
 interface Contribution {
   id: number;
+  /** Submitter user id (from API `contributor` FK) */
+  contributor_id?: number | null;
   status: string;
   contributor_username: string;
   review_notes: string | null;
@@ -107,7 +114,8 @@ const ContributionDetail = () => {
     lastSeen: string;
     type: string;
     color: string;
-    dimensions: string;
+    width_mm: string;
+    height_mm: string;
     manuscript: string;
     description: string;
     references: string;
@@ -117,7 +125,7 @@ const ContributionDetail = () => {
     date_format_id: string;
   }>({
     state: "", town: "", firstSeen: "", lastSeen: "", type: "", color: "",
-    dimensions: "", manuscript: "", description: "", references: "", rarity: "",
+    width_mm: "", height_mm: "", manuscript: "", description: "", references: "", rarity: "",
     lettering_style_id: "", framing_style_id: "", date_format_id: "",
   });
   const [savingEdits, setSavingEdits] = useState(false);
@@ -159,6 +167,12 @@ const ContributionDetail = () => {
         // API returns camelCase (CamelCaseJSONRenderer); normalize so component can use snake_case
         const normalized: Contribution = {
           id: data.id as number,
+          contributor_id:
+            typeof data.contributor === "number"
+              ? data.contributor
+              : typeof (data as { contributorId?: number }).contributorId === "number"
+                ? (data as { contributorId: number }).contributorId
+                : null,
           status: (data.status as string) ?? "pending",
           contributor_username: (data.contributor_username ?? data.contributorUsername) as string,
           review_notes: (data.review_notes ?? data.reviewNotes) as string | null,
@@ -222,6 +236,7 @@ const ContributionDetail = () => {
     const sd = contribution.submitted_data as Record<string, unknown>;
     const dr = String(sd.date_range ?? sd.dateRange ?? "").trim();
     const [firstSeen = "", lastSeen = ""] = dr ? dr.split(/[-–—]/).map((s) => s.trim()) : ["", ""];
+    const wh = submittedDataToWidthHeightStrings(sd);
     setEditorEdits({
       state: String(sd.state ?? "").trim(),
       town: String(sd.town ?? "").trim(),
@@ -229,7 +244,8 @@ const ContributionDetail = () => {
       lastSeen: lastSeen || "",
       type: String(sd.type ?? "").trim(),
       color: String(sd.color ?? "").trim(),
-      dimensions: String(sd.dimensions ?? "").trim(),
+      width_mm: wh.width,
+      height_mm: wh.height,
       manuscript: String(sd.manuscript ?? "").trim(),
       description: String(sd.description ?? "").trim(),
       references: String(sd.references ?? "").trim(),
@@ -251,7 +267,11 @@ const ContributionDetail = () => {
   useEffect(() => {
     if (loading || error || !contribution) return;
     const isPending = contribution.status === "pending";
-    const canReview = isStateEditor && isPending;
+    const isSubmitter =
+      !!user &&
+      (contribution.contributor_username === user.username || contribution.contributor_username === user.email);
+    const canReview =
+      isStateEditor && isPending && !!user && (user.is_superuser === true || !isSubmitter);
     if (!canReview) return;
     const postmarkIdRaw =
       contribution.postmark_id ?? contribution.postmark ?? (contribution as unknown as Record<string, unknown>).postmarkId ?? null;
@@ -286,7 +306,7 @@ const ContributionDetail = () => {
     return () => {
       cancelled = true;
     };
-  }, [loading, error, contribution, isStateEditor, value]);
+  }, [loading, error, contribution, isStateEditor, value, user]);
 
   const saveEditorEdits = async () => {
     if (!contribution) return;
@@ -311,7 +331,8 @@ const ContributionDetail = () => {
           lastSeen: editorEdits.lastSeen || undefined,
           type: editorEdits.type || undefined,
           color: editorEdits.color || undefined,
-          dimensions: editorEdits.dimensions || undefined,
+          width_mm: editorEdits.width_mm.trim() || undefined,
+          height_mm: editorEdits.height_mm.trim() || undefined,
           manuscript: editorEdits.manuscript || undefined,
           description: editorEdits.description || undefined,
           references: editorEdits.references || undefined,
@@ -328,6 +349,12 @@ const ContributionDetail = () => {
       const data = await res.json();
       const normalized: Contribution = {
         id: data.id,
+        contributor_id:
+          typeof data.contributor === "number"
+            ? data.contributor
+            : typeof (data as { contributorId?: number }).contributorId === "number"
+              ? (data as { contributorId: number }).contributorId
+              : contribution.contributor_id,
         status: data.status ?? "pending",
         contributor_username: (data.contributor_username ?? data.contributorUsername) ?? "",
         review_notes: data.review_notes ?? data.reviewNotes ?? null,
@@ -461,7 +488,6 @@ const ContributionDetail = () => {
   const town = String(sd.town ?? "").trim();
   const type = String(sd.type ?? "").trim();
   const color = String(sd.color ?? "").trim();
-  const dimensions = String(sd.dimensions ?? "").trim();
   const manuscript = String(sd.manuscript ?? "").trim();
   const rarity = String(sd.rarity ?? "").trim();
   const title = [town, state].filter(Boolean).join(", ") || `Submission #${contribution.id}`;
@@ -495,7 +521,9 @@ const ContributionDetail = () => {
   const images = imageMetaList;
 
   const isPending = contribution.status === "pending";
-  const canReview = isStateEditor && isPending;
+  const canReview =
+    isStateEditor && isPending && !!user && (user.is_superuser === true || !isContributor);
+  const showPeerReviewNotice = isStateEditor && isPending && isContributor && !user?.is_superuser;
   const postmarkIdRaw =
     contribution.postmark_id ?? contribution.postmark ?? (contribution as unknown as Record<string, unknown>).postmarkId ?? null;
   const postmarkId =
@@ -603,6 +631,12 @@ const ContributionDetail = () => {
                   {hasValue(color) ? <Badge variant="secondary">{color}</Badge> : null}
                   {hasValue(rarity) ? <Badge variant="outline">{rarity}</Badge> : null}
                 </div>
+                {showPeerReviewNotice ? (
+                  <p className="mt-4 text-sm rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-foreground">
+                    <span className="font-medium">Peer review required.</span> Another state editor assigned to this
+                    state must approve this entry before it appears in Search. You cannot approve your own submission.
+                  </p>
+                ) : null}
               </div>
 
               {/* Single Submitted data card — all contributor data in one place */}
@@ -624,6 +658,10 @@ const ContributionDetail = () => {
                         .filter(([k]) => {
                           if (k === "image_meta") return false;
                           if (k === "image_metas" || k === "imageMetas") return false;
+                          const hasMm =
+                            String(sd.width_mm ?? sd.widthMm ?? "").trim() !== "" ||
+                            String(sd.height_mm ?? sd.heightMm ?? "").trim() !== "";
+                          if (k === "dimensions" && hasMm) return false;
                           return true;
                         })
                         .map(([key, val]) => {
@@ -751,13 +789,27 @@ const ContributionDetail = () => {
                           disabled={savingEdits}
                         />
                       </div>
-                      <div className="space-y-2 sm:col-span-2">
-                        <Label htmlFor="edit-dimensions">Dimensions</Label>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-width-mm">Width (mm)</Label>
                         <Input
-                          id="edit-dimensions"
-                          value={editorEdits.dimensions}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, dimensions: e.target.value }))}
-                          placeholder="Dimensions"
+                          id="edit-width-mm"
+                          value={editorEdits.width_mm}
+                          onChange={(e) =>
+                            setEditorEdits((p) => ({ ...p, width_mm: sanitizeMmInput(e.target.value) }))
+                          }
+                          placeholder="Width"
+                          disabled={savingEdits}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-height-mm">Height (mm)</Label>
+                        <Input
+                          id="edit-height-mm"
+                          value={editorEdits.height_mm}
+                          onChange={(e) =>
+                            setEditorEdits((p) => ({ ...p, height_mm: sanitizeMmInput(e.target.value) }))
+                          }
+                          placeholder="Height"
                           disabled={savingEdits}
                         />
                       </div>
@@ -951,7 +1003,7 @@ const ContributionDetail = () => {
                     </CardTitle>
                     <p className="text-sm text-muted-foreground">
                       {contribution.status === "approved"
-                        ? "Your submission was approved and added to the catalog."
+                        ? "Your submission was approved and added to the catalog. If the editor left a comment below, use it as guidance for future submissions."
                         : contribution.status === "rejected"
                           ? "Your submission was not accepted. See the comment below for details."
                           : contribution.status === "needs_revision"

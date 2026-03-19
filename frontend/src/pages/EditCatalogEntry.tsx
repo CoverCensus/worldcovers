@@ -15,6 +15,11 @@ import { getColors, type ColorOption } from "@/services/colors";
 import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
 import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
 import { getPostalFacilities, type PostalFacilityOption } from "@/services/postalFacilities";
+import {
+  sanitizeMmInput,
+  validateMmPair,
+  catalogSizeToWidthHeightStrings,
+} from "@/lib/dimensionsMm";
 import { getLetteringStyles, type LetteringStyleOption } from "@/services/letteringStyles";
 import { getFramingStyles, type FramingStyleOption } from "@/services/framingStyles";
 import { getDateFormats, type DateFormatOption } from "@/services/dateFormats";
@@ -85,6 +90,9 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
       result.citationReferences = trimmed.slice("Citation references:".length).trim();
     } else if (trimmed.startsWith("Rarity:")) {
       result.rarityLabel = trimmed.slice("Rarity:".length).trim();
+    } else if (trimmed.startsWith("Comment:")) {
+      // Editor/internal notes in otherCharacteristics — not catalog description (matches RecordDetail).
+      continue;
     } else {
       extraDescriptionLines.push(trimmed);
     }
@@ -127,7 +135,8 @@ const EditCatalogEntry = () => {
   const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
   const [colorOther, setColorOther] = useState("");
-  const [dimensions, setDimensions] = useState("");
+  const [widthMm, setWidthMm] = useState("");
+  const [heightMm, setHeightMm] = useState("");
   const [manuscript, setManuscript] = useState("");
   const [rarity, setRarity] = useState("");
   const [description, setDescription] = useState("");
@@ -151,7 +160,8 @@ const EditCatalogEntry = () => {
     lastSeen?: string;
     type?: string;
     color?: string;
-    dimensions?: string;
+    widthMm?: string;
+    heightMm?: string;
     lettering?: string;
     framing?: string;
     dateFormat?: string;
@@ -159,9 +169,6 @@ const EditCatalogEntry = () => {
 
   /** Town/City: letters, spaces, hyphens, apostrophes only */
   const sanitizeTown = (v: string) => v.replace(/[^a-zA-Z\s\-']/g, "");
-  /** Dimensions: max 4 digits, numbers only */
-  const sanitizeDimensions = (v: string) => v.replace(/\D/g, "").slice(0, 4);
-
   useEffect(() => {
     getColors()
       .then(setColorOptions)
@@ -236,7 +243,13 @@ const EditCatalogEntry = () => {
           return;
         }
         const datesSeen = data.datesSeen?.[0];
-        const firstSize = data.sizes?.[0];
+        const sizes = Array.isArray(data.sizes) ? [...data.sizes] : [];
+        sizes.sort((a: any, b: any) => {
+          const da = a?.created_date ?? a?.createdDate ?? "";
+          const db = b?.created_date ?? b?.createdDate ?? "";
+          return String(db).localeCompare(String(da));
+        });
+        const firstSize = sizes[0];
         const firstVal = data.valuations?.[0];
         const parsed = parseOtherCharacteristics(data.otherCharacteristics);
         const rarityFromOther = parsed.rarityLabel?.trim() || "";
@@ -246,12 +259,7 @@ const EditCatalogEntry = () => {
             rarityFromOther.toLowerCase() === opt.value.toLowerCase()
         );
         const initialRarity = rarityMatch ? rarityMatch.value : "";
-        const dimRaw =
-          firstSize?.sizeNotes?.trim() ||
-          (firstSize?.width != null && firstSize?.height != null
-            ? `${firstSize.width}×${firstSize.height} mm`
-            : "");
-        const dimStr = dimRaw ? dimRaw.replace(/\D/g, "").slice(0, 4) : "";
+        const wh = catalogSizeToWidthHeightStrings(firstSize as Record<string, unknown> | undefined);
 
         const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
         const firstImage = data.images?.[0];
@@ -271,7 +279,8 @@ const EditCatalogEntry = () => {
         setLastSeen(datesSeen?.latestDateSeen?.slice(0, 4) || "");
         setType(data?.postmarkShape?.shapeName || "");
         setColor(data.colorsDisplay || "");
-        setDimensions(dimStr);
+        setWidthMm(wh.width);
+        setHeightMm(wh.height);
         setManuscript(data.isManuscript ? "Yes" : "No");
         setRarity(initialRarity);
         // Only prefill the textarea with an actual description, not raw otherCharacteristics
@@ -423,10 +432,9 @@ const EditCatalogEntry = () => {
     if (!letteringId) errors.lettering = "Lettering style is required";
     if (!framingId) errors.framing = "Framing style is required";
     if (!dateFormatId) errors.dateFormat = "Date format is required";
-    const dimensionsVal = dimensions.trim();
-    if (dimensionsVal && !/^\d{1,4}$/.test(dimensionsVal)) {
-      errors.dimensions = "Dimensions must be numeric only, max 4 digits";
-    }
+    const mmErr = validateMmPair(widthMm, heightMm);
+    if (mmErr.width) errors.widthMm = mmErr.width;
+    if (mmErr.height) errors.heightMm = mmErr.height;
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       return;
@@ -481,7 +489,10 @@ const EditCatalogEntry = () => {
         form.append("lettering_style_id", letteringId);
         form.append("framing_style_id", framingId);
         form.append("date_format_id", dateFormatId);
-        if (dimensions.trim()) form.append("dimensions", dimensions.trim());
+        if (widthMm.trim() && heightMm.trim()) {
+          form.append("width_mm", widthMm.trim());
+          form.append("height_mm", heightMm.trim());
+        }
         if (manuscript.trim()) form.append("manuscript", manuscript.trim());
         if (rarity.trim()) form.append("rarity", rarity.trim());
         if (description.trim()) form.append("description", description.trim());
@@ -506,7 +517,8 @@ const EditCatalogEntry = () => {
           lettering_style_id: letteringId ? Number(letteringId) : undefined,
           framing_style_id: framingId ? Number(framingId) : undefined,
           date_format_id: dateFormatId ? Number(dateFormatId) : undefined,
-          dimensions: dimensions.trim() || undefined,
+          width_mm: widthMm.trim() || undefined,
+          height_mm: heightMm.trim() || undefined,
           manuscript: manuscript.trim() || undefined,
           rarity: rarity.trim() || undefined,
           description: description.trim() || undefined,
@@ -925,28 +937,61 @@ const EditCatalogEntry = () => {
                       {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="edit-dimensions">Dimensions</Label>
-                      <Input
-                        id="edit-dimensions"
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="e.g., 32mm diameter"
-                        maxLength={4}
-                        value={dimensions}
-                        onChange={(e) => {
-                          setDimensions(sanitizeDimensions(e.target.value));
-                          if (fieldErrors.dimensions) {
-                            setFieldErrors((prev) => ({ ...prev, dimensions: undefined }));
-                          }
-                        }}
-                        className={fieldErrors.dimensions ? "border-destructive" : ""}
-                        aria-label="Dimensions (numbers only, max 4 digits)"
-                      />
-                      {fieldErrors.dimensions && (
-                        <p className="text-sm text-destructive">{fieldErrors.dimensions}</p>
-                      )}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-width-mm">Width (mm)</Label>
+                        <Input
+                          id="edit-width-mm"
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="e.g. 34"
+                          value={widthMm}
+                          onChange={(e) => {
+                            setWidthMm(sanitizeMmInput(e.target.value));
+                            if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                              setFieldErrors((prev) => ({
+                                ...prev,
+                                widthMm: undefined,
+                                heightMm: undefined,
+                              }));
+                            }
+                          }}
+                          className={fieldErrors.widthMm ? "border-destructive" : ""}
+                          aria-label="Width in millimetres"
+                        />
+                        {fieldErrors.widthMm && (
+                          <p className="text-sm text-destructive">{fieldErrors.widthMm}</p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-height-mm">Height (mm)</Label>
+                        <Input
+                          id="edit-height-mm"
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="e.g. 28"
+                          value={heightMm}
+                          onChange={(e) => {
+                            setHeightMm(sanitizeMmInput(e.target.value));
+                            if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                              setFieldErrors((prev) => ({
+                                ...prev,
+                                widthMm: undefined,
+                                heightMm: undefined,
+                              }));
+                            }
+                          }}
+                          className={fieldErrors.heightMm ? "border-destructive" : ""}
+                          aria-label="Height in millimetres"
+                        />
+                        {fieldErrors.heightMm && (
+                          <p className="text-sm text-destructive">{fieldErrors.heightMm}</p>
+                        )}
+                      </div>
                     </div>
+                    <p className="text-xs text-muted-foreground -mt-2">
+                      Optional. If you enter one, enter both. Stored as width × height (mm) on the catalog.
+                    </p>
 
                     <div className="space-y-2">
                       <Label htmlFor="edit-manuscript">Manuscript</Label>

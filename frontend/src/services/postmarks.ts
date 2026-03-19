@@ -26,6 +26,50 @@ export interface PostmarkApiResponse {
     responsibleGroups: unknown[];
   }
   
+  /**
+   * Human-readable dimensions for catalog/detail views.
+   * Contributions often store a free-text value in size_notes with width/height = 0
+   * (see backend PostmarkSize create from contributions).
+   * Matches backend PostmarkListSerializer.get_size_display behavior.
+   */
+  export function formatPostmarkDimensionsDisplay(sizes: unknown): string {
+    if (!Array.isArray(sizes) || sizes.length === 0) return "";
+
+    const parsePositive = (v: unknown): number | null => {
+      if (v == null || v === "") return null;
+      const n = typeof v === "number" ? v : parseFloat(String(v).replace(/,/g, ""));
+      if (!Number.isFinite(n) || n <= 0) return null;
+      return n;
+    };
+
+    const fmtNum = (n: number) => {
+      const t = n.toFixed(2).replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
+      return t;
+    };
+
+    const sorted = [...sizes].sort((a, b) => {
+      const da = (a as any)?.created_date ?? (a as any)?.createdDate ?? "";
+      const db = (b as any)?.created_date ?? (b as any)?.createdDate ?? "";
+      return String(db).localeCompare(String(da));
+    });
+
+    const s = sorted[0] as Record<string, unknown> | undefined;
+    if (!s) return "";
+
+    const w = parsePositive(s.width);
+    const h = parsePositive(s.height);
+    const notes = String(s.size_notes ?? s.sizeNotes ?? "").trim();
+
+    if (w != null && h != null) return `${fmtNum(w)}×${fmtNum(h)} mm`;
+    if (w != null) return `${fmtNum(w)} mm`;
+    if (h != null) return `${fmtNum(h)} mm`;
+    if (notes) {
+      if (/mm|×|\bcm\b|x/i.test(notes)) return notes;
+      return `${notes} mm`;
+    }
+    return "";
+  }
+
   /** Normalize image URL to absolute using the API origin when needed. */
   export function normalizeImageUrl(path: string | null | undefined): string | null {
     if (!path) return null;
@@ -54,16 +98,7 @@ export interface PostmarkApiResponse {
     // Derive a human-readable size string from various possible fields
     let sizeDisplay: string | undefined = sizeDisplayApi || "";
     if (!sizeDisplay && Array.isArray(item.sizes) && item.sizes.length > 0) {
-      const firstSize = item.sizes[0];
-      const w = firstSize?.width;
-      const h = firstSize?.height;
-      if (w && h) {
-        sizeDisplay = `${w}×${h} mm`;
-      } else if (w) {
-        sizeDisplay = `${w} mm`;
-      } else if (h) {
-        sizeDisplay = `${h} mm`;
-      }
+      sizeDisplay = formatPostmarkDimensionsDisplay(item.sizes) || undefined;
     }
   
     return {

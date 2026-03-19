@@ -30,6 +30,7 @@ import { Calendar, Grid3x3, List, Loader2, Search as SearchIcon, SlidersHorizont
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import { formatSizeFromSubmittedData } from "@/lib/dimensionsMm";
 import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { cn } from "@/lib/utils";
@@ -71,6 +72,8 @@ interface DashboardItem {
   postmark_id?: number | null;
   /** True when this is a suggested edit to an existing catalog entry (not a new submission). */
   isSuggestion?: boolean;
+  /** Editor feedback (approve / reject / revision); shown for all final statuses when present. */
+  review_notes?: string | null;
 }
 
 /** Catalog entry for User Submissions (state editor): postmarks in assigned states. */
@@ -342,7 +345,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             town,
             state,
             dateRange,
-            size: c.sizeDisplay || c.size || c.submittedData?.dimensions || "",
+            size:
+              c.sizeDisplay ||
+              c.size ||
+              formatSizeFromSubmittedData(c.submittedData as Record<string, unknown> | undefined) ||
+              (c.submittedData as { dimensions?: string } | undefined)?.dimensions ||
+              "",
             type: c.shapeName || c.typeDisplay || c.type || c.submittedData?.type || "",
             color: c.colorsDisplay || c.colorDisplay || c.color || c.submittedData?.color || "",
             status: String(c.status || "pending"),
@@ -351,6 +359,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             image_url: imageUrl,
             postmark_id: postmarkId ?? null,
             isSuggestion,
+            review_notes: c.review_notes ?? c.reviewNotes ?? null,
           } as DashboardItem;
         });
         setSubmissions(mapped);
@@ -455,7 +464,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             town,
             state,
             dateRange,
-            size: c.sizeDisplay || c.size || c.submittedData?.dimensions || "",
+            size:
+              c.sizeDisplay ||
+              c.size ||
+              formatSizeFromSubmittedData(c.submittedData as Record<string, unknown> | undefined) ||
+              (c.submittedData as { dimensions?: string } | undefined)?.dimensions ||
+              "",
             type: c.shapeName || c.typeDisplay || c.type || c.submittedData?.type || "",
             color: c.colorsDisplay || c.colorDisplay || c.color || c.submittedData?.color || "",
             status: String(c.status || "pending"),
@@ -1366,6 +1380,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               </p>
                             )}
 
+                            {submission.review_notes?.trim() ? (
+                              <div className="mt-3 rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-sm">
+                                <p className="font-medium text-foreground mb-1">Editor feedback</p>
+                                <p className="text-muted-foreground whitespace-pre-line line-clamp-4">
+                                  {submission.review_notes.trim()}
+                                </p>
+                              </div>
+                            ) : null}
+
                             <div className="mt-3 flex flex-wrap gap-2 justify-end">
                               <Button
                                 variant="outline"
@@ -1470,6 +1493,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             </span>
                           </div>
                         </div>
+
+                        {submission.review_notes?.trim() ? (
+                          <div className="rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-sm">
+                            <p className="font-medium text-foreground mb-1">Editor feedback</p>
+                            <p className="text-muted-foreground whitespace-pre-line line-clamp-3">
+                              {submission.review_notes.trim()}
+                            </p>
+                          </div>
+                        ) : null}
 
                         <div className="mt-2 flex flex-wrap gap-2 justify-center">
                           <Button

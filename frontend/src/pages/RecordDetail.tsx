@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Download, Upload, ArrowLeft, Loader2, Pencil } from "lucide-react";
+import { Download, Upload, ArrowLeft, Loader2, Pencil, MessageSquare } from "lucide-react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { SubmitImageDialog } from "@/components/SubmitImageDialog";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
-import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
+import { getPostmarkById, normalizeImageUrl, formatPostmarkDimensionsDisplay } from "@/services/postmarks";
 import { useAuth } from "@/hooks/useAuth";
+import type { AuthUser } from "@/lib/auth";
 
 function parseOtherCharacteristics(raw: string | null | undefined) {
   const result = {
@@ -19,7 +20,8 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
     description: "",
     citationReferences: "",
     rarityLabel: "",
-    comment: "",
+    /** Editor feedback stored as `Comment:` in other_characteristics (e.g. on approve). */
+    editorComment: "",
   };
 
   if (!raw) return result;
@@ -42,7 +44,12 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
     } else if (trimmed.startsWith("Rarity:")) {
       result.rarityLabel = trimmed.slice("Rarity:".length).trim();
     } else if (trimmed.startsWith("Comment:")) {
-      result.comment = trimmed.slice("Comment:".length).trim();
+      const commentText = trimmed.slice("Comment:".length).trim();
+      if (commentText) {
+        result.editorComment = result.editorComment
+          ? `${result.editorComment}\n${commentText}`
+          : commentText;
+      }
     } else {
       extraDescriptionLines.push(trimmed);
     }
@@ -52,6 +59,22 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
   result.description = [result.description, extra].filter(Boolean).join("\n");
 
   return result;
+}
+
+/** Who may see editor `Comment:` on the record page (hidden from anonymous visitors). */
+function shouldShowEditorCommentOnRecord(params: {
+  user: AuthUser | null;
+  editorComment: string;
+  sourceCatalog: string;
+}): boolean {
+  const text = params.editorComment.trim();
+  if (!text) return false;
+  const isUserContribution = /user\s*contribution/i.test((params.sourceCatalog || "").trim());
+  const isEditor = !!params.user && (params.user.role === "state_editor" || params.user.is_superuser);
+  if (isEditor) return true;
+  if (!params.user) return false;
+  if (isUserContribution) return true;
+  return false;
 }
 
 const RecordDetail = () => {
@@ -90,8 +113,10 @@ const RecordDetail = () => {
     letteringStyle?: string;
     framingStyle?: string;
     dateFormat?: string;
-    /** Editor comment (from review when approved) */
-    comment?: string;
+    /** From API source_catalog — used to decide if editor Comment is visible to logged-in users */
+    sourceCatalog?: string;
+    /** Parsed from other_characteristics `Comment:` (editor feedback at approval) */
+    editorComment?: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -111,8 +136,9 @@ const RecordDetail = () => {
         if (cancelled) return;
         if (data) {
           const datesSeen = data.datesSeen?.[0];
-          const firstSize = data.sizes?.[0];
-          const parsed = parseOtherCharacteristics(data.otherCharacteristics);
+          const parsed = parseOtherCharacteristics(
+            data.otherCharacteristics ?? data.other_characteristics,
+          );
           const locationLabel = [data.town, data.state].filter(Boolean).join(", ");
           const shapeLabel =
             data?.postmark_shape?.shape_name ?? data?.postmarkShape?.shapeName ?? "";
@@ -140,6 +166,9 @@ const RecordDetail = () => {
                   originalFilename: img.originalFilename,
                 }))
               : [];
+          const sourceCatalog = String(
+            data.source_catalog ?? data.sourceCatalog ?? "",
+          ).trim();
           setRecord({
             id: data.postmarkId,
             name: displayName,
@@ -150,18 +179,19 @@ const RecordDetail = () => {
             dateLastSeen: datesSeen?.latestDateSeen?.slice(0, 4) || "",
             color: data.colorsDisplay || "",
             type: shapeLabel || data?.postmarkShape?.shapeName || "",
-            dimensions: firstSize ? `${firstSize.width}×${firstSize.height} mm` : "",
+            dimensions: formatPostmarkDimensionsDisplay(data.sizes),
             manuscript: data.is_manuscript ?? data.isManuscript ? "Yes" : "No",
             letteringStyle: letteringStyle || undefined,
             framingStyle: framingStyle || undefined,
             dateFormat: dateFormat || undefined,
-            comment: parsed.comment || undefined,
             rarity: rarityLabel,
             // Only show description text the contributor actually provided
             // Do NOT fall back to raw otherCharacteristics (which may only contain submitter info)
             description: parsed.description || "",
             submitterName: parsed.submitterName || "",
             citationReferences: parsed.citationReferences || "",
+            sourceCatalog,
+            editorComment: parsed.editorComment || "",
             images,
             valuations: data.valuations?.map((v: any) => ({
               estimatedValue: v.estimatedValue ?? v.estimated_value,
@@ -223,6 +253,14 @@ const RecordDetail = () => {
       navigate("/search");
     }
   };
+
+  const showEditorComment =
+    record &&
+    shouldShowEditorCommentOnRecord({
+      user,
+      editorComment: record.editorComment ?? "",
+      sourceCatalog: record.sourceCatalog ?? "",
+    });
 
   if (error || !record) {
     return (
@@ -413,17 +451,6 @@ const RecordDetail = () => {
                 </CardContent>
               </Card>
 
-              {record.comment ? (
-                <Card className="shadow-archival-md">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg">Comment</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">{record.comment}</p>
-                  </CardContent>
-                </Card>
-              ) : null}
-
               {record.description?.trim() ? (
                 <Card className="shadow-archival-md">
                   <CardHeader>
@@ -432,6 +459,25 @@ const RecordDetail = () => {
                   <CardContent>
                     <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
                       {record.description}
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {showEditorComment && record.editorComment?.trim() ? (
+                <Card className="shadow-archival-md border-amber-500/20 bg-amber-500/5">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg flex items-center gap-2">
+                      <MessageSquare className="h-5 w-5 text-amber-600" />
+                      Editor feedback
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      Notes from the reviewer when this listing was approved. Use this for future submissions.
+                    </p>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
+                      {record.editorComment.trim()}
                     </p>
                   </CardContent>
                 </Card>
