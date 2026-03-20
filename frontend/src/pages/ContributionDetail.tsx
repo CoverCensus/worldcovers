@@ -158,6 +158,7 @@ const ContributionDetail = () => {
   const [value, setValue] = useState("");
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [resubmitting, setResubmitting] = useState(false);
   // Options to display names for lettering/framing/date format in Submitted data
   const [letteringOptions, setLetteringOptions] = useState<LetteringStyleOption[]>([]);
   const [framingOptions, setFramingOptions] = useState<FramingStyleOption[]>([]);
@@ -742,6 +743,47 @@ const ContributionDetail = () => {
     }
   };
 
+  const handleResubmit = async () => {
+    if (!contribution) return;
+    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
+    if (!apiBase) {
+      toast({ title: "Configuration error", description: "VITE_API_URL is not set.", variant: "destructive" });
+      return;
+    }
+
+    setResubmitting(true);
+    const csrfToken = getCsrfTokenFromCookie();
+    const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
+    if (csrfToken) headers["X-CSRFToken"] = csrfToken;
+
+    try {
+      const res = await fetch(`${apiBase}/api/contributions/${contribution.id}/resubmit/`, {
+        method: "POST",
+        credentials: "include",
+        headers,
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const resBody = await res.json().catch(() => ({}));
+        const msg = resBody?.detail ?? res.statusText;
+        throw new Error(typeof msg === "string" ? msg : "Request failed");
+      }
+      setContribution((prev) => (prev ? { ...prev, status: "pending" } : prev));
+      toast({
+        title: "Resubmitted",
+        description: "Your submission is now pending review again.",
+      });
+    } catch (err) {
+      toast({
+        title: "Could not resubmit",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setResubmitting(false);
+    }
+  };
+
   const handleBack = () => {
     if (fromDashboard) navigate("/dashboard", { state: { tab: "editor" } });
     else navigate("/dashboard");
@@ -787,6 +829,7 @@ const ContributionDetail = () => {
   const town = String(sd.town ?? "").trim();
   const type = String(sd.type ?? "").trim();
   const color = String(sd.color ?? "").trim();
+  const contributorComment = String(sd.review_notes ?? sd.reviewNotes ?? sd.comment ?? "").trim();
   const manuscript = String(sd.manuscript ?? "").trim();
   const rarity = String(sd.rarity ?? "").trim();
   const title = [town, state].filter(Boolean).join(", ") || `Submission #${contribution.id}`;
@@ -826,6 +869,8 @@ const ContributionDetail = () => {
   const showPeerReviewNotice = isStateEditor && isPending && isContributor && !user?.is_superuser;
   const showEditorFeedbackCard =
     contribution.status !== "pending" || !!(contribution.review_notes && contribution.review_notes.trim());
+  const canContributorResubmit =
+    isContributor && (contribution.status === "rejected" || contribution.status === "needs_revision");
   const postmarkIdRaw =
     contribution.postmark_id ?? contribution.postmark ?? (contribution as unknown as Record<string, unknown>).postmarkId ?? null;
   const postmarkId =
@@ -1020,7 +1065,7 @@ const ContributionDetail = () => {
                         : contribution.status === "rejected"
                           ? "Your submission was not accepted. See the comment below for details."
                           : contribution.status === "needs_revision"
-                            ? "The editor requested changes. Please update and resubmit or submit a new postmark."
+                            ? "The editor requested changes. Please update this submission and resubmit."
                             : "The reviewer left a comment for you. Use this feedback to improve your submission or add a new postmark if requested."}
                     </p>
                   </CardHeader>
@@ -1037,6 +1082,26 @@ const ContributionDetail = () => {
                       <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
                         {contribution.review_notes.trim()}
                       </p>
+                    ) : null}
+                    {canContributorResubmit ? (
+                      <div className="flex flex-wrap gap-2 pt-2">
+                        <Button
+                          type="button"
+                          variant="default"
+                          onClick={handleResubmit}
+                          disabled={resubmitting}
+                        >
+                          {resubmitting ? "Resubmitting..." : "Resubmit this submission"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => navigate(`/contribute?edit=${contribution.id}`)}
+                          disabled={resubmitting}
+                        >
+                          Edit before resubmitting
+                        </Button>
+                      </div>
                     ) : null}
                   </CardContent>
                 </Card>
@@ -1061,6 +1126,25 @@ const ContributionDetail = () => {
               </div>
 
               {/* Read-only submitted fields; editors see this for new postmarks (suggestions use "Edit submission data" instead). */}
+              {canReview && contributorComment && (
+                <Card className="shadow-archival-md border-primary/15">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg flex items-center gap-2">
+                      <MessageSquare className="h-5 w-5" />
+                      Contributor comment
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      Note from the contributor attached to this suggestion.
+                    </p>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
+                      {contributorComment}
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+
               {showSubmittedData && (
                 <Card className="shadow-archival-md border-primary/10">
                   <CardHeader>

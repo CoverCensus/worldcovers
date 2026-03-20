@@ -1984,11 +1984,11 @@ class IsStateEditorOrContributor(BasePermission):
             if obj.contributor_id == request.user.id:
                 return True
             return _can_review_contribution(request.user, obj)
-        if request.method in ("POST",):
+        if request.method in ("POST", "PATCH"):
             # Contributor can resubmit their own denied/needs_revision contribution
             if getattr(view, "action", None) == "resubmit" and obj.contributor_id == request.user.id:
                 return True
-            # approve / reject / request_revision: editors only
+            # approve / reject / request_revision / editor_edit: editors only
             return _can_review_contribution(request.user, obj)
         return False
 
