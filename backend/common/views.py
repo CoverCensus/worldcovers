@@ -1952,11 +1952,24 @@ def _can_review_contribution(user, contrib):
     """True if user can approve/reject this contribution (State Editor)."""
     if getattr(user, "is_superuser", False):
         return True
-    sd = contrib.submitted_data or {}
-    state_str = (sd.get("state") or "").strip()
     assigned = _get_user_assigned_units(user)
     if not assigned.exists():
         return False
+    # For suggestions on existing catalog entries, permission should be based on the
+    # linked postmark region as well (submitted_data can be edited before approval).
+    postmark = getattr(contrib, "postmark", None)
+    if postmark:
+        if postmark.state_id and assigned.filter(pk=postmark.state_id).exists():
+            return True
+        if postmark.postal_facility_identity_id and assigned.filter(
+            governed_facilities__postal_facility_identity_id=postmark.postal_facility_identity_id,
+            governed_facilities__effective_to_date__isnull=True,
+        ).exists():
+            return True
+
+    # Fallback for new submissions: evaluate state from submitted payload.
+    sd = contrib.submitted_data or {}
+    state_str = (sd.get("state") or "").strip()
     return _resolve_assigned_admin_unit(user, state_str) is not None
 
 
