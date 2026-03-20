@@ -143,7 +143,7 @@ const EditCatalogEntry = () => {
   const [references, setReferences] = useState("");
   // Contributor -> editor note for suggestions/corrections
   const [contributorComment, setContributorComment] = useState("");
-  const [existingImageUrl, setExistingImageUrl] = useState<string | null>(null);
+  const [existingImageUrls, setExistingImageUrls] = useState<string[]>([]);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [letteringId, setLetteringId] = useState("");
@@ -262,17 +262,21 @@ const EditCatalogEntry = () => {
         const wh = catalogSizeToWidthHeightStrings(firstSize as Record<string, unknown> | undefined);
 
         const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
-        const firstImage = data.images?.[0];
-        const existingUrl = firstImage
-          ? normalizeImageUrl(
-              firstImage.imageUrl ??
-                (baseImageUrl
-                  ? `${baseImageUrl.replace(/\/+$/, "")}/postmarks/${firstImage.storageFilename ?? ""}`
-                  : null)
-            )
-          : null;
+        const existingUrls = Array.isArray(data.images)
+          ? data.images
+              .map((img: any) => {
+                const rawUrl =
+                  img?.imageUrl ??
+                  img?.image_url ??
+                  (baseImageUrl && (img?.storageFilename ?? img?.storage_filename)
+                    ? `${baseImageUrl.replace(/\/+$/, "")}/postmarks/${img.storageFilename ?? img.storage_filename}`
+                    : null);
+                return normalizeImageUrl(rawUrl);
+              })
+              .filter((u: string | null): u is string => !!u)
+          : [];
 
-        setExistingImageUrl(existingUrl);
+        setExistingImageUrls(existingUrls);
         setState(data.state || "");
         setTown(sanitizeTown(data.town || ""));
         setFirstSeen(datesSeen?.earliestDateSeen?.slice(0, 4) || "");
@@ -1062,15 +1066,24 @@ const EditCatalogEntry = () => {
 
                     <div className="space-y-2">
                       <Label>Image</Label>
-                      {existingImageUrl && (
+                      {existingImageUrls.length > 0 && (
                         <div className="space-y-2">
-                          <p className="text-sm text-muted-foreground">Current image</p>
-                          <div className="rounded-lg border border-border overflow-hidden bg-muted inline-block max-w-sm">
-                            <img
-                              src={existingImageUrl}
-                              alt="Current catalog entry"
-                              className="max-h-48 w-full object-contain"
-                            />
+                          <p className="text-sm text-muted-foreground">
+                            Current image{existingImageUrls.length > 1 ? "s" : ""}
+                          </p>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                            {existingImageUrls.map((url, idx) => (
+                              <div
+                                key={`${url}-${idx}`}
+                                className="rounded-lg border border-border overflow-hidden bg-muted"
+                              >
+                                <img
+                                  src={url}
+                                  alt={`Current catalog entry ${idx + 1}`}
+                                  className="max-h-48 w-full object-contain"
+                                />
+                              </div>
+                            ))}
                           </div>
                           {imagePreviews.length === 0 && (
                             <p className="text-sm text-muted-foreground">
@@ -1079,8 +1092,8 @@ const EditCatalogEntry = () => {
                           )}
                         </div>
                       )}
-                      <Label className={existingImageUrl ? "mt-4 block" : ""}>
-                        {existingImageUrl ? "Add more images" : "Upload images (optional, multiple allowed)"}
+                      <Label className={existingImageUrls.length > 0 ? "mt-4 block" : ""}>
+                        {existingImageUrls.length > 0 ? "Add more images" : "Upload images (optional, multiple allowed)"}
                       </Label>
                       <input
                         ref={fileInputRef}
@@ -1124,7 +1137,7 @@ const EditCatalogEntry = () => {
                           <>
                             <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
                             <p className="text-sm text-muted-foreground mb-2">
-                              {existingImageUrl
+                              {existingImageUrls.length > 0
                                 ? "Click to add more images (optional)"
                                 : "Click to upload or drag and drop (optional, multiple allowed)"}
                             </p>

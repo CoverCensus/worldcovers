@@ -788,7 +788,16 @@ const ContributionDetail = () => {
   const town = String(sd.town ?? "").trim();
   const type = String(sd.type ?? "").trim();
   const color = String(sd.color ?? "").trim();
-  const contributorComment = String(sd.review_notes ?? sd.reviewNotes ?? sd.comment ?? "").trim();
+  const contributorComment = String(
+    sd.contributor_comment ??
+      sd.contributorComment ??
+      sd.comment_for_editor ??
+      sd.commentForEditor ??
+      sd.review_notes ??
+      sd.reviewNotes ??
+      sd.comment ??
+      ""
+  ).trim();
   const manuscript = String(sd.manuscript ?? "").trim();
   const rarity = String(sd.rarity ?? "").trim();
   const title = [town, state].filter(Boolean).join(", ") || `Submission #${contribution.id}`;
