@@ -743,47 +743,6 @@ const ContributionDetail = () => {
     }
   };
 
-  const handleResubmit = async () => {
-    if (!contribution) return;
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      toast({ title: "Configuration error", description: "VITE_API_URL is not set.", variant: "destructive" });
-      return;
-    }
-
-    setResubmitting(true);
-    const csrfToken = getCsrfTokenFromCookie();
-    const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
-    if (csrfToken) headers["X-CSRFToken"] = csrfToken;
-
-    try {
-      const res = await fetch(`${apiBase}/api/contributions/${contribution.id}/resubmit/`, {
-        method: "POST",
-        credentials: "include",
-        headers,
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) {
-        const resBody = await res.json().catch(() => ({}));
-        const msg = resBody?.detail ?? res.statusText;
-        throw new Error(typeof msg === "string" ? msg : "Request failed");
-      }
-      setContribution((prev) => (prev ? { ...prev, status: "pending" } : prev));
-      toast({
-        title: "Resubmitted",
-        description: "Your submission is now pending review again.",
-      });
-    } catch (err) {
-      toast({
-        title: "Could not resubmit",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setResubmitting(false);
-    }
-  };
-
   const handleBack = () => {
     if (fromDashboard) navigate("/dashboard", { state: { tab: "editor" } });
     else navigate("/dashboard");
@@ -1085,14 +1044,6 @@ const ContributionDetail = () => {
                     ) : null}
                     {canContributorResubmit ? (
                       <div className="flex flex-wrap gap-2 pt-2">
-                        <Button
-                          type="button"
-                          variant="default"
-                          onClick={handleResubmit}
-                          disabled={resubmitting}
-                        >
-                          {resubmitting ? "Resubmitting..." : "Resubmit this submission"}
-                        </Button>
                         <Button
                           type="button"
                           variant="outline"
