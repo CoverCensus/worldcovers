@@ -47,7 +47,7 @@ export const ForgotPasswordForm = ({ open, onOpenChange }: ForgotPasswordFormPro
       }
 
       const trimmed = base.trim().replace(/\/+$/, "");
-      const url = `${trimmed}/api/forgot-password/`;
+      const url = `${trimmed}/forgot-password/`;
 
       const res = await fetch(url, {
         method: "POST",

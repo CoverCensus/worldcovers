@@ -1,9 +1,9 @@
 /**
- * Date formats: from GET /api/date-formats/ when VITE_DATE_FORMATS_API_URL is set.
+ * Date formats: from GET /date-formats/ when VITE_DATE_FORMATS_API_URL is set.
  * No Supabase fallback (no matching table).
  */
 
-/** One item from GET /api/date-formats/ */
+/** One item from GET /date-formats/ */
 export interface DateFormatApiResultItem {
   dateFormatId: number;
   createdDate: string;
@@ -14,7 +14,7 @@ export interface DateFormatApiResultItem {
   modifiedBy: number;
 }
 
-/** Paginated response from GET /api/date-formats/ */
+/** Paginated response from GET /date-formats/ */
 export interface DateFormatApiResponse {
   count: number;
   next: string | null;
@@ -41,12 +41,12 @@ function getDateFormatsApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/date-formats")) return base;
-  return `${base}/api/date-formats`;
+  if (base.endsWith("/date-formats")) return base;
+  return `${base}/date-formats`;
 }
 
 /**
- * Fetches date formats from GET /api/date-formats/.
+ * Fetches date formats from GET /date-formats/.
  * When VITE_DATE_FORMATS_API_URL is not set, returns [].
  */
 export async function getDateFormats(): Promise<DateFormatOption[]> {

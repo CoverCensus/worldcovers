@@ -28,7 +28,7 @@ export const Navigation = () => {
   useEffect(() => {
     const checkFaqs = async () => {
       try {
-        const response = await fetch("/api/faq-entries/?page_size=1");
+        const response = await fetch((import.meta.env.VITE_API_BASE_URL || '/api/v1') + "/faq-entries/?page_size=1");
         if (!response.ok) {
           // If the FAQ endpoint fails, leave hasFaqs as null so we don't hide the link unexpectedly.
           return;
@@ -58,7 +58,7 @@ export const Navigation = () => {
   };
 
   const apiBase = (import.meta.env.VITE_API_URL ?? "").trim().replace(/\/+$/, "");
-  const logoutUrl = apiBase ? `${apiBase}/api/logout/` : "/api/logout/";
+  const logoutUrl = apiBase ? `${apiBase}/logout/` : (import.meta.env.VITE_API_BASE_URL || '/api/v1') + "/logout/";
 
   const handleLogout = async () => {
     try {

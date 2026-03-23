@@ -68,7 +68,7 @@ export async function fetchCurrentUser(): Promise<AuthUser | null> {
 
   if (currentUserInFlight) return currentUserInFlight;
 
-  const url = getApiBase() ? `${getApiBase()}/api/me/` : "/api/me/";
+  const url = getApiBase() ? `${getApiBase()}/me/` : (import.meta.env.VITE_API_BASE_URL || '/api/v1') + "/me/";
   currentUserInFlight = (async () => {
     try {
       const res = await fetch(url, { credentials: "include" });

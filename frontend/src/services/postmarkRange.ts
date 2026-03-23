@@ -9,7 +9,7 @@ function getPostmarksRangeApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  return `${base}/api/postmarks-range`;
+  return `${base}/postmarks-range`;
 }
 
 export async function getPostmarksDateRange(): Promise<PostmarkDateRange | null> {
