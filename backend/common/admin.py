@@ -28,16 +28,39 @@ from reversion.admin import VersionAdmin
 from reversion_compare.admin import CompareVersionAdmin
 
 from .models import (
-    PostalFacility, PostalFacilityIdentity,
-    AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
+    PostalFacility,
+    PostalFacilityIdentity,
+    AdministrativeUnit,
+    AdministrativeUnitIdentity,
+    AdministrativeUnitResponsibility,
     JurisdictionalAffiliation,
-    PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
-    Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
-    PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
-    PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
-    LegacyAbbreviation, LegacyRateLocation, LegacyRateValue,
-    LegacyParseStep, LegacyUserState, LegacyRawStateDataPendingUpdate, LegacyCover,
-    AdminCsvUpload, UserLocationAssignment, Contribution,
+    PostmarkShape,
+    LetteringStyle,
+    FramingStyle,
+    Color,
+    DateFormat,
+    Postmark,
+    PostmarkColor,
+    PostmarkDatesSeen,
+    PostmarkSize,
+    PostmarkValuation,
+    PostmarkPublication,
+    PostmarkPublicationReference,
+    PostmarkImage,
+    Postcover,
+    PostcoverPostmark,
+    PostcoverImage,
+    LegacyAbbreviation,
+    LegacyRateLocation,
+    LegacyRateValue,
+    LegacyParseStep,
+    LegacyUserState,
+    LegacyRawStateDataPendingUpdate,
+    LegacyCover,
+    AdminCsvUpload,
+    UserLocationAssignment,
+    Contribution,
+    FAQEntry,
 )
 from .csv_import import IMPORTERS
 from .utils import get_canonical_location_reference_codes
@@ -1090,11 +1113,14 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
                 user_location_assignments__user=self.instance
             )
 
-        # Initialise role based solely on existing group membership so that
-        # choosing "Contributor" persists even for superusers.
+        # Initialise role from group membership or from location assignments, so that
+        # opening a state editor always shows "State Editor" with their assigned locations.
         role_initial = ROLE_CONTRIBUTOR
-        if self.instance.pk and self.instance.groups.filter(name__iexact="State Editors").exists():
-            role_initial = ROLE_STATE_EDITOR
+        if self.instance.pk:
+            if self.instance.groups.filter(name__iexact="State Editors").exists():
+                role_initial = ROLE_STATE_EDITOR
+            elif _user_location_table_available() and UserLocationAssignment.objects.filter(user=self.instance).exists():
+                role_initial = ROLE_STATE_EDITOR
         self.fields['role'].initial = role_initial or ROLE_CONTRIBUTOR
 
     def _save_locations(self):
@@ -1363,6 +1389,14 @@ class ContributionAdmin(admin.ModelAdmin):
                 f"Rejected {rejected} contribution(s).",
                 level=messages.SUCCESS,
             )
+
+
+@admin.register(FAQEntry)
+class FAQEntryAdmin(TimestampedModelAdmin, ReversionAdminBase):
+    list_display = ("question", "is_active", "display_order")
+    list_filter = ("is_active",)
+    search_fields = ("question", "answer")
+    ordering = ("display_order", "faq_entry_id")
 
 
 ###################################################################################################

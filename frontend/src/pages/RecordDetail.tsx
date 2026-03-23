@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Download, Upload, ArrowLeft, Loader2, Pencil } from "lucide-react";
+import { Download, Upload, ArrowLeft, Loader2, Pencil, MessageSquare } from "lucide-react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { SubmitImageDialog } from "@/components/SubmitImageDialog";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
-import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
+import { getPostmarkById, normalizeImageUrl, formatPostmarkDimensionsDisplay } from "@/services/postmarks";
 import { useAuth } from "@/hooks/useAuth";
+import type { AuthUser } from "@/lib/auth";
 
 function parseOtherCharacteristics(raw: string | null | undefined) {
   const result = {
@@ -19,6 +20,8 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
     description: "",
     citationReferences: "",
     rarityLabel: "",
+    /** Editor feedback stored as `Comment:` in other_characteristics (e.g. on approve). */
+    editorComment: "",
   };
 
   if (!raw) return result;
@@ -40,6 +43,13 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
         .trim();
     } else if (trimmed.startsWith("Rarity:")) {
       result.rarityLabel = trimmed.slice("Rarity:".length).trim();
+    } else if (trimmed.startsWith("Comment:")) {
+      const commentText = trimmed.slice("Comment:".length).trim();
+      if (commentText) {
+        result.editorComment = result.editorComment
+          ? `${result.editorComment}\n${commentText}`
+          : commentText;
+      }
     } else {
       extraDescriptionLines.push(trimmed);
     }
@@ -49,6 +59,22 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
   result.description = [result.description, extra].filter(Boolean).join("\n");
 
   return result;
+}
+
+/** Who may see editor `Comment:` on the record page (hidden from anonymous visitors). */
+function shouldShowEditorCommentOnRecord(params: {
+  user: AuthUser | null;
+  editorComment: string;
+  sourceCatalog: string;
+}): boolean {
+  const text = params.editorComment.trim();
+  if (!text) return false;
+  const isUserContribution = /user\s*contribution/i.test((params.sourceCatalog || "").trim());
+  const isEditor = !!params.user && (params.user.role === "state_editor" || params.user.is_superuser);
+  if (isEditor) return true;
+  if (!params.user) return false;
+  if (isUserContribution) return true;
+  return false;
 }
 
 const RecordDetail = () => {
@@ -77,7 +103,20 @@ const RecordDetail = () => {
     submitterName?: string;
     citationReferences?: string;
     images: (string | { imageUrl?: string })[];
-    valuations?: Array<{ estimatedValue?: string; condition?: string }>;
+    valuations?: Array<{
+      estimatedValue?: string;
+      condition?: string;
+      valuationDate?: string;
+      valuedBy?: { username?: string; firstName?: string; lastName?: string };
+    }>;
+    /** Physical characteristics from the postmark (shape, lettering, framing, date format) */
+    letteringStyle?: string;
+    framingStyle?: string;
+    dateFormat?: string;
+    /** From API source_catalog — used to decide if editor Comment is visible to logged-in users */
+    sourceCatalog?: string;
+    /** Parsed from other_characteristics `Comment:` (editor feedback at approval) */
+    editorComment?: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -97,15 +136,25 @@ const RecordDetail = () => {
         if (cancelled) return;
         if (data) {
           const datesSeen = data.datesSeen?.[0];
-          const firstSize = data.sizes?.[0];
-          const firstVal = data.valuations?.[0];
-          const parsed = parseOtherCharacteristics(data.otherCharacteristics);
+          const parsed = parseOtherCharacteristics(
+            data.otherCharacteristics ?? data.other_characteristics,
+          );
           const locationLabel = [data.town, data.state].filter(Boolean).join(", ");
-          const shapeLabel = data?.postmarkShape?.shapeName || "";
-          const displayName = [locationLabel, shapeLabel].filter(Boolean).join(" — ") || data.postmarkKey;
+          const shapeLabel =
+            data?.postmark_shape?.shape_name ?? data?.postmarkShape?.shapeName ?? "";
+          const letteringStyle =
+            data?.lettering_style?.lettering_style_name ?? data?.letteringStyle?.letteringStyleName ?? "";
+          const framingStyle =
+            data?.framing_style?.framing_style_name ?? data?.framingStyle?.framingStyleName ?? "";
+          const dateFormat =
+            data?.date_format?.format_name ?? data?.dateFormat?.formatName ?? "";
+          const displayParts = [locationLabel, shapeLabel].filter(
+            (x) => x && String(x).trim().toLowerCase() !== "unknown"
+          );
+          const displayName = displayParts.join(" — ") || data.postmarkKey;
           const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
-          const rarityFromValuation = firstVal?.estimatedValue ? `$${firstVal.estimatedValue}` : "";
-          const rarityFromOther = parsed.rarityLabel || "";
+          // Rarity in Record Details is the label (Common/Scarce/Rare/Very Rare), not the dollar valuation
+          const rarityLabel = (parsed.rarityLabel || "").trim();
           const images =
             data.images?.length
               ? data.images.map((img: any) => ({
@@ -117,6 +166,9 @@ const RecordDetail = () => {
                   originalFilename: img.originalFilename,
                 }))
               : [];
+          const sourceCatalog = String(
+            data.source_catalog ?? data.sourceCatalog ?? "",
+          ).trim();
           setRecord({
             id: data.postmarkId,
             name: displayName,
@@ -126,19 +178,23 @@ const RecordDetail = () => {
             dateFirstSeen: datesSeen?.earliestDateSeen?.slice(0, 4) || "",
             dateLastSeen: datesSeen?.latestDateSeen?.slice(0, 4) || "",
             color: data.colorsDisplay || "",
-            type: data?.postmarkShape?.shapeName || "",
-            dimensions: firstSize ? `${firstSize.width}×${firstSize.height} mm` : "",
-            manuscript: data.isManuscript ? "Yes" : "No",
-            rarity: rarityFromValuation || rarityFromOther,
+            type: shapeLabel || data?.postmarkShape?.shapeName || "",
+            dimensions: formatPostmarkDimensionsDisplay(data.sizes),
+            manuscript: data.is_manuscript ?? data.isManuscript ? "Yes" : "No",
+            letteringStyle: letteringStyle || undefined,
+            framingStyle: framingStyle || undefined,
+            dateFormat: dateFormat || undefined,
+            rarity: rarityLabel,
             // Only show description text the contributor actually provided
             // Do NOT fall back to raw otherCharacteristics (which may only contain submitter info)
             description: parsed.description || "",
             submitterName: parsed.submitterName || "",
             citationReferences: parsed.citationReferences || "",
+            sourceCatalog,
+            editorComment: parsed.editorComment || "",
             images,
-            valuations: data.valuations?.map((v) => ({
-              estimatedValue: v.estimatedValue,
-              condition: "Average condition",
+            valuations: data.valuations?.map((v: any) => ({
+              estimatedValue: v.estimatedValue ?? v.estimated_value,
             })),
           });
         } else {
@@ -188,15 +244,6 @@ const RecordDetail = () => {
   const fromDashboard = location.state?.fromDashboard;
   const fromSearch = location.state?.fromSearch;
 
-  const isContributor = user?.role === "contributor";
-  const isStateEditor = user?.role === "state_editor";
-  const isOwner =
-    !!user &&
-    !!record.submitterName &&
-    [user.username, user.email]
-      .filter(Boolean)
-      .some((id) => id && id.toLowerCase() === record.submitterName!.toLowerCase());
-
   const handleBack = () => {
     if (fromDashboard) {
       navigate("/dashboard");
@@ -206,6 +253,14 @@ const RecordDetail = () => {
       navigate("/search");
     }
   };
+
+  const showEditorComment =
+    record &&
+    shouldShowEditorCommentOnRecord({
+      user,
+      editorComment: record.editorComment ?? "",
+      sourceCatalog: record.sourceCatalog ?? "",
+    });
 
   if (error || !record) {
     return (
@@ -234,26 +289,26 @@ const RecordDetail = () => {
               <ArrowLeft className="mr-2 h-4 w-4" />
               {fromDashboard ? "Back to Dashboard" : "Back to Search"}
             </Button>
-            {user && (
+            {/* Logged-in contributors and editors suggest corrections; they go to the review queue (see submitForReview API). */}
+            {user ? (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() =>
-                  navigate(`/edit/${record.id}`, {
+                  navigate(`/edit/${record.id}?mode=suggestion`, {
                     state: {
                       fromSearch,
                       fromDashboard,
                       fromDashboardViaDetail: !!fromDashboard,
-                      // Let the edit page know whether this is a direct edit or a suggestion
-                      mode: isStateEditor && isOwner ? "direct_edit" : "suggestion",
+                      mode: "suggestion",
                     },
                   })
                 }
               >
                 <Pencil className="mr-2 h-4 w-4" />
-                {isStateEditor && isOwner ? "Edit entry" : "Suggest an edit"}
+                Suggest
               </Button>
-            )}
+            ) : null}
           </div>
 
           {/* Main Content */}
@@ -341,9 +396,19 @@ const RecordDetail = () => {
                 </h1>
                 
                 <div className="flex flex-wrap gap-2">
-                  {record?.type && <Badge variant="secondary">{record?.type}</Badge>}
-                  {record?.color && <Badge variant="secondary">{record.color}</Badge>}
-                  {record?.rarity && <Badge variant="outline">{record.rarity}</Badge>}
+                  {(() => {
+                    const show = (v: string | undefined) => {
+                      const s = (v ?? "").trim();
+                      return s !== "" && s.toLowerCase() !== "unknown";
+                    };
+                    return (
+                      <>
+                        {show(record?.type) ? <Badge variant="secondary">{record.type}</Badge> : null}
+                        {show(record?.color) ? <Badge variant="secondary">{record.color}</Badge> : null}
+                        {show(record?.rarity) ? <Badge variant="outline">{record.rarity}</Badge> : null}
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -354,6 +419,10 @@ const RecordDetail = () => {
                 <CardContent>
                   <dl className="space-y-0 text-sm">
                     {(() => {
+                      const hasValue = (v: unknown) => {
+                        const s = v != null ? String(v).trim() : "";
+                        return s !== "" && s.toLowerCase() !== "unknown";
+                      };
                       const details = [
                         { label: "State", value: record.state },
                         { label: "Town", value: record.town },
@@ -362,7 +431,7 @@ const RecordDetail = () => {
                         { label: "Dimensions", value: record.dimensions },
                         { label: "Manuscript", value: record.manuscript },
                         { label: "Rarity", value: record.rarity },
-                      ].filter(({ value }) => value != null && String(value).trim() !== "");
+                      ].filter(({ value }) => hasValue(value));
                       if (details.length === 0) {
                         return (
                           <p className="text-sm text-muted-foreground py-2">No record details available.</p>
@@ -394,67 +463,113 @@ const RecordDetail = () => {
                   </CardContent>
                 </Card>
               ) : null}
+
+              {showEditorComment && record.editorComment?.trim() ? (
+                <Card className="shadow-archival-md border-amber-500/20 bg-amber-500/5">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg flex items-center gap-2">
+                      <MessageSquare className="h-5 w-5 text-amber-600" />
+                      Editor feedback
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      Notes from the reviewer when this listing was approved. Use this for future submissions.
+                    </p>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
+                      {record.editorComment.trim()}
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : null}
             </div>
           </div>
 
           {/* Additional Information Tabs */}
           <Card className="shadow-archival-lg">
             <CardContent className="p-6">
-              <Tabs defaultValue="valuations">
-              <TabsList className="mt-1 grid w-full grid-cols-3 gap-1 rounded-md bg-muted p-1">
-                  <TabsTrigger value="references">References</TabsTrigger>
-                  <TabsTrigger value="valuations">Valuations</TabsTrigger>
-                  {record.citationReferences && (
-                    <TabsTrigger value="citations">Citations</TabsTrigger>
-                  )}
-                </TabsList>
-                <TabsContent value="references" className="mt-6">
-                  <div className="space-y-4">
-                    <div className="border-l-4 border-primary pl-4">
-                      <p className="text-sm font-medium text-foreground">Skinner-Eno (SE-MA-1825-01)</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Listed in Skinner-Eno catalog of U.S. stampless covers, page 142.
-                      </p>
-                    </div>
-                    <div className="border-l-4 border-primary pl-4">
-                      <p className="text-sm font-medium text-foreground">Ashbrook Special Service (1956)</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Documented example sold at auction for $85.
-                      </p>
-                    </div>
-                  </div>
-                </TabsContent>
-                <TabsContent value="valuations" className="mt-6">
-                  <div className="space-y-4">
-                    {record.valuations?.filter((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "").length ? (
-                      record.valuations
-                        .filter((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "")
-                        .map((v, i) => (
-                          <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                            <div>
-                              <p className="text-sm font-medium text-foreground">On Cover</p>
-                              {v.condition ? (
-                                <p className="text-xs text-muted-foreground">{v.condition}</p>
+              {(() => {
+                const hasValuations = !!record.valuations?.some((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "");
+                const tabCount = 1 + (hasValuations ? 1 : 0) + (record.citationReferences ? 1 : 0);
+                return (
+                  <Tabs defaultValue="physical">
+                    <TabsList
+                      className={`mt-1 w-full gap-1 rounded-md bg-muted p-1 flex flex-wrap justify-start h-auto sm:grid sm:h-10 grid-cols-${tabCount}`}
+                      style={{ gridTemplateColumns: `repeat(${tabCount}, minmax(0, 1fr))` }}
+                    >
+                      <TabsTrigger value="physical">Physical Characteristics</TabsTrigger>
+                      {hasValuations ? (
+                        <TabsTrigger value="valuations">Valuations</TabsTrigger>
+                      ) : null}
+                      {record.citationReferences ? (
+                        <TabsTrigger value="citations">Citations</TabsTrigger>
+                      ) : null}
+                    </TabsList>
+                    <TabsContent value="physical" className="mt-6">
+                      <dl className="space-y-3 text-sm">
+                        {(() => {
+                          const hasValue = (v: string | undefined) => {
+                            const s = (v ?? "").trim();
+                            return s !== "" && s.toLowerCase() !== "unknown";
+                          };
+                          const showLettering = hasValue(record.letteringStyle);
+                          const showFraming = hasValue(record.framingStyle);
+                          const showDateFormat = hasValue(record.dateFormat);
+                          const none = !showLettering && !showFraming && !showDateFormat;
+                          return (
+                            <>
+                              {showLettering ? (
+                                <div className="flex gap-3">
+                                  <dt className="font-medium text-muted-foreground min-w-[8rem]">Lettering style</dt>
+                                  <dd className="text-foreground">{record.letteringStyle}</dd>
+                                </div>
                               ) : null}
-                            </div>
-                            <p className="text-lg font-heading font-semibold text-primary">
-                              ${v.estimatedValue}
-                            </p>
-                          </div>
-                        ))
-                    ) : (
-                      <p className="text-sm text-muted-foreground py-2">No valuations recorded.</p>
-                    )}
-                  </div>
-                </TabsContent>
-                {record.citationReferences && (
+                              {showFraming ? (
+                                <div className="flex gap-3">
+                                  <dt className="font-medium text-muted-foreground min-w-[8rem]">Framing style</dt>
+                                  <dd className="text-foreground">{record.framingStyle}</dd>
+                                </div>
+                              ) : null}
+                              {showDateFormat ? (
+                                <div className="flex gap-3">
+                                  <dt className="font-medium text-muted-foreground min-w-[8rem]">Date format</dt>
+                                  <dd className="text-foreground">{record.dateFormat}</dd>
+                                </div>
+                              ) : null}
+                              {none ? (
+                                <p className="text-muted-foreground py-2">No physical characteristics recorded for this postmark.</p>
+                              ) : null}
+                            </>
+                          );
+                        })()}
+                      </dl>
+                    </TabsContent>
+                    {hasValuations ? (
+                      <TabsContent value="valuations" className="mt-6">
+                        <div className="space-y-4">
+                          {record.valuations
+                            ?.filter((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "")
+                            .map((v, i) => (
+                              <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
+                                <p className="text-sm font-medium text-muted-foreground">Valuation</p>
+                                <p className="text-lg font-heading font-semibold text-primary">
+                                  ${v.estimatedValue}
+                                </p>
+                              </div>
+                            ))}
+                        </div>
+                      </TabsContent>
+                    ) : null}
+                {record.citationReferences ? (
                   <TabsContent value="citations" className="mt-6">
                     <div className="space-y-3 text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
                       {record.citationReferences}
                     </div>
                   </TabsContent>
-                )}
-              </Tabs>
+                ) : null}
+                  </Tabs>
+                );
+              })()}
             </CardContent>
           </Card>
         </div>

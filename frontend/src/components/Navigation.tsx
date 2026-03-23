@@ -7,8 +7,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Menu, X, LogOut, KeyRound, ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { Menu, X, LogOut, KeyRound, ChevronDown, LayoutDashboard } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -19,10 +19,30 @@ import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 export const Navigation = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [hasFaqs, setHasFaqs] = useState<boolean | null>(null);
   const user = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
+
+  useEffect(() => {
+    const checkFaqs = async () => {
+      try {
+        const response = await fetch("/api/faq-entries/?page_size=1");
+        if (!response.ok) {
+          // If the FAQ endpoint fails, leave hasFaqs as null so we don't hide the link unexpectedly.
+          return;
+        }
+        const data = await response.json();
+        const items = Array.isArray(data) ? data : data?.results || [];
+        setHasFaqs(items.length > 0);
+      } catch {
+        // Network or other error – keep hasFaqs as null.
+      }
+    };
+
+    void checkFaqs();
+  }, []);
 
   const handleFaqClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
@@ -37,9 +57,12 @@ export const Navigation = () => {
     setMobileMenuOpen(false);
   };
 
+  const apiBase = (import.meta.env.VITE_API_URL ?? "").trim().replace(/\/+$/, "");
+  const logoutUrl = apiBase ? `${apiBase}/api/logout/` : "/api/logout/";
+
   const handleLogout = async () => {
     try {
-      await fetch("/api/logout/", { method: "POST", credentials: "include" });
+      await fetch(logoutUrl, { method: "POST", credentials: "include" });
       clearStoredUser();
 
       toast({
@@ -62,7 +85,7 @@ export const Navigation = () => {
   const handleSignOutAndSignIn = async () => {
     setChangePasswordOpen(false);
     try {
-      await fetch("/api/logout/", { method: "POST", credentials: "include" });
+      await fetch(logoutUrl, { method: "POST", credentials: "include" });
       clearStoredUser();
       toast({
         title: "Signed out",
@@ -112,13 +135,15 @@ export const Navigation = () => {
             >
               Catalog
             </NavLink>
-            <a
-              href="#faq"
-              onClick={handleFaqClick}
-              className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-            >
-              FAQ
-            </a>
+            {hasFaqs !== false && (
+              <a
+                href="#faq"
+                onClick={handleFaqClick}
+                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              >
+                FAQ
+              </a>
+            )}
             {user && (
               <NavLink
                 to="/contribute"
@@ -126,24 +151,6 @@ export const Navigation = () => {
                 activeClassName="text-primary font-semibold"
               >
                 Contribute
-              </NavLink>
-            )}
-            {user && (
-              <NavLink
-                to="/dashboard"
-                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-                activeClassName="text-primary font-semibold"
-              >
-                My Submissions
-              </NavLink>
-            )}
-            {user && (
-              <NavLink
-                to="/suggestions"
-                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-                activeClassName="text-primary font-semibold"
-              >
-                My Suggestions
               </NavLink>
             )}
             {!user && (
@@ -173,6 +180,10 @@ export const Navigation = () => {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem onClick={() => navigate("/dashboard")}>
+                    <LayoutDashboard className="mr-2 h-4 w-4" />
+                    Dashboard
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setChangePasswordOpen(true)}>
                     <KeyRound className="mr-2 h-4 w-4" />
                     Change password
@@ -217,13 +228,15 @@ export const Navigation = () => {
             >
               Catalog
             </NavLink>
-            <a
-              href="#faq"
-              onClick={handleFaqClick}
-              className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md cursor-pointer"
-            >
-              FAQ
-            </a>
+            {hasFaqs !== false && (
+              <a
+                href="#faq"
+                onClick={handleFaqClick}
+                className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md cursor-pointer"
+              >
+                FAQ
+              </a>
+            )}
             {user && (
               <NavLink
                 to="/contribute"
@@ -232,26 +245,6 @@ export const Navigation = () => {
                 onClick={() => setMobileMenuOpen(false)}
               >
                 Contribute
-              </NavLink>
-            )}
-            {user && (
-              <NavLink
-                to="/dashboard"
-                className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
-                activeClassName="text-primary bg-secondary font-semibold"
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                My Submissions
-              </NavLink>
-            )}
-            {user && (
-              <NavLink
-                to="/suggestions"
-                className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
-                activeClassName="text-primary bg-secondary font-semibold"
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                My Suggestions
               </NavLink>
             )}
             {!user && (
@@ -274,6 +267,16 @@ export const Navigation = () => {
                   </Avatar>
                   <span className="text-sm font-medium truncate">{user.username || user.email}</span>
                 </div>
+                <button
+                  onClick={() => {
+                    navigate("/dashboard");
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full flex items-center px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md text-left"
+                >
+                  <LayoutDashboard className="h-4 w-4 mr-2 shrink-0" />
+                  Dashboard
+                </button>
                 <button
                   onClick={() => {
                     setChangePasswordOpen(true);

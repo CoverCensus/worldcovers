@@ -7,12 +7,6 @@ from django.db import migrations
 def alter_contributions_table(apps, schema_editor):
     from django.db import connection
     if connection.vendor != "sqlite":
-        schema_editor.execute(
-            "ALTER TABLE Contributions ADD COLUMN ReviewerUserID integer NULL REFERENCES auth_user(id)"
-        )
-        schema_editor.execute(
-            "ALTER TABLE Contributions ALTER COLUMN PostmarkID DROP NOT NULL"
-        )
         return
     # SQLite: recreate table to add column and change PostmarkID to nullable
     with connection.cursor() as cursor:
