@@ -42,8 +42,8 @@ function getPostmarksApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/postmarks")) return base;
-  return `${base}/api/postmarks`;
+  if (base.endsWith((import.meta.env.VITE_API_BASE_URL || '/api/v1') + "/postmarks")) return base;
+  return `${base}/postmarks`;
 }
 
 function getCsrfTokenFromCookie(): string | null {
@@ -275,7 +275,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         }
 
         // Fetch all contributions (new submissions + suggestions) so both appear in My Submissions
-        const res = await fetch(`${apiBase}/api/contributions/`, {
+        const res = await fetch(`${apiBase}/contributions/`, {
           method: "GET",
           credentials: "include",
           headers: { Accept: "application/json" },
@@ -409,7 +409,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
       setSuggestionsLoading(true);
       try {
-        const res = await fetch(`${apiBase}/api/contributions/?kind=suggestion`, {
+        const res = await fetch(`${apiBase}/contributions/?kind=suggestion`, {
           method: "GET",
           credentials: "include",
           headers: { Accept: "application/json" },
@@ -562,7 +562,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     setPendingReviewError(null);
     setPendingReviewLoading(true);
     fetch(
-      `${apiBase}/api/contributions/?mode=editor&status=pending&page=${pendingReviewPage}&page_size=${pendingReviewPageSize}`,
+      `${apiBase}/contributions/?mode=editor&status=pending&page=${pendingReviewPage}&page_size=${pendingReviewPageSize}`,
       {
       method: "GET",
       credentials: "include",
@@ -626,7 +626,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         ? `&status=${editorHistoryStatusFilter}`
         : "";
     fetch(
-      `${apiBase}/api/contributions/?mode=editor${statusParam}&page=${editorHistoryPage}&page_size=${editorHistoryPageSize}`,
+      `${apiBase}/contributions/?mode=editor${statusParam}&page=${editorHistoryPage}&page_size=${editorHistoryPageSize}`,
       {
       method: "GET",
       credentials: "include",
@@ -711,7 +711,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
     if (csrfToken) headers["X-CSRFToken"] = csrfToken;
     try {
-      const res = await fetch(`${apiBase}/api/contributions/${statusDecisionTarget.id}/${actionPath}/`, {
+      const res = await fetch(`${apiBase}/contributions/${statusDecisionTarget.id}/${actionPath}/`, {
         method: "POST",
         credentials: "include",
         headers,

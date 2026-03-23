@@ -2,6 +2,8 @@
 ## WoCo Commons - Signals
 ## User activation: send email when admin sets user Active (True)
 ###################################################################################################
+import logging
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
@@ -10,6 +12,17 @@ from django.dispatch import receiver
 
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
+
+
+def _mail_backend_configured():
+    """True if real SMTP (or similar) is likely usable; False for console / missing host."""
+    backend = getattr(settings, "EMAIL_BACKEND", "")
+    if "console" in backend or "dummy" in backend or "locmem" in backend:
+        return False
+    if not getattr(settings, "EMAIL_HOST", None):
+        return False
+    return True
 
 
 @receiver(pre_save, sender=User)
@@ -18,6 +31,10 @@ def send_activation_email_when_user_activated(sender, instance, **kwargs):
     When a user is changed from inactive to active in Django admin (or created as active),
     send them an email so they know they can sign in.
     """
+    # Superusers (e.g. createsuperuser) should not trigger consumer activation mail or SMTP.
+    if getattr(instance, "is_superuser", False):
+        return
+
     # New user being created with Active checked and email set
     if not instance.pk:
         if instance.is_active and (instance.email or "").strip():
@@ -74,14 +91,25 @@ def _send_activation_email(to_email):
             WorldCovers Team</p>
             """
 
+    if not _mail_backend_configured():
+        logger.info(
+            "Skipping activation email to %s: email backend not configured (set EMAIL_HOST or use a real backend).",
+            to_email,
+        )
+        return
+
     from_email = getattr(settings, "DEFAULT_FROM_EMAIL", None) or "no-reply@worldcovers.org"
-    send_mail(
-        subject,
-        message,
-        from_email,
-        [to_email],
-        fail_silently=False,
-        html_message=html_message,
-    )
+    try:
+        send_mail(
+            subject,
+            message,
+            from_email,
+            [to_email],
+            fail_silently=False,
+            html_message=html_message,
+        )
+    except Exception:
+        # Best-effort: do not block user save if SMTP is misconfigured or unreachable.
+        logger.exception("Failed to send activation email to %s", to_email)
 
 ###################################################################################################

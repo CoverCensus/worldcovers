@@ -535,7 +535,7 @@ const EditCatalogEntry = () => {
         headers["Content-Type"] = "application/json";
       }
 
-      const res = await fetch(`${apiBase}/api/contributions/`, {
+      const res = await fetch(`${apiBase}/contributions/`, {
         method: "POST",
         credentials: "include",
         headers,

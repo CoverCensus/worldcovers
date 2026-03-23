@@ -171,12 +171,12 @@ export interface PostmarkApiResponse {
     const env = import.meta.env.VITE_API_URL;
     if (!env || typeof env !== "string" || env.trim() === "") return null;
     const base = env.trim().replace(/\/+$/, "");
-    if (base.endsWith("/api/postmarks")) return base;
-    return `${base}/api/postmarks`;
+    if (base.endsWith("/postmarks")) return base;
+    return `${base}/postmarks`;
   }
   
   /**
-   * Fetches a single postmark by ID from GET /api/postmarks/{postmarkId}/.
+   * Fetches a single postmark by ID from GET /postmarks/{postmarkId}/.
    * Returns null if API is not configured or request fails.
    */
   export async function getPostmarkById(postmarkId: number): Promise<any | null> {
@@ -193,7 +193,7 @@ export interface PostmarkApiResponse {
   }
   
   /**
-   * Fetches postmarks from GET /api/postmarks/.
+   * Fetches postmarks from GET /postmarks/.
    * When VITE_POSTMARKS_API_URL is not set, returns [] (app uses Supabase catalog_records).
    */
   export async function getPostmarks(): Promise<PostmarkRecord[]> {

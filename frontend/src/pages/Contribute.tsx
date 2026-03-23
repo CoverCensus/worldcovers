@@ -242,7 +242,7 @@ const Contribute = () => {
       return;
     }
     let cancelled = false;
-    fetch(`${apiBase}/api/contributions/${editContributionId}/`, {
+    fetch(`${apiBase}/contributions/${editContributionId}/`, {
       method: "GET",
       credentials: "include",
       headers: { Accept: "application/json" },
@@ -581,7 +581,7 @@ const Contribute = () => {
         headers["Content-Type"] = "application/json";
       }
 
-      const res = await fetch(`${apiBase}/api/contributions/`, {
+      const res = await fetch(`${apiBase}/contributions/`, {
         method: "POST",
         credentials: "include",
         headers,

@@ -70,7 +70,7 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
         description: description.trim() || undefined,
       };
 
-      const res = await fetch(`${apiBase}/api/contributions/`, {
+      const res = await fetch(`${apiBase}/contributions/`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },

@@ -1,9 +1,9 @@
 /**
- * Framing styles: from GET /api/framing-styles/ when VITE_FRAMING_STYLES_API_URL is set.
+ * Framing styles: from GET /framing-styles/ when VITE_FRAMING_STYLES_API_URL is set.
  * No Supabase fallback (no matching table).
  */
 
-/** One item from GET /api/framing-styles/ */
+/** One item from GET /framing-styles/ */
 export interface FramingStyleApiResultItem {
   framingStyleId: number;
   createdDate: string;
@@ -14,7 +14,7 @@ export interface FramingStyleApiResultItem {
   modifiedBy: number;
 }
 
-/** Paginated response from GET /api/framing-styles/ */
+/** Paginated response from GET /framing-styles/ */
 export interface FramingStyleApiResponse {
   count: number;
   next: string | null;
@@ -41,12 +41,12 @@ function getFramingStylesApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/framing-styles")) return base;
-  return `${base}/api/framing-styles`;
+  if (base.endsWith("/framing-styles")) return base;
+  return `${base}/framing-styles`;
 }
 
 /**
- * Fetches framing styles from GET /api/framing-styles/.
+ * Fetches framing styles from GET /framing-styles/.
  * When VITE_FRAMING_STYLES_API_URL is not set, returns [].
  */
 export async function getFramingStyles(): Promise<FramingStyleOption[]> {

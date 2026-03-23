@@ -1,5 +1,5 @@
 /**
- * Postmark valuations: from GET /api/postmark-valuations/ when
+ * Postmark valuations: from GET /postmark-valuations/ when
  * VITE_POSTMARK_VALUATIONS_API_URL is set. No Supabase fallback (no matching table).
  */
 
@@ -12,7 +12,7 @@ export interface PostmarkValuationUser {
   lastName: string;
 }
 
-/** One item from GET /api/postmark-valuations/ */
+/** One item from GET /postmark-valuations/ */
 export interface PostmarkValuationApiResultItem {
   postmarkValuationId: number;
   valuedBy: PostmarkValuationUser;
@@ -21,7 +21,7 @@ export interface PostmarkValuationApiResultItem {
   createdDate: string;
 }
 
-/** Paginated response from GET /api/postmark-valuations/ */
+/** Paginated response from GET /postmark-valuations/ */
 export interface PostmarkValuationApiResponse {
   count: number;
   next: string | null;
@@ -54,12 +54,12 @@ function getPostmarkValuationsApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/postmark-valuations")) return base;
-  return `${base}/api/postmark-valuations`;
+  if (base.endsWith("/postmark-valuations")) return base;
+  return `${base}/postmark-valuations`;
 }
 
 /**
- * Fetches postmark valuations from GET /api/postmark-valuations/.
+ * Fetches postmark valuations from GET /postmark-valuations/.
  * When VITE_POSTMARK_VALUATIONS_API_URL is not set, returns [].
  */
 export async function getPostmarkValuations(): Promise<

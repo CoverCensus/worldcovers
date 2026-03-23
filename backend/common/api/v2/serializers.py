@@ -5,32 +5,15 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
-from .models import (
-    PostalFacility,
-    PostalFacilityIdentity,
-    AdministrativeUnit,
-    AdministrativeUnitIdentity,
-    AdministrativeUnitResponsibility,
+from common.models import (
+    PostalFacility, PostalFacilityIdentity,
+    AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
     JurisdictionalAffiliation,
-    PostmarkShape,
-    LetteringStyle,
-    FramingStyle,
-    Color,
-    DateFormat,
-    Postmark,
-    PostmarkColor,
-    PostmarkDatesSeen,
-    PostmarkSize,
-    PostmarkValuation,
-    PostmarkPublication,
-    PostmarkPublicationReference,
-    PostmarkImage,
-    Postcover,
-    PostcoverPostmark,
-    PostcoverImage,
-    AdminCsvUpload,
-    Contribution,
-    FAQEntry,
+    PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
+    Postmark, PostmarkV2, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
+    PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
+    PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
+    AdminCsvUpload, Contribution, FAQEntry,
 )
 
 User = get_user_model()
@@ -70,7 +53,7 @@ class LoginRequestSerializer(serializers.Serializer):
 
 
 class FAQEntrySerializer(serializers.ModelSerializer):
-    """Public FAQ entry serializer for the SPA."""
+    """Public FAQ entry serializer for the SPA (shared with v1)."""
 
     class Meta:
         model = FAQEntry
@@ -106,7 +89,7 @@ class AdministrativeUnitIdentitySerializer(serializers.ModelSerializer):
     class Meta:
         model = AdministrativeUnitIdentity
         fields = '__all__'
-        read_only_fields = ['administrative_unit_identity_id', 'created_date']
+        read_only_fields = ['administrative_unit_identity_id', 'created_at']
     
     def get_parent_name(self, obj):
         if obj.parent_administrative_unit:
@@ -130,7 +113,7 @@ class AdministrativeUnitResponsibilitySerializer(serializers.ModelSerializer):
     class Meta:
         model = AdministrativeUnitResponsibility
         fields = '__all__'
-        read_only_fields = ['administrative_unit_responsibility_id', 'created_date', 'modified_date']
+        read_only_fields = ['administrative_unit_responsibility_id', 'created_at', 'modified_at']
     
     def get_administrative_unit_name(self, obj):
         identity = obj.administrative_unit.get_current_identity()
@@ -148,7 +131,7 @@ class AdministrativeUnitSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdministrativeUnit
         fields = '__all__'
-        read_only_fields = ['administrative_unit_id', 'created_date', 'modified_date']
+        read_only_fields = ['administrative_unit_id', 'created_at', 'modified_at']
     
     def get_current_identity(self, obj):
         identity = obj.get_current_identity()
@@ -159,19 +142,11 @@ class PostalFacilityListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for lists"""
     current_name = serializers.SerializerMethodField()
     current_type = serializers.SerializerMethodField()
-    state_name = serializers.SerializerMethodField()
     
     class Meta:
         model = PostalFacility
-        fields = [
-            'postal_facility_id',
-            'reference_code',
-            'current_name',
-            'current_type',
-            'latitude',
-            'longitude',
-            'state_name',
-        ]
+        fields = ['postal_facility_id', 'reference_code', 'current_name', 'current_type', 
+                  'latitude', 'longitude']
     
     def get_current_name(self, obj):
         identity = obj.get_current_identity()
@@ -180,26 +155,6 @@ class PostalFacilityListSerializer(serializers.ModelSerializer):
     def get_current_type(self, obj):
         identity = obj.get_current_identity()
         return identity.facility_type if identity else None
-
-    def get_state_name(self, obj):
-        """
-        Derive the current state/location name for this facility from its
-        active jurisdictional affiliations, if any.
-        """
-        identity = obj.get_current_identity()
-        if not identity:
-            return None
-        # Look for a current jurisdiction (no effective_to_date) and use the
-        # administrative unit's current identity name.
-        aff = identity.jurisdictions.filter(
-            effective_to_date__isnull=True
-        ).select_related('administrative_unit').first()
-        if not aff or not aff.administrative_unit:
-            return None
-        admin_identity = aff.administrative_unit.get_current_identity()
-        if admin_identity and admin_identity.unit_name:
-            return admin_identity.unit_name
-        return aff.administrative_unit.reference_code
 
 
 class PostalFacilityIdentitySerializer(serializers.ModelSerializer):
@@ -211,7 +166,7 @@ class PostalFacilityIdentitySerializer(serializers.ModelSerializer):
     class Meta:
         model = PostalFacilityIdentity
         fields = '__all__'
-        read_only_fields = ['postal_facility_identity_id', 'created_date', 'modified_date']
+        read_only_fields = ['postal_facility_identity_id', 'created_at', 'modified_at']
     
     def get_coordinates(self, obj):
         coords = obj.get_coordinates()
@@ -233,7 +188,7 @@ class JurisdictionalAffiliationSerializer(serializers.ModelSerializer):
     class Meta:
         model = JurisdictionalAffiliation
         fields = '__all__'
-        read_only_fields = ['jurisdictional_affiliation_id', 'created_date', 'modified_date']
+        read_only_fields = ['jurisdictional_affiliation_id', 'created_at', 'modified_at']
     
     def get_administrative_unit_name(self, obj):
         identity = obj.get_administrative_unit_identity()
@@ -250,7 +205,7 @@ class PostalFacilitySerializer(serializers.ModelSerializer):
     class Meta:
         model = PostalFacility
         fields = '__all__'
-        read_only_fields = ['postal_facility_id', 'created_date', 'modified_date']
+        read_only_fields = ['postal_facility_id', 'created_at', 'modified_at']
     
     def get_current_identity(self, obj):
         identity = obj.get_current_identity()
@@ -263,35 +218,35 @@ class PostmarkShapeSerializer(serializers.ModelSerializer):
     class Meta:
         model = PostmarkShape
         fields = '__all__'
-        read_only_fields = ['postmark_shape_id', 'created_date', 'modified_date']
+        read_only_fields = ['postmark_shape_id', 'created_at', 'modified_at']
 
 
 class LetteringStyleSerializer(serializers.ModelSerializer):
     class Meta:
         model = LetteringStyle
         fields = '__all__'
-        read_only_fields = ['lettering_style_id', 'created_date', 'modified_date']
+        read_only_fields = ['lettering_style_id', 'created_at', 'modified_at']
 
 
 class FramingStyleSerializer(serializers.ModelSerializer):
     class Meta:
         model = FramingStyle
         fields = '__all__'
-        read_only_fields = ['framing_style_id', 'created_date', 'modified_date']
+        read_only_fields = ['framing_style_id', 'created_at', 'modified_at']
 
 
 class ColorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Color
         fields = '__all__'
-        read_only_fields = ['color_id', 'created_date', 'modified_date']
+        read_only_fields = ['color_id', 'created_at', 'modified_at']
 
 
 class DateFormatSerializer(serializers.ModelSerializer):
     class Meta:
         model = DateFormat
         fields = '__all__'
-        read_only_fields = ['date_format_id', 'created_date', 'modified_date']
+        read_only_fields = ['date_format_id', 'created_at', 'modified_at']
 
 
 # ========== POSTMARK SERIALIZERS ==========
@@ -307,24 +262,24 @@ class PostmarkColorSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = PostmarkColor
-        fields = ['postmark_color_id', 'color_id', 'color_name', 'created_date']
-        read_only_fields = ['postmark_color_id', 'created_date']
+        fields = ['postmark_color_id', 'color_id', 'color_name', 'created_at']
+        read_only_fields = ['postmark_color_id', 'created_at']
 
 
 class PostmarkDatesSeenSerializer(serializers.ModelSerializer):
     """Date ranges when postmarks were observed"""
     class Meta:
         model = PostmarkDatesSeen
-        fields = ['postmark_dates_seen_id', 'earliest_date_seen', 'latest_date_seen', 'created_date']
-        read_only_fields = ['postmark_dates_seen_id', 'created_date']
+        fields = ['postmark_dates_seen_id', 'earliest_date_seen', 'latest_date_seen', 'created_at']
+        read_only_fields = ['postmark_dates_seen_id', 'created_at']
 
 
 class PostmarkSizeSerializer(serializers.ModelSerializer):
     """Postmark size observations"""
     class Meta:
         model = PostmarkSize
-        fields = ['postmark_size_id', 'width', 'height', 'size_notes', 'created_date']
-        read_only_fields = ['postmark_size_id', 'created_date']
+        fields = ['postmark_size_id', 'width', 'height', 'size_notes', 'created_at']
+        read_only_fields = ['postmark_size_id', 'created_at']
 
 
 class PostmarkValuationSerializer(serializers.ModelSerializer):
@@ -333,9 +288,26 @@ class PostmarkValuationSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = PostmarkValuation
-        fields = ['postmark_valuation_id', 'valued_by', 'estimated_value', 
-                  'valuation_date', 'created_date']
-        read_only_fields = ['postmark_valuation_id', 'created_date', 'modified_date']
+        fields = [
+            'postmark_valuation_id',
+            'valued_by',
+            'estimated_value',
+            'valuation_date',
+            'appraisal_pos',
+            'amt',
+            'appraisal_date',
+            'created_at',
+        ]
+        read_only_fields = ['postmark_valuation_id', 'created_at', 'modified_at']
+
+
+class PostmarkV2Serializer(serializers.ModelSerializer):
+    """V2 extension values linked to a Postmark."""
+
+    class Meta:
+        model = PostmarkV2
+        fields = '__all__'
+        read_only_fields = ['id', 'created_date', 'modified_date']
 
 
 class PostmarkImageSerializer(serializers.ModelSerializer):
@@ -347,8 +319,8 @@ class PostmarkImageSerializer(serializers.ModelSerializer):
         fields = ['postmark_image_id', 'original_filename', 'storage_filename',
                   'image_url', 'mime_type', 'image_width', 'image_height',
                   'file_size_bytes', 'image_view', 'image_description',
-                  'display_order', 'uploaded_by', 'created_date']
-        read_only_fields = ['postmark_image_id', 'file_checksum', 'created_date', 'modified_date']
+                  'display_order', 'uploaded_by', 'created_at']
+        read_only_fields = ['postmark_image_id', 'file_checksum', 'created_at', 'modified_at']
     
     def get_image_url(self, obj):
         """
@@ -415,7 +387,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
             'colors_display',
             'valuation_display',
             'contribution_approval_status',
-            'created_date',
+            'created_at',
         ]
 
     def get_facility_name(self, obj):
@@ -469,7 +441,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         sizes_qs = getattr(obj, "sizes", None)
         if sizes_qs is None:
             return None
-        latest = sizes_qs.order_by("-created_date").first()
+        latest = sizes_qs.order_by("-created_at").first()
         if not latest:
             return None
         width = latest.width
@@ -546,7 +518,8 @@ class PostmarkSerializer(serializers.ModelSerializer):
     date_format_id = serializers.PrimaryKeyRelatedField(
         queryset=DateFormat.objects.all(),
         source='date_format',
-        write_only=True
+        write_only=True,
+        required=False
     )
     
     # Nested related data
@@ -554,6 +527,7 @@ class PostmarkSerializer(serializers.ModelSerializer):
     dates_seen = PostmarkDatesSeenSerializer(many=True, read_only=True)
     sizes = PostmarkSizeSerializer(many=True, read_only=True)
     valuations = PostmarkValuationSerializer(many=True, read_only=True)
+    v2_data = PostmarkV2Serializer(read_only=True)
     images = PostmarkImageSerializer(many=True, read_only=True)
     responsible_groups = serializers.SerializerMethodField()
     state = serializers.SerializerMethodField()
@@ -568,7 +542,7 @@ class PostmarkSerializer(serializers.ModelSerializer):
     class Meta:
         model = Postmark
         fields = '__all__'
-        read_only_fields = ['postmark_id', 'created_date', 'modified_date']
+        read_only_fields = ['postmark_id', 'created_at', 'modified_at']
     
     def get_state(self, obj):
         """State: direct FK (listing.state) if set, else from facility's current jurisdiction."""
@@ -633,7 +607,7 @@ class PostmarkPublicationSerializer(serializers.ModelSerializer):
     class Meta:
         model = PostmarkPublication
         fields = '__all__'
-        read_only_fields = ['postmark_publication_id', 'created_date', 'modified_date']
+        read_only_fields = ['postmark_publication_id', 'created_at', 'modified_at']
 
 
 class PostmarkPublicationReferenceSerializer(serializers.ModelSerializer):
@@ -646,8 +620,8 @@ class PostmarkPublicationReferenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = PostmarkPublicationReference
         fields = ['postmark_publication_reference_id', 'postmark_publication',
-                  'publication_title', 'published_id', 'reference_location', 'created_date']
-        read_only_fields = ['postmark_publication_reference_id', 'created_date']
+                  'publication_title', 'published_id', 'reference_location', 'created_at']
+        read_only_fields = ['postmark_publication_reference_id', 'created_at']
 
 
 # ========== POSTCOVER SERIALIZERS ==========
@@ -660,8 +634,8 @@ class PostcoverPostmarkSerializer(serializers.ModelSerializer):
     class Meta:
         model = PostcoverPostmark
         fields = ['postcover_postmark_id', 'postmark', 'postmark_key', 
-                  'postmark_details', 'position_order', 'postmark_location', 'created_date']
-        read_only_fields = ['postcover_postmark_id', 'created_date']
+                  'postmark_details', 'position_order', 'postmark_location', 'created_at']
+        read_only_fields = ['postcover_postmark_id', 'created_at']
 
 
 class PostcoverImageSerializer(serializers.ModelSerializer):
@@ -673,8 +647,8 @@ class PostcoverImageSerializer(serializers.ModelSerializer):
         fields = ['postcover_image_id', 'original_filename', 'storage_filename',
                   'image_url', 'mime_type', 'image_width', 'image_height',
                   'file_size_bytes', 'image_view', 'image_description',
-                  'display_order', 'created_date']
-        read_only_fields = ['postcover_image_id', 'file_checksum', 'created_date', 'modified_date']
+                  'display_order', 'created_at']
+        read_only_fields = ['postcover_image_id', 'file_checksum', 'created_at', 'modified_at']
     
     def get_image_url(self, obj):
         """Generate image URL"""
@@ -696,7 +670,7 @@ class PostcoverListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Postcover
         fields = ['postcover_id', 'postcover_key', 'owner_username', 
-                  'postmark_count', 'created_date']
+                  'postmark_count', 'created_at']
     
     def get_postmark_count(self, obj):
         return obj.postcover_postmarks.count()
@@ -713,7 +687,7 @@ class PostcoverSerializer(serializers.ModelSerializer):
     class Meta:
         model = Postcover
         fields = '__all__'
-        read_only_fields = ['postcover_id', 'created_date', 'modified_date']
+        read_only_fields = ['postcover_id', 'created_at', 'modified_at']
 
 
 # ========== ADMIN CSV UPLOADS ==========
@@ -751,11 +725,8 @@ class ContributionListSerializer(serializers.ModelSerializer):
     contributor_username = serializers.CharField(source="contributor.username", read_only=True)
     reviewer_username = serializers.CharField(source="reviewer.username", read_only=True, allow_null=True)
     postmark_id = serializers.SerializerMethodField()
-    is_suggestion = serializers.SerializerMethodField()
     state_display = serializers.SerializerMethodField()
     town_display = serializers.SerializerMethodField()
-    type_display = serializers.SerializerMethodField()
-    display_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Contribution
@@ -765,7 +736,6 @@ class ContributionListSerializer(serializers.ModelSerializer):
             "contributor_username",
             "postmark",
             "postmark_id",
-            "is_suggestion",
             "status",
             "reviewer",
             "reviewer_username",
@@ -774,52 +744,24 @@ class ContributionListSerializer(serializers.ModelSerializer):
             "updated_at",
             "state_display",
             "town_display",
-            "type_display",
-            "display_name",
         ]
 
     def get_postmark_id(self, obj):
         return obj.postmark_id if obj.postmark_id else None
 
-    def get_is_suggestion(self, obj):
-        """True if this is a suggested edit to an existing catalog entry (not a new submission)."""
-        if obj.postmark_id is not None:
-            return True
-        sd = obj.submitted_data or {}
-        orig = sd.get("original_postmark_id")
-        return orig is not None and str(orig).strip() != ""
-
     def get_state_display(self, obj):
         sd = obj.submitted_data or {}
-        return sd.get("state", "")
+        return sd.get("state", "-")
 
     def get_town_display(self, obj):
         sd = obj.submitted_data or {}
-        return sd.get("town", "")
-
-    def get_type_display(self, obj):
-        sd = obj.submitted_data or {}
-        return sd.get("type", "")
-
-    def get_display_name(self, obj):
-        """Postmaker-style title: "Town, State — Type" or "Submission #id" if missing."""
-        sd = obj.submitted_data or {}
-        town = (sd.get("town") or "").strip()
-        state = (sd.get("state") or "").strip()
-        type_val = (sd.get("type") or "").strip()
-        title = ", ".join(x for x in [town, state] if x)
-        if not title:
-            return f"Submission #{obj.id}"
-        if type_val and type_val.lower() != "unknown":
-            return f"{title} — {type_val}"
-        return title
+        return sd.get("town", "-")
 
 
 class ContributionDetailSerializer(serializers.ModelSerializer):
     """Detail view for a single contribution."""
     contributor_username = serializers.CharField(source="contributor.username", read_only=True)
     reviewer_username = serializers.CharField(source="reviewer.username", read_only=True, allow_null=True)
-    display_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Contribution
@@ -829,7 +771,6 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
             "contributor_username",
             "postmark",
             "submitted_data",
-            "display_name",
             "status",
             "reviewer",
             "reviewer_username",
@@ -839,30 +780,9 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "contributor", "postmark", "created_at"]
 
-    def get_display_name(self, obj):
-        """Postmaker-style title: "Town, State — Type" or "Submission #id" if missing."""
-        sd = obj.submitted_data or {}
-        town = (sd.get("town") or "").strip()
-        state = (sd.get("state") or "").strip()
-        type_val = (sd.get("type") or "").strip()
-        title = ", ".join(x for x in [town, state] if x)
-        if not title:
-            return f"Submission #{obj.id}"
-        if type_val and type_val.lower() != "unknown":
-            return f"{title} — {type_val}"
-        return title
-
 
 class ContributionApproveRejectSerializer(serializers.Serializer):
-    """Payload for approve/reject/request_revision. Comment required. For approve, editor must send value; lettering/framing/date_format come from contribution's submitted_data if not sent."""
-    review_notes = serializers.CharField(required=True, allow_blank=False)
-    # When approving: editor must set value; shape optional; lettering/framing/date_format optional (taken from submitted_data)
-    postmark_shape_id = serializers.IntegerField(required=False, allow_null=True)
-    lettering_style_id = serializers.IntegerField(required=False, allow_null=True)
-    framing_style_id = serializers.IntegerField(required=False, allow_null=True)
-    date_format_id = serializers.IntegerField(required=False, allow_null=True)
-    estimated_value = serializers.DecimalField(
-        max_digits=10, decimal_places=2, required=False, allow_null=True
-    )
+    """Payload for approve/reject actions."""
+    review_notes = serializers.CharField(required=False, allow_blank=True)
 
 ###################################################################################################

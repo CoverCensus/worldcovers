@@ -41,7 +41,7 @@ from woco.pagination import PageSizePagination, LargePageSizePagination, Postmar
 
 logger = logging.getLogger(__name__)
 
-from .models import (
+from common.models import (
     PostalFacility,
     PostalFacilityIdentity,
     AdministrativeUnit,
@@ -105,8 +105,8 @@ from .serializers import (
     ContributionApproveRejectSerializer,
     FAQEntrySerializer,
 )
-from .filters import PostmarkListFilter
-from .csv_import import IMPORTERS
+from common.filters import PostmarkListFilter
+from common.csv_import import IMPORTERS
 
 
 _password_reset_token_generator = PasswordResetTokenGenerator()

@@ -275,6 +275,14 @@ class PostmarkFilter(django_filters.FilterSet):
             return queryset.filter(images__isnull=False).distinct()
         return queryset.filter(images__isnull=True).distinct()
 
+    def filter_has_v2_data(self, queryset, name, value):
+        """Filter postmarks by presence of linked PostmarkV2 row."""
+        if value is None:
+            return queryset
+        if value:
+            return queryset.filter(v2_data__isnull=False)
+        return queryset.filter(v2_data__isnull=True)
+
 
 # ================================================================================================
 # "GEOGRAPHIC LOCATION" FILTERS (now mapped onto PostalFacilityIdentity)

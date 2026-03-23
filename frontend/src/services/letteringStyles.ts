@@ -1,9 +1,9 @@
 /**
- * Lettering styles: from GET /api/lettering-styles/ when VITE_LETTERING_STYLES_API_URL is set.
+ * Lettering styles: from GET /lettering-styles/ when VITE_LETTERING_STYLES_API_URL is set.
  * No Supabase fallback (no matching table).
  */
 
-/** One item from GET /api/lettering-styles/ */
+/** One item from GET /lettering-styles/ */
 export interface LetteringStyleApiResultItem {
   letteringStyleId: number;
   createdDate: string;
@@ -14,7 +14,7 @@ export interface LetteringStyleApiResultItem {
   modifiedBy: number;
 }
 
-/** Paginated response from GET /api/lettering-styles/ */
+/** Paginated response from GET /lettering-styles/ */
 export interface LetteringStyleApiResponse {
   count: number;
   next: string | null;
@@ -41,12 +41,12 @@ function getLetteringStylesApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/lettering-styles")) return base;
-  return `${base}/api/lettering-styles`;
+  if (base.endsWith("/lettering-styles")) return base;
+  return `${base}/lettering-styles`;
 }
 
 /**
- * Fetches lettering styles from GET /api/lettering-styles/.
+ * Fetches lettering styles from GET /lettering-styles/.
  * When VITE_LETTERING_STYLES_API_URL is not set, returns [].
  */
 export async function getLetteringStyles(): Promise<LetteringStyleOption[]> {

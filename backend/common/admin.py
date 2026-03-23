@@ -40,6 +40,7 @@ from .models import (
     Color,
     DateFormat,
     Postmark,
+    PostmarkV2,
     PostmarkColor,
     PostmarkDatesSeen,
     PostmarkSize,
@@ -64,7 +65,7 @@ from .models import (
 )
 from .csv_import import IMPORTERS
 from .utils import get_canonical_location_reference_codes
-from .views import _apply_contribution_to_catalog
+from .api.v1.views import _apply_contribution_to_catalog
 
 User = get_user_model()
 
@@ -1321,6 +1322,7 @@ class ContributionAdmin(admin.ModelAdmin):
                     level=messages.ERROR,
                 )
 
+
     @admin.action(description="Approve selected contributions and create/update catalog listings")
     def approve_contributions(self, request, queryset):
         """
@@ -1397,6 +1399,13 @@ class FAQEntryAdmin(TimestampedModelAdmin, ReversionAdminBase):
     list_filter = ("is_active",)
     search_fields = ("question", "answer")
     ordering = ("display_order", "faq_entry_id")
+
+
+@admin.register(PostmarkV2)
+class PostmarkV2Admin(InlineRevisionMixin, TimestampedModelAdmin):
+    list_display = ["postmark", "code", "date_type", "date_fmt", "date_format", "is_manuscript", "post_office"]
+    search_fields = ["postmark__postmark_key", "code", "catalog_txt", "inscription_txt"]
+    raw_id_fields = ["postmark", "post_office", "shape", "lettering", "color", "date_format"]
 
 
 ###################################################################################################
