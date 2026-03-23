@@ -337,6 +337,103 @@ class Postmark(TimestampedModel):
     date_type = models.CharField(max_length=20, choices=DATE_TYPE_CHOICES, null=True, blank=True, help_text='Named date convention: BISHOP MARK, FRANKLIN MARK, QUAKER DATE')
     date_fmt = models.CharField(max_length=10, choices=DATE_FMT_CHOICES, null=True, blank=True, help_text='Arrangement of date components: MD, MDD, YD, YMD, YMDD')
 
+
+
+class PostmarkV2(TimestampedModel):
+    """
+    V2 extension row for Postmark data.
+    This avoids changing/overloading legacy Postmark reverse relations.
+    """
+    postmark = models.OneToOneField(Postmark, on_delete=models.CASCADE, related_name='v2_data')
+    # Legacy app-layer compatibility fields (v2-scoped copy)
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name='postmarks_v2_site', db_column='V2SiteID', default=1)
+    postal_facility_identity = models.ForeignKey(
+        PostalFacilityIdentity,
+        on_delete=models.PROTECT,
+        related_name='postmarks_v2_facility',
+        db_column='V2PostalFacilityIdentityID',
+        null=True,
+        blank=True,
+    )
+    state = models.ForeignKey(
+        'postmarks.Location',
+        on_delete=models.PROTECT,
+        related_name='postmarks_v2_state',
+        db_column='V2StateID',
+        null=True,
+        blank=True,
+    )
+    postmark_shape = models.ForeignKey(
+        PostmarkShape,
+        on_delete=models.PROTECT,
+        related_name='postmarks_v2_shape',
+        db_column='V2PostmarkShapeID',
+        null=True,
+        blank=True,
+    )
+    lettering_style = models.ForeignKey(
+        LetteringStyle,
+        on_delete=models.PROTECT,
+        related_name='postmarks_v2_lettering_style',
+        db_column='V2LetteringStyleID',
+        null=True,
+        blank=True,
+    )
+    framing_style = models.ForeignKey(
+        FramingStyle,
+        on_delete=models.PROTECT,
+        related_name='postmarks_v2_framing_style',
+        db_column='V2FramingStyleID',
+        null=True,
+        blank=True,
+    )
+    legacy_date_format = models.ForeignKey(
+        DateFormat,
+        on_delete=models.PROTECT,
+        related_name='postmarks_v2_legacy_date_format',
+        db_column='V2LegacyDateFormatID',
+        null=True,
+        blank=True,
+    )
+    postmark_key = models.CharField(max_length=255, unique=True, db_column='V2PostmarkKey', null=True, blank=True)
+    raw_state_data_id = models.IntegerField(null=True, blank=True, unique=True, db_column='V2RawStateDataID')
+    public_slug = models.SlugField(max_length=150, unique=True, null=True, blank=True, db_column='V2PublicSlug')
+    visibility = models.CharField(max_length=10, choices=Postmark.VISIBILITY_CHOICES, default='PUBLIC', db_column='V2Visibility')
+    contribution_approval_status = models.CharField(max_length=20, choices=Postmark.CONTRIBUTION_APPROVAL_CHOICES, null=True, blank=True, db_column='V2ContributionApprovalStatus')
+    source_catalog = models.CharField(max_length=255, blank=True, default='ASCC 5th ed. (1997)', db_column='V2SourceCatalog')
+    source_page = models.CharField(max_length=50, blank=True, db_column='V2SourcePage')
+    last_public_update_at = models.DateTimeField(null=True, blank=True, db_column='V2LastPublicUpdateAt')
+    raw_import_payload = models.JSONField(null=True, blank=True, db_column='V2RawImportPayload')
+    rate_location = models.CharField(max_length=10, choices=Postmark.RATE_LOCATION_CHOICES, db_column='V2RateLocation', default='NONE')
+    rate_value = models.CharField(max_length=50, db_column='V2RateValue', blank=True, default='')
+    other_characteristics = models.TextField(blank=True, db_column='V2OtherCharacteristics')
+
+    # model.md domain fields
+    code = models.CharField(max_length=30, unique=True, null=True, blank=True)
+    catalog_txt = models.TextField(blank=True)
+    inscription_txt = models.TextField(blank=True)
+    post_office = models.ForeignKey('PostOffice', on_delete=models.PROTECT, null=True, blank=True, related_name='postmark_v2_entries')
+    shape = models.ForeignKey('Shape', on_delete=models.PROTECT, null=True, blank=True, related_name='postmark_v2_entries')
+    lettering = models.ForeignKey('Lettering', on_delete=models.PROTECT, null=True, blank=True, related_name='postmark_v2_entries')
+    color = models.ForeignKey(Color, on_delete=models.PROTECT, null=True, blank=True, related_name='postmark_v2_entries')
+    is_manuscript = models.BooleanField(default=False)
+    impression = models.CharField(max_length=10, choices=Postmark.IMPRESSION_CHOICES, null=True, blank=True)
+    is_irreg = models.BooleanField(null=True, blank=True)
+    width = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    height = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    date_type = models.CharField(max_length=20, choices=Postmark.DATE_TYPE_CHOICES, null=True, blank=True)
+    date_fmt = models.CharField(max_length=10, choices=Postmark.DATE_FMT_CHOICES, null=True, blank=True)
+    date_format = models.ForeignKey(DateFormat, on_delete=models.PROTECT, related_name='postmark_v2_entries', null=True, blank=True)
+
+    class Meta:
+        db_table = 'PostmarkV2'
+        verbose_name = 'Postmark V2'
+        verbose_name_plural = 'Postmark V2'
+
+    def __str__(self):
+        return f'PostmarkV2({self.postmark_id})'
+
+
 class Contribution(models.Model):
     """
     Moderation ticket for catalog contributions.
@@ -418,15 +515,28 @@ class PostmarkValuation(TimestampedModel):
     """Valuations for postmarks"""
     postmark_valuation_id = models.AutoField(primary_key=True, db_column='PostmarkValuationID')
     postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='valuations', db_column='PostmarkID')
-    valued_by_user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='postmark_valuations_made', db_column='ValuedByUserID')
-    estimated_value = models.DecimalField(max_digits=10, decimal_places=2, db_column='EstimatedValue')
-    valuation_date = models.DateField(db_column='ValuationDate')
+    # V2 fields
+    appraisal_pos = models.PositiveSmallIntegerField(default=0, help_text='Ordinal position within the postmark valuation sequence')
+    amt = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Non-negative USD; null = unpriced entry')
+    appraisal_date = models.DateField(null=True, blank=True, db_column='AppraisalDate')
+    # Legacy/app-layer fields retained for compatibility
+    valued_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='postmark_valuations_made',
+        db_column='ValuedByUserID',
+        null=True,
+        blank=True,
+    )
+    estimated_value = models.DecimalField(max_digits=10, decimal_places=2, db_column='EstimatedValue', null=True, blank=True)
+    valuation_date = models.DateField(db_column='ValuationDate', null=True, blank=True)
 
     class Meta:
         db_table = 'PostmarkValuations'
         verbose_name = 'Postmark Valuation'
         verbose_name_plural = 'Postmark Valuations'
-        ordering = ['-valuation_date']
+        unique_together = [['postmark', 'appraisal_pos']]
+        ordering = ['-appraisal_date', '-valuation_date']
 
     def __str__(self):
         return f'{self.postmark} - ${self.estimated_value} ({self.valuation_date})'

@@ -10,7 +10,7 @@ from common.models import (
     AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
     JurisdictionalAffiliation,
     PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
-    Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
+    Postmark, PostmarkV2, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
     AdminCsvUpload, Contribution, FAQEntry,
@@ -288,9 +288,26 @@ class PostmarkValuationSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = PostmarkValuation
-        fields = ['postmark_valuation_id', 'valued_by', 'estimated_value', 
-                  'valuation_date', 'created_at']
+        fields = [
+            'postmark_valuation_id',
+            'valued_by',
+            'estimated_value',
+            'valuation_date',
+            'appraisal_pos',
+            'amt',
+            'appraisal_date',
+            'created_at',
+        ]
         read_only_fields = ['postmark_valuation_id', 'created_at', 'modified_at']
+
+
+class PostmarkV2Serializer(serializers.ModelSerializer):
+    """V2 extension values linked to a Postmark."""
+
+    class Meta:
+        model = PostmarkV2
+        fields = '__all__'
+        read_only_fields = ['id', 'created_date', 'modified_date']
 
 
 class PostmarkImageSerializer(serializers.ModelSerializer):
@@ -476,7 +493,6 @@ class PostmarkSerializer(serializers.ModelSerializer):
     lettering_style = LetteringStyleSerializer(read_only=True)
     framing_style = FramingStyleSerializer(read_only=True)
     date_format = DateFormatSerializer(read_only=True)
-    date_format = DateFormatSerializer(source='date_format', read_only=True)
     
     # Write-only foreign key IDs
     postal_facility_identity_id = serializers.PrimaryKeyRelatedField(
@@ -502,11 +518,6 @@ class PostmarkSerializer(serializers.ModelSerializer):
     date_format_id = serializers.PrimaryKeyRelatedField(
         queryset=DateFormat.objects.all(),
         source='date_format',
-        write_only=True
-    )
-    date_format_id = serializers.PrimaryKeyRelatedField(
-        queryset=DateFormat.objects.all(),
-        source='date_format',
         write_only=True,
         required=False
     )
@@ -516,6 +527,7 @@ class PostmarkSerializer(serializers.ModelSerializer):
     dates_seen = PostmarkDatesSeenSerializer(many=True, read_only=True)
     sizes = PostmarkSizeSerializer(many=True, read_only=True)
     valuations = PostmarkValuationSerializer(many=True, read_only=True)
+    v2_data = PostmarkV2Serializer(read_only=True)
     images = PostmarkImageSerializer(many=True, read_only=True)
     responsible_groups = serializers.SerializerMethodField()
     state = serializers.SerializerMethodField()

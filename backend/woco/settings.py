@@ -2,7 +2,8 @@
 ## WoCo Project - Configuration
 ## MPC: 2025/10/24
 ###################################################################################################
-import os, sys
+import os
+import sys
 
 from datetime import datetime
 from pathlib import Path
@@ -26,18 +27,13 @@ SECRET_KEY = "DUMMY-KEY-HERE-NO-FALSE-POSITIVES-NO-WHAMMY-NO-WHAMMY-STOP"
 DEBUG = config("DEBUG", default=True, cast=bool)
 TESTING = "test" in sys.argv or "PYTEST_VERSION" in os.environ
 
-DJANGO_APP_HOSTNAME = config("DJANGO_APP_HOSTNAME", default="hellowoco.app")
-FRONTEND_BASE_URL = config("FRONTEND_BASE_URL", default="hellowoco.app")
-
-ALLOWED_HOSTS = [
-    "localhost",
-    "127.0.0.1",
-    DJANGO_APP_HOSTNAME,
-    f"www.{DJANGO_APP_HOSTNAME}",
-]
 INTERNAL_IPS = [
     "127.0.0.1"
 ]
+
+DJANGO_APP_HOSTNAME = config("DJANGO_APP_HOSTNAME", default="hellowoco.app")
+
+ALLOWED_HOSTS = [DJANGO_APP_HOSTNAME, *INTERNAL_IPS]
 
 # Application definition
 INSTALLED_APPS = [
@@ -162,13 +158,14 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "static"
-STATICFILES_DIRS = [
-    BASE_DIR / "assets",
-]
 
 # React SPA (frontend) – built output served as site home
 # Put your React app in frontend/ and run `npm run build`; index.html + /assets/ served from here
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
+
+STATICFILES_DIRS = [
+    FRONTEND_DIST
+]
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -301,36 +298,16 @@ CORS_ALLOW_CREDENTIALS = True
 # 8080 = common dev port; 5173 = Vite default
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:8080",
-    "http://127.0.0.1:8080",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-] if DEBUG else [
-    f"https://{DJANGO_APP_HOSTNAME}/",
-]
-
-# CSRF: allow frontend origins so cookie-based auth works with same-host.
-# For /auth login to work, open the frontend with the SAME host as the API:
-#   API at http://127.0.0.1:8000 → open app at http://127.0.0.1:8080 (not localhost:8080).
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:8000",
     "http://localhost:8000",
-] if DEBUG else [
-    f"https://{DJANGO_APP_HOSTNAME}",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    f"https://{DJANGO_APP_HOSTNAME}"
 ]
-
-# Session cookie: use same host for frontend and API so the session cookie is sent.
-# In dev, open the app at http://127.0.0.1:8080 and use VITE_API_BASE_URL=http://127.0.0.1:8000.
-if DEBUG:
-    SESSION_COOKIE_SAMESITE = "Lax"
-    SESSION_COOKIE_HTTPONLY = True
 
 # Security Settings (for production)
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_BROWSER_XSS_FILTER = True

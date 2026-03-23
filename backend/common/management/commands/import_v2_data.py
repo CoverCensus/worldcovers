@@ -32,10 +32,12 @@ from common.models import (
     Shape,
     Lettering,
     Framing,
+    DateFormat,
     Region,
     PostOffice,
     Cover,
     Postmark,
+    PostmarkV2,
     Ratemark,
     Auxmark,
     CoverPostmark,
@@ -420,6 +422,7 @@ class Command(BaseCommand):
         postmark_date_fmt_allowed = {v for v, _ in Postmark.DATE_FMT_CHOICES}
         postmark_date_type_allowed = {v for v, _ in Postmark.DATE_TYPE_CHOICES}
         postmark_impression_allowed = {v for v, _ in Postmark.IMPRESSION_CHOICES}
+        v2_date_format_cache = {}
 
         for row in postmarks_rows:
             postmark_id = parse_int(row.get("postmark_id"))
@@ -473,6 +476,20 @@ class Command(BaseCommand):
 
             post_office_id = parse_int(row.get("post_office_id"))
             postmark.post_office = post_office_map.get(post_office_id) if post_office_id is not None else None
+            v2_date_format_name = _s(row.get("date_format"))
+            v2_date_format_obj = None
+            if v2_date_format_name:
+                v2_date_format_obj = v2_date_format_cache.get(v2_date_format_name)
+                if v2_date_format_obj is None:
+                    v2_date_format_obj, _ = DateFormat.objects.get_or_create(
+                        format_name=v2_date_format_name,
+                        defaults={
+                            "format_description": "",
+                            "created_by": user,
+                            "modified_by": user,
+                        },
+                    )
+                    v2_date_format_cache[v2_date_format_name] = v2_date_format_obj
 
             # Keep v2-specific payload for debugging/audit without touching legacy payload content.
             payload = postmark.raw_import_payload or {}
@@ -498,6 +515,47 @@ class Command(BaseCommand):
                     "raw_import_payload",
                     "modified_by",
                 ]
+            )
+            PostmarkV2.objects.update_or_create(
+                postmark=postmark,
+                defaults={
+                    "site": postmark.site,
+                    "postal_facility_identity": postmark.postal_facility_identity,
+                    "state": postmark.state,
+                    "postmark_shape": postmark.postmark_shape,
+                    "lettering_style": postmark.lettering_style,
+                    "framing_style": postmark.framing_style,
+                    "legacy_date_format": postmark.date_format,
+                    "postmark_key": postmark.postmark_key,
+                    "raw_state_data_id": postmark.raw_state_data_id,
+                    "public_slug": postmark.public_slug,
+                    "visibility": postmark.visibility,
+                    "contribution_approval_status": postmark.contribution_approval_status,
+                    "source_catalog": postmark.source_catalog,
+                    "source_page": postmark.source_page,
+                    "last_public_update_at": postmark.last_public_update_at,
+                    "raw_import_payload": postmark.raw_import_payload,
+                    "rate_location": postmark.rate_location,
+                    "rate_value": postmark.rate_value,
+                    "other_characteristics": postmark.other_characteristics,
+                    "code": postmark.code,
+                    "catalog_txt": postmark.catalog_txt,
+                    "inscription_txt": postmark.inscription_txt,
+                    "post_office": postmark.post_office,
+                    "shape": postmark.shape,
+                    "lettering": postmark.lettering,
+                    "color": postmark.color,
+                    "is_manuscript": postmark.is_manuscript,
+                    "impression": postmark.impression,
+                    "is_irreg": postmark.is_irreg,
+                    "width": postmark.width,
+                    "height": postmark.height,
+                    "date_type": postmark.date_type,
+                    "date_fmt": postmark.date_fmt,
+                    "date_format": v2_date_format_obj,
+                    "created_by": user,
+                    "modified_by": user,
+                },
             )
             updated_postmarks += 1
 
