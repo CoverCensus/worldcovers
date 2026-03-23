@@ -10,6 +10,7 @@ import os
 import re
 import uuid
 from datetime import date
+from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, get_user_model
@@ -288,6 +289,42 @@ class FAQEntryViewSet(viewsets.ReadOnlyModelViewSet):
                 "previous": None,
                 "results": [],
             })
+
+
+class HelpDocsView(APIView):
+    """
+    Read markdown docs from the repository-level help-docs directory for the Help page.
+    Returns raw markdown so the SPA can render it as HTML.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        docs_dir = Path(settings.REPO_ROOT) / "help-docs"
+        items = []
+        if not docs_dir.exists():
+            return Response({"results": items})
+
+        for md_file in sorted(
+            docs_dir.rglob("*.md"),
+            key=lambda p: str(p.relative_to(docs_dir)).lower(),
+        ):
+            try:
+                markdown = md_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+
+            slug = slugify(md_file.stem) or md_file.stem.lower()
+            title_match = re.search(r"^#\s+(.+)$", markdown, flags=re.MULTILINE)
+            title = title_match.group(1).strip() if title_match else md_file.stem.replace("_", " ")
+
+            items.append({
+                "slug": slug,
+                "title": title,
+                "source_file": str(md_file.relative_to(docs_dir)),
+                "markdown": markdown,
+            })
+
+        return Response({"results": items})
 
 
 @method_decorator(csrf_exempt, name="dispatch")

@@ -8,8 +8,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Menu, X, LogOut, KeyRound, ChevronDown, LayoutDashboard } from "lucide-react";
-import { useEffect, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { clearStoredUser } from "@/lib/auth";
@@ -19,43 +19,9 @@ import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 export const Navigation = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
-  const [hasFaqs, setHasFaqs] = useState<boolean | null>(null);
   const user = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const checkFaqs = async () => {
-      try {
-        const response = await fetch("/api/faq-entries/?page_size=1");
-        if (!response.ok) {
-          // If the FAQ endpoint fails, leave hasFaqs as null so we don't hide the link unexpectedly.
-          return;
-        }
-        const data = await response.json();
-        const items = Array.isArray(data) ? data : data?.results || [];
-        setHasFaqs(items.length > 0);
-      } catch {
-        // Network or other error – keep hasFaqs as null.
-      }
-    };
-
-    void checkFaqs();
-  }, []);
-
-  const handleFaqClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    e.preventDefault();
-    if (location.pathname === '/') {
-      document.getElementById('faq')?.scrollIntoView({ behavior: 'smooth' });
-    } else {
-      navigate('/');
-      setTimeout(() => {
-        document.getElementById('faq')?.scrollIntoView({ behavior: 'smooth' });
-      }, 100);
-    }
-    setMobileMenuOpen(false);
-  };
 
   const apiBase = (import.meta.env.VITE_API_URL ?? "").trim().replace(/\/+$/, "");
   const logoutUrl = apiBase ? `${apiBase}/api/logout/` : "/api/logout/";
@@ -135,15 +101,13 @@ export const Navigation = () => {
             >
               Catalog
             </NavLink>
-            {hasFaqs !== false && (
-              <a
-                href="#faq"
-                onClick={handleFaqClick}
-                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-              >
-                FAQ
-              </a>
-            )}
+            <NavLink
+              to="/help"
+              className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              activeClassName="text-primary font-semibold"
+            >
+              Help
+            </NavLink>
             {user && (
               <NavLink
                 to="/contribute"
@@ -228,15 +192,14 @@ export const Navigation = () => {
             >
               Catalog
             </NavLink>
-            {hasFaqs !== false && (
-              <a
-                href="#faq"
-                onClick={handleFaqClick}
-                className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md cursor-pointer"
-              >
-                FAQ
-              </a>
-            )}
+            <NavLink
+              to="/help"
+              className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
+              activeClassName="text-primary bg-secondary font-semibold"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              Help
+            </NavLink>
             {user && (
               <NavLink
                 to="/contribute"
