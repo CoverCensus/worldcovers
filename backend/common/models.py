@@ -323,7 +323,7 @@ class Postmark(TimestampedModel):
     DATE_TYPE_CHOICES = [('BISHOP MARK', 'Bishop Mark'), ('FRANKLIN MARK', 'Franklin Mark'), ('QUAKER DATE', 'Quaker Date')]
     DATE_FMT_CHOICES = [('MD', 'MD'), ('MDD', 'MDD'), ('YD', 'YD'), ('YMD', 'YMD'), ('YMDD', 'YMDD')]
     IMPRESSION_CHOICES = [('Normal', 'Normal'), ('Stencil', 'Stencil'), ('Negative', 'Negative')]
-    code = models.CharField(max_length=30, unique=True, null=True, blank=True, help_text='Editor-assigned reference identifier')
+    code = models.CharField(max_length=30, null=True, blank=True, help_text='Editor-assigned reference identifier')
     catalog_txt = models.TextField(blank=True, help_text='Authoritative ASCC catalog entry text')
     inscription_txt = models.TextField(blank=True, help_text='Text as physically inscribed on the town marking device')
     post_office = models.ForeignKey('PostOffice', on_delete=models.PROTECT, related_name='postmarks', null=True, blank=True)
