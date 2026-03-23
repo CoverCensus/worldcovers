@@ -29,13 +29,22 @@ urlpatterns = [
     path("accounts", RedirectView.as_view(url="/accounts/", permanent=True)),
     path("accounts/", include("allauth.urls")),
 
+    path("api/v1", RedirectView.as_view(url="/api/v1/", permanent=True)),
+    path("api/v1/login/", csrf_exempt(LoginView.as_view()), name="api-v1-login"),
+    path("api/v1/logout/", csrf_exempt(LogoutView.as_view()), name="api-v1-logout"),
+    path("api/v1/login", csrf_exempt(LoginView.as_view()), name="api-v1-login-no-slash"),
+    path("api/v1/logout", csrf_exempt(LogoutView.as_view()), name="api-v1-logout-no-slash"),
+    path("api/v1/", include("common.urls")),
+    
+    # Legacy /api/ routes (alias)
     path("api", RedirectView.as_view(url="/api/", permanent=True)),
     # Login/logout with CSRF exempt so SPA can POST without token (matched before include)
     path("api/login/", csrf_exempt(LoginView.as_view()), name="api-login"),
     path("api/logout/", csrf_exempt(LogoutView.as_view()), name="api-logout"),
-    path("api/login", csrf_exempt(LoginView.as_view()), name="api-login"),
-    path("api/logout", csrf_exempt(LogoutView.as_view()), name="api-logout"),
+    path("api/login", csrf_exempt(LoginView.as_view()), name="api-login-no-slash"),
+    path("api/logout", csrf_exempt(LogoutView.as_view()), name="api-logout-no-slash"),
     path("api/", include("common.urls")),
+    
     path("api-auth/", include("rest_framework.urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
