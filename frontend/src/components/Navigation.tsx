@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Menu, X, LogOut, KeyRound, ChevronDown, LayoutDashboard } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -22,38 +22,6 @@ export const Navigation = () => {
   const user = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const checkFaqs = async () => {
-      try {
-        const response = await fetch((import.meta.env.VITE_API_BASE_URL || '/api/v1') + "/faq-entries/?page_size=1");
-        if (!response.ok) {
-          // If the FAQ endpoint fails, leave hasFaqs as null so we don't hide the link unexpectedly.
-          return;
-        }
-        const data = await response.json();
-        const items = Array.isArray(data) ? data : data?.results || [];
-        setHasFaqs(items.length > 0);
-      } catch {
-        // Network or other error – keep hasFaqs as null.
-      }
-    };
-
-    void checkFaqs();
-  }, []);
-
-  const handleFaqClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    e.preventDefault();
-    if (location.pathname === '/') {
-      document.getElementById('faq')?.scrollIntoView({ behavior: 'smooth' });
-    } else {
-      navigate('/');
-      setTimeout(() => {
-        document.getElementById('faq')?.scrollIntoView({ behavior: 'smooth' });
-      }, 100);
-    }
-    setMobileMenuOpen(false);
-  };
 
   const apiBase = (import.meta.env.VITE_API_URL ?? "").trim().replace(/\/+$/, "");
   const logoutUrl = apiBase ? `${apiBase}/logout/` : (import.meta.env.VITE_API_BASE_URL || '/api/v1') + "/logout/";

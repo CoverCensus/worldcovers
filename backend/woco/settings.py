@@ -33,7 +33,11 @@ INTERNAL_IPS = [
 
 DJANGO_APP_HOSTNAME = config("DJANGO_APP_HOSTNAME", default="hellowoco.app")
 
-ALLOWED_HOSTS = [DJANGO_APP_HOSTNAME, *INTERNAL_IPS]
+ALLOWED_HOSTS = [
+    DJANGO_APP_HOSTNAME, 
+    f"www.{DJANGO_APP_HOSTNAME}",
+    *INTERNAL_IPS
+]
 
 # Application definition
 INSTALLED_APPS = [
@@ -302,6 +306,11 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     f"https://{DJANGO_APP_HOSTNAME}"
+]
+
+# CSRF: allow frontend origins so cookie-based auth works with same-host.
+CSRF_TRUSTED_ORIGINS = [
+    f"https://{DJANGO_APP_HOSTNAME}",
 ]
 
 # Security Settings (for production)
