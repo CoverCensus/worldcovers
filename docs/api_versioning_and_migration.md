@@ -63,6 +63,7 @@ To support v2's expanded archival relationships, the following independent table
 - **Artifact Binding Models**: `Cover`, `CoverPostmark` (joins Cover -> Postmark), `PostmarkRatemark` (joins Postmark -> Ratemark)
 - **Citations Models**: `ReferenceWork`, `Citation`
 - **Timestamps**: `DateObserved`
+- **Listing extension**: `PostmarkV2` — one-to-one extension of `Postmark` (legacy + v2 fields denormalized for v2 serializers/filters). Rows are created/updated by `import_v2_data`, not by the legacy ASCC import alone.
 
 ### Restored / Unaffected Tables
 The following `v1` models remained completely intact despite `backend-apmc` attempting to erase or overwrite them:
@@ -91,25 +92,50 @@ After initial v1/v2 split, a few endpoints used by the frontend were still prese
 
 ---
 
-## 5. V2 Data Import & Versioning Scripts
+## 5. Seeding postal facilities (“towns”) per state
+
+Migration **`0033_seed_towns_for_states`** seeds a small set of **named cities** as `PostalFacility` + `PostalFacilityIdentity` rows and links each to the correct state `AdministrativeUnit` via **`JurisdictionalAffiliation`**. That powers **`GET /api/postal-facilities/`** with `state_name` so the UI can filter towns by selected state.
+
+- **First-time apply** (with the rest of Django migrations):  
+  `python manage.py migrate common`
+- **Important:** The migration only links towns to states that **already exist** with a **current** `AdministrativeUnitIdentity` whose `unit_name` matches the keys in `STATE_TOWNS` (e.g. `"Virginia"`). If `0033` ran **before** states were imported, those rows were skipped and no affiliation was created.
+- **Re-run the same seeding logic** after states exist (idempotent `get_or_create`):  
+  `python manage.py seed_towns_for_states`  
+  Implemented in `backend/common/management/commands/seed_towns_for_states.py` (calls the same function as migration `0033`).
+
+Suggested order with catalog data: migrate → import states/listings (e.g. `import_ascc`) → **`seed_towns_for_states`** if needed → `import_v2_data`.
+
+---
+
+## 6. V2 Data Import & Versioning Scripts
 
 To operationalize v2 datasets in `docs/data/v2_*.csv`, dedicated management commands were added.
 
 ### A. Main V2 Import Command
 - **Command:** `import_v2_data`
 - **File:** `backend/common/management/commands/import_v2_data.py`
-- **Primary behavior:**
-  1. Imports lookup/editorial v2 tables (`Shape`, `Lettering`, `Framing`, `Color`, `PostOffice`, plus placeholder `Region`)
-  2. Imports object tables (`Cover`, `Ratemark`, `Auxmark`)
-  3. Updates additive v2 fields on existing `Postmark` records
-  4. Imports relation tables (`CoverPostmark`, `PostmarkRatemark`, `MarkFraming`, `DateObserved`)
+- **Primary behavior (in execution order):**
+  1. Imports lookup/editorial v2 tables (`Color`, `Shape`, `Lettering`, `Framing`, `PostOffice`, plus placeholder `Region`).
+  2. Imports object tables (`Cover`, `Ratemark`).
+  3. **Postmark pass** — for each row in `v2_postmarks.csv` that matches an existing listing:
+     - Updates additive v2 fields on **`Postmark`** and stores the CSV row under `raw_import_payload["v2"]`.
+     - **`PostmarkV2`**: runs **`update_or_create(postmark=…)`** in the same loop **immediately after** each successful `Postmark` save.
+       - **First run:** creates the `PostmarkV2` row for that postmark.
+       - **Later runs:** refreshes all mirrored fields from the updated `Postmark` plus v2-specific `DateFormat` derived from the CSV `date_format` column (`DateFormat.get_or_create` by name — this is the v2 editorial date format on `PostmarkV2.date_format`, not necessarily the legacy `Postmark.date_format` FK).
+       - Extension row duplicates legacy listing data still living on `Postmark` (e.g. `site`, `state`, legacy shape/lettering/framing FKs, rate fields, slug, visibility) **and** the v2 fields written in that pass (`catalog_txt`, `shape`, `lettering`, `color`, `post_office`, dimensions, etc.).
+  4. Imports **`Auxmark`**, **`DateObserved`**, and relation tables (`CoverPostmark`, `PostmarkRatemark`, `MarkFraming`).
+  5. Imports **`PostmarkValuation`** where CSV data is complete enough to create rows.
 
 ### B. Important Mapping Rule
 - Existing `Postmark` records are updated by matching:
   - `Postmark.raw_state_data_id == v2_postmarks.postmark_id`
-- This preserves legacy catalog continuity while layering v2 attributes.
+- This preserves legacy catalog continuity while layering v2 attributes. Rows in `v2_postmarks.csv` with no matching `Postmark` are skipped (or fatal with `--missing-postmark-strategy error`).
 
-### C. Data Anomalies Handled
+### C. When `PostmarkV2` appears
+- **Not** created by legacy ASCC/CSV import alone.
+- **Created or updated** only inside **`import_v2_data`** for each `v2_postmarks` row that successfully maps to a `Postmark`. Re-running `import_v2_data` updates the same `PostmarkV2` row.
+
+### D. Data Anomalies Handled
 - `v2_shapes.csv` and some `v2_framings.csv` rows do not supply a usable `code`:
   - Import now derives non-null codes from names to satisfy DB constraints.
 - `v2_post_offices.csv` includes `region_id`, but values are blank:
@@ -117,7 +143,7 @@ To operationalize v2 datasets in `docs/data/v2_*.csv`, dedicated management comm
 - `v2_postmark_valuation.csv` has empty `appraisal_date`:
   - Valuation import is skipped with explicit logging.
 
-### D. Versioned Import Commands (django-reversion)
+### E. Versioned Import Commands (django-reversion)
 The project already includes `django-reversion`; version-aware wrappers were added:
 
 - **`import_v2_data_versioned`**
@@ -128,14 +154,17 @@ The project already includes `django-reversion`; version-aware wrappers were add
 - **`revert_v2_import_version`**
   - Reverts by explicit `Revision.id` or by latest matching tag.
 
-### E. Example Runbook
-1. Run non-versioned import:
+### F. Example Runbook
+1. Migrations: `python manage.py migrate`
+2. Legacy catalog + states (as needed): e.g. `import_ascc` / `import_all_legacy_csv`, then `backfill_listing_states` if `Postmark.state` is empty.
+3. Seed towns for postal-facility API (if migration 0033 ran too early): `python manage.py seed_towns_for_states`
+4. Run non-versioned v2 import:
    - `python manage.py import_v2_data --dir ../docs/data`
-2. Run versioned import for rollback safety:
+5. Run versioned import for rollback safety:
    - `python manage.py import_v2_data_versioned --dir ../docs/data --tag v2-2026-03-23`
-3. List version tags:
+6. List version tags:
    - `python manage.py list_v2_import_versions`
-4. Revert if needed:
+7. Revert if needed:
    - `python manage.py revert_v2_import_version --tag v2-2026-03-23`
 
 ## Summary

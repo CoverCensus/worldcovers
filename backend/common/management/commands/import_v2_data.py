@@ -1,22 +1,45 @@
 """
 Import WorldCovers V2 catalog data from `docs/data/v2_*.csv`.
 
-This command is intended to be run after the legacy catalog import
-(e.g. `import_all_legacy_csv` / `import_ascc`), so that `common.models.Postmark`
-records already exist and can be updated via:
+Prerequisites
+-------------
+Run **after** legacy catalog data exists so rows in `v2_postmarks.csv` can match
+existing listings:
+
   Postmark.raw_state_data_id == v2_postmarks.postmark_id
 
-It will:
-  - create V2 editorial/lookup tables (Shape, Lettering, Framing, Color, Region, PostOffice)
-  - create V2 object tables (Cover, Ratemark, Auxmark)
-  - update V2 fields on existing Postmark rows
-  - create V2 junction/relations (CoverPostmark, PostmarkRatemark, MarkFraming, DateObserved)
+Typical order: `migrate` → `import_reference_csv` / `import_ascc` (or
+`import_all_legacy_csv`) → optional `backfill_listing_states` → `import_v2_data`.
+States on `Postmark` are not required for the import to run, but `PostmarkV2`
+copies `postmark.state` for denormalized API use — backfill states before v2 if
+you need them populated.
 
-Notes / limitations (based on current CSV exports):
-  - `v2_post_offices.csv` has `region_id` column but all values are blank, so this
-    script assigns everything to a placeholder `Region` named "UNKNOWN".
-  - `v2_postmark_valuation.csv` has `appraisal_date` column but it is empty for all rows,
-    so PostmarkValuation rows are skipped.
+What this command does (order)
+------------------------------
+1. **Lookups**: Color, Shape, Lettering, Framing, placeholder Region, PostOffice
+   from the v2_* lookup CSVs.
+2. **Core objects**: Cover, Ratemark (from their CSVs).
+3. **Postmark rows** (for each matching `v2_postmarks` line):
+   - Updates additive v2 fields on `Postmark` (catalog/inscription text, shape,
+     lettering, color, dimensions, impression, date_type/date_fmt, post_office,
+     etc.) and merges the raw CSV row under `raw_import_payload["v2"]`.
+   - **`PostmarkV2`**: immediately after each successful `Postmark.save`, runs
+     `PostmarkV2.objects.update_or_create(postmark=postmark, ...)`.
+     - Creates the extension row on first import; updates it on every re-import.
+     - Copies legacy listing fields from `Postmark` (site, state, legacy shapes,
+       rate fields, slug, visibility, …) **plus** the same v2 FKs/texts saved on
+       `Postmark` in that loop.
+     - Sets `PostmarkV2.date_format` from the v2 CSV `date_format` string via
+       `DateFormat.get_or_create` (separate from legacy `Postmark.date_format`).
+4. **Auxmark**, **DateObserved**, junction tables (cover↔postmark, postmark↔ratemark,
+   mark framing), then **PostmarkValuation** where CSV rows are valid.
+
+Notes / limitations (current CSV exports)
+-----------------------------------------
+  - `v2_post_offices.csv`: `region_id` is blank → all offices use placeholder
+    `Region("UNKNOWN")`.
+  - `v2_postmark_valuation.csv`: empty `appraisal_date` → valuations skipped
+    (logged).
 """
 
 import csv
@@ -100,7 +123,10 @@ def read_csv_dicts(path):
 
 
 class Command(BaseCommand):
-    help = "Import V2 data from docs/data/v2_*.csv into the V2 tables + update Postmark v2 fields."
+    help = (
+        "Import v2_*.csv: lookups, Cover/Ratemark, update Postmark + PostmarkV2 per v2_postmarks row, "
+        "then auxmarks, relations, valuations. Requires Postmark.raw_state_data_id == v2 postmark_id."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument(
