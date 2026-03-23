@@ -96,7 +96,7 @@ const ResetPassword = () => {
       }
 
       const trimmed = base.trim().replace(/\/+$/, "");
-      const url = `${trimmed}/api/reset-password/`;
+      const url = `${trimmed}/reset-password/`;
 
       const res = await fetch(url, {
         method: "POST",

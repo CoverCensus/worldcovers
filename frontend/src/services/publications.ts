@@ -1,5 +1,5 @@
 /**
- * Publications: from GET /api/publications/ when VITE_PUBLICATIONS_API_URL is set.
+ * Publications: from GET /publications/ when VITE_PUBLICATIONS_API_URL is set.
  * No Supabase fallback (no matching table).
  */
 
@@ -12,7 +12,7 @@ export interface PublicationUser {
   lastName: string;
 }
 
-/** One item from GET /api/publications/ */
+/** One item from GET /publications/ */
 export interface PublicationApiResultItem {
   postmarkPublicationId: number;
   createdBy: PublicationUser;
@@ -28,7 +28,7 @@ export interface PublicationApiResultItem {
   publicationType: string;
 }
 
-/** Paginated response from GET /api/publications/ */
+/** Paginated response from GET /publications/ */
 export interface PublicationApiResponse {
   count: number;
   next: string | null;
@@ -69,12 +69,12 @@ function getPublicationsApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/publications")) return base;
-  return `${base}/api/publications`;
+  if (base.endsWith("/publications")) return base;
+  return `${base}/publications`;
 }
 
 /**
- * Fetches publications from GET /api/publications/.
+ * Fetches publications from GET /publications/.
  * When VITE_PUBLICATIONS_API_URL is not set, returns [].
  */
 export async function getPublications(): Promise<PublicationRecord[]> {

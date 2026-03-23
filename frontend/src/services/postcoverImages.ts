@@ -1,9 +1,9 @@
 /**
- * Postcover images: from GET /api/postcover-images/ when VITE_POSTCOVER_IMAGES_API_URL is set.
+ * Postcover images: from GET /postcover-images/ when VITE_POSTCOVER_IMAGES_API_URL is set.
  * When not set, returns [] (app may use Supabase or other source for cover images).
  */
 
-/** One item from GET /api/postcover-images/ */
+/** One item from GET /postcover-images/ */
 export interface PostcoverImageApiResultItem {
   postcoverImageId: number;
   originalFilename: string;
@@ -19,7 +19,7 @@ export interface PostcoverImageApiResultItem {
   createdDate: string;
 }
 
-/** Paginated response from GET /api/postcover-images/ */
+/** Paginated response from GET /postcover-images/ */
 export interface PostcoverImageApiResponse {
   count: number;
   next: string | null;
@@ -66,12 +66,12 @@ function getPostcoverImagesApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/postcover-images")) return base;
-  return `${base}/api/postcover-images`;
+  if (base.endsWith("/postcover-images")) return base;
+  return `${base}/postcover-images`;
 }
 
 /**
- * Fetches postcover images from GET /api/postcover-images/.
+ * Fetches postcover images from GET /postcover-images/.
  * When VITE_POSTCOVER_IMAGES_API_URL is not set, returns [].
  */
 export async function getPostcoverImages(): Promise<PostcoverImageRecord[]> {

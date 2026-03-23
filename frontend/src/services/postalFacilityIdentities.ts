@@ -1,5 +1,5 @@
 /**
- * Postal facility identities: from GET /api/postal-facility-identities/ when
+ * Postal facility identities: from GET /postal-facility-identities/ when
  * VITE_POSTAL_FACILITY_IDENTITIES_API_URL is set. No Supabase fallback (no matching table).
  */
 
@@ -12,7 +12,7 @@ export interface PostalFacilityIdentityUser {
   lastName: string;
 }
 
-/** One item from GET /api/postal-facility-identities/ */
+/** One item from GET /postal-facility-identities/ */
 export interface PostalFacilityIdentityApiResultItem {
   postalFacilityIdentityId: number;
   coordinates: unknown;
@@ -32,7 +32,7 @@ export interface PostalFacilityIdentityApiResultItem {
   postalFacility: number;
 }
 
-/** Paginated response from GET /api/postal-facility-identities/ */
+/** Paginated response from GET /postal-facility-identities/ */
 export interface PostalFacilityIdentityApiResponse {
   count: number;
   next: string | null;
@@ -77,12 +77,12 @@ function getPostalFacilityIdentitiesApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/postal-facility-identities")) return base;
-  return `${base}/api/postal-facility-identities`;
+  if (base.endsWith("/postal-facility-identities")) return base;
+  return `${base}/postal-facility-identities`;
 }
 
 /**
- * Fetches postal facility identities from GET /api/postal-facility-identities/.
+ * Fetches postal facility identities from GET /postal-facility-identities/.
  * When VITE_POSTAL_FACILITY_IDENTITIES_API_URL is not set, returns [].
  */
 export async function getPostalFacilityIdentities(): Promise<

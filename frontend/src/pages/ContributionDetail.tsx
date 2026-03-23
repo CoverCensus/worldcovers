@@ -258,7 +258,7 @@ const ContributionDetail = () => {
     }
 
     let cancelled = false;
-    fetch(`${apiBase}/api/contributions/${contributionId}/`, {
+    fetch(`${apiBase}/contributions/${contributionId}/`, {
       method: "GET",
       credentials: "include",
       headers: { Accept: "application/json" },
@@ -629,7 +629,7 @@ const ContributionDetail = () => {
     const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
     if (csrfToken) headers["X-CSRFToken"] = csrfToken;
     try {
-      const res = await fetch(`${apiBase}/api/contributions/${contribution.id}/editor-edit/`, {
+      const res = await fetch(`${apiBase}/contributions/${contribution.id}/editor-edit/`, {
         method: "PATCH",
         credentials: "include",
         headers,
@@ -710,7 +710,7 @@ const ContributionDetail = () => {
     if (csrfToken) headers["X-CSRFToken"] = csrfToken;
 
     try {
-      const res = await fetch(`${apiBase}/api/contributions/${contribution.id}/${actionPath}/`, {
+      const res = await fetch(`${apiBase}/contributions/${contribution.id}/${actionPath}/`, {
         method: "POST",
         credentials: "include",
         headers,

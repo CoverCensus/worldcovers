@@ -1,12 +1,12 @@
 /**
- * Postmark shapes: from GET /api/postmark-shapes/ (future) or Supabase (now).
+ * Postmark shapes: from GET /postmark-shapes/ (future) or Supabase (now).
  * - When VITE_POSTMARK_SHAPES_API_URL is set → fetch from API.
  * - When not set → derive distinct type from Supabase catalog_records and submissions.
  */
 
 import { supabase } from "@/integrations/supabase/client";
 
-/** One item from GET /api/postmark-shapes/ */
+/** One item from GET /postmark-shapes/ */
 export interface PostmarkShapeApiResultItem {
   postmarkShapeId: number;
   createdDate: string;
@@ -17,7 +17,7 @@ export interface PostmarkShapeApiResultItem {
   modifiedBy: number;
 }
 
-/** Paginated response from GET /api/postmark-shapes/ */
+/** Paginated response from GET /postmark-shapes/ */
 export interface PostmarkShapeApiResponse {
   count: number;
   next: string | null;
@@ -44,8 +44,8 @@ function getPostmarkShapesApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (env && typeof env === "string" && env.trim() !== "") {
     const base = env.trim().replace(/\/+$/, "");
-    if (base.endsWith("/api/postmark-shapes")) return base;
-    return `${base}/api/postmark-shapes`;
+    if (base.endsWith("/postmark-shapes")) return base;
+    return `${base}/postmark-shapes`;
   }
   // Fallback: use postmarks API base (e.g. .../api/postmarks → .../api/postmark-shapes)
   const postmarksBase = import.meta.env.VITE_POSTMARKS_API_URL;
@@ -114,7 +114,7 @@ async function getPostmarkShapesFromSupabase(): Promise<PostmarkShapeOption[]> {
 }
 
 /**
- * Fetches postmark shapes. When VITE_POSTMARK_SHAPES_API_URL is set, uses GET /api/postmark-shapes/.
+ * Fetches postmark shapes. When VITE_POSTMARK_SHAPES_API_URL is set, uses GET /postmark-shapes/.
  * Otherwise uses Supabase (distinct type from catalog_records and submissions).
  */
 export async function getPostmarkShapes(): Promise<PostmarkShapeOption[]> {

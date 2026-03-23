@@ -2,7 +2,12 @@
 # so GET /api/postal-facilities/ returns state_name and the frontend can show
 # Town/City dropdown filtered by selected state.
 #
-# Run: python manage.py migrate common
+# Requires: AdministrativeUnit + AdministrativeUnitIdentity rows for each state
+# name in STATE_TOWNS (match unit_name, current identity). If this ran before states
+# existed, affiliations were skipped — re-run the same logic with:
+#   python manage.py seed_towns_for_states
+#
+# Initial apply: python manage.py migrate common
 
 from django.conf import settings
 from django.db import migrations

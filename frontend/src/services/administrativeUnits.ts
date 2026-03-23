@@ -1,9 +1,9 @@
 /**
- * Administrative units (states/locations): from GET /api/administrative-units/
+ * Administrative units (states/locations): from GET /administrative-units/
  * Used for state filter options in Search.
  */
 
-/** One item from GET /api/administrative-units/ (camelCase from DRF) */
+/** One item from GET /administrative-units/ (camelCase from DRF) */
 export interface AdministrativeUnitApiItem {
   administrativeUnitId: number;
   referenceCode: string;
@@ -11,7 +11,7 @@ export interface AdministrativeUnitApiItem {
   currentType: string | null;
 }
 
-/** Paginated response from GET /api/administrative-units/ */
+/** Paginated response from GET /administrative-units/ */
 export interface AdministrativeUnitsApiResponse {
   count: number;
   next: string | null;
@@ -29,12 +29,12 @@ function getAdministrativeUnitsApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/administrative-units")) return base;
-  return `${base}/api/administrative-units`;
+  if (base.endsWith("/administrative-units")) return base;
+  return `${base}/administrative-units`;
 }
 
 /**
- * Fetches administrative units from GET /api/administrative-units/.
+ * Fetches administrative units from GET /administrative-units/.
  * Follows pagination (next) so the filter dropdown gets every state in the catalog.
  * Returns state options (value = currentName, label = currentName).
  * @param assignedOnly - When true, only returns states assigned to the current user (Contribute, Dashboard). When false/undefined, returns all states (Search).
@@ -85,7 +85,7 @@ function getAssignedAdministrativeUnitsApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  return `${base}/api/assigned-states`;
+  return `${base}/assigned-states`;
 }
 
 /**

@@ -1,9 +1,9 @@
 /**
- * Postcovers: from GET /api/postcovers/ when VITE_POSTCOVERS_API_URL is set.
+ * Postcovers: from GET /postcovers/ when VITE_POSTCOVERS_API_URL is set.
  * When not set, returns [] (app may use Supabase or other source for covers).
  */
 
-/** One item from GET /api/postcovers/ */
+/** One item from GET /postcovers/ */
 export interface PostcoverApiResultItem {
   postcoverId: number;
   postcoverKey: string;
@@ -12,7 +12,7 @@ export interface PostcoverApiResultItem {
   createdDate: string;
 }
 
-/** Paginated response from GET /api/postcovers/ */
+/** Paginated response from GET /postcovers/ */
 export interface PostcoverApiResponse {
   count: number;
   next: string | null;
@@ -43,12 +43,12 @@ function getPostcoversApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/postcovers")) return base;
-  return `${base}/api/postcovers`;
+  if (base.endsWith("/postcovers")) return base;
+  return `${base}/postcovers`;
 }
 
 /**
- * Fetches postcovers from GET /api/postcovers/.
+ * Fetches postcovers from GET /postcovers/.
  * When VITE_POSTCOVERS_API_URL is not set, returns [].
  */
 export async function getPostcovers(): Promise<PostcoverRecord[]> {

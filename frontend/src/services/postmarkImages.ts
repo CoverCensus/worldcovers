@@ -1,9 +1,9 @@
 /**
- * Postmark images: from GET /api/postmark-images/ when VITE_POSTMARK_IMAGES_API_URL is set.
+ * Postmark images: from GET /postmark-images/ when VITE_POSTMARK_IMAGES_API_URL is set.
  * When not set, returns [] (app uses Supabase or postmark mainImage for images).
  */
 
-/** One item from GET /api/postmark-images/ */
+/** One item from GET /postmark-images/ */
 export interface PostmarkImageApiResultItem {
   postmarkImageId: number;
   originalFilename: string;
@@ -23,7 +23,7 @@ export interface PostmarkImageApiResultItem {
   createdDate: string;
 }
 
-/** Paginated response from GET /api/postmark-images/ */
+/** Paginated response from GET /postmark-images/ */
 export interface PostmarkImageApiResponse {
   count: number;
   next: string | null;
@@ -78,12 +78,12 @@ function getPostmarkImagesApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/postmark-images")) return base;
-  return `${base}/api/postmark-images`;
+  if (base.endsWith("/postmark-images")) return base;
+  return `${base}/postmark-images`;
 }
 
 /**
- * Fetches postmark images from GET /api/postmark-images/.
+ * Fetches postmark images from GET /postmark-images/.
  * When VITE_POSTMARK_IMAGES_API_URL is not set, returns [].
  */
 export async function getPostmarkImages(): Promise<PostmarkImageRecord[]> {

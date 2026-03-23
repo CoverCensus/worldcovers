@@ -33,7 +33,7 @@ const Index = () => {
     const fetchFaqs = async () => {
       setIsLoadingFaqs(true);
       try {
-        const response = await fetch("/api/faq-entries/");
+        const response = await fetch((import.meta.env.VITE_API_BASE_URL || '/api/v1') + "/faq-entries/");
         if (!response.ok) {
           throw new Error(`Failed to load FAQs (${response.status})`);
         }

@@ -1,9 +1,9 @@
 /**
- * Publication references: from GET /api/publication-references/ when
+ * Publication references: from GET /publication-references/ when
  * VITE_PUBLICATION_REFERENCES_API_URL is set. No Supabase fallback (no matching table).
  */
 
-/** One item from GET /api/publication-references/ */
+/** One item from GET /publication-references/ */
 export interface PublicationReferenceApiResultItem {
   postmarkPublicationReferenceId: number;
   postmarkPublication: number;
@@ -13,7 +13,7 @@ export interface PublicationReferenceApiResultItem {
   createdDate: string;
 }
 
-/** Paginated response from GET /api/publication-references/ */
+/** Paginated response from GET /publication-references/ */
 export interface PublicationReferenceApiResponse {
   count: number;
   next: string | null;
@@ -48,12 +48,12 @@ function getPublicationReferencesApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/publication-references")) return base;
-  return `${base}/api/publication-references`;
+  if (base.endsWith("/publication-references")) return base;
+  return `${base}/publication-references`;
 }
 
 /**
- * Fetches publication references from GET /api/publication-references/.
+ * Fetches publication references from GET /publication-references/.
  * When VITE_PUBLICATION_REFERENCES_API_URL is not set, returns [].
  */
 export async function getPublicationReferences(): Promise<

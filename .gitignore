@@ -254,3 +254,4 @@ tools/wip/out/*
 !tools/wip/out/DELETE.ME
 .DS_Store
 /backend/imports
+docs/data/

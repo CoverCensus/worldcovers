@@ -1,5 +1,5 @@
 /**
- * Colors service: color options come from Supabase (now) or from GET /api/colors/ (future).
+ * Colors service: color options come from Supabase (now) or from GET /colors/ (future).
  * - When VITE_COLORS_API_URL is set → fetch from API (count, next, previous, results).
  * - When not set → derive distinct colors from Supabase catalog_records and submissions.
  */
@@ -17,7 +17,7 @@ export interface ColorsApiResultItem {
   modifiedBy: number;
 }
 
-/** Paginated response from GET /api/colors/ */
+/** Paginated response from GET /colors/ */
 export interface ColorsApiResponse {
   count: number;
   next: string | null;
@@ -49,8 +49,8 @@ function getColorsApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/api/colors")) return base;
-  return `${base}/api/colors`;
+  if (base.endsWith("/colors")) return base;
+  return `${base}/colors`;
 }
 
 /**
@@ -111,7 +111,7 @@ async function getAllColorsFromApi(apiUrl: string): Promise<ColorOption[]> {
 // }
 
 /**
- * Fetches color options. When VITE_COLORS_API_URL is set, uses GET /api/colors/.
+ * Fetches color options. When VITE_COLORS_API_URL is set, uses GET /colors/.
  * Otherwise uses Supabase (distinct colors from catalog_records and submissions).
  */
 export async function getColors(): Promise<ColorOption[]> {
