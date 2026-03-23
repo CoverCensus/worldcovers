@@ -15,7 +15,7 @@ from django.contrib import admin
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 from .views import ServeSPAView, FaviconView
-from common.views import LoginView, LogoutView
+from common.api.v1.views import LoginView, LogoutView
 
 
 ###
@@ -34,7 +34,8 @@ urlpatterns = [
     path("api/v1/logout/", csrf_exempt(LogoutView.as_view()), name="api-v1-logout"),
     path("api/v1/login", csrf_exempt(LoginView.as_view()), name="api-v1-login-no-slash"),
     path("api/v1/logout", csrf_exempt(LogoutView.as_view()), name="api-v1-logout-no-slash"),
-    path("api/v1/", include("common.urls")),
+    path("api/v1/", include("common.api.v1.urls")),
+    path("api/v2/", include("common.api.v2.urls")),
     
     # Legacy /api/ routes (alias)
     path("api", RedirectView.as_view(url="/api/", permanent=True)),
@@ -43,7 +44,7 @@ urlpatterns = [
     path("api/logout/", csrf_exempt(LogoutView.as_view()), name="api-logout"),
     path("api/login", csrf_exempt(LoginView.as_view()), name="api-login-no-slash"),
     path("api/logout", csrf_exempt(LogoutView.as_view()), name="api-logout-no-slash"),
-    path("api/", include("common.urls")),
+    path("api/", include("common.api.v1.urls")),
     
     path("api-auth/", include("rest_framework.urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),

@@ -64,7 +64,7 @@ from .models import (
 )
 from .csv_import import IMPORTERS
 from .utils import get_canonical_location_reference_codes
-from .views import _apply_contribution_to_catalog
+from .api.v1.views import _apply_contribution_to_catalog
 
 User = get_user_model()
 
