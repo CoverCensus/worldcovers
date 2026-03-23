@@ -134,6 +134,13 @@ router.register(
     basename="contribution",
 )
 
+# FAQ entries (public site)
+router.register(
+    r"faq-entries",
+    views.FAQEntryViewSet,
+    basename="faq-entry",
+)
+
 # The API URLs are now determined automatically by the router
 # csrf_exempt on login/logout/login-requests so the SPA can POST without a CSRF token
 urlpatterns = [
@@ -147,6 +154,7 @@ urlpatterns = [
     path("postmarks/<int:pk>/delete-mine/", views.DeleteMySubmissionView.as_view(), name="postmark-delete-mine"),
     path("me/", views.CurrentUserView.as_view(), name="current-user"),
     path("assigned-states/", views.AssignedStatesView.as_view(), name="assigned-states"),
+    path("postmarks-range/", views.PostmarkDateRangeView.as_view(), name="postmarks-range"),
     path("", include(router.urls)),
 ]
 

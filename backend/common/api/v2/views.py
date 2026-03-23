@@ -14,7 +14,8 @@ from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core.mail import send_mail
-from django.db.models import Q, Count, Prefetch
+from django.db.models import Q, Count, Prefetch, Min, Max
+from django.db.utils import ProgrammingError
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
@@ -44,7 +45,7 @@ from common.models import (
     Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
-    AdminCsvUpload, UserLocationAssignment, Contribution,
+    AdminCsvUpload, UserLocationAssignment, Contribution, FAQEntry,
 )
 
 from .serializers import (
@@ -62,6 +63,7 @@ from .serializers import (
     AdminCsvUploadListSerializer, AdminCsvUploadSerializer,
     LoginRequestSerializer,
     ContributionListSerializer, ContributionDetailSerializer, ContributionApproveRejectSerializer,
+    FAQEntrySerializer,
 )
 from common.filters import PostmarkListFilter
 from common.csv_import import IMPORTERS
@@ -200,6 +202,45 @@ class AssignedStatesView(APIView):
             })
         items.sort(key=lambda x: x["label"].lower())
         return Response(items)
+
+
+class FAQEntryViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only API for FAQ entries used by the public SPA homepage.
+    Only active entries are returned, ordered for display.
+    """
+    queryset = FAQEntry.objects.filter(is_active=True).order_by("display_order", "faq_entry_id")
+    serializer_class = FAQEntrySerializer
+    permission_classes = [AllowAny]
+
+    def list(self, request, *args, **kwargs):
+        """Return FAQ list; if table is missing (migration not applied), return empty list."""
+        try:
+            return super().list(request, *args, **kwargs)
+        except ProgrammingError:
+            # FAQEntries table may not exist yet; return empty paginated response
+            return Response({
+                "count": 0,
+                "next": None,
+                "previous": None,
+                "results": [],
+            })
+
+
+class PostmarkDateRangeView(APIView):
+    """
+    Returns the overall earliest and latest years seen for any cataloged postmark.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        agg = PostmarkDatesSeen.objects.aggregate(
+            earliest_year=Min("earliest_date_seen__year"),
+            latest_year=Max("latest_date_seen__year"),
+        )
+        earliest = int(agg["earliest_year"]) if agg["earliest_year"] is not None else None
+        latest = int(agg["latest_year"]) if agg["latest_year"] is not None else None
+        return Response({"earliest_year": earliest, "latest_year": latest})
 
 
 @method_decorator(csrf_exempt, name="dispatch")

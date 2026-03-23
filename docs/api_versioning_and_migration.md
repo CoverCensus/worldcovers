@@ -70,5 +70,73 @@ The following `v1` models remained completely intact despite `backend-apmc` atte
 - `AdminCsvUpload` (Retained for Dashboard use)
 - `FAQEntry` (Retained without issues)
 
+---
+
+## 4. V2 Endpoint Alignment Updates
+
+After initial v1/v2 split, a few endpoints used by the frontend were still present only in `v1`. These were added to `v2` so both API versions expose equivalent utility routes where needed.
+
+### Added to `backend/common/api/v2/`
+- **`faq-entries`** route:
+  - Added `FAQEntrySerializer` in `serializers.py`
+  - Added `FAQEntryViewSet` in `views.py`
+  - Added router registration in `urls.py`
+- **`postmarks-range/`** route:
+  - Added `PostmarkDateRangeView` in `views.py`
+  - Added URL path in `urls.py`
+
+### Why this was required
+- The SPA references FAQ and date-range endpoints in environments where `VITE_API_URL` points at `v2`.
+- Without these routes on `v2`, those calls return 404 while working on `v1`.
+
+---
+
+## 5. V2 Data Import & Versioning Scripts
+
+To operationalize v2 datasets in `docs/data/v2_*.csv`, dedicated management commands were added.
+
+### A. Main V2 Import Command
+- **Command:** `import_v2_data`
+- **File:** `backend/common/management/commands/import_v2_data.py`
+- **Primary behavior:**
+  1. Imports lookup/editorial v2 tables (`Shape`, `Lettering`, `Framing`, `Color`, `PostOffice`, plus placeholder `Region`)
+  2. Imports object tables (`Cover`, `Ratemark`, `Auxmark`)
+  3. Updates additive v2 fields on existing `Postmark` records
+  4. Imports relation tables (`CoverPostmark`, `PostmarkRatemark`, `MarkFraming`, `DateObserved`)
+
+### B. Important Mapping Rule
+- Existing `Postmark` records are updated by matching:
+  - `Postmark.raw_state_data_id == v2_postmarks.postmark_id`
+- This preserves legacy catalog continuity while layering v2 attributes.
+
+### C. Data Anomalies Handled
+- `v2_shapes.csv` and some `v2_framings.csv` rows do not supply a usable `code`:
+  - Import now derives non-null codes from names to satisfy DB constraints.
+- `v2_post_offices.csv` includes `region_id`, but values are blank:
+  - Import assigns rows to a placeholder `Region("UNKNOWN")`.
+- `v2_postmark_valuation.csv` has empty `appraisal_date`:
+  - Valuation import is skipped with explicit logging.
+
+### D. Versioned Import Commands (django-reversion)
+The project already includes `django-reversion`; version-aware wrappers were added:
+
+- **`import_v2_data_versioned`**
+  - Runs `import_v2_data` inside a single reversion revision.
+  - Stores comment tag as: `v2-import:<tag>`
+- **`list_v2_import_versions`**
+  - Lists revisions tagged with prefix `v2-import:`
+- **`revert_v2_import_version`**
+  - Reverts by explicit `Revision.id` or by latest matching tag.
+
+### E. Example Runbook
+1. Run non-versioned import:
+   - `python manage.py import_v2_data --dir ../docs/data`
+2. Run versioned import for rollback safety:
+   - `python manage.py import_v2_data_versioned --dir ../docs/data --tag v2-2026-03-23`
+3. List version tags:
+   - `python manage.py list_v2_import_versions`
+4. Revert if needed:
+   - `python manage.py revert_v2_import_version --tag v2-2026-03-23`
+
 ## Summary
 The codebase now safely supports simultaneous `v1` standard functionality while unlocking `v2` logic for modern features and new physical domains. All changes are backwards-compatible and tracked successfully throughout the application’s lifespan without breaking production integrity.

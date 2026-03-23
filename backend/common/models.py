@@ -323,7 +323,7 @@ class Postmark(TimestampedModel):
     DATE_TYPE_CHOICES = [('BISHOP MARK', 'Bishop Mark'), ('FRANKLIN MARK', 'Franklin Mark'), ('QUAKER DATE', 'Quaker Date')]
     DATE_FMT_CHOICES = [('MD', 'MD'), ('MDD', 'MDD'), ('YD', 'YD'), ('YMD', 'YMD'), ('YMDD', 'YMDD')]
     IMPRESSION_CHOICES = [('Normal', 'Normal'), ('Stencil', 'Stencil'), ('Negative', 'Negative')]
-    code = models.CharField(max_length=30, unique=True, blank=True, help_text='Editor-assigned reference identifier')
+    code = models.CharField(max_length=30, unique=True, null=True, blank=True, help_text='Editor-assigned reference identifier')
     catalog_txt = models.TextField(blank=True, help_text='Authoritative ASCC catalog entry text')
     inscription_txt = models.TextField(blank=True, help_text='Text as physically inscribed on the town marking device')
     post_office = models.ForeignKey('PostOffice', on_delete=models.PROTECT, related_name='postmarks', null=True, blank=True)
@@ -858,7 +858,7 @@ class Framing(TimestampedModel):
     Seed values: NOR, Single Line, Double Line, Dotted, Dashed, Cogwheel, Fancy, Ornate, Other.
     """
     name = models.CharField(max_length=100, unique=True)
-    code = models.CharField(max_length=30, unique=True, blank=True, help_text='Editor-assigned reference identifier')
+    code = models.CharField(max_length=30, unique=True, null=True, blank=True, help_text='Editor-assigned reference identifier')
 
     class Meta:
         verbose_name = 'Framing'
@@ -876,7 +876,7 @@ class Shape(TimestampedModel):
     Seed values: SL, BOX, O, C, ARC, Octagon, Pictorial, Ornamental Mortised, Other.
     """
     name = models.CharField(max_length=100, unique=True)
-    code = models.CharField(max_length=30, unique=True, blank=True, help_text='Editor-assigned reference identifier')
+    code = models.CharField(max_length=30, unique=True, null=True, blank=True, help_text='Editor-assigned reference identifier')
 
     class Meta:
         verbose_name = 'Shape'
@@ -893,7 +893,7 @@ class Cover(TimestampedModel):
     model.md domain type: Cover
     """
     COVER_TYPE_CHOICES = [('FC', 'Folded Cover'), ('FL', 'Folded Letter')]
-    code = models.CharField(max_length=30, unique=True, blank=True, db_column='code', help_text='Editor-assigned reference identifier')
+    code = models.CharField(max_length=30, unique=True, null=True, blank=True, db_column='code', help_text='Editor-assigned reference identifier')
     color = models.ForeignKey(Color, on_delete=models.PROTECT, null=True, blank=True, related_name='covers', help_text='Ink or material color of the cover itself')
     type = models.CharField(max_length=2, choices=COVER_TYPE_CHOICES, null=True, blank=True)
     has_adhesive = models.BooleanField(default=False, help_text='Whether the cover bears an adhesive stamp')

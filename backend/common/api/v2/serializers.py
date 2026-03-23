@@ -13,7 +13,7 @@ from common.models import (
     Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
-    AdminCsvUpload, Contribution,
+    AdminCsvUpload, Contribution, FAQEntry,
 )
 
 User = get_user_model()
@@ -50,6 +50,15 @@ class LoginRequestSerializer(serializers.Serializer):
                 "A user with this email already exists."
             )
         return value
+
+
+class FAQEntrySerializer(serializers.ModelSerializer):
+    """Public FAQ entry serializer for the SPA (shared with v1)."""
+
+    class Meta:
+        model = FAQEntry
+        fields = ["faq_entry_id", "question", "answer", "is_active", "display_order"]
+        read_only_fields = ["faq_entry_id", "is_active", "display_order"]
 
 
 # ========== GEOGRAPHIC HIERARCHY SERIALIZERS ==========
