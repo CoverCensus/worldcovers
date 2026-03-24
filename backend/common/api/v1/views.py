@@ -2817,23 +2817,6 @@ class DateFormatViewSet(viewsets.ModelViewSet):
 
 # ========== POSTMARK VIEWSETS ==========
 
-V2_POSTMARK_DEFER_FIELDS = (
-    "code",
-    "catalog_txt",
-    "inscription_txt",
-    "post_office",
-    "shape",
-    "lettering",
-    "color",
-    "impression",
-    "is_irreg",
-    "width",
-    "height",
-    "date_type",
-    "date_fmt",
-)
-
-
 def _postmark_list_queryset():
     """Optimized queryset for postmark list: prefetches only data needed by PostmarkListSerializer.
     Minimal select_related/prefetch reduces JOINs and speeds up pagination count on 50k+ rows.
@@ -2868,8 +2851,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     Catalog list (used by /search): shows all listings.
     """
     pagination_class = PostmarkListPagination
-    # Keep base queryset compatible with databases that haven't added v2 columns yet.
-    queryset = Postmark.objects.defer(*V2_POSTMARK_DEFER_FIELDS).all()
+    queryset = Postmark.objects.all()  # Base queryset; get_queryset() returns optimized version
     permission_classes = [IsAuthenticatedOrReadOnly, IsResponsibleForRegion]
 
     def get_queryset(self):
