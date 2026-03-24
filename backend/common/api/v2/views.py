@@ -38,23 +38,30 @@ from django.contrib.auth import get_user_model
 from woco.pagination import PageSizePagination, LargePageSizePagination, PostmarkListPagination
 
 from common.models import (
+    Region, PostOffice, Lettering, Framing, Shape, Cover, DateObserved,
+    Ratemark, Auxmark, CoverPostmark, PostmarkRatemark, MarkFraming,
+    ReferenceWork, Citation,
     PostalFacility, PostalFacilityIdentity,
     AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
     JurisdictionalAffiliation,
     PostmarkShape, LetteringStyle, FramingStyle, Color, DateFormat,
-    Postmark, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
+    Postmark, PostmarkV2, PostmarkColor, PostmarkDatesSeen, PostmarkSize,
     PostmarkValuation, PostmarkPublication, PostmarkPublicationReference,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
     AdminCsvUpload, UserLocationAssignment, Contribution, FAQEntry,
 )
 
 from .serializers import (
+    RegionSerializer, PostOfficeSerializer, LetteringSerializer, FramingSerializer,
+    ShapeSerializer, CoverSerializer, DateObservedSerializer, RatemarkSerializer,
+    AuxmarkSerializer, CoverPostmarkSerializer, PostmarkRatemarkSerializer,
+    MarkFramingSerializer, ReferenceWorkSerializer, CitationSerializer,
     PostalFacilitySerializer, PostalFacilityListSerializer,
     PostalFacilityIdentitySerializer, AdministrativeUnitSerializer,
     AdministrativeUnitListSerializer, AdministrativeUnitIdentitySerializer,
     AdministrativeUnitResponsibilitySerializer, JurisdictionalAffiliationSerializer,
     PostmarkShapeSerializer, LetteringStyleSerializer, FramingStyleSerializer,
-    ColorSerializer, DateFormatSerializer, PostmarkSerializer,
+    ColorSerializer, DateFormatSerializer, PostmarkSerializer, PostmarkV2Serializer,
     PostmarkListSerializer, PostmarkColorSerializer, PostmarkDatesSeenSerializer,
     PostmarkSizeSerializer, PostmarkValuationSerializer, PostmarkPublicationSerializer,
     PostmarkPublicationReferenceSerializer, PostmarkImageSerializer,
@@ -1482,6 +1489,274 @@ class DeleteMySubmissionView(APIView):
 
 
 # ========== GEOGRAPHIC HIERARCHY VIEWSETS ==========
+
+class RegionViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 regions."""
+    queryset = Region.objects.all().select_related("parent_region")
+    serializer_class = RegionSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["region_tier", "parent_region"]
+    search_fields = ["name", "abbrev"]
+    ordering_fields = ["name", "abbrev", "established_date", "defunct_date", "created_at"]
+    ordering = ["name"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class PostOfficeViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 post offices."""
+    queryset = PostOffice.objects.all().select_related("region")
+    serializer_class = PostOfficeSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["region"]
+    search_fields = ["name", "region__name", "region__abbrev"]
+    ordering_fields = ["name", "created_at"]
+    ordering = ["name"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class LetteringViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 lettering values."""
+    queryset = Lettering.objects.all()
+    serializer_class = LetteringSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["name"]
+    ordering_fields = ["name", "created_at"]
+    ordering = ["name"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class FramingViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 framing values."""
+    queryset = Framing.objects.all()
+    serializer_class = FramingSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["name", "code"]
+    ordering_fields = ["name", "code", "created_at"]
+    ordering = ["name"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class ShapeViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 shape values."""
+    queryset = Shape.objects.all()
+    serializer_class = ShapeSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["name", "code"]
+    ordering_fields = ["name", "code", "created_at"]
+    ordering = ["name"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class CoverV2ViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 covers."""
+    queryset = Cover.objects.all().select_related("color")
+    serializer_class = CoverSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["color", "type", "has_adhesive", "is_institutional"]
+    ordering_fields = ["id", "code", "created_at"]
+    ordering = ["id"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class DateObservedViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 postmark observed dates."""
+    queryset = DateObserved.objects.all().select_related("postmark")
+    serializer_class = DateObservedSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["postmark", "granularity"]
+    ordering_fields = ["date", "created_at"]
+    ordering = ["postmark", "date"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class RatemarkViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 ratemarks."""
+    queryset = Ratemark.objects.all().select_related("shape", "lettering", "color")
+    serializer_class = RatemarkSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["is_manuscript", "shape", "lettering", "color", "impression", "is_irreg"]
+    search_fields = ["inscription_txt"]
+    ordering_fields = ["id", "created_at"]
+    ordering = ["id"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class AuxmarkViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 auxiliary marks."""
+    queryset = Auxmark.objects.all().select_related("shape", "lettering", "color")
+    serializer_class = AuxmarkSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["parent_mark_type", "parent_mark_id", "is_manuscript", "shape", "lettering", "color"]
+    search_fields = ["inscription_text"]
+    ordering_fields = ["parent_mark_type", "parent_mark_id", "created_at"]
+    ordering = ["parent_mark_type", "parent_mark_id"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class CoverPostmarkV2ViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 cover-postmark links."""
+    queryset = CoverPostmark.objects.all().select_related("cover", "postmark")
+    serializer_class = CoverPostmarkSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["cover", "postmark", "is_backstamp"]
+    ordering_fields = ["id", "created_at"]
+    ordering = ["id"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class PostmarkRatemarkViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 postmark-ratemark links."""
+    queryset = PostmarkRatemark.objects.all().select_related("postmark", "ratemark")
+    serializer_class = PostmarkRatemarkSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["postmark", "ratemark", "placement_type"]
+    ordering_fields = ["id", "created_at"]
+    ordering = ["id"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class MarkFramingViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 mark-framing links."""
+    queryset = MarkFraming.objects.all().select_related("framing")
+    serializer_class = MarkFramingSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["parent_mark_type", "parent_mark_id", "framing"]
+    ordering_fields = ["id", "framing_pos", "created_at"]
+    ordering = ["parent_mark_type", "parent_mark_id"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class ReferenceWorkViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 reference works."""
+    queryset = ReferenceWork.objects.all()
+    serializer_class = ReferenceWorkSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["publication_year"]
+    search_fields = ["title", "authorship", "publisher", "edition", "volume", "isbn"]
+    ordering_fields = ["title", "publication_year", "created_at"]
+    ordering = ["title"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class CitationViewSet(viewsets.ModelViewSet):
+    """ViewSet for v2 citations."""
+    queryset = Citation.objects.all().select_related("reference_work")
+    serializer_class = CitationSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["reference_work", "subject_type", "subject_id"]
+    search_fields = ["citation_detail", "reference_work__title"]
+    ordering_fields = ["reference_work", "subject_type", "subject_id", "created_at"]
+    ordering = ["reference_work", "subject_type", "subject_id"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+
+class PostmarkV2ViewSet(viewsets.ModelViewSet):
+    """Canonical v2 postmark CRUD based on PostmarkV2 model."""
+    queryset = PostmarkV2.objects.all().select_related(
+        "postmark", "post_office", "shape", "lettering", "color", "date_format"
+    )
+    serializer_class = PostmarkV2Serializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = [
+        "postmark", "post_office", "shape", "lettering", "color", "is_manuscript",
+        "impression", "is_irreg", "date_type", "date_fmt", "visibility",
+        "contribution_approval_status",
+    ]
+    search_fields = ["code", "postmark_key", "inscription_txt", "catalog_txt"]
+    ordering_fields = ["id", "postmark_key", "code", "created_at"]
+    ordering = ["id"]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
 
 class PostalFacilityViewSet(viewsets.ModelViewSet):
     """

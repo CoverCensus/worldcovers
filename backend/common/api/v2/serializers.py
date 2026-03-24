@@ -6,6 +6,9 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from common.models import (
+    Region, PostOffice, Lettering, Framing, Shape, Cover, DateObserved,
+    Ratemark, Auxmark, CoverPostmark, PostmarkRatemark, MarkFraming,
+    ReferenceWork, Citation,
     PostalFacility, PostalFacilityIdentity,
     AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
     JurisdictionalAffiliation,
@@ -62,6 +65,134 @@ class FAQEntrySerializer(serializers.ModelSerializer):
 
 
 # ========== GEOGRAPHIC HIERARCHY SERIALIZERS ==========
+
+class RegionSerializer(serializers.ModelSerializer):
+    """Serializer for v2 Region model."""
+
+    class Meta:
+        model = Region
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
+
+class PostOfficeSerializer(serializers.ModelSerializer):
+    """Serializer for v2 PostOffice model."""
+    region_name = serializers.CharField(source="region.name", read_only=True)
+
+    class Meta:
+        model = PostOffice
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
+
+class LetteringSerializer(serializers.ModelSerializer):
+    """Serializer for v2 Lettering model."""
+
+    class Meta:
+        model = Lettering
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
+
+class FramingSerializer(serializers.ModelSerializer):
+    """Serializer for v2 Framing model."""
+
+    class Meta:
+        model = Framing
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
+
+class ShapeSerializer(serializers.ModelSerializer):
+    """Serializer for v2 Shape model."""
+
+    class Meta:
+        model = Shape
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
+
+class CoverSerializer(serializers.ModelSerializer):
+    """Serializer for v2 Cover model."""
+    color_name = serializers.CharField(source="color.color_name", read_only=True)
+
+    class Meta:
+        model = Cover
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
+
+class DateObservedSerializer(serializers.ModelSerializer):
+    """Serializer for v2 DateObserved model."""
+
+    class Meta:
+        model = DateObserved
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
+
+class RatemarkSerializer(serializers.ModelSerializer):
+    """Serializer for v2 Ratemark model."""
+
+    class Meta:
+        model = Ratemark
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
+
+class AuxmarkSerializer(serializers.ModelSerializer):
+    """Serializer for v2 Auxmark model."""
+
+    class Meta:
+        model = Auxmark
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
+
+class CoverPostmarkSerializer(serializers.ModelSerializer):
+    """Serializer for v2 CoverPostmark model."""
+
+    class Meta:
+        model = CoverPostmark
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
+
+class PostmarkRatemarkSerializer(serializers.ModelSerializer):
+    """Serializer for v2 PostmarkRatemark model."""
+
+    class Meta:
+        model = PostmarkRatemark
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
+
+class MarkFramingSerializer(serializers.ModelSerializer):
+    """Serializer for v2 MarkFraming model."""
+
+    class Meta:
+        model = MarkFraming
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
+
+class ReferenceWorkSerializer(serializers.ModelSerializer):
+    """Serializer for v2 ReferenceWork model."""
+
+    class Meta:
+        model = ReferenceWork
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
+
+class CitationSerializer(serializers.ModelSerializer):
+    """Serializer for v2 Citation model."""
+
+    class Meta:
+        model = Citation
+        fields = "__all__"
+        read_only_fields = ["id", "created_at", "modified_at"]
+
 
 class AdministrativeUnitListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for lists"""
@@ -307,7 +438,7 @@ class PostmarkV2Serializer(serializers.ModelSerializer):
     class Meta:
         model = PostmarkV2
         fields = '__all__'
-        read_only_fields = ['id', 'created_date', 'modified_date']
+        read_only_fields = ['id', 'created_at', 'modified_at']
 
 
 class PostmarkImageSerializer(serializers.ModelSerializer):
