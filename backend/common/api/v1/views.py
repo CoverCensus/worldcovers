@@ -2817,6 +2817,23 @@ class DateFormatViewSet(viewsets.ModelViewSet):
 
 # ========== POSTMARK VIEWSETS ==========
 
+V2_POSTMARK_DEFER_FIELDS = (
+    "code",
+    "catalog_txt",
+    "inscription_txt",
+    "post_office",
+    "shape",
+    "lettering",
+    "color",
+    "impression",
+    "is_irreg",
+    "width",
+    "height",
+    "date_type",
+    "date_fmt",
+)
+
+
 def _postmark_list_queryset():
     """Optimized queryset for postmark list: prefetches only data needed by PostmarkListSerializer.
     Minimal select_related/prefetch reduces JOINs and speeds up pagination count on 50k+ rows.
@@ -2831,7 +2848,7 @@ def _postmark_list_queryset():
             queryset=AdministrativeUnitResponsibility.objects.filter(is_active=True).select_related('group'),
         )
     )
-    return Postmark.objects.all().select_related(
+    return Postmark.objects.all().defer(*V2_POSTMARK_DEFER_FIELDS).select_related(
         'postal_facility_identity__postal_facility',
         'postmark_shape',
         'state',
