@@ -51,6 +51,12 @@ from .models import (
     Postcover,
     PostcoverPostmark,
     PostcoverImage,
+    Auxmark,
+    Framing,
+    Shape,
+    Cover,
+    Lettering,
+    Citation,
     LegacyAbbreviation,
     LegacyRateLocation,
     LegacyRateValue,
@@ -1399,6 +1405,65 @@ class FAQEntryAdmin(TimestampedModelAdmin, ReversionAdminBase):
     list_filter = ("is_active",)
     search_fields = ("question", "answer")
     ordering = ("display_order", "faq_entry_id")
+
+
+@admin.register(Lettering)
+class LetteringAdmin(TimestampedModelAdmin):
+    list_display = ["name"]
+    search_fields = ["name"]
+    ordering = ["name"]
+
+
+@admin.register(Framing)
+class FramingAdmin(TimestampedModelAdmin):
+    list_display = ["name", "code"]
+    search_fields = ["name", "code"]
+    ordering = ["name"]
+
+
+@admin.register(Shape)
+class ShapeAdmin(TimestampedModelAdmin):
+    list_display = ["name", "code"]
+    search_fields = ["name", "code"]
+    ordering = ["name"]
+
+
+@admin.register(Cover)
+class CoverAdmin(TimestampedModelAdmin):
+    list_display = ["code", "type", "color", "has_adhesive", "height", "width", "is_institutional"]
+    list_filter = ["type", "has_adhesive", "is_institutional"]
+    search_fields = ["code", "type"]
+    raw_id_fields = ["color"]
+
+
+@admin.register(Auxmark)
+class AuxmarkAdmin(TimestampedModelAdmin):
+    list_display = [
+        "parent_mark_type",
+        "parent_mark_id",
+        "inscription_text",
+        "is_manuscript",
+        "shape",
+        "lettering",
+        "color",
+        "impression",
+        "is_irreg",
+        "width",
+        "height",
+    ]
+    list_filter = ["parent_mark_type", "is_manuscript", "impression", "is_irreg"]
+    search_fields = ["inscription_text", "parent_mark_type"]
+    raw_id_fields = ["shape", "lettering", "color"]
+    ordering = ["parent_mark_type", "parent_mark_id"]
+
+
+@admin.register(Citation)
+class CitationAdmin(TimestampedModelAdmin):
+    list_display = ["reference_work", "subject_type", "subject_id", "citation_detail"]
+    list_filter = ["subject_type"]
+    search_fields = ["reference_work__title", "citation_detail"]
+    raw_id_fields = ["reference_work"]
+    ordering = ["reference_work", "subject_type", "subject_id"]
 
 
 @admin.register(PostmarkV2)
