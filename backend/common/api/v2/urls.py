@@ -13,76 +13,92 @@ router = DefaultRouter()
 
 # ========== GEOGRAPHIC & JURISDICTIONAL CORE ==========
 
-# Postal facilities (stable containers + identities + jurisdiction)
+# New v2 geography models
 router.register(
-    r"postal-facilities",
-    views.PostalFacilityViewSet,
-    basename="postal-facility",
+    r"regions",
+    views.RegionViewSet,
+    basename="region",
 )
 router.register(
-    r"postal-facility-identities",
-    views.PostalFacilityIdentityViewSet,
-    basename="postal-facility-identity",
+    r"post-offices",
+    views.PostOfficeViewSet,
+    basename="post-office",
+)
+router.register(
+    r"letterings",
+    views.LetteringViewSet,
+    basename="lettering",
+)
+router.register(
+    r"framings",
+    views.FramingViewSet,
+    basename="framing",
+)
+router.register(
+    r"shapes",
+    views.ShapeViewSet,
+    basename="shape",
+)
+router.register(
+    r"covers",
+    views.CoverV2ViewSet,
+    basename="cover-v2",
+)
+router.register(
+    r"dates-observed",
+    views.DateObservedViewSet,
+    basename="date-observed",
+)
+router.register(
+    r"ratemarks",
+    views.RatemarkViewSet,
+    basename="ratemark",
+)
+router.register(
+    r"auxmarks",
+    views.AuxmarkViewSet,
+    basename="auxmark",
+)
+router.register(
+    r"cover-postmarks",
+    views.CoverPostmarkV2ViewSet,
+    basename="cover-postmark-v2",
+)
+router.register(
+    r"postmark-ratemarks",
+    views.PostmarkRatemarkViewSet,
+    basename="postmark-ratemark",
+)
+router.register(
+    r"mark-framings",
+    views.MarkFramingViewSet,
+    basename="mark-framing",
+)
+router.register(
+    r"reference-works",
+    views.ReferenceWorkViewSet,
+    basename="reference-work",
+)
+router.register(
+    r"citations",
+    views.CitationViewSet,
+    basename="citation",
 )
 
-# Administrative units (stable containers + identities + group responsibilities)
-router.register(
-    r"administrative-units",
-    views.AdministrativeUnitViewSet,
-    basename="administrative-unit",
-)
-router.register(
-    r"administrative-unit-identities",
-    views.AdministrativeUnitIdentityViewSet,
-    basename="administrative-unit-identity",
-)
-router.register(
-    r"administrative-unit-responsibilities",
-    views.AdministrativeUnitResponsibilityViewSet,
-    basename="administrative-unit-responsibility",
-)
+# ========== SHARED LOOKUPS ==========
 
-# Jurisdictional links between facilities and units
-router.register(
-    r"jurisdictional-affiliations",
-    views.JurisdictionalAffiliationViewSet,
-    basename="jurisdictional-affiliation",
-)
-
-# ========== PHYSICAL CHARACTERISTICS ==========
-
-router.register(
-    r"postmark-shapes",
-    views.PostmarkShapeViewSet,
-    basename="postmark-shape",
-)
-router.register(
-    r"lettering-styles",
-    views.LetteringStyleViewSet,
-    basename="lettering-style",
-)
-router.register(
-    r"framing-styles",
-    views.FramingStyleViewSet,
-    basename="framing-style",
-)
 router.register(
     r"colors",
     views.ColorViewSet,
     basename="color",
-)
-router.register(
-    r"date-formats",
-    views.DateFormatViewSet,
-    basename="date-format",
 )
 
 # ========== POSTMARKS ==========
 
 router.register(
     r"postmarks",
-    views.PostmarkViewSet,
-    basename="postmark",
+    views.PostmarkV2ViewSet,
+    basename="postmark-v2",
 )
 router.register(
     r"postmark-images",
@@ -95,31 +111,10 @@ router.register(
     basename="postmark-valuation",
 )
 
-# ========== PUBLICATIONS ==========
-
-router.register(
-    r"publications",
-    views.PostmarkPublicationViewSet,
-    basename="publication",
-)
-router.register(
-    r"publication-references",
-    views.PostmarkPublicationReferenceViewSet,
-    basename="publication-reference",
-)
-
-# ========== POSTCOVERS ==========
-
-router.register(
-    r"postcovers",
-    views.PostcoverViewSet,
-    basename="postcover",
-)
-router.register(
-    r"postcover-images",
-    views.PostcoverImageViewSet,
-    basename="postcover-image",
-)
+# Note: legacy v1-oriented resources intentionally removed from v2 router:
+# postal-facilities, administrative-units, jurisdictional-affiliations,
+# postmark-shapes/lettering-styles/framing-styles/date-formats,
+# publications/publication-references, and postcovers/postcover-images.
 
 # ========== ADMIN (STAFF ONLY) ==========
 
@@ -153,7 +148,6 @@ urlpatterns = [
     path("contributions/", csrf_exempt(views.ContributionView.as_view()), name="contribution"),
     path("postmarks/<int:pk>/delete-mine/", views.DeleteMySubmissionView.as_view(), name="postmark-delete-mine"),
     path("me/", views.CurrentUserView.as_view(), name="current-user"),
-    path("assigned-states/", views.AssignedStatesView.as_view(), name="assigned-states"),
     path("postmarks-range/", views.PostmarkDateRangeView.as_view(), name="postmarks-range"),
     path("", include(router.urls)),
 ]
