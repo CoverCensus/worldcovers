@@ -12,7 +12,12 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
-import { getPostmarksPage, normalizeImageUrl } from "@/services/postmarks";
+import {
+  getPostmarksPage,
+  type PostmarkRecord,
+} from "@/services/postmarks";
+import { buildCatalogSearchRow } from "@/lib/catalogRecordDisplay";
+import { CatalogRecordFields } from "@/components/CatalogRecordFields";
 import { useToast } from "@/hooks/use-toast";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
 import { useDebounce } from "@/hooks/useDebounce";
@@ -227,34 +232,12 @@ const Search = () => {
         normalizedTo,
         imagesOnly
       );
-      const apiTransformed = results.map((record: any) => ({
-        id: `api-${record.id}`,
-        name:
-          [
-            [record.town, record.state].filter(Boolean).join(", "),
-            record.shapeName,
-          ]
-            .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
-            .join(" — ") || record.postmarkKey,
-        postmarkKey: record.postmarkKey,
-        state: record.state || "",
-        town: record.town || "",
-        dateRange: record.dateRange || "",
-        size: (record as any).sizeDisplay || "",
-        color: record.colorsDisplay || "",
-        type: record.shapeName || "",
-        valuation: record.rateValue,
-        image: normalizeImageUrl(
-          (record as any).mainImage?.imageUrl ??
-          (typeof (record as any).mainImage === "string" ? (record as any).mainImage : null)
-        ),
-      }));
-      return { records: apiTransformed, count, count_capped };
+      return { records: results, count, count_capped };
     },
     staleTime: 5 * 60 * 1000, // 5 min - use cache when navigating back, no loading
   });
 
-  const catalogRecords = queryData?.records ?? [];
+  const catalogRecords: PostmarkRecord[] = queryData?.records ?? [];
   const totalCount = queryData?.count ?? 0;
   const countCapped = queryData?.count_capped ?? false;
   // Show loading only when we have no data; when we have cached data, show it (no spinner)
@@ -600,118 +583,61 @@ const Search = () => {
                 </div>
               ) : viewMode === "list" ? (
                 <div className="space-y-4">
-                  {paginatedResults.map((result) => (
-                    <Card
-                      key={result.id}
-                      className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
-                      onClick={() => navigate(`/record/${result.id}`, { state: { fromSearch: true } })}
-                    >
-                      <CardContent className="p-4">
-                        <div className="flex gap-6 md:flex-row flex-col">
-                          <ImageOrPlaceholder
-                            src={result.image}
-                            alt={result.name}
-                            className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border"
-                          />
-                          <div className="flex-1">
-                            <h3 className="font-heading text-xl font-semibold text-foreground mb-2">
-                              {result.name}
-                            </h3>
-
-                            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                              {result.town && (
-                                <div>
-                                  <span className="text-muted-foreground">Town:</span>{" "}
-                                  <span className="text-foreground">{result.town}</span>
-                                </div>
-                              )}
-                              {result.state && (
-                                <div>
-                                  <span className="text-muted-foreground">State:</span>{" "}
-                                  <span className="text-foreground">{result.state}</span>
-                                </div>
-                              )}
-                            </div>
-                            
-                            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                              {result.dateRange && (
-                                <div>
-                                  <span className="text-muted-foreground">Date Seen:</span>{" "}
-                                  <span className="text-foreground">{result.dateRange}</span>
-                                </div>
-                              )}
-                              {result.size && (
-                                <div>
-                                  <span className="text-muted-foreground">Size:</span>{" "}
-                                  <span className="text-foreground">{result.size}</span>
-                                </div>
-                              )}
-                              {result.color && (
-                                <div>
-                                  <span className="text-muted-foreground">Color:</span>{" "}
-                                  <span className="text-foreground">{result.color}</span>
-                                </div>
-                              )}
+                  {paginatedResults.map((record) => {
+                    const row = buildCatalogSearchRow(record);
+                    return (
+                      <Card
+                        key={row.cardId}
+                        className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
+                        onClick={() =>
+                          navigate(`/record/${row.cardId}`, { state: { fromSearch: true } })
+                        }
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex gap-6 md:flex-row flex-col">
+                            <ImageOrPlaceholder
+                              src={row.image}
+                              alt={row.title}
+                              className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <h3 className="font-heading text-xl font-semibold text-foreground mb-2">
+                                {row.title}
+                              </h3>
+                              <CatalogRecordFields row={row} />
                             </div>
                           </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {paginatedResults.map((result) => (
-                    <Card
-                      key={result.id}
-                      className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden"
-                      onClick={() => navigate(`/record/${result.id}`, { state: { fromSearch: true } })}
-                    >
-                      <ImageOrPlaceholder
-                        src={result.image}
-                        alt={result.name}
-                        className="w-full h-48 object-cover"
-                      />
-                      <CardContent className="p-4">
-                        <h3 className="font-heading text-lg font-semibold text-foreground mb-2">
-                          {result.name}
-                        </h3>
-
-                        <div className="space-y-1 text-sm">
-                          {result.town && (
-                            <div>
-                              <span className="text-muted-foreground">Town:</span>{" "}
-                              <span className="text-foreground">{result.town}</span>
-                            </div>
-                          )}
-                             {result.state && (
-                            <div>
-                              <span className="text-muted-foreground">State:</span>{" "}
-                              <span className="text-foreground">{result.state}</span>
-                            </div>
-                          )}
-                          {result.dateRange && (
-                            <div>
-                              <span className="text-muted-foreground">Date Seen:</span>{" "}
-                              <span className="text-foreground">{result.dateRange}</span>
-                            </div>
-                          )}
-                          {result.size && (
-                            <div>
-                              <span className="text-muted-foreground">Size:</span>{" "}
-                              <span className="text-foreground">{result.size}</span>
-                            </div>
-                          )}
-                          {result.color && (
-                            <div>
-                              <span className="text-muted-foreground">Color:</span>{" "}
-                              <span className="text-foreground">{result.color}</span>
-                            </div>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                  {paginatedResults.map((record) => {
+                    const row = buildCatalogSearchRow(record);
+                    return (
+                      <Card
+                        key={row.cardId}
+                        className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden"
+                        onClick={() =>
+                          navigate(`/record/${row.cardId}`, { state: { fromSearch: true } })
+                        }
+                      >
+                        <ImageOrPlaceholder
+                          src={row.image}
+                          alt={row.title}
+                          className="w-full h-48 object-cover"
+                        />
+                        <CardContent className="p-4">
+                          <h3 className="font-heading text-lg font-semibold text-foreground mb-2">
+                            {row.title}
+                          </h3>
+                          <CatalogRecordFields row={row} />
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               )}
 

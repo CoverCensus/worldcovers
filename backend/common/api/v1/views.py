@@ -85,7 +85,6 @@ from .serializers import (
     ColorSerializer,
     DateFormatSerializer,
     PostmarkSerializer,
-    PostmarkListSerializer,
     PostmarkColorSerializer,
     PostmarkDatesSeenSerializer,
     PostmarkSizeSerializer,
@@ -2818,8 +2817,8 @@ class DateFormatViewSet(viewsets.ModelViewSet):
 # ========== POSTMARK VIEWSETS ==========
 
 def _postmark_list_queryset():
-    """Optimized queryset for postmark list: prefetches only data needed by PostmarkListSerializer.
-    Minimal select_related/prefetch reduces JOINs and speeds up pagination count on 50k+ rows.
+    """Queryset for postmark list + detail: matches data needed by PostmarkSerializer (same shape as retrieve).
+    List uses the same serializer as GET /postmarks/{id}/ so clients see identical fields per row.
     """
     current_identities = AdministrativeUnitIdentity.objects.filter(effective_to_date__isnull=True)
     current_jurisdictions = JurisdictionalAffiliation.objects.filter(
@@ -2832,11 +2831,36 @@ def _postmark_list_queryset():
         )
     )
     return Postmark.objects.all().select_related(
+        'site',
         'postal_facility_identity__postal_facility',
-        'postmark_shape',
+        'postal_facility_identity__created_by',
+        'postal_facility_identity__modified_by',
         'state',
+        'postmark_shape',
+        'lettering_style',
+        'framing_style',
+        'date_format',
+        'post_office',
+        'post_office__region',
+        'shape',
+        'lettering',
+        'color',
+        'created_by',
+        'modified_by',
     ).prefetch_related(
-        'postmark_colors__color', 'dates_seen', 'valuations', 'images',
+        Prefetch(
+            'postmark_colors',
+            queryset=PostmarkColor.objects.select_related('color'),
+        ),
+        'dates_seen',
+        Prefetch(
+            'valuations',
+            queryset=PostmarkValuation.objects.select_related('valued_by_user'),
+        ),
+        Prefetch(
+            'images',
+            queryset=PostmarkImage.objects.select_related('uploaded_by'),
+        ),
         Prefetch('sizes', queryset=PostmarkSize.objects.order_by('-created_date')),
         Prefetch('postal_facility_identity__jurisdictions', queryset=current_jurisdictions),
         Prefetch('state__identities', queryset=current_identities),
@@ -2905,8 +2929,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     ordering = ['-created_date']  # Newest first for catalog search list
     
     def get_serializer_class(self):
-        if self.action in ('list', 'my_assigned'):
-            return PostmarkListSerializer
+        # List and detail use the same serializer so paginated list rows match GET /postmarks/{id}/.
         return PostmarkSerializer
 
     @action(detail=True, methods=['delete'], url_path='delete-mine', permission_classes=[IsAuthenticated])

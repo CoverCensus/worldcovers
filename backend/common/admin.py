@@ -53,6 +53,14 @@ from .models import (
     PostcoverImage,
     Auxmark,
     Framing,
+    MarkFraming,
+    Ratemark,
+    PostmarkRatemark,
+    CoverPostmark,
+    DateObserved,
+    Region,
+    PostOffice,
+    ReferenceWork,
     Shape,
     Cover,
     Lettering,
@@ -1464,6 +1472,71 @@ class CitationAdmin(TimestampedModelAdmin):
     search_fields = ["reference_work__title", "citation_detail"]
     raw_id_fields = ["reference_work"]
     ordering = ["reference_work", "subject_type", "subject_id"]
+
+
+@admin.register(Region)
+class RegionAdmin(TimestampedModelAdmin):
+    list_display = ["name", "abbrev", "region_tier", "parent_region"]
+    list_filter = ["region_tier"]
+    search_fields = ["name", "abbrev"]
+    raw_id_fields = ["parent_region"]
+    ordering = ["name"]
+
+
+@admin.register(PostOffice)
+class PostOfficeAdmin(TimestampedModelAdmin):
+    list_display = ["name", "region"]
+    list_filter = ["region"]
+    search_fields = ["name", "region__name"]
+    raw_id_fields = ["region"]
+    ordering = ["name"]
+
+
+@admin.register(DateObserved)
+class DateObservedAdmin(TimestampedModelAdmin):
+    list_display = ["postmark", "date", "granularity"]
+    list_filter = ["granularity"]
+    search_fields = ["postmark__postmark_key"]
+    raw_id_fields = ["postmark"]
+    ordering = ["postmark", "date"]
+
+
+@admin.register(Ratemark)
+class RatemarkAdmin(TimestampedModelAdmin):
+    list_display = ["id", "inscription_txt", "is_manuscript", "shape", "lettering", "color", "rate_val"]
+    list_filter = ["is_manuscript", "impression", "is_irreg"]
+    search_fields = ["inscription_txt"]
+    raw_id_fields = ["shape", "lettering", "color"]
+
+
+@admin.register(CoverPostmark)
+class CoverPostmarkAdmin(TimestampedModelAdmin):
+    list_display = ["cover", "postmark", "is_backstamp"]
+    search_fields = ["cover__code", "postmark__postmark_key"]
+    raw_id_fields = ["cover", "postmark"]
+
+
+@admin.register(PostmarkRatemark)
+class PostmarkRatemarkAdmin(TimestampedModelAdmin):
+    list_display = ["postmark", "ratemark", "placement_type"]
+    list_filter = ["placement_type"]
+    search_fields = ["postmark__postmark_key", "ratemark__inscription_txt"]
+    raw_id_fields = ["postmark", "ratemark"]
+
+
+@admin.register(MarkFraming)
+class MarkFramingAdmin(TimestampedModelAdmin):
+    list_display = ["parent_mark_type", "parent_mark_id", "framing", "framing_pos"]
+    list_filter = ["parent_mark_type"]
+    search_fields = ["parent_mark_type", "parent_mark_id", "framing__name"]
+    raw_id_fields = ["framing"]
+
+
+@admin.register(ReferenceWork)
+class ReferenceWorkAdmin(TimestampedModelAdmin):
+    list_display = ["title", "authorship", "publication_year", "publisher"]
+    search_fields = ["title", "authorship", "publisher", "isbn"]
+    ordering = ["title"]
 
 
 @admin.register(PostmarkV2)
