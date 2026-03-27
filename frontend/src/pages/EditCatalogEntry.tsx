@@ -745,32 +745,29 @@ const EditCatalogEntry = () => {
 
                     <div className="space-y-2">
                       <Label htmlFor="edit-town">Town/City <span className="text-destructive">*</span></Label>
-                      <Input
+                      <SearchableSelect
                         id="edit-town"
-                        type="text"
                         value={town}
-                        onChange={(e) => {
-                          setTown(sanitizeTown(e.target.value));
+                        onValueChange={(value) => {
+                          setTown(value);
                           if (fieldErrors.town) {
                             setFieldErrors((prev) => ({ ...prev, town: undefined }));
                           }
                         }}
-                        placeholder="Enter town/city..."
-                        list="edit-town-options"
+                        placeholder={state ? "Select town/city..." : "Select a state first"}
+                        options={townOptions}
+                        loading={loadingTowns}
+                        error={!!townOptionsError}
+                        errorMessage={
+                          townOptionsError ??
+                          (state ? "Failed to load towns" : "Select a state first")
+                        }
+                        searchPlaceholder="Search towns..."
+                        emptyMessage={state ? "No towns found for this state." : "Select a state first."}
                         aria-label="Town or city"
-                        className={fieldErrors.town ? "border-destructive" : ""}
+                        triggerClassName={fieldErrors.town ? "border-destructive" : ""}
+                        disabled={!state || townOptions.length === 0}
                       />
-                      <datalist id="edit-town-options">
-                        {townOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value} />
-                        ))}
-                      </datalist>
-                      {loadingTowns && state ? (
-                        <p className="text-xs text-muted-foreground">Loading town suggestions...</p>
-                      ) : null}
-                      {townOptionsError && state ? (
-                        <p className="text-xs text-destructive">{townOptionsError}</p>
-                      ) : null}
                       {fieldErrors.town && (
                         <p className="text-sm text-destructive">{fieldErrors.town}</p>
                       )}
@@ -783,7 +780,7 @@ const EditCatalogEntry = () => {
                           id="edit-firstSeen"
                           type="text"
                           inputMode="numeric"
-                          placeholder=""
+                          placeholder={String(MIN_YEAR)}
                           value={firstSeen}
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);
@@ -804,7 +801,7 @@ const EditCatalogEntry = () => {
                           id="edit-lastSeen"
                           type="text"
                           inputMode="numeric"
-                          placeholder=""
+                          placeholder={String(CURRENT_YEAR)}
                           value={lastSeen}
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);

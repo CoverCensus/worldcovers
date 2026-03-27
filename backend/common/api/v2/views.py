@@ -1188,6 +1188,7 @@ class ContributionView(APIView):
             contrib = Contribution.objects.filter(
                 id=edit_contribution_id,
                 contributor=user,
+                postmark__isnull=True,
             ).first()
             if not contrib:
                 return Response(

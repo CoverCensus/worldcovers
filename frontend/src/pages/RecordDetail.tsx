@@ -419,38 +419,31 @@ const RecordDetail = () => {
                 <CardContent>
                   <dl className="space-y-0 text-sm">
                     {(() => {
-                      const displayValue = (v: unknown) => {
+                      const hasValue = (v: unknown) => {
                         const s = v != null ? String(v).trim() : "";
-                        return s !== "" && s.toLowerCase() !== "unknown" ? s : "-";
+                        return s !== "" && s.toLowerCase() !== "unknown";
                       };
-                      const firstSeen = displayValue(record.dateFirstSeen);
-                      const lastSeen = displayValue(record.dateLastSeen);
-                      const datesSeen =
-                        firstSeen === "-" && lastSeen === "-"
-                          ? "-"
-                          : `${firstSeen} - ${lastSeen}`;
                       const details = [
-                        { label: "Town", value: record.town },
                         { label: "State", value: record.state },
-                        { label: "Postmark Text", value: record.postmarkKey },
-                        { label: "Type", value: record.type },
-                        // {
-                        //   label: "Shape / Lettering Style",
-                        //   value: `${displayValue(record.type)} / ${displayValue(record.letteringStyle)}`,
-                        // },
+                        { label: "Town", value: record.town },
+                        { label: "First Seen", value: record.dateFirstSeen },
+                        { label: "Last Seen", value: record.dateLastSeen },
                         { label: "Dimensions", value: record.dimensions },
-                        { label: "Color", value: record.color },
-                        { label: "Dates Seen", value: datesSeen },
-                        { label: "Earliest Use", value: firstSeen },
-                        { label: "Latest Use", value: lastSeen },
-                      ];
+                        { label: "Manuscript", value: record.manuscript },
+                        { label: "Rarity", value: record.rarity },
+                      ].filter(({ value }) => hasValue(value));
+                      if (details.length === 0) {
+                        return (
+                          <p className="text-sm text-muted-foreground py-2">No record details available.</p>
+                        );
+                      }
                       return details.map(({ label, value }, index) => (
                         <div
                           key={label}
                           className={`flex justify-between py-2 ${index < details.length - 1 ? "border-b border-border" : ""}`}
                         >
                           <dt className="text-muted-foreground font-medium">{label}</dt>
-                          <dd className="text-foreground">{displayValue(value)}</dd>
+                          <dd className="text-foreground">{value}</dd>
                         </div>
                       ));
                     })()}
@@ -515,24 +508,37 @@ const RecordDetail = () => {
                     <TabsContent value="physical" className="mt-6">
                       <dl className="space-y-3 text-sm">
                         {(() => {
-                          const displayValue = (v: string | undefined) => {
+                          const hasValue = (v: string | undefined) => {
                             const s = (v ?? "").trim();
-                            return s !== "" && s.toLowerCase() !== "unknown" ? s : "-";
+                            return s !== "" && s.toLowerCase() !== "unknown";
                           };
+                          const showLettering = hasValue(record.letteringStyle);
+                          const showFraming = hasValue(record.framingStyle);
+                          const showDateFormat = hasValue(record.dateFormat);
+                          const none = !showLettering && !showFraming && !showDateFormat;
                           return (
                             <>
-                              <div className="flex gap-3">
-                                <dt className="font-medium text-muted-foreground min-w-[8rem]">Lettering style</dt>
-                                <dd className="text-foreground">{displayValue(record.letteringStyle)}</dd>
-                              </div>
-                              <div className="flex gap-3">
-                                <dt className="font-medium text-muted-foreground min-w-[8rem]">Framing style</dt>
-                                <dd className="text-foreground">{displayValue(record.framingStyle)}</dd>
-                              </div>
-                              <div className="flex gap-3">
-                                <dt className="font-medium text-muted-foreground min-w-[8rem]">Date format</dt>
-                                <dd className="text-foreground">{displayValue(record.dateFormat)}</dd>
-                              </div>
+                              {showLettering ? (
+                                <div className="flex gap-3">
+                                  <dt className="font-medium text-muted-foreground min-w-[8rem]">Lettering style</dt>
+                                  <dd className="text-foreground">{record.letteringStyle}</dd>
+                                </div>
+                              ) : null}
+                              {showFraming ? (
+                                <div className="flex gap-3">
+                                  <dt className="font-medium text-muted-foreground min-w-[8rem]">Framing style</dt>
+                                  <dd className="text-foreground">{record.framingStyle}</dd>
+                                </div>
+                              ) : null}
+                              {showDateFormat ? (
+                                <div className="flex gap-3">
+                                  <dt className="font-medium text-muted-foreground min-w-[8rem]">Date format</dt>
+                                  <dd className="text-foreground">{record.dateFormat}</dd>
+                                </div>
+                              ) : null}
+                              {none ? (
+                                <p className="text-muted-foreground py-2">No physical characteristics recorded for this postmark.</p>
+                              ) : null}
                             </>
                           );
                         })()}
