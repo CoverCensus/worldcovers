@@ -854,8 +854,8 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
 
 
 class ContributionApproveRejectSerializer(serializers.Serializer):
-    """Payload for approve/reject/request_revision. Comment required. For approve, editor must send value; lettering/framing/date_format come from contribution's submitted_data if not sent."""
-    review_notes = serializers.CharField(required=True, allow_blank=False)
+    """Payload for approve/reject/request_revision. Comment optional. For approve, editor may send value; lettering/framing/date_format come from contribution's submitted_data if not sent."""
+    review_notes = serializers.CharField(required=False, allow_blank=True)
     # When approving: editor must set value; shape optional; lettering/framing/date_format optional (taken from submitted_data)
     postmark_shape_id = serializers.IntegerField(required=False, allow_null=True)
     lettering_style_id = serializers.IntegerField(required=False, allow_null=True)

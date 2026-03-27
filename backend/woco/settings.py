@@ -28,7 +28,8 @@ DEBUG = config("DEBUG", default=True, cast=bool)
 TESTING = "test" in sys.argv or "PYTEST_VERSION" in os.environ
 
 INTERNAL_IPS = [
-    "127.0.0.1"
+    "127.0.0.1",
+    "localhost"
 ]
 
 DJANGO_APP_HOSTNAME = config("DJANGO_APP_HOSTNAME", default="hellowoco.app")
@@ -310,6 +311,10 @@ CORS_ALLOWED_ORIGINS = [
 
 # CSRF: allow frontend origins so cookie-based auth works with same-host.
 CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:8080",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
     f"https://{DJANGO_APP_HOSTNAME}",
 ]
 

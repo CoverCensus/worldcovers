@@ -1533,6 +1533,11 @@ class ContributionView(APIView):
             }:
                 qs = qs.filter(status=status_param)
 
+            # Optional state-wise filtering for editor dashboard
+            state_param = (request.query_params.get("state") or "").strip()
+            if state_param and state_param.lower() != "all":
+                qs = qs.filter(submitted_data__state__iexact=state_param)
+
             paginated = _paginate_if_requested(qs)
             if paginated is not None:
                 return Response(paginated)
@@ -1698,7 +1703,6 @@ class ContributionView(APIView):
             contrib = Contribution.objects.filter(
                 id=edit_contribution_id,
                 contributor=user,
-                postmark__isnull=True,
             ).first()
             if not contrib:
                 return Response(
@@ -2093,7 +2097,7 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         data = serializer.validated_data
         review_notes = data.get("review_notes", "")
 
-        # Editor must supply value; lettering/framing/date_format come from payload or from contribution's submitted_data
+        # lettering/framing/date_format come from payload or from contribution's submitted_data
         shape_id = data.get("postmark_shape_id")
         lettering_id = data.get("lettering_style_id")
         framing_id = data.get("framing_style_id")
@@ -2107,14 +2111,6 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         if date_fmt_id is None:
             date_fmt_id = sd.get("date_format_id") or sd.get("dateFormatId")
 
-        missing = []
-        if estimated_value is None:
-            missing.append("estimated_value (Value)")
-        if missing:
-            return Response(
-                {"detail": "When approving, the editor must provide: " + ", ".join(missing) + "."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         missing_from_contribution = []
         if lettering_id is None:
             missing_from_contribution.append("lettering_style_id (Lettering style)")
@@ -2164,15 +2160,16 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
                 update_fields.append("postmark_shape_id")
             postmark.save(update_fields=update_fields)
 
-            # Create valuation (TimestampedModel requires created_by, modified_by)
-            PostmarkValuation.objects.create(
-                postmark=postmark,
-                valued_by_user=request.user,
-                estimated_value=estimated_value,
-                valuation_date=timezone.now().date(),
-                created_by=request.user,
-                modified_by=request.user,
-            )
+            # Create valuation only when editor provides a value.
+            if estimated_value is not None:
+                PostmarkValuation.objects.create(
+                    postmark=postmark,
+                    valued_by_user=request.user,
+                    estimated_value=estimated_value,
+                    valuation_date=timezone.now().date(),
+                    created_by=request.user,
+                    modified_by=request.user,
+                )
 
             contrib.status = Contribution.STATUS_APPROVED
             contrib.reviewer = request.user

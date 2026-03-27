@@ -14,7 +14,7 @@ import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
+import { normalizeImageUrl } from "@/services/postmarks";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { getLetteringStyles, type LetteringStyleOption } from "@/services/letteringStyles";
 import { getFramingStyles, type FramingStyleOption } from "@/services/framingStyles";
@@ -166,7 +166,6 @@ const ContributionDetail = () => {
   const [carouselApi, setCarouselApi] = useState<CarouselApi>();
   const [carouselCurrent, setCarouselCurrent] = useState(0);
   const [carouselCount, setCarouselCount] = useState(0);
-  const [prefillingValue, setPrefillingValue] = useState(false);
   const [stateOptions, setStateOptions] = useState<{ value: string; label: string }[]>([]);
   const [loadingStates, setLoadingStates] = useState(false);
   const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
@@ -468,53 +467,6 @@ const ContributionDetail = () => {
     setEditorFieldErrors({});
   }, [contribution?.id, contribution?.submitted_data, typeOptions, colorOptions]);
 
-  // Prefill editor Value from the existing catalog record when this is an edit-suggestion
-  // (linked postmark). MUST run before any early return — otherwise hook count changes (React #310).
-  useEffect(() => {
-    if (loading || error || !contribution) return;
-    const isPending = contribution.status === "pending";
-    const isSubmitter =
-      !!user &&
-      (contribution.contributor_id === user.id ||
-        contribution.contributor_username === user.username ||
-        contribution.contributor_username === user.email);
-    const canReview = isStateEditor && isPending && !!user && !isSubmitter;
-    if (!canReview) return;
-    const postmarkIdRaw =
-      contribution.postmark_id ?? contribution.postmark ?? (contribution as unknown as Record<string, unknown>).postmarkId ?? null;
-    const postmarkIdResolved =
-      typeof postmarkIdRaw === "number"
-        ? postmarkIdRaw
-        : postmarkIdRaw != null && String(postmarkIdRaw).trim() !== ""
-          ? parseInt(String(postmarkIdRaw), 10)
-          : null;
-    if (postmarkIdResolved == null || Number.isNaN(postmarkIdResolved)) return;
-    if (value.trim() !== "") return;
-    let cancelled = false;
-    setPrefillingValue(true);
-    getPostmarkById(postmarkIdResolved)
-      .then((pm) => {
-        if (cancelled || !pm) return;
-        const firstVal = (pm as any)?.valuations?.[0];
-        const estimated =
-          firstVal?.estimatedValue ??
-          firstVal?.estimated_value ??
-          (pm as any)?.estimatedValue ??
-          (pm as any)?.estimated_value ??
-          null;
-        const num = typeof estimated === "number" ? estimated : estimated != null ? parseFloat(String(estimated)) : NaN;
-        if (!Number.isNaN(num) && num >= 0) {
-          setValue(String(num));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setPrefillingValue(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [loading, error, contribution, isStateEditor, value, user]);
-
   const effectiveStateKey = useMemo(() => {
     return editorEdits.state === STATE_OTHER_VALUE
       ? editorEdits.stateOther.trim().toLowerCase()
@@ -670,18 +622,7 @@ const ContributionDetail = () => {
   };
 
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
-    if (!contribution || !comment.trim()) return;
-    if (kind === "approve") {
-      const valueNum = value.trim() === "" ? NaN : parseFloat(value);
-      if (Number.isNaN(valueNum) || valueNum < 0) {
-        toast({
-          title: "Missing required fields",
-          description: "Value is required to approve. Enter a valid value (number ≥ 0) and a comment.",
-          variant: "destructive",
-        });
-        return;
-      }
-    }
+    if (!contribution) return;
 
     const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
     if (!apiBase) {
@@ -690,9 +631,15 @@ const ContributionDetail = () => {
     }
 
     const actionPath = kind === "approve" ? "approve" : kind === "reject" ? "reject" : "request-revision";
-    const body: Record<string, unknown> = { review_notes: comment.trim() };
+    const body: Record<string, unknown> = {};
+    if (comment.trim()) {
+      body.review_notes = comment.trim();
+    }
     if (kind === "approve") {
-      body.estimated_value = parseFloat(value);
+      const valueNum = value.trim() === "" ? NaN : parseFloat(value);
+      if (!Number.isNaN(valueNum) && valueNum >= 0) {
+        body.estimated_value = valueNum;
+      }
       // lettering_style_id, framing_style_id, date_format_id come from contribution's submitted_data (required on form)
     }
 
@@ -831,6 +778,23 @@ const ContributionDetail = () => {
   const images = imageMetaList;
 
   const isPending = contribution.status === "pending";
+  const normalizedStatus = String(contribution.status || "").toLowerCase();
+  const statusLabel =
+    normalizedStatus === "approved"
+      ? "Approved"
+      : normalizedStatus === "rejected"
+        ? "Rejected"
+        : normalizedStatus === "needs_revision"
+          ? "Needs Revision"
+          : "Pending";
+  const statusBadgeClassName =
+    normalizedStatus === "approved"
+      ? "rounded-full border border-green-700 bg-green-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-green-600"
+      : normalizedStatus === "rejected"
+        ? "rounded-full border border-red-700 bg-red-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-red-600"
+        : normalizedStatus === "needs_revision"
+          ? "rounded-full border border-orange-600 bg-orange-500 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-orange-500"
+          : "rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500";
   const canReview = isStateEditor && isPending && !!user && !isContributor;
   const isCatalogSuggestion = contributionIsCatalogSuggestion(contribution);
   const showSubmittedData = !canReview || !isCatalogSuggestion;
@@ -864,9 +828,7 @@ const ContributionDetail = () => {
               Back to Dashboard
             </Button>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <Badge variant={isPending ? "secondary" : contribution.status === "approved" ? "default" : "destructive"}>
-                {contribution.status}
-              </Badge>
+              <Badge className={statusBadgeClassName}>{statusLabel}</Badge>
               {postmarkId != null && (
                 <Button variant="outline" size="sm" asChild>
                   <Link to={`/record/${postmarkId}`} state={{ fromDashboard: true }}>
@@ -951,27 +913,23 @@ const ContributionDetail = () => {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="space-y-2 max-w-xs">
-                      <Label htmlFor="contribution-value">
-                        Value (of this postmark) <span className="text-destructive">*</span>
-                      </Label>
+                      <Label htmlFor="contribution-value">Value (of this postmark)</Label>
                       <Input
                         id="contribution-value"
                         type="number"
                         min={0}
                         step="0.01"
-                        placeholder={prefillingValue ? "Prefilling..." : "e.g. 25.00"}
+                        placeholder="Enter value (optional)"
                         value={value}
                         onChange={(e) => setValue(e.target.value)}
-                        disabled={submitting || prefillingValue}
+                        disabled={submitting}
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="contribution-comment">
-                        Comment (required) <span className="text-destructive">*</span>
-                      </Label>
+                      <Label htmlFor="contribution-comment">Comment</Label>
                       <Textarea
                         id="contribution-comment"
-                        placeholder="Add a comment for the contributor (required for approve, reject, or revision)."
+                        placeholder="Optional comment for the contributor."
                         rows={4}
                         value={comment}
                         onChange={(e) => setComment(e.target.value)}
@@ -983,13 +941,7 @@ const ContributionDetail = () => {
                       <Button
                         type="button"
                         onClick={() => submitDecision("approve")}
-                        disabled={
-                          submitting ||
-                          !comment.trim() ||
-                          value.trim() === "" ||
-                          Number.isNaN(parseFloat(value)) ||
-                          parseFloat(value) < 0
-                        }
+                        disabled={submitting}
                         className="bg-green-600 hover:bg-green-700"
                       >
                         <CheckCircle className="mr-2 h-4 w-4" />
@@ -999,7 +951,7 @@ const ContributionDetail = () => {
                         type="button"
                         variant="destructive"
                         onClick={() => submitDecision("reject")}
-                        disabled={submitting || !comment.trim()}
+                        disabled={submitting}
                       >
                         <XCircle className="mr-2 h-4 w-4" />
                         Reject
@@ -1008,7 +960,7 @@ const ContributionDetail = () => {
                         type="button"
                         variant="outline"
                         onClick={() => submitDecision("revision")}
-                        disabled={submitting || !comment.trim()}
+                        disabled={submitting}
                       >
                         <MessageSquare className="mr-2 h-4 w-4" />
                         Request revision
@@ -1041,9 +993,7 @@ const ContributionDetail = () => {
                     {contribution.status !== "pending" && (
                       <p className="text-sm font-medium text-foreground">
                         Outcome:{" "}
-                        <Badge variant={contribution.status === "approved" ? "default" : contribution.status === "rejected" ? "destructive" : "secondary"}>
-                          {contribution.status === "approved" ? "Approved" : contribution.status === "rejected" ? "Rejected" : "Needs revision"}
-                        </Badge>
+                        <Badge className={statusBadgeClassName}>{statusLabel}</Badge>
                       </p>
                     )}
                     {contribution.review_notes?.trim() ? (
@@ -1242,37 +1192,32 @@ const ContributionDetail = () => {
                       <Label htmlFor="contrib-edit-town">
                         Town/City <span className="text-destructive">*</span>
                       </Label>
-                      <SearchableSelect
+                      <Input
                         id="contrib-edit-town"
+                        type="text"
                         value={editorEdits.town}
-                        onValueChange={(v) => {
-                          setEditorEdits((p) => ({ ...p, town: v }));
+                        onChange={(e) => {
+                          const sanitized = e.target.value.replace(/[^a-zA-Z\s\-']/g, "");
+                          setEditorEdits((p) => ({ ...p, town: sanitized }));
                           setEditorFieldErrors((prev) => ({ ...prev, town: undefined }));
                         }}
-                        placeholder={
-                          editorEdits.state || editorEdits.state === STATE_OTHER_VALUE
-                            ? "Select town/city..."
-                            : "Select a state first"
-                        }
-                        options={townSelectOptions}
-                        loading={loadingTowns}
-                        error={!!townOptionsError}
-                        errorMessage={
-                          townOptionsError ??
-                          (editorEdits.state ? "Failed to load towns" : "Select a state first")
-                        }
-                        searchPlaceholder="Search towns..."
-                        emptyMessage={
-                          effectiveStateKey ? "No towns found for this state." : "Select a state first."
-                        }
+                        placeholder="Enter town/city..."
+                        list="contrib-edit-town-options"
                         aria-label="Town or city"
-                        disabled={
-                          submitting ||
-                          (!effectiveStateKey && editorEdits.state !== STATE_OTHER_VALUE) ||
-                          townSelectOptions.length === 0
-                        }
-                        triggerClassName={editorFieldErrors.town ? "border-destructive" : ""}
+                        disabled={submitting}
+                        className={editorFieldErrors.town ? "border-destructive" : ""}
                       />
+                      <datalist id="contrib-edit-town-options">
+                        {townSelectOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value} />
+                        ))}
+                      </datalist>
+                      {loadingTowns && (effectiveStateKey || editorEdits.state === STATE_OTHER_VALUE) ? (
+                        <p className="text-xs text-muted-foreground">Loading town suggestions...</p>
+                      ) : null}
+                      {townOptionsError && (effectiveStateKey || editorEdits.state === STATE_OTHER_VALUE) ? (
+                        <p className="text-xs text-destructive">{townOptionsError}</p>
+                      ) : null}
                       {editorFieldErrors.town && (
                         <p className="text-sm text-destructive">{editorFieldErrors.town}</p>
                       )}
@@ -1287,7 +1232,7 @@ const ContributionDetail = () => {
                           id="contrib-edit-firstSeen"
                           type="text"
                           inputMode="numeric"
-                          placeholder={String(MIN_YEAR)}
+                          placeholder=""
                           value={editorEdits.firstSeen}
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);
@@ -1309,7 +1254,7 @@ const ContributionDetail = () => {
                           id="contrib-edit-lastSeen"
                           type="text"
                           inputMode="numeric"
-                          placeholder={String(CURRENT_YEAR)}
+                          placeholder=""
                           value={editorEdits.lastSeen}
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);
@@ -1616,7 +1561,7 @@ const ContributionDetail = () => {
           </div>
 
           {isPending && !isStateEditor && (
-            <p className="text-sm text-muted-foreground">This submission is pending review by an editor.</p>
+            <p className="text-sm text-red-600">This submission is pending review by an editor.</p>
           )}
         </div>
       </div>

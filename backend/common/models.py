@@ -78,7 +78,7 @@ class PostalFacilityIdentity(TimestampedModel):
         return (self.postal_facility.latitude, self.postal_facility.longitude)
 
     def __str__(self):
-        return f'{self.facility_name} ({self.effective_from_date} - {self.effective_to_date or 'present'})'
+        return f"{self.facility_name} ({self.effective_from_date} - {self.effective_to_date or 'present'})"
 
 class AdministrativeUnit(TimestampedModel):
     """
@@ -138,7 +138,7 @@ class AdministrativeUnitIdentity(TimestampedModel):
         return self.parent_administrative_unit.get_identity_at_date(self.effective_from_date)
 
     def __str__(self):
-        return f'{self.unit_name} ({self.effective_from_date} - {self.effective_to_date or 'present'})'
+        return f"{self.unit_name} ({self.effective_from_date} - {self.effective_to_date or 'present'})"
 
 class AdministrativeUnitResponsibility(TimestampedModel):
     """

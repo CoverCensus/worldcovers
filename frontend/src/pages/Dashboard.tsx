@@ -213,6 +213,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [editorHistoryLoading, setEditorHistoryLoading] = useState(false);
   const [editorHistoryError, setEditorHistoryError] = useState<string | null>(null);
   const [editorHistoryStatusFilter, setEditorHistoryStatusFilter] = useState("all");
+  const [editorStateFilter, setEditorStateFilter] = useState("all");
   const [editorHistoryPage, setEditorHistoryPage] = useState(1);
   const [editorHistoryTotal, setEditorHistoryTotal] = useState<number | null>(null);
   const [editorHistoryGoToInput, setEditorHistoryGoToInput] = useState("");
@@ -238,6 +239,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const filtersDisabled = loading || isLoadingFilters;
   const isStateEditor = user?.role === "state_editor";
   const isSuperuser = !!user?.is_superuser;
+
+  // Contributors should always see submissions directly (no tab switching).
+  useEffect(() => {
+    if (!isStateEditor && activeTab !== "submissions") {
+      setActiveTab("submissions");
+    }
+  }, [isStateEditor, activeTab]);
 
   // Prevent duplicate fetches during rapid re-renders / user rehydration.
   const submissionsInFlightKey = useRef<string | null>(null);
@@ -561,8 +569,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     }
     setPendingReviewError(null);
     setPendingReviewLoading(true);
+    const stateParam = editorStateFilter !== "all" ? `&state=${encodeURIComponent(editorStateFilter)}` : "";
     fetch(
-      `${apiBase}/contributions/?mode=editor&status=pending&page=${pendingReviewPage}&page_size=${pendingReviewPageSize}`,
+      `${apiBase}/contributions/?mode=editor&status=pending${stateParam}&page=${pendingReviewPage}&page_size=${pendingReviewPageSize}`,
       {
       method: "GET",
       credentials: "include",
@@ -606,7 +615,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         setPendingReviewTotal(null);
       })
       .finally(() => setPendingReviewLoading(false));
-  }, [isStateEditor, activeTab, pendingReviewPage]);
+  }, [isStateEditor, activeTab, pendingReviewPage, editorStateFilter]);
 
   // Load editor history (all user suggestions in assigned states) for the Editor tab
   useEffect(() => {
@@ -625,8 +634,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       ["pending", "approved", "rejected", "needs_revision"].includes(editorHistoryStatusFilter)
         ? `&status=${editorHistoryStatusFilter}`
         : "";
+    const stateParam = editorStateFilter !== "all" ? `&state=${encodeURIComponent(editorStateFilter)}` : "";
     fetch(
-      `${apiBase}/contributions/?mode=editor${statusParam}&page=${editorHistoryPage}&page_size=${editorHistoryPageSize}`,
+      `${apiBase}/contributions/?mode=editor${statusParam}${stateParam}&page=${editorHistoryPage}&page_size=${editorHistoryPageSize}`,
       {
       method: "GET",
       credentials: "include",
@@ -673,18 +683,18 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         setEditorHistoryTotal(null);
       })
       .finally(() => setEditorHistoryLoading(false));
-  }, [isStateEditor, activeTab, editorHistoryStatusFilter, editorHistoryPage, submissionsRefetchKey]);
+  }, [isStateEditor, activeTab, editorHistoryStatusFilter, editorHistoryPage, submissionsRefetchKey, editorStateFilter]);
 
   // Reset editor pagination when changing history status filter or tab
   useEffect(() => {
     if (!isStateEditor || activeTab !== "editor") return;
     setEditorHistoryPage(1);
-  }, [isStateEditor, activeTab, editorHistoryStatusFilter]);
+  }, [isStateEditor, activeTab, editorHistoryStatusFilter, editorStateFilter]);
 
   useEffect(() => {
     if (!isStateEditor || activeTab !== "editor") return;
     setPendingReviewPage(1);
-  }, [isStateEditor, activeTab]);
+  }, [isStateEditor, activeTab, editorStateFilter]);
 
   const submitStatusDecision = async () => {
     if (!statusDecisionTarget || !statusComment.trim()) return;
@@ -868,14 +878,30 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const getStatusBadge = (status: string) => {
     switch (String(status || "").toLowerCase()) {
       case "approved":
-        return <Badge className="bg-green-500">Approved</Badge>;
+        return (
+          <Badge className="rounded-full border border-green-700 bg-green-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-green-600">
+            Approved
+          </Badge>
+        );
       case "rejected":
-        return <Badge variant="destructive">Rejected</Badge>;
+        return (
+          <Badge className="rounded-full border border-red-700 bg-red-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-red-600">
+            Rejected
+          </Badge>
+        );
       case "needs_revision":
       case "revision":
-        return <Badge variant="secondary">Needs Revision</Badge>;
+        return (
+          <Badge className="rounded-full border border-orange-600 bg-orange-500 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-orange-500">
+            Needs Revision
+          </Badge>
+        );
       default:
-        return <Badge variant="outline">Pending</Badge>;
+        return (
+          <Badge className="rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500">
+            Pending
+          </Badge>
+        );
     }
   };
 
@@ -996,28 +1022,18 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               )}
             </div>
 
-            <div className="inline-flex rounded-md border border-border bg-card p-1">
-              <Button
-                type="button"
-                variant={activeTab === "submissions" ? "secondary" : "ghost"}
-                size="sm"
-                className="rounded-r-none"
-                onClick={() => setActiveTab("submissions")}
-              >
-                My Submissions
-              </Button>
-              {/* My Suggestions – commented out for now
-              <Button
-                type="button"
-                variant={activeTab === "suggestions" ? "secondary" : "ghost"}
-                size="sm"
-                className="rounded-l-none"
-                onClick={() => setActiveTab("suggestions")}
-              >
-                My Suggestions
-              </Button>
-              */}
-              {isStateEditor && (
+            {isStateEditor && (
+              <div className="inline-flex rounded-md border border-border bg-card p-1">
+                <Button
+                  type="button"
+                  variant={activeTab === "submissions" ? "secondary" : "ghost"}
+                  size="sm"
+                  className="rounded-r-none"
+                  onClick={() => setActiveTab("submissions")}
+                >
+                  My Submissions
+                </Button>
+                {/* My Suggestions – commented out for now
                 <Button
                   type="button"
                   variant={activeTab === "editor" ? "secondary" : "ghost"}
@@ -1027,8 +1043,18 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 >
                   User Submissions
                 </Button>
-              )}
-            </div>
+                */}
+                <Button
+                  type="button"
+                  variant={activeTab === "editor" ? "secondary" : "ghost"}
+                  size="sm"
+                  className="rounded-l-none"
+                  onClick={() => setActiveTab("editor")}
+                >
+                  User Submissions
+                </Button>
+              </div>
+            )}
           </div>
 
           {activeTab === "submissions" && (
@@ -1379,8 +1405,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
                             <div className="mt-3 flex flex-wrap gap-2 justify-end">
                               <Button
-                                variant="outline"
+                                variant="secondary"
                                 size="sm"
+                                className="font-medium"
                                 onClick={() =>
                                   navigate(`/contribution/${submission.id}`, { state: { fromDashboard: true } })
                                 }
@@ -1486,8 +1513,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
                         <div className="mt-2 flex flex-wrap gap-2 justify-center">
                           <Button
-                            variant="outline"
+                            variant="secondary"
                             size="sm"
+                            className="font-medium"
                             onClick={() =>
                               navigate(`/contribution/${submission.id}`, { state: { fromDashboard: true } })
                             }
@@ -1675,12 +1703,31 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         </SelectContent>
                       </Select>
                     </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="editor-state-filter">State</Label>
+                      <SearchableSelect
+                        id="editor-state-filter"
+                        value={editorStateFilter}
+                        onValueChange={setEditorStateFilter}
+                        placeholder="All States"
+                        allOption={{ value: "all", label: "All States" }}
+                        options={Array.isArray(stateOptions) ? stateOptions : []}
+                        loading={isLoadingFilters}
+                        error={!!filterError}
+                        errorMessage="Failed to load states"
+                        searchPlaceholder="Search states..."
+                        emptyMessage="No state found."
+                        aria-label="Filter editor data by state"
+                        disabled={editorHistoryLoading || pendingReviewLoading || isLoadingFilters}
+                      />
+                    </div>
                   </CardContent>
                 </Card>
               </aside>
 
               <div className="flex-1 flex flex-col gap-6">
                 {/* Pending submissions to review — approve / reject / request revision with required comment */}
+                {/* Pending review section temporarily disabled.
                 {(pendingReviewLoading || pendingReviewItems.length > 0) && (
                   <Card className="shadow-archival-md">
                     <CardContent className="pt-6">
@@ -1859,6 +1906,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     </CardContent>
                   </Card>
                 )}
+                */}
 
               <main className="flex-1 space-y-4">
                 {/* History of user suggestions (contributions in assigned states) */}
@@ -1924,14 +1972,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         title ||
                         `Submission #${item.id}`;
                       const displayLabel = item.display_name || fallbackName;
-                      const statusVariant =
+                      const statusClassName =
                         item.status === "approved"
-                          ? "default"
+                          ? "bg-green-600 text-white hover:bg-green-600"
                           : item.status === "rejected"
-                            ? "destructive"
+                            ? "bg-red-600 text-white hover:bg-red-600"
                             : item.status === "needs_revision"
-                              ? "secondary"
-                              : "outline";
+                              ? "bg-orange-500 text-white hover:bg-orange-500"
+                              : "bg-yellow-500 text-black hover:bg-yellow-500";
                       return (
                         <li
                           key={item.id}
@@ -1948,10 +1996,16 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             </span>
                           </div>
                           <div className="flex flex-wrap items-center gap-2 shrink-0">
-                            <Badge variant={statusVariant}>
-                              {item.status === "needs_revision" ? "Needs revision" : item.status}
+                            <Badge className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${statusClassName}`}>
+                              {item.status === "needs_revision"
+                                ? "Needs Revision"
+                                : item.status === "approved"
+                                  ? "Approved"
+                                  : item.status === "rejected"
+                                    ? "Rejected"
+                                    : "Pending"}
                             </Badge>
-                            {item.status !== "approved" && (
+                            {/* {item.status !== "approved" && ( */}
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1961,7 +2015,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               >
                                 View details
                               </Button>
-                            )}
+                            {/* )} */}
                           </div>
                         </li>
                       );

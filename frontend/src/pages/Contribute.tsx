@@ -759,29 +759,32 @@ const Contribute = () => {
 
                     <div className="space-y-2">
                       <Label htmlFor="town">Town/City <span className="text-destructive">*</span></Label>
-                      <SearchableSelect
+                      <Input
                         id="town"
+                        type="text"
                         value={town}
-                        onValueChange={(value) => {
-                          setTown(value);
+                        onChange={(e) => {
+                          setTown(sanitizeTown(e.target.value));
                           if (fieldErrors.town) {
                             setFieldErrors((prev) => ({ ...prev, town: undefined }));
                           }
                         }}
-                        placeholder={state ? "Select town/city..." : "Select a state first"}
-                        options={townOptions}
-                        loading={loadingTowns}
-                        error={!!townOptionsError}
-                        errorMessage={
-                          townOptionsError ??
-                          (state ? "Failed to load towns" : "Select a state first")
-                        }
-                        searchPlaceholder="Search towns..."
-                        emptyMessage={state ? "No towns found for this state." : "Select a state first."}
+                        placeholder="Enter town/city..."
+                        list="town-options"
                         aria-label="Town or city"
-                        triggerClassName={fieldErrors.town ? "border-destructive" : ""}
-                        disabled={!state || townOptions.length === 0}
+                        className={fieldErrors.town ? "border-destructive" : ""}
                       />
+                      {/* <datalist id="town-options">
+                        {townOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value} />
+                        ))}
+                      </datalist> */}
+                      {loadingTowns && state ? (
+                        <p className="text-xs text-muted-foreground">Loading town suggestions...</p>
+                      ) : null}
+                      {townOptionsError && state ? (
+                        <p className="text-xs text-destructive">{townOptionsError}</p>
+                      ) : null}
                       {fieldErrors.town && (
                         <p className="text-sm text-destructive">{fieldErrors.town}</p>
                       )}
@@ -794,7 +797,7 @@ const Contribute = () => {
                           id="firstSeen"
                           type="text"
                           inputMode="numeric"
-                          placeholder="1825"
+                          placeholder=""
                           value={firstSeen}
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);
@@ -821,7 +824,7 @@ const Contribute = () => {
                           id="lastSeen"
                           type="text"
                           inputMode="numeric"
-                          placeholder="1845"
+                          placeholder=""
                           value={lastSeen}
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);
