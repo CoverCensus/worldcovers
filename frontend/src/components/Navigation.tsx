@@ -25,6 +25,9 @@ export const Navigation = () => {
 
   const apiBase = (import.meta.env.VITE_API_URL ?? "").trim().replace(/\/+$/, "");
   const logoutUrl = apiBase ? `${apiBase}/logout/` : (import.meta.env.VITE_API_BASE_URL || '/api/v1') + "/logout/";
+  const isStateEditor = user?.role === "state_editor" || user?.is_superuser;
+  const dashboardLabel = isStateEditor ? "Dashboard" : "My Submissions";
+  const dashboardTabState = isStateEditor ? { tab: "editor" as const } : { tab: "submissions" as const };
 
   const handleLogout = async () => {
     try {
@@ -144,9 +147,9 @@ export const Navigation = () => {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuItem onClick={() => navigate("/dashboard")}>
+                  <DropdownMenuItem onClick={() => navigate("/dashboard", { state: dashboardTabState })}>
                     <LayoutDashboard className="mr-2 h-4 w-4" />
-                    Dashboard
+                    {dashboardLabel}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setChangePasswordOpen(true)}>
                     <KeyRound className="mr-2 h-4 w-4" />
@@ -232,13 +235,13 @@ export const Navigation = () => {
                 </div>
                 <button
                   onClick={() => {
-                    navigate("/dashboard");
+                    navigate("/dashboard", { state: dashboardTabState });
                     setMobileMenuOpen(false);
                   }}
                   className="w-full flex items-center px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md text-left"
                 >
                   <LayoutDashboard className="h-4 w-4 mr-2 shrink-0" />
-                  Dashboard
+                  {dashboardLabel}
                 </button>
                 <button
                   onClick={() => {
