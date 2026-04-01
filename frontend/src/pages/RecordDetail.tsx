@@ -399,35 +399,32 @@ const RecordDetail = () => {
                         .map((s) => parseFloat(s.replace(/[^0-9.]/g, "")))
                         .filter((n) => Number.isFinite(n));
                       const title = "Valuations";
-                      if (nums.length === 0) return <CardTitle className="font-heading text-lg">{title}</CardTitle>;
-                      const min = Math.min(...nums);
-                      const max = Math.max(...nums);
-                      const fmt = (n: number) =>
-                        n.toLocaleString(undefined, {
-                          minimumFractionDigits: n % 1 === 0 ? 0 : 2,
-                          maximumFractionDigits: 2,
-                        });
-                      const label =
-                        nums.length === 1 || min === max ? `$${fmt(max)}` : `$${fmt(min)}–$${fmt(max)}`;
+                      if (values.length === 0) return <CardTitle className="font-heading text-lg">{title}</CardTitle>;
+
+                      // If values are numeric, show min–max; otherwise show the first value as-is.
+                      const label = (() => {
+                        if (nums.length === 0) return values[0];
+                        const min = Math.min(...nums);
+                        const max = Math.max(...nums);
+                        const fmt = (n: number) =>
+                          n.toLocaleString(undefined, {
+                            minimumFractionDigits: n % 1 === 0 ? 0 : 2,
+                            maximumFractionDigits: 2,
+                          });
+                        return nums.length === 1 || min === max ? `$${fmt(max)}` : `$${fmt(min)}–$${fmt(max)}`;
+                      })();
+
+                      const normalized = String(label).trim();
+                      const display = normalized.startsWith("$") ? normalized : `$${normalized}`;
+
                       return (
                         <CardTitle className="font-heading text-lg flex items-baseline justify-between gap-3">
                           <span>{title}</span>
-                          <span className="text-primary">{label}</span>
+                          <span className="text-primary">{display}</span>
                         </CardTitle>
                       );
                     })()}
                   </CardHeader>
-                  <CardContent className="space-y-3">
-                    {record.valuations
-                      ?.filter((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "")
-                      .map((v, i) => (
-                        <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                          <p className="text-lg font-heading font-semibold text-primary">
-                            ${v.estimatedValue}
-                          </p>
-                        </div>
-                      ))}
-                  </CardContent>
                 </Card>
               ) : null}
             </div>

@@ -32,7 +32,7 @@ export function CatalogRecordFields({ row }: { row: CatalogFieldValues }) {
         </span>{" "}
         <span className="text-foreground break-words">{row.type}</span>
       </div>
-      <div className="min-w-0 sm:col-span-2">
+      <div className="min-w-0">
         <span className="text-muted-foreground">Postmark Text:</span>{" "}
         {row.postmarkTextLines.length > 1 ? (
           <ul className="list-disc pl-5 mt-1 text-foreground space-y-0.5 w-full">
@@ -46,13 +46,13 @@ export function CatalogRecordFields({ row }: { row: CatalogFieldValues }) {
           <span className="text-foreground break-words whitespace-pre-line">{row.postmarkTextSingle}</span>
         )}
       </div>
-      {/* <div className="min-w-0">
-        <span className="text-muted-foreground">Lettering:</span>{" "}
-        <span className="text-foreground break-words">{row.lettering}</span>
-      </div> */}
       <div className="min-w-0">
-        <span className="text-muted-foreground">Framing/Lettering:</span>{" "}
-        <span className="text-foreground break-words">{row.framing}/{row.lettering}</span>
+        <span className="text-muted-foreground">Framing style:</span>{" "}
+        <span className="text-foreground break-words">{row.framing}</span>
+      </div>
+      <div className="min-w-0">
+        <span className="text-muted-foreground">Lettering style:</span>{" "}
+        <span className="text-foreground break-words">{row.lettering}</span>
       </div>
       <div className="min-w-0">
         <span className="text-muted-foreground">Dimensions:</span>{" "}
@@ -70,7 +70,7 @@ export function CatalogRecordFields({ row }: { row: CatalogFieldValues }) {
         <span className="text-muted-foreground">Earliest Use:</span>{" "}
         <span className="text-foreground break-words">{row.earliestUse}</span>
       </div>
-      <div className="min-w-0 sm:col-span-2">
+      <div className="min-w-0">
         <span className="text-muted-foreground">Latest Use:</span>{" "}
         <span className="text-foreground break-words">{row.latestUse}</span>
       </div>
