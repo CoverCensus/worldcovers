@@ -72,9 +72,13 @@ function validateYearString(raw: string): string | null {
 function parseDateRange(dateRange: string): [string, string] {
   const s = (dateRange || "").trim();
   if (!s) return ["", ""];
-  const idx = s.indexOf("-");
-  if (idx === -1) return [s, ""];
-  return [s.slice(0, idx).trim(), s.slice(idx + 1).trim()];
+  // Prefer an explicit range delimiter with spaces: "YYYY-MM-DD - YYYY-MM-DD"
+  const spaced = s.split(/\s+[-–—]\s+/);
+  if (spaced.length >= 2) return [spaced[0].trim(), spaced[1].trim()];
+  // Fallback: legacy year range "YYYY-YYYY"
+  const m = s.match(/^\s*(\d{4})\s*[-–—]\s*(\d{4})\s*$/);
+  if (m) return [m[1], m[2]];
+  return [s, ""];
 }
 
 const Contribute = () => {
@@ -112,12 +116,16 @@ const Contribute = () => {
   const [state, setState] = useState("");
 
   const [town, setTown] = useState("");
-  // Observed date (UI): day/month/year or Unknown.
-  // Backend still accepts firstSeen/lastSeen year; we map year -> firstSeen and leave lastSeen blank.
-  const [observedDay, setObservedDay] = useState("");
-  const [observedMonth, setObservedMonth] = useState("");
-  const [observedYear, setObservedYear] = useState("");
-  const [observedUnknown, setObservedUnknown] = useState(false);
+  // Earliest/Latest Use (UI): day/month/year or Unknown.
+  // Backend accepts year-only or full ISO date (YYYY-MM-DD) via firstSeen/lastSeen.
+  const [earliestDay, setEarliestDay] = useState("");
+  const [earliestMonth, setEarliestMonth] = useState("");
+  const [earliestYear, setEarliestYear] = useState("");
+  const [earliestUnknown, setEarliestUnknown] = useState(false);
+  const [latestDay, setLatestDay] = useState("");
+  const [latestMonth, setLatestMonth] = useState("");
+  const [latestYear, setLatestYear] = useState("");
+  const [latestUnknown, setLatestUnknown] = useState(false);
   const [type, setType] = useState("");
   const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
@@ -137,7 +145,8 @@ const Contribute = () => {
   const [fieldErrors, setFieldErrors] = useState<{
     state?: string;
     town?: string;
-    observedDate?: string;
+    earliestDate?: string;
+    latestDate?: string;
     type?: string;
     color?: string;
     widthMm?: string;
@@ -151,7 +160,8 @@ const Contribute = () => {
     editorValue?: string;
     editorComment?: string;
   }>({});
-  const [yearError, setYearError] = useState<string | null>(null);
+  const [earliestYearError, setEarliestYearError] = useState<string | null>(null);
+  const [latestYearError, setLatestYearError] = useState<string | null>(null);
 
   // Contributor: lettering, framing, date format (loaded for all)
   const [letteringOptions, setLetteringOptions] = useState<LetteringStyleOption[]>([]);
@@ -286,12 +296,15 @@ const Contribute = () => {
         const colorVal = getStr(sd.color);
         setState(stateVal);
         setTown(townVal);
-        // Existing submissions only store year ranges; map earliest year into the new Date UI.
-        // When range exists, we keep the earliest year as the observed year for editing.
-        setObservedDay("");
-        setObservedMonth("");
-        setObservedYear(first || last || "");
-        setObservedUnknown(false);
+        // Existing submissions only store year ranges; map into the new Earliest/Latest UI.
+        setEarliestDay("");
+        setEarliestMonth("");
+        setEarliestYear(first || "");
+        setEarliestUnknown(false);
+        setLatestDay("");
+        setLatestMonth("");
+        setLatestYear(last || "");
+        setLatestUnknown(false);
         setType(typeVal || "");
         setTypeOther("");
         setColor(colorVal || "");
@@ -429,18 +442,42 @@ const Contribute = () => {
   };
 
   const buildDateRange = () => {
-    const year = observedYear.trim();
-    if (observedUnknown) return "";
-    if (!year) return "";
-    return year;
+    const y1 = earliestUnknown ? "" : earliestYear.trim();
+    const y2 = latestUnknown ? "" : latestYear.trim();
+    if (!y1) return "";
+
+    const mkIso = (d: string, m: string, y: string) => {
+      const yy = y.trim();
+      if (!yy) return "";
+      const dd = d.trim().padStart(2, "0");
+      const mmTxt = m.trim();
+      const map: Record<string, string> = {
+        Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+        Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+      };
+      const mm = map[mmTxt];
+      if (!mm || !dd || dd.length !== 2) return "";
+      return `${yy}-${mm}-${dd}`;
+    };
+
+    const firstIso = earliestUnknown ? "" : mkIso(earliestDay, earliestMonth, earliestYear);
+    const lastIso = latestUnknown ? "" : mkIso(latestDay, latestMonth, latestYear);
+
+    // Prefer full dates when day+month are provided; otherwise fall back to year-only.
+    const first = firstIso || y1;
+    const last = lastIso || y2;
+    if (!last) return first;
+    // If we are sending ISO dates, use a delimiter with spaces to avoid ambiguity.
+    const isIso = first.length === 10 || last.length === 10;
+    return isIso ? `${first} - ${last}` : `${first}-${last}`;
   };
 
-  const formatObservedDateLabel = () => {
-    if (observedUnknown) return "Unknown";
-    const y = observedYear.trim();
-    const m = observedMonth.trim();
-    const d = observedDay.trim();
-    const parts = [d, m, y].filter(Boolean);
+  const formatDateLabel = (d: string, m: string, y: string, unknown: boolean) => {
+    if (unknown) return "Unknown";
+    const yy = y.trim();
+    const mm = m.trim();
+    const dd = d.trim();
+    const parts = [dd, mm, yy].filter(Boolean);
     return parts.length ? parts.join(" ") : "";
   };
 
@@ -489,9 +526,14 @@ const Contribute = () => {
       errors.images = "At least one image is required";
     }
 
-    // Date: Day / Month / Year OR Unknown (one of the four required)
-    if (!observedUnknown && !observedDay.trim() && !observedMonth.trim() && !observedYear.trim()) {
-      errors.observedDate = "Enter Day, Month, Year, or choose Unknown";
+    // Earliest Use date: Day / Month / Year OR Unknown (one of the four required)
+    if (!earliestUnknown && !earliestDay.trim() && !earliestMonth.trim() && !earliestYear.trim()) {
+      errors.earliestDate = "Enter Day, Month, Year, or choose Unknown";
+    }
+    // Latest Use date: optional, but if anything is entered it must be valid; Unknown allowed.
+    const latestHasAny = !!latestDay.trim() || !!latestMonth.trim() || !!latestYear.trim();
+    if (!latestUnknown && latestHasAny === false) {
+      // ok: completely blank
     }
 
     // Dimensions: if circular, use diameter; otherwise width/height pair.
@@ -523,13 +565,23 @@ const Contribute = () => {
       return;
     }
 
-    // Validate year if provided (year is the only piece we send to backend for date_range)
-    const yearRangeError = validateYearString(observedYear.trim());
-    setYearError(yearRangeError);
-    if (yearRangeError) {
+    // Validate years (required; day/month are optional but will be sent when provided)
+    const earliestYearRangeError = validateYearString(earliestYear.trim());
+    setEarliestYearError(earliestYearRangeError);
+    if (earliestYearRangeError) {
       toast({
         title: "Invalid year",
-        description: yearRangeError,
+        description: earliestYearRangeError,
+        variant: "destructive",
+      });
+      return;
+    }
+    const latestYearRangeError = validateYearString(latestYear.trim());
+    setLatestYearError(latestYearRangeError);
+    if (latestYearRangeError) {
+      toast({
+        title: "Invalid year",
+        description: latestYearRangeError,
         variant: "destructive",
       });
       return;
@@ -564,9 +616,27 @@ const Contribute = () => {
       let body: string | FormData;
       let headers: Record<string, string> = {};
 
-      const firstSeenToSend = observedUnknown ? "" : observedYear.trim();
-      const lastSeenToSend = "";
-      const observedDateLabel = formatObservedDateLabel();
+      const mkIso = (d: string, m: string, y: string) => {
+        const yy = y.trim();
+        if (!yy) return "";
+        const dd = d.trim().padStart(2, "0");
+        const map: Record<string, string> = {
+          Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+          Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+        };
+        const mm = map[m.trim()];
+        if (!mm || !dd || dd.length !== 2) return "";
+        return `${yy}-${mm}-${dd}`;
+      };
+
+      const firstSeenToSend = earliestUnknown
+        ? ""
+        : mkIso(earliestDay, earliestMonth, earliestYear) || earliestYear.trim();
+      const lastSeenToSend = latestUnknown
+        ? ""
+        : mkIso(latestDay, latestMonth, latestYear) || latestYear.trim();
+      const earliestLabel = formatDateLabel(earliestDay, earliestMonth, earliestYear, earliestUnknown);
+      const latestLabel = formatDateLabel(latestDay, latestMonth, latestYear, latestUnknown);
       const derivedIsCircular = isCircularType(typeVal);
       const derivedDimensions = (() => {
         const d = diameterMm.trim();
@@ -576,14 +646,7 @@ const Contribute = () => {
         if (w && h) return `${w}×${h} mm`;
         return "";
       })();
-      const descriptionToSend = (() => {
-        const base = description.trim();
-        // Preserve day/month details for reviewers even though backend stores year-only in date_range.
-        if (observedDateLabel && (observedMonth.trim() || observedDay.trim()) && !base.toLowerCase().includes("date:")) {
-          return `Date: ${observedDateLabel}\n${base}`.trim();
-        }
-        return base;
-      })();
+      const descriptionToSend = description.trim();
 
       const derivedShapeId = isStateEditor && type && type !== TYPE_OTHER_VALUE
         ? typeOptions.find((t) => t.name === type)?.id
@@ -690,10 +753,14 @@ const Contribute = () => {
 
       setState("");
       setTown("");
-      setObservedDay("");
-      setObservedMonth("");
-      setObservedYear("");
-      setObservedUnknown(false);
+      setEarliestDay("");
+      setEarliestMonth("");
+      setEarliestYear("");
+      setEarliestUnknown(false);
+      setLatestDay("");
+      setLatestMonth("");
+      setLatestYear("");
+      setLatestUnknown(false);
       setType("");
       setTypeOther("");
       setColor("");
@@ -886,95 +953,181 @@ const Contribute = () => {
                       {fieldErrors.manuscript && <p className="text-sm text-destructive">{fieldErrors.manuscript}</p>}
                     </div>
 
-                    <div className="space-y-2">
-                      <Label>Date</Label>
-                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-                        <div className="space-y-1">
-                          <Label htmlFor="observed-day" className="text-xs text-muted-foreground">
-                            Day
-                          </Label>
-                          <Input
-                            id="observed-day"
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="DD"
-                            value={observedDay}
-                            onChange={(e) => {
-                              const v = e.target.value.replace(/\D/g, "").slice(0, 2);
-                              setObservedDay(v);
-                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
-                            }}
-                            disabled={observedUnknown}
-                          />
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label>Earliest Use</Label>
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                          <div className="space-y-1">
+                            <Label htmlFor="earliest-day" className="text-xs text-muted-foreground">
+                              Day
+                            </Label>
+                            <Input
+                              id="earliest-day"
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="DD"
+                              value={earliestDay}
+                              onChange={(e) => {
+                                const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+                                setEarliestDay(v);
+                                if (fieldErrors.earliestDate) setFieldErrors((p) => ({ ...p, earliestDate: undefined }));
+                              }}
+                              disabled={earliestUnknown}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">Month</Label>
+                            <Select
+                              value={earliestMonth}
+                              onValueChange={(v) => {
+                                setEarliestMonth(v);
+                                if (fieldErrors.earliestDate) setFieldErrors((p) => ({ ...p, earliestDate: undefined }));
+                              }}
+                              disabled={earliestUnknown}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Month" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m) => (
+                                  <SelectItem key={m} value={m}>
+                                    {m}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label htmlFor="earliest-year" className="text-xs text-muted-foreground">
+                              Year
+                            </Label>
+                            <Input
+                              id="earliest-year"
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="YYYY"
+                              value={earliestYear}
+                              onChange={(e) => {
+                                const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                setEarliestYear(v);
+                                if (fieldErrors.earliestDate) setFieldErrors((p) => ({ ...p, earliestDate: undefined }));
+                                setEarliestYearError(validateYearString(v));
+                              }}
+                              disabled={earliestUnknown}
+                              className={earliestYearError ? "border-destructive" : ""}
+                            />
+                          </div>
+                          <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
+                            <input
+                              type="checkbox"
+                              checked={earliestUnknown}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setEarliestUnknown(checked);
+                                if (checked) {
+                                  setEarliestDay("");
+                                  setEarliestMonth("");
+                                  setEarliestYear("");
+                                  setEarliestYearError(null);
+                                }
+                                if (fieldErrors.earliestDate) setFieldErrors((p) => ({ ...p, earliestDate: undefined }));
+                              }}
+                            />
+                            Unknown
+                          </label>
                         </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">Month</Label>
-                          <Select
-                            value={observedMonth}
-                            onValueChange={(v) => {
-                              setObservedMonth(v);
-                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
-                            }}
-                            disabled={observedUnknown}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Month" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {[
-                                "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec",
-                              ].map((m) => (
-                                <SelectItem key={m} value={m}>
-                                  {m}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1">
-                          <Label htmlFor="observed-year" className="text-xs text-muted-foreground">
-                            Year
-                          </Label>
-                          <Input
-                            id="observed-year"
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="YYYY"
-                            value={observedYear}
-                            onChange={(e) => {
-                              const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                              setObservedYear(v);
-                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
-                              setYearError(validateYearString(v));
-                            }}
-                            disabled={observedUnknown}
-                            className={yearError ? "border-destructive" : ""}
-                          />
-                        </div>
-                        <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
-                          <input
-                            type="checkbox"
-                            checked={observedUnknown}
-                            onChange={(e) => {
-                              const checked = e.target.checked;
-                              setObservedUnknown(checked);
-                              if (checked) {
-                                setObservedDay("");
-                                setObservedMonth("");
-                                setObservedYear("");
-                                setYearError(null);
-                              }
-                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
-                            }}
-                          />
-                          Unknown
-                        </label>
+                        {fieldErrors.earliestDate && <p className="text-sm text-destructive">{fieldErrors.earliestDate}</p>}
+                        {earliestYearError && !fieldErrors.earliestDate && <p className="text-sm text-destructive">{earliestYearError}</p>}
                       </div>
-                      {fieldErrors.observedDate && <p className="text-sm text-destructive">{fieldErrors.observedDate}</p>}
-                      {yearError && !fieldErrors.observedDate && <p className="text-sm text-destructive">{yearError}</p>}
-                      <p className="text-xs text-muted-foreground">
-                        Enter Day, Month, Year, or choose Unknown. If you only know the year, enter just the year.
-                      </p>
+
+                      <div className="space-y-2">
+                        <Label>Latest Use</Label>
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                          <div className="space-y-1">
+                            <Label htmlFor="latest-day" className="text-xs text-muted-foreground">
+                              Day
+                            </Label>
+                            <Input
+                              id="latest-day"
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="DD"
+                              value={latestDay}
+                              onChange={(e) => {
+                                const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+                                setLatestDay(v);
+                                if (fieldErrors.latestDate) setFieldErrors((p) => ({ ...p, latestDate: undefined }));
+                              }}
+                              disabled={latestUnknown}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">Month</Label>
+                            <Select
+                              value={latestMonth}
+                              onValueChange={(v) => {
+                                setLatestMonth(v);
+                                if (fieldErrors.latestDate) setFieldErrors((p) => ({ ...p, latestDate: undefined }));
+                              }}
+                              disabled={latestUnknown}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Month" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m) => (
+                                  <SelectItem key={m} value={m}>
+                                    {m}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label htmlFor="latest-year" className="text-xs text-muted-foreground">
+                              Year
+                            </Label>
+                            <Input
+                              id="latest-year"
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="YYYY"
+                              value={latestYear}
+                              onChange={(e) => {
+                                const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                setLatestYear(v);
+                                if (fieldErrors.latestDate) setFieldErrors((p) => ({ ...p, latestDate: undefined }));
+                                setLatestYearError(validateYearString(v));
+                              }}
+                              disabled={latestUnknown}
+                              className={latestYearError ? "border-destructive" : ""}
+                            />
+                          </div>
+                          <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
+                            <input
+                              type="checkbox"
+                              checked={latestUnknown}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setLatestUnknown(checked);
+                                if (checked) {
+                                  setLatestDay("");
+                                  setLatestMonth("");
+                                  setLatestYear("");
+                                  setLatestYearError(null);
+                                }
+                                if (fieldErrors.latestDate) setFieldErrors((p) => ({ ...p, latestDate: undefined }));
+                              }}
+                            />
+                            Unknown
+                          </label>
+                        </div>
+                        {fieldErrors.latestDate && <p className="text-sm text-destructive">{fieldErrors.latestDate}</p>}
+                        {latestYearError && !fieldErrors.latestDate && <p className="text-sm text-destructive">{latestYearError}</p>}
+                        <p className="text-xs text-muted-foreground">
+                          Optional. Leave blank if unknown, or enter Day/Month/Year, or choose Unknown.
+                        </p>
+                      </div>
                     </div>
 
                     <div className="space-y-2">
@@ -1343,7 +1496,7 @@ const Contribute = () => {
                   </form>
 
                   <p className="text-xs text-muted-foreground">
-                    Required: State, Town/City, Manuscript (Yes/No), and at least one image. Date requires Day, Month, Year, or Unknown. When approving (adding to catalog), editors must still add Value and Comment.
+                    Required: State, Town/City, Manuscript (Yes/No), and at least one image. Earliest Use requires Day, Month, Year, or Unknown. When approving (adding to catalog), editors must still add Value and Comment.
                   </p>
                 </CardContent>
               </Card>

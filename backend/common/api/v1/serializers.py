@@ -484,18 +484,26 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         return latest.size_notes or None
 
     def get_date_range(self, obj):
-        """Earliest–latest date seen as string (e.g. '1850-1860')."""
+        """
+        Earliest–latest date seen as string.
+        - If stored as year-only bounds (Jan 1 / Dec 31), return legacy "YYYY" or "YYYY-YYYY"
+        - Otherwise return ISO "YYYY-MM-DD" or "YYYY-MM-DD - YYYY-MM-DD"
+        """
         if not obj.dates_seen.exists():
             return None
-        earliest = obj.dates_seen.order_by('earliest_date_seen').first()
-        latest = obj.dates_seen.order_by('-latest_date_seen').first()
-        if not earliest:
+        earliest = obj.dates_seen.order_by("earliest_date_seen").first()
+        latest = obj.dates_seen.order_by("-latest_date_seen").first()
+        if not earliest or not earliest.earliest_date_seen:
             return None
-        e_str = str(earliest.earliest_date_seen.year) if earliest.earliest_date_seen else ''
-        l_str = str(latest.latest_date_seen.year) if latest and latest.latest_date_seen else e_str
-        if e_str == l_str:
-            return e_str
-        return f"{e_str}-{l_str}" if e_str and l_str else e_str or l_str
+        e = earliest.earliest_date_seen
+        l = (latest.latest_date_seen if latest and latest.latest_date_seen else e)
+        if e.month == 1 and e.day == 1 and l.month == 12 and l.day == 31:
+            ey = str(e.year)
+            ly = str(l.year)
+            return ey if ey == ly else f"{ey}-{ly}"
+        e_str = e.isoformat()
+        l_str = l.isoformat()
+        return e_str if e_str == l_str else f"{e_str} - {l_str}"
 
     def get_colors_display(self, obj):
         """Comma-separated color names for this postmark. Uses prefetched postmark_colors__color."""
@@ -593,15 +601,19 @@ class PostmarkSerializer(serializers.ModelSerializer):
     def get_date_range(self, obj):
         if not obj.dates_seen.exists():
             return None
-        earliest = obj.dates_seen.order_by('earliest_date_seen').first()
-        latest = obj.dates_seen.order_by('-latest_date_seen').first()
-        if not earliest:
+        earliest = obj.dates_seen.order_by("earliest_date_seen").first()
+        latest = obj.dates_seen.order_by("-latest_date_seen").first()
+        if not earliest or not earliest.earliest_date_seen:
             return None
-        e_str = str(earliest.earliest_date_seen.year) if earliest.earliest_date_seen else ''
-        l_str = str(latest.latest_date_seen.year) if latest and latest.latest_date_seen else e_str
-        if e_str == l_str:
-            return e_str
-        return f"{e_str}-{l_str}" if e_str and l_str else e_str or l_str
+        e = earliest.earliest_date_seen
+        l = (latest.latest_date_seen if latest and latest.latest_date_seen else e)
+        if e.month == 1 and e.day == 1 and l.month == 12 and l.day == 31:
+            ey = str(e.year)
+            ly = str(l.year)
+            return ey if ey == ly else f"{ey}-{ly}"
+        e_str = e.isoformat()
+        l_str = l.isoformat()
+        return e_str if e_str == l_str else f"{e_str} - {l_str}"
 
     def get_colors_display(self, obj):
         names = [

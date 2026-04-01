@@ -23,6 +23,15 @@ export function CatalogRecordFields({ row }: { row: CatalogFieldValues }) {
         <span className="text-muted-foreground">Manuscript:</span>{" "}
         <span className="text-foreground break-words">{row.manuscript}</span>
       </div>
+      <div className="min-w-0">
+        <span
+          className="text-muted-foreground cursor-help border-b border-dotted border-muted-foreground/40"
+          title="Legacy catalog outline type (e.g. ASCC postmark shape). Same idea as the Postmark Type filter."
+        >
+          Postmark type:
+        </span>{" "}
+        <span className="text-foreground break-words">{row.type}</span>
+      </div>
       <div className="min-w-0 sm:col-span-2">
         <span className="text-muted-foreground">Postmark Text:</span>{" "}
         {row.postmarkTextLines.length > 1 ? (
@@ -36,15 +45,6 @@ export function CatalogRecordFields({ row }: { row: CatalogFieldValues }) {
         ) : (
           <span className="text-foreground break-words whitespace-pre-line">{row.postmarkTextSingle}</span>
         )}
-      </div>
-      <div className="min-w-0">
-        <span
-          className="text-muted-foreground cursor-help border-b border-dotted border-muted-foreground/40"
-          title="Legacy catalog outline type (e.g. ASCC postmark shape). Same idea as the Postmark Type filter."
-        >
-          Postmark type:
-        </span>{" "}
-        <span className="text-foreground break-words">{row.type}</span>
       </div>
       {/* <div className="min-w-0">
         <span className="text-muted-foreground">Lettering:</span>{" "}

@@ -201,8 +201,10 @@ export interface PostmarkApiResponse {
       })[0];
       const ey = earliest?.earliest_date_seen ?? earliest?.earliestDateSeen;
       const ly = latest?.latest_date_seen ?? latest?.latestDateSeen;
-      if (ey) earliestUse = String(ey).slice(0, 4);
-      if (ly) latestUse = String(ly).slice(0, 4);
+      // Backend may return year-only bounds (YYYY-01-01 / YYYY-12-31) or real dates.
+      // Preserve the full ISO date string when available.
+      if (ey) earliestUse = String(ey);
+      if (ly) latestUse = String(ly);
     }
 
     const inscriptionTxt = data.inscription_txt ?? data.inscriptionTxt ?? "";

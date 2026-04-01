@@ -174,8 +174,8 @@ const RecordDetail = () => {
             postmarkKey: data.postmarkKey,
             state: data.state || "",
             town: data.town || "",
-            dateFirstSeen: datesSeen?.earliestDateSeen?.slice(0, 4) || "",
-            dateLastSeen: datesSeen?.latestDateSeen?.slice(0, 4) || "",
+            dateFirstSeen: datesSeen?.earliestDateSeen ? String(datesSeen.earliestDateSeen).slice(0, 10) : "",
+            dateLastSeen: datesSeen?.latestDateSeen ? String(datesSeen.latestDateSeen).slice(0, 10) : "",
             color: data.colorsDisplay || "",
             type: shapeLabel || data?.postmarkShape?.shapeName || "",
             dimensions: formatPostmarkDimensionsDisplay(data.sizes),
@@ -391,14 +391,37 @@ const RecordDetail = () => {
               {record.valuations?.some((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "") ? (
                 <Card className="shadow-archival-md">
                   <CardHeader>
-                    <CardTitle className="font-heading text-lg">Valuations</CardTitle>
+                    {(() => {
+                      const values = (record.valuations ?? [])
+                        .map((v) => String(v?.estimatedValue ?? "").trim())
+                        .filter(Boolean);
+                      const nums = values
+                        .map((s) => parseFloat(s.replace(/[^0-9.]/g, "")))
+                        .filter((n) => Number.isFinite(n));
+                      const title = "Valuations";
+                      if (nums.length === 0) return <CardTitle className="font-heading text-lg">{title}</CardTitle>;
+                      const min = Math.min(...nums);
+                      const max = Math.max(...nums);
+                      const fmt = (n: number) =>
+                        n.toLocaleString(undefined, {
+                          minimumFractionDigits: n % 1 === 0 ? 0 : 2,
+                          maximumFractionDigits: 2,
+                        });
+                      const label =
+                        nums.length === 1 || min === max ? `$${fmt(max)}` : `$${fmt(min)}–$${fmt(max)}`;
+                      return (
+                        <CardTitle className="font-heading text-lg flex items-baseline justify-between gap-3">
+                          <span>{title}</span>
+                          <span className="text-primary">{label}</span>
+                        </CardTitle>
+                      );
+                    })()}
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {record.valuations
                       ?.filter((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "")
                       .map((v, i) => (
                         <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                          <p className="text-sm font-medium text-muted-foreground">Valuation</p>
                           <p className="text-lg font-heading font-semibold text-primary">
                             ${v.estimatedValue}
                           </p>
@@ -493,15 +516,36 @@ const RecordDetail = () => {
                       return (
                         <>
                           <div className="flex gap-3">
-                            <dt className="font-medium text-muted-foreground min-w-[8rem]">Lettering style</dt>
+                            <dt className="font-medium text-muted-foreground min-w-[8rem]">
+                              <span
+                                className="cursor-help border-b border-dotted border-muted-foreground/40"
+                                title="Lettering style describes the shape/appearance of the letters used in the postmark text (e.g. block, serif, script)."
+                              >
+                                Lettering style
+                              </span>
+                            </dt>
                             <dd className="text-foreground">{displayValue(record.letteringStyle)}</dd>
                           </div>
                           <div className="flex gap-3">
-                            <dt className="font-medium text-muted-foreground min-w-[8rem]">Framing style</dt>
+                            <dt className="font-medium text-muted-foreground min-w-[8rem]">
+                              <span
+                                className="cursor-help border-b border-dotted border-muted-foreground/40"
+                                title="Framing style describes any lines/boxes/circles surrounding the postmark text (e.g. single circle, double circle, boxed)."
+                              >
+                                Framing style
+                              </span>
+                            </dt>
                             <dd className="text-foreground">{displayValue(record.framingStyle)}</dd>
                           </div>
                           <div className="flex gap-3">
-                            <dt className="font-medium text-muted-foreground min-w-[8rem]">Date format</dt>
+                            <dt className="font-medium text-muted-foreground min-w-[8rem]">
+                              <span
+                                className="cursor-help border-b border-dotted border-muted-foreground/40"
+                                title="Date format is how the date appears in the postmark (order and abbreviations), e.g. 'JAN 2', '2 JAN', '1-2', or '12/31'."
+                              >
+                                Date format
+                              </span>
+                            </dt>
                             <dd className="text-foreground">{displayValue(record.dateFormat)}</dd>
                           </div>
                         </>

@@ -140,12 +140,16 @@ const EditCatalogEntry = () => {
   const [state, setState] = useState("");
   const [stateOther, setStateOther] = useState("");
   const [town, setTown] = useState("");
-  // Observed date (UI): day/month/year or Unknown.
-  // Backend still accepts firstSeen/lastSeen year; we map year -> firstSeen and leave lastSeen blank.
-  const [observedDay, setObservedDay] = useState("");
-  const [observedMonth, setObservedMonth] = useState("");
-  const [observedYear, setObservedYear] = useState("");
-  const [observedUnknown, setObservedUnknown] = useState(false);
+  // Earliest/Latest Use (UI): day/month/year or Unknown.
+  // Backend accepts year-only or full ISO date (YYYY-MM-DD) via firstSeen/lastSeen.
+  const [earliestDay, setEarliestDay] = useState("");
+  const [earliestMonth, setEarliestMonth] = useState("");
+  const [earliestYear, setEarliestYear] = useState("");
+  const [earliestUnknown, setEarliestUnknown] = useState(false);
+  const [latestDay, setLatestDay] = useState("");
+  const [latestMonth, setLatestMonth] = useState("");
+  const [latestYear, setLatestYear] = useState("");
+  const [latestUnknown, setLatestUnknown] = useState(false);
   const [type, setType] = useState("");
   const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
@@ -172,7 +176,8 @@ const EditCatalogEntry = () => {
   const [fieldErrors, setFieldErrors] = useState<{
     state?: string;
     town?: string;
-    observedDate?: string;
+    earliestDate?: string;
+    latestDate?: string;
     type?: string;
     color?: string;
     widthMm?: string;
@@ -306,11 +311,28 @@ const EditCatalogEntry = () => {
         setExistingImageUrls(existingUrls);
         setState(data.state || "");
         setTown(sanitizeTown(data.town || ""));
-        const yearPrefill = datesSeen?.earliestDateSeen?.slice(0, 4) || datesSeen?.latestDateSeen?.slice(0, 4) || "";
-        setObservedDay("");
-        setObservedMonth("");
-        setObservedYear(yearPrefill);
-        setObservedUnknown(false);
+        const monthNumToAbbrev: Record<string, string> = {
+          "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "May", "06": "Jun",
+          "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec",
+        };
+        const splitIso = (raw: unknown): { day: string; month: string; year: string } => {
+          const s = String(raw ?? "").slice(0, 10);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return { day: "", month: "", year: s.slice(0, 4) || "" };
+          const [y, m, d] = s.split("-");
+          return { year: y, month: monthNumToAbbrev[m] || "", day: d };
+        };
+
+        const eParts = splitIso(datesSeen?.earliestDateSeen);
+        const lParts = splitIso(datesSeen?.latestDateSeen);
+
+        setEarliestDay(eParts.day);
+        setEarliestMonth(eParts.month);
+        setEarliestYear(eParts.year);
+        setEarliestUnknown(false);
+        setLatestDay(lParts.day);
+        setLatestMonth(lParts.month);
+        setLatestYear(lParts.year);
+        setLatestUnknown(false);
         setType(data?.postmarkShape?.shapeName || "");
         setColor(data.colorsDisplay || "");
         setWidthMm(wh.width);
@@ -426,18 +448,40 @@ const EditCatalogEntry = () => {
   };
 
   const buildDateRange = () => {
-    const year = observedYear.trim();
-    if (observedUnknown) return "";
-    if (!year) return "";
-    return year;
+    const y1 = earliestUnknown ? "" : earliestYear.trim();
+    const y2 = latestUnknown ? "" : latestYear.trim();
+    if (!y1) return "";
+
+    const mkIso = (d: string, m: string, y: string) => {
+      const yy = y.trim();
+      if (!yy) return "";
+      const dd = d.trim().padStart(2, "0");
+      const mmTxt = m.trim();
+      const map: Record<string, string> = {
+        Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+        Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+      };
+      const mm = map[mmTxt];
+      if (!mm || !dd || dd.length !== 2) return "";
+      return `${yy}-${mm}-${dd}`;
+    };
+
+    const firstIso = earliestUnknown ? "" : mkIso(earliestDay, earliestMonth, earliestYear);
+    const lastIso = latestUnknown ? "" : mkIso(latestDay, latestMonth, latestYear);
+
+    const first = firstIso || y1;
+    const last = lastIso || y2;
+    if (!last) return first;
+    const isIso = first.length === 10 || last.length === 10;
+    return isIso ? `${first} - ${last}` : `${first}-${last}`;
   };
 
-  const formatObservedDateLabel = () => {
-    if (observedUnknown) return "Unknown";
-    const y = observedYear.trim();
-    const m = observedMonth.trim();
-    const d = observedDay.trim();
-    const parts = [d, m, y].filter(Boolean);
+  const formatDateLabel = (d: string, m: string, y: string, unknown: boolean) => {
+    if (unknown) return "Unknown";
+    const dd = d.trim();
+    const mm = m.trim();
+    const yy = y.trim();
+    const parts = [dd, mm, yy].filter(Boolean);
     return parts.length ? parts.join(" ") : "";
   };
 
@@ -461,15 +505,18 @@ const EditCatalogEntry = () => {
       errors.manuscript = "Manuscript is required";
     }
 
-    // Date: Day / Month / Year OR Unknown (one of the four required)
-    if (!observedUnknown && !observedDay.trim() && !observedMonth.trim() && !observedYear.trim()) {
-      errors.observedDate = "Enter Day, Month, Year, or choose Unknown";
+    // Earliest Use date: Day / Month / Year OR Unknown (one of the four required)
+    if (!earliestUnknown && !earliestDay.trim() && !earliestMonth.trim() && !earliestYear.trim()) {
+      errors.earliestDate = "Enter Day, Month, Year, or choose Unknown";
     }
-
-    // Validate year if provided (year is the only piece we send to backend for date_range)
-    const yearErr = getYearError(observedYear, { required: false, label: "Year" });
-    if (yearErr) {
-      errors.observedDate = yearErr;
+    // Validate years if provided (years are the only piece we send to backend for date_range)
+    const earliestYearErr = getYearError(earliestYear, { required: false, label: "Earliest Use Year" });
+    if (earliestYearErr) {
+      errors.earliestDate = earliestYearErr;
+    }
+    const latestYearErr = getYearError(latestYear, { required: false, label: "Latest Use Year" });
+    if (latestYearErr) {
+      errors.latestDate = latestYearErr;
     }
 
     // Dimensions: if circular, use diameter; otherwise width/height pair.
@@ -485,9 +532,9 @@ const EditCatalogEntry = () => {
         if (mmErr.height) errors.heightMm = mmErr.height;
       }
     } else {
-      const mmErr = validateMmPair(widthMm, heightMm);
-      if (mmErr.width) errors.widthMm = mmErr.width;
-      if (mmErr.height) errors.heightMm = mmErr.height;
+    const mmErr = validateMmPair(widthMm, heightMm);
+    if (mmErr.width) errors.widthMm = mmErr.width;
+    if (mmErr.height) errors.heightMm = mmErr.height;
     }
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
@@ -524,9 +571,27 @@ const EditCatalogEntry = () => {
       let body: string | FormData;
       let headers: Record<string, string> = {};
 
-      const firstSeenToSend = observedUnknown ? "" : observedYear.trim();
-      const lastSeenToSend = "";
-      const observedDateLabel = formatObservedDateLabel();
+      const mkIso = (d: string, m: string, y: string) => {
+        const yy = y.trim();
+        if (!yy) return "";
+        const dd = d.trim().padStart(2, "0");
+        const map: Record<string, string> = {
+          Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+          Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+        };
+        const mm = map[m.trim()];
+        if (!mm || !dd || dd.length !== 2) return "";
+        return `${yy}-${mm}-${dd}`;
+      };
+
+      const firstSeenToSend = earliestUnknown
+        ? ""
+        : mkIso(earliestDay, earliestMonth, earliestYear) || earliestYear.trim();
+      const lastSeenToSend = latestUnknown
+        ? ""
+        : mkIso(latestDay, latestMonth, latestYear) || latestYear.trim();
+      const earliestLabel = formatDateLabel(earliestDay, earliestMonth, earliestYear, earliestUnknown);
+      const latestLabel = formatDateLabel(latestDay, latestMonth, latestYear, latestUnknown);
       const derivedDimensions = (() => {
         const d = diameterMm.trim();
         const w = widthMm.trim();
@@ -535,13 +600,7 @@ const EditCatalogEntry = () => {
         if (w && h) return `${w}×${h} mm`;
         return "";
       })();
-      const descriptionToSend = (() => {
-        const base = description.trim();
-        if (observedDateLabel && (observedMonth.trim() || observedDay.trim()) && !base.toLowerCase().includes("date:")) {
-          return `Date: ${observedDateLabel}\n${base}`.trim();
-        }
-        return base;
-      })();
+      const descriptionToSend = description.trim();
 
       if (imageFiles.length > 0) {
         const form = new FormData();
@@ -834,7 +893,7 @@ const EditCatalogEntry = () => {
                       )}
                     </div>
 
-                    <div className="space-y-2">
+                      <div className="space-y-2">
                       <Label htmlFor="edit-manuscript">Manuscript</Label>
                       <Select
                         value={manuscript}
@@ -860,89 +919,173 @@ const EditCatalogEntry = () => {
                       {fieldErrors.manuscript && <p className="text-sm text-destructive">{fieldErrors.manuscript}</p>}
                     </div>
 
-                    <div className="space-y-2">
-                      <Label>Date</Label>
-                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-                        <div className="space-y-1">
-                          <Label htmlFor="edit-observed-day" className="text-xs text-muted-foreground">
-                            Day
-                          </Label>
-                          <Input
-                            id="edit-observed-day"
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="DD"
-                            value={observedDay}
-                            onChange={(e) => {
-                              const v = e.target.value.replace(/\D/g, "").slice(0, 2);
-                              setObservedDay(v);
-                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
-                            }}
-                            disabled={observedUnknown}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">Month</Label>
-                          <Select
-                            value={observedMonth}
-                            onValueChange={(v) => {
-                              setObservedMonth(v);
-                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
-                            }}
-                            disabled={observedUnknown}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Month" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m) => (
-                                <SelectItem key={m} value={m}>
-                                  {m}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1">
-                          <Label htmlFor="edit-observed-year" className="text-xs text-muted-foreground">
-                            Year
-                          </Label>
-                          <Input
-                            id="edit-observed-year"
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="YYYY"
-                            value={observedYear}
-                            onChange={(e) => {
-                              const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                              setObservedYear(v);
-                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
-                            }}
-                            disabled={observedUnknown}
-                          />
-                        </div>
-                        <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
-                          <input
-                            type="checkbox"
-                            checked={observedUnknown}
-                            onChange={(e) => {
-                              const checked = e.target.checked;
-                              setObservedUnknown(checked);
-                              if (checked) {
-                                setObservedDay("");
-                                setObservedMonth("");
-                                setObservedYear("");
-                              }
-                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
-                            }}
-                          />
-                          Unknown
-                        </label>
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label>Earliest Use</Label>
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                          <div className="space-y-1">
+                            <Label htmlFor="edit-earliest-day" className="text-xs text-muted-foreground">
+                              Day
+                            </Label>
+                        <Input
+                              id="edit-earliest-day"
+                          type="text"
+                          inputMode="numeric"
+                              placeholder="DD"
+                              value={earliestDay}
+                              onChange={(e) => {
+                                const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+                                setEarliestDay(v);
+                                if (fieldErrors.earliestDate) setFieldErrors((p) => ({ ...p, earliestDate: undefined }));
+                              }}
+                              disabled={earliestUnknown}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">Month</Label>
+                            <Select
+                              value={earliestMonth}
+                              onValueChange={(v) => {
+                                setEarliestMonth(v);
+                                if (fieldErrors.earliestDate) setFieldErrors((p) => ({ ...p, earliestDate: undefined }));
+                              }}
+                              disabled={earliestUnknown}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Month" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m) => (
+                                  <SelectItem key={m} value={m}>
+                                    {m}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label htmlFor="edit-earliest-year" className="text-xs text-muted-foreground">
+                              Year
+                            </Label>
+                            <Input
+                              id="edit-earliest-year"
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="YYYY"
+                              value={earliestYear}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                setEarliestYear(v);
+                                if (fieldErrors.earliestDate) setFieldErrors((p) => ({ ...p, earliestDate: undefined }));
+                          }}
+                              disabled={earliestUnknown}
+                        />
                       </div>
-                      {fieldErrors.observedDate && <p className="text-sm text-destructive">{fieldErrors.observedDate}</p>}
-                      <p className="text-xs text-muted-foreground">
-                        Enter Day, Month, Year, or choose Unknown. If you only know the year, enter just the year.
-                      </p>
+                          <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
+                            <input
+                              type="checkbox"
+                              checked={earliestUnknown}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setEarliestUnknown(checked);
+                                if (checked) {
+                                  setEarliestDay("");
+                                  setEarliestMonth("");
+                                  setEarliestYear("");
+                                }
+                                if (fieldErrors.earliestDate) setFieldErrors((p) => ({ ...p, earliestDate: undefined }));
+                              }}
+                            />
+                            Unknown
+                          </label>
+                        </div>
+                        {fieldErrors.earliestDate && <p className="text-sm text-destructive">{fieldErrors.earliestDate}</p>}
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Latest Use</Label>
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                          <div className="space-y-1">
+                            <Label htmlFor="edit-latest-day" className="text-xs text-muted-foreground">
+                              Day
+                            </Label>
+                        <Input
+                              id="edit-latest-day"
+                          type="text"
+                          inputMode="numeric"
+                              placeholder="DD"
+                              value={latestDay}
+                              onChange={(e) => {
+                                const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+                                setLatestDay(v);
+                                if (fieldErrors.latestDate) setFieldErrors((p) => ({ ...p, latestDate: undefined }));
+                              }}
+                              disabled={latestUnknown}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">Month</Label>
+                            <Select
+                              value={latestMonth}
+                              onValueChange={(v) => {
+                                setLatestMonth(v);
+                                if (fieldErrors.latestDate) setFieldErrors((p) => ({ ...p, latestDate: undefined }));
+                              }}
+                              disabled={latestUnknown}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Month" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m) => (
+                                  <SelectItem key={m} value={m}>
+                                    {m}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label htmlFor="edit-latest-year" className="text-xs text-muted-foreground">
+                              Year
+                            </Label>
+                            <Input
+                              id="edit-latest-year"
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="YYYY"
+                              value={latestYear}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                setLatestYear(v);
+                                if (fieldErrors.latestDate) setFieldErrors((p) => ({ ...p, latestDate: undefined }));
+                              }}
+                              disabled={latestUnknown}
+                            />
+                          </div>
+                          <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
+                            <input
+                              type="checkbox"
+                              checked={latestUnknown}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setLatestUnknown(checked);
+                                if (checked) {
+                                  setLatestDay("");
+                                  setLatestMonth("");
+                                  setLatestYear("");
+                                }
+                                if (fieldErrors.latestDate) setFieldErrors((p) => ({ ...p, latestDate: undefined }));
+                              }}
+                            />
+                            Unknown
+                          </label>
+                        </div>
+                        {fieldErrors.latestDate && <p className="text-sm text-destructive">{fieldErrors.latestDate}</p>}
+                        <p className="text-xs text-muted-foreground">
+                          Optional. Leave blank if unknown, or enter Day/Month/Year, or choose Unknown.
+                        </p>
+                      </div>
                     </div>
 
                     <div className="space-y-2">
@@ -1116,61 +1259,61 @@ const EditCatalogEntry = () => {
                       </div>
                     ) : (
                       <>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="edit-width-mm">Width (mm)</Label>
-                            <Input
-                              id="edit-width-mm"
-                              type="text"
-                              inputMode="decimal"
-                              placeholder="e.g. 34"
-                              value={widthMm}
-                              onChange={(e) => {
-                                setWidthMm(sanitizeMmInput(e.target.value));
-                                if (fieldErrors.widthMm || fieldErrors.heightMm) {
-                                  setFieldErrors((prev) => ({
-                                    ...prev,
-                                    widthMm: undefined,
-                                    heightMm: undefined,
-                                  }));
-                                }
-                              }}
-                              className={fieldErrors.widthMm ? "border-destructive" : ""}
-                              aria-label="Width in millimetres"
-                            />
-                            {fieldErrors.widthMm && (
-                              <p className="text-sm text-destructive">{fieldErrors.widthMm}</p>
-                            )}
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="edit-height-mm">Height (mm)</Label>
-                            <Input
-                              id="edit-height-mm"
-                              type="text"
-                              inputMode="decimal"
-                              placeholder="e.g. 28"
-                              value={heightMm}
-                              onChange={(e) => {
-                                setHeightMm(sanitizeMmInput(e.target.value));
-                                if (fieldErrors.widthMm || fieldErrors.heightMm) {
-                                  setFieldErrors((prev) => ({
-                                    ...prev,
-                                    widthMm: undefined,
-                                    heightMm: undefined,
-                                  }));
-                                }
-                              }}
-                              className={fieldErrors.heightMm ? "border-destructive" : ""}
-                              aria-label="Height in millimetres"
-                            />
-                            {fieldErrors.heightMm && (
-                              <p className="text-sm text-destructive">{fieldErrors.heightMm}</p>
-                            )}
-                          </div>
-                        </div>
-                        <p className="text-xs text-muted-foreground -mt-2">
-                          Optional. If you enter one, enter both. Stored as width × height (mm) on the catalog.
-                        </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-width-mm">Width (mm)</Label>
+                        <Input
+                          id="edit-width-mm"
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="e.g. 34"
+                          value={widthMm}
+                          onChange={(e) => {
+                            setWidthMm(sanitizeMmInput(e.target.value));
+                            if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                              setFieldErrors((prev) => ({
+                                ...prev,
+                                widthMm: undefined,
+                                heightMm: undefined,
+                              }));
+                            }
+                          }}
+                          className={fieldErrors.widthMm ? "border-destructive" : ""}
+                          aria-label="Width in millimetres"
+                        />
+                        {fieldErrors.widthMm && (
+                          <p className="text-sm text-destructive">{fieldErrors.widthMm}</p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-height-mm">Height (mm)</Label>
+                        <Input
+                          id="edit-height-mm"
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="e.g. 28"
+                          value={heightMm}
+                          onChange={(e) => {
+                            setHeightMm(sanitizeMmInput(e.target.value));
+                            if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                              setFieldErrors((prev) => ({
+                                ...prev,
+                                widthMm: undefined,
+                                heightMm: undefined,
+                              }));
+                            }
+                          }}
+                          className={fieldErrors.heightMm ? "border-destructive" : ""}
+                          aria-label="Height in millimetres"
+                        />
+                        {fieldErrors.heightMm && (
+                          <p className="text-sm text-destructive">{fieldErrors.heightMm}</p>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground -mt-2">
+                      Optional. If you enter one, enter both. Stored as width × height (mm) on the catalog.
+                    </p>
                       </>
                     )}
 
@@ -1324,7 +1467,7 @@ const EditCatalogEntry = () => {
                   </form>
 
                   <p className="text-xs text-muted-foreground">
-                    Required: State, Town/City, and Manuscript (Yes/No). Date requires Day, Month, Year, or Unknown.
+                    Required: State, Town/City, and Manuscript (Yes/No). Earliest Use requires Day, Month, Year, or Unknown.
                   </p>
                 </CardContent>
               </Card>

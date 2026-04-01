@@ -9,8 +9,9 @@ import io
 import os
 import re
 import uuid
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+from typing import Optional, Tuple
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, get_user_model
@@ -40,6 +41,91 @@ from django.contrib.auth import get_user_model
 from woco.pagination import PageSizePagination, LargePageSizePagination, PostmarkListPagination
 
 logger = logging.getLogger(__name__)
+
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_YEAR_RE = re.compile(r"^\d{4}$")
+_YEAR_RANGE_RE = re.compile(r"^\s*(\d{4})\s*[-–—]\s*(\d{4})\s*$")
+
+
+def _parse_dates_seen_from_payload(payload: dict) -> Tuple[date, date]:
+    """
+    Parse earliest/latest date seen from contribution payload.
+
+    Supports:
+    - first_seen/last_seen (or firstSeen/lastSeen) as YYYY or YYYY-MM-DD
+    - date_range/dateRange as:
+        - YYYY
+        - YYYY-YYYY
+        - YYYY-MM-DD
+        - YYYY-MM-DD - YYYY-MM-DD (note spaces around dash)
+    """
+    def _get(*keys: str) -> str:
+        for k in keys:
+            v = payload.get(k)
+            if v is None:
+                continue
+            s = str(v).strip()
+            if s != "":
+                return s
+        return ""
+
+    first_raw = _get("first_seen", "firstSeen")
+    last_raw = _get("last_seen", "lastSeen")
+    range_raw = _get("date_range", "dateRange")
+
+    def _parse_token(tok: str, *, is_latest: bool) -> Optional[date]:
+        t = (tok or "").strip()
+        if not t:
+            return None
+        if _ISO_DATE_RE.match(t):
+            try:
+                return datetime.fromisoformat(t).date()
+            except ValueError:
+                return None
+        if _YEAR_RE.match(t):
+            y = max(1, min(int(t), 9999))
+            return date(y, 12, 31) if is_latest else date(y, 1, 1)
+        return None
+
+    # Prefer explicit first/last fields when present
+    if first_raw or last_raw:
+        e = _parse_token(first_raw or last_raw, is_latest=False) or date(1900, 1, 1)
+        l = _parse_token(last_raw or first_raw, is_latest=True) or date(1900, 12, 31)
+        return (e, l) if e <= l else (l, e)
+
+    # Fall back to date_range string
+    s = (range_raw or "").strip()
+    if not s:
+        return date(1900, 1, 1), date(1900, 12, 31)
+
+    # Year range like "1850-1860"
+    m = _YEAR_RANGE_RE.match(s)
+    if m:
+        y1 = max(1, min(int(m.group(1)), 9999))
+        y2 = max(1, min(int(m.group(2)), 9999))
+        e = date(y1, 1, 1)
+        l = date(y2, 12, 31)
+        return (e, l) if e <= l else (l, e)
+
+    # ISO single date
+    if _ISO_DATE_RE.match(s):
+        d = _parse_token(s, is_latest=False) or date(1900, 1, 1)
+        return d, d
+
+    # ISO range like "1850-01-02 - 1851-03-04" (spaces around dash)
+    parts = re.split(r"\s+[-–—]\s+", s)
+    if len(parts) >= 2:
+        e = _parse_token(parts[0], is_latest=False) or date(1900, 1, 1)
+        l = _parse_token(parts[1], is_latest=True) or e
+        return (e, l) if e <= l else (l, e)
+
+    # Legacy fallback: attempt to interpret the first 4 digits as a year
+    try:
+        y = int(s.strip()[:4])
+        y = max(1, min(y, 9999))
+        return date(y, 1, 1), date(y, 12, 31)
+    except Exception:
+        return date(1900, 1, 1), date(1900, 12, 31)
 
 from common.models import (
     PostalFacility,
@@ -1097,15 +1183,8 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
             created_by=user,
             modified_by=user,
         )
-        # Dates seen: parse "YYYY" or "YYYY-YYYY"
-        parts = re.split(r"[-–—]", date_range_str)
-        try:
-            y1 = int(parts[0].strip()[:4]) if parts else 1900
-            y2 = int(parts[1].strip()[:4]) if len(parts) > 1 else y1
-        except (ValueError, IndexError):
-            y1 = y2 = 1900
-        earliest = date(max(1, min(y1, 9999)), 1, 1)
-        latest = date(max(1, min(y2, 9999)), 12, 31)
+        # Dates seen: support year-only OR full YYYY-MM-DD (via first_seen/last_seen or date_range)
+        earliest, latest = _parse_dates_seen_from_payload(payload)
         PostmarkDatesSeen.objects.create(
             postmark=postmark,
             earliest_date_seen=earliest,
@@ -1328,16 +1407,9 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name, *, keep_pu
         )
         PostmarkColor.objects.create(postmark=postmark, color=color, created_by=user, modified_by=user)
 
-        # Replace dates seen
+        # Replace dates seen (support year-only OR full YYYY-MM-DD)
         PostmarkDatesSeen.objects.filter(postmark=postmark).delete()
-        parts = re.split(r"[-–—]", date_range_str)
-        try:
-            y1 = int(parts[0].strip()[:4]) if parts else 1900
-            y2 = int(parts[1].strip()[:4]) if len(parts) > 1 else y1
-        except (ValueError, IndexError):
-            y1 = y2 = 1900
-        earliest = date(max(1, min(y1, 9999)), 1, 1)
-        latest = date(max(1, min(y2, 9999)), 12, 31)
+        earliest, latest = _parse_dates_seen_from_payload(payload)
         PostmarkDatesSeen.objects.create(
             postmark=postmark,
             earliest_date_seen=earliest,
@@ -1596,9 +1668,10 @@ class ContributionView(APIView):
         last_seen = (data.get("lastSeen") or "").strip()
         type_val = (data.get("type") or "").strip()
         color = (data.get("color") or "").strip()
-        if not state or not town or not first_seen or not type_val or not color:
+        manuscript = (data.get("manuscript") or "").strip()
+        if not state or not town or not manuscript:
             return Response(
-                {"detail": "Missing required fields: state, town, firstSeen, type, color."},
+                {"detail": "Missing required fields: state, town, manuscript."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         user = request.user
@@ -1618,7 +1691,15 @@ class ContributionView(APIView):
                         {"detail": "You are not assigned to submit listings for this state."},
                         status=status.HTTP_403_FORBIDDEN,
                     )
-        date_range = f"{first_seen}-{last_seen}" if last_seen else first_seen
+        # Build a human-readable date_range string for submitted_data.
+        # If first/last are ISO dates (YYYY-MM-DD), use a delimiter with spaces to avoid ambiguity.
+        if first_seen and last_seen:
+            if _YEAR_RE.match(first_seen) and _YEAR_RE.match(last_seen):
+                date_range = f"{first_seen}-{last_seen}"
+            else:
+                date_range = f"{first_seen} - {last_seen}"
+        else:
+            date_range = first_seen or ""
         submitter_name = (data.get("submitterName") or "").strip()
         if user.is_authenticated:
             submitter_name = user.username or getattr(user, "email", "") or submitter_name
@@ -1638,9 +1719,12 @@ class ContributionView(APIView):
             "state": state,
             "town": town,
             "date_range": date_range,
+            # Preserve raw inputs so the catalog can store full dates when provided.
+            "first_seen": first_seen,
+            "last_seen": last_seen,
             "type": type_val,
             "color": color,
-            "manuscript": (data.get("manuscript") or "").strip(),
+            "manuscript": manuscript,
             "dimensions": (data.get("dimensions") or "").strip(),
             "width_mm": wm_in,
             "height_mm": hm_in,
@@ -1681,6 +1765,11 @@ class ContributionView(APIView):
                     payload["image_meta"] = image_metas[0]
                 else:
                     payload.pop("image_meta", None)
+        elif edit_postmark_id is None and edit_contribution_id is None:
+            return Response(
+                {"detail": "Missing required field: image."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # State editors (non-superuser): new listings always go to peer review; preserve proposed catalog fields on the ticket.
         if edit_postmark_id is None and edit_contribution_id is None:
