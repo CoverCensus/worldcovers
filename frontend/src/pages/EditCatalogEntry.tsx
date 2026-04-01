@@ -102,6 +102,17 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
   return result;
 }
 
+function isCircularType(raw: string) {
+  const s = (raw || "").toLowerCase();
+  return (
+    s.includes("circle") ||
+    s.includes("circular") ||
+    s.includes("cds") ||
+    s.includes("double circle") ||
+    s.includes("single circle")
+  );
+}
+
 const EditCatalogEntry = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -129,14 +140,19 @@ const EditCatalogEntry = () => {
   const [state, setState] = useState("");
   const [stateOther, setStateOther] = useState("");
   const [town, setTown] = useState("");
-  const [firstSeen, setFirstSeen] = useState("");
-  const [lastSeen, setLastSeen] = useState("");
+  // Observed date (UI): day/month/year or Unknown.
+  // Backend still accepts firstSeen/lastSeen year; we map year -> firstSeen and leave lastSeen blank.
+  const [observedDay, setObservedDay] = useState("");
+  const [observedMonth, setObservedMonth] = useState("");
+  const [observedYear, setObservedYear] = useState("");
+  const [observedUnknown, setObservedUnknown] = useState(false);
   const [type, setType] = useState("");
   const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
   const [colorOther, setColorOther] = useState("");
   const [widthMm, setWidthMm] = useState("");
   const [heightMm, setHeightMm] = useState("");
+  const [diameterMm, setDiameterMm] = useState("");
   const [manuscript, setManuscript] = useState("");
   const [rarity, setRarity] = useState("");
   const [description, setDescription] = useState("");
@@ -156,12 +172,13 @@ const EditCatalogEntry = () => {
   const [fieldErrors, setFieldErrors] = useState<{
     state?: string;
     town?: string;
-    firstSeen?: string;
-    lastSeen?: string;
+    observedDate?: string;
     type?: string;
     color?: string;
     widthMm?: string;
     heightMm?: string;
+    diameterMm?: string;
+    manuscript?: string;
     lettering?: string;
     framing?: string;
     dateFormat?: string;
@@ -218,6 +235,16 @@ const EditCatalogEntry = () => {
         setLetteringOptions(lettering);
         setFramingOptions(framing);
         setDateFormatOptions(dateFmt);
+
+        // Defaults: Lettering = Normal, Framing = None (only when empty).
+        if (!letteringId) {
+          const normal = lettering.find((o) => String(o.name || "").trim().toLowerCase() === "normal");
+          if (normal) setLetteringId(String(normal.id));
+        }
+        if (!framingId) {
+          const none = framing.find((o) => String(o.name || "").trim().toLowerCase() === "none");
+          if (none) setFramingId(String(none.id));
+        }
       })
       .catch(() => {
         setLetteringOptions([]);
@@ -225,7 +252,7 @@ const EditCatalogEntry = () => {
         setDateFormatOptions([]);
       })
       .finally(() => setCatalogOptionsLoading(false));
-  }, []);
+  }, [letteringId, framingId]);
 
   useEffect(() => {
     if (postmarkId == null || isNaN(postmarkId)) {
@@ -279,8 +306,11 @@ const EditCatalogEntry = () => {
         setExistingImageUrls(existingUrls);
         setState(data.state || "");
         setTown(sanitizeTown(data.town || ""));
-        setFirstSeen(datesSeen?.earliestDateSeen?.slice(0, 4) || "");
-        setLastSeen(datesSeen?.latestDateSeen?.slice(0, 4) || "");
+        const yearPrefill = datesSeen?.earliestDateSeen?.slice(0, 4) || datesSeen?.latestDateSeen?.slice(0, 4) || "";
+        setObservedDay("");
+        setObservedMonth("");
+        setObservedYear(yearPrefill);
+        setObservedUnknown(false);
         setType(data?.postmarkShape?.shapeName || "");
         setColor(data.colorsDisplay || "");
         setWidthMm(wh.width);
@@ -396,10 +426,19 @@ const EditCatalogEntry = () => {
   };
 
   const buildDateRange = () => {
-    const first = firstSeen.trim();
-    const last = lastSeen.trim();
-    if (!first) return "";
-    return last ? `${first}-${last}` : first;
+    const year = observedYear.trim();
+    if (observedUnknown) return "";
+    if (!year) return "";
+    return year;
+  };
+
+  const formatObservedDateLabel = () => {
+    if (observedUnknown) return "Unknown";
+    const y = observedYear.trim();
+    const m = observedMonth.trim();
+    const d = observedDay.trim();
+    const parts = [d, m, y].filter(Boolean);
+    return parts.length ? parts.join(" ") : "";
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -407,9 +446,9 @@ const EditCatalogEntry = () => {
 
     const stateVal = state === STATE_OTHER_VALUE ? stateOther.trim() : state.trim();
     const townVal = town.trim();
-    const firstVal = firstSeen.trim();
     const typeVal = type === TYPE_OTHER_VALUE ? typeOther.trim() : type.trim();
     const colorVal = color === COLOR_OTHER_VALUE ? colorOther.trim() : color.trim();
+    const isCircular = isCircularType(typeVal);
 
     const errors: typeof fieldErrors = {};
     if (!stateVal) {
@@ -418,41 +457,45 @@ const EditCatalogEntry = () => {
     if (!townVal) {
       errors.town = "Town/City is required";
     }
+    if (!manuscript.trim()) {
+      errors.manuscript = "Manuscript is required";
+    }
 
-    const firstSeenError = getYearError(firstSeen, { required: true, label: "First Seen Year" });
-    const lastSeenError = getYearError(lastSeen, { required: false, label: "Last Seen Year" });
-    if (firstSeenError) {
-      errors.firstSeen = firstSeenError;
+    // Date: Day / Month / Year OR Unknown (one of the four required)
+    if (!observedUnknown && !observedDay.trim() && !observedMonth.trim() && !observedYear.trim()) {
+      errors.observedDate = "Enter Day, Month, Year, or choose Unknown";
     }
-    if (lastSeenError) {
-      errors.lastSeen = lastSeenError;
+
+    // Validate year if provided (year is the only piece we send to backend for date_range)
+    const yearErr = getYearError(observedYear, { required: false, label: "Year" });
+    if (yearErr) {
+      errors.observedDate = yearErr;
     }
-    if (!typeVal) {
-      errors.type = "Postmark Type is required";
+
+    // Dimensions: if circular, use diameter; otherwise width/height pair.
+    if (isCircular) {
+      const d = diameterMm.trim();
+      if (d) {
+        const wErr = validateMmPair(d, d);
+        if (wErr.width) errors.diameterMm = wErr.width;
+        if (wErr.height) errors.diameterMm = wErr.height;
+      } else {
+        const mmErr = validateMmPair(widthMm, heightMm);
+        if (mmErr.width) errors.widthMm = mmErr.width;
+        if (mmErr.height) errors.heightMm = mmErr.height;
+      }
+    } else {
+      const mmErr = validateMmPair(widthMm, heightMm);
+      if (mmErr.width) errors.widthMm = mmErr.width;
+      if (mmErr.height) errors.heightMm = mmErr.height;
     }
-    if (!colorVal) {
-      errors.color = "Color is required";
-    }
-    if (!letteringId) errors.lettering = "Lettering style is required";
-    if (!framingId) errors.framing = "Framing style is required";
-    if (!dateFormatId) errors.dateFormat = "Date format is required";
-    const mmErr = validateMmPair(widthMm, heightMm);
-    if (mmErr.width) errors.widthMm = mmErr.width;
-    if (mmErr.height) errors.heightMm = mmErr.height;
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       return;
     }
 
     const dateRange = buildDateRange();
-    if (!dateRange) {
-      toast({
-        title: "Invalid date",
-        description: "Please enter at least First Seen Year.",
-        variant: "destructive",
-      });
-      return;
-    }
+    // dateRange may be empty when Unknown
 
     const apiBase = getApiBaseUrl();
     if (!apiBase) {
@@ -481,25 +524,41 @@ const EditCatalogEntry = () => {
       let body: string | FormData;
       let headers: Record<string, string> = {};
 
+      const firstSeenToSend = observedUnknown ? "" : observedYear.trim();
+      const lastSeenToSend = "";
+      const observedDateLabel = formatObservedDateLabel();
+      const derivedDimensions = (() => {
+        const d = diameterMm.trim();
+        const w = widthMm.trim();
+        const h = heightMm.trim();
+        if (isCircular && d) return `${d} mm diameter`;
+        if (w && h) return `${w}×${h} mm`;
+        return "";
+      })();
+      const descriptionToSend = (() => {
+        const base = description.trim();
+        if (observedDateLabel && (observedMonth.trim() || observedDay.trim()) && !base.toLowerCase().includes("date:")) {
+          return `Date: ${observedDateLabel}\n${base}`.trim();
+        }
+        return base;
+      })();
+
       if (imageFiles.length > 0) {
         const form = new FormData();
         form.append("editPostmarkId", String(postmarkId!));
         form.append("state", stateVal);
         form.append("town", townVal);
-        form.append("firstSeen", firstVal);
-        form.append("lastSeen", lastSeen.trim());
+        form.append("firstSeen", firstSeenToSend);
+        form.append("lastSeen", lastSeenToSend);
         form.append("type", typeVal);
         form.append("color", colorVal);
         form.append("lettering_style_id", letteringId);
         form.append("framing_style_id", framingId);
         form.append("date_format_id", dateFormatId);
-        if (widthMm.trim() && heightMm.trim()) {
-          form.append("width_mm", widthMm.trim());
-          form.append("height_mm", heightMm.trim());
-        }
+        if (derivedDimensions) form.append("dimensions", derivedDimensions);
         if (manuscript.trim()) form.append("manuscript", manuscript.trim());
         if (rarity.trim()) form.append("rarity", rarity.trim());
-        if (description.trim()) form.append("description", description.trim());
+        if (descriptionToSend) form.append("description", descriptionToSend);
         if (references.trim()) form.append("references", references.trim());
         if (!isStateEditor && contributorComment.trim()) {
           form.append("contributorComment", contributorComment.trim());
@@ -514,18 +573,17 @@ const EditCatalogEntry = () => {
           editPostmarkId: postmarkId!,
           state: stateVal,
           town: townVal,
-          firstSeen: firstVal,
-          lastSeen: lastSeen.trim(),
+          firstSeen: firstSeenToSend,
+          lastSeen: lastSeenToSend,
           type: typeVal,
           color: colorVal,
           lettering_style_id: letteringId ? Number(letteringId) : undefined,
           framing_style_id: framingId ? Number(framingId) : undefined,
           date_format_id: dateFormatId ? Number(dateFormatId) : undefined,
-          width_mm: widthMm.trim() || undefined,
-          height_mm: heightMm.trim() || undefined,
+          dimensions: derivedDimensions || undefined,
           manuscript: manuscript.trim() || undefined,
           rarity: rarity.trim() || undefined,
-          description: description.trim() || undefined,
+          description: descriptionToSend || undefined,
           references: references.trim() || undefined,
           ...(isStateEditor || !contributorComment.trim()
             ? {}
@@ -700,7 +758,7 @@ const EditCatalogEntry = () => {
 
                   <form onSubmit={handleSubmit} className="space-y-6" noValidate>
                     <div className="space-y-2">
-                      <Label htmlFor="edit-state">State <span className="text-destructive">*</span></Label>
+                      <Label htmlFor="edit-state">State</Label>
                       <SearchableSelect
                         id="edit-state"
                         value={state}
@@ -744,7 +802,7 @@ const EditCatalogEntry = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="edit-town">Town/City <span className="text-destructive">*</span></Label>
+                      <Label htmlFor="edit-town">Town/City</Label>
                       <Input
                         id="edit-town"
                         type="text"
@@ -776,53 +834,119 @@ const EditCatalogEntry = () => {
                       )}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-firstSeen">First Seen Year <span className="text-destructive">*</span></Label>
-                        <Input
-                          id="edit-firstSeen"
-                          type="text"
-                          inputMode="numeric"
-                          placeholder=""
-                          value={firstSeen}
-                          onChange={(e) => {
-                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                            setFirstSeen(v);
-                            const err = getYearError(v, { required: true, label: "First Seen Year" });
-                            setFieldErrors((prev) => ({ ...prev, firstSeen: err || undefined }));
-                          }}
-                          maxLength={5}
-                          className={fieldErrors.firstSeen ? "border-destructive" : ""}
-                        />
-                        {fieldErrors.firstSeen && (
-                          <p className="text-sm text-destructive">{fieldErrors.firstSeen}</p>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-lastSeen">Last Seen Year</Label>
-                        <Input
-                          id="edit-lastSeen"
-                          type="text"
-                          inputMode="numeric"
-                          placeholder=""
-                          value={lastSeen}
-                          onChange={(e) => {
-                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                            setLastSeen(v);
-                            const err = getYearError(v, { required: false, label: "Last Seen Year" });
-                            setFieldErrors((prev) => ({ ...prev, lastSeen: err || undefined }));
-                          }}
-                          maxLength={5}
-                          className={fieldErrors.lastSeen ? "border-destructive" : ""}
-                        />
-                        {fieldErrors.lastSeen && (
-                          <p className="text-sm text-destructive">{fieldErrors.lastSeen}</p>
-                        )}
-                      </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-manuscript">Manuscript</Label>
+                      <Select
+                        value={manuscript}
+                        onValueChange={(v) => {
+                          setManuscript(v);
+                          if (fieldErrors.manuscript) setFieldErrors((p) => ({ ...p, manuscript: undefined }));
+                        }}
+                      >
+                        <SelectTrigger
+                          id="edit-manuscript"
+                          className={fieldErrors.manuscript ? "border-destructive" : ""}
+                        >
+                          <SelectValue placeholder="Select Yes/No..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {MANUSCRIPT_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {fieldErrors.manuscript && <p className="text-sm text-destructive">{fieldErrors.manuscript}</p>}
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="edit-type">Postmark Type <span className="text-destructive">*</span></Label>
+                      <Label>Date</Label>
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                        <div className="space-y-1">
+                          <Label htmlFor="edit-observed-day" className="text-xs text-muted-foreground">
+                            Day
+                          </Label>
+                          <Input
+                            id="edit-observed-day"
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="DD"
+                            value={observedDay}
+                            onChange={(e) => {
+                              const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+                              setObservedDay(v);
+                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
+                            }}
+                            disabled={observedUnknown}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs text-muted-foreground">Month</Label>
+                          <Select
+                            value={observedMonth}
+                            onValueChange={(v) => {
+                              setObservedMonth(v);
+                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
+                            }}
+                            disabled={observedUnknown}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Month" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m) => (
+                                <SelectItem key={m} value={m}>
+                                  {m}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label htmlFor="edit-observed-year" className="text-xs text-muted-foreground">
+                            Year
+                          </Label>
+                          <Input
+                            id="edit-observed-year"
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="YYYY"
+                            value={observedYear}
+                            onChange={(e) => {
+                              const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                              setObservedYear(v);
+                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
+                            }}
+                            disabled={observedUnknown}
+                          />
+                        </div>
+                        <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
+                          <input
+                            type="checkbox"
+                            checked={observedUnknown}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setObservedUnknown(checked);
+                              if (checked) {
+                                setObservedDay("");
+                                setObservedMonth("");
+                                setObservedYear("");
+                              }
+                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
+                            }}
+                          />
+                          Unknown
+                        </label>
+                      </div>
+                      {fieldErrors.observedDate && <p className="text-sm text-destructive">{fieldErrors.observedDate}</p>}
+                      <p className="text-xs text-muted-foreground">
+                        Enter Day, Month, Year, or choose Unknown. If you only know the year, enter just the year.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-type">Postmark Type</Label>
                       <SearchableSelect
                         id="edit-type"
                         value={type}
@@ -861,7 +985,7 @@ const EditCatalogEntry = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="edit-color">Color <span className="text-destructive">*</span></Label>
+                      <Label htmlFor="edit-color">Color</Label>
                       <Select
                         value={color}
                         onValueChange={(value) => {
@@ -902,7 +1026,14 @@ const EditCatalogEntry = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label>Lettering style <span className="text-destructive">*</span></Label>
+                      <Label>
+                        <span
+                          className="cursor-help border-b border-dotted border-muted-foreground/40"
+                          title="Lettering style describes the shape/appearance of the letters used in the postmark text."
+                        >
+                          Lettering style
+                        </span>
+                      </Label>
                       <Select value={letteringId} onValueChange={(v) => { setLetteringId(v); setFieldErrors((prev) => ({ ...prev, lettering: undefined })); }} disabled={catalogOptionsLoading}>
                         <SelectTrigger className={fieldErrors.lettering ? "border-destructive" : ""}>
                           <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select lettering style"} />
@@ -916,7 +1047,14 @@ const EditCatalogEntry = () => {
                       {fieldErrors.lettering && <p className="text-sm text-destructive">{fieldErrors.lettering}</p>}
                     </div>
                     <div className="space-y-2">
-                      <Label>Framing style <span className="text-destructive">*</span></Label>
+                      <Label>
+                        <span
+                          className="cursor-help border-b border-dotted border-muted-foreground/40"
+                          title="Framing style describes lines/boxes/circles surrounding the postmark text."
+                        >
+                          Framing style
+                        </span>
+                      </Label>
                       <Select value={framingId} onValueChange={(v) => { setFramingId(v); setFieldErrors((prev) => ({ ...prev, framing: undefined })); }} disabled={catalogOptionsLoading}>
                         <SelectTrigger className={fieldErrors.framing ? "border-destructive" : ""}>
                           <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select framing style"} />
@@ -930,7 +1068,14 @@ const EditCatalogEntry = () => {
                       {fieldErrors.framing && <p className="text-sm text-destructive">{fieldErrors.framing}</p>}
                     </div>
                     <div className="space-y-2">
-                      <Label>Date format <span className="text-destructive">*</span></Label>
+                      <Label>
+                        <span
+                          className="cursor-help border-b border-dotted border-muted-foreground/40"
+                          title="Date format is how the date appears in the postmark (e.g. month/day order, abbreviations)."
+                        >
+                          Date format
+                        </span>
+                      </Label>
                       <Select value={dateFormatId} onValueChange={(v) => { setDateFormatId(v); setFieldErrors((prev) => ({ ...prev, dateFormat: undefined })); }} disabled={catalogOptionsLoading}>
                         <SelectTrigger className={fieldErrors.dateFormat ? "border-destructive" : ""}>
                           <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select date format"} />
@@ -944,77 +1089,90 @@ const EditCatalogEntry = () => {
                       {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {isCircularType((type === TYPE_OTHER_VALUE ? typeOther : type).trim()) ? (
                       <div className="space-y-2">
-                        <Label htmlFor="edit-width-mm">Width (mm)</Label>
+                        <Label htmlFor="edit-diameter-mm">Diameter (mm)</Label>
                         <Input
-                          id="edit-width-mm"
+                          id="edit-diameter-mm"
                           type="text"
                           inputMode="decimal"
                           placeholder="e.g. 34"
-                          value={widthMm}
+                          value={diameterMm}
                           onChange={(e) => {
-                            setWidthMm(sanitizeMmInput(e.target.value));
-                            if (fieldErrors.widthMm || fieldErrors.heightMm) {
-                              setFieldErrors((prev) => ({
-                                ...prev,
-                                widthMm: undefined,
-                                heightMm: undefined,
-                              }));
+                            setDiameterMm(sanitizeMmInput(e.target.value));
+                            if (fieldErrors.diameterMm) {
+                              setFieldErrors((prev) => ({ ...prev, diameterMm: undefined }));
                             }
                           }}
-                          className={fieldErrors.widthMm ? "border-destructive" : ""}
-                          aria-label="Width in millimetres"
+                          className={fieldErrors.diameterMm ? "border-destructive" : ""}
+                          aria-label="Diameter in millimetres"
                         />
-                        {fieldErrors.widthMm && (
-                          <p className="text-sm text-destructive">{fieldErrors.widthMm}</p>
+                        {fieldErrors.diameterMm && (
+                          <p className="text-sm text-destructive">{fieldErrors.diameterMm}</p>
                         )}
+                        <p className="text-xs text-muted-foreground -mt-1">
+                          Optional. For circular postmarks, enter the diameter.
+                        </p>
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-height-mm">Height (mm)</Label>
-                        <Input
-                          id="edit-height-mm"
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="e.g. 28"
-                          value={heightMm}
-                          onChange={(e) => {
-                            setHeightMm(sanitizeMmInput(e.target.value));
-                            if (fieldErrors.widthMm || fieldErrors.heightMm) {
-                              setFieldErrors((prev) => ({
-                                ...prev,
-                                widthMm: undefined,
-                                heightMm: undefined,
-                              }));
-                            }
-                          }}
-                          className={fieldErrors.heightMm ? "border-destructive" : ""}
-                          aria-label="Height in millimetres"
-                        />
-                        {fieldErrors.heightMm && (
-                          <p className="text-sm text-destructive">{fieldErrors.heightMm}</p>
-                        )}
-                      </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground -mt-2">
-                      Optional. If you enter one, enter both. Stored as width × height (mm) on the catalog.
-                    </p>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="edit-manuscript">Manuscript</Label>
-                      <Select value={manuscript} onValueChange={setManuscript}>
-                        <SelectTrigger id="edit-manuscript">
-                          <SelectValue placeholder="Select..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {MANUSCRIPT_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="edit-width-mm">Width (mm)</Label>
+                            <Input
+                              id="edit-width-mm"
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="e.g. 34"
+                              value={widthMm}
+                              onChange={(e) => {
+                                setWidthMm(sanitizeMmInput(e.target.value));
+                                if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                                  setFieldErrors((prev) => ({
+                                    ...prev,
+                                    widthMm: undefined,
+                                    heightMm: undefined,
+                                  }));
+                                }
+                              }}
+                              className={fieldErrors.widthMm ? "border-destructive" : ""}
+                              aria-label="Width in millimetres"
+                            />
+                            {fieldErrors.widthMm && (
+                              <p className="text-sm text-destructive">{fieldErrors.widthMm}</p>
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="edit-height-mm">Height (mm)</Label>
+                            <Input
+                              id="edit-height-mm"
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="e.g. 28"
+                              value={heightMm}
+                              onChange={(e) => {
+                                setHeightMm(sanitizeMmInput(e.target.value));
+                                if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                                  setFieldErrors((prev) => ({
+                                    ...prev,
+                                    widthMm: undefined,
+                                    heightMm: undefined,
+                                  }));
+                                }
+                              }}
+                              className={fieldErrors.heightMm ? "border-destructive" : ""}
+                              aria-label="Height in millimetres"
+                            />
+                            {fieldErrors.heightMm && (
+                              <p className="text-sm text-destructive">{fieldErrors.heightMm}</p>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground -mt-2">
+                          Optional. If you enter one, enter both. Stored as width × height (mm) on the catalog.
+                        </p>
+                      </>
+                    )}
 
                     <div className="space-y-2">
                       <Label htmlFor="edit-rarity">Rarity</Label>
@@ -1166,7 +1324,7 @@ const EditCatalogEntry = () => {
                   </form>
 
                   <p className="text-xs text-muted-foreground">
-                    <span className="text-destructive">*</span> Required: State, Town/City, First Seen Year, Postmark Type, Color, Lettering style, Framing style, Date format.
+                    Required: State, Town/City, and Manuscript (Yes/No). Date requires Day, Month, Year, or Unknown.
                   </p>
                 </CardContent>
               </Card>
