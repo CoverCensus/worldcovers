@@ -46,6 +46,7 @@ function framingField(record: PostmarkRecord): string {
 export type CatalogFieldValues = {
   town: string;
   state: string;
+  manuscript: string;
   postmarkTextLines: string[];
   postmarkTextSingle: string;
   /** Legacy “postmark type” / outline (API `type` or postmark_shape name). */
@@ -87,6 +88,7 @@ export function buildCatalogFieldValues(record: PostmarkRecord): CatalogFieldVal
   return {
     town: displayCatalogField(record.town),
     state: displayCatalogField(record.state),
+    manuscript: displayCatalogField(record.isManuscript ? "Yes" : "No"),
     postmarkTextLines: postmarkTextLines.length > 1 ? postmarkTextLines : [],
     postmarkTextSingle,
     type: displayCatalogField(record.listingType?.trim() || record.shapeName),

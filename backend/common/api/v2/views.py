@@ -1137,9 +1137,10 @@ class ContributionView(APIView):
         last_seen = (data.get("lastSeen") or "").strip()
         type_val = (data.get("type") or "").strip()
         color = (data.get("color") or "").strip()
-        if not state or not town or not first_seen or not type_val or not color:
+        manuscript = (data.get("manuscript") or "").strip()
+        if not state or not town or not manuscript:
             return Response(
-                {"detail": "Missing required fields: state, town, firstSeen, type, color."},
+                {"detail": "Missing required fields: state, town, manuscript."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         user = request.user
@@ -1169,7 +1170,7 @@ class ContributionView(APIView):
             "date_range": date_range,
             "type": type_val,
             "color": color,
-            "manuscript": (data.get("manuscript") or "").strip(),
+            "manuscript": manuscript,
             "dimensions": (data.get("dimensions") or "").strip(),
             "description": (data.get("description") or "").strip(),
             "references": (data.get("references") or "").strip(),
@@ -1183,6 +1184,11 @@ class ContributionView(APIView):
             image_meta = _save_contribution_image(image_file)
             if image_meta:
                 payload["image_meta"] = image_meta
+        elif edit_postmark_id is None and edit_contribution_id is None:
+            return Response(
+                {"detail": "Missing required field: image."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if edit_contribution_id is not None and edit_postmark_id is None:
             contrib = Contribution.objects.filter(

@@ -306,7 +306,7 @@ const RecordDetail = () => {
                 }
               >
                 <Pencil className="mr-2 h-4 w-4" />
-                Suggest
+                Submit Edit/Addition
               </Button>
             ) : null}
           </div>
@@ -314,9 +314,10 @@ const RecordDetail = () => {
           {/* Main Content */}
           <div className="grid items-start lg:grid-cols-2 gap-8 mb-8">
             {/* Image Carousel */}
-            <Card className="shadow-archival-lg">
-              <CardContent className="p-6">
-                <Carousel setApi={setApi} className="w-full">
+            <div className="space-y-6">
+              <Card className="shadow-archival-lg">
+                <CardContent className="p-6">
+                  <Carousel setApi={setApi} className="w-full">
                   <CarouselContent>
                     {record?.images?.length ? (
                       record.images.map((img: any, index) => (
@@ -385,8 +386,29 @@ const RecordDetail = () => {
                     Upload Image
                   </Button>
                 </div> */}
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+
+              {record.valuations?.some((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "") ? (
+                <Card className="shadow-archival-md">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">Valuations</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {record.valuations
+                      ?.filter((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "")
+                      .map((v, i) => (
+                        <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
+                          <p className="text-sm font-medium text-muted-foreground">Valuation</p>
+                          <p className="text-lg font-heading font-semibold text-primary">
+                            ${v.estimatedValue}
+                          </p>
+                        </div>
+                      ))}
+                  </CardContent>
+                </Card>
+              ) : null}
+            </div>
 
             {/* Metadata */}
             <div className="space-y-6">
@@ -458,6 +480,38 @@ const RecordDetail = () => {
                 </CardContent>
               </Card>
 
+              <Card className="shadow-archival-md">
+                <CardHeader>
+                  <CardTitle className="font-heading text-lg">Physical Characteristics</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <dl className="space-y-3 text-sm">
+                    {(() => {
+                      const displayValue = (v: string | undefined) => {
+                        const s = (v ?? "").trim();
+                        return s !== "" && s.toLowerCase() !== "unknown" ? s : "-";
+                      };
+                      return (
+                        <>
+                          <div className="flex gap-3">
+                            <dt className="font-medium text-muted-foreground min-w-[8rem]">Lettering style</dt>
+                            <dd className="text-foreground">{displayValue(record.letteringStyle)}</dd>
+                          </div>
+                          <div className="flex gap-3">
+                            <dt className="font-medium text-muted-foreground min-w-[8rem]">Framing style</dt>
+                            <dd className="text-foreground">{displayValue(record.framingStyle)}</dd>
+                          </div>
+                          <div className="flex gap-3">
+                            <dt className="font-medium text-muted-foreground min-w-[8rem]">Date format</dt>
+                            <dd className="text-foreground">{displayValue(record.dateFormat)}</dd>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </dl>
+                </CardContent>
+              </Card>
+
               {record.description?.trim() ? (
                 <Card className="shadow-archival-md">
                   <CardHeader>
@@ -496,61 +550,46 @@ const RecordDetail = () => {
           <Card className="shadow-archival-lg">
             <CardContent className="p-6">
               {(() => {
-                const hasValuations = !!record.valuations?.some((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "");
-                const tabCount = 1 + (hasValuations ? 1 : 0) + (record.citationReferences ? 1 : 0);
+                const hasThumbnails = (record.images?.length ?? 0) > 1;
+                const tabCount = (hasThumbnails ? 1 : 0) + (record.citationReferences ? 1 : 0);
+                if (tabCount === 0) {
+                  return (
+                    <div className="text-sm text-muted-foreground">
+                      No additional information available.
+                    </div>
+                  );
+                }
                 return (
-                  <Tabs defaultValue="physical">
+                  <Tabs defaultValue={hasThumbnails ? "thumbnails" : "citations"}>
                     <TabsList
                       className={`mt-1 w-full gap-1 rounded-md bg-muted p-1 flex flex-wrap justify-start h-auto sm:grid sm:h-10 grid-cols-${tabCount}`}
                       style={{ gridTemplateColumns: `repeat(${tabCount}, minmax(0, 1fr))` }}
                     >
-                      <TabsTrigger value="physical">Physical Characteristics</TabsTrigger>
-                      {hasValuations ? (
-                        <TabsTrigger value="valuations">Valuations</TabsTrigger>
-                      ) : null}
+                      {hasThumbnails ? <TabsTrigger value="thumbnails">Thumbnails</TabsTrigger> : null}
                       {record.citationReferences ? (
                         <TabsTrigger value="citations">Citations</TabsTrigger>
                       ) : null}
                     </TabsList>
-                    <TabsContent value="physical" className="mt-6">
-                      <dl className="space-y-3 text-sm">
-                        {(() => {
-                          const displayValue = (v: string | undefined) => {
-                            const s = (v ?? "").trim();
-                            return s !== "" && s.toLowerCase() !== "unknown" ? s : "-";
-                          };
-                          return (
-                            <>
-                              <div className="flex gap-3">
-                                <dt className="font-medium text-muted-foreground min-w-[8rem]">Lettering style</dt>
-                                <dd className="text-foreground">{displayValue(record.letteringStyle)}</dd>
-                              </div>
-                              <div className="flex gap-3">
-                                <dt className="font-medium text-muted-foreground min-w-[8rem]">Framing style</dt>
-                                <dd className="text-foreground">{displayValue(record.framingStyle)}</dd>
-                              </div>
-                              <div className="flex gap-3">
-                                <dt className="font-medium text-muted-foreground min-w-[8rem]">Date format</dt>
-                                <dd className="text-foreground">{displayValue(record.dateFormat)}</dd>
-                              </div>
-                            </>
-                          );
-                        })()}
-                      </dl>
-                    </TabsContent>
-                    {hasValuations ? (
-                      <TabsContent value="valuations" className="mt-6">
-                        <div className="space-y-4">
-                          {record.valuations
-                            ?.filter((v) => v.estimatedValue != null && String(v.estimatedValue).trim() !== "")
-                            .map((v, i) => (
-                              <div key={i} className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                                <p className="text-sm font-medium text-muted-foreground">Valuation</p>
-                                <p className="text-lg font-heading font-semibold text-primary">
-                                  ${v.estimatedValue}
-                                </p>
-                              </div>
-                            ))}
+                    {hasThumbnails ? (
+                      <TabsContent value="thumbnails" className="mt-6">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                          {record.images.map((img: any, index) => (
+                            <button
+                              key={index}
+                              type="button"
+                              onClick={() => api?.scrollTo(index)}
+                              className={`rounded border overflow-hidden bg-muted focus:outline-none focus:ring-2 focus:ring-primary/60 ${
+                                index === current ? "border-primary" : "border-border"
+                              }`}
+                              aria-label={`View image ${index + 1}`}
+                            >
+                              <img
+                                src={normalizeImageUrl(img.imageUrl) || imageNotAvailable}
+                                alt={`Thumbnail ${index + 1}`}
+                                className="w-full aspect-square object-contain"
+                              />
+                            </button>
+                          ))}
                         </div>
                       </TabsContent>
                     ) : null}

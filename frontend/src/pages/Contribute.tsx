@@ -112,8 +112,12 @@ const Contribute = () => {
   const [state, setState] = useState("");
 
   const [town, setTown] = useState("");
-  const [firstSeen, setFirstSeen] = useState("");
-  const [lastSeen, setLastSeen] = useState("");
+  // Observed date (UI): day/month/year or Unknown.
+  // Backend still accepts firstSeen/lastSeen year; we map year -> firstSeen and leave lastSeen blank.
+  const [observedDay, setObservedDay] = useState("");
+  const [observedMonth, setObservedMonth] = useState("");
+  const [observedYear, setObservedYear] = useState("");
+  const [observedUnknown, setObservedUnknown] = useState(false);
   const [type, setType] = useState("");
   const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
@@ -126,25 +130,28 @@ const Contribute = () => {
   const [references, setReferences] = useState("");
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const [diameterMm, setDiameterMm] = useState("");
   const [letteringId, setLetteringId] = useState("");
   const [framingId, setFramingId] = useState("");
   const [dateFormatId, setDateFormatId] = useState("");
   const [fieldErrors, setFieldErrors] = useState<{
     state?: string;
     town?: string;
-    firstSeen?: string;
+    observedDate?: string;
     type?: string;
     color?: string;
     widthMm?: string;
     heightMm?: string;
+    diameterMm?: string;
+    manuscript?: string;
+    images?: string;
     lettering?: string;
     framing?: string;
     dateFormat?: string;
     editorValue?: string;
     editorComment?: string;
   }>({});
-  const [firstSeenError, setFirstSeenError] = useState<string | null>(null);
-  const [lastSeenError, setLastSeenError] = useState<string | null>(null);
+  const [yearError, setYearError] = useState<string | null>(null);
 
   // Contributor: lettering, framing, date format (loaded for all)
   const [letteringOptions, setLetteringOptions] = useState<LetteringStyleOption[]>([]);
@@ -220,6 +227,18 @@ const Contribute = () => {
         setLetteringOptions(lettering);
         setFramingOptions(framing);
         setDateFormatOptions(dateFmt);
+
+        // Defaults (when creating a new submission): Lettering = Normal, Framing = None.
+        if (!editContributionId) {
+          if (!letteringId) {
+            const normal = lettering.find((o) => String(o.name || "").trim().toLowerCase() === "normal");
+            if (normal) setLetteringId(String(normal.id));
+          }
+          if (!framingId) {
+            const none = framing.find((o) => String(o.name || "").trim().toLowerCase() === "none");
+            if (none) setFramingId(String(none.id));
+          }
+        }
       })
       .catch(() => {
         setLetteringOptions([]);
@@ -227,7 +246,7 @@ const Contribute = () => {
         setDateFormatOptions([]);
       })
       .finally(() => setCatalogOptionsLoading(false));
-  }, []);
+  }, [editContributionId, letteringId, framingId]);
 
   // Load contribution for edit-and-resubmit (rejected / needs_revision)
   useEffect(() => {
@@ -267,8 +286,12 @@ const Contribute = () => {
         const colorVal = getStr(sd.color);
         setState(stateVal);
         setTown(townVal);
-        setFirstSeen(first);
-        setLastSeen(last);
+        // Existing submissions only store year ranges; map earliest year into the new Date UI.
+        // When range exists, we keep the earliest year as the observed year for editing.
+        setObservedDay("");
+        setObservedMonth("");
+        setObservedYear(first || last || "");
+        setObservedUnknown(false);
         setType(typeVal || "");
         setTypeOther("");
         setColor(colorVal || "");
@@ -375,6 +398,9 @@ const Contribute = () => {
       e.target.value = "";
       return;
     }
+    if (fieldErrors.images) {
+      setFieldErrors((prev) => ({ ...prev, images: undefined }));
+    }
     setImageFiles((prev) => [...prev, ...toAdd]);
     Promise.all(
       toAdd.map(
@@ -403,10 +429,30 @@ const Contribute = () => {
   };
 
   const buildDateRange = () => {
-    const first = firstSeen.trim();
-    const last = lastSeen.trim();
-    if (!first) return "";
-    return last ? `${first}-${last}` : first;
+    const year = observedYear.trim();
+    if (observedUnknown) return "";
+    if (!year) return "";
+    return year;
+  };
+
+  const formatObservedDateLabel = () => {
+    if (observedUnknown) return "Unknown";
+    const y = observedYear.trim();
+    const m = observedMonth.trim();
+    const d = observedDay.trim();
+    const parts = [d, m, y].filter(Boolean);
+    return parts.length ? parts.join(" ") : "";
+  };
+
+  const isCircularType = (raw: string) => {
+    const s = (raw || "").toLowerCase();
+    return (
+      s.includes("circle") ||
+      s.includes("circular") ||
+      s.includes("cds") ||
+      s.includes("double circle") ||
+      s.includes("single circle")
+    );
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -423,9 +469,9 @@ const Contribute = () => {
 
     const stateVal = state.trim();
     const townVal = town.trim();
-    const firstVal = firstSeen.trim();
     const typeVal = type === TYPE_OTHER_VALUE ? typeOther.trim() : type.trim();
     const colorVal = color === COLOR_OTHER_VALUE ? colorOther.trim() : color.trim();
+    const isCircular = isCircularType(typeVal);
 
     const errors: typeof fieldErrors = {};
     if (!stateVal) {
@@ -436,21 +482,36 @@ const Contribute = () => {
     } else if (/[0-9]/.test(townVal)) {
       errors.town = "Town/City must contain only letters and spaces";
     }
-    if (!firstVal) {
-      errors.firstSeen = "First Seen Year is required"
+    if (!manuscript.trim()) {
+      errors.manuscript = "Manuscript is required";
     }
-    if (!typeVal) {
-      errors.type = "Postmark Type is required";
+    if (!isEditMode && imageFiles.length === 0) {
+      errors.images = "At least one image is required";
     }
-    if (!colorVal) {
-      errors.color = "Color is required";
+
+    // Date: Day / Month / Year OR Unknown (one of the four required)
+    if (!observedUnknown && !observedDay.trim() && !observedMonth.trim() && !observedYear.trim()) {
+      errors.observedDate = "Enter Day, Month, Year, or choose Unknown";
     }
-    const mmErr = validateMmPair(widthMm, heightMm);
-    if (mmErr.width) errors.widthMm = mmErr.width;
-    if (mmErr.height) errors.heightMm = mmErr.height;
-    if (!letteringId) errors.lettering = "Lettering style is required";
-    if (!framingId) errors.framing = "Framing style is required";
-    if (!dateFormatId) errors.dateFormat = "Date format is required";
+
+    // Dimensions: if circular, use diameter; otherwise width/height pair.
+    if (isCircular) {
+      const d = diameterMm.trim();
+      if (d) {
+        const wErr = validateMmPair(d, d);
+        if (wErr.width) errors.diameterMm = wErr.width;
+        if (wErr.height) errors.diameterMm = wErr.height;
+      } else {
+        const mmErr = validateMmPair(widthMm, heightMm);
+        if (mmErr.width) errors.widthMm = mmErr.width;
+        if (mmErr.height) errors.heightMm = mmErr.height;
+      }
+    } else {
+      const mmErr = validateMmPair(widthMm, heightMm);
+      if (mmErr.width) errors.widthMm = mmErr.width;
+      if (mmErr.height) errors.heightMm = mmErr.height;
+    }
+
     if (isStateEditor) {
       if (editorValue.trim() === "" || Number.isNaN(parseFloat(editorValue)) || parseFloat(editorValue) < 0) {
         errors.editorValue = "Value is required when approving (adding to catalog) and must be a non-negative number";
@@ -462,31 +523,19 @@ const Contribute = () => {
       return;
     }
 
-    const firstRangeError = validateYearString(firstVal);
-    const lastRangeError = validateYearString(lastSeen.trim());
-    setFirstSeenError(firstRangeError);
-    setLastSeenError(lastRangeError);
-    if (firstRangeError || lastRangeError) {
+    // Validate year if provided (year is the only piece we send to backend for date_range)
+    const yearRangeError = validateYearString(observedYear.trim());
+    setYearError(yearRangeError);
+    if (yearRangeError) {
       toast({
         title: "Invalid year",
-        description:
-          firstRangeError ||
-          lastRangeError ||
-          "Please correct the First Seen and Last Seen years.",
+        description: yearRangeError,
         variant: "destructive",
       });
       return;
     }
 
-    const dateRange = buildDateRange();
-    if (!dateRange) {
-      toast({
-        title: "Invalid date",
-        description: "Please enter at least First Seen Year.",
-        variant: "destructive",
-      });
-      return;
-    }
+    const dateRange = buildDateRange(); // may be empty when Unknown
 
     const apiBase = getApiBaseUrl();
     if (!apiBase) {
@@ -515,6 +564,27 @@ const Contribute = () => {
       let body: string | FormData;
       let headers: Record<string, string> = {};
 
+      const firstSeenToSend = observedUnknown ? "" : observedYear.trim();
+      const lastSeenToSend = "";
+      const observedDateLabel = formatObservedDateLabel();
+      const derivedIsCircular = isCircularType(typeVal);
+      const derivedDimensions = (() => {
+        const d = diameterMm.trim();
+        const w = widthMm.trim();
+        const h = heightMm.trim();
+        if (derivedIsCircular && d) return `${d} mm diameter`;
+        if (w && h) return `${w}×${h} mm`;
+        return "";
+      })();
+      const descriptionToSend = (() => {
+        const base = description.trim();
+        // Preserve day/month details for reviewers even though backend stores year-only in date_range.
+        if (observedDateLabel && (observedMonth.trim() || observedDay.trim()) && !base.toLowerCase().includes("date:")) {
+          return `Date: ${observedDateLabel}\n${base}`.trim();
+        }
+        return base;
+      })();
+
       const derivedShapeId = isStateEditor && type && type !== TYPE_OTHER_VALUE
         ? typeOptions.find((t) => t.name === type)?.id
         : undefined;
@@ -531,17 +601,14 @@ const Contribute = () => {
         if (editContributionId != null) form.append("edit_contribution_id", String(editContributionId));
         form.append("state", stateVal);
         form.append("town", townVal);
-        form.append("firstSeen", firstVal);
-        form.append("lastSeen", lastSeen.trim());
+        form.append("firstSeen", firstSeenToSend);
+        form.append("lastSeen", lastSeenToSend);
         form.append("type", typeVal);
         form.append("color", colorVal);
-        if (widthMm.trim() && heightMm.trim()) {
-          form.append("width_mm", widthMm.trim());
-          form.append("height_mm", heightMm.trim());
-        }
+        if (derivedDimensions) form.append("dimensions", derivedDimensions);
         if (manuscript.trim()) form.append("manuscript", manuscript.trim());
         if (rarity.trim()) form.append("rarity", rarity.trim());
-        if (description.trim()) form.append("description", description.trim());
+        if (descriptionToSend) form.append("description", descriptionToSend);
         if (references.trim()) form.append("references", references.trim());
         if (submitterName) form.append("submitterName", submitterName);
         form.append("lettering_style_id", letteringId);
@@ -562,15 +629,14 @@ const Contribute = () => {
           ...(editContributionId != null ? { edit_contribution_id: editContributionId } : {}),
           state: stateVal,
           town: townVal,
-          firstSeen: firstVal,
-          lastSeen: lastSeen.trim(),
+          firstSeen: firstSeenToSend,
+          lastSeen: lastSeenToSend,
           type: typeVal,
           color: colorVal,
-          width_mm: widthMm.trim() || undefined,
-          height_mm: heightMm.trim() || undefined,
+          dimensions: derivedDimensions || undefined,
           manuscript: manuscript.trim() || undefined,
           rarity: rarity.trim() || undefined,
-          description: description.trim() || undefined,
+          description: descriptionToSend || undefined,
           references: references.trim() || undefined,
           submitterName: submitterName || undefined,
           lettering_style_id: letteringId ? Number(letteringId) : undefined,
@@ -624,14 +690,17 @@ const Contribute = () => {
 
       setState("");
       setTown("");
-      setFirstSeen("");
-      setLastSeen("");
+      setObservedDay("");
+      setObservedMonth("");
+      setObservedYear("");
+      setObservedUnknown(false);
       setType("");
       setTypeOther("");
       setColor("");
       setColorOther("");
       setWidthMm("");
       setHeightMm("");
+      setDiameterMm("");
       setManuscript("");
       setRarity("");
       setDescription("");
@@ -658,6 +727,8 @@ const Contribute = () => {
   };
 
   const isEditMode = editContributionId != null;
+  const effectiveTypeLabel = (type === TYPE_OTHER_VALUE ? typeOther : type).trim();
+  const showDiameter = isCircularType(effectiveTypeLabel);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -727,7 +798,7 @@ const Contribute = () => {
 
                   <form onSubmit={handleSubmit} className="space-y-6" noValidate>
                     <div className="space-y-2">
-                      <Label htmlFor="state">State <span className="text-destructive">*</span></Label>
+                      <Label htmlFor="state">State</Label>
                       <SearchableSelect
                         id="state"
                         value={state}
@@ -758,7 +829,7 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="town">Town/City <span className="text-destructive">*</span></Label>
+                      <Label htmlFor="town">Town/City</Label>
                       <Input
                         id="town"
                         type="text"
@@ -790,59 +861,124 @@ const Contribute = () => {
                       )}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="firstSeen">First Seen Year <span className="text-destructive">*</span></Label>
-                        <Input
-                          id="firstSeen"
-                          type="text"
-                          inputMode="numeric"
-                          placeholder=""
-                          value={firstSeen}
-                          onChange={(e) => {
-                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                            setFirstSeen(v);
-                            if (fieldErrors.firstSeen) {
-                              setFieldErrors((prev) => ({ ...prev, firstSeen: undefined }));
-                            }
-                            setFirstSeenError(validateYearString(v));
-                          }}
-                          maxLength={5}
-                          aria-label="First seen year (numbers only, up to 5 digits)"
-                          className={fieldErrors.firstSeen ? "border-destructive" : ""}
-                        />
-                        {fieldErrors.firstSeen && (
-                          <p className="text-sm text-destructive">{fieldErrors.firstSeen}</p>
-                        )}
-                        {firstSeenError && !fieldErrors.firstSeen && (
-                          <p className="text-sm text-destructive">{firstSeenError}</p>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="lastSeen">Last Seen Year</Label>
-                        <Input
-                          id="lastSeen"
-                          type="text"
-                          inputMode="numeric"
-                          placeholder=""
-                          value={lastSeen}
-                          onChange={(e) => {
-                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                            setLastSeen(v);
-                            setLastSeenError(validateYearString(v));
-                          }}
-                          maxLength={5}
-                          aria-label="Last seen year (numbers only, up to 5 digits)"
-
-                        />
-                        {lastSeenError && (
-                          <p className="text-sm text-destructive">{lastSeenError}</p>
-                        )}
-                      </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="manuscript">Manuscript</Label>
+                      <Select
+                        value={manuscript}
+                        onValueChange={(v) => {
+                          setManuscript(v);
+                          if (fieldErrors.manuscript) {
+                            setFieldErrors((prev) => ({ ...prev, manuscript: undefined }));
+                          }
+                        }}
+                      >
+                        <SelectTrigger id="manuscript" className={fieldErrors.manuscript ? "border-destructive" : ""}>
+                          <SelectValue placeholder="Select Yes/No..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {MANUSCRIPT_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {fieldErrors.manuscript && <p className="text-sm text-destructive">{fieldErrors.manuscript}</p>}
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="type">Postmark Type <span className="text-destructive">*</span></Label>
+                      <Label>Date</Label>
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                        <div className="space-y-1">
+                          <Label htmlFor="observed-day" className="text-xs text-muted-foreground">
+                            Day
+                          </Label>
+                          <Input
+                            id="observed-day"
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="DD"
+                            value={observedDay}
+                            onChange={(e) => {
+                              const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+                              setObservedDay(v);
+                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
+                            }}
+                            disabled={observedUnknown}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs text-muted-foreground">Month</Label>
+                          <Select
+                            value={observedMonth}
+                            onValueChange={(v) => {
+                              setObservedMonth(v);
+                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
+                            }}
+                            disabled={observedUnknown}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Month" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {[
+                                "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec",
+                              ].map((m) => (
+                                <SelectItem key={m} value={m}>
+                                  {m}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label htmlFor="observed-year" className="text-xs text-muted-foreground">
+                            Year
+                          </Label>
+                          <Input
+                            id="observed-year"
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="YYYY"
+                            value={observedYear}
+                            onChange={(e) => {
+                              const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                              setObservedYear(v);
+                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
+                              setYearError(validateYearString(v));
+                            }}
+                            disabled={observedUnknown}
+                            className={yearError ? "border-destructive" : ""}
+                          />
+                        </div>
+                        <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
+                          <input
+                            type="checkbox"
+                            checked={observedUnknown}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setObservedUnknown(checked);
+                              if (checked) {
+                                setObservedDay("");
+                                setObservedMonth("");
+                                setObservedYear("");
+                                setYearError(null);
+                              }
+                              if (fieldErrors.observedDate) setFieldErrors((p) => ({ ...p, observedDate: undefined }));
+                            }}
+                          />
+                          Unknown
+                        </label>
+                      </div>
+                      {fieldErrors.observedDate && <p className="text-sm text-destructive">{fieldErrors.observedDate}</p>}
+                      {yearError && !fieldErrors.observedDate && <p className="text-sm text-destructive">{yearError}</p>}
+                      <p className="text-xs text-muted-foreground">
+                        Enter Day, Month, Year, or choose Unknown. If you only know the year, enter just the year.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="type">Postmark Type</Label>
                       <SearchableSelect
                         id="type"
                         value={type}
@@ -881,7 +1017,7 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="color">Color <span className="text-destructive">*</span></Label>
+                      <Label htmlFor="color">Color</Label>
                       <Select
                         value={color}
                         onValueChange={(value) => {
@@ -924,7 +1060,14 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label>Lettering style <span className="text-destructive">*</span></Label>
+                      <Label>
+                        <span
+                          className="cursor-help border-b border-dotted border-muted-foreground/40"
+                          title="Lettering style describes the shape/appearance of the letters used in the postmark text."
+                        >
+                          Lettering style
+                        </span>
+                      </Label>
                       <Select value={letteringId} onValueChange={(v) => { setLetteringId(v); setFieldErrors((prev) => ({ ...prev, lettering: undefined })); }} disabled={catalogOptionsLoading}>
                         <SelectTrigger className={fieldErrors.lettering ? "border-destructive" : ""}>
                           <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select lettering style"} />
@@ -938,7 +1081,14 @@ const Contribute = () => {
                       {fieldErrors.lettering && <p className="text-sm text-destructive">{fieldErrors.lettering}</p>}
                     </div>
                     <div className="space-y-2">
-                      <Label>Framing style <span className="text-destructive">*</span></Label>
+                      <Label>
+                        <span
+                          className="cursor-help border-b border-dotted border-muted-foreground/40"
+                          title="Framing style describes lines/boxes/circles surrounding the postmark text."
+                        >
+                          Framing style
+                        </span>
+                      </Label>
                       <Select value={framingId} onValueChange={(v) => { setFramingId(v); setFieldErrors((prev) => ({ ...prev, framing: undefined })); }} disabled={catalogOptionsLoading}>
                         <SelectTrigger className={fieldErrors.framing ? "border-destructive" : ""}>
                           <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select framing style"} />
@@ -952,7 +1102,14 @@ const Contribute = () => {
                       {fieldErrors.framing && <p className="text-sm text-destructive">{fieldErrors.framing}</p>}
                     </div>
                     <div className="space-y-2">
-                      <Label>Date format <span className="text-destructive">*</span></Label>
+                      <Label>
+                        <span
+                          className="cursor-help border-b border-dotted border-muted-foreground/40"
+                          title="Date format is how the date appears in the postmark (e.g. month/day order, abbreviations)."
+                        >
+                          Date format
+                        </span>
+                      </Label>
                       <Select value={dateFormatId} onValueChange={(v) => { setDateFormatId(v); setFieldErrors((prev) => ({ ...prev, dateFormat: undefined })); }} disabled={catalogOptionsLoading}>
                         <SelectTrigger className={fieldErrors.dateFormat ? "border-destructive" : ""}>
                           <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select date format"} />
@@ -966,77 +1123,90 @@ const Contribute = () => {
                       {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {showDiameter ? (
                       <div className="space-y-2">
-                        <Label htmlFor="width-mm">Width (mm)</Label>
+                        <Label htmlFor="diameter-mm">Diameter (mm)</Label>
                         <Input
-                          id="width-mm"
+                          id="diameter-mm"
                           type="text"
                           inputMode="decimal"
                           placeholder="e.g. 34"
-                          value={widthMm}
+                          value={diameterMm}
                           onChange={(e) => {
-                            setWidthMm(sanitizeMmInput(e.target.value));
-                            if (fieldErrors.widthMm || fieldErrors.heightMm) {
-                              setFieldErrors((prev) => ({
-                                ...prev,
-                                widthMm: undefined,
-                                heightMm: undefined,
-                              }));
+                            setDiameterMm(sanitizeMmInput(e.target.value));
+                            if (fieldErrors.diameterMm) {
+                              setFieldErrors((prev) => ({ ...prev, diameterMm: undefined }));
                             }
                           }}
-                          className={fieldErrors.widthMm ? "border-destructive" : ""}
-                          aria-label="Width in millimetres"
+                          className={fieldErrors.diameterMm ? "border-destructive" : ""}
+                          aria-label="Diameter in millimetres"
                         />
-                        {fieldErrors.widthMm && (
-                          <p className="text-sm text-destructive">{fieldErrors.widthMm}</p>
+                        {fieldErrors.diameterMm && (
+                          <p className="text-sm text-destructive">{fieldErrors.diameterMm}</p>
                         )}
+                        <p className="text-xs text-muted-foreground -mt-1">
+                          Optional. For circular postmarks, enter the diameter.
+                        </p>
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="height-mm">Height (mm)</Label>
-                        <Input
-                          id="height-mm"
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="e.g. 28"
-                          value={heightMm}
-                          onChange={(e) => {
-                            setHeightMm(sanitizeMmInput(e.target.value));
-                            if (fieldErrors.widthMm || fieldErrors.heightMm) {
-                              setFieldErrors((prev) => ({
-                                ...prev,
-                                widthMm: undefined,
-                                heightMm: undefined,
-                              }));
-                            }
-                          }}
-                          className={fieldErrors.heightMm ? "border-destructive" : ""}
-                          aria-label="Height in millimetres"
-                        />
-                        {fieldErrors.heightMm && (
-                          <p className="text-sm text-destructive">{fieldErrors.heightMm}</p>
-                        )}
-                      </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground -mt-2">
-                      Optional. If you enter one, enter both. Stored on the catalog as width × height (mm).
-                    </p>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="manuscript">Manuscript</Label>
-                      <Select value={manuscript} onValueChange={setManuscript}>
-                        <SelectTrigger id="manuscript">
-                          <SelectValue placeholder="Select..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {MANUSCRIPT_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="width-mm">Width (mm)</Label>
+                            <Input
+                              id="width-mm"
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="e.g. 34"
+                              value={widthMm}
+                              onChange={(e) => {
+                                setWidthMm(sanitizeMmInput(e.target.value));
+                                if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                                  setFieldErrors((prev) => ({
+                                    ...prev,
+                                    widthMm: undefined,
+                                    heightMm: undefined,
+                                  }));
+                                }
+                              }}
+                              className={fieldErrors.widthMm ? "border-destructive" : ""}
+                              aria-label="Width in millimetres"
+                            />
+                            {fieldErrors.widthMm && (
+                              <p className="text-sm text-destructive">{fieldErrors.widthMm}</p>
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="height-mm">Height (mm)</Label>
+                            <Input
+                              id="height-mm"
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="e.g. 28"
+                              value={heightMm}
+                              onChange={(e) => {
+                                setHeightMm(sanitizeMmInput(e.target.value));
+                                if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                                  setFieldErrors((prev) => ({
+                                    ...prev,
+                                    widthMm: undefined,
+                                    heightMm: undefined,
+                                  }));
+                                }
+                              }}
+                              className={fieldErrors.heightMm ? "border-destructive" : ""}
+                              aria-label="Height in millimetres"
+                            />
+                            {fieldErrors.heightMm && (
+                              <p className="text-sm text-destructive">{fieldErrors.heightMm}</p>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground -mt-2">
+                          Optional. If you enter one, enter both. Stored on the catalog as width × height (mm).
+                        </p>
+                      </>
+                    )}
 
                     <div className="space-y-2">
                       <Label htmlFor="rarity">Rarity</Label>
@@ -1080,7 +1250,7 @@ const Contribute = () => {
                       <div className="border-t pt-6 mt-6 space-y-4">
                         <p className="text-sm text-muted-foreground">When approving (adding directly to the catalog), Value and Comment are required.</p>
                         <div className="space-y-2">
-                          <Label htmlFor="editor-value">Value (of this postmark) <span className="text-destructive">*</span></Label>
+                          <Label htmlFor="editor-value">Value (of this postmark)</Label>
                           <Input
                             id="editor-value"
                             type="number"
@@ -1094,7 +1264,7 @@ const Contribute = () => {
                           {fieldErrors.editorValue && <p className="text-sm text-destructive">{fieldErrors.editorValue}</p>}
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="editor-comment">Comment <span className="text-destructive">*</span></Label>
+                          <Label htmlFor="editor-comment">Comment</Label>
                           <Textarea
                             id="editor-comment"
                             placeholder="Add a comment for this catalog entry (required when adding to catalog)..."
@@ -1110,6 +1280,7 @@ const Contribute = () => {
 
                     <div className="space-y-2">
                       <Label>Upload Images</Label>
+                      {fieldErrors.images && <p className="text-sm text-destructive">{fieldErrors.images}</p>}
                       <input
                         ref={fileInputRef}
                         type="file"
@@ -1172,7 +1343,7 @@ const Contribute = () => {
                   </form>
 
                   <p className="text-xs text-muted-foreground">
-                    <span className="text-destructive">*</span> Required: State, Town/City, First Seen Year, Postmark Type, Color, Lettering style, Framing style, Date format. When approving (adding to catalog), editors must also add Value and Comment.
+                    Required: State, Town/City, Manuscript (Yes/No), and at least one image. Date requires Day, Month, Year, or Unknown. When approving (adding to catalog), editors must still add Value and Comment.
                   </p>
                 </CardContent>
               </Card>

@@ -19,6 +19,10 @@ export function CatalogRecordFields({ row }: { row: CatalogFieldValues }) {
         <span className="text-muted-foreground">State:</span>{" "}
         <span className="text-foreground break-words">{row.state}</span>
       </div>
+      <div className="min-w-0">
+        <span className="text-muted-foreground">Manuscript:</span>{" "}
+        <span className="text-foreground break-words">{row.manuscript}</span>
+      </div>
       <div className="min-w-0 sm:col-span-2">
         <span className="text-muted-foreground">Postmark Text:</span>{" "}
         {row.postmarkTextLines.length > 1 ? (
