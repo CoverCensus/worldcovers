@@ -3,7 +3,6 @@ import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Download, Upload, ArrowLeft, Loader2, Pencil, MessageSquare } from "lucide-react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -546,65 +545,15 @@ const RecordDetail = () => {
             </div>
           </div>
 
-          {/* Additional Information Tabs */}
-          <Card className="shadow-archival-lg">
-            <CardContent className="p-6">
-              {(() => {
-                const hasThumbnails = (record.images?.length ?? 0) > 1;
-                const tabCount = (hasThumbnails ? 1 : 0) + (record.citationReferences ? 1 : 0);
-                if (tabCount === 0) {
-                  return (
-                    <div className="text-sm text-muted-foreground">
-                      No additional information available.
-                    </div>
-                  );
-                }
-                return (
-                  <Tabs defaultValue={hasThumbnails ? "thumbnails" : "citations"}>
-                    <TabsList
-                      className={`mt-1 w-full gap-1 rounded-md bg-muted p-1 flex flex-wrap justify-start h-auto sm:grid sm:h-10 grid-cols-${tabCount}`}
-                      style={{ gridTemplateColumns: `repeat(${tabCount}, minmax(0, 1fr))` }}
-                    >
-                      {hasThumbnails ? <TabsTrigger value="thumbnails">Thumbnails</TabsTrigger> : null}
-                      {record.citationReferences ? (
-                        <TabsTrigger value="citations">Citations</TabsTrigger>
-                      ) : null}
-                    </TabsList>
-                    {hasThumbnails ? (
-                      <TabsContent value="thumbnails" className="mt-6">
-                        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                          {record.images.map((img: any, index) => (
-                            <button
-                              key={index}
-                              type="button"
-                              onClick={() => api?.scrollTo(index)}
-                              className={`rounded border overflow-hidden bg-muted focus:outline-none focus:ring-2 focus:ring-primary/60 ${
-                                index === current ? "border-primary" : "border-border"
-                              }`}
-                              aria-label={`View image ${index + 1}`}
-                            >
-                              <img
-                                src={normalizeImageUrl(img.imageUrl) || imageNotAvailable}
-                                alt={`Thumbnail ${index + 1}`}
-                                className="w-full aspect-square object-contain"
-                              />
-                            </button>
-                          ))}
-                        </div>
-                      </TabsContent>
-                    ) : null}
-                {record.citationReferences ? (
-                  <TabsContent value="citations" className="mt-6">
-                    <div className="space-y-3 text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
-                      {record.citationReferences}
-                    </div>
-                  </TabsContent>
-                ) : null}
-                  </Tabs>
-                );
-              })()}
-            </CardContent>
-          </Card>
+          {record.citationReferences ? (
+            <Card className="shadow-archival-lg">
+              <CardContent className="p-6">
+                <div className="space-y-3 text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
+                  {record.citationReferences}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
         </div>
       </div>
 
