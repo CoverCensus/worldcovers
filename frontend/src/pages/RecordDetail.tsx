@@ -9,7 +9,7 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { SubmitImageDialog } from "@/components/SubmitImageDialog";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
-import { getPostmarkById, normalizeImageUrl, formatPostmarkDimensionsDisplay } from "@/services/postmarks";
+import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
 
@@ -108,10 +108,8 @@ const RecordDetail = () => {
       valuationDate?: string;
       valuedBy?: { username?: string; firstName?: string; lastName?: string };
     }>;
-    /** Physical characteristics from the postmark (shape, lettering, framing, date format) */
     letteringStyle?: string;
     framingStyle?: string;
-    dateFormat?: string;
     /** From API source_catalog — used to decide if editor Comment is visible to logged-in users */
     sourceCatalog?: string;
     /** Parsed from other_characteristics `Comment:` (editor feedback at approval) */
@@ -134,25 +132,21 @@ const RecordDetail = () => {
       .then((data) => {
         if (cancelled) return;
         if (data) {
-          const datesSeen = data.datesSeen?.[0];
           const parsed = parseOtherCharacteristics(
             data.otherCharacteristics ?? data.other_characteristics,
           );
-          const locationLabel = [data.town, data.state].filter(Boolean).join(", ");
-          const shapeLabel =
-            data?.postmark_shape?.shape_name ?? data?.postmarkShape?.shapeName ?? "";
-          const letteringStyle =
-            data?.lettering_style?.lettering_style_name ?? data?.letteringStyle?.letteringStyleName ?? "";
-          const framingStyle =
-            data?.framing_style?.framing_style_name ?? data?.framingStyle?.framingStyleName ?? "";
-          const dateFormat =
-            data?.date_format?.format_name ?? data?.dateFormat?.formatName ?? "";
-          const displayParts = [locationLabel, shapeLabel].filter(
-            (x) => x && String(x).trim().toLowerCase() !== "unknown"
-          );
-          const displayName = displayParts.join(" — ") || data.postmarkKey;
+          const postmarkKey = data.postmark_key ?? data.postmarkKey ?? "";
+          const town = data.town ?? "";
+          const state = data.state ?? "";
+          const earliestUse = data.earliest_use ?? data.earliestUse ?? "";
+          const latestUse = data.latest_use ?? data.latestUse ?? "";
+          const earliestYear = earliestUse.slice(0, 4);
+          const townState = [town, state].filter(Boolean).join(",");
+          const suffix = earliestYear ? ` (${earliestYear})` : "";
+          const displayName = townState
+            ? `${postmarkKey} - ${townState}${suffix}`
+            : postmarkKey || "—";
           const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
-          // Rarity in Record Details is the label (Common/Scarce/Rare/Very Rare), not the dollar valuation
           const rarityLabel = (parsed.rarityLabel || "").trim();
           const images =
             data.images?.length
@@ -169,23 +163,20 @@ const RecordDetail = () => {
             data.source_catalog ?? data.sourceCatalog ?? "",
           ).trim();
           setRecord({
-            id: data.postmarkId,
+            id: data.postmark_id ?? data.postmarkId,
             name: displayName,
-            postmarkKey: data.postmarkKey,
-            state: data.state || "",
-            town: data.town || "",
-            dateFirstSeen: datesSeen?.earliestDateSeen ? String(datesSeen.earliestDateSeen).slice(0, 10) : "",
-            dateLastSeen: datesSeen?.latestDateSeen ? String(datesSeen.latestDateSeen).slice(0, 10) : "",
-            color: data.colorsDisplay || "",
-            type: shapeLabel || data?.postmarkShape?.shapeName || "",
-            dimensions: formatPostmarkDimensionsDisplay(data.sizes),
-            manuscript: data.is_manuscript ?? data.isManuscript ? "Yes" : "No",
-            letteringStyle: letteringStyle || undefined,
-            framingStyle: framingStyle || undefined,
-            dateFormat: dateFormat || undefined,
+            postmarkKey,
+            state,
+            town,
+            dateFirstSeen: earliestUse,
+            dateLastSeen: latestUse,
+            color: data.colors_display ?? data.colorsDisplay ?? "",
+            type: data.shape_name ?? data.shapeName ?? "",
+            dimensions: data.size_display ?? data.sizeDisplay ?? "",
+            manuscript: (data.is_manuscript ?? data.isManuscript) ? "Yes" : "No",
+            letteringStyle: data.lettering_style_name ?? data.letteringStyleName ?? "",
+            framingStyle: data.framing_style_name ?? data.framingStyleName ?? "",
             rarity: rarityLabel,
-            // Only show description text the contributor actually provided
-            // Do NOT fall back to raw otherCharacteristics (which may only contain submitter info)
             description: parsed.description || "",
             submitterName: parsed.submitterName || "",
             citationReferences: parsed.citationReferences || "",
@@ -473,15 +464,12 @@ const RecordDetail = () => {
                       const details = [
                         { label: "Town", value: record.town },
                         { label: "State", value: record.state },
-                        { label: "Postmark Text", value: record.postmarkKey },
-                        { label: "Type", value: record.type },
-                        // {
-                        //   label: "Shape / Lettering Style",
-                        //   value: `${displayValue(record.type)} / ${displayValue(record.letteringStyle)}`,
-                        // },
+                        { label: "Manuscript", value: record.manuscript },
+                        { label: "Shape", value: record.type },
+                        { label: "Lettering style", value: record.letteringStyle },
+                        { label: "Framing style", value: record.framingStyle },
                         { label: "Dimensions", value: record.dimensions },
                         { label: "Color", value: record.color },
-                        { label: "Dates Seen", value: datesSeen },
                         { label: "Earliest Use", value: firstSeen },
                         { label: "Latest Use", value: lastSeen },
                       ];
@@ -494,59 +482,6 @@ const RecordDetail = () => {
                           <dd className="text-foreground">{displayValue(value)}</dd>
                         </div>
                       ));
-                    })()}
-                  </dl>
-                </CardContent>
-              </Card>
-
-              <Card className="shadow-archival-md">
-                <CardHeader>
-                  <CardTitle className="font-heading text-lg">Physical Characteristics</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <dl className="space-y-3 text-sm">
-                    {(() => {
-                      const displayValue = (v: string | undefined) => {
-                        const s = (v ?? "").trim();
-                        return s !== "" && s.toLowerCase() !== "unknown" ? s : "-";
-                      };
-                      return (
-                        <>
-                          <div className="flex gap-3">
-                            <dt className="font-medium text-muted-foreground min-w-[8rem]">
-                              <span
-                                className="cursor-help border-b border-dotted border-muted-foreground/40"
-                                title="Lettering style describes the shape/appearance of the letters used in the postmark text (e.g. block, serif, script)."
-                              >
-                                Lettering style
-                              </span>
-                            </dt>
-                            <dd className="text-foreground">{displayValue(record.letteringStyle)}</dd>
-                          </div>
-                          <div className="flex gap-3">
-                            <dt className="font-medium text-muted-foreground min-w-[8rem]">
-                              <span
-                                className="cursor-help border-b border-dotted border-muted-foreground/40"
-                                title="Framing style describes any lines/boxes/circles surrounding the postmark text (e.g. single circle, double circle, boxed)."
-                              >
-                                Framing style
-                              </span>
-                            </dt>
-                            <dd className="text-foreground">{displayValue(record.framingStyle)}</dd>
-                          </div>
-                          <div className="flex gap-3">
-                            <dt className="font-medium text-muted-foreground min-w-[8rem]">
-                              <span
-                                className="cursor-help border-b border-dotted border-muted-foreground/40"
-                                title="Date format is how the date appears in the postmark (order and abbreviations), e.g. 'JAN 2', '2 JAN', '1-2', or '12/31'."
-                              >
-                                Date format
-                              </span>
-                            </dt>
-                            <dd className="text-foreground">{displayValue(record.dateFormat)}</dd>
-                          </div>
-                        </>
-                      );
                     })()}
                   </dl>
                 </CardContent>

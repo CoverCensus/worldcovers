@@ -2145,8 +2145,12 @@ def _postmark_list_queryset():
         'postal_facility_identity__postal_facility',
         'postmark_shape',
         'state',
+        'v2_data__lettering',
+        'v2_data__shape',
+        'v2_data__post_office__region',
+        'v2_data__color',
     ).prefetch_related(
-        'postmark_colors__color', 'dates_seen', 'valuations', 'images',
+        'postmark_colors__color', 'dates_seen', 'dates_observed', 'valuations', 'images',
         Prefetch('sizes', queryset=PostmarkSize.objects.order_by('-created_date')),
         Prefetch('postal_facility_identity__jurisdictions', queryset=current_jurisdictions),
         Prefetch('state__identities', queryset=current_identities),

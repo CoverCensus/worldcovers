@@ -487,16 +487,23 @@ class PostmarkImageSerializer(serializers.ModelSerializer):
 
 class PostmarkListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for postmark lists (search/catalog)"""
+    postmark_key = serializers.SerializerMethodField()
     facility_name = serializers.SerializerMethodField()
     shape_name = serializers.SerializerMethodField()
     main_image = serializers.SerializerMethodField()
     responsible_groups = serializers.SerializerMethodField()
     state = serializers.SerializerMethodField()
     town = serializers.SerializerMethodField()
-    date_range = serializers.SerializerMethodField()
     colors_display = serializers.SerializerMethodField()
     valuation_display = serializers.SerializerMethodField()
     size_display = serializers.SerializerMethodField()
+    is_manuscript = serializers.SerializerMethodField()
+    catalog_txt = serializers.SerializerMethodField()
+    inscription_txt = serializers.SerializerMethodField()
+    lettering_style_name = serializers.SerializerMethodField()
+    framing_style_name = serializers.SerializerMethodField()
+    earliest_use = serializers.SerializerMethodField()
+    latest_use = serializers.SerializerMethodField()
 
     class Meta:
         model = Postmark
@@ -513,113 +520,150 @@ class PostmarkListSerializer(serializers.ModelSerializer):
             'state',
             'state_id',
             'town',
-            'date_range',
             'size_display',
             'colors_display',
             'valuation_display',
             'contribution_approval_status',
             'created_date',
+            'catalog_txt',
+            'inscription_txt',
+            'lettering_style_name',
+            'framing_style_name',
+            'earliest_use',
+            'latest_use',
         ]
 
+    def _v2(self, obj):
+        """Get the PostmarkV2 row, or None."""
+        return getattr(obj, 'v2_data', None)
+
+    def get_postmark_key(self, obj):
+        """PostmarkV2.V2PostmarkKey"""
+        v2 = self._v2(obj)
+        return v2.postmark_key if v2 else ''
+
+    # -- Town / State: V2 post_office --
+
     def get_facility_name(self, obj):
-        if obj.postal_facility_identity_id:
-            return getattr(obj.postal_facility_identity, 'facility_name', None) or ''
-        return ''
+        """PostmarkV2.post_office_id → post_office.name"""
+        return self.get_town(obj)
+
+    def get_town(self, obj):
+        """PostmarkV2.post_office_id → post_office.name"""
+        v2 = self._v2(obj)
+        po = getattr(v2, 'post_office', None) if v2 else None
+        return getattr(po, 'name', '') or ''
+
+    def get_state(self, obj):
+        """PostmarkV2.post_office_id → post_office.region_id → Region.name"""
+        v2 = self._v2(obj)
+        po = getattr(v2, 'post_office', None) if v2 else None
+        if not po:
+            return ''
+        region = getattr(po, 'region', None)
+        return getattr(region, 'name', '') or ''
+
+    # -- Shape --
 
     def get_shape_name(self, obj):
-        if obj.postmark_shape_id:
-            return getattr(obj.postmark_shape, 'shape_name', None) or ''
-        return ''
+        """PostmarkV2.shape_id → common_shape.name"""
+        v2 = self._v2(obj)
+        shape = getattr(v2, 'shape', None) if v2 else None
+        return getattr(shape, 'name', '') or ''
+
+    # -- Manuscript, catalog text, inscription text: direct columns on PostmarkV2 --
+
+    def get_is_manuscript(self, obj):
+        """PostmarkV2.is_manuscript"""
+        v2 = self._v2(obj)
+        return v2.is_manuscript if v2 else False
+
+    def get_catalog_txt(self, obj):
+        """PostmarkV2.catalog_txt"""
+        v2 = self._v2(obj)
+        return v2.catalog_txt or '' if v2 else ''
+
+    def get_inscription_txt(self, obj):
+        """PostmarkV2.inscription_txt"""
+        v2 = self._v2(obj)
+        return v2.inscription_txt or '' if v2 else ''
+
+    # -- Lettering / Framing --
+
+    def get_lettering_style_name(self, obj):
+        """PostmarkV2.lettering_id → common_lettering.name"""
+        v2 = self._v2(obj)
+        lettering = getattr(v2, 'lettering', None) if v2 else None
+        return getattr(lettering, 'name', '') or ''
+
+    def get_framing_style_name(self, obj):
+        """mark_framing (parent_mark_type=POSTMARK, parent_mark_id=PK) → common_framing.name"""
+        framings = MarkFraming.objects.filter(
+            parent_mark_type='POSTMARK',
+            parent_mark_id=obj.postmark_id,
+        ).select_related('framing').order_by('framing_pos')
+        names = [mf.framing.name for mf in framings if mf.framing]
+        return ', '.join(names) if names else ''
+
+    # -- Dimensions: V2 width/height --
+
+    def get_size_display(self, obj):
+        """PostmarkV2.width / PostmarkV2.height"""
+        v2 = self._v2(obj)
+        if not v2:
+            return None
+        fmt = lambda v: f"{float(v):g}" if v else None
+        w = fmt(v2.width)
+        h = fmt(v2.height)
+        if w and h:
+            return f"{w}×{h}"
+        if w:
+            return w
+        if h:
+            return h
+        return None
+
+    # -- Color: V2 FK into Colors --
+
+    def get_colors_display(self, obj):
+        """PostmarkV2.color_id → Colors.color_name"""
+        v2 = self._v2(obj)
+        color = getattr(v2, 'color', None) if v2 else None
+        return getattr(color, 'color_name', '') or ''
+
+    # -- Dates: from date_observed (V2) --
+
+    def get_earliest_use(self, obj):
+        """min(date_observed.date) where postmark_id = PK"""
+        dates = list(obj.dates_observed.all())
+        if not dates:
+            return None
+        earliest = min((d.date for d in dates if d.date), default=None)
+        return earliest.isoformat() if earliest else None
+
+    def get_latest_use(self, obj):
+        """max(date_observed.date) where postmark_id = PK"""
+        dates = list(obj.dates_observed.all())
+        if not dates:
+            return None
+        latest = max((d.date for d in dates if d.date), default=None)
+        return latest.isoformat() if latest else None
+
+    # -- Image, groups, valuation: unchanged (no V2 equivalent) --
 
     def get_main_image(self, obj):
-        """Get main image (display_order=0)"""
+        """PostmarkImages where display_order=0"""
         main_img = obj.images.filter(display_order=0).first()
         if main_img:
             return PostmarkImageSerializer(main_img, context=self.context).data
         return None
 
     def get_responsible_groups(self, obj):
-        """Get groups responsible for this postmark"""
         groups = obj.get_responsible_groups()
         return [{'id': g.id, 'name': g.name} for g in groups]
 
-    def get_state(self, obj):
-        """State: direct FK (listing.state) if set, else from facility's current jurisdiction."""
-        if obj.state_id:
-            identity = obj.state.get_current_identity() if getattr(obj, 'state', None) else None
-            return identity.unit_name if identity else (obj.state.reference_code if getattr(obj, 'state', None) else None)
-        if not obj.postal_facility_identity_id:
-            return None
-        aff = obj.postal_facility_identity.jurisdictions.filter(
-            effective_to_date__isnull=True
-        ).select_related('administrative_unit').first()
-        if not aff or not aff.administrative_unit:
-            return None
-        identity = aff.administrative_unit.get_current_identity()
-        return identity.unit_name if identity else None
-
-    def get_town(self, obj):
-        """Town: facility name from identity."""
-        if obj.postal_facility_identity_id:
-            return getattr(obj.postal_facility_identity, 'facility_name', None) or ''
-        return ''
-
-    def get_size_display(self, obj):
-        """
-        Compact size string for catalog list, derived from the most recent
-        PostmarkSize entry when available.
-        """
-        sizes_qs = getattr(obj, "sizes", None)
-        if sizes_qs is None:
-            return None
-        sizes = list(sizes_qs.all())  # use prefetch cache; already ordered by -created_date
-        latest = sizes[0] if sizes else None
-        if not latest:
-            return None
-        width = latest.width
-        height = latest.height
-        # Prefer explicit width/height; fall back to notes if needed
-        if width and height:
-            return f"{width}×{height}"
-        if width:
-            return str(width)
-        if height:
-            return str(height)
-        return latest.size_notes or None
-
-    def get_date_range(self, obj):
-        """
-        Earliest–latest date seen as string.
-        - If stored as year-only bounds (Jan 1 / Dec 31), return legacy "YYYY" or "YYYY-YYYY"
-        - Otherwise return ISO "YYYY-MM-DD" or "YYYY-MM-DD - YYYY-MM-DD"
-        """
-        if not obj.dates_seen.exists():
-            return None
-        earliest = obj.dates_seen.order_by("earliest_date_seen").first()
-        latest = obj.dates_seen.order_by("-latest_date_seen").first()
-        if not earliest or not earliest.earliest_date_seen:
-            return None
-        e = earliest.earliest_date_seen
-        l = (latest.latest_date_seen if latest and latest.latest_date_seen else e)
-        if e.month == 1 and e.day == 1 and l.month == 12 and l.day == 31:
-            ey = str(e.year)
-            ly = str(l.year)
-            return ey if ey == ly else f"{ey}-{ly}"
-        e_str = e.isoformat()
-        l_str = l.isoformat()
-        return e_str if e_str == l_str else f"{e_str} - {l_str}"
-
-    def get_colors_display(self, obj):
-        """Comma-separated color names for this postmark. Uses prefetched postmark_colors__color."""
-        names = [
-            pc.color.color_name
-            for pc in obj.postmark_colors.all()
-            if getattr(pc, 'color', None)
-        ]
-        return ', '.join(names) if names else None
-
     def get_valuation_display(self, obj):
-        """Latest valuation as string (e.g. Common, or numeric)."""
+        """Latest PostmarkValuations.EstimatedValue"""
         val = obj.valuations.order_by('-valuation_date').first()
         if not val:
             return None
@@ -627,13 +671,13 @@ class PostmarkListSerializer(serializers.ModelSerializer):
 
 
 class PostmarkSerializer(serializers.ModelSerializer):
-    """Full postmark serializer with all nested data"""
+    """Full postmark serializer with all nested data — reads from PostmarkV2."""
     postal_facility_identity = PostalFacilityIdentitySerializer(read_only=True)
     postmark_shape = PostmarkShapeSerializer(read_only=True)
     lettering_style = LetteringStyleSerializer(read_only=True)
     framing_style = FramingStyleSerializer(read_only=True)
     date_format = DateFormatSerializer(read_only=True)
-    
+
     # Write-only foreign key IDs
     postal_facility_identity_id = serializers.PrimaryKeyRelatedField(
         queryset=PostalFacilityIdentity.objects.all(),
@@ -661,7 +705,7 @@ class PostmarkSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False
     )
-    
+
     # Nested related data
     colors = PostmarkColorSerializer(source='postmark_colors', many=True, read_only=True)
     dates_seen = PostmarkDatesSeenSerializer(many=True, read_only=True)
@@ -670,64 +714,127 @@ class PostmarkSerializer(serializers.ModelSerializer):
     v2_data = PostmarkV2Serializer(read_only=True)
     images = PostmarkImageSerializer(many=True, read_only=True)
     responsible_groups = serializers.SerializerMethodField()
+
+    # V2-sourced fields
+    postmark_key = serializers.SerializerMethodField()
     state = serializers.SerializerMethodField()
     town = serializers.SerializerMethodField()
-    date_range = serializers.SerializerMethodField()
+    shape_name = serializers.SerializerMethodField()
+    is_manuscript = serializers.SerializerMethodField()
+    catalog_txt = serializers.SerializerMethodField()
+    inscription_txt = serializers.SerializerMethodField()
+    lettering_style_name = serializers.SerializerMethodField()
+    framing_style_name = serializers.SerializerMethodField()
+    size_display = serializers.SerializerMethodField()
     colors_display = serializers.SerializerMethodField()
+    earliest_use = serializers.SerializerMethodField()
+    latest_use = serializers.SerializerMethodField()
     valuation_display = serializers.SerializerMethodField()
-    
+
     created_by = UserSerializer(read_only=True)
     modified_by = UserSerializer(read_only=True)
-    
+
     class Meta:
         model = Postmark
         fields = '__all__'
         read_only_fields = ['postmark_id', 'created_at', 'modified_at']
-    
-    def get_state(self, obj):
-        """State: direct FK (listing.state) if set, else from facility's current jurisdiction."""
-        if obj.state_id:
-            identity = obj.state.get_current_identity() if getattr(obj, 'state', None) else None
-            return identity.unit_name if identity else (obj.state.reference_code if getattr(obj, 'state', None) else None)
-        if not obj.postal_facility_identity_id:
-            return None
-        aff = obj.postal_facility_identity.jurisdictions.filter(
-            effective_to_date__isnull=True
-        ).select_related('administrative_unit').first()
-        if not aff or not aff.administrative_unit:
-            return None
-        identity = aff.administrative_unit.get_current_identity()
-        return identity.unit_name if identity else None
+
+    def _v2(self, obj):
+        return getattr(obj, 'v2_data', None)
+
+    def get_postmark_key(self, obj):
+        """PostmarkV2.V2PostmarkKey"""
+        v2 = self._v2(obj)
+        return v2.postmark_key if v2 else ''
 
     def get_town(self, obj):
-        if obj.postal_facility_identity_id:
-            return getattr(obj.postal_facility_identity, 'facility_name', None) or ''
-        return ''
+        """PostmarkV2.post_office_id → post_office.name"""
+        v2 = self._v2(obj)
+        po = getattr(v2, 'post_office', None) if v2 else None
+        return getattr(po, 'name', '') or ''
 
-    def get_date_range(self, obj):
-        if not obj.dates_seen.exists():
+    def get_state(self, obj):
+        """PostmarkV2.post_office_id → post_office.region_id → Region.name"""
+        v2 = self._v2(obj)
+        po = getattr(v2, 'post_office', None) if v2 else None
+        if not po:
+            return ''
+        region = getattr(po, 'region', None)
+        return getattr(region, 'name', '') or ''
+
+    def get_shape_name(self, obj):
+        """PostmarkV2.shape_id → common_shape.name"""
+        v2 = self._v2(obj)
+        shape = getattr(v2, 'shape', None) if v2 else None
+        return getattr(shape, 'name', '') or ''
+
+    def get_is_manuscript(self, obj):
+        """PostmarkV2.is_manuscript"""
+        v2 = self._v2(obj)
+        return v2.is_manuscript if v2 else False
+
+    def get_catalog_txt(self, obj):
+        """PostmarkV2.catalog_txt"""
+        v2 = self._v2(obj)
+        return v2.catalog_txt or '' if v2 else ''
+
+    def get_inscription_txt(self, obj):
+        """PostmarkV2.inscription_txt"""
+        v2 = self._v2(obj)
+        return v2.inscription_txt or '' if v2 else ''
+
+    def get_lettering_style_name(self, obj):
+        """PostmarkV2.lettering_id → common_lettering.name"""
+        v2 = self._v2(obj)
+        lettering = getattr(v2, 'lettering', None) if v2 else None
+        return getattr(lettering, 'name', '') or ''
+
+    def get_framing_style_name(self, obj):
+        """mark_framing (parent_mark_type=POSTMARK, parent_mark_id=PK) → common_framing.name"""
+        framings = MarkFraming.objects.filter(
+            parent_mark_type='POSTMARK',
+            parent_mark_id=obj.postmark_id,
+        ).select_related('framing').order_by('framing_pos')
+        names = [mf.framing.name for mf in framings if mf.framing]
+        return ', '.join(names) if names else ''
+
+    def get_size_display(self, obj):
+        """PostmarkV2.width / PostmarkV2.height"""
+        v2 = self._v2(obj)
+        if not v2:
             return None
-        earliest = obj.dates_seen.order_by("earliest_date_seen").first()
-        latest = obj.dates_seen.order_by("-latest_date_seen").first()
-        if not earliest or not earliest.earliest_date_seen:
-            return None
-        e = earliest.earliest_date_seen
-        l = (latest.latest_date_seen if latest and latest.latest_date_seen else e)
-        if e.month == 1 and e.day == 1 and l.month == 12 and l.day == 31:
-            ey = str(e.year)
-            ly = str(l.year)
-            return ey if ey == ly else f"{ey}-{ly}"
-        e_str = e.isoformat()
-        l_str = l.isoformat()
-        return e_str if e_str == l_str else f"{e_str} - {l_str}"
+        fmt = lambda v: f"{float(v):g}" if v else None
+        w = fmt(v2.width)
+        h = fmt(v2.height)
+        if w and h:
+            return f"{w}×{h}"
+        if w:
+            return w
+        if h:
+            return h
+        return None
 
     def get_colors_display(self, obj):
-        names = [
-            pc.color.color_name
-            for pc in obj.postmark_colors.select_related('color').all()
-            if getattr(pc, 'color', None)
-        ]
-        return ', '.join(names) if names else None
+        """PostmarkV2.color_id → Colors.color_name"""
+        v2 = self._v2(obj)
+        color = getattr(v2, 'color', None) if v2 else None
+        return getattr(color, 'color_name', '') or ''
+
+    def get_earliest_use(self, obj):
+        """min(date_observed.date) where postmark_id = PK"""
+        dates = list(obj.dates_observed.all())
+        if not dates:
+            return None
+        earliest = min((d.date for d in dates if d.date), default=None)
+        return earliest.isoformat() if earliest else None
+
+    def get_latest_use(self, obj):
+        """max(date_observed.date) where postmark_id = PK"""
+        dates = list(obj.dates_observed.all())
+        if not dates:
+            return None
+        latest = max((d.date for d in dates if d.date), default=None)
+        return latest.isoformat() if latest else None
 
     def get_valuation_display(self, obj):
         val = obj.valuations.order_by('-valuation_date').first()
@@ -736,7 +843,6 @@ class PostmarkSerializer(serializers.ModelSerializer):
         return str(val.estimated_value)
 
     def get_responsible_groups(self, obj):
-        """Get groups responsible for this postmark"""
         groups = obj.get_responsible_groups()
         return [{'id': g.id, 'name': g.name} for g in groups]
 

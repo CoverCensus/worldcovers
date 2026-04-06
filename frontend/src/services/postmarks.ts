@@ -308,14 +308,14 @@ export interface PostmarkApiResponse {
       (typeof ls === "object" && ls != null
         ? (ls as { lettering_style_name?: string }).lettering_style_name ??
           (ls as { letteringStyleName?: string }).letteringStyleName
-        : undefined) ?? "";
+        : undefined) ?? item.lettering_style_name ?? item.letteringStyleName ?? "";
 
     const fs = item.framing_style ?? item.framingStyle;
     const framingStyleName =
       (typeof fs === "object" && fs != null
         ? (fs as { framing_style_name?: string }).framing_style_name ??
           (fs as { framingStyleName?: string }).framingStyleName
-        : undefined) ?? "";
+        : undefined) ?? item.framing_style_name ?? item.framingStyleName ?? "";
 
     return {
       id,
