@@ -92,13 +92,28 @@ router.register(
     views.ColorViewSet,
     basename="color",
 )
+router.register(
+    r"postmark-shapes",
+    views.PostmarkShapeViewSet,
+    basename="postmark-shape",
+)
+router.register(
+    r"administrative-units",
+    views.AdministrativeUnitViewSet,
+    basename="administrative-unit",
+)
 
 # ========== POSTMARKS ==========
 
 router.register(
-    r"postmarks",
+    r"postmarks-v2",
     views.PostmarkV2ViewSet,
     basename="postmark-v2",
+)
+router.register(
+    r"postmarks",
+    views.PostmarkViewSet,
+    basename="postmark",
 )
 router.register(
     r"postmark-images",

@@ -518,7 +518,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
             'colors_display',
             'valuation_display',
             'contribution_approval_status',
-            'created_at',
+            'created_date',
         ]
 
     def get_facility_name(self, obj):
@@ -572,7 +572,8 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         sizes_qs = getattr(obj, "sizes", None)
         if sizes_qs is None:
             return None
-        latest = sizes_qs.order_by("-created_at").first()
+        sizes = list(sizes_qs.all())  # use prefetch cache; already ordered by -created_date
+        latest = sizes[0] if sizes else None
         if not latest:
             return None
         width = latest.width

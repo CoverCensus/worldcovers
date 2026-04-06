@@ -2147,7 +2147,7 @@ def _postmark_list_queryset():
         'state',
     ).prefetch_related(
         'postmark_colors__color', 'dates_seen', 'valuations', 'images',
-        Prefetch('sizes', queryset=PostmarkSize.objects.order_by('-created_at')),
+        Prefetch('sizes', queryset=PostmarkSize.objects.order_by('-created_date')),
         Prefetch('postal_facility_identity__jurisdictions', queryset=current_jurisdictions),
         Prefetch('state__identities', queryset=current_identities),
     )
@@ -2211,8 +2211,8 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     filterset_class = PostmarkListFilter
     # Search only by name (postmark_key); town, state, type, color have their own filters
     search_fields = ['postmark_key']
-    ordering_fields = ['postmark_key', 'created_at', 'rate_value']
-    ordering = ['-created_at']  # Newest first for catalog search list
+    ordering_fields = ['postmark_key', 'created_date', 'rate_value']
+    ordering = ['-created_date']  # Newest first for catalog search list
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -2243,7 +2243,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
             | Q(
                 postal_facility_identity__jurisdictions__administrative_unit__in=assigned_units
             )
-        ).distinct().order_by('-created_at')
+        ).distinct().order_by('-created_date')
         page = self.paginate_queryset(qs)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
@@ -2284,7 +2284,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         if needles:
             qs = qs.filter(needle_q)
 
-        qs = qs.distinct().order_by('-created_at')
+        qs = qs.distinct().order_by('-created_date')
 
         # Apply standard filters (state, town, color, etc.) and ordering if query params are present
         qs = self.filter_queryset(qs)

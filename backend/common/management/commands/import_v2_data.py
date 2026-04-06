@@ -1,25 +1,18 @@
 """
-Import WorldCovers V2 catalog data from `docs/data/v2_*.csv`.
+Import WorldCovers V2 catalog data from `docs/data/*.csv`.
 
-Prerequisites
--------------
-Run **after** legacy catalog data exists so rows in `v2_postmarks.csv` can match
-existing listings:
-
-  Postmark.raw_state_data_id == v2_postmarks.postmark_id
-
-Typical order: `migrate` → `import_reference_csv` / `import_ascc` (or
-`import_all_legacy_csv`) → optional `backfill_listing_states` → `import_v2_data`.
-States on `Postmark` are not required for the import to run, but `PostmarkV2`
-copies `postmark.state` for denormalized API use — backfill states before v2 if
-you need them populated.
+This is the primary import command and works on a fresh database — no prior
+legacy import is required. When a `postmarks.csv` row has no existing
+`Postmark` record the default `--missing-postmark-strategy=create` will create
+a stub `Postmark` (DRAFT visibility, type-default values for required legacy
+fields) that gets fully enriched in the same pass.
 
 What this command does (order)
 ------------------------------
 1. **Lookups**: Color, Shape, Lettering, Framing, placeholder Region, PostOffice
-   from the v2_* lookup CSVs.
+   from the * lookup CSVs.
 2. **Core objects**: Cover, Ratemark (from their CSVs).
-3. **Postmark rows** (for each matching `v2_postmarks` line):
+3. **Postmark rows** (for each matching `postmarks` line):
    - Updates additive v2 fields on `Postmark` (catalog/inscription text, shape,
      lettering, color, dimensions, impression, date_type/date_fmt, post_office,
      etc.) and merges the raw CSV row under `raw_import_payload["v2"]`.
@@ -36,9 +29,9 @@ What this command does (order)
 
 Notes / limitations (current CSV exports)
 -----------------------------------------
-  - `v2_post_offices.csv`: `region_id` is blank → all offices use placeholder
+  - `post_offices.csv`: `region_id` is blank → all offices use placeholder
     `Region("UNKNOWN")`.
-  - `v2_postmark_valuation.csv`: empty `appraisal_date` → valuations skipped
+  - `postmark_valuation.csv`: empty `appraisal_date` → valuations skipped
     (logged).
 """
 
@@ -60,6 +53,9 @@ from common.models import (
     PostOffice,
     Cover,
     Postmark,
+    PostmarkShape,
+    LetteringStyle,
+    FramingStyle,
     PostmarkV2,
     Ratemark,
     Auxmark,
@@ -124,7 +120,7 @@ def read_csv_dicts(path):
 
 class Command(BaseCommand):
     help = (
-        "Import v2_*.csv: lookups, Cover/Ratemark, update Postmark + PostmarkV2 per v2_postmarks row, "
+        "Import *.csv: lookups, Cover/Ratemark, update Postmark + PostmarkV2 per postmarks row, "
         "then auxmarks, relations, valuations. Requires Postmark.raw_state_data_id == v2 postmark_id."
     )
 
@@ -132,8 +128,8 @@ class Command(BaseCommand):
         parser.add_argument(
             "--dir",
             "-d",
-            default="docs/data",
-            help="Directory containing v2_*.csv exports (default: docs/data)",
+            default="tools/wip/out",
+            help="Directory containing csv exports (default: tools/wip/out)",
         )
         parser.add_argument(
             "--user",
@@ -143,9 +139,15 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--missing-postmark-strategy",
-            choices=["skip", "error"],
-            default="skip",
-            help="What to do when v2_postmarks references a Postmark not found by raw_state_data_id",
+            choices=["skip", "error", "create"],
+            default="create",
+            help=(
+                "What to do when a postmarks.csv row has no existing Postmark "
+                "(matched by raw_state_data_id):\n"
+                "  create — create a stub Postmark using type defaults (default)\n"
+                "  skip   — silently skip the row\n"
+                "  error  — abort with ValueError"
+            ),
         )
 
     def _get_user(self, username):
@@ -180,40 +182,40 @@ class Command(BaseCommand):
             return os.path.join(import_dir, name)
 
         required_csvs = [
-            "v2_colors.csv",
-            "v2_shapes.csv",
-            "v2_letterings.csv",
-            "v2_framings.csv",
-            "v2_post_offices.csv",
-            "v2_covers.csv",
-            "v2_ratemarks.csv",
-            "v2_auxmarks.csv",
-            "v2_postmarks.csv",
-            "v2_date_observed.csv",
-            "v2_postmark_ratemark.csv",
-            "v2_cover_postmark.csv",
-            "v2_mark_framing.csv",
-            "v2_postmark_valuation.csv",
+            "colors.csv",
+            "shapes.csv",
+            "letterings.csv",
+            "framings.csv",
+            "post_offices.csv",
+            "covers.csv",
+            "ratemarks.csv",
+            "auxmarks.csv",
+            "postmarks.csv",
+            "date_observed.csv",
+            "postmark_ratemark.csv",
+            "cover_postmark.csv",
+            "mark_framing.csv",
+            "postmark_valuation.csv",
         ]
         for filename in required_csvs:
             if not os.path.isfile(p(filename)):
                 self.stderr.write(self.style.ERROR(f"Missing required CSV: {filename}"))
                 return
 
-        colors_rows = read_csv_dicts(p("v2_colors.csv"))
-        shapes_rows = read_csv_dicts(p("v2_shapes.csv"))
-        letterings_rows = read_csv_dicts(p("v2_letterings.csv"))
-        framings_rows = read_csv_dicts(p("v2_framings.csv"))
-        post_offices_rows = read_csv_dicts(p("v2_post_offices.csv"))
-        covers_rows = read_csv_dicts(p("v2_covers.csv"))
-        ratemarks_rows = read_csv_dicts(p("v2_ratemarks.csv"))
-        auxmarks_rows = read_csv_dicts(p("v2_auxmarks.csv"))
-        postmarks_rows = read_csv_dicts(p("v2_postmarks.csv"))
-        date_observed_rows = read_csv_dicts(p("v2_date_observed.csv"))
-        postmark_ratemark_rows = read_csv_dicts(p("v2_postmark_ratemark.csv"))
-        cover_postmark_rows = read_csv_dicts(p("v2_cover_postmark.csv"))
-        mark_framing_rows = read_csv_dicts(p("v2_mark_framing.csv"))
-        postmark_valuation_rows = read_csv_dicts(p("v2_postmark_valuation.csv"))
+        colors_rows = read_csv_dicts(p("colors.csv"))
+        shapes_rows = read_csv_dicts(p("shapes.csv"))
+        letterings_rows = read_csv_dicts(p("letterings.csv"))
+        framings_rows = read_csv_dicts(p("framings.csv"))
+        post_offices_rows = read_csv_dicts(p("post_offices.csv"))
+        covers_rows = read_csv_dicts(p("covers.csv"))
+        ratemarks_rows = read_csv_dicts(p("ratemarks.csv"))
+        auxmarks_rows = read_csv_dicts(p("auxmarks.csv"))
+        postmarks_rows = read_csv_dicts(p("postmarks.csv"))
+        date_observed_rows = read_csv_dicts(p("date_observed.csv"))
+        postmark_ratemark_rows = read_csv_dicts(p("postmark_ratemark.csv"))
+        cover_postmark_rows = read_csv_dicts(p("cover_postmark.csv"))
+        mark_framing_rows = read_csv_dicts(p("mark_framing.csv"))
+        postmark_valuation_rows = read_csv_dicts(p("postmark_valuation.csv"))
 
         self.stdout.write(f"Using user: {user.username} (id={user.pk})")
 
@@ -245,7 +247,7 @@ class Command(BaseCommand):
             name = _s(row.get("name"))
             if sid is None or not name:
                 continue
-            # DB schema expects `Shape.code` to be non-null; v2_shapes.csv does not provide it.
+            # DB schema expects `Shape.code` to be non-null; shapes.csv does not provide it.
             # Derive a stable editor-style code from the name (unique because `name` is unique).
             derived_code = "".join(name.split())[:30].upper() or name[:30]
             obj, _ = Shape.objects.get_or_create(
@@ -293,7 +295,7 @@ class Command(BaseCommand):
                 obj.save(update_fields=["code", "modified_by"])
             framing_map[fid] = obj
 
-        # v2_post_offices.csv has region_id but it's blank for all rows.
+        # post_offices.csv has region_id but it's blank for all rows.
         unknown_region, _ = Region.objects.get_or_create(
             name="UNKNOWN",
             abbrev="UNK",
@@ -393,7 +395,7 @@ class Command(BaseCommand):
             if is_manuscript is None:
                 is_manuscript = False
 
-            # v2_postmark data uses shape/lettering/impression/is_irregular only when not a manuscript.
+            # postmark data uses shape/lettering/impression/is_irregular only when not a manuscript.
             shape_id = parse_int(row.get("shape_id"))
             lettering_id = parse_int(row.get("lettering_id"))
             shape_obj = shape_map.get(shape_id) if (not is_manuscript and shape_id is not None) else None
@@ -441,6 +443,51 @@ class Command(BaseCommand):
         postmarks = Postmark.objects.filter(raw_state_data_id__in=postmark_ids)
         postmark_by_raw_id = {p.raw_state_data_id: p for p in postmarks}
 
+        missing_ids = postmark_ids - set(postmark_by_raw_id.keys())
+
+        if missing_ids and missing_postmark_strategy == "create":
+            # Get or create pk=1 entries for required legacy lookup FKs.
+            # Nullable fields are left null.
+            def _get_or_create_pk1(Model, **name_field):
+                obj = Model.objects.filter(pk=1).first()
+                if obj is None:
+                    obj = Model.objects.get_or_create(
+                        **name_field,
+                        defaults={"created_by": user, "modified_by": user},
+                    )[0]
+                return obj
+
+            stub_shape = _get_or_create_pk1(PostmarkShape, shape_name="Unspecified")
+            stub_lettering = _get_or_create_pk1(LetteringStyle, lettering_style_name="Unspecified")
+            stub_framing = _get_or_create_pk1(FramingStyle, framing_style_name="Unspecified")
+            stub_date_format = _get_or_create_pk1(DateFormat, format_name="Unspecified")
+
+            created_stubs = 0
+            for mid in missing_ids:
+                stub, created = Postmark.objects.get_or_create(
+                    raw_state_data_id=mid,
+                    defaults={
+                        "postmark_key": f"V2-{mid}",
+                        "postmark_shape": stub_shape,
+                        "lettering_style": stub_lettering,
+                        "framing_style": stub_framing,
+                        "date_format": stub_date_format,
+                        "rate_location": "NONE",
+                        "rate_value": "",
+                        "visibility": "DRAFT",
+                        "source_catalog": "",
+                        "created_by": user,
+                        "modified_by": user,
+                    },
+                )
+                postmark_by_raw_id[mid] = stub
+                if created:
+                    created_stubs += 1
+            self.stdout.write(
+                f"Stub Postmarks created: {created_stubs} "
+                f"(already existed: {len(missing_ids) - created_stubs})"
+            )
+
         missing_postmarks = 0
         updated_postmarks = 0
 
@@ -448,7 +495,7 @@ class Command(BaseCommand):
         postmark_date_fmt_allowed = {v for v, _ in Postmark.DATE_FMT_CHOICES}
         postmark_date_type_allowed = {v for v, _ in Postmark.DATE_TYPE_CHOICES}
         postmark_impression_allowed = {v for v, _ in Postmark.IMPRESSION_CHOICES}
-        v2_date_format_cache = {}
+        date_format_cache = {}
 
         for row in postmarks_rows:
             postmark_id = parse_int(row.get("postmark_id"))
@@ -502,20 +549,20 @@ class Command(BaseCommand):
 
             post_office_id = parse_int(row.get("post_office_id"))
             postmark.post_office = post_office_map.get(post_office_id) if post_office_id is not None else None
-            v2_date_format_name = _s(row.get("date_format"))
-            v2_date_format_obj = None
-            if v2_date_format_name:
-                v2_date_format_obj = v2_date_format_cache.get(v2_date_format_name)
-                if v2_date_format_obj is None:
-                    v2_date_format_obj, _ = DateFormat.objects.get_or_create(
-                        format_name=v2_date_format_name,
+            date_format_name = _s(row.get("date_format"))
+            date_format_obj = None
+            if date_format_name:
+                date_format_obj = date_format_cache.get(date_format_name)
+                if date_format_obj is None:
+                    date_format_obj, _ = DateFormat.objects.get_or_create(
+                        format_name=date_format_name,
                         defaults={
                             "format_description": "",
                             "created_by": user,
                             "modified_by": user,
                         },
                     )
-                    v2_date_format_cache[v2_date_format_name] = v2_date_format_obj
+                    date_format_cache[date_format_name] = date_format_obj
 
             # Keep v2-specific payload for debugging/audit without touching legacy payload content.
             payload = postmark.raw_import_payload or {}
@@ -578,7 +625,7 @@ class Command(BaseCommand):
                     "height": postmark.height,
                     "date_type": postmark.date_type,
                     "date_fmt": postmark.date_fmt,
-                    "date_format": v2_date_format_obj,
+                    "date_format": date_format_obj,
                     "created_by": user,
                     "modified_by": user,
                 },
@@ -586,9 +633,13 @@ class Command(BaseCommand):
             updated_postmarks += 1
 
         postmark_pk_map = {rid: postmark_by_raw_id[rid].pk for rid in postmark_by_raw_id.keys()}
-        self.stdout.write(
-            f"Postmarks updated: {updated_postmarks} (missing by raw_state_data_id: {missing_postmarks})"
-        )
+        if missing_postmarks > 0:
+            self.stderr.write(self.style.WARNING(
+                f"{missing_postmarks} postmarks.csv row(s) skipped — no matching Postmark "
+                f"(raw_state_data_id not found). Re-run with --missing-postmark-strategy=create "
+                f"to auto-create stubs, or =error to abort."
+            ))
+        self.stdout.write(f"Postmarks updated: {updated_postmarks} (skipped: {missing_postmarks})")
 
         # -------------------------
         # Import Auxmarks
@@ -791,7 +842,7 @@ class Command(BaseCommand):
         # -------------------------
         has_any_valuation_date = any(_s(r.get("appraisal_date")) for r in postmark_valuation_rows)
         if not has_any_valuation_date:
-            self.stdout.write("Skipping PostmarkValuation import: `appraisal_date` is empty in v2_postmark_valuation.csv.")
+            self.stdout.write("Skipping PostmarkValuation import: `appraisal_date` is empty in postmark_valuation.csv.")
         else:
             # Best-effort: parse what we can.
             valuation_created = 0

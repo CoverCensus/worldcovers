@@ -6,15 +6,11 @@
 
 import { supabase } from "@/integrations/supabase/client";
 
-/** One item from GET /postmark-shapes/ */
+/** One item from GET /postmark-shapes/ (DRF returns snake_case) */
 export interface PostmarkShapeApiResultItem {
-  postmarkShapeId: number;
-  createdDate: string;
-  modifiedDate: string;
-  shapeName: string;
-  shapeDescription: string;
-  createdBy: number;
-  modifiedBy: number;
+  postmark_shape_id: number;
+  shape_name: string;
+  shape_description: string;
 }
 
 /** Paginated response from GET /postmark-shapes/ */
@@ -34,9 +30,9 @@ export interface PostmarkShapeOption {
 
 function mapApiResultToOption(item: PostmarkShapeApiResultItem): PostmarkShapeOption {
   return {
-    id: item.postmarkShapeId,
-    name: item.shapeName,
-    description: item.shapeDescription,
+    id: item.postmark_shape_id,
+    name: item.shape_name,
+    description: item.shape_description,
   };
 }
 

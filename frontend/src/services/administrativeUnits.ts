@@ -3,12 +3,12 @@
  * Used for state filter options in Search.
  */
 
-/** One item from GET /administrative-units/ (camelCase from DRF) */
+/** One item from GET /administrative-units/ (DRF returns snake_case) */
 export interface AdministrativeUnitApiItem {
-  administrativeUnitId: number;
-  referenceCode: string;
-  currentName: string | null;
-  currentType: string | null;
+  administrative_unit_id: number;
+  reference_code: string;
+  current_name: string | null;
+  current_type: string | null;
 }
 
 /** Paginated response from GET /administrative-units/ */
@@ -69,14 +69,14 @@ export async function getAdministrativeUnits(assignedOnly?: boolean): Promise<St
   const seen = new Set<string>();
   return allResults
     .filter((u) => {
-      const name = u.currentName?.trim();
+      const name = u.current_name?.trim();
       if (!name || seen.has(name)) return false;
       seen.add(name);
       return true;
     })
     .map((u) => ({
-      value: u.currentName!.trim(),
-      label: u.currentName!.trim(),
+      value: u.current_name!.trim(),
+      label: u.current_name!.trim(),
     }))
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
 }
