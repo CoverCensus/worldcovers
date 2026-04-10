@@ -63,6 +63,29 @@ function getPostmarkShapesApiUrl(): string | null {
   return null;
 }
 
+function getPostmarkShapesApiCandidates(): string[] {
+  const candidates: string[] = [];
+  // Prefer v2 commons shape taxonomy first.
+  candidates.push("/api/v2/shapes");
+  // Keep current/legacy routes as fallback.
+  candidates.push("/api/v2/postmark-shapes");
+  candidates.push("/api/v1/postmark-shapes");
+  const pushCandidate = (raw: unknown) => {
+    if (!raw || typeof raw !== "string") return;
+    const base = raw.trim().replace(/\/+$/, "");
+    if (!base) return;
+    if (base.endsWith("/shapes") || base.endsWith("/postmark-shapes")) {
+      candidates.push(base);
+      return;
+    }
+    candidates.push(`${base}/shapes`);
+    candidates.push(`${base}/postmark-shapes`);
+  };
+  pushCandidate(import.meta.env.VITE_API_URL);
+  pushCandidate(import.meta.env.VITE_API_BASE_URL);
+  return candidates.filter((url, idx) => candidates.indexOf(url) === idx);
+}
+
 /**
  * Fetch all pages from the paginated /api/postmark-shapes/ endpoint so we
  * can show every postmark type in dropdowns, not just the first page.
@@ -125,9 +148,15 @@ async function getPostmarkShapesFromSupabase(): Promise<PostmarkShapeOption[]> {
  * Otherwise uses Supabase (distinct type from catalog_records and submissions).
  */
 export async function getPostmarkShapes(): Promise<PostmarkShapeOption[]> {
-  const apiUrl = getPostmarkShapesApiUrl();
-  if (apiUrl) {
-    return getAllPostmarkShapesFromApi(apiUrl);
+  const primary = getPostmarkShapesApiUrl();
+  const candidates = primary ? [primary, ...getPostmarkShapesApiCandidates()] : getPostmarkShapesApiCandidates();
+  for (const apiUrl of candidates) {
+    try {
+      const result = await getAllPostmarkShapesFromApi(apiUrl);
+      if (result.length > 0) return result;
+    } catch {
+      // Try next candidate URL.
+    }
   }
 
   return getPostmarkShapesFromSupabase();
