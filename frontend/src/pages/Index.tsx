@@ -23,6 +23,33 @@ type FAQItem = {
   answer: string;
 };
 
+function getSafeApiBaseUrl(): string {
+  const raw =
+    String(import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || "/api/v1")
+      .trim()
+      .replace(/\/+$/, "");
+
+  // Relative API paths are always safe on the current origin/protocol.
+  if (!/^https?:\/\//i.test(raw)) return raw || "/api/v1";
+
+  try {
+    const parsed = new URL(raw);
+    // Avoid mixed content when site is loaded over HTTPS.
+    if (window.location.protocol === "https:" && parsed.protocol === "http:") {
+      // Same-host: keep path but use relative URL (best behind reverse proxy).
+      if (parsed.host === window.location.host) {
+        return parsed.pathname.replace(/\/+$/, "") || "/api/v1";
+      }
+      // Different host: attempt protocol upgrade.
+      parsed.protocol = "https:";
+      return parsed.toString().replace(/\/+$/, "");
+    }
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return "/api/v1";
+  }
+}
+
 const Index = () => {
   const navigate = useNavigate();
   const user = useAuth();
@@ -33,7 +60,7 @@ const Index = () => {
     const fetchFaqs = async () => {
       setIsLoadingFaqs(true);
       try {
-        const response = await fetch((import.meta.env.VITE_API_BASE_URL || '/api/v1') + "/faq-entries/");
+        const response = await fetch(`${getSafeApiBaseUrl()}/faq-entries/`);
         if (!response.ok) {
           throw new Error(`Failed to load FAQs (${response.status})`);
         }

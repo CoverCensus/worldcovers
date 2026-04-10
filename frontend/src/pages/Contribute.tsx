@@ -13,7 +13,11 @@ import { Upload, CheckCircle, XCircle, Clock, Loader2 } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
-import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
+import {
+  getAdministrativeUnits,
+  getAssignedAdministrativeUnits,
+  type StateOption,
+} from "@/services/administrativeUnits";
 import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
 import { getPostalFacilities, type PostalFacilityOption } from "@/services/postalFacilities";
 import { getLetteringStyles, type LetteringStyleOption } from "@/services/letteringStyles";
@@ -110,6 +114,7 @@ const Contribute = () => {
   const [postalFacilities, setPostalFacilities] = useState<PostalFacilityOption[]>([]);
   const [loadingStates, setLoadingStates] = useState(true);
   const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
+  const [confirmedNoAssignedStates, setConfirmedNoAssignedStates] = useState(false);
   const [loadingTypes, setLoadingTypes] = useState(true);
   const [typeOptionsError, setTypeOptionsError] = useState<string | null>(null);
   const [loadingTowns, setLoadingTowns] = useState(false);
@@ -205,19 +210,35 @@ const Contribute = () => {
   useEffect(() => {
     setLoadingStates(true);
     setStateOptionsError(null);
+    setConfirmedNoAssignedStates(false);
 
     const loadStates = async () => {
       try {
-        // Contributors can submit to any state: load full list (assignedOnly = false).
-        // State Editors see only their assigned states.
         const isStateEditor = user?.role === "state_editor";
-        const options = await getAdministrativeUnits(isStateEditor);
+        if (isStateEditor) {
+          // Prefer dedicated endpoint first; then fallback to assigned_only query.
+          const assignedStates = await getAssignedAdministrativeUnits().catch(() => []);
+          if (assignedStates.length > 0) {
+            setStateOptions(assignedStates);
+            setConfirmedNoAssignedStates(false);
+            return;
+          }
+          const assignedOnlyStates = await getAdministrativeUnits(true);
+          setStateOptions(assignedOnlyStates);
+          setConfirmedNoAssignedStates(assignedOnlyStates.length === 0);
+          return;
+        }
+
+        // Contributors can submit to any state: load full list.
+        const options = await getAdministrativeUnits(false);
         setStateOptions(options);
+        setConfirmedNoAssignedStates(false);
       } catch (err) {
         setStateOptionsError(
           err instanceof Error ? err.message : "Failed to load states"
         );
         setStateOptions([]);
+        setConfirmedNoAssignedStates(false);
       } finally {
         setLoadingStates(false);
       }
@@ -373,6 +394,7 @@ const Contribute = () => {
   const noAssignedStates =
     !!user &&
     user.role === "state_editor" &&
+    confirmedNoAssignedStates &&
     !loadingStates &&
     !stateOptionsError &&
     stateOptions.length === 0;
