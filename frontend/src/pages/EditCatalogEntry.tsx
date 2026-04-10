@@ -612,7 +612,6 @@ const EditCatalogEntry = () => {
         form.append("lettering_style_id", letteringId);
         if (framingIds.length > 0) {
           form.append("framing_style_id", framingIds[0]);
-          framingIds.forEach((id) => form.append("framing_style_ids[]", id));
         }
         form.append("date_format_id", dateFormatId);
         if (dateType.trim()) form.append("date_type", dateType.trim());
@@ -642,7 +641,6 @@ const EditCatalogEntry = () => {
           color: colorVal,
           lettering_style_id: letteringId ? Number(letteringId) : undefined,
           framing_style_id: framingIds[0] ? Number(framingIds[0]) : undefined,
-          framing_style_ids: framingIds.length > 0 ? framingIds.map((id) => Number(id)) : undefined,
           date_format_id: dateFormatId ? Number(dateFormatId) : undefined,
           date_type: dateType.trim() || undefined,
           dimensions: derivedDimensions || undefined,
