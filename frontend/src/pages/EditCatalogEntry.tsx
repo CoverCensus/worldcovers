@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Loader2, Upload } from "lucide-react";
 import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
 import { getColors, type ColorOption } from "@/services/colors";
@@ -39,16 +40,19 @@ const STATE_OTHER_VALUE = "__other__";
 const COLOR_OTHER_VALUE = "__other__";
 const TYPE_OTHER_VALUE = "__other__";
 
-const RARITY_OPTIONS = [
-  { value: "Common", label: "Common" },
-  { value: "Scarce", label: "Scarce" },
-  { value: "Rare", label: "Rare" },
-  { value: "Very Rare", label: "Very Rare" },
-];
-
 const MANUSCRIPT_OPTIONS = [
   { value: "Yes", label: "Yes" },
   { value: "No", label: "No" },
+];
+const IMPRESSION_OPTIONS = [
+  { value: "Normal", label: "Normal" },
+  { value: "Stencil", label: "Stencil" },
+  { value: "Negative", label: "Negative" },
+];
+const DATE_TYPE_OPTIONS = [
+  { value: "BISHOP MARK", label: "Bishop Mark" },
+  { value: "FRANKLIN MARK", label: "Franklin Mark" },
+  { value: "QUAKER DATE", label: "Quaker Date" },
 ];
 
 const MIN_YEAR = 1661;
@@ -74,7 +78,6 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
     submitterName: "",
     description: "",
     citationReferences: "",
-    rarityLabel: "",
   };
   if (!raw) return result;
   const lines = String(raw).split(/\r?\n/);
@@ -88,8 +91,6 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
       result.description = trimmed.slice("Description:".length).trim();
     } else if (trimmed.startsWith("Citation references:")) {
       result.citationReferences = trimmed.slice("Citation references:".length).trim();
-    } else if (trimmed.startsWith("Rarity:")) {
-      result.rarityLabel = trimmed.slice("Rarity:".length).trim();
     } else if (trimmed.startsWith("Comment:")) {
       // Editor/internal notes in otherCharacteristics — not catalog description (matches RecordDetail).
       continue;
@@ -150,6 +151,7 @@ const EditCatalogEntry = () => {
   const [latestMonth, setLatestMonth] = useState("");
   const [latestYear, setLatestYear] = useState("");
   const [latestUnknown, setLatestUnknown] = useState(false);
+  const [datesObserved, setDatesObserved] = useState("");
   const [type, setType] = useState("");
   const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
@@ -158,7 +160,10 @@ const EditCatalogEntry = () => {
   const [heightMm, setHeightMm] = useState("");
   const [diameterMm, setDiameterMm] = useState("");
   const [manuscript, setManuscript] = useState("");
-  const [rarity, setRarity] = useState("");
+  const [isIrregular, setIsIrregular] = useState(false);
+  const [impression, setImpression] = useState("");
+  const [dateType, setDateType] = useState("");
+  const [inscriptionText, setInscriptionText] = useState("");
   const [description, setDescription] = useState("");
   const [references, setReferences] = useState("");
   // Contributor -> editor note for suggestions/corrections
@@ -167,7 +172,7 @@ const EditCatalogEntry = () => {
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [letteringId, setLetteringId] = useState("");
-  const [framingId, setFramingId] = useState("");
+  const [framingIds, setFramingIds] = useState<string[]>([]);
   const [dateFormatId, setDateFormatId] = useState("");
   const [letteringOptions, setLetteringOptions] = useState<LetteringStyleOption[]>([]);
   const [framingOptions, setFramingOptions] = useState<FramingStyleOption[]>([]);
@@ -246,9 +251,9 @@ const EditCatalogEntry = () => {
           const normal = lettering.find((o) => String(o.name || "").trim().toLowerCase() === "normal");
           if (normal) setLetteringId(String(normal.id));
         }
-        if (!framingId) {
+        if (framingIds.length === 0) {
           const none = framing.find((o) => String(o.name || "").trim().toLowerCase() === "none");
-          if (none) setFramingId(String(none.id));
+          if (none) setFramingIds([String(none.id)]);
         }
       })
       .catch(() => {
@@ -257,7 +262,7 @@ const EditCatalogEntry = () => {
         setDateFormatOptions([]);
       })
       .finally(() => setCatalogOptionsLoading(false));
-  }, [letteringId, framingId]);
+  }, [letteringId, framingIds.length]);
 
   useEffect(() => {
     if (postmarkId == null || isNaN(postmarkId)) {
@@ -274,7 +279,8 @@ const EditCatalogEntry = () => {
           if (!data) setRecordError("Record not found");
           return;
         }
-        const datesSeen = data.datesSeen?.[0];
+        const datesSeenRaw = data.datesSeen ?? data.dates_seen ?? [];
+        const datesSeen = Array.isArray(datesSeenRaw) ? datesSeenRaw[0] : undefined;
         const sizes = Array.isArray(data.sizes) ? [...data.sizes] : [];
         sizes.sort((a: any, b: any) => {
           const da = a?.created_date ?? a?.createdDate ?? "";
@@ -284,13 +290,6 @@ const EditCatalogEntry = () => {
         const firstSize = sizes[0];
         const firstVal = data.valuations?.[0];
         const parsed = parseOtherCharacteristics(data.otherCharacteristics);
-        const rarityFromOther = parsed.rarityLabel?.trim() || "";
-        const rarityMatch = RARITY_OPTIONS.find(
-          (opt) =>
-            opt.value === rarityFromOther ||
-            rarityFromOther.toLowerCase() === opt.value.toLowerCase()
-        );
-        const initialRarity = rarityMatch ? rarityMatch.value : "";
         const wh = catalogSizeToWidthHeightStrings(firstSize as Record<string, unknown> | undefined);
 
         const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
@@ -333,12 +332,28 @@ const EditCatalogEntry = () => {
         setLatestMonth(lParts.month);
         setLatestYear(lParts.year);
         setLatestUnknown(false);
+        if (Array.isArray(datesSeenRaw) && datesSeenRaw.length > 1) {
+          const extras = datesSeenRaw
+            .slice(1)
+            .map((row: any) => {
+              const e = String(row?.earliestDateSeen ?? row?.earliest_date_seen ?? "").slice(0, 10);
+              const l = String(row?.latestDateSeen ?? row?.latest_date_seen ?? "").slice(0, 10);
+              if (e && l && e !== l) return `${e} - ${l}`;
+              return e || l || "";
+            })
+            .filter(Boolean);
+          setDatesObserved(extras.join("\n"));
+        } else {
+          setDatesObserved("");
+        }
         setType(data?.postmarkShape?.shapeName || "");
         setColor(data.colorsDisplay || "");
         setWidthMm(wh.width);
         setHeightMm(wh.height);
         setManuscript(data.isManuscript ? "Yes" : "No");
-        setRarity(initialRarity);
+        setIsIrregular(Boolean(data.is_irreg ?? data.isIrreg));
+        setImpression(String(data.impression ?? ""));
+        setInscriptionText(String(data.inscription_txt ?? data.inscriptionTxt ?? ""));
         // Only prefill the textarea with an actual description, not raw otherCharacteristics
         // so users don't have to clear default "Submitted by: ..." lines.
         setDescription(parsed.description || "");
@@ -356,9 +371,16 @@ const EditCatalogEntry = () => {
           data.date_format_id ?? data.dateFormatId
           ?? data.date_format?.date_format_id ?? data.date_format?.dateFormatId
           ?? (data as any).dateFormat?.date_format_id ?? (data as any).dateFormat?.dateFormatId;
+        const dateTypeRaw = data.date_type ?? data.dateType;
         setLetteringId(letteringIdRaw != null ? String(letteringIdRaw) : "");
-        setFramingId(framingIdRaw != null ? String(framingIdRaw) : "");
+        const framingIdsRaw = data.framing_style_ids ?? data.framingStyleIds;
+        if (Array.isArray(framingIdsRaw) && framingIdsRaw.length > 0) {
+          setFramingIds(framingIdsRaw.map((x: unknown) => String(x)).filter(Boolean));
+        } else {
+          setFramingIds(framingIdRaw != null ? [String(framingIdRaw)] : []);
+        }
         setDateFormatId(dateFormatIdRaw != null ? String(dateFormatIdRaw) : "");
+        setDateType(dateTypeRaw != null ? String(dateTypeRaw) : "");
       })
       .catch(() => {
         if (!cancelled) setRecordError("Failed to load record");
@@ -592,6 +614,11 @@ const EditCatalogEntry = () => {
         : mkIso(latestDay, latestMonth, latestYear) || latestYear.trim();
       const earliestLabel = formatDateLabel(earliestDay, earliestMonth, earliestYear, earliestUnknown);
       const latestLabel = formatDateLabel(latestDay, latestMonth, latestYear, latestUnknown);
+      const normalizedObservedDates = datesObserved
+        .split(/\r?\n|,/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join("\n");
       const derivedDimensions = (() => {
         const d = diameterMm.trim();
         const w = widthMm.trim();
@@ -601,6 +628,7 @@ const EditCatalogEntry = () => {
         return "";
       })();
       const descriptionToSend = description.trim();
+      const inscriptionToSend = inscriptionText.trim();
 
       if (imageFiles.length > 0) {
         const form = new FormData();
@@ -609,14 +637,21 @@ const EditCatalogEntry = () => {
         form.append("town", townVal);
         form.append("firstSeen", firstSeenToSend);
         form.append("lastSeen", lastSeenToSend);
+        if (normalizedObservedDates) form.append("dates_observed", normalizedObservedDates);
         form.append("type", typeVal);
         form.append("color", colorVal);
         form.append("lettering_style_id", letteringId);
-        form.append("framing_style_id", framingId);
+        if (framingIds.length > 0) {
+          form.append("framing_style_id", framingIds[0]);
+          framingIds.forEach((id) => form.append("framing_style_ids[]", id));
+        }
         form.append("date_format_id", dateFormatId);
+        if (dateType.trim()) form.append("date_type", dateType.trim());
         if (derivedDimensions) form.append("dimensions", derivedDimensions);
         if (manuscript.trim()) form.append("manuscript", manuscript.trim());
-        if (rarity.trim()) form.append("rarity", rarity.trim());
+        form.append("is_irreg", String(isIrregular));
+        if (impression.trim()) form.append("impression", impression.trim());
+        if (inscriptionToSend) form.append("inscription_txt", inscriptionToSend);
         if (descriptionToSend) form.append("description", descriptionToSend);
         if (references.trim()) form.append("references", references.trim());
         if (!isStateEditor && contributorComment.trim()) {
@@ -634,14 +669,19 @@ const EditCatalogEntry = () => {
           town: townVal,
           firstSeen: firstSeenToSend,
           lastSeen: lastSeenToSend,
+          dates_observed: normalizedObservedDates || undefined,
           type: typeVal,
           color: colorVal,
           lettering_style_id: letteringId ? Number(letteringId) : undefined,
-          framing_style_id: framingId ? Number(framingId) : undefined,
+          framing_style_id: framingIds[0] ? Number(framingIds[0]) : undefined,
+          framing_style_ids: framingIds.length > 0 ? framingIds.map((id) => Number(id)) : undefined,
           date_format_id: dateFormatId ? Number(dateFormatId) : undefined,
+          date_type: dateType.trim() || undefined,
           dimensions: derivedDimensions || undefined,
           manuscript: manuscript.trim() || undefined,
-          rarity: rarity.trim() || undefined,
+          is_irreg: isIrregular,
+          impression: impression.trim() || undefined,
+          inscription_txt: inscriptionToSend || undefined,
           description: descriptionToSend || undefined,
           references: references.trim() || undefined,
           ...(isStateEditor || !contributorComment.trim()
@@ -918,6 +958,30 @@ const EditCatalogEntry = () => {
                       </Select>
                       {fieldErrors.manuscript && <p className="text-sm text-destructive">{fieldErrors.manuscript}</p>}
                     </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-impression">Impression</Label>
+                      <Select value={impression} onValueChange={setImpression}>
+                        <SelectTrigger id="edit-impression">
+                          <SelectValue placeholder="Select impression..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {IMPRESSION_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="edit-is-irregular"
+                        type="checkbox"
+                        checked={isIrregular}
+                        onChange={(e) => setIsIrregular(e.target.checked)}
+                      />
+                      <Label htmlFor="edit-is-irregular">Is Irregular</Label>
+                    </div>
 
                     <div className="space-y-3">
                       <div className="space-y-2">
@@ -1086,6 +1150,19 @@ const EditCatalogEntry = () => {
                           Optional. Leave blank if unknown, or enter Day/Month/Year, or choose Unknown.
                         </p>
                       </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-dates-observed">Additional observed dates</Label>
+                        <Textarea
+                          id="edit-dates-observed"
+                          placeholder={"One per line (YYYY or YYYY-MM-DD)\nExample:\n1842\n1842-05-17"}
+                          value={datesObserved}
+                          onChange={(e) => setDatesObserved(e.target.value)}
+                          rows={4}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Optional. These are stored as extra dates_observed entries in addition to Earliest/Latest Use.
+                        </p>
+                      </div>
                     </div>
 
                     <div className="space-y-2">
@@ -1169,6 +1246,19 @@ const EditCatalogEntry = () => {
                     </div>
 
                     <div className="space-y-2">
+                      <Label htmlFor="edit-date-type">Date type</Label>
+                      <Select value={dateType} onValueChange={setDateType}>
+                        <SelectTrigger id="edit-date-type">
+                          <SelectValue placeholder="Select date type (optional)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {DATE_TYPE_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
                       <Label>
                         <span
                           className="cursor-help border-b border-dotted border-muted-foreground/40"
@@ -1198,16 +1288,31 @@ const EditCatalogEntry = () => {
                           Framing style
                         </span>
                       </Label>
-                      <Select value={framingId} onValueChange={(v) => { setFramingId(v); setFieldErrors((prev) => ({ ...prev, framing: undefined })); }} disabled={catalogOptionsLoading}>
-                        <SelectTrigger className={fieldErrors.framing ? "border-destructive" : ""}>
-                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select framing style"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {framingOptions.map((opt) => (
-                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <div className={`rounded-md border p-3 space-y-2 max-h-44 overflow-auto ${fieldErrors.framing ? "border-destructive" : "border-input"}`}>
+                        {catalogOptionsLoading ? (
+                          <p className="text-sm text-muted-foreground">Loading...</p>
+                        ) : (
+                          framingOptions.map((opt) => {
+                            const value = String(opt.id);
+                            const checked = framingIds.includes(value);
+                            return (
+                              <label key={opt.id} className="flex items-center gap-2 text-sm">
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(next) => {
+                                    setFramingIds((prev) => {
+                                      if (next) return prev.includes(value) ? prev : [...prev, value];
+                                      return prev.filter((id) => id !== value);
+                                    });
+                                    setFieldErrors((prev) => ({ ...prev, framing: undefined }));
+                                  }}
+                                />
+                                <span>{opt.name}</span>
+                              </label>
+                            );
+                          })
+                        )}
+                      </div>
                       {fieldErrors.framing && <p className="text-sm text-destructive">{fieldErrors.framing}</p>}
                     </div>
                     <div className="space-y-2">
@@ -1318,19 +1423,14 @@ const EditCatalogEntry = () => {
                     )}
 
                     <div className="space-y-2">
-                      <Label htmlFor="edit-rarity">Rarity</Label>
-                      <Select value={rarity} onValueChange={setRarity}>
-                        <SelectTrigger id="edit-rarity">
-                          <SelectValue placeholder="Select..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {RARITY_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Label htmlFor="edit-inscription-text">Inscription Text</Label>
+                      <Textarea
+                        id="edit-inscription-text"
+                        placeholder="Exact text inscribed on the marking device (abbreviations/annotations)."
+                        value={inscriptionText}
+                        onChange={(e) => setInscriptionText(e.target.value)}
+                        rows={3}
+                      />
                     </div>
 
                     <div className="space-y-2">

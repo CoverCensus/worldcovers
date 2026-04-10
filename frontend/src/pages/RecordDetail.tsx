@@ -9,7 +9,7 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { SubmitImageDialog } from "@/components/SubmitImageDialog";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
-import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
+import { getPostmarkById, normalizeImageUrl, formatPostmarkDimensionsDisplay } from "@/services/postmarks";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
 
@@ -18,7 +18,6 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
     submitterName: "",
     description: "",
     citationReferences: "",
-    rarityLabel: "",
     /** Editor feedback stored as `Comment:` in other_characteristics (e.g. on approve). */
     editorComment: "",
   };
@@ -40,8 +39,6 @@ function parseOtherCharacteristics(raw: string | null | undefined) {
       result.citationReferences = trimmed
         .slice("Citation references:".length)
         .trim();
-    } else if (trimmed.startsWith("Rarity:")) {
-      result.rarityLabel = trimmed.slice("Rarity:".length).trim();
     } else if (trimmed.startsWith("Comment:")) {
       const commentText = trimmed.slice("Comment:".length).trim();
       if (commentText) {
@@ -93,11 +90,15 @@ const RecordDetail = () => {
     town: string;
     dateFirstSeen: string;
     dateLastSeen: string;
+    datesObserved?: string[];
     color: string;
     type: any;
     dimensions: string;
     manuscript: string;
-    rarity: string;
+    isIrregular?: string;
+    impression?: string;
+    dateType?: string;
+    inscriptionText?: string;
     description: string;
     submitterName?: string;
     citationReferences?: string;
@@ -132,6 +133,14 @@ const RecordDetail = () => {
       .then((data) => {
         if (cancelled) return;
         if (data) {
+          const fromNested = (obj: any, path: string[]): string => {
+            let cur = obj;
+            for (const key of path) {
+              if (cur == null || typeof cur !== "object") return "";
+              cur = cur[key];
+            }
+            return cur != null ? String(cur).trim() : "";
+          };
           const parsed = parseOtherCharacteristics(
             data.otherCharacteristics ?? data.other_characteristics,
           );
@@ -147,7 +156,6 @@ const RecordDetail = () => {
             ? `${postmarkKey} - ${townState}${suffix}`
             : postmarkKey || "—";
           const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
-          const rarityLabel = (parsed.rarityLabel || "").trim();
           const images =
             data.images?.length
               ? data.images.map((img: any) => ({
@@ -162,6 +170,40 @@ const RecordDetail = () => {
           const sourceCatalog = String(
             data.source_catalog ?? data.sourceCatalog ?? "",
           ).trim();
+          const shapeName =
+            (data.shape_name ?? data.shapeName ?? "").trim() ||
+            fromNested(data, ["postmark_shape", "shape_name"]) ||
+            fromNested(data, ["postmarkShape", "shapeName"]) ||
+            fromNested(data, ["shape", "name"]);
+          const dimensionsDisplay =
+            (data.size_display ?? data.sizeDisplay ?? data.dimensionsDisplay ?? "").trim() ||
+            formatPostmarkDimensionsDisplay(data.sizes);
+          const letteringStyleName =
+            (data.lettering_style_name ?? data.letteringStyleName ?? "").trim() ||
+            fromNested(data, ["lettering_style", "lettering_style_name"]) ||
+            fromNested(data, ["letteringStyle", "letteringStyleName"]) ||
+            fromNested(data, ["lettering", "name"]);
+          const framingStyleName =
+            (data.framing_style_name ?? data.framingStyleName ?? "").trim() ||
+            fromNested(data, ["framing_style", "framing_style_name"]) ||
+            fromNested(data, ["framingStyle", "framingStyleName"]) ||
+            fromNested(data, ["framing", "name"]);
+          const colorDisplay =
+            (data.colors_display ?? data.colorsDisplay ?? "").trim() ||
+            fromNested(data, ["color", "name"]) ||
+            fromNested(data, ["color", "color_name"]) ||
+            fromNested(data, ["color", "colorName"]);
+          const rawDatesSeen = data.dates_seen ?? data.datesSeen ?? [];
+          const datesObserved = Array.isArray(rawDatesSeen)
+            ? rawDatesSeen
+                .map((row: any) => {
+                  const earliest = String(row?.earliest_date_seen ?? row?.earliestDateSeen ?? "").slice(0, 10);
+                  const latest = String(row?.latest_date_seen ?? row?.latestDateSeen ?? "").slice(0, 10);
+                  if (earliest && latest && earliest !== latest) return `${earliest} - ${latest}`;
+                  return earliest || latest || "";
+                })
+                .filter(Boolean)
+            : [];
           setRecord({
             id: data.postmark_id ?? data.postmarkId,
             name: displayName,
@@ -170,13 +212,22 @@ const RecordDetail = () => {
             town,
             dateFirstSeen: earliestUse,
             dateLastSeen: latestUse,
-            color: data.colors_display ?? data.colorsDisplay ?? "",
-            type: data.shape_name ?? data.shapeName ?? "",
-            dimensions: data.size_display ?? data.sizeDisplay ?? "",
+            datesObserved,
+            color: colorDisplay,
+            type: shapeName,
+            dimensions: dimensionsDisplay,
             manuscript: (data.is_manuscript ?? data.isManuscript) ? "Yes" : "No",
-            letteringStyle: data.lettering_style_name ?? data.letteringStyleName ?? "",
-            framingStyle: data.framing_style_name ?? data.framingStyleName ?? "",
-            rarity: rarityLabel,
+            isIrregular:
+              (data.is_irreg ?? data.isIrreg) === true
+                ? "Yes"
+                : (data.is_irreg ?? data.isIrreg) === false
+                  ? "No"
+                  : "",
+            impression: String(data.impression ?? "").trim(),
+            dateType: String(data.date_type ?? data.dateType ?? "").trim(),
+            letteringStyle: letteringStyleName,
+            framingStyle: framingStyleName,
+            inscriptionText: String(data.inscription_txt ?? data.inscriptionTxt ?? "").trim(),
             description: parsed.description || "",
             submitterName: parsed.submitterName || "",
             citationReferences: parsed.citationReferences || "",
@@ -437,7 +488,7 @@ const RecordDetail = () => {
                       <>
                         {show(record?.type) ? <Badge variant="secondary">{record.type}</Badge> : null}
                         {show(record?.color) ? <Badge variant="secondary">{record.color}</Badge> : null}
-                        {show(record?.rarity) ? <Badge variant="outline">{record.rarity}</Badge> : null}
+                        {show(record?.isIrregular) ? <Badge variant="outline">Irregular: {record.isIrregular}</Badge> : null}
                       </>
                     );
                   })()}
@@ -457,14 +508,13 @@ const RecordDetail = () => {
                       };
                       const firstSeen = displayValue(record.dateFirstSeen);
                       const lastSeen = displayValue(record.dateLastSeen);
-                      const datesSeen =
-                        firstSeen === "-" && lastSeen === "-"
-                          ? "-"
-                          : `${firstSeen} - ${lastSeen}`;
                       const details = [
                         { label: "Town", value: record.town },
                         { label: "State", value: record.state },
                         { label: "Manuscript", value: record.manuscript },
+                        { label: "Is Irregular", value: record.isIrregular },
+                        { label: "Impression", value: record.impression },
+                        { label: "Date Type", value: record.dateType },
                         { label: "Shape", value: record.type },
                         { label: "Lettering style", value: record.letteringStyle },
                         { label: "Framing style", value: record.framingStyle },
@@ -472,6 +522,7 @@ const RecordDetail = () => {
                         { label: "Color", value: record.color },
                         { label: "Earliest Use", value: firstSeen },
                         { label: "Latest Use", value: lastSeen },
+                        { label: "Dates observed", value: (record.datesObserved ?? []).join("\n") },
                       ];
                       return details.map(({ label, value }, index) => (
                         <div
@@ -479,7 +530,7 @@ const RecordDetail = () => {
                           className={`flex justify-between py-2 ${index < details.length - 1 ? "border-b border-border" : ""}`}
                         >
                           <dt className="text-muted-foreground font-medium">{label}</dt>
-                          <dd className="text-foreground">{displayValue(value)}</dd>
+                          <dd className="text-foreground whitespace-pre-line">{displayValue(value)}</dd>
                         </div>
                       ));
                     })()}
@@ -495,6 +546,19 @@ const RecordDetail = () => {
                   <CardContent>
                     <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
                       {record.description}
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {record.inscriptionText?.trim() ? (
+                <Card className="shadow-archival-md">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">Inscription Text</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
+                      {record.inscriptionText}
                     </p>
                   </CardContent>
                 </Card>

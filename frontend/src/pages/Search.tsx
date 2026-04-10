@@ -103,7 +103,8 @@ const Search = () => {
   const { toast } = useToast();
 
   // Fetch filter options from API (colors, postmark shapes, states)
-  const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } = useFilterOptions();
+  const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } =
+    useFilterOptions({ shapeSource: "commonShape" });
 
   // Filter states - initialize from URL so filters persist when navigating back from detail
   const [keywordSearch, setKeywordSearch] = useState(() => getSearchParam(searchParams, "q", ""));
@@ -424,21 +425,21 @@ const Search = () => {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="type">Postmark Type</Label>
+                    <Label htmlFor="type">Shape</Label>
                     <SearchableSelect
                       id="type"
                       disabled={filtersDisabled}
                       value={typeFilter}
                       onValueChange={setTypeFilter}
-                      placeholder="All Types"
-                      allOption={{ value: "all", label: "All Types" }}
+                      placeholder="All Shapes"
+                      allOption={{ value: "all", label: "All Shapes" }}
                       options={Array.isArray(shapeOptions) ? shapeOptions : []}
                       loading={isLoadingFilters}
                       error={!!filterError}
-                      errorMessage="Failed to load types"
-                      searchPlaceholder="Search types..."
-                      emptyMessage="No type found."
-                      aria-label="Filter by postmark type"
+                      errorMessage="Failed to load shapes"
+                      searchPlaceholder="Search shapes..."
+                      emptyMessage="No shape found."
+                      aria-label="Filter by shape"
                     />
                   </div>
 

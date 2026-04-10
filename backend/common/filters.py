@@ -53,6 +53,13 @@ class PostmarkListFilter(django_filters.FilterSet):
         label='Town (facility name contains)',
     )
 
+    # Shape: v2 common shape (PostmarkV2.shape FK). Frontend sends ?shape=<shape_id>.
+    shape = django_filters.NumberFilter(
+        field_name='v2_data__shape',
+        lookup_expr='exact',
+        label='Shape (v2 common_shape id)',
+    )
+
     # Date range: from PostmarkDatesSeen. Use method filters so we can .distinct() (postmark can have multiple dates_seen).
     earliest_use_year_min = django_filters.NumberFilter(method='filter_earliest_year_min', label='Earliest use year (min)')
     latest_use_year_max = django_filters.NumberFilter(method='filter_latest_year_max', label='Latest use year (max)')

@@ -98,6 +98,40 @@ def _parse_dates_seen_from_payload(payload: dict) -> Tuple[date, date]:
     if not s:
         return date(1900, 1, 1), date(1900, 12, 31)
 
+
+def _parse_dates_seen_rows_from_payload(payload: dict) -> list[Tuple[date, date]]:
+    """
+    Build one or more PostmarkDatesSeen rows from payload.
+    - Primary row comes from existing first_seen/last_seen/date_range parsing.
+    - Extra rows can come from dates_observed/datesObserved as:
+      * array of date tokens
+      * comma/newline-separated string
+    Supported token formats: YYYY, YYYY-MM-DD, YYYY-YYYY, YYYY-MM-DD - YYYY-MM-DD.
+    """
+    primary = _parse_dates_seen_from_payload(payload)
+    rows: list[Tuple[date, date]] = [primary]
+
+    raw = _get_payload_value(payload, "dates_observed", "datesObserved")
+    if raw is None or raw == "":
+        return rows
+
+    if isinstance(raw, (list, tuple)):
+        tokens = [str(v).strip() for v in raw if str(v).strip()]
+    else:
+        text = str(raw)
+        tokens = [t.strip() for t in re.split(r"[\n,]+", text) if t.strip()]
+
+    seen = {(primary[0].isoformat(), primary[1].isoformat())}
+    for tok in tokens:
+        synthetic = {"date_range": tok}
+        e, l = _parse_dates_seen_from_payload(synthetic)
+        key = (e.isoformat(), l.isoformat())
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append((e, l))
+    return rows
+
     # Year range like "1850-1860"
     m = _YEAR_RANGE_RE.match(s)
     if m:
@@ -731,6 +765,81 @@ def _get_payload_value(payload, *keys, default=None):
     return default
 
 
+def _coerce_int_list(raw):
+    """Convert a scalar/list payload value into a de-duplicated int list."""
+    if raw is None or raw == "":
+        return []
+    values = raw if isinstance(raw, (list, tuple)) else [raw]
+    out = []
+    for v in values:
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n not in out:
+            out.append(n)
+    return out
+
+
+def _parse_optional_bool(raw):
+    """Parse common truthy/falsy payload forms to bool; return None when unspecified/invalid."""
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, bool):
+        return raw
+    s = str(raw).strip().lower()
+    if s in {"true", "1", "yes", "y"}:
+        return True
+    if s in {"false", "0", "no", "n"}:
+        return False
+    return None
+
+
+def _resolve_framing_style_from_payload(payload, user, fallback_id=None):
+    """
+    Resolve framing style from payload:
+    - single framing_style_id/framingStyleId -> existing style
+    - framing_style_ids/framingStyleIds (list) -> combined style (create if needed)
+    """
+    if not user:
+        user = _get_contribution_user()
+    framing_ids_raw = _get_payload_value(payload, "framing_style_ids", "framingStyleIds")
+    framing_ids = _coerce_int_list(framing_ids_raw)
+
+    if framing_ids:
+        styles = list(FramingStyle.objects.filter(pk__in=framing_ids))
+        if not styles:
+            return FramingStyle.objects.filter(pk=fallback_id).first() if fallback_id is not None else None
+        order = {sid: idx for idx, sid in enumerate(framing_ids)}
+        styles.sort(key=lambda s: order.get(s.pk, 10**9))
+        if len(styles) == 1:
+            return styles[0]
+        combo_name = " + ".join(s.framing_style_name.strip() for s in styles if s.framing_style_name.strip())[:100]
+        if not combo_name:
+            return styles[0]
+        combo = FramingStyle.objects.filter(framing_style_name__iexact=combo_name).first()
+        if combo:
+            return combo
+        combo_desc = f"Auto-generated combined framing style from IDs: {', '.join(str(s.pk) for s in styles)}"
+        combo, _ = FramingStyle.objects.get_or_create(
+            framing_style_name=combo_name,
+            defaults={
+                "framing_description": combo_desc[:1000],
+                "created_by": user,
+                "modified_by": user,
+            },
+        )
+        return combo
+
+    single_id = _get_payload_value(payload, "framing_style_id", "framingStyleId")
+    if single_id is None and fallback_id is not None:
+        single_id = fallback_id
+    try:
+        return FramingStyle.objects.filter(pk=int(single_id)).first() if single_id is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _decimal_mm_from_payload(payload, snake_key, camel_key):
     """
     Parse a positive millimetre dimension from contribution/catalog payload.
@@ -923,15 +1032,19 @@ def _create_contribution_only(payload, contributor):
             "state": (payload.get("state") or "").strip(),
             "town": (payload.get("town") or "").strip(),
             "date_range": (payload.get("date_range") or "").strip(),
+            "dates_observed": (payload.get("dates_observed") or "").strip(),
             "type": (payload.get("type") or "").strip(),
             "color": (payload.get("color") or "").strip(),
             "manuscript": (payload.get("manuscript") or "").strip(),
+            "is_irreg": payload.get("is_irreg"),
+            "impression": (payload.get("impression") or "").strip(),
+            "date_type": (payload.get("date_type") or payload.get("dateType") or "").strip(),
             "dimensions": (payload.get("dimensions") or "").strip(),
             "width_mm": (payload.get("width_mm") or payload.get("widthMm") or "").strip(),
             "height_mm": (payload.get("height_mm") or payload.get("heightMm") or "").strip(),
             "description": (payload.get("description") or "").strip(),
+            "inscription_txt": (payload.get("inscription_txt") or payload.get("inscriptionText") or "").strip(),
             "references": (payload.get("references") or "").strip(),
-            "rarity": (payload.get("rarity") or "").strip(),
             "submitter_name": (payload.get("submitter_name") or "").strip(),
             # Contributor -> editor note (used mainly for suggestions/corrections).
             "contributor_comment": (payload.get("contributor_comment") or "").strip(),
@@ -1029,9 +1142,12 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
         type_str = (_get_payload_value(payload, "type", "Type") or "").strip()
         color_str = (_get_payload_value(payload, "color", "Color") or "").strip()
         manuscript_str = (_get_payload_value(payload, "manuscript", "Manuscript") or "").strip()
+        is_irreg_val = _parse_optional_bool(_get_payload_value(payload, "is_irreg", "isIrreg", "isIrregular"))
+        impression_str = (_get_payload_value(payload, "impression", "Impression") or "").strip()
+        date_type_str = (_get_payload_value(payload, "date_type", "dateType", "DateType") or "").strip()
         description_str = (_get_payload_value(payload, "description", "Description") or "").strip()
+        inscription_txt_str = (_get_payload_value(payload, "inscription_txt", "inscriptionText", "inscription_text", "inscriptionText") or "").strip()
         references_str = (_get_payload_value(payload, "references", "References") or "").strip()
-        rarity_str = (_get_payload_value(payload, "rarity", "Rarity") or "").strip()
         original_postmark_id = _get_payload_value(payload, "original_postmark_id", "originalPostmarkId")
 
         # State: get or create AdministrativeUnit + Identity
@@ -1120,7 +1236,7 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
         if date_fmt_id is None and editor_data:
             date_fmt_id = editor_data.get("date_format_id")
         lettering = LetteringStyle.objects.filter(pk=lettering_id).first() if lettering_id is not None else None
-        framing = FramingStyle.objects.filter(pk=framing_id).first() if framing_id is not None else None
+        framing = _resolve_framing_style_from_payload(payload, user, fallback_id=framing_id)
         date_fmt = DateFormat.objects.filter(pk=date_fmt_id).first() if date_fmt_id is not None else None
         if lettering is None:
             lettering = LetteringStyle.objects.first()
@@ -1133,14 +1249,12 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
         # Unique key
         postmark_key = f"CONTRIB-{uuid.uuid4().hex[:12]}"
         is_manuscript = manuscript_str.lower() == "yes"
-        # Build other_characteristics from contributor fields (description, references, rarity, submitter)
+        # Build other_characteristics from contributor fields
         other_parts = []
         if description_str:
             other_parts.append(f"Description: {description_str}")
         if references_str:
             other_parts.append(f"Citation references: {references_str}")
-        if rarity_str:
-            other_parts.append(f"Rarity: {rarity_str}")
         if original_postmark_id:
             other_parts.append(f"Correction to catalog ID: {original_postmark_id}")
         submitter_str = (_get_payload_value(payload, "submitter_name", "submitterName") or "").strip()
@@ -1163,9 +1277,13 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
             rate_location="NONE",
             rate_value="",
             is_manuscript=is_manuscript,
+            is_irreg=is_irreg_val,
+            impression=impression_str[:10] if impression_str else None,
+            date_type=date_type_str[:20] if date_type_str else None,
             source_catalog="User contribution",
             contribution_approval_status=approval_status,
             other_characteristics=other_characteristics[:10000] if other_characteristics else "",
+            inscription_txt=inscription_txt_str,
             created_by=user,
             modified_by=user,
         )
@@ -1183,15 +1301,15 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
             created_by=user,
             modified_by=user,
         )
-        # Dates seen: support year-only OR full YYYY-MM-DD (via first_seen/last_seen or date_range)
-        earliest, latest = _parse_dates_seen_from_payload(payload)
-        PostmarkDatesSeen.objects.create(
-            postmark=postmark,
-            earliest_date_seen=earliest,
-            latest_date_seen=latest,
-            created_by=user,
-            modified_by=user,
-        )
+        # Dates seen: primary range plus optional extra observed dates.
+        for earliest, latest in _parse_dates_seen_rows_from_payload(payload):
+            PostmarkDatesSeen.objects.create(
+                postmark=postmark,
+                earliest_date_seen=earliest,
+                latest_date_seen=latest,
+                created_by=user,
+                modified_by=user,
+            )
         # Optional: attach uploaded image(s) (support image_metas array or single image_meta)
         image_metas = payload.get("image_metas") or payload.get("imageMetas") or []
         if isinstance(image_metas, list) and len(image_metas) > 0:
@@ -1283,9 +1401,12 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name, *, keep_pu
         type_str = (_get_payload_value(payload, "type", "Type") or "").strip()
         color_str = (_get_payload_value(payload, "color", "Color") or "").strip()
         manuscript_str = (_get_payload_value(payload, "manuscript", "Manuscript") or "").strip()
+        is_irreg_val = _parse_optional_bool(_get_payload_value(payload, "is_irreg", "isIrreg", "isIrregular"))
+        impression_str = (_get_payload_value(payload, "impression", "Impression") or "").strip()
+        date_type_str = (_get_payload_value(payload, "date_type", "dateType", "DateType") or "").strip()
         description_str = (_get_payload_value(payload, "description", "Description") or "").strip()
+        inscription_txt_str = (_get_payload_value(payload, "inscription_txt", "inscriptionText", "inscription_text", "inscriptionText") or "").strip()
         references_str = (_get_payload_value(payload, "references", "References") or "").strip()
-        rarity_str = (_get_payload_value(payload, "rarity", "Rarity") or "").strip()
 
         # State / facility / identity (same as create)
         state_slug = slugify(state_str)[:40] or "unknown"
@@ -1346,14 +1467,17 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name, *, keep_pu
         shape = PostmarkShape.objects.filter(shape_name=type_str).first() or PostmarkShape.objects.first()
         if not shape:
             return None
+        framing = _resolve_framing_style_from_payload(payload, user, fallback_id=postmark.framing_style_id)
+        if framing is None:
+            framing = FramingStyle.objects.first()
+        if framing is None:
+            return None
         is_manuscript = manuscript_str.lower() == "yes"
         other_parts = []
         if description_str:
             other_parts.append(f"Description: {description_str}")
         if references_str:
             other_parts.append(f"Citation references: {references_str}")
-        if rarity_str:
-            other_parts.append(f"Rarity: {rarity_str}")
         if submitter_name.strip():
             other_parts.append(f"Submitted by: {submitter_name.strip()}")
         other_characteristics = "\n".join(other_parts) if other_parts else ""
@@ -1362,8 +1486,13 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name, *, keep_pu
         postmark.postal_facility_identity = identity
         postmark.state = admin_unit
         postmark.postmark_shape = shape
+        postmark.framing_style = framing
         postmark.is_manuscript = is_manuscript
+        postmark.is_irreg = is_irreg_val
+        postmark.impression = impression_str[:10] if impression_str else None
+        postmark.date_type = date_type_str[:20] if date_type_str else None
         postmark.other_characteristics = other_characteristics[:10000] if other_characteristics else ""
+        postmark.inscription_txt = inscription_txt_str
 
         if keep_public_approved:
             postmark.contribution_approval_status = "approved"
@@ -1387,8 +1516,13 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name, *, keep_pu
                 "postal_facility_identity",
                 "state",
                 "postmark_shape",
+                "framing_style",
                 "is_manuscript",
+                "is_irreg",
+                "impression",
+                "date_type",
                 "other_characteristics",
+                "inscription_txt",
                 "contribution_approval_status",
                 "last_public_update_at",
                 "modified_by",
@@ -1407,16 +1541,16 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name, *, keep_pu
         )
         PostmarkColor.objects.create(postmark=postmark, color=color, created_by=user, modified_by=user)
 
-        # Replace dates seen (support year-only OR full YYYY-MM-DD)
+        # Replace dates seen (primary range plus optional extra observed dates)
         PostmarkDatesSeen.objects.filter(postmark=postmark).delete()
-        earliest, latest = _parse_dates_seen_from_payload(payload)
-        PostmarkDatesSeen.objects.create(
-            postmark=postmark,
-            earliest_date_seen=earliest,
-            latest_date_seen=latest,
-            created_by=user,
-            modified_by=user,
-        )
+        for earliest, latest in _parse_dates_seen_rows_from_payload(payload):
+            PostmarkDatesSeen.objects.create(
+                postmark=postmark,
+                earliest_date_seen=earliest,
+                latest_date_seen=latest,
+                created_by=user,
+                modified_by=user,
+            )
 
         # Append new images if provided (do NOT delete existing catalog images).
         # Supports image_metas array or single image_meta.
@@ -1481,15 +1615,19 @@ def _sync_approved_contribution_submitted_data(postmark_id, user, payload):
     sd["state"] = (payload.get("state") or "").strip()
     sd["town"] = (payload.get("town") or "").strip()
     sd["date_range"] = (payload.get("date_range") or "").strip()
+    sd["dates_observed"] = (payload.get("dates_observed") or "").strip()
     sd["type"] = (payload.get("type") or "").strip()
     sd["color"] = (payload.get("color") or "").strip()
     sd["manuscript"] = (payload.get("manuscript") or "").strip()
+    sd["is_irreg"] = payload.get("is_irreg")
+    sd["impression"] = (payload.get("impression") or "").strip()
+    sd["date_type"] = (payload.get("date_type") or payload.get("dateType") or "").strip()
     sd["dimensions"] = (payload.get("dimensions") or "").strip()
     sd["width_mm"] = (payload.get("width_mm") or "").strip()
     sd["height_mm"] = (payload.get("height_mm") or "").strip()
     sd["description"] = (payload.get("description") or "").strip()
+    sd["inscription_txt"] = (payload.get("inscription_txt") or payload.get("inscriptionText") or "").strip()
     sd["references"] = (payload.get("references") or "").strip()
-    sd["rarity"] = (payload.get("rarity") or "").strip()
     sd["submitter_name"] = (payload.get("submitter_name") or "").strip()
     cc = (payload.get("contributor_comment") or "").strip()
     if cc:
@@ -1501,6 +1639,9 @@ def _sync_approved_contribution_submitted_data(postmark_id, user, payload):
                 sd[fk] = int(v)
             except (TypeError, ValueError):
                 pass
+    framing_ids = payload.get("framing_style_ids")
+    if isinstance(framing_ids, list) and framing_ids:
+        sd["framing_style_ids"] = [int(v) for v in framing_ids if str(v).strip().isdigit()]
     if payload.get("image_metas"):
         sd["image_metas"] = payload["image_metas"]
     elif payload.get("image_meta"):
@@ -1713,6 +1854,19 @@ class ContributionView(APIView):
                 return int(raw)
             except (TypeError, ValueError):
                 return None
+        def _payload_int_list(*keys):
+            raw_values = []
+            for k in keys:
+                if not k:
+                    continue
+                if hasattr(data, "getlist"):
+                    raw_values.extend(data.getlist(k))
+                v = data.get(k)
+                if isinstance(v, (list, tuple)):
+                    raw_values.extend(v)
+                elif v not in (None, ""):
+                    raw_values.append(v)
+            return _coerce_int_list(raw_values)
         wm_in = (data.get("width_mm") or data.get("widthMm") or "").strip()
         hm_in = (data.get("height_mm") or data.get("heightMm") or "").strip()
         payload = {
@@ -1722,15 +1876,19 @@ class ContributionView(APIView):
             # Preserve raw inputs so the catalog can store full dates when provided.
             "first_seen": first_seen,
             "last_seen": last_seen,
+            "dates_observed": data.get("dates_observed") or data.get("datesObserved") or "",
             "type": type_val,
             "color": color,
             "manuscript": manuscript,
+            "is_irreg": _parse_optional_bool(data.get("is_irreg") or data.get("isIrreg") or data.get("isIrregular")),
+            "impression": (data.get("impression") or "").strip(),
+            "date_type": (data.get("date_type") or data.get("dateType") or "").strip(),
             "dimensions": (data.get("dimensions") or "").strip(),
             "width_mm": wm_in,
             "height_mm": hm_in,
             "description": (data.get("description") or "").strip(),
+            "inscription_txt": (data.get("inscription_txt") or data.get("inscriptionText") or data.get("inscription_text") or "").strip(),
             "references": (data.get("references") or "").strip(),
-            "rarity": (data.get("rarity") or "").strip(),
             "submitter_name": submitter_name,
             # Contributor -> editor note (optional)
             "contributor_comment": (
@@ -1743,11 +1901,19 @@ class ContributionView(APIView):
         }
         lettering_payload = _payload_int("lettering_style_id", "letteringStyleId")
         framing_payload = _payload_int("framing_style_id", "framingStyleId")
+        framing_payload_ids = _payload_int_list(
+            "framing_style_ids",
+            "framing_style_ids[]",
+            "framingStyleIds",
+            "framingStyleIds[]",
+        )
         date_fmt_payload = _payload_int("date_format_id", "dateFormatId")
         if lettering_payload is not None:
             payload["lettering_style_id"] = lettering_payload
         if framing_payload is not None:
             payload["framing_style_id"] = framing_payload
+        if framing_payload_ids:
+            payload["framing_style_ids"] = framing_payload_ids
         if date_fmt_payload is not None:
             payload["date_format_id"] = date_fmt_payload
         if assigned_admin_unit is not None:
@@ -1882,6 +2048,10 @@ class ContributionView(APIView):
                 review_notes_val = _get_str(data, "review_notes", "reviewNotes", "comment")
                 lettering_id = payload.get("lettering_style_id")
                 framing_id = payload.get("framing_style_id")
+                framing_obj = _resolve_framing_style_from_payload(payload, user, fallback_id=framing_id)
+                if framing_obj is not None:
+                    framing_id = framing_obj.pk
+                    payload["framing_style_id"] = framing_id
                 date_fmt_id = payload.get("date_format_id")
                 if lettering_id is not None and framing_id is not None and date_fmt_id is not None and estimated_val is not None and review_notes_val:
                     if shape_id is not None and not PostmarkShape.objects.filter(pk=shape_id).exists():
@@ -1912,12 +2082,15 @@ class ContributionView(APIView):
                         "type": (payload.get("type") or "").strip(),
                         "color": (payload.get("color") or "").strip(),
                         "manuscript": (payload.get("manuscript") or "").strip(),
+                        "is_irreg": payload.get("is_irreg"),
+                        "impression": (payload.get("impression") or "").strip(),
+                        "date_type": (payload.get("date_type") or payload.get("dateType") or "").strip(),
                         "dimensions": (payload.get("dimensions") or "").strip(),
                         "width_mm": (payload.get("width_mm") or "").strip(),
                         "height_mm": (payload.get("height_mm") or "").strip(),
                         "description": (payload.get("description") or "").strip(),
+                        "inscription_txt": (payload.get("inscription_txt") or payload.get("inscriptionText") or "").strip(),
                         "references": (payload.get("references") or "").strip(),
-                        "rarity": (payload.get("rarity") or "").strip(),
                         "submitter_name": (payload.get("submitter_name") or "").strip(),
                         "original_postmark_id": "",
                     }
@@ -1969,12 +2142,15 @@ class ContributionView(APIView):
                         "type": payload.get("type", ""),
                         "color": payload.get("color", ""),
                         "manuscript": payload.get("manuscript", ""),
+                        "is_irreg": payload.get("is_irreg"),
+                        "impression": payload.get("impression", ""),
+                        "date_type": payload.get("date_type", ""),
                         "dimensions": payload.get("dimensions", ""),
                         "width_mm": payload.get("width_mm", ""),
                         "height_mm": payload.get("height_mm", ""),
                         "description": payload.get("description", ""),
+                        "inscription_txt": payload.get("inscription_txt", ""),
                         "references": payload.get("references", ""),
-                        "rarity": payload.get("rarity", ""),
                         "submitter_name": submitter_name,
                         "contributor_comment": payload.get("contributor_comment", ""),
                         "original_postmark_id": str(edit_postmark_id),
@@ -2383,9 +2559,13 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         references = _get("references", "References")
         if references is not None:
             overlay["references"] = str(references).strip()
-        rarity = _get("rarity", "Rarity")
-        if rarity is not None:
-            overlay["rarity"] = str(rarity).strip()
+        is_irreg = _get("is_irreg", "isIrreg", "isIrregular")
+        parsed_is_irreg = _parse_optional_bool(is_irreg)
+        if parsed_is_irreg is not None:
+            overlay["is_irreg"] = parsed_is_irreg
+        date_type = _get("date_type", "dateType")
+        if date_type is not None:
+            overlay["date_type"] = str(date_type).strip()
         for key, payload_key in [
             ("lettering_style_id", "letteringStyleId"),
             ("framing_style_id", "framingStyleId"),

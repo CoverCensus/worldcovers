@@ -477,13 +477,13 @@ export interface PostmarkApiResponse {
    * Fetches a single page of postmarks from api/postmarks/.
    * 10 records per page. Use page=2 for next 10 records.
    * Pass search to filter by keyword (postmark_key, facility_name, rate_value, etc).
-   * Pass postmarkShapeId to filter by postmark type (sends postmark_shape=id to API).
+   * Pass shapeId to filter by v2 common shape (sends shape=id to API).
    */
   export async function getPostmarksPage(
     page: number = 1,
     pageSize: number = 10,
     search?: string,
-    postmarkShapeId?: string | number,
+    shapeId?: string | number,
     excludeManuscripts?: boolean,
     color?: string,
     state?: string,
@@ -501,8 +501,8 @@ export interface PostmarkApiResponse {
   
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
     if (search?.trim()) params.set("search", search.trim());
-    if (postmarkShapeId != null && postmarkShapeId !== "" && String(postmarkShapeId) !== "all") {
-      params.set("postmark_shape", String(postmarkShapeId));
+    if (shapeId != null && shapeId !== "" && String(shapeId) !== "all") {
+      params.set("shape", String(shapeId));
     }
     if (excludeManuscripts) {
       params.set("is_manuscript", String(excludeManuscripts));

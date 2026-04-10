@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Upload, CheckCircle, XCircle, Clock, Loader2 } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
@@ -42,16 +43,19 @@ const COLOR_OTHER_VALUE = "__other__";
 /** Value when user chooses "Other" and types postmark type manually */
 const TYPE_OTHER_VALUE = "__other__";
 
-const RARITY_OPTIONS = [
-  { value: "Common", label: "Common" },
-  { value: "Scarce", label: "Scarce" },
-  { value: "Rare", label: "Rare" },
-  { value: "Very Rare", label: "Very Rare" },
-];
-
 const MANUSCRIPT_OPTIONS = [
   { value: "Yes", label: "Yes" },
   { value: "No", label: "No" },
+];
+const IMPRESSION_OPTIONS = [
+  { value: "Normal", label: "Normal" },
+  { value: "Stencil", label: "Stencil" },
+  { value: "Negative", label: "Negative" },
+];
+const DATE_TYPE_OPTIONS = [
+  { value: "BISHOP MARK", label: "Bishop Mark" },
+  { value: "FRANKLIN MARK", label: "Franklin Mark" },
+  { value: "QUAKER DATE", label: "Quaker Date" },
 ];
 
 const MIN_YEAR = 1661;
@@ -126,6 +130,7 @@ const Contribute = () => {
   const [latestMonth, setLatestMonth] = useState("");
   const [latestYear, setLatestYear] = useState("");
   const [latestUnknown, setLatestUnknown] = useState(false);
+  const [datesObserved, setDatesObserved] = useState("");
   const [type, setType] = useState("");
   const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
@@ -133,14 +138,17 @@ const Contribute = () => {
   const [widthMm, setWidthMm] = useState("");
   const [heightMm, setHeightMm] = useState("");
   const [manuscript, setManuscript] = useState("");
-  const [rarity, setRarity] = useState("");
+  const [isIrregular, setIsIrregular] = useState(false);
+  const [impression, setImpression] = useState("");
+  const [dateType, setDateType] = useState("");
+  const [inscriptionText, setInscriptionText] = useState("");
   const [description, setDescription] = useState("");
   const [references, setReferences] = useState("");
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [diameterMm, setDiameterMm] = useState("");
   const [letteringId, setLetteringId] = useState("");
-  const [framingId, setFramingId] = useState("");
+  const [framingIds, setFramingIds] = useState<string[]>([]);
   const [dateFormatId, setDateFormatId] = useState("");
   const [fieldErrors, setFieldErrors] = useState<{
     state?: string;
@@ -244,9 +252,9 @@ const Contribute = () => {
             const normal = lettering.find((o) => String(o.name || "").trim().toLowerCase() === "normal");
             if (normal) setLetteringId(String(normal.id));
           }
-          if (!framingId) {
+          if (framingIds.length === 0) {
             const none = framing.find((o) => String(o.name || "").trim().toLowerCase() === "none");
-            if (none) setFramingId(String(none.id));
+            if (none) setFramingIds([String(none.id)]);
           }
         }
       })
@@ -256,7 +264,7 @@ const Contribute = () => {
         setDateFormatOptions([]);
       })
       .finally(() => setCatalogOptionsLoading(false));
-  }, [editContributionId, letteringId, framingId]);
+  }, [editContributionId, letteringId, framingIds.length]);
 
   // Load contribution for edit-and-resubmit (rejected / needs_revision)
   useEffect(() => {
@@ -305,6 +313,7 @@ const Contribute = () => {
         setLatestMonth("");
         setLatestYear(last || "");
         setLatestUnknown(false);
+        setDatesObserved(getStr(sd.dates_observed ?? (sd as Record<string, unknown>).datesObserved));
         setType(typeVal || "");
         setTypeOther("");
         setColor(colorVal || "");
@@ -313,13 +322,24 @@ const Contribute = () => {
         setWidthMm(wh.width);
         setHeightMm(wh.height);
         setManuscript(getStr(sd.manuscript));
-        setRarity(getStr(sd.rarity));
+        setImpression(getStr(sd.impression));
+        setDateType(getStr(sd.date_type ?? (sd as Record<string, unknown>).dateType));
+        setIsIrregular(Boolean(sd.is_irreg ?? (sd as Record<string, unknown>).isIrreg));
+        setInscriptionText(getStr(sd.inscription_txt ?? (sd as Record<string, unknown>).inscriptionText));
         setDescription(getStr(sd.description));
         setReferences(getStr(sd.references));
         const lid = sd.lettering_style_id ?? (sd as Record<string, unknown>).letteringStyleId;
         setLetteringId(lid != null ? String(lid) : "");
-        const fid = sd.framing_style_id ?? (sd as Record<string, unknown>).framingStyleId;
-        setFramingId(fid != null ? String(fid) : "");
+        const fids = (sd.framing_style_ids ?? (sd as Record<string, unknown>).framingStyleIds) as unknown;
+        const normalizedFramingIds = Array.isArray(fids)
+          ? fids.map((x) => String(x)).filter(Boolean)
+          : [];
+        if (normalizedFramingIds.length > 0) {
+          setFramingIds(normalizedFramingIds);
+        } else {
+          const fid = sd.framing_style_id ?? (sd as Record<string, unknown>).framingStyleId;
+          setFramingIds(fid != null ? [String(fid)] : []);
+        }
         const did = sd.date_format_id ?? (sd as Record<string, unknown>).dateFormatId;
         setDateFormatId(did != null ? String(did) : "");
         const metas = (sd.image_metas ?? (sd as Record<string, unknown>).imageMetas) as Array<{ storage_filename?: string; storageFilename?: string }> | undefined;
@@ -637,6 +657,11 @@ const Contribute = () => {
         : mkIso(latestDay, latestMonth, latestYear) || latestYear.trim();
       const earliestLabel = formatDateLabel(earliestDay, earliestMonth, earliestYear, earliestUnknown);
       const latestLabel = formatDateLabel(latestDay, latestMonth, latestYear, latestUnknown);
+      const normalizedObservedDates = datesObserved
+        .split(/\r?\n|,/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join("\n");
       const derivedIsCircular = isCircularType(typeVal);
       const derivedDimensions = (() => {
         const d = diameterMm.trim();
@@ -647,6 +672,7 @@ const Contribute = () => {
         return "";
       })();
       const descriptionToSend = description.trim();
+      const inscriptionToSend = inscriptionText.trim();
 
       const derivedShapeId = isStateEditor && type && type !== TYPE_OTHER_VALUE
         ? typeOptions.find((t) => t.name === type)?.id
@@ -666,16 +692,23 @@ const Contribute = () => {
         form.append("town", townVal);
         form.append("firstSeen", firstSeenToSend);
         form.append("lastSeen", lastSeenToSend);
+        if (normalizedObservedDates) form.append("dates_observed", normalizedObservedDates);
         form.append("type", typeVal);
         form.append("color", colorVal);
         if (derivedDimensions) form.append("dimensions", derivedDimensions);
         if (manuscript.trim()) form.append("manuscript", manuscript.trim());
-        if (rarity.trim()) form.append("rarity", rarity.trim());
+        form.append("is_irreg", String(isIrregular));
+        if (impression.trim()) form.append("impression", impression.trim());
+        if (dateType.trim()) form.append("date_type", dateType.trim());
+        if (inscriptionToSend) form.append("inscription_txt", inscriptionToSend);
         if (descriptionToSend) form.append("description", descriptionToSend);
         if (references.trim()) form.append("references", references.trim());
         if (submitterName) form.append("submitterName", submitterName);
         form.append("lettering_style_id", letteringId);
-        form.append("framing_style_id", framingId);
+        if (framingIds.length > 0) {
+          form.append("framing_style_id", framingIds[0]);
+          framingIds.forEach((id) => form.append("framing_style_ids[]", id));
+        }
         form.append("date_format_id", dateFormatId);
         if (isStateEditor) {
           if (derivedShapeId != null) form.append("postmark_shape_id", String(derivedShapeId));
@@ -694,16 +727,21 @@ const Contribute = () => {
           town: townVal,
           firstSeen: firstSeenToSend,
           lastSeen: lastSeenToSend,
+          dates_observed: normalizedObservedDates || undefined,
           type: typeVal,
           color: colorVal,
           dimensions: derivedDimensions || undefined,
           manuscript: manuscript.trim() || undefined,
-          rarity: rarity.trim() || undefined,
+          is_irreg: isIrregular,
+          impression: impression.trim() || undefined,
+          date_type: dateType.trim() || undefined,
+          inscription_txt: inscriptionToSend || undefined,
           description: descriptionToSend || undefined,
           references: references.trim() || undefined,
           submitterName: submitterName || undefined,
           lettering_style_id: letteringId ? Number(letteringId) : undefined,
-          framing_style_id: framingId ? Number(framingId) : undefined,
+          framing_style_id: framingIds[0] ? Number(framingIds[0]) : undefined,
+          framing_style_ids: framingIds.length > 0 ? framingIds.map((id) => Number(id)) : undefined,
           date_format_id: dateFormatId ? Number(dateFormatId) : undefined,
           ...editorPayload,
         });
@@ -761,6 +799,7 @@ const Contribute = () => {
       setLatestMonth("");
       setLatestYear("");
       setLatestUnknown(false);
+      setDatesObserved("");
       setType("");
       setTypeOther("");
       setColor("");
@@ -769,14 +808,18 @@ const Contribute = () => {
       setHeightMm("");
       setDiameterMm("");
       setManuscript("");
-      setRarity("");
+      setIsIrregular(false);
+      setImpression("");
+      setDateType("");
+      setInscriptionText("");
       setDescription("");
       setReferences("");
       setImageFiles([]);
       setImagePreviews([]);
       setLetteringId("");
-      setFramingId("");
+      setFramingIds([]);
       setDateFormatId("");
+      setDateType("");
       if (directAdd) {
         setEditorValue("");
         setEditorComment("");
@@ -951,6 +994,30 @@ const Contribute = () => {
                         </SelectContent>
                       </Select>
                       {fieldErrors.manuscript && <p className="text-sm text-destructive">{fieldErrors.manuscript}</p>}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="impression">Impression</Label>
+                      <Select value={impression} onValueChange={setImpression}>
+                        <SelectTrigger id="impression">
+                          <SelectValue placeholder="Select impression..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {IMPRESSION_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="is-irregular"
+                        type="checkbox"
+                        checked={isIrregular}
+                        onChange={(e) => setIsIrregular(e.target.checked)}
+                      />
+                      <Label htmlFor="is-irregular">Is Irregular</Label>
                     </div>
 
                     <div className="space-y-3">
@@ -1128,6 +1195,19 @@ const Contribute = () => {
                           Optional. Leave blank if unknown, or enter Day/Month/Year, or choose Unknown.
                         </p>
                       </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="dates-observed">Additional observed dates</Label>
+                        <Textarea
+                          id="dates-observed"
+                          placeholder={"One per line (YYYY or YYYY-MM-DD)\nExample:\n1842\n1842-05-17"}
+                          value={datesObserved}
+                          onChange={(e) => setDatesObserved(e.target.value)}
+                          rows={4}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Optional. These are stored as extra dates_observed entries in addition to Earliest/Latest Use.
+                        </p>
+                      </div>
                     </div>
 
                     <div className="space-y-2">
@@ -1213,6 +1293,21 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
+                      <Label htmlFor="date-type">Date type</Label>
+                      <Select value={dateType} onValueChange={setDateType}>
+                        <SelectTrigger id="date-type">
+                          <SelectValue placeholder="Select date type (optional)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {DATE_TYPE_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
                       <Label>
                         <span
                           className="cursor-help border-b border-dotted border-muted-foreground/40"
@@ -1242,16 +1337,31 @@ const Contribute = () => {
                           Framing style
                         </span>
                       </Label>
-                      <Select value={framingId} onValueChange={(v) => { setFramingId(v); setFieldErrors((prev) => ({ ...prev, framing: undefined })); }} disabled={catalogOptionsLoading}>
-                        <SelectTrigger className={fieldErrors.framing ? "border-destructive" : ""}>
-                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select framing style"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {framingOptions.map((opt) => (
-                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <div className={`rounded-md border p-3 space-y-2 max-h-44 overflow-auto ${fieldErrors.framing ? "border-destructive" : "border-input"}`}>
+                        {catalogOptionsLoading ? (
+                          <p className="text-sm text-muted-foreground">Loading...</p>
+                        ) : (
+                          framingOptions.map((opt) => {
+                            const value = String(opt.id);
+                            const checked = framingIds.includes(value);
+                            return (
+                              <label key={opt.id} className="flex items-center gap-2 text-sm">
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(next) => {
+                                    setFramingIds((prev) => {
+                                      if (next) return prev.includes(value) ? prev : [...prev, value];
+                                      return prev.filter((id) => id !== value);
+                                    });
+                                    setFieldErrors((prev) => ({ ...prev, framing: undefined }));
+                                  }}
+                                />
+                                <span>{opt.name}</span>
+                              </label>
+                            );
+                          })
+                        )}
+                      </div>
                       {fieldErrors.framing && <p className="text-sm text-destructive">{fieldErrors.framing}</p>}
                     </div>
                     <div className="space-y-2">
@@ -1362,19 +1472,14 @@ const Contribute = () => {
                     )}
 
                     <div className="space-y-2">
-                      <Label htmlFor="rarity">Rarity</Label>
-                      <Select value={rarity} onValueChange={setRarity}>
-                        <SelectTrigger id="rarity">
-                          <SelectValue placeholder="Select..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {RARITY_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Label htmlFor="inscription-text">Inscription Text</Label>
+                      <Textarea
+                        id="inscription-text"
+                        placeholder="Exact text inscribed on the marking device (abbreviations/annotations)."
+                        value={inscriptionText}
+                        onChange={(e) => setInscriptionText(e.target.value)}
+                        rows={3}
+                      />
                     </div>
 
                     <div className="space-y-2">

@@ -31,13 +31,6 @@ const TYPE_OTHER_VALUE = "__other__";
 const MIN_YEAR = 1661;
 const CURRENT_YEAR = new Date().getFullYear();
 
-const RARITY_OPTIONS = [
-  { value: "Common", label: "Common" },
-  { value: "Scarce", label: "Scarce" },
-  { value: "Rare", label: "Rare" },
-  { value: "Very Rare", label: "Very Rare" },
-];
-
 const MANUSCRIPT_OPTIONS = [
   { value: "Yes", label: "Yes" },
   { value: "No", label: "No" },
@@ -78,7 +71,8 @@ interface SubmittedData {
   heightMm?: string | number;
   description?: string;
   references?: string;
-  rarity?: string;
+  is_irreg?: boolean;
+  isIrreg?: boolean;
   submitter_name?: string;
   original_postmark_id?: string;
   image_meta?: {
@@ -207,7 +201,7 @@ const ContributionDetail = () => {
     manuscript: string;
     description: string;
     references: string;
-    rarity: string;
+    is_irreg: boolean;
     lettering_style_id: string;
     framing_style_id: string;
     date_format_id: string;
@@ -226,7 +220,7 @@ const ContributionDetail = () => {
     manuscript: "",
     description: "",
     references: "",
-    rarity: "",
+    is_irreg: false,
     lettering_style_id: "",
     framing_style_id: "",
     date_format_id: "",
@@ -450,7 +444,7 @@ const ContributionDetail = () => {
       manuscript: String(sd.manuscript ?? "").trim(),
       description: String(sd.description ?? "").trim(),
       references: String(sd.references ?? "").trim(),
-      rarity: String(sd.rarity ?? "").trim(),
+      is_irreg: Boolean(sd.is_irreg ?? sd.isIrreg),
       lettering_style_id:
         sd.lettering_style_id != null || sd.letteringStyleId != null
           ? String(sd.lettering_style_id ?? sd.letteringStyleId ?? "")
@@ -554,7 +548,7 @@ const ContributionDetail = () => {
       manuscript: editorEdits.manuscript.trim() || undefined,
       description: editorEdits.description.trim() || undefined,
       references: editorEdits.references.trim() || undefined,
-      rarity: editorEdits.rarity.trim() || undefined,
+      is_irreg: editorEdits.is_irreg,
       lettering_style_id: editorEdits.lettering_style_id
         ? parseInt(editorEdits.lettering_style_id, 10)
         : undefined,
@@ -746,7 +740,7 @@ const ContributionDetail = () => {
       ""
   ).trim();
   const manuscript = String(sd.manuscript ?? "").trim();
-  const rarity = String(sd.rarity ?? "").trim();
+  const isIrregular = Boolean(sd.is_irreg ?? sd.isIrreg);
   const title = [town, state].filter(Boolean).join(", ") || `Submission #${contribution.id}`;
   const displayName = [title, type].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") || title;
   const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
@@ -1025,7 +1019,7 @@ const ContributionDetail = () => {
                 <div className="flex flex-wrap gap-2">
                   {hasValue(type) ? <Badge variant="secondary">{type}</Badge> : null}
                   {hasValue(color) ? <Badge variant="secondary">{color}</Badge> : null}
-                  {hasValue(rarity) ? <Badge variant="outline">{rarity}</Badge> : null}
+                  <Badge variant="outline">Irregular: {isIrregular ? "Yes" : "No"}</Badge>
                 </div>
                 {showPeerReviewNotice ? (
                   <p className="mt-4 text-sm rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-foreground">
@@ -1510,24 +1504,17 @@ const ContributionDetail = () => {
                       </Select>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-rarity">Rarity</Label>
-                      <Select
-                        value={editorEdits.rarity}
-                        onValueChange={(v) => setEditorEdits((p) => ({ ...p, rarity: v }))}
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="contrib-edit-is-irregular"
+                        type="checkbox"
+                        checked={editorEdits.is_irreg}
+                        onChange={(e) =>
+                          setEditorEdits((p) => ({ ...p, is_irreg: e.target.checked }))
+                        }
                         disabled={submitting}
-                      >
-                        <SelectTrigger id="contrib-edit-rarity">
-                          <SelectValue placeholder="Select..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {RARITY_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      />
+                      <Label htmlFor="contrib-edit-is-irregular">Is Irregular</Label>
                     </div>
 
                     <div className="space-y-2">
