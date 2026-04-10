@@ -973,7 +973,7 @@ const Contribute = () => {
       setImagePreviews([]);
       setLetteringId("");
       setFramingIds([]);
-      setDateFormatId("");
+      setDateFormatIds([]);
       setDateType("");
       if (directAdd) {
         setEditorValue("");
