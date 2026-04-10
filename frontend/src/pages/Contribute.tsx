@@ -135,7 +135,6 @@ const Contribute = () => {
   const [latestMonth, setLatestMonth] = useState("");
   const [latestYear, setLatestYear] = useState("");
   const [latestUnknown, setLatestUnknown] = useState(false);
-  const [datesObserved, setDatesObserved] = useState("");
   const [type, setType] = useState("");
   const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
@@ -334,7 +333,6 @@ const Contribute = () => {
         setLatestMonth("");
         setLatestYear(last || "");
         setLatestUnknown(false);
-        setDatesObserved(getStr(sd.dates_observed ?? (sd as Record<string, unknown>).datesObserved));
         setType(typeVal || "");
         setTypeOther("");
         setColor(colorVal || "");
@@ -679,11 +677,6 @@ const Contribute = () => {
         : mkIso(latestDay, latestMonth, latestYear) || latestYear.trim();
       const earliestLabel = formatDateLabel(earliestDay, earliestMonth, earliestYear, earliestUnknown);
       const latestLabel = formatDateLabel(latestDay, latestMonth, latestYear, latestUnknown);
-      const normalizedObservedDates = datesObserved
-        .split(/\r?\n|,/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .join("\n");
       const derivedIsCircular = isCircularType(typeVal);
       const derivedDimensions = (() => {
         const d = diameterMm.trim();
@@ -714,7 +707,6 @@ const Contribute = () => {
         form.append("town", townVal);
         form.append("firstSeen", firstSeenToSend);
         form.append("lastSeen", lastSeenToSend);
-        if (normalizedObservedDates) form.append("dates_observed", normalizedObservedDates);
         form.append("type", typeVal);
         form.append("color", colorVal);
         if (derivedDimensions) form.append("dimensions", derivedDimensions);
@@ -749,7 +741,6 @@ const Contribute = () => {
           town: townVal,
           firstSeen: firstSeenToSend,
           lastSeen: lastSeenToSend,
-          dates_observed: normalizedObservedDates || undefined,
           type: typeVal,
           color: colorVal,
           dimensions: derivedDimensions || undefined,
@@ -821,7 +812,6 @@ const Contribute = () => {
       setLatestMonth("");
       setLatestYear("");
       setLatestUnknown(false);
-      setDatesObserved("");
       setType("");
       setTypeOther("");
       setColor("");
@@ -1215,19 +1205,6 @@ const Contribute = () => {
                         {latestYearError && !fieldErrors.latestDate && <p className="text-sm text-destructive">{latestYearError}</p>}
                         <p className="text-xs text-muted-foreground">
                           Optional. Leave blank if unknown, or enter Day/Month/Year, or choose Unknown.
-                        </p>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="dates-observed">Additional observed dates</Label>
-                        <Textarea
-                          id="dates-observed"
-                          placeholder={"One per line (YYYY or YYYY-MM-DD)\nExample:\n1842\n1842-05-17"}
-                          value={datesObserved}
-                          onChange={(e) => setDatesObserved(e.target.value)}
-                          rows={4}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Optional. These are stored as extra dates_observed entries in addition to Earliest/Latest Use.
                         </p>
                       </div>
                     </div>

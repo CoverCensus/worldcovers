@@ -151,7 +151,6 @@ const EditCatalogEntry = () => {
   const [latestMonth, setLatestMonth] = useState("");
   const [latestYear, setLatestYear] = useState("");
   const [latestUnknown, setLatestUnknown] = useState(false);
-  const [datesObserved, setDatesObserved] = useState("");
   const [type, setType] = useState("");
   const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
@@ -332,20 +331,6 @@ const EditCatalogEntry = () => {
         setLatestMonth(lParts.month);
         setLatestYear(lParts.year);
         setLatestUnknown(false);
-        if (Array.isArray(datesSeenRaw) && datesSeenRaw.length > 1) {
-          const extras = datesSeenRaw
-            .slice(1)
-            .map((row: any) => {
-              const e = String(row?.earliestDateSeen ?? row?.earliest_date_seen ?? "").slice(0, 10);
-              const l = String(row?.latestDateSeen ?? row?.latest_date_seen ?? "").slice(0, 10);
-              if (e && l && e !== l) return `${e} - ${l}`;
-              return e || l || "";
-            })
-            .filter(Boolean);
-          setDatesObserved(extras.join("\n"));
-        } else {
-          setDatesObserved("");
-        }
         setType(data?.postmarkShape?.shapeName || "");
         setColor(data.colorsDisplay || "");
         setWidthMm(wh.width);
@@ -614,11 +599,6 @@ const EditCatalogEntry = () => {
         : mkIso(latestDay, latestMonth, latestYear) || latestYear.trim();
       const earliestLabel = formatDateLabel(earliestDay, earliestMonth, earliestYear, earliestUnknown);
       const latestLabel = formatDateLabel(latestDay, latestMonth, latestYear, latestUnknown);
-      const normalizedObservedDates = datesObserved
-        .split(/\r?\n|,/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .join("\n");
       const derivedDimensions = (() => {
         const d = diameterMm.trim();
         const w = widthMm.trim();
@@ -637,7 +617,6 @@ const EditCatalogEntry = () => {
         form.append("town", townVal);
         form.append("firstSeen", firstSeenToSend);
         form.append("lastSeen", lastSeenToSend);
-        if (normalizedObservedDates) form.append("dates_observed", normalizedObservedDates);
         form.append("type", typeVal);
         form.append("color", colorVal);
         form.append("lettering_style_id", letteringId);
@@ -669,7 +648,6 @@ const EditCatalogEntry = () => {
           town: townVal,
           firstSeen: firstSeenToSend,
           lastSeen: lastSeenToSend,
-          dates_observed: normalizedObservedDates || undefined,
           type: typeVal,
           color: colorVal,
           lettering_style_id: letteringId ? Number(letteringId) : undefined,
@@ -1148,19 +1126,6 @@ const EditCatalogEntry = () => {
                         {fieldErrors.latestDate && <p className="text-sm text-destructive">{fieldErrors.latestDate}</p>}
                         <p className="text-xs text-muted-foreground">
                           Optional. Leave blank if unknown, or enter Day/Month/Year, or choose Unknown.
-                        </p>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-dates-observed">Additional observed dates</Label>
-                        <Textarea
-                          id="edit-dates-observed"
-                          placeholder={"One per line (YYYY or YYYY-MM-DD)\nExample:\n1842\n1842-05-17"}
-                          value={datesObserved}
-                          onChange={(e) => setDatesObserved(e.target.value)}
-                          rows={4}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Optional. These are stored as extra dates_observed entries in addition to Earliest/Latest Use.
                         </p>
                       </div>
                     </div>

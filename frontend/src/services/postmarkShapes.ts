@@ -8,9 +8,12 @@ import { supabase } from "@/integrations/supabase/client";
 
 /** One item from GET /postmark-shapes/ (DRF returns snake_case) */
 export interface PostmarkShapeApiResultItem {
-  postmark_shape_id: number;
-  shape_name: string;
-  shape_description: string;
+  postmark_shape_id?: number;
+  shape_name?: string;
+  shape_description?: string;
+  id?: number;
+  name?: string;
+  notes?: string | null;
 }
 
 /** Paginated response from GET /postmark-shapes/ */
@@ -30,9 +33,9 @@ export interface PostmarkShapeOption {
 
 function mapApiResultToOption(item: PostmarkShapeApiResultItem): PostmarkShapeOption {
   return {
-    id: item.postmark_shape_id,
-    name: item.shape_name,
-    description: item.shape_description,
+    id: item.postmark_shape_id ?? item.id ?? 0,
+    name: item.shape_name ?? item.name ?? "",
+    description: item.shape_description ?? (item.notes ?? ""),
   };
 }
 
@@ -106,7 +109,11 @@ async function getAllPostmarkShapesFromApi(apiUrl: string): Promise<PostmarkShap
       throw new Error("Postmark shapes API: invalid response (missing results array)");
     }
 
-    allResults.push(...data.results.map(mapApiResultToOption));
+    allResults.push(
+      ...data.results
+        .map(mapApiResultToOption)
+        .filter((x) => x.id > 0 && x.name.trim() !== "")
+    );
 
     nextUrl =
       typeof data.next === "string" && data.next.trim() !== "" ? data.next : null;
