@@ -2415,6 +2415,65 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         if date_fmt_id is None:
             date_fmt_id = sd.get("date_format_id") or sd.get("dateFormatId")
 
+        def _as_int_or_none(raw):
+            if raw is None or raw == "":
+                return None
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return None
+
+        def _as_str_or_none(raw):
+            if raw is None:
+                return None
+            s = str(raw).strip()
+            return s or None
+
+        # Backward compatibility:
+        # Some older contributions stored labels (e.g. "Sans-serif", "DL - Double Line", "MD")
+        # instead of numeric FK IDs in submitted_data. Resolve by name/abbreviation when needed.
+        lettering_id = _as_int_or_none(lettering_id)
+        if lettering_id is None:
+            lettering_name = (
+                _as_str_or_none(sd.get("lettering_style_name"))
+                or _as_str_or_none(sd.get("letteringStyleName"))
+                or _as_str_or_none(sd.get("lettering_style"))
+                or _as_str_or_none(sd.get("letteringStyle"))
+                or _as_str_or_none(sd.get("LetteringStyle"))
+            )
+            if lettering_name:
+                matched = LetteringStyle.objects.filter(lettering_style_name__iexact=lettering_name).values_list("pk", flat=True).first()
+                if matched is not None:
+                    lettering_id = int(matched)
+
+        framing_id = _as_int_or_none(framing_id)
+        if framing_id is None:
+            framing_name = (
+                _as_str_or_none(sd.get("framing_style_name"))
+                or _as_str_or_none(sd.get("framingStyleName"))
+                or _as_str_or_none(sd.get("framing_style"))
+                or _as_str_or_none(sd.get("framingStyle"))
+                or _as_str_or_none(sd.get("FramingStyle"))
+            )
+            if framing_name:
+                matched = FramingStyle.objects.filter(framing_style_name__iexact=framing_name).values_list("pk", flat=True).first()
+                if matched is not None:
+                    framing_id = int(matched)
+
+        date_fmt_id = _as_int_or_none(date_fmt_id)
+        if date_fmt_id is None:
+            date_fmt_name = (
+                _as_str_or_none(sd.get("date_format_name"))
+                or _as_str_or_none(sd.get("dateFormatName"))
+                or _as_str_or_none(sd.get("date_format"))
+                or _as_str_or_none(sd.get("dateFormat"))
+                or _as_str_or_none(sd.get("DateFormat"))
+            )
+            if date_fmt_name:
+                matched = DateFormat.objects.filter(date_format__iexact=date_fmt_name).values_list("pk", flat=True).first()
+                if matched is not None:
+                    date_fmt_id = int(matched)
+
         missing_from_contribution = []
         if lettering_id is None:
             missing_from_contribution.append("lettering_style_id (Lettering style)")

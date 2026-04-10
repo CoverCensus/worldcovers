@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { Checkbox } from "@/components/ui/checkbox";
+import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { ArrowLeft, Loader2, Upload } from "lucide-react";
 import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
 import { getColors, type ColorOption } from "@/services/colors";
@@ -244,16 +244,6 @@ const EditCatalogEntry = () => {
         setLetteringOptions(lettering);
         setFramingOptions(framing);
         setDateFormatOptions(dateFmt);
-
-        // Defaults: Lettering = Normal, Framing = None (only when empty).
-        if (!letteringId) {
-          const normal = lettering.find((o) => String(o.name || "").trim().toLowerCase() === "normal");
-          if (normal) setLetteringId(String(normal.id));
-        }
-        if (framingIds.length === 0) {
-          const none = framing.find((o) => String(o.name || "").trim().toLowerCase() === "none");
-          if (none) setFramingIds([String(none.id)]);
-        }
       })
       .catch(() => {
         setLetteringOptions([]);
@@ -261,7 +251,7 @@ const EditCatalogEntry = () => {
         setDateFormatOptions([]);
       })
       .finally(() => setCatalogOptionsLoading(false));
-  }, [letteringId, framingIds.length]);
+  }, []);
 
   useEffect(() => {
     if (postmarkId == null || isNaN(postmarkId)) {
@@ -1253,31 +1243,24 @@ const EditCatalogEntry = () => {
                           Framing style
                         </span>
                       </Label>
-                      <div className={`rounded-md border p-3 space-y-2 max-h-44 overflow-auto ${fieldErrors.framing ? "border-destructive" : "border-input"}`}>
-                        {catalogOptionsLoading ? (
-                          <p className="text-sm text-muted-foreground">Loading...</p>
-                        ) : (
-                          framingOptions.map((opt) => {
-                            const value = String(opt.id);
-                            const checked = framingIds.includes(value);
-                            return (
-                              <label key={opt.id} className="flex items-center gap-2 text-sm">
-                                <Checkbox
-                                  checked={checked}
-                                  onCheckedChange={(next) => {
-                                    setFramingIds((prev) => {
-                                      if (next) return prev.includes(value) ? prev : [...prev, value];
-                                      return prev.filter((id) => id !== value);
-                                    });
-                                    setFieldErrors((prev) => ({ ...prev, framing: undefined }));
-                                  }}
-                                />
-                                <span>{opt.name}</span>
-                              </label>
-                            );
-                          })
-                        )}
-                      </div>
+                      <SearchableMultiSelect
+                        id="edit-framing"
+                        values={framingIds}
+                        onValuesChange={(values) => {
+                          setFramingIds(values);
+                          setFieldErrors((prev) => ({ ...prev, framing: undefined }));
+                        }}
+                        options={framingOptions.map((opt) => ({
+                          value: String(opt.id),
+                          label: opt.name,
+                        }))}
+                        loading={catalogOptionsLoading}
+                        placeholder="Select one or more framing styles"
+                        searchPlaceholder="Search framing styles..."
+                        emptyMessage="No framing style found."
+                        triggerClassName={fieldErrors.framing ? "border-destructive" : ""}
+                        aria-label="Framing style"
+                      />
                       {fieldErrors.framing && <p className="text-sm text-destructive">{fieldErrors.framing}</p>}
                     </div>
                     <div className="space-y-2">

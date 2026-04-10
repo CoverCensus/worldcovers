@@ -149,12 +149,18 @@ const RecordDetail = () => {
           const state = data.state ?? "";
           const earliestUse = data.earliest_use ?? data.earliestUse ?? "";
           const latestUse = data.latest_use ?? data.latestUse ?? "";
-          const earliestYear = earliestUse.slice(0, 4);
-          const townState = [town, state].filter(Boolean).join(",");
-          const suffix = earliestYear ? ` (${earliestYear})` : "";
-          const displayName = townState
-            ? `${postmarkKey} - ${townState}${suffix}`
-            : postmarkKey || "—";
+          const shapeNameForTitle =
+            (data.shape_name ?? data.shapeName ?? "").trim() ||
+            fromNested(data, ["postmark_shape", "shape_name"]) ||
+            fromNested(data, ["postmarkShape", "shapeName"]) ||
+            fromNested(data, ["shape", "name"]);
+          const townState = [town, state].filter(Boolean).join(", ");
+          const displayName = [townState, shapeNameForTitle]
+            .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
+            .join(" — ")
+            || townState
+            || postmarkKey
+            || "—";
           const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
           const images =
             data.images?.length
@@ -170,11 +176,7 @@ const RecordDetail = () => {
           const sourceCatalog = String(
             data.source_catalog ?? data.sourceCatalog ?? "",
           ).trim();
-          const shapeName =
-            (data.shape_name ?? data.shapeName ?? "").trim() ||
-            fromNested(data, ["postmark_shape", "shape_name"]) ||
-            fromNested(data, ["postmarkShape", "shapeName"]) ||
-            fromNested(data, ["shape", "name"]);
+          const shapeName = shapeNameForTitle;
           const dimensionsDisplay =
             (data.size_display ?? data.sizeDisplay ?? data.dimensionsDisplay ?? "").trim() ||
             formatPostmarkDimensionsDisplay(data.sizes);
@@ -506,8 +508,6 @@ const RecordDetail = () => {
                         const s = v != null ? String(v).trim() : "";
                         return s !== "" && s.toLowerCase() !== "unknown" ? s : "-";
                       };
-                      const firstSeen = displayValue(record.dateFirstSeen);
-                      const lastSeen = displayValue(record.dateLastSeen);
                       const details = [
                         { label: "Town", value: record.town },
                         { label: "State", value: record.state },
@@ -520,8 +520,6 @@ const RecordDetail = () => {
                         { label: "Framing style", value: record.framingStyle },
                         { label: "Dimensions", value: record.dimensions },
                         { label: "Color", value: record.color },
-                        { label: "Earliest Use", value: firstSeen },
-                        { label: "Latest Use", value: lastSeen },
                         { label: "Dates observed", value: (record.datesObserved ?? []).join("\n") },
                       ];
                       return details.map(({ label, value }, index) => (

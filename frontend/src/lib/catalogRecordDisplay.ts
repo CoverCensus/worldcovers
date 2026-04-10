@@ -121,11 +121,15 @@ export function buildCatalogSearchRow(record: PostmarkRecord): CatalogSearchRowD
     ...fields,
     cardId: `api-${record.id}`,
     title: (() => {
-      const townState = [record.town, record.state].filter(Boolean).join(",");
-      const earliestYear = record.earliestUse?.slice(0, 4) || "";
-      const suffix = earliestYear ? ` (${earliestYear})` : "";
-      const location = townState ? ` - ${townState}${suffix}` : "";
-      return `${record.postmarkKey || ""}${location}`.trim() || "—";
+      const normalize = (v: string | null | undefined) => {
+        const s = String(v ?? "").trim();
+        return s && s.toLowerCase() !== "unknown" ? s : "";
+      };
+      const townState = [normalize(record.town), normalize(record.state)]
+        .filter(Boolean)
+        .join(", ");
+      const type = normalize(record.listingType) || normalize(record.shapeName);
+      return [townState, type].filter(Boolean).join(" — ") || townState || normalize(record.postmarkKey) || "—";
     })(),
     image: normalizeImageUrl(getPostmarkListImageUrl(record.mainImage)),
   };
