@@ -188,6 +188,8 @@ from common.models import (
     UserLocationAssignment,
     Contribution,
     FAQEntry,
+    Lettering,
+    Framing,
 )
 
 from .serializers import (
@@ -2430,9 +2432,26 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
             return s or None
 
         # Backward compatibility:
-        # Some older contributions stored labels (e.g. "Sans-serif", "DL - Double Line", "MD")
-        # instead of numeric FK IDs in submitted_data. Resolve by name/abbreviation when needed.
+        # Some contributions now carry v2 lettering IDs (/api/v2/letterings), while this
+        # approval flow still persists legacy LetteringStyle FK values. Resolve by either:
+        # - direct legacy PK
+        # - v2 Lettering PK -> name -> legacy LetteringStyle name
+        # - direct name string stored in submitted_data
         lettering_id = _as_int_or_none(lettering_id)
+        if lettering_id is not None and not LetteringStyle.objects.filter(pk=lettering_id).exists():
+            v2_lettering_name = Lettering.objects.filter(pk=lettering_id).values_list("name", flat=True).first()
+            if v2_lettering_name:
+                matched = (
+                    LetteringStyle.objects.filter(lettering_style_name__iexact=v2_lettering_name)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+                if matched is not None:
+                    lettering_id = int(matched)
+                else:
+                    lettering_id = None
+            else:
+                lettering_id = None
         if lettering_id is None:
             lettering_name = (
                 _as_str_or_none(sd.get("lettering_style_name"))
@@ -2442,11 +2461,29 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
                 or _as_str_or_none(sd.get("LetteringStyle"))
             )
             if lettering_name:
-                matched = LetteringStyle.objects.filter(lettering_style_name__iexact=lettering_name).values_list("pk", flat=True).first()
+                matched = (
+                    LetteringStyle.objects.filter(lettering_style_name__iexact=lettering_name)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
                 if matched is not None:
                     lettering_id = int(matched)
 
         framing_id = _as_int_or_none(framing_id)
+        if framing_id is not None and not FramingStyle.objects.filter(pk=framing_id).exists():
+            v2_framing_name = Framing.objects.filter(pk=framing_id).values_list("name", flat=True).first()
+            if v2_framing_name:
+                matched = (
+                    FramingStyle.objects.filter(framing_style_name__iexact=v2_framing_name)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+                if matched is not None:
+                    framing_id = int(matched)
+                else:
+                    framing_id = None
+            else:
+                framing_id = None
         if framing_id is None:
             framing_name = (
                 _as_str_or_none(sd.get("framing_style_name"))
