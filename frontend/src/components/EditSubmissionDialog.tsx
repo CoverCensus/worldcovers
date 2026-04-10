@@ -6,6 +6,23 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 
+const MIN_YEAR = 1661;
+const CURRENT_YEAR = new Date().getFullYear();
+
+function getSeenDateError(value: string, opts: { required: boolean; label: string }): string | null {
+  const v = value.trim();
+  if (!v) return opts.required ? `${opts.label} is required.` : null;
+  if (/^\d{4}$/.test(v)) {
+    const n = Number(v);
+    if (Number.isNaN(n) || n < MIN_YEAR || n > CURRENT_YEAR) {
+      return `${opts.label} year must be between ${MIN_YEAR} and ${CURRENT_YEAR}.`;
+    }
+    return null;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  return `${opts.label} must be YYYY or YYYY-MM-DD.`;
+}
+
 type EditSubmissionDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -45,6 +62,16 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
         description: "State, town, first seen year, type, and color are required.",
         variant: "destructive",
       });
+      return;
+    }
+    const firstSeenErr = getSeenDateError(firstSeen, { required: true, label: "First Seen" });
+    if (firstSeenErr) {
+      toast({ title: "Invalid date", description: firstSeenErr, variant: "destructive" });
+      return;
+    }
+    const lastSeenErr = getSeenDateError(lastSeen, { required: false, label: "Last Seen" });
+    if (lastSeenErr) {
+      toast({ title: "Invalid date", description: lastSeenErr, variant: "destructive" });
       return;
     }
 
@@ -131,19 +158,23 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-firstSeen">First Seen Year</Label>
+              <Label htmlFor="edit-firstSeen">First Seen</Label>
               <Input
                 id="edit-firstSeen"
-                type="number"
+                type="text"
+                inputMode="text"
+                placeholder="YYYY or YYYY-MM-DD"
                 value={firstSeen}
                 onChange={(e) => setFirstSeen(e.target.value)}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-lastSeen">Last Seen Year</Label>
+              <Label htmlFor="edit-lastSeen">Last Seen</Label>
               <Input
                 id="edit-lastSeen"
-                type="number"
+                type="text"
+                inputMode="text"
+                placeholder="YYYY or YYYY-MM-DD"
                 value={lastSeen}
                 onChange={(e) => setLastSeen(e.target.value)}
               />

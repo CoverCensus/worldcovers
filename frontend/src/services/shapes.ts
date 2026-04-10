@@ -24,7 +24,21 @@ export interface ShapeOption {
 function getShapesApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
-  const base = env.trim().replace(/\/+$/, "");
+  let base = env.trim().replace(/\/+$/, "");
+  // Prevent mixed-content calls when site is served over HTTPS.
+  if (typeof window !== "undefined" && window.location.protocol === "https:" && /^http:\/\//i.test(base)) {
+    try {
+      const parsed = new URL(base);
+      if (parsed.host === window.location.host) {
+        base = parsed.pathname.replace(/\/+$/, "") || "/api/v2";
+      } else {
+        parsed.protocol = "https:";
+        base = parsed.toString().replace(/\/+$/, "");
+      }
+    } catch {
+      // keep original base; candidate fallback will still try safe defaults
+    }
+  }
   if (base.endsWith("/shapes")) return base;
   return `${base}/shapes`;
 }
@@ -33,7 +47,20 @@ function getShapesApiCandidates(): string[] {
   const candidates: string[] = [];
   const pushCandidate = (raw: unknown) => {
     if (!raw || typeof raw !== "string") return;
-    const base = raw.trim().replace(/\/+$/, "");
+    let base = raw.trim().replace(/\/+$/, "");
+    if (typeof window !== "undefined" && window.location.protocol === "https:" && /^http:\/\//i.test(base)) {
+      try {
+        const parsed = new URL(base);
+        if (parsed.host === window.location.host) {
+          base = parsed.pathname.replace(/\/+$/, "") || "/api/v2";
+        } else {
+          parsed.protocol = "https:";
+          base = parsed.toString().replace(/\/+$/, "");
+        }
+      } catch {
+        return;
+      }
+    }
     if (!base) return;
     candidates.push(base.endsWith("/shapes") ? base : `${base}/shapes`);
   };

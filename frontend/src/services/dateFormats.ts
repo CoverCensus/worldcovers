@@ -50,10 +50,9 @@ function getDateFormatsApiUrl(): string | null {
 
 function getDateFormatsApiCandidates(): string[] {
   const candidates: string[] = [];
-  // Prefer v2 route first if/when available.
-  candidates.push("/api/v2/date-formats");
-  // Explicit current compatibility route.
+  // Prefer v1 route for moderation-compatible IDs.
   candidates.push("/api/v1/date-formats");
+  candidates.push("/api/v2/date-formats");
   const pushCandidate = (raw: unknown) => {
     if (!raw || typeof raw !== "string") return;
     const base = raw.trim().replace(/\/+$/, "");
@@ -81,9 +80,7 @@ async function readJsonOrThrow(res: Response, endpoint: string): Promise<any> {
  * When VITE_DATE_FORMATS_API_URL is not set, returns [].
  */
 export async function getDateFormats(): Promise<DateFormatOption[]> {
-  const primary = getDateFormatsApiUrl();
   const candidates = getDateFormatsApiCandidates();
-  if (primary && !candidates.includes(primary)) candidates.push(primary);
   if (candidates.length === 0) return [];
 
   let lastError: unknown = null;

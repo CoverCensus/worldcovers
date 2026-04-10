@@ -50,10 +50,9 @@ function getFramingStylesApiUrl(): string | null {
 
 function getFramingStylesApiCandidates(): string[] {
   const candidates: string[] = [];
-  // Prefer v2 commons dataset first.
-  candidates.push("/api/v2/framings");
-  // Explicit v1 compatibility route.
+  // Prefer v1 compatibility route for approvable IDs in moderation.
   candidates.push("/api/v1/framing-styles");
+  candidates.push("/api/v2/framings");
   const pushCandidate = (raw: unknown) => {
     if (!raw || typeof raw !== "string") return;
     const base = raw.trim().replace(/\/+$/, "");
@@ -86,9 +85,7 @@ async function readJsonOrThrow(res: Response, endpoint: string): Promise<any> {
  * When VITE_FRAMING_STYLES_API_URL is not set, returns [].
  */
 export async function getFramingStyles(): Promise<FramingStyleOption[]> {
-  const primary = getFramingStylesApiUrl();
   const candidates = getFramingStylesApiCandidates();
-  if (primary && !candidates.includes(primary)) candidates.push(primary);
   if (candidates.length === 0) return [];
 
   let lastError: unknown = null;
