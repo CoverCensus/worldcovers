@@ -1091,11 +1091,50 @@ def _apply_contribution_to_catalog(contrib):
     Returns the Postmark or None on failure.
     """
     payload = contrib.submitted_data or {}
-    state = (_get_payload_value(payload, "state", "State") or "").strip()
-    town = (_get_payload_value(payload, "town", "Town") or "").strip()
+    state = (
+        _get_payload_value(
+            payload,
+            "state",
+            "State",
+            "state_display",
+            "stateDisplay",
+        )
+        or ""
+    ).strip()
+    town = (
+        _get_payload_value(
+            payload,
+            "town",
+            "Town",
+            "town_display",
+            "townDisplay",
+            "city",
+            "City",
+        )
+        or ""
+    ).strip()
+    # Older contributions may miss state/town in submitted_data. For edits tied to
+    # an existing catalog postmark, fall back to the current postmark location.
+    if (not state or not town) and contrib.postmark_id:
+        try:
+            pm = (
+                Postmark.objects.select_related("state", "postal_facility_identity")
+                .filter(postmark_id=contrib.postmark_id)
+                .first()
+            )
+            if pm:
+                if not town and getattr(pm, "postal_facility_identity", None):
+                    town = (pm.postal_facility_identity.facility_name or "").strip()
+                if not state and getattr(pm, "state", None):
+                    ident = pm.state.get_current_identity() if hasattr(pm.state, "get_current_identity") else None
+                    state = ((ident.unit_name if ident else "") or pm.state.reference_code or "").strip()
+        except Exception:
+            pass
     if not state or not town:
         logger.warning("_apply_contribution_to_catalog: contribution %s missing state or town in submitted_data", contrib.id)
         return None
+    payload.setdefault("state", state)
+    payload.setdefault("town", town)
     submitter_name = (_get_payload_value(payload, "submitter_name", "submitterName") or "").strip()
     if contrib.postmark_id:
         return _update_postmark_in_catalog(contrib.postmark_id, payload, submitter_name)

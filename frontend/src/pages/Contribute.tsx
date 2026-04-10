@@ -8,7 +8,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Upload, CheckCircle, XCircle, Clock, Loader2 } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
@@ -414,6 +419,15 @@ const Contribute = () => {
     towns.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
     return towns;
   }, [postalFacilities, state]);
+
+  const selectedFramingSummary = useMemo(() => {
+    if (framingIds.length === 0) return "Select one or more framing styles";
+    const selectedNames = framingOptions
+      .filter((opt) => framingIds.includes(String(opt.id)))
+      .map((opt) => opt.name);
+    if (selectedNames.length <= 2) return selectedNames.join(", ");
+    return `${selectedNames.slice(0, 2).join(", ")} +${selectedNames.length - 2} more`;
+  }, [framingIds, framingOptions]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -1336,31 +1350,38 @@ const Contribute = () => {
                           Framing style
                         </span>
                       </Label>
-                      <div className={`rounded-md border p-3 space-y-2 max-h-44 overflow-auto ${fieldErrors.framing ? "border-destructive" : "border-input"}`}>
-                        {catalogOptionsLoading ? (
-                          <p className="text-sm text-muted-foreground">Loading...</p>
-                        ) : (
-                          framingOptions.map((opt) => {
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild disabled={catalogOptionsLoading}>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={`w-full justify-start text-left font-normal ${fieldErrors.framing ? "border-destructive" : ""}`}
+                          >
+                            {catalogOptionsLoading ? "Loading..." : selectedFramingSummary}
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64 overflow-auto">
+                          {framingOptions.map((opt) => {
                             const value = String(opt.id);
                             const checked = framingIds.includes(value);
                             return (
-                              <label key={opt.id} className="flex items-center gap-2 text-sm">
-                                <Checkbox
-                                  checked={checked}
-                                  onCheckedChange={(next) => {
-                                    setFramingIds((prev) => {
-                                      if (next) return prev.includes(value) ? prev : [...prev, value];
-                                      return prev.filter((id) => id !== value);
-                                    });
-                                    setFieldErrors((prev) => ({ ...prev, framing: undefined }));
-                                  }}
-                                />
-                                <span>{opt.name}</span>
-                              </label>
+                              <DropdownMenuCheckboxItem
+                                key={opt.id}
+                                checked={checked}
+                                onCheckedChange={(next) => {
+                                  setFramingIds((prev) => {
+                                    if (next) return prev.includes(value) ? prev : [...prev, value];
+                                    return prev.filter((id) => id !== value);
+                                  });
+                                  setFieldErrors((prev) => ({ ...prev, framing: undefined }));
+                                }}
+                              >
+                                {opt.name}
+                              </DropdownMenuCheckboxItem>
                             );
-                          })
-                        )}
-                      </div>
+                          })}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                       {fieldErrors.framing && <p className="text-sm text-destructive">{fieldErrors.framing}</p>}
                     </div>
                     <div className="space-y-2">
