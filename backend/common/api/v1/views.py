@@ -2410,8 +2410,28 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         date_fmt_id = data.get("date_format_id")
         estimated_value = data.get("estimated_value")
         sd = contrib.submitted_data or {}
+
+        def _extract_id_from_submitted(raw, *keys):
+            if raw is None:
+                return None
+            if isinstance(raw, dict):
+                for k in keys:
+                    v = raw.get(k)
+                    if v is not None and v != "":
+                        return v
+                return None
+            return raw
+
         if lettering_id is None:
-            lettering_id = sd.get("lettering_style_id") or sd.get("letteringStyleId")
+            lettering_id = (
+                sd.get("lettering_style_id")
+                or sd.get("letteringStyleId")
+                or sd.get("lettering_id")
+                or sd.get("letteringId")
+                or _extract_id_from_submitted(sd.get("lettering_style"), "lettering_style_id", "letteringStyleId", "id")
+                or _extract_id_from_submitted(sd.get("letteringStyle"), "lettering_style_id", "letteringStyleId", "id")
+                or _extract_id_from_submitted(sd.get("lettering"), "lettering_id", "letteringId", "id")
+            )
         if framing_id is None:
             framing_id = sd.get("framing_style_id") or sd.get("framingStyleId")
         if date_fmt_id is None:
