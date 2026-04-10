@@ -58,7 +58,6 @@ export const useFilterOptions = (options?: UseFilterOptionsOptions): UseFilterOp
       setShapeOptions(shapes.map((s) => ({ value: String(s.id), label: s.name })));
       setStateOptions(states);
     } catch (err) {
-      console.log(err)
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch filter options';
       setError(errorMessage);
       console.error('Error fetching filter options:', errorMessage);

@@ -25,6 +25,17 @@ export interface StateOption {
   label: string;
 }
 
+async function readJsonOrThrow(res: Response, endpoint: string): Promise<any> {
+  const contentType = (res.headers.get("content-type") || "").toLowerCase();
+  if (!contentType.includes("application/json")) {
+    const snippet = (await res.text()).slice(0, 120).replace(/\s+/g, " ").trim();
+    throw new Error(
+      `Administrative units API returned non-JSON at ${endpoint} (${res.status}). Response starts with: ${snippet || "<empty>"}`
+    );
+  }
+  return res.json();
+}
+
 function getAdministrativeUnitsApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
@@ -58,7 +69,7 @@ export async function getAdministrativeUnits(assignedOnly?: boolean): Promise<St
     if (!res.ok) {
       throw new Error(`Administrative units API error: ${res.status} ${res.statusText}`);
     }
-    const data: AdministrativeUnitsApiResponse = await res.json();
+    const data: AdministrativeUnitsApiResponse = await readJsonOrThrow(res, nextUrl);
     if (!Array.isArray(data.results)) {
       throw new Error("Administrative units API: invalid response (missing results array)");
     }
@@ -99,7 +110,7 @@ export async function getAssignedAdministrativeUnits(): Promise<StateOption[]> {
   if (!res.ok) {
     throw new Error(`Assigned states API error: ${res.status} ${res.statusText}`);
   }
-  const data = await res.json();
+  const data = await readJsonOrThrow(res, apiUrl);
   if (!Array.isArray(data)) {
     throw new Error("Assigned states API: invalid response");
   }

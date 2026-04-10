@@ -36,6 +36,17 @@ function mapApiResultToOption(item: PostmarkShapeApiResultItem): PostmarkShapeOp
   };
 }
 
+async function readJsonOrThrow(res: Response, endpoint: string): Promise<any> {
+  const contentType = (res.headers.get("content-type") || "").toLowerCase();
+  if (!contentType.includes("application/json")) {
+    const snippet = (await res.text()).slice(0, 120).replace(/\s+/g, " ").trim();
+    throw new Error(
+      `Postmark shapes API returned non-JSON at ${endpoint} (${res.status}). Response starts with: ${snippet || "<empty>"}`
+    );
+  }
+  return res.json();
+}
+
 function getPostmarkShapesApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (env && typeof env === "string" && env.trim() !== "") {
@@ -67,7 +78,7 @@ async function getAllPostmarkShapesFromApi(apiUrl: string): Promise<PostmarkShap
     if (!res.ok) {
       throw new Error(`Postmark shapes API error: ${res.status} ${res.statusText}`);
     }
-    const data: PostmarkShapeApiResponse = await res.json();
+    const data: PostmarkShapeApiResponse = await readJsonOrThrow(res, nextUrl);
     if (!Array.isArray(data.results)) {
       throw new Error("Postmark shapes API: invalid response (missing results array)");
     }

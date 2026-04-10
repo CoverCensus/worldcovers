@@ -40,6 +40,17 @@ function mapApiResultToOption(item: ColorsApiResultItem): ColorOption {
   };
 }
 
+async function readJsonOrThrow(res: Response, endpoint: string): Promise<any> {
+  const contentType = (res.headers.get("content-type") || "").toLowerCase();
+  if (!contentType.includes("application/json")) {
+    const snippet = (await res.text()).slice(0, 120).replace(/\s+/g, " ").trim();
+    throw new Error(
+      `Colors API returned non-JSON at ${endpoint} (${res.status}). Response starts with: ${snippet || "<empty>"}`
+    );
+  }
+  return res.json();
+}
+
 /**
  * Base URL for the colors API.
  * VITE_COLORS_API_URL can be the full path (e.g. https://api.example.com/api/colors)
@@ -68,7 +79,7 @@ async function getAllColorsFromApi(apiUrl: string): Promise<ColorOption[]> {
     if (!res.ok) {
       throw new Error(`Colors API error: ${res.status} ${res.statusText}`);
     }
-    const data: ColorsApiResponse = await res.json();
+    const data: ColorsApiResponse = await readJsonOrThrow(res, nextUrl);
     if (!Array.isArray(data.results)) {
       throw new Error("Colors API: invalid response (missing results array)");
     }
@@ -119,6 +130,5 @@ export async function getColors(): Promise<ColorOption[]> {
   if (apiUrl) {
     return getAllColorsFromApi(apiUrl);
   }
-
-  // return getColorsFromSupabase();
+  return [];
 }

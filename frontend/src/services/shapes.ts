@@ -37,6 +37,17 @@ function mapApiResultToOption(item: ShapeApiResultItem): ShapeOption {
   };
 }
 
+async function readJsonOrThrow(res: Response, endpoint: string): Promise<any> {
+  const contentType = (res.headers.get("content-type") || "").toLowerCase();
+  if (!contentType.includes("application/json")) {
+    const snippet = (await res.text()).slice(0, 120).replace(/\s+/g, " ").trim();
+    throw new Error(
+      `Shapes API returned non-JSON at ${endpoint} (${res.status}). Response starts with: ${snippet || "<empty>"}`
+    );
+  }
+  return res.json();
+}
+
 export async function getShapes(): Promise<ShapeOption[]> {
   const apiUrl = getShapesApiUrl();
   if (!apiUrl) return [];
@@ -51,7 +62,7 @@ export async function getShapes(): Promise<ShapeOption[]> {
     if (!res.ok) {
       throw new Error(`Shapes API error: ${res.status} ${res.statusText}`);
     }
-    const data: ShapeApiResponse = await res.json();
+    const data: ShapeApiResponse = await readJsonOrThrow(res, nextUrl);
     if (!Array.isArray(data.results)) {
       throw new Error("Shapes API: invalid response (missing results array)");
     }

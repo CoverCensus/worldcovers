@@ -859,7 +859,7 @@ const Contribute = () => {
   };
 
   const isEditMode = editContributionId != null;
-  const effectiveTypeLabel = (type === TYPE_OTHER_VALUE ? typeOther : type).trim();
+  const effectiveTypeLabel = String(type === TYPE_OTHER_VALUE ? (typeOther ?? "") : (type ?? "")).trim();
   const showDiameter = isCircularType(effectiveTypeLabel);
 
   return (
