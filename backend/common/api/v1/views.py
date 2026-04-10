@@ -801,9 +801,37 @@ def _resolve_framing_style_from_payload(payload, user, fallback_id=None):
     """
     Resolve framing style from payload:
     - single framing_style_id/framingStyleId -> existing style
+    - framing_style_ids/framingStyleIds (list) -> combined style (create if needed)
     """
     if not user:
         user = _get_contribution_user()
+    framing_ids_raw = _get_payload_value(payload, "framing_style_ids", "framingStyleIds")
+    framing_ids = _coerce_int_list(framing_ids_raw)
+
+    if framing_ids:
+        styles = list(FramingStyle.objects.filter(pk__in=framing_ids))
+        if not styles:
+            return FramingStyle.objects.filter(pk=fallback_id).first() if fallback_id is not None else None
+        order = {sid: idx for idx, sid in enumerate(framing_ids)}
+        styles.sort(key=lambda s: order.get(s.pk, 10**9))
+        if len(styles) == 1:
+            return styles[0]
+        combo_name = " + ".join(s.framing_style_name.strip() for s in styles if s.framing_style_name.strip())[:100]
+        if not combo_name:
+            return styles[0]
+        combo = FramingStyle.objects.filter(framing_style_name__iexact=combo_name).first()
+        if combo:
+            return combo
+        combo_desc = f"Auto-generated combined framing style from IDs: {', '.join(str(s.pk) for s in styles)}"
+        combo, _ = FramingStyle.objects.get_or_create(
+            framing_style_name=combo_name,
+            defaults={
+                "framing_description": combo_desc[:1000],
+                "created_by": user,
+                "modified_by": user,
+            },
+        )
+        return combo
 
     single_id = _get_payload_value(payload, "framing_style_id", "framingStyleId")
     if single_id is None and fallback_id is not None:
@@ -1028,8 +1056,14 @@ def _create_contribution_only(payload, contributor):
             submitted_data["lettering_style_id"] = payload["lettering_style_id"]
         if payload.get("framing_style_id") is not None:
             submitted_data["framing_style_id"] = payload["framing_style_id"]
+        framing_ids = payload.get("framing_style_ids")
+        if isinstance(framing_ids, list) and framing_ids:
+            submitted_data["framing_style_ids"] = [int(v) for v in framing_ids if str(v).strip().isdigit()]
         if payload.get("date_format_id") is not None:
             submitted_data["date_format_id"] = payload["date_format_id"]
+        date_fmt_ids = payload.get("date_format_ids")
+        if isinstance(date_fmt_ids, list) and date_fmt_ids:
+            submitted_data["date_format_ids"] = [int(v) for v in date_fmt_ids if str(v).strip().isdigit()]
         if payload.get("image_metas"):
             submitted_data["image_metas"] = payload["image_metas"]
         elif payload.get("image_meta"):
@@ -1652,6 +1686,12 @@ def _sync_approved_contribution_submitted_data(postmark_id, user, payload):
                 sd[fk] = int(v)
             except (TypeError, ValueError):
                 pass
+    date_fmt_ids = payload.get("date_format_ids")
+    if isinstance(date_fmt_ids, list) and date_fmt_ids:
+        sd["date_format_ids"] = [int(v) for v in date_fmt_ids if str(v).strip().isdigit()]
+    framing_ids = payload.get("framing_style_ids")
+    if isinstance(framing_ids, list) and framing_ids:
+        sd["framing_style_ids"] = [int(v) for v in framing_ids if str(v).strip().isdigit()]
     if payload.get("image_metas"):
         sd["image_metas"] = payload["image_metas"]
     elif payload.get("image_meta"):
@@ -1864,6 +1904,19 @@ class ContributionView(APIView):
                 return int(raw)
             except (TypeError, ValueError):
                 return None
+        def _payload_int_list(*keys):
+            raw_values = []
+            for k in keys:
+                if not k:
+                    continue
+                if hasattr(data, "getlist"):
+                    raw_values.extend(data.getlist(k))
+                v = data.get(k)
+                if isinstance(v, (list, tuple)):
+                    raw_values.extend(v)
+                elif v not in (None, ""):
+                    raw_values.append(v)
+            return _coerce_int_list(raw_values)
         wm_in = (data.get("width_mm") or data.get("widthMm") or "").strip()
         hm_in = (data.get("height_mm") or data.get("heightMm") or "").strip()
         payload = {
@@ -1896,15 +1949,31 @@ class ContributionView(APIView):
                 or ""
             ).strip(),
         }
-        lettering_payload = _payload_int("lettering_style_id", "letteringStyleId", "lettering_id", "letteringId")
+        lettering_payload = _payload_int("lettering_style_id", "letteringStyleId")
         framing_payload = _payload_int("framing_style_id", "framingStyleId")
+        framing_payload_ids = _payload_int_list(
+            "framing_style_ids",
+            "framing_style_ids[]",
+            "framingStyleIds",
+            "framingStyleIds[]",
+        )
         date_fmt_payload = _payload_int("date_format_id", "dateFormatId")
+        date_fmt_payload_ids = _payload_int_list(
+            "date_format_ids",
+            "date_format_ids[]",
+            "dateFormatIds",
+            "dateFormatIds[]",
+        )
         if lettering_payload is not None:
             payload["lettering_style_id"] = lettering_payload
         if framing_payload is not None:
             payload["framing_style_id"] = framing_payload
+        if framing_payload_ids:
+            payload["framing_style_ids"] = framing_payload_ids
         if date_fmt_payload is not None:
             payload["date_format_id"] = date_fmt_payload
+        if date_fmt_payload_ids:
+            payload["date_format_ids"] = date_fmt_payload_ids
         if assigned_admin_unit is not None:
             payload["admin_unit"] = assigned_admin_unit
         image_files = request.FILES.getlist("image") or []
@@ -2087,8 +2156,14 @@ class ContributionView(APIView):
                         submitted_data["lettering_style_id"] = payload["lettering_style_id"]
                     if payload.get("framing_style_id") is not None:
                         submitted_data["framing_style_id"] = payload["framing_style_id"]
+                    framing_ids = payload.get("framing_style_ids")
+                    if isinstance(framing_ids, list) and framing_ids:
+                        submitted_data["framing_style_ids"] = [int(v) for v in framing_ids if str(v).strip().isdigit()]
                     if payload.get("date_format_id") is not None:
                         submitted_data["date_format_id"] = payload["date_format_id"]
+                    date_fmt_ids = payload.get("date_format_ids")
+                    if isinstance(date_fmt_ids, list) and date_fmt_ids:
+                        submitted_data["date_format_ids"] = [int(v) for v in date_fmt_ids if str(v).strip().isdigit()]
                     if payload.get("image_metas"):
                         submitted_data["image_metas"] = payload["image_metas"]
                     elif payload.get("image_meta"):
@@ -2148,8 +2223,14 @@ class ContributionView(APIView):
                         submitted_data["lettering_style_id"] = payload["lettering_style_id"]
                     if payload.get("framing_style_id") is not None:
                         submitted_data["framing_style_id"] = payload["framing_style_id"]
+                    framing_ids = payload.get("framing_style_ids")
+                    if isinstance(framing_ids, list) and framing_ids:
+                        submitted_data["framing_style_ids"] = [int(v) for v in framing_ids if str(v).strip().isdigit()]
                     if payload.get("date_format_id") is not None:
                         submitted_data["date_format_id"] = payload["date_format_id"]
+                    date_fmt_ids = payload.get("date_format_ids")
+                    if isinstance(date_fmt_ids, list) and date_fmt_ids:
+                        submitted_data["date_format_ids"] = [int(v) for v in date_fmt_ids if str(v).strip().isdigit()]
                     if payload.get("image_metas"):
                         submitted_data["image_metas"] = payload["image_metas"]
                     elif payload.get("image_meta"):
@@ -2384,6 +2465,10 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
             framing_id = sd.get("framing_style_id") or sd.get("framingStyleId")
         if date_fmt_id is None:
             date_fmt_id = sd.get("date_format_id") or sd.get("dateFormatId")
+        if date_fmt_id is None:
+            raw_date_fmt_ids = sd.get("date_format_ids") or sd.get("dateFormatIds")
+            if isinstance(raw_date_fmt_ids, list) and raw_date_fmt_ids:
+                date_fmt_id = raw_date_fmt_ids[0]
 
         def _as_int_or_none(raw):
             if raw is None or raw == "":

@@ -172,7 +172,7 @@ const EditCatalogEntry = () => {
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [letteringId, setLetteringId] = useState("");
   const [framingIds, setFramingIds] = useState<string[]>([]);
-  const [dateFormatId, setDateFormatId] = useState("");
+  const [dateFormatIds, setDateFormatIds] = useState<string[]>([]);
   const [letteringOptions, setLetteringOptions] = useState<LetteringStyleOption[]>([]);
   const [framingOptions, setFramingOptions] = useState<FramingStyleOption[]>([]);
   const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
@@ -354,7 +354,12 @@ const EditCatalogEntry = () => {
         } else {
           setFramingIds(framingIdRaw != null ? [String(framingIdRaw)] : []);
         }
-        setDateFormatId(dateFormatIdRaw != null ? String(dateFormatIdRaw) : "");
+        const dateFormatIdsRaw = data.date_format_ids ?? data.dateFormatIds;
+        if (Array.isArray(dateFormatIdsRaw) && dateFormatIdsRaw.length > 0) {
+          setDateFormatIds(dateFormatIdsRaw.map((x: unknown) => String(x)).filter(Boolean));
+        } else {
+          setDateFormatIds(dateFormatIdRaw != null ? [String(dateFormatIdRaw)] : []);
+        }
         setDateType(dateTypeRaw != null ? String(dateTypeRaw) : "");
       })
       .catch(() => {
@@ -612,8 +617,12 @@ const EditCatalogEntry = () => {
         form.append("lettering_style_id", letteringId);
         if (framingIds.length > 0) {
           form.append("framing_style_id", framingIds[0]);
+          framingIds.forEach((id) => form.append("framing_style_ids[]", id));
         }
-        form.append("date_format_id", dateFormatId);
+        if (dateFormatIds.length > 0) {
+          form.append("date_format_id", dateFormatIds[0]);
+          dateFormatIds.forEach((id) => form.append("date_format_ids[]", id));
+        }
         if (dateType.trim()) form.append("date_type", dateType.trim());
         if (derivedDimensions) form.append("dimensions", derivedDimensions);
         if (manuscript.trim()) form.append("manuscript", manuscript.trim());
@@ -641,7 +650,9 @@ const EditCatalogEntry = () => {
           color: colorVal,
           lettering_style_id: letteringId ? Number(letteringId) : undefined,
           framing_style_id: framingIds[0] ? Number(framingIds[0]) : undefined,
-          date_format_id: dateFormatId ? Number(dateFormatId) : undefined,
+          framing_style_ids: framingIds.length > 0 ? framingIds.map((id) => Number(id)) : undefined,
+          date_format_id: dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
+          date_format_ids: dateFormatIds.length > 0 ? dateFormatIds.map((id) => Number(id)) : undefined,
           date_type: dateType.trim() || undefined,
           dimensions: derivedDimensions || undefined,
           manuscript: manuscript.trim() || undefined,
@@ -943,6 +954,7 @@ const EditCatalogEntry = () => {
                       <input
                         id="edit-is-irregular"
                         type="checkbox"
+                        className="h-4 w-4 accent-primary"
                         checked={isIrregular}
                         onChange={(e) => setIsIrregular(e.target.checked)}
                       />
@@ -1014,6 +1026,7 @@ const EditCatalogEntry = () => {
                           <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
                             <input
                               type="checkbox"
+                              className="h-4 w-4 accent-primary"
                               checked={earliestUnknown}
                               onChange={(e) => {
                                 const checked = e.target.checked;
@@ -1096,6 +1109,7 @@ const EditCatalogEntry = () => {
                           <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
                             <input
                               type="checkbox"
+                              className="h-4 w-4 accent-primary"
                               checked={latestUnknown}
                               onChange={(e) => {
                                 const checked = e.target.checked;
@@ -1270,16 +1284,24 @@ const EditCatalogEntry = () => {
                           Date format
                         </span>
                       </Label>
-                      <Select value={dateFormatId} onValueChange={(v) => { setDateFormatId(v); setFieldErrors((prev) => ({ ...prev, dateFormat: undefined })); }} disabled={catalogOptionsLoading}>
-                        <SelectTrigger className={fieldErrors.dateFormat ? "border-destructive" : ""}>
-                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select date format"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {dateFormatOptions.map((opt) => (
-                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <SearchableMultiSelect
+                        id="edit-date-format"
+                        values={dateFormatIds}
+                        onValuesChange={(values) => {
+                          setDateFormatIds(values);
+                          setFieldErrors((prev) => ({ ...prev, dateFormat: undefined }));
+                        }}
+                        options={dateFormatOptions.map((opt) => ({
+                          value: String(opt.id),
+                          label: opt.name,
+                        }))}
+                        loading={catalogOptionsLoading}
+                        placeholder="Select one or more date formats"
+                        searchPlaceholder="Search date formats..."
+                        emptyMessage="No date format found."
+                        triggerClassName={fieldErrors.dateFormat ? "border-destructive" : ""}
+                        aria-label="Date format"
+                      />
                       {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
                     </div>
 

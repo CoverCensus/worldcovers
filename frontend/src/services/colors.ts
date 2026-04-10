@@ -1,20 +1,22 @@
 /**
- * Colors service: color options come from Supabase (now) or from GET /colors/ (future).
- * - When VITE_COLORS_API_URL is set → fetch from API (count, next, previous, results).
- * - When not set → derive distinct colors from Supabase catalog_records and submissions.
+ * Colors service: fetch from API with v2-first candidates.
  */
-
-import { supabase } from "@/integrations/supabase/client";
 
 /** One item from the external /api/colors/ response */
 export interface ColorsApiResultItem {
-  colorId: number;
-  createdDate: string;
-  modifiedDate: string;
-  colorName: string;
-  colorValue: string;
-  createdBy: number;
-  modifiedBy: number;
+  colorId?: number;
+  createdDate?: string;
+  modifiedDate?: string;
+  colorName?: string;
+  colorValue?: string;
+  createdBy?: number;
+  modifiedBy?: number;
+  color_id?: number;
+  color_name?: string;
+  color_value?: string;
+  id?: number;
+  name?: string;
+  value?: string | null;
 }
 
 /** Paginated response from GET /colors/ */
@@ -34,9 +36,9 @@ export interface ColorOption {
 
 function mapApiResultToOption(item: ColorsApiResultItem): ColorOption {
   return {
-    id: item.colorId,
-    name: item.colorName,
-    value: item.colorValue,
+    id: item.colorId ?? item.color_id ?? item.id ?? 0,
+    name: item.colorName ?? item.color_name ?? item.name ?? "",
+    value: item.colorValue ?? item.color_value ?? item.value ?? "",
   };
 }
 
@@ -62,6 +64,23 @@ function getColorsApiUrl(): string | null {
   const base = env.trim().replace(/\/+$/, "");
   if (base.endsWith("/colors")) return base;
   return `${base}/colors`;
+}
+
+function getColorsApiCandidates(): string[] {
+  const candidates: string[] = [];
+  // Prefer v2 source first.
+  candidates.push("/api/v2/colors");
+  // Keep v1 compatibility as fallback only.
+  candidates.push("/api/v1/colors");
+  const pushCandidate = (raw: unknown) => {
+    if (!raw || typeof raw !== "string") return;
+    const base = raw.trim().replace(/\/+$/, "");
+    if (!base) return;
+    candidates.push(base.endsWith("/colors") ? base : `${base}/colors`);
+  };
+  pushCandidate(import.meta.env.VITE_API_URL);
+  pushCandidate(import.meta.env.VITE_API_BASE_URL);
+  return candidates.filter((url, idx) => candidates.indexOf(url) === idx);
 }
 
 /**
@@ -127,8 +146,15 @@ async function getAllColorsFromApi(apiUrl: string): Promise<ColorOption[]> {
  */
 export async function getColors(): Promise<ColorOption[]> {
   const apiUrl = getColorsApiUrl();
-  if (apiUrl) {
-    return getAllColorsFromApi(apiUrl);
+  const candidates = apiUrl ? [apiUrl, ...getColorsApiCandidates()] : getColorsApiCandidates();
+  for (const candidate of candidates) {
+    try {
+      const result = await getAllColorsFromApi(candidate);
+      const normalized = result.filter((x) => x.id > 0 && x.name.trim() !== "");
+      if (normalized.length > 0) return normalized;
+    } catch {
+      // Try next candidate URL.
+    }
   }
   return [];
 }

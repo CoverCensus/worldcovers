@@ -94,6 +94,58 @@ function parseDateRange(dateRange: string): [string, string] {
   return [s, ""];
 }
 
+const MONTH_OPTIONS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"] as const;
+const MONTH_TO_NUM: Record<string, string> = {
+  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+};
+const NUM_TO_MONTH: Record<string, string> = {
+  "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "May", "06": "Jun",
+  "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec",
+};
+
+type DatePair = {
+  earliestDay: string;
+  earliestMonth: string;
+  earliestYear: string;
+  latestDay: string;
+  latestMonth: string;
+  latestYear: string;
+};
+
+function parseDateTokenToParts(raw: string): { day: string; month: string; year: string } {
+  const s = String(raw || "").trim();
+  if (!s) return { day: "", month: "", year: "" };
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    return {
+      day: iso[3],
+      month: NUM_TO_MONTH[iso[2]] ?? "",
+      year: iso[1],
+    };
+  }
+  const y = s.match(/^(\d{4})$/);
+  if (y) return { day: "", month: "", year: y[1] };
+  return { day: "", month: "", year: "" };
+}
+
+function parseDateRangeToken(raw: string): DatePair | null {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+  const [first, last] = parseDateRange(s);
+  const a = parseDateTokenToParts(first);
+  const b = parseDateTokenToParts(last);
+  if (!a.year || !b.year) return null;
+  return {
+    earliestDay: a.day,
+    earliestMonth: a.month,
+    earliestYear: a.year,
+    latestDay: b.day,
+    latestMonth: b.month,
+    latestYear: b.year,
+  };
+}
+
 const Contribute = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -140,6 +192,7 @@ const Contribute = () => {
   const [latestMonth, setLatestMonth] = useState("");
   const [latestYear, setLatestYear] = useState("");
   const [latestUnknown, setLatestUnknown] = useState(false);
+  const [additionalDatePairs, setAdditionalDatePairs] = useState<DatePair[]>([]);
   const [type, setType] = useState("");
   const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
@@ -158,12 +211,13 @@ const Contribute = () => {
   const [diameterMm, setDiameterMm] = useState("");
   const [letteringId, setLetteringId] = useState("");
   const [framingIds, setFramingIds] = useState<string[]>([]);
-  const [dateFormatId, setDateFormatId] = useState("");
+  const [dateFormatIds, setDateFormatIds] = useState<string[]>([]);
   const [fieldErrors, setFieldErrors] = useState<{
     state?: string;
     town?: string;
     earliestDate?: string;
     latestDate?: string;
+    datePairs?: string;
     type?: string;
     color?: string;
     widthMm?: string;
@@ -338,6 +392,12 @@ const Contribute = () => {
         setLatestMonth("");
         setLatestYear(last || "");
         setLatestUnknown(false);
+        const datesObservedRaw = getStr(sd.dates_observed ?? (sd as Record<string, unknown>).datesObserved);
+        const extraPairs = datesObservedRaw
+          .split(",")
+          .map((x) => parseDateRangeToken(x))
+          .filter((x): x is DatePair => x != null);
+        setAdditionalDatePairs(extraPairs);
         setType(typeVal || "");
         setTypeOther("");
         setColor(colorVal || "");
@@ -364,8 +424,16 @@ const Contribute = () => {
           const fid = sd.framing_style_id ?? (sd as Record<string, unknown>).framingStyleId;
           setFramingIds(fid != null ? [String(fid)] : []);
         }
-        const did = sd.date_format_id ?? (sd as Record<string, unknown>).dateFormatId;
-        setDateFormatId(did != null ? String(did) : "");
+        const dids = (sd.date_format_ids ?? (sd as Record<string, unknown>).dateFormatIds) as unknown;
+        const normalizedDateFormatIds = Array.isArray(dids)
+          ? dids.map((x) => String(x)).filter(Boolean)
+          : [];
+        if (normalizedDateFormatIds.length > 0) {
+          setDateFormatIds(normalizedDateFormatIds);
+        } else {
+          const did = sd.date_format_id ?? (sd as Record<string, unknown>).dateFormatId;
+          setDateFormatIds(did != null ? [String(did)] : []);
+        }
         const metas = (sd.image_metas ?? (sd as Record<string, unknown>).imageMetas) as Array<{ storage_filename?: string; storageFilename?: string }> | undefined;
         const metaOne = sd.image_meta as { storage_filename?: string; storageFilename?: string } | undefined;
         const baseUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
@@ -428,6 +496,14 @@ const Contribute = () => {
     if (selectedNames.length <= 2) return selectedNames.join(", ");
     return `${selectedNames.slice(0, 2).join(", ")} +${selectedNames.length - 2} more`;
   }, [framingIds, framingOptions]);
+  const selectedDateFormatSummary = useMemo(() => {
+    if (dateFormatIds.length === 0) return "Select one or more date formats";
+    const selectedNames = dateFormatOptions
+      .filter((opt) => dateFormatIds.includes(String(opt.id)))
+      .map((opt) => opt.name);
+    if (selectedNames.length <= 2) return selectedNames.join(", ");
+    return `${selectedNames.slice(0, 2).join(", ")} +${selectedNames.length - 2} more`;
+  }, [dateFormatIds, dateFormatOptions]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -505,11 +581,7 @@ const Contribute = () => {
       if (!yy) return "";
       const dd = d.trim().padStart(2, "0");
       const mmTxt = m.trim();
-      const map: Record<string, string> = {
-        Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
-        Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
-      };
-      const mm = map[mmTxt];
+      const mm = MONTH_TO_NUM[mmTxt];
       if (!mm || !dd || dd.length !== 2) return "";
       return `${yy}-${mm}-${dd}`;
     };
@@ -641,7 +713,61 @@ const Contribute = () => {
       return;
     }
 
+    for (const pair of additionalDatePairs) {
+      const mkIsoOrYear = (d: string, m: string, y: string) => {
+        const yy = y.trim();
+        if (!yy) return "";
+        const dd = d.trim().padStart(2, "0");
+        const mm = MONTH_TO_NUM[m.trim()];
+        if (mm && dd && dd.length === 2) return `${yy}-${mm}-${dd}`;
+        return yy;
+      };
+      const first = mkIsoOrYear(pair.earliestDay, pair.earliestMonth, pair.earliestYear);
+      const last = mkIsoOrYear(pair.latestDay, pair.latestMonth, pair.latestYear);
+      if (!first || !last) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          datePairs: "Each additional pair requires both Earliest Use and Latest Use.",
+        }));
+        return;
+      }
+      const firstErr = validateYearString(pair.earliestYear.trim());
+      const lastErr = validateYearString(pair.latestYear.trim());
+      if (firstErr || lastErr) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          datePairs: firstErr || lastErr || "Invalid additional date pair.",
+        }));
+        return;
+      }
+      if (Number(first) > Number(last)) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          datePairs: "Earliest Year must be less than or equal to Latest Year in each pair.",
+        }));
+        return;
+      }
+    }
+
     const dateRange = buildDateRange(); // may be empty when Unknown
+    const datesObservedToSend = additionalDatePairs
+      .map((pair) => {
+        const mkIsoOrYear = (d: string, m: string, y: string) => {
+          const yy = y.trim();
+          if (!yy) return "";
+          const dd = d.trim().padStart(2, "0");
+          const mm = MONTH_TO_NUM[m.trim()];
+          if (mm && dd && dd.length === 2) return `${yy}-${mm}-${dd}`;
+          return yy;
+        };
+        const first = mkIsoOrYear(pair.earliestDay, pair.earliestMonth, pair.earliestYear);
+        const last = mkIsoOrYear(pair.latestDay, pair.latestMonth, pair.latestYear);
+        if (!first || !last) return "";
+        const isIso = first.length === 10 || last.length === 10;
+        return isIso ? `${first} - ${last}` : `${first}-${last}`;
+      })
+      .filter(Boolean)
+      .join(", ");
 
     const apiBase = getApiBaseUrl();
     if (!apiBase) {
@@ -674,11 +800,7 @@ const Contribute = () => {
         const yy = y.trim();
         if (!yy) return "";
         const dd = d.trim().padStart(2, "0");
-        const map: Record<string, string> = {
-          Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
-          Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
-        };
-        const mm = map[m.trim()];
+        const mm = MONTH_TO_NUM[m.trim()];
         if (!mm || !dd || dd.length !== 2) return "";
         return `${yy}-${mm}-${dd}`;
       };
@@ -721,6 +843,7 @@ const Contribute = () => {
         form.append("town", townVal);
         form.append("firstSeen", firstSeenToSend);
         form.append("lastSeen", lastSeenToSend);
+        if (datesObservedToSend) form.append("dates_observed", datesObservedToSend);
         form.append("type", typeVal);
         form.append("color", colorVal);
         if (derivedDimensions) form.append("dimensions", derivedDimensions);
@@ -735,8 +858,12 @@ const Contribute = () => {
         form.append("lettering_style_id", letteringId);
         if (framingIds.length > 0) {
           form.append("framing_style_id", framingIds[0]);
+          framingIds.forEach((id) => form.append("framing_style_ids[]", id));
         }
-        form.append("date_format_id", dateFormatId);
+        if (dateFormatIds.length > 0) {
+          form.append("date_format_id", dateFormatIds[0]);
+          dateFormatIds.forEach((id) => form.append("date_format_ids[]", id));
+        }
         if (isStateEditor) {
           if (derivedShapeId != null) form.append("postmark_shape_id", String(derivedShapeId));
           form.append("estimated_value", editorValue.trim());
@@ -754,6 +881,7 @@ const Contribute = () => {
           town: townVal,
           firstSeen: firstSeenToSend,
           lastSeen: lastSeenToSend,
+          dates_observed: datesObservedToSend || undefined,
           type: typeVal,
           color: colorVal,
           dimensions: derivedDimensions || undefined,
@@ -767,7 +895,9 @@ const Contribute = () => {
           submitterName: submitterName || undefined,
           lettering_style_id: letteringId ? Number(letteringId) : undefined,
           framing_style_id: framingIds[0] ? Number(framingIds[0]) : undefined,
-          date_format_id: dateFormatId ? Number(dateFormatId) : undefined,
+          framing_style_ids: framingIds.length > 0 ? framingIds.map((id) => Number(id)) : undefined,
+          date_format_id: dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
+          date_format_ids: dateFormatIds.length > 0 ? dateFormatIds.map((id) => Number(id)) : undefined,
           ...editorPayload,
         });
         headers["Content-Type"] = "application/json";
@@ -824,6 +954,7 @@ const Contribute = () => {
       setLatestMonth("");
       setLatestYear("");
       setLatestUnknown(false);
+      setAdditionalDatePairs([]);
       setType("");
       setTypeOther("");
       setColor("");
@@ -1038,6 +1169,7 @@ const Contribute = () => {
                       <input
                         id="is-irregular"
                         type="checkbox"
+                        className="h-4 w-4 accent-primary"
                         checked={isIrregular}
                         onChange={(e) => setIsIrregular(e.target.checked)}
                       />
@@ -1080,7 +1212,7 @@ const Contribute = () => {
                                 <SelectValue placeholder="Month" />
                               </SelectTrigger>
                               <SelectContent>
-                                {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m) => (
+                                {MONTH_OPTIONS.map((m) => (
                                   <SelectItem key={m} value={m}>
                                     {m}
                                   </SelectItem>
@@ -1111,6 +1243,7 @@ const Contribute = () => {
                           <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
                             <input
                               type="checkbox"
+                              className="h-4 w-4 accent-primary"
                               checked={earliestUnknown}
                               onChange={(e) => {
                                 const checked = e.target.checked;
@@ -1166,7 +1299,7 @@ const Contribute = () => {
                                 <SelectValue placeholder="Month" />
                               </SelectTrigger>
                               <SelectContent>
-                                {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((m) => (
+                                {MONTH_OPTIONS.map((m) => (
                                   <SelectItem key={m} value={m}>
                                     {m}
                                   </SelectItem>
@@ -1197,6 +1330,7 @@ const Contribute = () => {
                           <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
                             <input
                               type="checkbox"
+                              className="h-4 w-4 accent-primary"
                               checked={latestUnknown}
                               onChange={(e) => {
                                 const checked = e.target.checked;
@@ -1218,6 +1352,183 @@ const Contribute = () => {
                         <p className="text-xs text-muted-foreground">
                           Optional. Leave blank if unknown, or enter Day/Month/Year, or choose Unknown.
                         </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <Label>Additional Earliest/Latest pairs</Label>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              setAdditionalDatePairs((prev) => [
+                                ...prev,
+                                {
+                                  earliestDay: "",
+                                  earliestMonth: "",
+                                  earliestYear: "",
+                                  latestDay: "",
+                                  latestMonth: "",
+                                  latestYear: "",
+                                },
+                              ])
+                            }
+                          >
+                            Add date
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Add extra date ranges with the same date inputs. Saved in submitted data as comma-separated values.
+                        </p>
+                        <div className="space-y-2">
+                          {additionalDatePairs.map((pair, idx) => (
+                            <div key={idx} className="space-y-2 rounded-md border border-border p-3">
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs font-medium text-muted-foreground">Pair {idx + 1}</p>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    setAdditionalDatePairs((prev) => prev.filter((_, i) => i !== idx))
+                                  }
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Earliest Day</Label>
+                                  <Input
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="DD"
+                                    value={pair.earliestDay}
+                                    onChange={(e) => {
+                                      const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+                                      setAdditionalDatePairs((prev) =>
+                                        prev.map((p, i) => (i === idx ? { ...p, earliestDay: v } : p))
+                                      );
+                                      if (fieldErrors.datePairs) {
+                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                      }
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Earliest Month</Label>
+                                  <Select
+                                    value={pair.earliestMonth}
+                                    onValueChange={(v) => {
+                                      setAdditionalDatePairs((prev) =>
+                                        prev.map((p, i) => (i === idx ? { ...p, earliestMonth: v } : p))
+                                      );
+                                      if (fieldErrors.datePairs) {
+                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                      }
+                                    }}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Month" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {MONTH_OPTIONS.map((m) => (
+                                        <SelectItem key={m} value={m}>
+                                          {m}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Earliest Year</Label>
+                                  <Input
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="YYYY"
+                                    value={pair.earliestYear}
+                                    onChange={(e) => {
+                                      const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                      setAdditionalDatePairs((prev) =>
+                                        prev.map((p, i) => (i === idx ? { ...p, earliestYear: v } : p))
+                                      );
+                                      if (fieldErrors.datePairs) {
+                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                      }
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Latest Day</Label>
+                                  <Input
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="DD"
+                                    value={pair.latestDay}
+                                    onChange={(e) => {
+                                      const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+                                      setAdditionalDatePairs((prev) =>
+                                        prev.map((p, i) => (i === idx ? { ...p, latestDay: v } : p))
+                                      );
+                                      if (fieldErrors.datePairs) {
+                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                      }
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Latest Month</Label>
+                                  <Select
+                                    value={pair.latestMonth}
+                                    onValueChange={(v) => {
+                                      setAdditionalDatePairs((prev) =>
+                                        prev.map((p, i) => (i === idx ? { ...p, latestMonth: v } : p))
+                                      );
+                                      if (fieldErrors.datePairs) {
+                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                      }
+                                    }}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Month" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {MONTH_OPTIONS.map((m) => (
+                                        <SelectItem key={m} value={m}>
+                                          {m}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Latest Year</Label>
+                                  <Input
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="YYYY"
+                                    value={pair.latestYear}
+                                    onChange={(e) => {
+                                      const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                      setAdditionalDatePairs((prev) =>
+                                        prev.map((p, i) => (i === idx ? { ...p, latestYear: v } : p))
+                                      );
+                                      if (fieldErrors.datePairs) {
+                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                      }
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {fieldErrors.datePairs && (
+                          <p className="text-sm text-destructive">{fieldErrors.datePairs}</p>
+                        )}
                       </div>
                     </div>
 
@@ -1391,16 +1702,39 @@ const Contribute = () => {
                           Date format
                         </span>
                       </Label>
-                      <Select value={dateFormatId} onValueChange={(v) => { setDateFormatId(v); setFieldErrors((prev) => ({ ...prev, dateFormat: undefined })); }} disabled={catalogOptionsLoading}>
-                        <SelectTrigger className={fieldErrors.dateFormat ? "border-destructive" : ""}>
-                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select date format"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {dateFormatOptions.map((opt) => (
-                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={`w-full justify-between ${fieldErrors.dateFormat ? "border-destructive" : ""}`}
+                            disabled={catalogOptionsLoading}
+                          >
+                            {catalogOptionsLoading ? "Loading..." : selectedDateFormatSummary}
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64 overflow-auto">
+                          {dateFormatOptions.map((opt) => {
+                            const value = String(opt.id);
+                            const checked = dateFormatIds.includes(value);
+                            return (
+                              <DropdownMenuCheckboxItem
+                                key={opt.id}
+                                checked={checked}
+                                onCheckedChange={(next) => {
+                                  setDateFormatIds((prev) => {
+                                    if (next) return prev.includes(value) ? prev : [...prev, value];
+                                    return prev.filter((id) => id !== value);
+                                  });
+                                  setFieldErrors((prev) => ({ ...prev, dateFormat: undefined }));
+                                }}
+                              >
+                                {opt.name}
+                              </DropdownMenuCheckboxItem>
+                            );
+                          })}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                       {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
                     </div>
 

@@ -25,12 +25,12 @@ type FAQItem = {
 
 function getSafeApiBaseUrl(): string {
   const raw =
-    String(import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || "/api/v1")
+    String(import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || "/api/v2")
       .trim()
       .replace(/\/+$/, "");
 
   // Relative API paths are always safe on the current origin/protocol.
-  if (!/^https?:\/\//i.test(raw)) return raw || "/api/v1";
+  if (!/^https?:\/\//i.test(raw)) return raw || "/api/v2";
 
   try {
     const parsed = new URL(raw);
@@ -38,7 +38,7 @@ function getSafeApiBaseUrl(): string {
     if (window.location.protocol === "https:" && parsed.protocol === "http:") {
       // Same-host: keep path but use relative URL (best behind reverse proxy).
       if (parsed.host === window.location.host) {
-        return parsed.pathname.replace(/\/+$/, "") || "/api/v1";
+        return parsed.pathname.replace(/\/+$/, "") || "/api/v2";
       }
       // Different host: attempt protocol upgrade.
       parsed.protocol = "https:";
@@ -46,8 +46,19 @@ function getSafeApiBaseUrl(): string {
     }
     return parsed.toString().replace(/\/+$/, "");
   } catch {
-    return "/api/v1";
+    return "/api/v2";
   }
+}
+
+function getFaqApiCandidates(): string[] {
+  const candidates: string[] = [];
+  candidates.push("/api/v2/faq-entries/");
+  candidates.push("/api/v1/faq-entries/");
+  const safeBase = getSafeApiBaseUrl();
+  if (safeBase) {
+    candidates.push(`${safeBase}/faq-entries/`);
+  }
+  return candidates.filter((url, idx) => candidates.indexOf(url) === idx);
 }
 
 const Index = () => {
@@ -60,27 +71,29 @@ const Index = () => {
     const fetchFaqs = async () => {
       setIsLoadingFaqs(true);
       try {
-        const response = await fetch(`${getSafeApiBaseUrl()}/faq-entries/`);
-        if (!response.ok) {
-          throw new Error(`Failed to load FAQs (${response.status})`);
+        for (const endpoint of getFaqApiCandidates()) {
+          const response = await fetch(endpoint);
+          if (!response.ok) continue;
+          const data = await response.json();
+          const rawItems = Array.isArray(data) ? data : data?.results || [];
+          const items: FAQItem[] = rawItems
+            .map((item: any, index: number) => {
+              if (!item) return null;
+              const question = item.question ?? "";
+              const answer = item.answer ?? "";
+              if (!question || !answer) return null;
+              return {
+                id: String(item.faqEntryId ?? item.faq_entry_id ?? item.id ?? index),
+                question,
+                answer,
+              };
+            })
+            .filter(Boolean) as FAQItem[];
+          if (items.length > 0) {
+            setFaqs(items);
+            break;
+          }
         }
-        const data = await response.json();
-        const rawItems = Array.isArray(data) ? data : data?.results || [];
-        const items: FAQItem[] = rawItems
-          .map((item: any, index: number) => {
-            if (!item) return null;
-            const question = item.question ?? "";
-            const answer = item.answer ?? "";
-            if (!question || !answer) return null;
-            return {
-              id: String(item.faq_entry_id ?? item.id ?? index),
-              question,
-              answer,
-            };
-          })
-          .filter(Boolean) as FAQItem[];
-
-        setFaqs(items);
       } catch {
         // If FAQ API fails, leave FAQs empty so the section stays hidden
       } finally {

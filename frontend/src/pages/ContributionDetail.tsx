@@ -1106,11 +1106,35 @@ const ContributionDetail = () => {
                                 const opt = framingOptions.find((o) => o.id === numVal);
                                 display = opt ? opt.name : String(val);
                               }
+                            } else if (key === "framing_style_ids" || key === "framingStyleIds") {
+                              const ids = Array.isArray(val)
+                                ? val
+                                    .map((x) => (typeof x === "number" ? x : typeof x === "string" ? parseInt(x, 10) : NaN))
+                                    .filter((x): x is number => !Number.isNaN(x))
+                                : [];
+                              if (ids.length > 0) {
+                                const names = ids.map((id) => framingOptions.find((o) => o.id === id)?.name ?? String(id));
+                                display = names.join(", ");
+                              } else {
+                                display = "—";
+                              }
                             } else if (key === "date_format_id" || key === "dateFormatId") {
                               const numVal = typeof val === "number" ? val : typeof val === "string" ? parseInt(val, 10) : NaN;
                               if (!Number.isNaN(numVal)) {
                                 const opt = dateFormatOptions.find((o) => o.id === numVal);
                                 display = opt ? opt.name : String(val);
+                              }
+                            } else if (key === "date_format_ids" || key === "dateFormatIds") {
+                              const ids = Array.isArray(val)
+                                ? val
+                                    .map((x) => (typeof x === "number" ? x : typeof x === "string" ? parseInt(x, 10) : NaN))
+                                    .filter((x): x is number => !Number.isNaN(x))
+                                : [];
+                              if (ids.length > 0) {
+                                const names = ids.map((id) => dateFormatOptions.find((o) => o.id === id)?.name ?? String(id));
+                                display = names.join(", ");
+                              } else {
+                                display = "—";
                               }
                             } else if (typeof val === "object" && val !== null) {
                               display = JSON.stringify(val);
@@ -1508,6 +1532,7 @@ const ContributionDetail = () => {
                       <input
                         id="contrib-edit-is-irregular"
                         type="checkbox"
+                        className="h-4 w-4 accent-primary"
                         checked={editorEdits.is_irreg}
                         onChange={(e) =>
                           setEditorEdits((p) => ({ ...p, is_irreg: e.target.checked }))
