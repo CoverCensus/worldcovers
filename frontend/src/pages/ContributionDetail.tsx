@@ -35,40 +35,20 @@ const MANUSCRIPT_OPTIONS = [
   { value: "Yes", label: "Yes" },
   { value: "No", label: "No" },
 ];
-const DATE_TYPE_OPTIONS = [
-  { value: "BISHOP MARK", label: "Bishop Mark" },
-  { value: "FRANKLIN MARK", label: "Franklin Mark" },
-  { value: "QUAKER DATE", label: "Quaker Date" },
-];
 
-function getSeenDateError(value: string, opts: { required: boolean; label: string }): string | null {
+function getYearError(value: string, opts: { required: boolean; label: string }): string | null {
   const v = value.trim();
   if (!v) {
     return opts.required ? `${opts.label} is required` : null;
   }
-  if (/^\d{4}$/.test(v)) {
-    const n = Number(v);
-    if (Number.isNaN(n) || n < MIN_YEAR || n > CURRENT_YEAR) {
-      return `${opts.label} year must be between ${MIN_YEAR} and ${CURRENT_YEAR}`;
-    }
-    return null;
+  if (v.length !== 4) {
+    return `${opts.label} must be 4 digits`;
   }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
-  return `${opts.label} must be YYYY or YYYY-MM-DD`;
-}
-
-function parseDateRangeForEditor(raw: string): { firstSeen: string; lastSeen: string } {
-  const s = (raw || "").trim();
-  if (!s) return { firstSeen: "", lastSeen: "" };
-  const spaced = s.split(/\s+[-–—]\s+/);
-  if (spaced.length >= 2) {
-    return { firstSeen: spaced[0].trim(), lastSeen: spaced[1].trim() };
+  const n = Number(v);
+  if (Number.isNaN(n) || n < MIN_YEAR || n > CURRENT_YEAR) {
+    return `${opts.label} must be between ${MIN_YEAR} and ${CURRENT_YEAR}`;
   }
-  const yearRange = s.match(/^\s*(\d{4})\s*[-–—]\s*(\d{4})\s*$/);
-  if (yearRange) {
-    return { firstSeen: yearRange[1], lastSeen: yearRange[2] };
-  }
-  return { firstSeen: s, lastSeen: "" };
+  return null;
 }
 
 function getCsrfTokenFromCookie(): string | null {
@@ -115,12 +95,10 @@ interface SubmittedData {
   lettering_style_id?: number;
   framing_style_id?: number;
   date_format_id?: number;
-  date_type?: string;
   /** API may return camelCase */
   letteringStyleId?: number;
   framingStyleId?: number;
   dateFormatId?: number;
-  dateType?: string;
 }
 
 interface Contribution {
@@ -205,7 +183,6 @@ const ContributionDetail = () => {
     lettering?: string;
     framing?: string;
     dateFormat?: string;
-    dateType?: string;
   }>({});
 
   // Editor direct-edit: same field model as Edit Catalog Entry
@@ -228,7 +205,6 @@ const ContributionDetail = () => {
     lettering_style_id: string;
     framing_style_id: string;
     date_format_id: string;
-    date_type: string;
   }>({
     state: "",
     stateOther: "",
@@ -248,7 +224,6 @@ const ContributionDetail = () => {
     lettering_style_id: "",
     framing_style_id: "",
     date_format_id: "",
-    date_type: "",
   });
   const fromDashboard = location.state?.fromDashboard === true;
   const isStateEditor = user?.role === "state_editor" || user?.is_superuser;
@@ -438,7 +413,7 @@ const ContributionDetail = () => {
     if (!contribution?.submitted_data) return;
     const sd = contribution.submitted_data as Record<string, unknown>;
     const dr = String(sd.date_range ?? sd.dateRange ?? "").trim();
-    const { firstSeen, lastSeen } = parseDateRangeForEditor(dr);
+    const [firstSeen = "", lastSeen = ""] = dr ? dr.split(/[-–—]/).map((s) => s.trim()) : ["", ""];
     const wh = submittedDataToWidthHeightStrings(sd);
     const rawType = String(sd.type ?? "").trim();
     const rawColor = String(sd.color ?? "").trim();
@@ -482,7 +457,6 @@ const ContributionDetail = () => {
         sd.date_format_id != null || sd.dateFormatId != null
           ? String(sd.date_format_id ?? sd.dateFormatId ?? "")
           : "",
-      date_type: String(sd.date_type ?? sd.dateType ?? "").trim(),
     });
     setEditorFieldErrors({});
   }, [contribution?.id, contribution?.submitted_data, typeOptions, colorOptions]);
@@ -540,9 +514,9 @@ const ContributionDetail = () => {
     const errors: typeof editorFieldErrors = {};
     if (!stateVal) errors.state = "State is required";
     if (!townVal) errors.town = "Town/City is required";
-    const fe = getSeenDateError(editorEdits.firstSeen, { required: true, label: "First Seen" });
+    const fe = getYearError(editorEdits.firstSeen, { required: true, label: "First Seen Year" });
     if (fe) errors.firstSeen = fe;
-    const le = getSeenDateError(editorEdits.lastSeen, { required: false, label: "Last Seen" });
+    const le = getYearError(editorEdits.lastSeen, { required: false, label: "Last Seen Year" });
     if (le) errors.lastSeen = le;
     if (!typeVal) errors.type = "Postmark type is required";
     if (!colorVal) errors.color = "Color is required";
@@ -582,7 +556,6 @@ const ContributionDetail = () => {
         ? parseInt(editorEdits.framing_style_id, 10)
         : undefined,
       date_format_id: editorEdits.date_format_id ? parseInt(editorEdits.date_format_id, 10) : undefined,
-      date_type: editorEdits.date_type.trim() || undefined,
     };
   };
 
@@ -1247,20 +1220,21 @@ const ContributionDetail = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="contrib-edit-firstSeen">
-                          First Seen <span className="text-destructive">*</span>
+                          First Seen Year <span className="text-destructive">*</span>
                         </Label>
                         <Input
                           id="contrib-edit-firstSeen"
                           type="text"
-                          inputMode="text"
-                          placeholder="YYYY or YYYY-MM-DD"
+                          inputMode="numeric"
+                          placeholder=""
                           value={editorEdits.firstSeen}
                           onChange={(e) => {
-                            const v = e.target.value.trim();
+                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                             setEditorEdits((p) => ({ ...p, firstSeen: v }));
-                            const err = getSeenDateError(v, { required: true, label: "First Seen" });
+                            const err = getYearError(v, { required: true, label: "First Seen Year" });
                             setEditorFieldErrors((prev) => ({ ...prev, firstSeen: err || undefined }));
                           }}
+                          maxLength={5}
                           disabled={submitting}
                           className={editorFieldErrors.firstSeen ? "border-destructive" : ""}
                         />
@@ -1269,19 +1243,20 @@ const ContributionDetail = () => {
                         )}
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="contrib-edit-lastSeen">Last Seen</Label>
+                        <Label htmlFor="contrib-edit-lastSeen">Last Seen Year</Label>
                         <Input
                           id="contrib-edit-lastSeen"
                           type="text"
-                          inputMode="text"
-                          placeholder="YYYY or YYYY-MM-DD"
+                          inputMode="numeric"
+                          placeholder=""
                           value={editorEdits.lastSeen}
                           onChange={(e) => {
-                            const v = e.target.value.trim();
+                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                             setEditorEdits((p) => ({ ...p, lastSeen: v }));
-                            const err = getSeenDateError(v, { required: false, label: "Last Seen" });
+                            const err = getYearError(v, { required: false, label: "Last Seen Year" });
                             setEditorFieldErrors((prev) => ({ ...prev, lastSeen: err || undefined }));
                           }}
+                          maxLength={5}
                           disabled={submitting}
                           className={editorFieldErrors.lastSeen ? "border-destructive" : ""}
                         />
@@ -1372,35 +1347,6 @@ const ContributionDetail = () => {
                           disabled={submitting}
                           aria-label="Color (other)"
                         />
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-date-type">Date type</Label>
-                      <Select
-                        value={editorEdits.date_type}
-                        onValueChange={(v) => {
-                          setEditorEdits((p) => ({ ...p, date_type: v }));
-                          setEditorFieldErrors((prev) => ({ ...prev, dateType: undefined }));
-                        }}
-                        disabled={submitting}
-                      >
-                        <SelectTrigger
-                          id="contrib-edit-date-type"
-                          className={editorFieldErrors.dateType ? "border-destructive" : ""}
-                        >
-                          <SelectValue placeholder="Select date type (optional)" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {DATE_TYPE_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {editorFieldErrors.dateType && (
-                        <p className="text-sm text-destructive">{editorFieldErrors.dateType}</p>
                       )}
                     </div>
 

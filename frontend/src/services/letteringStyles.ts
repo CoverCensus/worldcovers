@@ -37,22 +37,23 @@ function mapApiResultToOption(item: LetteringStyleApiResultItem): LetteringStyle
   };
 }
 
+function getLetteringStylesApiUrl(): string | null {
+  const env = import.meta.env.VITE_API_URL;
+  if (!env || typeof env !== "string" || env.trim() === "") return null;
+  const base = env.trim().replace(/\/+$/, "");
+  if (base.endsWith("/letterings")) return base;
+  return `${base}/letterings`;
+}
+
 function getLetteringStylesApiCandidates(): string[] {
   const candidates: string[] = [];
-  // Moderation currently validates legacy lettering_style_id values.
-  // Prefer v1 options so submitted IDs remain approvable.
-  candidates.push("/api/v1/lettering-styles");
+  // Always prefer v2 commons source for lettering taxonomy.
   candidates.push("/api/v2/letterings");
   const pushCandidate = (raw: unknown) => {
     if (!raw || typeof raw !== "string") return;
     const base = raw.trim().replace(/\/+$/, "");
     if (!base) return;
-    if (base.endsWith("/lettering-styles") || base.endsWith("/letterings")) {
-      candidates.push(base);
-      return;
-    }
-    candidates.push(`${base}/lettering-styles`);
-    candidates.push(`${base}/letterings`);
+    candidates.push(base.endsWith("/letterings") ? base : `${base}/letterings`);
   };
   pushCandidate(import.meta.env.VITE_API_URL);
   pushCandidate(import.meta.env.VITE_API_BASE_URL);
@@ -75,7 +76,10 @@ async function readJsonOrThrow(res: Response, endpoint: string): Promise<any> {
  * When VITE_LETTERING_STYLES_API_URL is not set, returns [].
  */
 export async function getLetteringStyles(): Promise<LetteringStyleOption[]> {
+  const primary = getLetteringStylesApiUrl();
   const candidates = getLetteringStylesApiCandidates();
+  // Keep env-derived primary as an additional fallback (not first).
+  if (primary && !candidates.includes(primary)) candidates.push(primary);
   if (candidates.length === 0) return [];
 
   let lastError: unknown = null;

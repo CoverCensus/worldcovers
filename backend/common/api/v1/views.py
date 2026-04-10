@@ -2532,28 +2532,9 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         first_seen = _get("firstSeen", "first_seen")
         last_seen = _get("lastSeen", "last_seen")
         if first_seen is not None or last_seen is not None:
-            existing_range = str(existing.get("date_range", "") or "").strip()
-            existing_first = ""
-            existing_last = ""
-            if existing_range:
-                parts = re.split(r"\s+[-–—]\s+", existing_range, maxsplit=1)
-                if len(parts) == 2:
-                    existing_first, existing_last = parts[0].strip(), parts[1].strip()
-                else:
-                    yr = re.match(r"^\s*(\d{4})\s*[-–—]\s*(\d{4})\s*$", existing_range)
-                    if yr:
-                        existing_first, existing_last = yr.group(1), yr.group(2)
-                    else:
-                        existing_first = existing_range
-                        existing_last = ""
-
-            fs = str(first_seen or "").strip() if first_seen is not None else existing_first
-            ls = str(last_seen or "").strip() if last_seen is not None else existing_last
-            if fs and ls:
-                has_iso = len(fs) == 10 or len(ls) == 10
-                overlay["date_range"] = f"{fs} - {ls}" if has_iso else f"{fs}-{ls}"
-            elif fs:
-                overlay["date_range"] = fs
+            fs = (str(first_seen or "").strip() or existing.get("date_range", "").split("-")[0].strip()).strip()
+            ls = str(last_seen or "").strip() if last_seen is not None else (existing.get("date_range", "") or "").split("-")[-1].strip()
+            overlay["date_range"] = f"{fs}-{ls}" if ls else fs
         type_val = _get("type", "Type")
         if type_val is not None:
             overlay["type"] = str(type_val).strip()
