@@ -229,7 +229,13 @@ const RecordDetail = () => {
             dateType: String(data.date_type ?? data.dateType ?? "").trim(),
             letteringStyle: letteringStyleName,
             framingStyle: framingStyleName,
-            inscriptionText: String(data.inscription_txt ?? data.inscriptionTxt ?? "").trim(),
+            inscriptionText: String(
+              data.inscription_txt ??
+                data.inscriptionTxt ??
+                data.inscription_text ??
+                data.inscriptionText ??
+                "",
+            ).trim(),
             description: parsed.description || "",
             submitterName: parsed.submitterName || "",
             citationReferences: parsed.citationReferences || "",
@@ -521,6 +527,7 @@ const RecordDetail = () => {
                         { label: "Dimensions", value: record.dimensions },
                         { label: "Color", value: record.color },
                         { label: "Dates observed", value: (record.datesObserved ?? []).join("\n") },
+                        { label: "Inscription text", value: record.inscriptionText },
                       ];
                       return details.map(({ label, value }, index) => (
                         <div
@@ -544,19 +551,6 @@ const RecordDetail = () => {
                   <CardContent>
                     <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
                       {record.description}
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : null}
-
-              {record.inscriptionText?.trim() ? (
-                <Card className="shadow-archival-md">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg">Inscription Text</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
-                      {record.inscriptionText}
                     </p>
                   </CardContent>
                 </Card>
