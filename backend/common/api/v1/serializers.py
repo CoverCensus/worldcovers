@@ -392,6 +392,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
     town = serializers.SerializerMethodField()
     date_range = serializers.SerializerMethodField()
     colors_display = serializers.SerializerMethodField()
+    color = serializers.SerializerMethodField()
     valuation_display = serializers.SerializerMethodField()
     size_display = serializers.SerializerMethodField()
 
@@ -412,6 +413,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
             'town',
             'date_range',
             'size_display',
+            'color',
             'colors_display',
             'valuation_display',
             'contribution_approval_status',
@@ -506,13 +508,16 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         return e_str if e_str == l_str else f"{e_str} - {l_str}"
 
     def get_colors_display(self, obj):
-        """Comma-separated color names for this postmark. Uses prefetched postmark_colors__color."""
-        names = [
-            pc.color.color_name
-            for pc in obj.postmark_colors.all()
-            if getattr(pc, 'color', None)
-        ]
-        return ', '.join(names) if names else None
+        """v2 Postmark.color FK -> Color.color_name."""
+        color = getattr(obj, 'color', None)
+        return getattr(color, 'color_name', None) if color else None
+
+    def get_color(self, obj):
+        """v2 Postmark.color FK as {id, color_name} for frontend dropdowns/filters."""
+        color = getattr(obj, 'color', None)
+        if not color:
+            return None
+        return {'id': color.color_id, 'color_name': color.color_name}
 
     def get_valuation_display(self, obj):
         """Latest valuation as string (e.g. Common, or numeric)."""
@@ -616,12 +621,9 @@ class PostmarkSerializer(serializers.ModelSerializer):
         return e_str if e_str == l_str else f"{e_str} - {l_str}"
 
     def get_colors_display(self, obj):
-        names = [
-            pc.color.color_name
-            for pc in obj.postmark_colors.select_related('color').all()
-            if getattr(pc, 'color', None)
-        ]
-        return ', '.join(names) if names else None
+        """v2 Postmark.color FK -> Color.color_name."""
+        color = getattr(obj, 'color', None)
+        return getattr(color, 'color_name', None) if color else None
 
     def get_valuation_display(self, obj):
         val = obj.valuations.order_by('-valuation_date').first()

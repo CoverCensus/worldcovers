@@ -191,10 +191,9 @@ const RecordDetail = () => {
             fromNested(data, ["framingStyle", "framingStyleName"]) ||
             fromNested(data, ["framing", "name"]);
           const colorDisplay =
-            (data.colors_display ?? data.colorsDisplay ?? "").trim() ||
-            fromNested(data, ["color", "name"]) ||
             fromNested(data, ["color", "color_name"]) ||
-            fromNested(data, ["color", "colorName"]);
+            fromNested(data, ["color", "colorName"]) ||
+            fromNested(data, ["color", "name"]);
           const rawDatesSeen = data.dates_seen ?? data.datesSeen ?? [];
           const datesObserved = Array.isArray(rawDatesSeen)
             ? rawDatesSeen
@@ -518,10 +517,10 @@ const RecordDetail = () => {
                         { label: "Town", value: record.town },
                         { label: "State", value: record.state },
                         { label: "Manuscript", value: record.manuscript },
-                        { label: "Is Irregular", value: record.isIrregular },
                         { label: "Impression", value: record.impression },
                         { label: "Date Type", value: record.dateType },
                         { label: "Shape", value: record.type },
+                        { label: "Is Irregular", value: record.isIrregular },
                         { label: "Lettering style", value: record.letteringStyle },
                         { label: "Framing style", value: record.framingStyle },
                         { label: "Dimensions", value: record.dimensions },

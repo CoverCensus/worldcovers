@@ -42,7 +42,7 @@ function getPostmarksApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith((import.meta.env.VITE_API_BASE_URL || '/api/v1') + "/postmarks")) return base;
+  if (base.endsWith((import.meta.env.VITE_API_BASE_URL || '/api/v2') + "/postmarks")) return base;
   return `${base}/postmarks`;
 }
 
@@ -358,7 +358,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               (c.submittedData as { dimensions?: string } | undefined)?.dimensions ||
               "",
             type: c.shapeName || c.typeDisplay || c.type || c.submittedData?.type || "",
-            color: c.colorsDisplay || c.colorDisplay || c.color || c.submittedData?.color || "",
+            color: c.colorDisplay || c.color || c.submittedData?.color || "",
             status: String(c.status || "pending"),
             created_at: String(c.createdAt || c.created_at || ""),
             description: c.description || c.submittedData?.description || "",
@@ -476,7 +476,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               (c.submittedData as { dimensions?: string } | undefined)?.dimensions ||
               "",
             type: c.shapeName || c.typeDisplay || c.type || c.submittedData?.type || "",
-            color: c.colorsDisplay || c.colorDisplay || c.color || c.submittedData?.color || "",
+            color: c.colorDisplay || c.color || c.submittedData?.color || "",
             status: String(c.status || "pending"),
             created_at: String(c.createdAt || c.created_at || ""),
             description: c.description || c.submittedData?.description || "",
@@ -1138,7 +1138,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="type">Postmark Type</Label>
+                    <Label htmlFor="type">Shape</Label>
                     <SearchableSelect
                       id="type"
                       value={typeFilter}

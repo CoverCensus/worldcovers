@@ -16,7 +16,7 @@ import { getStoredUser, setStoredUser } from "@/lib/auth";
 
 function getLoginApiUrl(): string {
   const base = import.meta.env.VITE_API_URL || "";
-  return base ? `${String(base).replace(/\/+$/, "")}/login/` : (import.meta.env.VITE_API_BASE_URL || '/api/v1') + "/login/";
+  return base ? `${String(base).replace(/\/+$/, "")}/login/` : (import.meta.env.VITE_API_BASE_URL || '/api/v2') + "/login/";
 }
 
 interface AuthValues {

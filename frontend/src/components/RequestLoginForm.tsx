@@ -44,7 +44,8 @@ export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) 
     { setSubmitting, resetForm }: FormikHelpers<RequestLoginFormValues>
   ) => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/login-requests/`, {
+      const base = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '/api/v2').replace(/\/+$/, "");
+      const res = await fetch(`${base}/login-requests/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",

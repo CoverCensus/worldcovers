@@ -13,9 +13,8 @@ import {
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import heroImage from "@/assets/hero-cover.jpg";
-import { getAdministrativeUnits } from "@/services/administrativeUnits";
-import { getPostalFacilities } from "@/services/postalFacilities";
-import { getPostmarksDateRange } from "@/services/postmarkRange";
+import { getRegions } from "@/services/regions";
+import { getPostOffices } from "@/services/postOffices";
 
 type FAQItem = {
   id: string;
@@ -53,7 +52,6 @@ function getSafeApiBaseUrl(): string {
 function getFaqApiCandidates(): string[] {
   const candidates: string[] = [];
   candidates.push("/api/v2/faq-entries/");
-  candidates.push("/api/v1/faq-entries/");
   const safeBase = getSafeApiBaseUrl();
   if (safeBase) {
     candidates.push(`${safeBase}/faq-entries/`);
@@ -110,39 +108,30 @@ const Index = () => {
   const [stats, setStats] = useState<{
     towns: number | null;
     states: number | null;
-    earliestYear: number | null;
-    latestYear: number | null;
   }>({
     towns: null,
     states: null,
-    earliestYear: null,
-    latestYear: null,
   });
 
   useEffect(() => {
     let cancelled = false;
 
     const loadStats = async () => {
-      const [facilitiesResult, unitsResult, dateRangeResult] = await Promise.allSettled([
-        getPostalFacilities(),
-        getAdministrativeUnits(false),
-        getPostmarksDateRange(),
+      const [officesResult, regionsResult] = await Promise.allSettled([
+        getPostOffices(),
+        getRegions(false),
       ]);
 
       if (cancelled) return;
 
-      const facilities =
-        facilitiesResult.status === "fulfilled" ? facilitiesResult.value : [];
-      const administrativeUnits =
-        unitsResult.status === "fulfilled" ? unitsResult.value : [];
-      const dateRange =
-        dateRangeResult.status === "fulfilled" ? dateRangeResult.value : null;
+      const offices =
+        officesResult.status === "fulfilled" ? officesResult.value : [];
+      const regions =
+        regionsResult.status === "fulfilled" ? regionsResult.value : [];
 
       setStats({
-        towns: Array.isArray(facilities) ? facilities.length : null,
-        states: Array.isArray(administrativeUnits) ? administrativeUnits.length : null,
-        earliestYear: dateRange?.earliest_year ?? null,
-        latestYear: dateRange?.latest_year ?? null,
+        towns: Array.isArray(offices) ? offices.length : null,
+        states: Array.isArray(regions) ? regions.length : null,
       });
     };
 

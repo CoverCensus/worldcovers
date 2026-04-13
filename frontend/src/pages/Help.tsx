@@ -29,7 +29,7 @@ const Help = () => {
   useEffect(() => {
     const fetchDocs = async () => {
       try {
-        const response = await fetch("/api/help-docs/");
+        const response = await fetch("/api/v2/help-docs/");
         if (!response.ok) {
           throw new Error(`Failed to load help docs (${response.status})`);
         }

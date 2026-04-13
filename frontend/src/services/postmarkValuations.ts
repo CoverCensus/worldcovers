@@ -1,7 +1,7 @@
 /**
- * Postmark valuations: from GET /postmark-valuations/ when
- * VITE_POSTMARK_VALUATIONS_API_URL is set. No Supabase fallback (no matching table).
+ * Postmark valuations (v2 PostmarkValuation entity): GET /postmark-valuations/.
  */
+import apiClient from "@/lib/api";
 
 /** User object in valuedBy */
 export interface PostmarkValuationUser {
@@ -50,40 +50,14 @@ function mapApiResultToRecord(
   };
 }
 
-function getPostmarkValuationsApiUrl(): string | null {
-  const env = import.meta.env.VITE_API_URL;
-  if (!env || typeof env !== "string" || env.trim() === "") return null;
-  const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/postmark-valuations")) return base;
-  return `${base}/postmark-valuations`;
-}
-
 /**
  * Fetches postmark valuations from GET /postmark-valuations/.
- * When VITE_POSTMARK_VALUATIONS_API_URL is not set, returns [].
  */
-export async function getPostmarkValuations(): Promise<
-  PostmarkValuationRecord[]
-> {
-  const apiUrl = getPostmarkValuationsApiUrl();
-  if (!apiUrl) {
-    return [];
-  }
-
-  const url = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(
-      `Postmark valuations API error: ${res.status} ${res.statusText}`
-    );
-  }
-
-  const data: PostmarkValuationApiResponse = await res.json();
+export async function getPostmarkValuations(): Promise<PostmarkValuationRecord[]> {
+  const res = await apiClient.get<PostmarkValuationApiResponse>("/postmark-valuations/");
+  const data = res.data;
   if (!Array.isArray(data.results)) {
-    throw new Error(
-      "Postmark valuations API: invalid response (missing results array)"
-    );
+    throw new Error("Postmark valuations API: invalid response (missing results array)");
   }
-
   return data.results.map(mapApiResultToRecord);
 }

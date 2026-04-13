@@ -16,13 +16,13 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { normalizeImageUrl } from "@/services/postmarks";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
-import { getLetteringStyles, type LetteringStyleOption } from "@/services/letteringStyles";
-import { getFramingStyles, type FramingStyleOption } from "@/services/framingStyles";
-import { getDateFormats, type DateFormatOption } from "@/services/dateFormats";
+import { getLetterings, type LetteringOption } from "@/services/letterings";
+import { getFramings, type FramingOption } from "@/services/framings";
+import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
 import { sanitizeMmInput, submittedDataToWidthHeightStrings, validateMmPair } from "@/lib/dimensionsMm";
-import { getAdministrativeUnits } from "@/services/administrativeUnits";
-import { getPostalFacilities, type PostalFacilityOption } from "@/services/postalFacilities";
-import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
+import { getRegions } from "@/services/regions";
+import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
+import { getShapes, type ShapeOption } from "@/services/shapes";
 import { getColors, type ColorOption } from "@/services/colors";
 
 const STATE_OTHER_VALUE = "__other__";
@@ -49,6 +49,40 @@ function getYearError(value: string, opts: { required: boolean; label: string })
     return `${opts.label} must be between ${MIN_YEAR} and ${CURRENT_YEAR}`;
   }
   return null;
+}
+
+type YearPair = { earliestYear: string; latestYear: string };
+
+function parseDatesObservedToYearPairs(raw: unknown): YearPair[] {
+  const s = String(raw ?? "").trim();
+  if (!s) return [];
+  return s
+    .split(",")
+    .map((tok) => {
+      const t = tok.trim();
+      if (!t) return null;
+      const spaced = t.split(/\s+[-–—]\s+/);
+      const parts = spaced.length >= 2 ? spaced : t.match(/^\s*(\d{4})\s*[-–—]\s*(\d{4})\s*$/)?.slice(1) ?? [t];
+      const first = String(parts[0] ?? "").trim().slice(0, 4);
+      const last = String(parts[1] ?? "").trim().slice(0, 4);
+      const earliestYear = /^\d{4}$/.test(first) ? first : "";
+      const latestYear = /^\d{4}$/.test(last) ? last : "";
+      if (!earliestYear && !latestYear) return null;
+      return { earliestYear, latestYear };
+    })
+    .filter((p): p is YearPair => p != null);
+}
+
+function buildDatesObservedFromYearPairs(pairs: YearPair[]): string {
+  return pairs
+    .map((p) => {
+      const a = p.earliestYear.trim();
+      const b = p.latestYear.trim();
+      if (!a || !b) return "";
+      return `${a}-${b}`;
+    })
+    .filter(Boolean)
+    .join(", ");
 }
 
 function getCsrfTokenFromCookie(): string | null {
@@ -99,6 +133,8 @@ interface SubmittedData {
   letteringStyleId?: number;
   framingStyleId?: number;
   dateFormatId?: number;
+  dates_observed?: string;
+  datesObserved?: string;
 }
 
 interface Contribution {
@@ -154,8 +190,8 @@ const ContributionDetail = () => {
   const [submitting, setSubmitting] = useState(false);
   const [resubmitting, setResubmitting] = useState(false);
   // Options to display names for lettering/framing/date format in Submitted data
-  const [letteringOptions, setLetteringOptions] = useState<LetteringStyleOption[]>([]);
-  const [framingOptions, setFramingOptions] = useState<FramingStyleOption[]>([]);
+  const [letteringOptions, setLetteringOptions] = useState<LetteringOption[]>([]);
+  const [framingOptions, setFramingOptions] = useState<FramingOption[]>([]);
   const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
   const [carouselApi, setCarouselApi] = useState<CarouselApi>();
   const [carouselCurrent, setCarouselCurrent] = useState(0);
@@ -163,10 +199,10 @@ const ContributionDetail = () => {
   const [stateOptions, setStateOptions] = useState<{ value: string; label: string }[]>([]);
   const [loadingStates, setLoadingStates] = useState(false);
   const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
-  const [postalFacilities, setPostalFacilities] = useState<PostalFacilityOption[]>([]);
+  const [postOffices, setPostOffices] = useState<PostOfficeOption[]>([]);
   const [loadingTowns, setLoadingTowns] = useState(false);
   const [townOptionsError, setTownOptionsError] = useState<string | null>(null);
-  const [typeOptions, setTypeOptions] = useState<PostmarkShapeOption[]>([]);
+  const [typeOptions, setTypeOptions] = useState<ShapeOption[]>([]);
   const [loadingTypes, setLoadingTypes] = useState(false);
   const [typeOptionsError, setTypeOptionsError] = useState<string | null>(null);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
@@ -176,6 +212,7 @@ const ContributionDetail = () => {
     town?: string;
     firstSeen?: string;
     lastSeen?: string;
+    datePairs?: string;
     type?: string;
     color?: string;
     width_mm?: string;
@@ -225,6 +262,7 @@ const ContributionDetail = () => {
     framing_style_id: "",
     date_format_id: "",
   });
+  const [additionalDatePairs, setAdditionalDatePairs] = useState<YearPair[]>([]);
   const fromDashboard = location.state?.fromDashboard === true;
   const isStateEditor = user?.role === "state_editor" || user?.is_superuser;
   /** True if the logged-in user is the person who submitted this contribution (edit/review UI is for other editors only). */
@@ -310,8 +348,8 @@ const ContributionDetail = () => {
     let cancelled = false;
     setCatalogOptionsLoading(true);
     Promise.all([
-      getLetteringStyles(),
-      getFramingStyles(),
+      getLetterings(),
+      getFramings(),
       getDateFormats(),
       getColors().catch(() => [] as ColorOption[]),
     ])
@@ -344,7 +382,7 @@ const ContributionDetail = () => {
     let cancelled = false;
     setLoadingStates(true);
     setStateOptionsError(null);
-    getAdministrativeUnits(true)
+    getRegions(true)
       .then((opts) => {
         if (!cancelled) setStateOptions(opts);
       })
@@ -367,14 +405,14 @@ const ContributionDetail = () => {
     let cancelled = false;
     setLoadingTowns(true);
     setTownOptionsError(null);
-    getPostalFacilities()
+    getPostOffices()
       .then((rows) => {
-        if (!cancelled) setPostalFacilities(rows);
+        if (!cancelled) setPostOffices(rows);
       })
       .catch((err) => {
         if (!cancelled) {
           setTownOptionsError(err instanceof Error ? err.message : "Failed to load towns");
-          setPostalFacilities([]);
+          setPostOffices([]);
         }
       })
       .finally(() => {
@@ -390,7 +428,7 @@ const ContributionDetail = () => {
     let cancelled = false;
     setLoadingTypes(true);
     setTypeOptionsError(null);
-    getPostmarkShapes()
+    getShapes()
       .then((rows) => {
         if (!cancelled) setTypeOptions(rows);
       })
@@ -458,6 +496,7 @@ const ContributionDetail = () => {
           ? String(sd.date_format_id ?? sd.dateFormatId ?? "")
           : "",
     });
+    setAdditionalDatePairs(parseDatesObservedToYearPairs(sd.dates_observed ?? sd.datesObserved));
     setEditorFieldErrors({});
   }, [contribution?.id, contribution?.submitted_data, typeOptions, colorOptions]);
 
@@ -471,7 +510,7 @@ const ContributionDetail = () => {
     if (!effectiveStateKey) return [];
     const seen = new Set<string>();
     const towns: { value: string; label: string }[] = [];
-    for (const facility of postalFacilities) {
+    for (const facility of postOffices) {
       const facilityState = (facility.state || "").trim().toLowerCase();
       const facilityTown = (facility.town || facility.name || "").trim();
       if (!facilityTown || facilityState !== effectiveStateKey) continue;
@@ -482,7 +521,7 @@ const ContributionDetail = () => {
     }
     towns.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
     return towns;
-  }, [postalFacilities, effectiveStateKey]);
+  }, [postOffices, effectiveStateKey]);
 
   const stateSelectOptions = useMemo(() => {
     const base = [...stateOptions, { value: STATE_OTHER_VALUE, label: "Other (type below)" }];
@@ -527,6 +566,25 @@ const ContributionDetail = () => {
     if (mmErr.width) errors.width_mm = mmErr.width;
     if (mmErr.height) errors.height_mm = mmErr.height;
 
+    for (const pair of additionalDatePairs) {
+      const a = pair.earliestYear.trim();
+      const b = pair.latestYear.trim();
+      if (!a || !b) {
+        errors.datePairs = "Each additional pair requires both Earliest Year and Latest Year.";
+        break;
+      }
+      const aErr = getYearError(a, { required: true, label: "Earliest Year" });
+      const bErr = getYearError(b, { required: true, label: "Latest Year" });
+      if (aErr || bErr) {
+        errors.datePairs = aErr || bErr || "Invalid additional date pair.";
+        break;
+      }
+      if (Number(a) > Number(b)) {
+        errors.datePairs = "Earliest Year must be less than or equal to Latest Year in each pair.";
+        break;
+      }
+    }
+
     if (Object.keys(errors).length > 0) {
       setEditorFieldErrors(errors);
       return null;
@@ -536,11 +594,14 @@ const ContributionDetail = () => {
     const first = editorEdits.firstSeen.trim();
     const last = editorEdits.lastSeen.trim();
 
+    const datesObservedStr = buildDatesObservedFromYearPairs(additionalDatePairs);
+
     return {
       state: stateVal,
       town: townVal,
       firstSeen: first,
       lastSeen: last,
+      dates_observed: datesObservedStr || undefined,
       type: typeVal,
       color: colorVal,
       width_mm: editorEdits.width_mm.trim() || undefined,
@@ -1291,8 +1352,96 @@ const ContributionDetail = () => {
                     </div>
 
                     <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label>Additional Earliest/Latest pairs</Label>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={submitting}
+                          onClick={() =>
+                            setAdditionalDatePairs((prev) => [
+                              ...prev,
+                              { earliestYear: "", latestYear: "" },
+                            ])
+                          }
+                        >
+                          Add date
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Add extra year ranges observed for this postmark.
+                      </p>
+                      <div className="space-y-2">
+                        {additionalDatePairs.map((pair, idx) => (
+                          <div key={idx} className="space-y-2 rounded-md border border-border p-3">
+                            <div className="flex items-center justify-between">
+                              <p className="text-xs font-medium text-muted-foreground">Pair {idx + 1}</p>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={submitting}
+                                onClick={() =>
+                                  setAdditionalDatePairs((prev) => prev.filter((_, i) => i !== idx))
+                                }
+                              >
+                                Remove
+                              </Button>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
+                              <div className="space-y-1">
+                                <Label className="text-xs text-muted-foreground">Earliest Year</Label>
+                                <Input
+                                  type="text"
+                                  inputMode="numeric"
+                                  placeholder="YYYY"
+                                  value={pair.earliestYear}
+                                  disabled={submitting}
+                                  onChange={(e) => {
+                                    const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                    setAdditionalDatePairs((prev) =>
+                                      prev.map((p, i) => (i === idx ? { ...p, earliestYear: v } : p))
+                                    );
+                                    if (editorFieldErrors.datePairs) {
+                                      setEditorFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                    }
+                                  }}
+                                  maxLength={5}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs text-muted-foreground">Latest Year</Label>
+                                <Input
+                                  type="text"
+                                  inputMode="numeric"
+                                  placeholder="YYYY"
+                                  value={pair.latestYear}
+                                  disabled={submitting}
+                                  onChange={(e) => {
+                                    const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                    setAdditionalDatePairs((prev) =>
+                                      prev.map((p, i) => (i === idx ? { ...p, latestYear: v } : p))
+                                    );
+                                    if (editorFieldErrors.datePairs) {
+                                      setEditorFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                    }
+                                  }}
+                                  maxLength={5}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {editorFieldErrors.datePairs && (
+                        <p className="text-sm text-destructive">{editorFieldErrors.datePairs}</p>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
                       <Label htmlFor="contrib-edit-type">
-                        Postmark Type <span className="text-destructive">*</span>
+                        Shape <span className="text-destructive">*</span>
                       </Label>
                       <SearchableSelect
                         id="contrib-edit-type"
@@ -1329,6 +1478,20 @@ const ContributionDetail = () => {
                           aria-label="Postmark type (other)"
                         />
                       )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="contrib-edit-is-irregular"
+                        type="checkbox"
+                        className="h-4 w-4 accent-primary"
+                        checked={editorEdits.is_irreg}
+                        onChange={(e) =>
+                          setEditorEdits((p) => ({ ...p, is_irreg: e.target.checked }))
+                        }
+                        disabled={submitting}
+                      />
+                      <Label htmlFor="contrib-edit-is-irregular">Is Irregular</Label>
                     </div>
 
                     <div className="space-y-2">
@@ -1526,20 +1689,6 @@ const ContributionDetail = () => {
                           ))}
                         </SelectContent>
                       </Select>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <input
-                        id="contrib-edit-is-irregular"
-                        type="checkbox"
-                        className="h-4 w-4 accent-primary"
-                        checked={editorEdits.is_irreg}
-                        onChange={(e) =>
-                          setEditorEdits((p) => ({ ...p, is_irreg: e.target.checked }))
-                        }
-                        disabled={submitting}
-                      />
-                      <Label htmlFor="contrib-edit-is-irregular">Is Irregular</Label>
                     </div>
 
                     <div className="space-y-2">

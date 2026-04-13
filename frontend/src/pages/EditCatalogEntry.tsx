@@ -13,17 +13,17 @@ import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { ArrowLeft, Loader2, Upload } from "lucide-react";
 import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
 import { getColors, type ColorOption } from "@/services/colors";
-import { getAdministrativeUnits, type StateOption } from "@/services/administrativeUnits";
-import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
-import { getPostalFacilities, type PostalFacilityOption } from "@/services/postalFacilities";
+import { getRegions, type StateOption } from "@/services/regions";
+import { getShapes, type ShapeOption } from "@/services/shapes";
+import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
 import {
   sanitizeMmInput,
   validateMmPair,
   catalogSizeToWidthHeightStrings,
 } from "@/lib/dimensionsMm";
-import { getLetteringStyles, type LetteringStyleOption } from "@/services/letteringStyles";
-import { getFramingStyles, type FramingStyleOption } from "@/services/framingStyles";
-import { getDateFormats, type DateFormatOption } from "@/services/dateFormats";
+import { getLetterings, type LetteringOption } from "@/services/letterings";
+import { getFramings, type FramingOption } from "@/services/framings";
+import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -58,6 +58,25 @@ const DATE_TYPE_OPTIONS = [
 const MIN_YEAR = 1661;
 const CURRENT_YEAR = new Date().getFullYear();
 
+const MONTH_OPTIONS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"] as const;
+const MONTH_TO_NUM: Record<string, string> = {
+  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+};
+const NUM_TO_MONTH: Record<string, string> = {
+  "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "May", "06": "Jun",
+  "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec",
+};
+
+type DatePair = {
+  earliestDay: string;
+  earliestMonth: string;
+  earliestYear: string;
+  latestDay: string;
+  latestMonth: string;
+  latestYear: string;
+};
+
 function getYearError(value: string, opts: { required: boolean; label: string }): string | null {
   const v = value.trim();
   if (!v) {
@@ -71,6 +90,48 @@ function getYearError(value: string, opts: { required: boolean; label: string })
     return `${opts.label} must be between ${MIN_YEAR} and ${CURRENT_YEAR}`;
   }
   return null;
+}
+
+function datesSeenRowToPair(row: Record<string, unknown> | null | undefined): DatePair | null {
+  if (!row || typeof row !== "object") return null;
+  const e = String((row as any).earliest_date_seen ?? (row as any).earliestDateSeen ?? "");
+  const l = String((row as any).latest_date_seen ?? (row as any).latestDateSeen ?? "");
+  const split = (s: string) => {
+    const trimmed = s.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const [y, m, d] = trimmed.split("-");
+      return { day: d, month: NUM_TO_MONTH[m] ?? "", year: y };
+    }
+    const y = trimmed.match(/^(\d{4})/);
+    return { day: "", month: "", year: y ? y[1] : "" };
+  };
+  const ep = split(e);
+  const lp = split(l);
+  if (!ep.year && !lp.year) return null;
+  return {
+    earliestDay: ep.day,
+    earliestMonth: ep.month,
+    earliestYear: ep.year,
+    latestDay: lp.day,
+    latestMonth: lp.month,
+    latestYear: lp.year,
+  };
+}
+
+function buildDateTokenFromPair(pair: DatePair): string {
+  const mkIsoOrYear = (d: string, m: string, y: string) => {
+    const yy = y.trim();
+    if (!yy) return "";
+    const dd = d.trim().padStart(2, "0");
+    const mm = MONTH_TO_NUM[m.trim()];
+    if (mm && dd && dd.length === 2) return `${yy}-${mm}-${dd}`;
+    return yy;
+  };
+  const first = mkIsoOrYear(pair.earliestDay, pair.earliestMonth, pair.earliestYear);
+  const last = mkIsoOrYear(pair.latestDay, pair.latestMonth, pair.latestYear);
+  if (!first || !last) return "";
+  const isIso = first.length === 10 || last.length === 10;
+  return isIso ? `${first} - ${last}` : `${first}-${last}`;
 }
 
 function parseOtherCharacteristics(raw: string | null | undefined) {
@@ -126,8 +187,8 @@ const EditCatalogEntry = () => {
 
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [stateOptions, setStateOptions] = useState<StateOption[]>([]);
-  const [typeOptions, setTypeOptions] = useState<PostmarkShapeOption[]>([]);
-  const [postalFacilities, setPostalFacilities] = useState<PostalFacilityOption[]>([]);
+  const [typeOptions, setTypeOptions] = useState<ShapeOption[]>([]);
+  const [postOffices, setPostOffices] = useState<PostOfficeOption[]>([]);
   const [loadingStates, setLoadingStates] = useState(true);
   const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
   const [loadingTypes, setLoadingTypes] = useState(true);
@@ -151,6 +212,7 @@ const EditCatalogEntry = () => {
   const [latestMonth, setLatestMonth] = useState("");
   const [latestYear, setLatestYear] = useState("");
   const [latestUnknown, setLatestUnknown] = useState(false);
+  const [additionalDatePairs, setAdditionalDatePairs] = useState<DatePair[]>([]);
   const [type, setType] = useState("");
   const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
@@ -173,8 +235,8 @@ const EditCatalogEntry = () => {
   const [letteringId, setLetteringId] = useState("");
   const [framingIds, setFramingIds] = useState<string[]>([]);
   const [dateFormatIds, setDateFormatIds] = useState<string[]>([]);
-  const [letteringOptions, setLetteringOptions] = useState<LetteringStyleOption[]>([]);
-  const [framingOptions, setFramingOptions] = useState<FramingStyleOption[]>([]);
+  const [letteringOptions, setLetteringOptions] = useState<LetteringOption[]>([]);
+  const [framingOptions, setFramingOptions] = useState<FramingOption[]>([]);
   const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
   const [catalogOptionsLoading, setCatalogOptionsLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{
@@ -182,6 +244,7 @@ const EditCatalogEntry = () => {
     town?: string;
     earliestDate?: string;
     latestDate?: string;
+    datePairs?: string;
     type?: string;
     color?: string;
     widthMm?: string;
@@ -204,11 +267,11 @@ const EditCatalogEntry = () => {
   useEffect(() => {
     setLoadingTowns(true);
     setTownOptionsError(null);
-    getPostalFacilities()
-      .then(setPostalFacilities)
+    getPostOffices()
+      .then(setPostOffices)
       .catch((err) => {
         setTownOptionsError(err instanceof Error ? err.message : "Failed to load towns");
-        setPostalFacilities([]);
+        setPostOffices([]);
       })
       .finally(() => setLoadingTowns(false));
   }, []);
@@ -216,7 +279,7 @@ const EditCatalogEntry = () => {
   useEffect(() => {
     setLoadingStates(true);
     setStateOptionsError(null);
-    getAdministrativeUnits(true)
+    getRegions(true)
       .then(setStateOptions)
       .catch((err) => {
         setStateOptionsError(err instanceof Error ? err.message : "Failed to load states");
@@ -228,7 +291,7 @@ const EditCatalogEntry = () => {
   useEffect(() => {
     setLoadingTypes(true);
     setTypeOptionsError(null);
-    getPostmarkShapes()
+    getShapes()
       .then(setTypeOptions)
       .catch((err) => {
         setTypeOptionsError(err instanceof Error ? err.message : "Failed to load postmark types");
@@ -239,7 +302,7 @@ const EditCatalogEntry = () => {
 
   useEffect(() => {
     setCatalogOptionsLoading(true);
-    Promise.all([getLetteringStyles(), getFramingStyles(), getDateFormats()])
+    Promise.all([getLetterings(), getFramings(), getDateFormats()])
       .then(([lettering, framing, dateFmt]) => {
         setLetteringOptions(lettering);
         setFramingOptions(framing);
@@ -269,7 +332,14 @@ const EditCatalogEntry = () => {
           return;
         }
         const datesSeenRaw = data.datesSeen ?? data.dates_seen ?? [];
-        const datesSeen = Array.isArray(datesSeenRaw) ? datesSeenRaw[0] : undefined;
+        const datesSeenArr: Record<string, unknown>[] = Array.isArray(datesSeenRaw) ? datesSeenRaw : [];
+        const sortedDatesSeen = [...datesSeenArr].sort((a, b) => {
+          const ea = String((a as any)?.earliest_date_seen ?? (a as any)?.earliestDateSeen ?? "");
+          const eb = String((b as any)?.earliest_date_seen ?? (b as any)?.earliestDateSeen ?? "");
+          return ea.localeCompare(eb);
+        });
+        const datesSeen = sortedDatesSeen[0];
+        const extraDatesSeen = sortedDatesSeen.slice(1);
         const sizes = Array.isArray(data.sizes) ? [...data.sizes] : [];
         sizes.sort((a: any, b: any) => {
           const da = a?.created_date ?? a?.createdDate ?? "";
@@ -321,8 +391,12 @@ const EditCatalogEntry = () => {
         setLatestMonth(lParts.month);
         setLatestYear(lParts.year);
         setLatestUnknown(false);
+        const extraPairs = extraDatesSeen
+          .map((row) => datesSeenRowToPair(row))
+          .filter((p): p is DatePair => p != null);
+        setAdditionalDatePairs(extraPairs);
         setType(data?.postmarkShape?.shapeName || "");
-        setColor(data.colorsDisplay || "");
+        setColor(data.color?.color_name || data.color?.colorName || data.color?.name || "");
         setWidthMm(wh.width);
         setHeightMm(wh.height);
         setManuscript(data.isManuscript ? "Yes" : "No");
@@ -378,7 +452,7 @@ const EditCatalogEntry = () => {
     if (!normalizedState) return [];
     const seen = new Set<string>();
     const towns: { value: string; label: string }[] = [];
-    for (const facility of postalFacilities) {
+    for (const facility of postOffices) {
       const facilityState = (facility.state || "").trim().toLowerCase();
       const facilityTown = (facility.town || "").trim();
       if (!facilityTown || facilityState !== normalizedState) continue;
@@ -389,7 +463,7 @@ const EditCatalogEntry = () => {
     }
     towns.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
     return towns;
-  }, [postalFacilities, state]);
+  }, [postOffices, state]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -521,6 +595,24 @@ const EditCatalogEntry = () => {
       errors.latestDate = latestYearErr;
     }
 
+    for (const pair of additionalDatePairs) {
+      const token = buildDateTokenFromPair(pair);
+      if (!token) {
+        errors.datePairs = "Each additional pair requires both Earliest Use and Latest Use.";
+        break;
+      }
+      const firstErr = getYearError(pair.earliestYear, { required: true, label: "Earliest Year" });
+      const lastErr = getYearError(pair.latestYear, { required: true, label: "Latest Year" });
+      if (firstErr || lastErr) {
+        errors.datePairs = firstErr || lastErr || "Invalid additional date pair.";
+        break;
+      }
+      if (Number(pair.earliestYear) > Number(pair.latestYear)) {
+        errors.datePairs = "Earliest Year must be less than or equal to Latest Year in each pair.";
+        break;
+      }
+    }
+
     // Dimensions: if circular, use diameter; otherwise width/height pair.
     if (isCircular) {
       const d = diameterMm.trim();
@@ -545,6 +637,10 @@ const EditCatalogEntry = () => {
 
     const dateRange = buildDateRange();
     // dateRange may be empty when Unknown
+    const datesObservedToSend = additionalDatePairs
+      .map(buildDateTokenFromPair)
+      .filter(Boolean)
+      .join(", ");
 
     const apiBase = getApiBaseUrl();
     if (!apiBase) {
@@ -612,6 +708,7 @@ const EditCatalogEntry = () => {
         form.append("town", townVal);
         form.append("firstSeen", firstSeenToSend);
         form.append("lastSeen", lastSeenToSend);
+        if (datesObservedToSend) form.append("dates_observed", datesObservedToSend);
         form.append("type", typeVal);
         form.append("color", colorVal);
         form.append("lettering_style_id", letteringId);
@@ -646,6 +743,7 @@ const EditCatalogEntry = () => {
           town: townVal,
           firstSeen: firstSeenToSend,
           lastSeen: lastSeenToSend,
+          dates_observed: datesObservedToSend || undefined,
           type: typeVal,
           color: colorVal,
           lettering_style_id: letteringId ? Number(letteringId) : undefined,
@@ -950,17 +1048,6 @@ const EditCatalogEntry = () => {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        id="edit-is-irregular"
-                        type="checkbox"
-                        className="h-4 w-4 accent-primary"
-                        checked={isIrregular}
-                        onChange={(e) => setIsIrregular(e.target.checked)}
-                      />
-                      <Label htmlFor="edit-is-irregular">Is Irregular</Label>
-                    </div>
-
                     <div className="space-y-3">
                       <div className="space-y-2">
                         <Label>Earliest Use</Label>
@@ -1130,10 +1217,187 @@ const EditCatalogEntry = () => {
                           Optional. Leave blank if unknown, or enter Day/Month/Year, or choose Unknown.
                         </p>
                       </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <Label>Additional Earliest/Latest pairs</Label>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              setAdditionalDatePairs((prev) => [
+                                ...prev,
+                                {
+                                  earliestDay: "",
+                                  earliestMonth: "",
+                                  earliestYear: "",
+                                  latestDay: "",
+                                  latestMonth: "",
+                                  latestYear: "",
+                                },
+                              ])
+                            }
+                          >
+                            Add date
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Add extra date ranges observed for this postmark.
+                        </p>
+                        <div className="space-y-2">
+                          {additionalDatePairs.map((pair, idx) => (
+                            <div key={idx} className="space-y-2 rounded-md border border-border p-3">
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs font-medium text-muted-foreground">Pair {idx + 1}</p>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    setAdditionalDatePairs((prev) => prev.filter((_, i) => i !== idx))
+                                  }
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Earliest Day</Label>
+                                  <Input
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="DD"
+                                    value={pair.earliestDay}
+                                    onChange={(e) => {
+                                      const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+                                      setAdditionalDatePairs((prev) =>
+                                        prev.map((p, i) => (i === idx ? { ...p, earliestDay: v } : p))
+                                      );
+                                      if (fieldErrors.datePairs) {
+                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                      }
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Earliest Month</Label>
+                                  <Select
+                                    value={pair.earliestMonth}
+                                    onValueChange={(v) => {
+                                      setAdditionalDatePairs((prev) =>
+                                        prev.map((p, i) => (i === idx ? { ...p, earliestMonth: v } : p))
+                                      );
+                                      if (fieldErrors.datePairs) {
+                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                      }
+                                    }}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Month" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {MONTH_OPTIONS.map((m) => (
+                                        <SelectItem key={m} value={m}>
+                                          {m}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Earliest Year</Label>
+                                  <Input
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="YYYY"
+                                    value={pair.earliestYear}
+                                    onChange={(e) => {
+                                      const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                      setAdditionalDatePairs((prev) =>
+                                        prev.map((p, i) => (i === idx ? { ...p, earliestYear: v } : p))
+                                      );
+                                      if (fieldErrors.datePairs) {
+                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                      }
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Latest Day</Label>
+                                  <Input
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="DD"
+                                    value={pair.latestDay}
+                                    onChange={(e) => {
+                                      const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+                                      setAdditionalDatePairs((prev) =>
+                                        prev.map((p, i) => (i === idx ? { ...p, latestDay: v } : p))
+                                      );
+                                      if (fieldErrors.datePairs) {
+                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                      }
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Latest Month</Label>
+                                  <Select
+                                    value={pair.latestMonth}
+                                    onValueChange={(v) => {
+                                      setAdditionalDatePairs((prev) =>
+                                        prev.map((p, i) => (i === idx ? { ...p, latestMonth: v } : p))
+                                      );
+                                      if (fieldErrors.datePairs) {
+                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                      }
+                                    }}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Month" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {MONTH_OPTIONS.map((m) => (
+                                        <SelectItem key={m} value={m}>
+                                          {m}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Latest Year</Label>
+                                  <Input
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="YYYY"
+                                    value={pair.latestYear}
+                                    onChange={(e) => {
+                                      const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                      setAdditionalDatePairs((prev) =>
+                                        prev.map((p, i) => (i === idx ? { ...p, latestYear: v } : p))
+                                      );
+                                      if (fieldErrors.datePairs) {
+                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
+                                      }
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {fieldErrors.datePairs && (
+                          <p className="text-sm text-destructive">{fieldErrors.datePairs}</p>
+                        )}
+                      </div>
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="edit-type">Postmark Type</Label>
+                      <Label htmlFor="edit-type">Shape</Label>
                       <SearchableSelect
                         id="edit-type"
                         value={type}
@@ -1169,6 +1433,17 @@ const EditCatalogEntry = () => {
                           aria-label="Postmark type (other)"
                         />
                       )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="edit-is-irregular"
+                        type="checkbox"
+                        className="h-4 w-4 accent-primary"
+                        checked={isIrregular}
+                        onChange={(e) => setIsIrregular(e.target.checked)}
+                      />
+                      <Label htmlFor="edit-is-irregular">Is Irregular</Label>
                     </div>
 
                     <div className="space-y-2">

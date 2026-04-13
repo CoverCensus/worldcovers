@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import { ColorOption } from '@/lib/api';
 import { getColors } from '@/services/colors';
-import { getPostmarkShapes } from '@/services/postmarkShapes';
 import { getShapes } from '@/services/shapes';
-import { getAdministrativeUnits } from '@/services/administrativeUnits';
+import { getRegions } from '@/services/regions';
 
 interface ShapeOption {
   value: string;
@@ -32,8 +31,6 @@ interface UseFilterOptionsReturn {
 interface UseFilterOptionsOptions {
   /** When true, only states assigned to the user (Dashboard). When false, all states (Search). */
   assignedStatesOnly?: boolean;
-  /** Shape source for the shape dropdown. */
-  shapeSource?: "postmarkType" | "commonShape";
 }
 
 export const useFilterOptions = (options?: UseFilterOptionsOptions): UseFilterOptionsReturn => {
@@ -43,7 +40,6 @@ export const useFilterOptions = (options?: UseFilterOptionsOptions): UseFilterOp
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const assignedStatesOnly = options?.assignedStatesOnly ?? false;
-  const shapeSource = options?.shapeSource ?? "postmarkType";
 
   const fetchOptions = async () => {
     setIsLoading(true);
@@ -51,8 +47,8 @@ export const useFilterOptions = (options?: UseFilterOptionsOptions): UseFilterOp
     try {
       const [colors, shapes, states] = await Promise.all([
         getColors(),
-        shapeSource === "commonShape" ? getShapes() : getPostmarkShapes(),
-        getAdministrativeUnits(assignedStatesOnly),
+        getShapes(),
+        getRegions(assignedStatesOnly),
       ]);
       setColorOptions(colors.map((c) => ({ value: c.name, label: c.name })));
       setShapeOptions(shapes.map((s) => ({ value: String(s.id), label: s.name })));
@@ -71,7 +67,7 @@ export const useFilterOptions = (options?: UseFilterOptionsOptions): UseFilterOp
 
   useEffect(() => {
     fetchOptions();
-  }, [assignedStatesOnly, shapeSource]);
+  }, [assignedStatesOnly]);
 
   return {
     colorOptions,

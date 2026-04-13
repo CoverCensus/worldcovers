@@ -39,7 +39,7 @@ class PostmarkListFilter(django_filters.FilterSet):
     # Only filter when value is "true" or "false"; ignore "unknown", empty, or other values.
     is_manuscript = django_filters.CharFilter(method='filter_is_manuscript', label='Is manuscript')
 
-    # Filter by color name: same source as list API's colorsDisplay (postmark_colors -> color.color_name).
+    # Filter by color name: v2 Postmark.color FK -> Color.color_name.
     # Frontend sends ?color=black or ?color=Black (iexact so case doesn't matter).
     color = django_filters.CharFilter(method='filter_by_color', label='Color (name)')
 
@@ -83,8 +83,8 @@ class PostmarkListFilter(django_filters.FilterSet):
         if not value or not str(value).strip():
             return queryset
         return queryset.filter(
-            postmark_colors__color__color_name__iexact=str(value).strip()
-        ).distinct()
+            color__color_name__iexact=str(value).strip()
+        )
 
     @staticmethod
     def filter_by_state_name(queryset, name, value):
@@ -186,9 +186,9 @@ class PostmarkFilter(django_filters.FilterSet):
         label="Latest Use Year (maximum)",
     )
 
-    # Color filter (via PostmarkColor -> Color)
+    # Color filter (v2 Postmark.color FK -> Color)
     color = django_filters.CharFilter(
-        field_name="postmark_colors__color__color_name",
+        field_name="color__color_name",
         lookup_expr="iexact",
         label="Color",
     )

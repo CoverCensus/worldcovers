@@ -1,7 +1,7 @@
 /**
- * Postmark images: from GET /postmark-images/ when VITE_POSTMARK_IMAGES_API_URL is set.
- * When not set, returns [] (app uses Supabase or postmark mainImage for images).
+ * Postmark images: GET /postmark-images/.
  */
+import apiClient from "@/lib/api";
 
 /** One item from GET /postmark-images/ */
 export interface PostmarkImageApiResultItem {
@@ -31,7 +31,7 @@ export interface PostmarkImageApiResponse {
   results: PostmarkImageApiResultItem[];
 }
 
-/** Normalized postmark image for display (matches API shape) */
+/** Normalized postmark image for display */
 export interface PostmarkImageRecord {
   id: number;
   originalFilename: string;
@@ -51,9 +51,7 @@ export interface PostmarkImageRecord {
   createdDate: string;
 }
 
-function mapApiResultToRecord(
-  item: PostmarkImageApiResultItem
-): PostmarkImageRecord {
+function mapApiResultToRecord(item: PostmarkImageApiResultItem): PostmarkImageRecord {
   return {
     id: item.postmarkImageId,
     originalFilename: item.originalFilename,
@@ -74,38 +72,14 @@ function mapApiResultToRecord(
   };
 }
 
-function getPostmarkImagesApiUrl(): string | null {
-  const env = import.meta.env.VITE_API_URL;
-  if (!env || typeof env !== "string" || env.trim() === "") return null;
-  const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/postmark-images")) return base;
-  return `${base}/postmark-images`;
-}
-
 /**
  * Fetches postmark images from GET /postmark-images/.
- * When VITE_POSTMARK_IMAGES_API_URL is not set, returns [].
  */
 export async function getPostmarkImages(): Promise<PostmarkImageRecord[]> {
-  const apiUrl = getPostmarkImagesApiUrl();
-  if (!apiUrl) {
-    return [];
-  }
-
-  const url = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(
-      `Postmark images API error: ${res.status} ${res.statusText}`
-    );
-  }
-
-  const data: PostmarkImageApiResponse = await res.json();
+  const res = await apiClient.get<PostmarkImageApiResponse>("/postmark-images/");
+  const data = res.data;
   if (!Array.isArray(data.results)) {
-    throw new Error(
-      "Postmark images API: invalid response (missing results array)"
-    );
+    throw new Error("Postmark images API: invalid response (missing results array)");
   }
-
   return data.results.map(mapApiResultToRecord);
 }

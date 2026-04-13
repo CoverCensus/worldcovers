@@ -19,15 +19,15 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
 import {
-  getAdministrativeUnits,
-  getAssignedAdministrativeUnits,
+  getRegions,
+  getAssignedRegions,
   type StateOption,
-} from "@/services/administrativeUnits";
-import { getPostmarkShapes, type PostmarkShapeOption } from "@/services/postmarkShapes";
-import { getPostalFacilities, type PostalFacilityOption } from "@/services/postalFacilities";
-import { getLetteringStyles, type LetteringStyleOption } from "@/services/letteringStyles";
-import { getFramingStyles, type FramingStyleOption } from "@/services/framingStyles";
-import { getDateFormats, type DateFormatOption } from "@/services/dateFormats";
+} from "@/services/regions";
+import { getShapes, type ShapeOption } from "@/services/shapes";
+import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
+import { getLetterings, type LetteringOption } from "@/services/letterings";
+import { getFramings, type FramingOption } from "@/services/framings";
+import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -167,8 +167,8 @@ const Contribute = () => {
   const [editLoadError, setEditLoadError] = useState<string | null>(null);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [stateOptions, setStateOptions] = useState<StateOption[]>([]);
-  const [typeOptions, setTypeOptions] = useState<PostmarkShapeOption[]>([]);
-  const [postalFacilities, setPostalFacilities] = useState<PostalFacilityOption[]>([]);
+  const [typeOptions, setTypeOptions] = useState<ShapeOption[]>([]);
+  const [postOffices, setPostOffices] = useState<PostOfficeOption[]>([]);
   const [loadingStates, setLoadingStates] = useState(true);
   const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
   const [confirmedNoAssignedStates, setConfirmedNoAssignedStates] = useState(false);
@@ -235,8 +235,8 @@ const Contribute = () => {
   const [latestYearError, setLatestYearError] = useState<string | null>(null);
 
   // Contributor: lettering, framing, date format (loaded for all)
-  const [letteringOptions, setLetteringOptions] = useState<LetteringStyleOption[]>([]);
-  const [framingOptions, setFramingOptions] = useState<FramingStyleOption[]>([]);
+  const [letteringOptions, setLetteringOptions] = useState<LetteringOption[]>([]);
+  const [framingOptions, setFramingOptions] = useState<FramingOption[]>([]);
   const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
   const [catalogOptionsLoading, setCatalogOptionsLoading] = useState(false);
 
@@ -256,11 +256,11 @@ const Contribute = () => {
   useEffect(() => {
     setLoadingTowns(true);
     setTownOptionsError(null);
-    getPostalFacilities()
-      .then(setPostalFacilities)
+    getPostOffices()
+      .then(setPostOffices)
       .catch((err) => {
         setTownOptionsError(err instanceof Error ? err.message : "Failed to load towns");
-        setPostalFacilities([]);
+        setPostOffices([]);
       })
       .finally(() => setLoadingTowns(false));
   }, []);
@@ -275,20 +275,20 @@ const Contribute = () => {
         const isStateEditor = user?.role === "state_editor";
         if (isStateEditor) {
           // Prefer dedicated endpoint first; then fallback to assigned_only query.
-          const assignedStates = await getAssignedAdministrativeUnits().catch(() => []);
+          const assignedStates = await getAssignedRegions().catch(() => []);
           if (assignedStates.length > 0) {
             setStateOptions(assignedStates);
             setConfirmedNoAssignedStates(false);
             return;
           }
-          const assignedOnlyStates = await getAdministrativeUnits(true);
+          const assignedOnlyStates = await getRegions(true);
           setStateOptions(assignedOnlyStates);
           setConfirmedNoAssignedStates(assignedOnlyStates.length === 0);
           return;
         }
 
         // Contributors can submit to any state: load full list.
-        const options = await getAdministrativeUnits(false);
+        const options = await getRegions(false);
         setStateOptions(options);
         setConfirmedNoAssignedStates(false);
       } catch (err) {
@@ -308,7 +308,7 @@ const Contribute = () => {
   useEffect(() => {
     setLoadingTypes(true);
     setTypeOptionsError(null);
-    getPostmarkShapes()
+    getShapes()
       .then(setTypeOptions)
       .catch((err) => {
         setTypeOptionsError(err instanceof Error ? err.message : "Failed to load postmark types");
@@ -319,7 +319,7 @@ const Contribute = () => {
 
   useEffect(() => {
     setCatalogOptionsLoading(true);
-    Promise.all([getLetteringStyles(), getFramingStyles(), getDateFormats()])
+    Promise.all([getLetterings(), getFramings(), getDateFormats()])
       .then(([lettering, framing, dateFmt]) => {
         setLetteringOptions(lettering);
         setFramingOptions(framing);
@@ -475,7 +475,7 @@ const Contribute = () => {
     if (!normalizedState) return [];
     const seen = new Set<string>();
     const towns: { value: string; label: string }[] = [];
-    for (const facility of postalFacilities) {
+    for (const facility of postOffices) {
       const facilityState = (facility.state || "").trim().toLowerCase();
       const facilityTown = (facility.town || "").trim();
       if (!facilityTown || facilityState !== normalizedState) continue;
@@ -486,7 +486,7 @@ const Contribute = () => {
     }
     towns.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
     return towns;
-  }, [postalFacilities, state]);
+  }, [postOffices, state]);
 
   const selectedFramingSummary = useMemo(() => {
     if (framingIds.length === 0) return "Select one or more framing styles";
@@ -1165,17 +1165,6 @@ const Contribute = () => {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        id="is-irregular"
-                        type="checkbox"
-                        className="h-4 w-4 accent-primary"
-                        checked={isIrregular}
-                        onChange={(e) => setIsIrregular(e.target.checked)}
-                      />
-                      <Label htmlFor="is-irregular">Is Irregular</Label>
-                    </div>
-
                     <div className="space-y-3">
                       <div className="space-y-2">
                         <Label>Earliest Use</Label>
@@ -1533,7 +1522,7 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="type">Postmark Type</Label>
+                      <Label htmlFor="type">Shape</Label>
                       <SearchableSelect
                         id="type"
                         value={type}
@@ -1569,6 +1558,17 @@ const Contribute = () => {
                           aria-label="Postmark type (other)"
                         />
                       )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="is-irregular"
+                        type="checkbox"
+                        className="h-4 w-4 accent-primary"
+                        checked={isIrregular}
+                        onChange={(e) => setIsIrregular(e.target.checked)}
+                      />
+                      <Label htmlFor="is-irregular">Is Irregular</Label>
                     </div>
 
                     <div className="space-y-2">

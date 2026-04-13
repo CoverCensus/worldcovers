@@ -1,3 +1,5 @@
+import apiClient from "@/lib/api";
+
 export interface PostmarkApiResponse {
     /** Total count; null when include_count=false for faster response */
     count: number | null;
@@ -22,7 +24,6 @@ export interface PostmarkApiResponse {
     shapeName: string;
     rateLocation: string;
     rateValue: string;
-    colorsDisplay: string,
     state: string,
     dateRange: string,
     town: string,
@@ -96,10 +97,10 @@ export interface PostmarkApiResponse {
     if (!path) return null;
     // Already absolute
     if (/^https?:\/\//i.test(path)) return path;
-    const apiUrl = getPostmarksApiUrl();
-    if (!apiUrl) return path;
+    const base = apiClient.defaults.baseURL;
+    if (!base || !/^https?:\/\//i.test(base)) return path;
     try {
-      const url = new URL(apiUrl);
+      const url = new URL(base);
       const relative = path.startsWith("/") ? path : `/${path}`;
       return `${url.origin}${relative}`;
     } catch {
@@ -148,7 +149,7 @@ export interface PostmarkApiResponse {
         town: data?.town ?? "",
         state: data?.state ?? "",
         date_range: data?.date_range ?? data?.dateRange ?? "",
-        colors_display: data?.colors_display ?? data?.colorsDisplay ?? "",
+        color: data?.color,
         catalog_txt: data?.catalog_txt ?? data?.catalogTxt ?? "",
         inscription_txt: data?.inscription_txt ?? data?.inscriptionTxt ?? "",
         rate_location: data?.rate_location ?? data?.rateLocation ?? "",
@@ -231,7 +232,6 @@ export interface PostmarkApiResponse {
       town: data.town,
       state: data.state,
       date_range: dateRange,
-      colors_display: data.colors_display ?? data.colorsDisplay,
       catalog_txt: catalogTxt,
       inscription_txt: inscriptionTxt,
       postmark_text: postmarkTextCombined,
@@ -283,18 +283,15 @@ export interface PostmarkApiResponse {
         : "";
     const shapeName = (item.shape_name ?? item.shapeName ?? shapeNameFromNested ?? "").trim();
 
-    const pfi = item.postal_facility_identity ?? item.postalFacilityIdentity;
-    const facilityNameFromNested =
-      typeof pfi === "object" && pfi != null
-        ? (pfi as { facility_name?: string }).facility_name ??
-          (pfi as { facilityName?: string }).facilityName ??
-          ""
+    const postOffice = item.post_office ?? item.postOffice;
+    const postOfficeNameFromNested =
+      typeof postOffice === "object" && postOffice != null
+        ? (postOffice as { name?: string }).name ?? ""
         : "";
     const facilityName =
-      (item.facility_name ?? item.facilityName ?? facilityNameFromNested ?? "").trim();
+      (item.post_office_name ?? item.postOfficeName ?? postOfficeNameFromNested ?? "").trim();
 
     const mainImage = deriveMainImageFromApiItem(item);
-    const colorsDisplay = item.colors_display ?? item.colorsDisplay;
     const dateRange = item.date_range ?? item.dateRange;
     const sizeDisplayApi = item.size_display ?? item.sizeDisplay ?? item.sizeNotes;
     // Derive a human-readable size string from various possible fields
@@ -326,7 +323,6 @@ export interface PostmarkApiResponse {
       rateValue: item.rate_value ?? item.rateValue,
       isManuscript: item.is_manuscript ?? item.isManuscript,
       mainImage: (mainImage ?? null) as PostmarkRecord["mainImage"],
-      colorsDisplay: colorsDisplay ?? "",
       state: item.state ?? "",
       dateRange: dateRange ?? "",
       town: item.town ?? "",
@@ -380,28 +376,20 @@ export interface PostmarkApiResponse {
       filters?: { state?: string; town?: string; type?: string; color?: string; search?: string };
     }
   ): Promise<GetPostmarksPageResult> {
-    const apiUrl = getPostmarksApiUrl();
-    if (!apiUrl) {
-      return { results: [], count: 0, next: null, previous: null };
-    }
-    const base = apiUrl.replace(/\/+$/, "");
-    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+    const params: Record<string, string> = { page: String(page), page_size: String(pageSize) };
     const f = options?.filters;
-    if (f?.state && f.state !== "all") params.set("state", f.state);
-    if (f?.town?.trim()) params.set("town", f.town.trim());
-    if (f?.type && f.type !== "all") params.set("postmark_shape", f.type);
-    if (f?.color && f.color !== "all") params.set("color", f.color);
-    if (f?.search?.trim()) params.set("search", f.search.trim());
-    const url = `${base}/my-assigned/?${params.toString()}`;
-    const res = await fetch(url, {
-      method: "GET",
-      credentials: options?.credentials ?? "include",
+    if (f?.state && f.state !== "all") params.state = f.state;
+    if (f?.town?.trim()) params.town = f.town.trim();
+    if (f?.type && f.type !== "all") params.postmark_shape = f.type;
+    if (f?.color && f.color !== "all") params.color = f.color;
+    if (f?.search?.trim()) params.search = f.search.trim();
+
+    const res = await apiClient.get<PostmarkApiResponse>("/postmarks/my-assigned/", {
+      params,
+      withCredentials: true,
       headers: { Accept: "application/json" },
     });
-    if (!res.ok) {
-      throw new Error(`Assigned catalog API error: ${res.status} ${res.statusText}`);
-    }
-    const data: PostmarkApiResponse = await res.json();
+    const data = res.data;
     if (!Array.isArray(data.results)) {
       throw new Error("Assigned catalog API: invalid response (missing results array)");
     }
@@ -413,53 +401,29 @@ export interface PostmarkApiResponse {
       count_capped: data.count_capped,
     };
   }
-  
-  function getPostmarksApiUrl(): string | null {
-    const env = import.meta.env.VITE_API_URL;
-    if (!env || typeof env !== "string" || env.trim() === "") return null;
-    const base = env.trim().replace(/\/+$/, "");
-    if (base.endsWith("/postmarks")) return base;
-    return `${base}/postmarks`;
-  }
-  
+
   /**
    * Fetches a single postmark by ID from GET /postmarks/{postmarkId}/.
-   * Returns null if API is not configured or request fails.
+   * Returns null if the request fails.
    */
   export async function getPostmarkById(postmarkId: number): Promise<any | null> {
-    const apiUrl = getPostmarksApiUrl();
-    if (!apiUrl) return null;
-  
-    const base = apiUrl.replace(/\/+$/, "");
-    const url = `${base}/${postmarkId}/`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-  
-    const data = await res.json();
-    return data;
+    try {
+      const res = await apiClient.get(`/postmarks/${postmarkId}/`);
+      return res.data;
+    } catch {
+      return null;
+    }
   }
-  
+
   /**
    * Fetches postmarks from GET /postmarks/.
-   * When VITE_POSTMARKS_API_URL is not set, returns [] (app uses Supabase catalog_records).
    */
   export async function getPostmarks(): Promise<PostmarkRecord[]> {
-    const apiUrl = getPostmarksApiUrl();
-    if (!apiUrl) {
-      return [];
-    }
-  
-    const url = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`Postmarks API error: ${res.status} ${res.statusText}`);
-    }
-  
-    const data: PostmarkApiResponse = await res.json();
+    const res = await apiClient.get<PostmarkApiResponse>("/postmarks/");
+    const data = res.data;
     if (!Array.isArray(data.results)) {
       throw new Error("Postmarks API: invalid response (missing results array)");
     }
-  
     return data.results.map(mapApiResultToRecord);
   }
   
@@ -494,59 +458,49 @@ export interface PostmarkApiResponse {
     /** When true, skips slow COUNT query for faster first load (count will be null) */
     deferCount?: boolean
   ): Promise<GetPostmarksPageResult> {
-    const apiUrl = getPostmarksApiUrl();
-    if (!apiUrl) {
-    return { results: [], count: 0, next: null, previous: null };
-    }
-  
-    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-    if (search?.trim()) params.set("search", search.trim());
+    const params: Record<string, string> = { page: String(page), page_size: String(pageSize) };
+    if (search?.trim()) params.search = search.trim();
     if (shapeId != null && shapeId !== "" && String(shapeId) !== "all") {
-      params.set("shape", String(shapeId));
+      params.shape = String(shapeId);
     }
     if (excludeManuscripts) {
-      params.set("is_manuscript", String(excludeManuscripts));
+      params.is_manuscript = String(excludeManuscripts);
     }
     if (color !== "all" && color !== null && color !== "") {
-      params.set("color", color);
+      params.color = color;
     }
     if (state !== "all" && state != null && state !== "") {
-      params.set("state", state.trim());
+      params.state = state.trim();
     }
     if (town != null && town.trim() !== "") {
-      params.set("town", town.trim());
+      params.town = town.trim();
     }
     const begin = beginYear?.trim();
     if (begin !== undefined && begin !== "") {
-      params.set("earliest_use_year_min", begin);
+      params.earliest_use_year_min = begin;
     }
     const end = endYear?.trim();
     if (end !== undefined && end !== "") {
-      params.set("latest_use_year_max", end);
+      params.latest_use_year_max = end;
     }
     if (hasImages === true) {
-      params.set("has_images", "true");
+      params.has_images = "true";
     }
     if (deferCount === true) {
-      params.set("include_count", "false");
+      params.include_count = "false";
     }
-    const base = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
-    const url = `${base}?${params.toString()}`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`Postmarks API error: ${res.status} ${res.statusText}`);
-    }
-  
-    const data: PostmarkApiResponse = await res.json();
+
+    const res = await apiClient.get<PostmarkApiResponse>("/postmarks/", { params });
+    const data = res.data;
     if (!Array.isArray(data.results)) {
       throw new Error("Postmarks API: invalid response (missing results array)");
     }
-  
+
     return {
       results: data.results.map(mapApiResultToRecord),
       count: data.count,
-    next: data.next,
-    previous: data.previous,
+      next: data.next,
+      previous: data.previous,
       count_capped: data.count_capped,
     };
   }

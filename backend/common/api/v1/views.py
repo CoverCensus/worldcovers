@@ -2754,6 +2754,11 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         date_type = _get("date_type", "dateType")
         if date_type is not None:
             overlay["date_type"] = str(date_type).strip()
+        if "dates_observed" in data or "datesObserved" in data:
+            raw_do = data.get("dates_observed")
+            if raw_do is None or raw_do == "":
+                raw_do = data.get("datesObserved")
+            overlay["dates_observed"] = str(raw_do or "").strip()
         for key, payload_key in [
             ("lettering_style_id", "letteringStyleId"),
             ("framing_style_id", "framingStyleId"),

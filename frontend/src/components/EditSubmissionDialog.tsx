@@ -152,7 +152,7 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-type">Postmark Type</Label>
+              <Label htmlFor="edit-type">Shape</Label>
               <Input
                 id="edit-type"
                 value={type}

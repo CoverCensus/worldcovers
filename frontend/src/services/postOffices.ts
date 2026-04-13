@@ -1,33 +1,38 @@
 /**
- * Postal facilities: data from Supabase (now) or from GET /postal-facilities/ (future).
- * - When VITE_POSTAL_FACILITIES_API_URL is set → fetch from API.
+ * Post offices (v2 PostOffice entity): data from Supabase (now) or from GET /post-offices/ (future).
+ * - When VITE_API_URL is set → fetch from API via /post-offices/town-options/.
  * - When not set → derive from Supabase (distinct town + state from catalog_records and submissions).
+ *
+ * Note: the v2 PostOffice entity itself is narrow (id, name, region_id). The richer
+ * fields below (referenceCode, type, latitude, longitude) are extensions kept for
+ * existing UI use until the town-options aggregate on the backend moves to v2 shape.
  */
 
+import apiClient from "@/lib/api";
 import { supabase } from "@/integrations/supabase/client";
 
-/** One item from the external /api/postal-facilities/ response */
-export interface PostalFacilitiesApiResultItem {
-  postalFacilityId: number;
+/** One item from the external /api/post-offices/ response */
+export interface PostOfficeApiResultItem {
+  postOfficeId: number;
   referenceCode: string;
   currentName: string;
   currentType: string;
   latitude: number | null;
   longitude: number | null;
-  /** State name from jurisdiction (for town dropdown filtering) */
+  /** State/region name (for town dropdown filtering) */
   stateName?: string | null;
 }
 
-/** Paginated response from GET /postal-facilities/ */
-export interface PostalFacilitiesApiResponse {
+/** Paginated response from GET /post-offices/ */
+export interface PostOfficesApiResponse {
   count: number;
   next: string | null;
   previous: string | null;
-  results: PostalFacilitiesApiResultItem[];
+  results: PostOfficeApiResultItem[];
 }
 
 /** Normalized option for dropdowns/filters */
-export interface PostalFacilityOption {
+export interface PostOfficeOption {
   id: number;
   referenceCode: string;
   name: string;
@@ -39,9 +44,9 @@ export interface PostalFacilityOption {
   state?: string;
 }
 
-function mapApiResultToOption(item: PostalFacilitiesApiResultItem): PostalFacilityOption {
+function mapApiResultToOption(item: PostOfficeApiResultItem): PostOfficeOption {
   return {
-    id: item.postalFacilityId,
+    id: item.postOfficeId,
     referenceCode: item.referenceCode,
     name: item.currentName ?? "",
     type: item.currentType ?? "",
@@ -52,21 +57,13 @@ function mapApiResultToOption(item: PostalFacilitiesApiResultItem): PostalFacili
   };
 }
 
-function getPostalFacilitiesApiUrl(): string | null {
-  const env = import.meta.env.VITE_API_URL;
-  if (!env || typeof env !== "string" || env.trim() === "") return null;
-  const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith("/postal-facilities")) return base;
-  return `${base}/postal-facilities`;
-}
-
 /**
  * Fetches distinct (town, state) from Supabase catalog_records and submissions.
- * Mapped to PostalFacilityOption with id = index, name = "Town, State", referenceCode = "", type = "".
+ * Mapped to PostOfficeOption with id = index, name = "Town, State", referenceCode = "", type = "".
  */
-async function getPostalFacilitiesFromSupabase(): Promise<PostalFacilityOption[]> {
+async function getPostOfficesFromSupabase(): Promise<PostOfficeOption[]> {
   const seen = new Set<string>();
-  const options: PostalFacilityOption[] = [];
+  const options: PostOfficeOption[] = [];
 
   const add = (town: string, state: string) => {
     const key = `${town.trim().toLowerCase()}|${state.trim().toLowerCase()}`;
@@ -103,29 +100,23 @@ async function getPostalFacilitiesFromSupabase(): Promise<PostalFacilityOption[]
   return options.map((o, i) => ({ ...o, id: i }));
 }
 
-/** One item from GET /postal-facilities/town-options/ */
+/** One item from GET /post-offices/town-options/ */
 export interface TownOptionItem {
   town: string;
   state: string;
 }
 
 /**
- * Fetches postal facilities for dropdowns. When VITE_API_URL is set, uses
- * GET /postal-facilities/town-options/ (merged from facilities + postmarks).
+ * Fetches post offices for dropdowns. When VITE_API_URL is set, uses
+ * GET /post-offices/town-options/ (merged from offices + postmarks).
  * Otherwise uses Supabase (distinct town + state from catalog_records and submissions).
  */
-export async function getPostalFacilities(): Promise<PostalFacilityOption[]> {
-  const apiUrl = getPostalFacilitiesApiUrl();
-  if (apiUrl) {
-    const base = apiUrl.replace(/\/+$/, "");
-    const townOptionsUrl = `${base}/town-options/`;
-    const res = await fetch(townOptionsUrl);
-    if (!res.ok) {
-      throw new Error(`Postal facilities API error: ${res.status} ${res.statusText}`);
-    }
-    const data: TownOptionItem[] = await res.json();
+export async function getPostOffices(): Promise<PostOfficeOption[]> {
+  try {
+    const res = await apiClient.get<TownOptionItem[]>("/post-offices/town-options/");
+    const data = res.data;
     if (!Array.isArray(data)) {
-      throw new Error("Postal facilities API: invalid town-options response");
+      throw new Error("Post offices API: invalid town-options response");
     }
     return data.map((item, i) => ({
       id: i,
@@ -137,7 +128,7 @@ export async function getPostalFacilities(): Promise<PostalFacilityOption[]> {
       town: item.town.trim(),
       state: item.state.trim(),
     }));
+  } catch {
+    return getPostOfficesFromSupabase();
   }
-
-  return getPostalFacilitiesFromSupabase();
 }

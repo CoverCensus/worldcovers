@@ -80,10 +80,7 @@ export function buildCatalogFieldValues(record: PostmarkRecord): CatalogFieldVal
       : "";
 
   const dateParts = parseDateRangeParts(record.dateRange);
-  const colorStr =
-    record.color?.name?.trim() ||
-    record.colorsDisplay?.trim() ||
-    "";
+  const colorStr = record.color?.name?.trim() || "";
 
   return {
     town: displayCatalogField(record.town),
@@ -120,17 +117,7 @@ export function buildCatalogSearchRow(record: PostmarkRecord): CatalogSearchRowD
   return {
     ...fields,
     cardId: `api-${record.id}`,
-    title: (() => {
-      const normalize = (v: string | null | undefined) => {
-        const s = String(v ?? "").trim();
-        return s && s.toLowerCase() !== "unknown" ? s : "";
-      };
-      const townState = [normalize(record.town), normalize(record.state)]
-        .filter(Boolean)
-        .join(", ");
-      const type = normalize(record.listingType) || normalize(record.shapeName);
-      return [townState, type].filter(Boolean).join(" — ") || townState || normalize(record.postmarkKey) || "—";
-    })(),
+    title: record.inscriptionTxt?.trim() || CATALOG_FIELD_EMPTY,
     image: normalizeImageUrl(getPostmarkListImageUrl(record.mainImage)),
   };
 }

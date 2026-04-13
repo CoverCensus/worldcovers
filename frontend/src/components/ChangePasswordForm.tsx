@@ -74,7 +74,7 @@ export const ChangePasswordForm = ({ open, onOpenChange, onSignOut }: ChangePass
     try {
       // Use relative URL when VITE_API_URL is empty (proxy); otherwise use full API URL
       const base = import.meta.env.VITE_API_URL || "";
-      const url = base ? `${String(base).replace(/\/+$/, "")}/change-password/` : (import.meta.env.VITE_API_BASE_URL || '/api/v1') + "/change-password/";
+      const url = base ? `${String(base).replace(/\/+$/, "")}/change-password/` : (import.meta.env.VITE_API_BASE_URL || '/api/v2') + "/change-password/";
 
       const res = await fetch(url, {
         method: "POST",

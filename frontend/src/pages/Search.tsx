@@ -104,7 +104,7 @@ const Search = () => {
 
   // Fetch filter options from API (colors, postmark shapes, states)
   const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } =
-    useFilterOptions({ shapeSource: "commonShape" });
+    useFilterOptions();
 
   // Filter states - initialize from URL so filters persist when navigating back from detail
   const [keywordSearch, setKeywordSearch] = useState(() => getSearchParam(searchParams, "q", ""));

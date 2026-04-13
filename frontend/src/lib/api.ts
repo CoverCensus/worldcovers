@@ -2,7 +2,7 @@ import axios, { AxiosError } from 'axios';
 
 // API base URL from environment variable
 // Use same-origin fallback to avoid mixed-content issues on HTTPS pages.
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v2';
 
 // Create axios instance with default configuration
 const apiClient = axios.create({
