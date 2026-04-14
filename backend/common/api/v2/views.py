@@ -1579,7 +1579,7 @@ class RegionViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["region_tier", "parent_region"]
     search_fields = ["name", "abbrev"]
-    ordering_fields = ["name", "abbrev", "established_date", "defunct_date", "created_at"]
+    ordering_fields = ["name", "abbrev", "established_date", "defunct_date", "created_date"]
     ordering = ["name"]
 
     def perform_create(self, serializer):
@@ -1597,7 +1597,7 @@ class PostOfficeViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["region"]
     search_fields = ["name", "region__name", "region__abbrev"]
-    ordering_fields = ["name", "created_at"]
+    ordering_fields = ["name", "created_date"]
     ordering = ["name"]
 
     def perform_create(self, serializer):
@@ -1614,7 +1614,7 @@ class LetteringViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["name"]
-    ordering_fields = ["name", "created_at"]
+    ordering_fields = ["name", "created_date"]
     ordering = ["name"]
 
     def perform_create(self, serializer):
@@ -1631,7 +1631,7 @@ class FramingViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["name", "code"]
-    ordering_fields = ["name", "code", "created_at"]
+    ordering_fields = ["name", "code", "created_date"]
     ordering = ["name"]
 
     def perform_create(self, serializer):
@@ -1648,7 +1648,7 @@ class ShapeViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["name", "code"]
-    ordering_fields = ["name", "code", "created_at"]
+    ordering_fields = ["name", "code", "created_date"]
     ordering = ["name"]
 
     def perform_create(self, serializer):
@@ -1665,7 +1665,7 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ["color", "type", "has_adhesive", "is_institutional"]
-    ordering_fields = ["id", "code", "created_at"]
+    ordering_fields = ["id", "code", "created_date"]
     ordering = ["id"]
 
     def perform_create(self, serializer):
@@ -1682,7 +1682,7 @@ class DateObservedViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ["postmark", "granularity"]
-    ordering_fields = ["date", "created_at"]
+    ordering_fields = ["date", "created_date"]
     ordering = ["postmark", "date"]
 
     def perform_create(self, serializer):
@@ -1700,7 +1700,7 @@ class RatemarkViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["is_manuscript", "shape", "lettering", "color", "impression", "is_irreg"]
     search_fields = ["inscription_txt"]
-    ordering_fields = ["id", "created_at"]
+    ordering_fields = ["id", "created_date"]
     ordering = ["id"]
 
     def perform_create(self, serializer):
@@ -1718,7 +1718,7 @@ class AuxmarkViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["parent_mark_type", "parent_mark_id", "is_manuscript", "shape", "lettering", "color"]
     search_fields = ["inscription_text"]
-    ordering_fields = ["parent_mark_type", "parent_mark_id", "created_at"]
+    ordering_fields = ["parent_mark_type", "parent_mark_id", "created_date"]
     ordering = ["parent_mark_type", "parent_mark_id"]
 
     def perform_create(self, serializer):
@@ -1735,7 +1735,7 @@ class CoverPostmarkV2ViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ["cover", "postmark", "is_backstamp"]
-    ordering_fields = ["id", "created_at"]
+    ordering_fields = ["id", "created_date"]
     ordering = ["id"]
 
     def perform_create(self, serializer):
@@ -1752,7 +1752,7 @@ class PostmarkRatemarkViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ["postmark", "ratemark", "placement_type"]
-    ordering_fields = ["id", "created_at"]
+    ordering_fields = ["id", "created_date"]
     ordering = ["id"]
 
     def perform_create(self, serializer):
@@ -1769,7 +1769,7 @@ class MarkFramingViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ["parent_mark_type", "parent_mark_id", "framing"]
-    ordering_fields = ["id", "framing_pos", "created_at"]
+    ordering_fields = ["id", "framing_pos", "created_date"]
     ordering = ["parent_mark_type", "parent_mark_id"]
 
     def perform_create(self, serializer):
@@ -1787,7 +1787,7 @@ class ReferenceWorkViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["publication_year"]
     search_fields = ["title", "authorship", "publisher", "edition", "volume", "isbn"]
-    ordering_fields = ["title", "publication_year", "created_at"]
+    ordering_fields = ["title", "publication_year", "created_date"]
     ordering = ["title"]
 
     def perform_create(self, serializer):
@@ -1805,7 +1805,7 @@ class CitationViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["reference_work", "subject_type", "subject_id"]
     search_fields = ["citation_detail", "reference_work__title"]
-    ordering_fields = ["reference_work", "subject_type", "subject_id", "created_at"]
+    ordering_fields = ["reference_work", "subject_type", "subject_id", "created_date"]
     ordering = ["reference_work", "subject_type", "subject_id"]
 
     def perform_create(self, serializer):
@@ -1829,7 +1829,7 @@ class PostmarkV2ViewSet(viewsets.ModelViewSet):
         "contribution_approval_status",
     ]
     search_fields = ["code", "postmark_key", "inscription_txt", "catalog_txt"]
-    ordering_fields = ["id", "postmark_key", "code", "created_at"]
+    ordering_fields = ["id", "postmark_key", "code", "created_date"]
     ordering = ["id"]
 
     def perform_create(self, serializer):
@@ -1850,7 +1850,7 @@ class PostalFacilityViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['reference_code']
     search_fields = ['reference_code']
-    ordering_fields = ['reference_code', 'created_at']
+    ordering_fields = ['reference_code', 'created_date']
     ordering = ['reference_code']
     
     def get_serializer_class(self):
@@ -1930,7 +1930,7 @@ class AdministrativeUnitViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['reference_code']
     search_fields = ['reference_code']
-    ordering_fields = ['reference_code', 'created_at']
+    ordering_fields = ['reference_code', 'created_date']
     ordering = ['reference_code']
 
     def get_queryset(self):
@@ -2365,7 +2365,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
             needle_q |= Q(other_characteristics__icontains=needle)
         qs = self.get_queryset().filter(
             source_catalog="User contribution",
-        ).filter(needle_q).order_by('-created_at')
+        ).filter(needle_q).order_by('-created_date')
 
         if not getattr(user, "is_superuser", False):
             assigned_units = _get_user_assigned_units(user)
@@ -2441,7 +2441,7 @@ class PostmarkImageViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['postmark', 'image_view']
-    ordering_fields = ['display_order', 'created_at']
+    ordering_fields = ['display_order', 'created_date']
     ordering = ['display_order']
     
     def perform_create(self, serializer):
@@ -2540,7 +2540,7 @@ class PostcoverViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['owner_user']
     search_fields = ['postcover_key', 'description']
-    ordering_fields = ['postcover_key', 'created_at']
+    ordering_fields = ['postcover_key', 'created_date']
     ordering = ['postcover_key']
     
     def get_serializer_class(self):
@@ -2575,7 +2575,7 @@ class PostcoverImageViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['postcover', 'image_view']
-    ordering_fields = ['display_order', 'created_at']
+    ordering_fields = ['display_order', 'created_date']
     ordering = ['display_order']
 
 

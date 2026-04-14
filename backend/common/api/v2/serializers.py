@@ -72,7 +72,7 @@ class RegionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Region
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class PostOfficeSerializer(serializers.ModelSerializer):
@@ -82,7 +82,7 @@ class PostOfficeSerializer(serializers.ModelSerializer):
     class Meta:
         model = PostOffice
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class LetteringSerializer(serializers.ModelSerializer):
@@ -91,7 +91,7 @@ class LetteringSerializer(serializers.ModelSerializer):
     class Meta:
         model = Lettering
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class FramingSerializer(serializers.ModelSerializer):
@@ -100,7 +100,7 @@ class FramingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Framing
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class ShapeSerializer(serializers.ModelSerializer):
@@ -109,7 +109,7 @@ class ShapeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Shape
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class CoverSerializer(serializers.ModelSerializer):
@@ -119,7 +119,7 @@ class CoverSerializer(serializers.ModelSerializer):
     class Meta:
         model = Cover
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class DateObservedSerializer(serializers.ModelSerializer):
@@ -128,7 +128,7 @@ class DateObservedSerializer(serializers.ModelSerializer):
     class Meta:
         model = DateObserved
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class RatemarkSerializer(serializers.ModelSerializer):
@@ -137,7 +137,7 @@ class RatemarkSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ratemark
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class AuxmarkSerializer(serializers.ModelSerializer):
@@ -146,7 +146,7 @@ class AuxmarkSerializer(serializers.ModelSerializer):
     class Meta:
         model = Auxmark
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class CoverPostmarkSerializer(serializers.ModelSerializer):
@@ -155,7 +155,7 @@ class CoverPostmarkSerializer(serializers.ModelSerializer):
     class Meta:
         model = CoverPostmark
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class PostmarkRatemarkSerializer(serializers.ModelSerializer):
@@ -164,7 +164,7 @@ class PostmarkRatemarkSerializer(serializers.ModelSerializer):
     class Meta:
         model = PostmarkRatemark
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class MarkFramingSerializer(serializers.ModelSerializer):
@@ -173,7 +173,7 @@ class MarkFramingSerializer(serializers.ModelSerializer):
     class Meta:
         model = MarkFraming
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class ReferenceWorkSerializer(serializers.ModelSerializer):
@@ -182,7 +182,7 @@ class ReferenceWorkSerializer(serializers.ModelSerializer):
     class Meta:
         model = ReferenceWork
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class CitationSerializer(serializers.ModelSerializer):
@@ -191,7 +191,7 @@ class CitationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Citation
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "modified_at"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class AdministrativeUnitListSerializer(serializers.ModelSerializer):
@@ -220,7 +220,7 @@ class AdministrativeUnitIdentitySerializer(serializers.ModelSerializer):
     class Meta:
         model = AdministrativeUnitIdentity
         fields = '__all__'
-        read_only_fields = ['administrative_unit_identity_id', 'created_at']
+        read_only_fields = ['administrative_unit_identity_id', 'created_date']
     
     def get_parent_name(self, obj):
         if obj.parent_administrative_unit:
@@ -244,7 +244,7 @@ class AdministrativeUnitResponsibilitySerializer(serializers.ModelSerializer):
     class Meta:
         model = AdministrativeUnitResponsibility
         fields = '__all__'
-        read_only_fields = ['administrative_unit_responsibility_id', 'created_at', 'modified_at']
+        read_only_fields = ['administrative_unit_responsibility_id', 'created_date', 'modified_date']
     
     def get_administrative_unit_name(self, obj):
         identity = obj.administrative_unit.get_current_identity()
@@ -262,7 +262,7 @@ class AdministrativeUnitSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdministrativeUnit
         fields = '__all__'
-        read_only_fields = ['administrative_unit_id', 'created_at', 'modified_at']
+        read_only_fields = ['administrative_unit_id', 'created_date', 'modified_date']
     
     def get_current_identity(self, obj):
         identity = obj.get_current_identity()
@@ -297,7 +297,7 @@ class PostalFacilityIdentitySerializer(serializers.ModelSerializer):
     class Meta:
         model = PostalFacilityIdentity
         fields = '__all__'
-        read_only_fields = ['postal_facility_identity_id', 'created_at', 'modified_at']
+        read_only_fields = ['postal_facility_identity_id', 'created_date', 'modified_date']
     
     def get_coordinates(self, obj):
         coords = obj.get_coordinates()
@@ -319,7 +319,7 @@ class JurisdictionalAffiliationSerializer(serializers.ModelSerializer):
     class Meta:
         model = JurisdictionalAffiliation
         fields = '__all__'
-        read_only_fields = ['jurisdictional_affiliation_id', 'created_at', 'modified_at']
+        read_only_fields = ['jurisdictional_affiliation_id', 'created_date', 'modified_date']
     
     def get_administrative_unit_name(self, obj):
         identity = obj.get_administrative_unit_identity()
@@ -336,7 +336,7 @@ class PostalFacilitySerializer(serializers.ModelSerializer):
     class Meta:
         model = PostalFacility
         fields = '__all__'
-        read_only_fields = ['postal_facility_id', 'created_at', 'modified_at']
+        read_only_fields = ['postal_facility_id', 'created_date', 'modified_date']
     
     def get_current_identity(self, obj):
         identity = obj.get_current_identity()
@@ -349,35 +349,35 @@ class PostmarkShapeSerializer(serializers.ModelSerializer):
     class Meta:
         model = PostmarkShape
         fields = '__all__'
-        read_only_fields = ['postmark_shape_id', 'created_at', 'modified_at']
+        read_only_fields = ['postmark_shape_id', 'created_date', 'modified_date']
 
 
 class LetteringStyleSerializer(serializers.ModelSerializer):
     class Meta:
         model = LetteringStyle
         fields = '__all__'
-        read_only_fields = ['lettering_style_id', 'created_at', 'modified_at']
+        read_only_fields = ['lettering_style_id', 'created_date', 'modified_date']
 
 
 class FramingStyleSerializer(serializers.ModelSerializer):
     class Meta:
         model = FramingStyle
         fields = '__all__'
-        read_only_fields = ['framing_style_id', 'created_at', 'modified_at']
+        read_only_fields = ['framing_style_id', 'created_date', 'modified_date']
 
 
 class ColorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Color
         fields = '__all__'
-        read_only_fields = ['color_id', 'created_at', 'modified_at']
+        read_only_fields = ['color_id', 'created_date', 'modified_date']
 
 
 class DateFormatSerializer(serializers.ModelSerializer):
     class Meta:
         model = DateFormat
         fields = '__all__'
-        read_only_fields = ['date_format_id', 'created_at', 'modified_at']
+        read_only_fields = ['date_format_id', 'created_date', 'modified_date']
 
 
 # ========== POSTMARK SERIALIZERS ==========
@@ -393,24 +393,24 @@ class PostmarkColorSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = PostmarkColor
-        fields = ['postmark_color_id', 'color_id', 'color_name', 'created_at']
-        read_only_fields = ['postmark_color_id', 'created_at']
+        fields = ['postmark_color_id', 'color_id', 'color_name', 'created_date']
+        read_only_fields = ['postmark_color_id', 'created_date']
 
 
 class PostmarkDatesSeenSerializer(serializers.ModelSerializer):
     """Date ranges when postmarks were observed"""
     class Meta:
         model = PostmarkDatesSeen
-        fields = ['postmark_dates_seen_id', 'earliest_date_seen', 'latest_date_seen', 'created_at']
-        read_only_fields = ['postmark_dates_seen_id', 'created_at']
+        fields = ['postmark_dates_seen_id', 'earliest_date_seen', 'latest_date_seen', 'created_date']
+        read_only_fields = ['postmark_dates_seen_id', 'created_date']
 
 
 class PostmarkSizeSerializer(serializers.ModelSerializer):
     """Postmark size observations"""
     class Meta:
         model = PostmarkSize
-        fields = ['postmark_size_id', 'width', 'height', 'size_notes', 'created_at']
-        read_only_fields = ['postmark_size_id', 'created_at']
+        fields = ['postmark_size_id', 'width', 'height', 'size_notes', 'created_date']
+        read_only_fields = ['postmark_size_id', 'created_date']
 
 
 class PostmarkValuationSerializer(serializers.ModelSerializer):
@@ -427,9 +427,9 @@ class PostmarkValuationSerializer(serializers.ModelSerializer):
             'appraisal_pos',
             'amt',
             'appraisal_date',
-            'created_at',
+            'created_date',
         ]
-        read_only_fields = ['postmark_valuation_id', 'created_at', 'modified_at']
+        read_only_fields = ['postmark_valuation_id', 'created_date', 'modified_date']
 
 
 class PostmarkV2Serializer(serializers.ModelSerializer):
@@ -438,7 +438,7 @@ class PostmarkV2Serializer(serializers.ModelSerializer):
     class Meta:
         model = PostmarkV2
         fields = '__all__'
-        read_only_fields = ['id', 'created_at', 'modified_at']
+        read_only_fields = ['id', 'created_date', 'modified_date']
 
 
 class PostmarkImageSerializer(serializers.ModelSerializer):
@@ -450,8 +450,8 @@ class PostmarkImageSerializer(serializers.ModelSerializer):
         fields = ['postmark_image_id', 'original_filename', 'storage_filename',
                   'image_url', 'mime_type', 'image_width', 'image_height',
                   'file_size_bytes', 'image_view', 'image_description',
-                  'display_order', 'uploaded_by', 'created_at']
-        read_only_fields = ['postmark_image_id', 'file_checksum', 'created_at', 'modified_at']
+                  'display_order', 'uploaded_by', 'created_date']
+        read_only_fields = ['postmark_image_id', 'file_checksum', 'created_date', 'modified_date']
     
     def get_image_url(self, obj):
         """
@@ -737,7 +737,7 @@ class PostmarkSerializer(serializers.ModelSerializer):
     class Meta:
         model = Postmark
         fields = '__all__'
-        read_only_fields = ['postmark_id', 'created_at', 'modified_at']
+        read_only_fields = ['postmark_id', 'created_date', 'modified_date']
 
     def _v2(self, obj):
         return getattr(obj, 'v2_data', None)
@@ -857,7 +857,7 @@ class PostmarkPublicationSerializer(serializers.ModelSerializer):
     class Meta:
         model = PostmarkPublication
         fields = '__all__'
-        read_only_fields = ['postmark_publication_id', 'created_at', 'modified_at']
+        read_only_fields = ['postmark_publication_id', 'created_date', 'modified_date']
 
 
 class PostmarkPublicationReferenceSerializer(serializers.ModelSerializer):
@@ -870,8 +870,8 @@ class PostmarkPublicationReferenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = PostmarkPublicationReference
         fields = ['postmark_publication_reference_id', 'postmark_publication',
-                  'publication_title', 'published_id', 'reference_location', 'created_at']
-        read_only_fields = ['postmark_publication_reference_id', 'created_at']
+                  'publication_title', 'published_id', 'reference_location', 'created_date']
+        read_only_fields = ['postmark_publication_reference_id', 'created_date']
 
 
 # ========== POSTCOVER SERIALIZERS ==========
@@ -884,8 +884,8 @@ class PostcoverPostmarkSerializer(serializers.ModelSerializer):
     class Meta:
         model = PostcoverPostmark
         fields = ['postcover_postmark_id', 'postmark', 'postmark_key', 
-                  'postmark_details', 'position_order', 'postmark_location', 'created_at']
-        read_only_fields = ['postcover_postmark_id', 'created_at']
+                  'postmark_details', 'position_order', 'postmark_location', 'created_date']
+        read_only_fields = ['postcover_postmark_id', 'created_date']
 
 
 class PostcoverImageSerializer(serializers.ModelSerializer):
@@ -897,8 +897,8 @@ class PostcoverImageSerializer(serializers.ModelSerializer):
         fields = ['postcover_image_id', 'original_filename', 'storage_filename',
                   'image_url', 'mime_type', 'image_width', 'image_height',
                   'file_size_bytes', 'image_view', 'image_description',
-                  'display_order', 'created_at']
-        read_only_fields = ['postcover_image_id', 'file_checksum', 'created_at', 'modified_at']
+                  'display_order', 'created_date']
+        read_only_fields = ['postcover_image_id', 'file_checksum', 'created_date', 'modified_date']
     
     def get_image_url(self, obj):
         """Generate image URL"""
@@ -920,7 +920,7 @@ class PostcoverListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Postcover
         fields = ['postcover_id', 'postcover_key', 'owner_username', 
-                  'postmark_count', 'created_at']
+                  'postmark_count', 'created_date']
     
     def get_postmark_count(self, obj):
         return obj.postcover_postmarks.count()
@@ -937,7 +937,7 @@ class PostcoverSerializer(serializers.ModelSerializer):
     class Meta:
         model = Postcover
         fields = '__all__'
-        read_only_fields = ['postcover_id', 'created_at', 'modified_at']
+        read_only_fields = ['postcover_id', 'created_date', 'modified_date']
 
 
 # ========== ADMIN CSV UPLOADS ==========
