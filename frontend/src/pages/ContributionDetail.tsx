@@ -125,6 +125,17 @@ interface SubmittedData {
   }>;
   /** API may return camelCase */
   imageMetas?: SubmittedData["image_metas"];
+  /** Categorized public image URLs returned by backend sanitization */
+  postmark_images?: string[];
+  ratemark_images?: string[];
+  auxmark_images?: string[];
+  /** API may return camelCase or PascalCase */
+  postmarkImages?: string[];
+  ratemarkImages?: string[];
+  auxmarkImages?: string[];
+  PostmarkImages?: string[];
+  RatemarkImages?: string[];
+  AuxmarkImages?: string[];
   /** Contributor-provided; used when editor approves (editor only fills value + comment). */
   lettering_style_id?: number;
   framing_style_id?: number;
@@ -808,13 +819,41 @@ const ContributionDetail = () => {
   const imageMetasRaw = (sd.image_metas ?? sd.imageMetas) as SubmittedData["image_metas"] | undefined;
   const imageMetaSingle = sd.image_meta as SubmittedData["image_meta"] | undefined;
   const imageMetaList: Array<{ imageUrl: string; originalFilename?: string }> = [];
+  const asImageUrlArray = (raw: unknown): string[] => {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((item) => {
+        if (typeof item === "string") return item.trim();
+        if (!item || typeof item !== "object") return "";
+        const obj = item as Record<string, unknown>;
+        const fromUrl =
+          obj.url ?? obj.image_url ?? obj.imageUrl ?? obj.public_url ?? obj.publicUrl;
+        return typeof fromUrl === "string" ? fromUrl.trim() : "";
+      })
+      .filter((url) => url.length > 0);
+  };
+  const categorizedImageUrls = [
+    ...asImageUrlArray(sd.postmark_images ?? sd.postmarkImages ?? sd.PostmarkImages),
+    ...asImageUrlArray(sd.ratemark_images ?? sd.ratemarkImages ?? sd.RatemarkImages),
+    ...asImageUrlArray(sd.auxmark_images ?? sd.auxmarkImages ?? sd.AuxmarkImages),
+  ];
+  const seenImageUrls = new Set<string>();
+  categorizedImageUrls.forEach((url) => {
+    const normalized = normalizeImageUrl(url);
+    if (!normalized || seenImageUrls.has(normalized)) return;
+    seenImageUrls.add(normalized);
+    imageMetaList.push({ imageUrl: normalized });
+  });
   if (imageMetasRaw && Array.isArray(imageMetasRaw) && imageMetasRaw.length > 0) {
     for (const meta of imageMetasRaw) {
       if (meta && typeof meta === "object") {
         const sf = meta.storage_filename ?? meta.storageFilename;
         if (sf && baseImageUrl) {
+          const imageUrl = normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${sf}`);
+          if (!imageUrl || seenImageUrls.has(imageUrl)) continue;
+          seenImageUrls.add(imageUrl);
           imageMetaList.push({
-            imageUrl: normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${sf}`),
+            imageUrl,
             originalFilename: meta.original_filename ?? meta.originalFilename,
           });
         }
@@ -824,10 +863,13 @@ const ContributionDetail = () => {
   if (imageMetaList.length === 0 && imageMetaSingle) {
     const sf = imageMetaSingle.storage_filename ?? imageMetaSingle.storageFilename;
     if (sf && baseImageUrl) {
-      imageMetaList.push({
-        imageUrl: normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${sf}`),
-        originalFilename: imageMetaSingle.original_filename ?? imageMetaSingle.originalFilename,
-      });
+      const imageUrl = normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${sf}`);
+      if (imageUrl) {
+        imageMetaList.push({
+          imageUrl,
+          originalFilename: imageMetaSingle.original_filename ?? imageMetaSingle.originalFilename,
+        });
+      }
     }
   }
   const images = imageMetaList;
@@ -1133,6 +1175,19 @@ const ContributionDetail = () => {
                           .filter(([k]) => {
                             if (k === "image_meta") return false;
                             if (k === "image_metas" || k === "imageMetas") return false;
+                            if (
+                              k === "postmark_images" ||
+                              k === "ratemark_images" ||
+                              k === "auxmark_images" ||
+                              k === "postmarkImages" ||
+                              k === "ratemarkImages" ||
+                              k === "auxmarkImages" ||
+                              k === "PostmarkImages" ||
+                              k === "RatemarkImages" ||
+                              k === "AuxmarkImages"
+                            ) {
+                              return false;
+                            }
                             const hasMm =
                               String(sd.width_mm ?? sd.widthMm ?? "").trim() !== "" ||
                               String(sd.height_mm ?? sd.heightMm ?? "").trim() !== "";
