@@ -289,7 +289,14 @@ export interface PostmarkApiResponse {
         ? (postOffice as { name?: string }).name ?? ""
         : "";
     const facilityName =
-      (item.post_office_name ?? item.postOfficeName ?? postOfficeNameFromNested ?? "").trim();
+      (
+        item.facility_name ??
+        item.facilityName ??
+        item.post_office_name ??
+        item.postOfficeName ??
+        postOfficeNameFromNested ??
+        ""
+      ).trim();
 
     const mainImage = deriveMainImageFromApiItem(item);
     const dateRange = item.date_range ?? item.dateRange;
@@ -313,6 +320,15 @@ export interface PostmarkApiResponse {
         ? (fs as { framing_style_name?: string }).framing_style_name ??
           (fs as { framingStyleName?: string }).framingStyleName
         : undefined) ?? item.framing_style_name ?? item.framingStyleName ?? "";
+
+    const colorRefFromApi = parseIdNameRef(item.color);
+    const colorsDisplay = String(item.colors_display ?? item.colorsDisplay ?? "").trim();
+    const normalizedColor =
+      colorRefFromApi !== undefined
+        ? colorRefFromApi
+        : colorsDisplay
+          ? { id: -1, name: colorsDisplay }
+          : undefined;
 
     return {
       id,
@@ -358,7 +374,7 @@ export interface PostmarkApiResponse {
           : item.latestUse != null && item.latestUse !== ""
             ? String(item.latestUse)
             : "",
-      color: parseIdNameRef(item.color),
+      color: normalizedColor,
     };
   }
 

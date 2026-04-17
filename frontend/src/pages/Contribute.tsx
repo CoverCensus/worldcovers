@@ -617,11 +617,26 @@ const Contribute = () => {
           if (!Array.isArray(raw)) return [];
           return raw as Array<{ storage_filename?: string; storageFilename?: string }>;
         };
+        const asStringArray = (raw: unknown): string[] => {
+          if (!Array.isArray(raw)) return [];
+          return raw
+            .map((v) => (typeof v === "string" ? v.trim() : ""))
+            .filter((v) => v.length > 0);
+        };
         const postmarkMetas = asMetaArray(sd.postmark_image_metas ?? (sd as Record<string, unknown>).postmarkImageMetas);
         const ratemarkMetas = asMetaArray(sd.ratemark_image_metas ?? (sd as Record<string, unknown>).ratemarkImageMetas);
         const auxmarkMetas = asMetaArray(sd.auxmark_image_metas ?? (sd as Record<string, unknown>).auxmarkImageMetas);
         const metas = asMetaArray(sd.image_metas ?? (sd as Record<string, unknown>).imageMetas);
         const metaOne = sd.image_meta as { storage_filename?: string; storageFilename?: string } | undefined;
+        const submittedPostmarkImages = asStringArray(
+          sd.postmark_images ?? (sd as Record<string, unknown>).postmarkImages
+        );
+        const submittedRatemarkImages = asStringArray(
+          sd.ratemark_images ?? (sd as Record<string, unknown>).ratemarkImages
+        );
+        const submittedAuxmarkImages = asStringArray(
+          sd.auxmark_images ?? (sd as Record<string, unknown>).auxmarkImages
+        );
         const baseUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
         const toPreviewUrls = (items: Array<{ storage_filename?: string; storageFilename?: string }>) => {
           const urls: string[] = [];
@@ -632,16 +647,26 @@ const Contribute = () => {
           });
           return urls;
         };
-        const hasCategorized = postmarkMetas.length > 0 || ratemarkMetas.length > 0 || auxmarkMetas.length > 0;
-        if (hasCategorized) {
-          setPostmarkImagePreviews(toPreviewUrls(postmarkMetas));
-          setRatemarkImagePreviews(toPreviewUrls(ratemarkMetas));
-          setAuxmarkImagePreviews(toPreviewUrls(auxmarkMetas));
+        const hasSubmittedImageUrls =
+          submittedPostmarkImages.length > 0 ||
+          submittedRatemarkImages.length > 0 ||
+          submittedAuxmarkImages.length > 0;
+        if (hasSubmittedImageUrls) {
+          setPostmarkImagePreviews(submittedPostmarkImages);
+          setRatemarkImagePreviews(submittedRatemarkImages);
+          setAuxmarkImagePreviews(submittedAuxmarkImages);
         } else {
-          const legacyItems = [...metas];
-          if (metaOne) legacyItems.push(metaOne);
-          const postmarkPreviews = toPreviewUrls(legacyItems);
-          if (postmarkPreviews.length > 0) setPostmarkImagePreviews(postmarkPreviews);
+          const hasCategorized = postmarkMetas.length > 0 || ratemarkMetas.length > 0 || auxmarkMetas.length > 0;
+          if (hasCategorized) {
+            setPostmarkImagePreviews(toPreviewUrls(postmarkMetas));
+            setRatemarkImagePreviews(toPreviewUrls(ratemarkMetas));
+            setAuxmarkImagePreviews(toPreviewUrls(auxmarkMetas));
+          } else {
+            const legacyItems = [...metas];
+            if (metaOne) legacyItems.push(metaOne);
+            const postmarkPreviews = toPreviewUrls(legacyItems);
+            if (postmarkPreviews.length > 0) setPostmarkImagePreviews(postmarkPreviews);
+          }
         }
         setEditLoadError(null);
         setEditLoadDone(true);

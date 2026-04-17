@@ -1090,10 +1090,81 @@ _SUBMITTED_DATA_IMAGE_META_KEYS = {
 }
 
 
-def _strip_submitted_data_image_metas(data):
+def _meta_item_to_public_image_url(meta, request):
+    """Build public image URL from submitted_data image meta."""
+    if not isinstance(meta, dict):
+        return None
+    storage = (meta.get("storage_filename") or meta.get("storageFilename") or "").strip().lstrip("/")
+    if not storage:
+        return None
+
+    from django.conf import settings
+
+    if storage.startswith("contributions/") or storage.startswith("postmarks/"):
+        path = f"{settings.MEDIA_URL.rstrip('/')}/postmarks/{storage}"
+    else:
+        path = f"{settings.MEDIA_URL.rstrip('/')}/{storage}"
+    if request is None:
+        return path
+    return request.build_absolute_uri(path)
+
+
+def _coerce_meta_list(raw):
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    return []
+
+
+def _build_submitted_data_image_urls(data, request):
+    """Return categorized URL lists for gallery previews, without exposing meta objects."""
+    if not isinstance(data, dict):
+        return {}
+
+    categorized = {
+        "postmark_images": [],
+        "ratemark_images": [],
+        "auxmark_images": [],
+    }
+
+    grouped_sources = (
+        ("postmark_images", data.get("postmark_image_metas")),
+        ("ratemark_images", data.get("ratemark_image_metas")),
+        ("auxmark_images", data.get("auxmark_image_metas")),
+    )
+
+    has_grouped = False
+    for target_key, raw_list in grouped_sources:
+        urls = []
+        for item in _coerce_meta_list(raw_list):
+            image_url = _meta_item_to_public_image_url(item, request)
+            if image_url:
+                urls.append(image_url)
+        if urls:
+            categorized[target_key] = urls
+            has_grouped = True
+
+    if not has_grouped:
+        legacy_metas = _coerce_meta_list(data.get("image_metas"))
+        single_meta = data.get("image_meta")
+        if isinstance(single_meta, dict):
+            legacy_metas = [*legacy_metas, single_meta]
+        legacy_urls = []
+        for item in legacy_metas:
+            image_url = _meta_item_to_public_image_url(item, request)
+            if image_url:
+                legacy_urls.append(image_url)
+        if legacy_urls:
+            categorized["postmark_images"] = legacy_urls
+
+    return {k: v for k, v in categorized.items() if v}
+
+
+def _strip_submitted_data_image_metas(data, request=None):
     if not isinstance(data, dict):
         return data
-    return {k: v for k, v in data.items() if k not in _SUBMITTED_DATA_IMAGE_META_KEYS}
+    stripped = {k: v for k, v in data.items() if k not in _SUBMITTED_DATA_IMAGE_META_KEYS}
+    stripped.update(_build_submitted_data_image_urls(data, request))
+    return stripped
 
 
 class ContributionListSerializer(serializers.ModelSerializer):
@@ -1166,7 +1237,10 @@ class ContributionListSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        data["submitted_data"] = _strip_submitted_data_image_metas(data.get("submitted_data"))
+        data["submitted_data"] = _strip_submitted_data_image_metas(
+            data.get("submitted_data"),
+            request=self.context.get("request"),
+        )
         return data
 
 
@@ -1194,7 +1268,10 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        data["submitted_data"] = _strip_submitted_data_image_metas(data.get("submitted_data"))
+        data["submitted_data"] = _strip_submitted_data_image_metas(
+            data.get("submitted_data"),
+            request=self.context.get("request"),
+        )
         return data
 
 

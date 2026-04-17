@@ -2681,8 +2681,24 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         )
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = PostmarkListFilter
-    # Search only by name (postmark_key); town, state, type, color have their own filters
-    search_fields = ['postmark_key']
+    # Search across both legacy and V2-backed display fields used in catalog cards.
+    # This keeps list-search behavior aligned with record-detail values.
+    search_fields = [
+        'postmark_key',
+        'v2_data__postmark_key',
+        'v2_data__post_office__name',
+        'postal_facility_identity__facility_name',
+        'inscription_txt',
+        'v2_data__inscription_txt',
+        'catalog_txt',
+        'v2_data__catalog_txt',
+        'v2_data__shape__name',
+        'postmark_shape__shape_name',
+        'v2_data__lettering__name',
+        'lettering_style__lettering_style_name',
+        'v2_data__color__color_name',
+        'postmark_colors__color__color_name',
+    ]
     ordering_fields = ['postmark_key', 'created_date', 'rate_value']
     ordering = ['-created_date']  # Newest first for catalog search list
     
