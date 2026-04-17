@@ -5,11 +5,14 @@
 import csv
 import hashlib
 import io
+import json
 import os
 import re
 import uuid
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Optional, Tuple
+from urllib.parse import urlparse
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, get_user_model
@@ -41,6 +44,7 @@ from woco.pagination import PageSizePagination, LargePageSizePagination, Postmar
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _YEAR_RE = re.compile(r"^\d{4}$")
 _YEAR_RANGE_RE = re.compile(r"^\s*(\d{4})\s*[-–—]\s*(\d{4})\s*$")
+_CITATION_PAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\s\-–—.,:;()/#]*$")
 
 
 def _parse_dates_seen_from_payload(payload: dict) -> Tuple[date, date]:
@@ -116,6 +120,223 @@ def _parse_dates_seen_from_payload(payload: dict) -> Tuple[date, date]:
         return date(y, 1, 1), date(y, 12, 31)
     except Exception:
         return date(1900, 1, 1), date(1900, 12, 31)
+
+
+def _coerce_reference_work_ids(raw_values) -> list[int]:
+    """
+    Normalize arbitrary reference_work_ids payloads into a unique int list.
+    Accepts list/int/str, including JSON array strings and comma-separated strings.
+    """
+    candidates = []
+    if raw_values is None:
+        return []
+    if isinstance(raw_values, (list, tuple)):
+        candidates.extend(raw_values)
+    else:
+        candidates.append(raw_values)
+
+    flattened = []
+    for val in candidates:
+        if val is None:
+            continue
+        if isinstance(val, (list, tuple)):
+            flattened.extend(val)
+            continue
+        if isinstance(val, int):
+            flattened.append(val)
+            continue
+        s = str(val).strip()
+        if not s:
+            continue
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, list):
+                    flattened.extend(parsed)
+                    continue
+            except Exception:
+                pass
+        if "," in s:
+            flattened.extend([chunk.strip() for chunk in s.split(",") if chunk.strip() != ""])
+            continue
+        flattened.append(s)
+
+    out: list[int] = []
+    seen: set[int] = set()
+    for val in flattened:
+        try:
+            n = int(val)
+        except (TypeError, ValueError):
+            continue
+        if n <= 0 or n in seen:
+            continue
+        seen.add(n)
+        out.append(n)
+    return out
+
+
+def _extract_reference_work_ids(data) -> list[int]:
+    """
+    Extract reference_work_ids from request.data (JSON dict or multipart QueryDict).
+    Supports keys:
+    - reference_work_ids (JSON array / scalar / csv string)
+    - reference_work_ids[] (repeated form fields)
+    """
+    values = []
+    if hasattr(data, "getlist"):
+        values.extend(data.getlist("reference_work_ids[]"))
+        values.extend(data.getlist("reference_work_ids"))
+    else:
+        if isinstance(data, dict):
+            if "reference_work_ids[]" in data:
+                values.append(data.get("reference_work_ids[]"))
+            if "reference_work_ids" in data:
+                values.append(data.get("reference_work_ids"))
+    return _coerce_reference_work_ids(values)
+
+
+def _extract_reference_work_ids_from_payload(payload: dict) -> list[int]:
+    if not isinstance(payload, dict):
+        return []
+    values = []
+    if "reference_work_ids" in payload:
+        values.append(payload.get("reference_work_ids"))
+    if "reference_work_ids[]" in payload:
+        values.append(payload.get("reference_work_ids[]"))
+    return _coerce_reference_work_ids(values)
+
+
+def _extract_reference_work_details_from_payload(payload: dict) -> dict[int, dict]:
+    """
+    Read optional per-reference citation metadata from payload:
+    reference_work_details: [{"reference_work_id": 1, "page_number": "...", "url": "..."}]
+    """
+    if not isinstance(payload, dict):
+        return {}
+
+    raw = payload.get("reference_work_details", payload.get("referenceWorkDetails"))
+    if raw is None:
+        return {}
+
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return {}
+        try:
+            raw = json.loads(s)
+        except Exception:
+            return {}
+
+    if not isinstance(raw, list):
+        return {}
+
+    details: dict[int, dict] = {}
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        rid_raw = row.get("reference_work_id", row.get("referenceWorkId"))
+        try:
+            rid = int(rid_raw)
+        except (TypeError, ValueError):
+            continue
+        if rid <= 0:
+            continue
+        page_number = str(row.get("page_number", row.get("pageNumber", "")) or "").strip()
+        url = str(row.get("url", "") or "").strip()
+        details[rid] = {
+            "page_number": page_number,
+            "url": url,
+        }
+    return details
+
+
+def _build_citation_detail(detail: Optional[dict]) -> str:
+    if not isinstance(detail, dict):
+        return "Selected via contribution workflow"
+    parts = []
+    page_number = str(detail.get("page_number", "") or "").strip()
+    url = str(detail.get("url", "") or "").strip()
+    if page_number:
+        parts.append(f"Page: {page_number}")
+    if url:
+        parts.append(f"URL: {url}")
+    if not parts:
+        return "Selected via contribution workflow"
+    return " | ".join(parts)[:500]
+
+
+def _validate_reference_work_payload(reference_work_ids: list[int], reference_details: dict[int, dict]) -> list[str]:
+    errors = []
+    if not reference_work_ids and reference_details:
+        reference_work_ids = list(reference_details.keys())
+
+    if reference_work_ids:
+        existing_ids = set(
+            ReferenceWork.objects.filter(reference_work_id__in=reference_work_ids).values_list(
+                "reference_work_id", flat=True
+            )
+        )
+        missing = [rid for rid in reference_work_ids if rid not in existing_ids]
+        if missing:
+            errors.append(
+                "Unknown reference work id(s): " + ", ".join(str(x) for x in missing)
+            )
+
+    for rid, detail in (reference_details or {}).items():
+        page_number = str((detail or {}).get("page_number", "") or "").strip()
+        citation_url = str((detail or {}).get("url", "") or "").strip()
+
+        if page_number:
+            if len(page_number) > 120:
+                errors.append(f"Reference {rid}: page number must be 120 characters or fewer.")
+            elif not _CITATION_PAGE_RE.match(page_number):
+                errors.append(f"Reference {rid}: page number has invalid characters.")
+
+        if citation_url:
+            if len(citation_url) > 2000:
+                errors.append(f"Reference {rid}: URL must be 2000 characters or fewer.")
+            else:
+                parsed = urlparse(citation_url)
+                if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                    errors.append(
+                        f"Reference {rid}: URL must be a valid http:// or https:// link."
+                    )
+
+    return errors
+
+
+def _sync_postmark_citations_from_payload(postmark, payload: dict, acting_user) -> None:
+    """
+    Replace POSTMARK citations for this postmark from payload.reference_work_ids.
+    """
+    if not postmark or not payload or not acting_user:
+        return
+    reference_ids = _extract_reference_work_ids_from_payload(payload)
+    reference_details = _extract_reference_work_details_from_payload(payload)
+    if not reference_ids and reference_details:
+        reference_ids = list(reference_details.keys())
+    subject_id = getattr(postmark, "postmark_id", None) or getattr(postmark, "pk", None)
+    if not subject_id:
+        return
+
+    Citation.objects.filter(subject_type="POSTMARK", subject_id=subject_id).delete()
+    if not reference_ids:
+        return
+
+    works = ReferenceWork.objects.filter(reference_work_id__in=reference_ids)
+    works_by_id = {int(w.reference_work_id): w for w in works}
+    for rid in reference_ids:
+        work = works_by_id.get(int(rid))
+        if not work:
+            continue
+        Citation.objects.create(
+            reference_work=work,
+            subject_type="POSTMARK",
+            subject_id=subject_id,
+            citation_detail=_build_citation_detail(reference_details.get(int(rid))),
+            created_by=acting_user,
+            modified_by=acting_user,
+        )
 
 from common.models import (
     Region, PostOffice, Lettering, Framing, Shape, Cover, DateObserved,
@@ -694,6 +915,201 @@ def _save_contribution_image(uploaded_file):
     }
 
 
+def _extract_image_metas_from_payload(payload):
+    """
+    Normalize contribution image metadata into a flat list.
+    Supports explicit grouped keys and legacy image_meta/image_metas payloads.
+    """
+    category_map = {
+        "postmark_image_metas": "postmark",
+        "ratemark_image_metas": "ratemark",
+        "auxmark_image_metas": "auxmark",
+    }
+    normalized = []
+
+    def _append_many(raw_items, default_category):
+        if not isinstance(raw_items, list):
+            return
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            storage = raw.get("storage_filename")
+            if not storage:
+                continue
+            category = str(raw.get("mark_category") or raw.get("image_category") or default_category or "postmark").strip().lower()
+            normalized.append(
+                {
+                    "storage_filename": storage,
+                    "original_filename": (raw.get("original_filename") or "image")[:255],
+                    "file_checksum": (raw.get("file_checksum") or "")[:64],
+                    "mime_type": (raw.get("mime_type") or "image/jpeg")[:50],
+                    "image_width": raw.get("image_width", 0),
+                    "image_height": raw.get("image_height", 0),
+                    "file_size_bytes": raw.get("file_size_bytes", 0),
+                    "mark_category": category,
+                    "image_description": (raw.get("image_description") or "").strip(),
+                }
+            )
+
+    has_grouped = False
+    for key, category in category_map.items():
+        raw_items = payload.get(key)
+        if isinstance(raw_items, list) and raw_items:
+            has_grouped = True
+        _append_many(raw_items, category)
+
+    if has_grouped:
+        return normalized
+
+    _append_many(payload.get("image_metas"), "postmark")
+    raw_single = payload.get("image_meta")
+    if isinstance(raw_single, dict):
+        _append_many([raw_single], "postmark")
+    return normalized
+
+
+def _create_postmark_images_from_payload(postmark, user, payload, replace_existing=False):
+    image_metas = _extract_image_metas_from_payload(payload)
+    if not image_metas:
+        return False
+    if replace_existing:
+        PostmarkImage.objects.filter(postmark=postmark).delete()
+
+    category_prefix = {
+        "postmark": "Postmark",
+        "ratemark": "Ratemark",
+        "auxmark": "Auxmark",
+    }
+
+    for idx, meta in enumerate(image_metas):
+        category = str(meta.get("mark_category") or "postmark").strip().lower()
+        prefix = category_prefix.get(category, "Postmark")
+        custom_description = (meta.get("image_description") or "").strip()
+        image_description = custom_description or f"{prefix} image"
+        PostmarkImage.objects.create(
+            postmark=postmark,
+            original_filename=meta.get("original_filename", "image")[:255],
+            storage_filename=meta["storage_filename"],
+            file_checksum=meta.get("file_checksum", "")[:64],
+            mime_type=meta.get("mime_type", "image/jpeg")[:50],
+            image_width=meta.get("image_width", 0),
+            image_height=meta.get("image_height", 0),
+            file_size_bytes=meta.get("file_size_bytes", 0),
+            image_view="FULL",
+            image_description=image_description,
+            display_order=idx,
+            uploaded_by=user,
+            created_by=user,
+            modified_by=user,
+        )
+    return True
+
+
+def _extract_mark_entries(payload, key):
+    """
+    Normalize ratemarks/auxmarks payloads from JSON body or multipart string field.
+    """
+    raw = payload.get(key)
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [row for row in raw if isinstance(row, dict)]
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [row for row in parsed if isinstance(row, dict)]
+        except json.JSONDecodeError:
+            return []
+    return []
+
+
+def _as_decimal(value):
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value).strip())
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def _resolve_shape_for_mark(type_str):
+    name = str(type_str or "").strip()
+    if not name:
+        return None
+    return Shape.objects.filter(name__iexact=name).first()
+
+
+def _resolve_color_for_mark(color_str):
+    name = str(color_str or "").strip()
+    if not name:
+        return Color.objects.filter(color_name__iexact="Black").first() or Color.objects.first()
+    color = Color.objects.filter(color_name__iexact=name).first()
+    if color:
+        return color
+    return Color.objects.filter(color_name__iexact="Black").first() or Color.objects.first()
+
+
+def _sync_ratemarks_auxmarks_from_payload(postmark, user, payload):
+    """
+    Create ratemarks + auxmarks from contribution payload and link them to the postmark.
+    """
+    ratemark_entries = _extract_mark_entries(payload, "ratemarks")
+    auxmark_entries = _extract_mark_entries(payload, "auxmarks")
+    if not ratemark_entries and not auxmark_entries:
+        return
+
+    default_lettering = Lettering.objects.first()
+    created_ratemarks = []
+    for row in ratemark_entries:
+        manuscript = str(row.get("manuscript") or "").strip().lower() == "yes"
+        ratemark = Ratemark.objects.create(
+            inscription_txt=str(row.get("inscription_txt") or "").strip(),
+            is_manuscript=manuscript,
+            shape=_resolve_shape_for_mark(row.get("type")),
+            lettering=None if manuscript else default_lettering,
+            color=_resolve_color_for_mark(row.get("color")),
+            impression=str(row.get("impression") or "").strip() or None,
+            is_irreg=bool(row.get("is_irreg")) if row.get("is_irreg") is not None else None,
+            width=_as_decimal(row.get("width_mm")),
+            height=_as_decimal(row.get("height_mm")),
+            rate_val=_as_decimal(row.get("rate_val")),
+            created_by=user,
+            modified_by=user,
+        )
+        PostmarkRatemark.objects.get_or_create(
+            postmark=postmark,
+            ratemark=ratemark,
+            defaults={"placement_type": "SEPARATE", "created_by": user, "modified_by": user},
+        )
+        created_ratemarks.append(ratemark)
+
+    for row in auxmark_entries:
+        manuscript = str(row.get("manuscript") or "").strip().lower() == "yes"
+        parent_type = str(row.get("parent_mark_type") or "POSTMARK").strip().upper()
+        parent_mark_type = "POSTMARK"
+        parent_mark_id = postmark.postmark_id
+        if parent_type == "RATEMARK" and created_ratemarks:
+            parent_mark_type = "RATEMARK"
+            parent_mark_id = created_ratemarks[0].pk
+
+        Auxmark.objects.create(
+            parent_mark_type=parent_mark_type,
+            parent_mark_id=parent_mark_id,
+            inscription_text=str(row.get("inscription_txt") or "").strip(),
+            is_manuscript=manuscript,
+            shape=_resolve_shape_for_mark(row.get("type")),
+            lettering=None if manuscript else default_lettering,
+            color=_resolve_color_for_mark(row.get("color")),
+            impression=str(row.get("impression") or "").strip() or None,
+            is_irreg=bool(row.get("is_irreg")) if row.get("is_irreg") is not None else None,
+            width=_as_decimal(row.get("width_mm")),
+            height=_as_decimal(row.get("height_mm")),
+            created_by=user,
+            modified_by=user,
+        )
+
+
 def _get_user_assigned_units(user):
     """Return queryset of AdministrativeUnits explicitly assigned to this user."""
     return AdministrativeUnit.objects.filter(
@@ -759,10 +1175,22 @@ def _create_contribution_only(payload, contributor):
             "dimensions": (payload.get("dimensions") or "").strip(),
             "description": (payload.get("description") or "").strip(),
             "references": (payload.get("references") or "").strip(),
+            "reference_work_ids": _extract_reference_work_ids_from_payload(payload),
+            "reference_work_details": _extract_reference_work_details_from_payload(payload),
             "rarity": (payload.get("rarity") or "").strip(),
             "submitter_name": (payload.get("submitter_name") or "").strip(),
             "original_postmark_id": str(payload.get("original_postmark_id", "")),
+            "ratemarks": payload.get("ratemarks", []),
+            "auxmarks": payload.get("auxmarks", []),
         }
+        if payload.get("postmark_image_metas"):
+            submitted_data["postmark_image_metas"] = payload["postmark_image_metas"]
+        if payload.get("ratemark_image_metas"):
+            submitted_data["ratemark_image_metas"] = payload["ratemark_image_metas"]
+        if payload.get("auxmark_image_metas"):
+            submitted_data["auxmark_image_metas"] = payload["auxmark_image_metas"]
+        if payload.get("image_metas"):
+            submitted_data["image_metas"] = payload["image_metas"]
         if payload.get("image_meta"):
             submitted_data["image_meta"] = payload["image_meta"]
         contrib = Contribution.objects.create(
@@ -957,24 +1385,9 @@ def _create_postmark_in_catalog(payload):
             created_by=user,
             modified_by=user,
         )
-        # Optional: attach uploaded image
-        image_meta = payload.get("image_meta")
-        if image_meta and isinstance(image_meta, dict):
-            PostmarkImage.objects.create(
-                postmark=postmark,
-                original_filename=image_meta.get("original_filename", "image")[:255],
-                storage_filename=image_meta["storage_filename"],
-                file_checksum=image_meta.get("file_checksum", "")[:64],
-                mime_type=image_meta.get("mime_type", "image/jpeg")[:50],
-                image_width=image_meta.get("image_width", 0),
-                image_height=image_meta.get("image_height", 0),
-                file_size_bytes=image_meta.get("file_size_bytes", 0),
-                image_view="FULL",
-                display_order=0,
-                uploaded_by=user,
-                created_by=user,
-                modified_by=user,
-            )
+        # Optional: attach uploaded postmark/ratemark/auxmark images.
+        _create_postmark_images_from_payload(postmark, user, payload, replace_existing=False)
+        _sync_ratemarks_auxmarks_from_payload(postmark, user, payload)
         return postmark
     except Exception:
         return None
@@ -1140,25 +1553,9 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
             modified_by=user,
         )
 
-        # Replace image if new one provided
-        image_meta = payload.get("image_meta")
-        if image_meta and isinstance(image_meta, dict):
-            PostmarkImage.objects.filter(postmark=postmark).delete()
-            PostmarkImage.objects.create(
-                postmark=postmark,
-                original_filename=image_meta.get("original_filename", "image")[:255],
-                storage_filename=image_meta["storage_filename"],
-                file_checksum=image_meta.get("file_checksum", "")[:64],
-                mime_type=image_meta.get("mime_type", "image/jpeg")[:50],
-                image_width=image_meta.get("image_width", 0),
-                image_height=image_meta.get("image_height", 0),
-                file_size_bytes=image_meta.get("file_size_bytes", 0),
-                image_view="FULL",
-                display_order=0,
-                uploaded_by=user,
-                created_by=user,
-                modified_by=user,
-            )
+        # Replace image set when new files are provided.
+        _create_postmark_images_from_payload(postmark, user, payload, replace_existing=True)
+        _sync_ratemarks_auxmarks_from_payload(postmark, user, payload)
         return postmark
     except Exception:
         return None
@@ -1238,6 +1635,21 @@ class ContributionView(APIView):
         submitter_name = (data.get("submitterName") or "").strip()
         if user.is_authenticated:
             submitter_name = user.username or getattr(user, "email", "") or submitter_name
+        reference_work_ids = _extract_reference_work_ids(data)
+        reference_work_details = _extract_reference_work_details_from_payload(data)
+        ratemarks = _extract_mark_entries(data, "ratemarks")
+        auxmarks = _extract_mark_entries(data, "auxmarks")
+        if reference_work_details:
+            reference_work_ids = list(dict.fromkeys(reference_work_ids + list(reference_work_details.keys())))
+        reference_errors = _validate_reference_work_payload(reference_work_ids, reference_work_details)
+        if reference_errors:
+            return Response(
+                {
+                    "detail": "Invalid reference details.",
+                    "reference_errors": reference_errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         payload = {
             "state": state,
             "town": town,
@@ -1250,19 +1662,50 @@ class ContributionView(APIView):
             "dimensions": (data.get("dimensions") or "").strip(),
             "description": (data.get("description") or "").strip(),
             "references": (data.get("references") or "").strip(),
+            "reference_work_ids": reference_work_ids,
+            "reference_work_details": reference_work_details,
             "rarity": (data.get("rarity") or "").strip(),
             "submitter_name": submitter_name,
+            "ratemarks": ratemarks,
+            "auxmarks": auxmarks,
         }
         if assigned_admin_unit is not None:
             payload["admin_unit"] = assigned_admin_unit
-        image_file = request.FILES.get("image")
-        if image_file:
-            image_meta = _save_contribution_image(image_file)
-            if image_meta:
-                payload["image_meta"] = image_meta
-        elif edit_postmark_id is None and edit_contribution_id is None:
+        postmark_files = request.FILES.getlist("postmark_image") or request.FILES.getlist("postmark_images")
+        ratemark_files = request.FILES.getlist("ratemark_image") or request.FILES.getlist("ratemark_images")
+        auxmark_files = request.FILES.getlist("auxmark_image") or request.FILES.getlist("auxmark_images")
+        legacy_files = request.FILES.getlist("image")
+        if not postmark_files and legacy_files:
+            postmark_files = legacy_files
+
+        def _save_files(file_list, category):
+            metas = []
+            for uploaded in file_list:
+                meta = _save_contribution_image(uploaded)
+                if not meta:
+                    continue
+                meta["mark_category"] = category
+                metas.append(meta)
+            return metas
+
+        postmark_image_metas = _save_files(postmark_files, "postmark")
+        ratemark_image_metas = _save_files(ratemark_files, "ratemark")
+        auxmark_image_metas = _save_files(auxmark_files, "auxmark")
+        all_image_metas = [*postmark_image_metas, *ratemark_image_metas, *auxmark_image_metas]
+
+        if postmark_image_metas:
+            payload["postmark_image_metas"] = postmark_image_metas
+            payload["image_meta"] = postmark_image_metas[0]
+        if ratemark_image_metas:
+            payload["ratemark_image_metas"] = ratemark_image_metas
+        if auxmark_image_metas:
+            payload["auxmark_image_metas"] = auxmark_image_metas
+        if all_image_metas:
+            payload["image_metas"] = all_image_metas
+
+        if edit_postmark_id is None and edit_contribution_id is None and not postmark_image_metas:
             return Response(
-                {"detail": "Missing required field: image."},
+                {"detail": "Missing required field: postmark_image."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1304,25 +1747,48 @@ class ContributionView(APIView):
                         "dimensions": payload.get("dimensions", ""),
                         "description": payload.get("description", ""),
                         "references": payload.get("references", ""),
+                        "reference_work_ids": payload.get("reference_work_ids", []),
+                        "reference_work_details": payload.get("reference_work_details", {}),
+                        "ratemarks": payload.get("ratemarks", []),
+                        "auxmarks": payload.get("auxmarks", []),
                         "rarity": payload.get("rarity", ""),
                         "submitter_name": submitter_name,
                         "original_postmark_id": str(edit_postmark_id),
                     }
+                    if payload.get("postmark_image_metas"):
+                        submitted_data["postmark_image_metas"] = payload["postmark_image_metas"]
+                    if payload.get("ratemark_image_metas"):
+                        submitted_data["ratemark_image_metas"] = payload["ratemark_image_metas"]
+                    if payload.get("auxmark_image_metas"):
+                        submitted_data["auxmark_image_metas"] = payload["auxmark_image_metas"]
+                    if payload.get("image_metas"):
+                        submitted_data["image_metas"] = payload["image_metas"]
                     if payload.get("image_meta"):
                         submitted_data["image_meta"] = payload["image_meta"]
 
-                    contrib = Contribution.objects.create(
-                        contributor=user,
+                    # Contribution.postmark is OneToOne, so only one row can
+                    # exist per catalog postmark. Update existing suggestion
+                    # instead of creating a duplicate that would violate the
+                    # unique constraint.
+                    contrib, created = Contribution.objects.update_or_create(
                         postmark_id=edit_postmark_id,
-                        status=Contribution.STATUS_PENDING,
-                        submitted_data=submitted_data,
+                        defaults={
+                            "contributor": user,
+                            "status": Contribution.STATUS_PENDING,
+                            "submitted_data": submitted_data,
+                        },
+                    )
+                    detail_msg = (
+                        "Correction submitted for review. A State Editor will review and apply it."
+                        if created
+                        else "Correction updated. A State Editor will review and apply it."
                     )
                     return Response(
                         {
-                            "detail": "Correction submitted for review. A State Editor will review and apply it.",
+                            "detail": detail_msg,
                             "contributionId": contrib.id,
                         },
-                        status=status.HTTP_201_CREATED,
+                        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
                     )
                 except Exception:
                     return Response(
@@ -1337,6 +1803,7 @@ class ContributionView(APIView):
                     {"detail": "Could not apply catalog edit. Ensure the target listing exists and try again."},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
+            _sync_postmark_citations_from_payload(postmark, payload, request.user)
             return Response(
                 {"detail": "Catalog entry updated successfully.", "postmarkId": postmark.postmark_id},
                 status=status.HTTP_200_OK,
@@ -1449,6 +1916,7 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         contrib.save(update_fields=["status", "reviewer", "review_notes", "postmark", "updated_at"])
         postmark.contribution_approval_status = "approved"
         postmark.save(update_fields=["contribution_approval_status"])
+        _sync_postmark_citations_from_payload(postmark, contrib.submitted_data or {}, request.user)
         return Response(
             {"detail": "Contribution approved.", "postmarkId": postmark.postmark_id},
             status=status.HTTP_200_OK,

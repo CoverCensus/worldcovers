@@ -28,6 +28,14 @@ import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getFramings, type FramingOption } from "@/services/framings";
 import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
+import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -103,6 +111,7 @@ const NUM_TO_MONTH: Record<string, string> = {
   "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "May", "06": "Jun",
   "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec",
 };
+const PAGE_NUMBER_RE = /^[A-Za-z0-9][A-Za-z0-9\s\-–—.,:;()/#]*$/;
 
 type DatePair = {
   earliestDay: string;
@@ -112,6 +121,104 @@ type DatePair = {
   latestMonth: string;
   latestYear: string;
 };
+
+type ReferenceDetailInput = {
+  pageNumber: string;
+  citationUrl: string;
+};
+
+type ReferenceDetailPayload = {
+  reference_work_id: number;
+  page_number?: string;
+  url?: string;
+};
+
+type ReferenceDetailFieldErrors = {
+  pageNumber?: string;
+  citationUrl?: string;
+};
+
+type ImageCategory = "postmark" | "ratemark" | "auxmark";
+
+function parseReferenceWorkIds(raw: unknown): number[] {
+  const values: unknown[] = [];
+  if (Array.isArray(raw)) {
+    values.push(...raw);
+  } else if (raw != null) {
+    values.push(raw);
+  }
+
+  const parsed: number[] = [];
+  const seen = new Set<number>();
+
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      value.forEach((v) => values.push(v));
+      continue;
+    }
+    const s = String(value ?? "").trim();
+    if (!s) continue;
+    if (s.startsWith("[") && s.endsWith("]")) {
+      try {
+        const json = JSON.parse(s);
+        if (Array.isArray(json)) {
+          json.forEach((v) => values.push(v));
+          continue;
+        }
+      } catch {
+        // Ignore malformed payloads from legacy records.
+      }
+    }
+    if (s.includes(",")) {
+      s.split(",").forEach((chunk) => values.push(chunk.trim()));
+      continue;
+    }
+    const n = Number.parseInt(s, 10);
+    if (Number.isNaN(n) || n <= 0 || seen.has(n)) continue;
+    seen.add(n);
+    parsed.push(n);
+  }
+
+  return parsed;
+}
+
+function parseReferenceWorkDetails(raw: unknown): Record<number, ReferenceDetailInput> {
+  if (raw == null) return {};
+  let list: unknown = raw;
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s) return {};
+    try {
+      list = JSON.parse(s);
+    } catch {
+      return {};
+    }
+  }
+  if (!Array.isArray(list)) {
+    if (list && typeof list === "object") {
+      list = Object.entries(list as Record<string, unknown>).map(([id, detail]) => ({
+        reference_work_id: id,
+        ...(detail && typeof detail === "object" ? detail : {}),
+      }));
+    } else {
+      return {};
+    }
+  }
+  const rows = list as unknown[];
+  const out: Record<number, ReferenceDetailInput> = {};
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as Record<string, unknown>;
+    const idRaw = rec.reference_work_id ?? rec.referenceWorkId;
+    const id = Number.parseInt(String(idRaw ?? ""), 10);
+    if (Number.isNaN(id) || id <= 0) continue;
+    out[id] = {
+      pageNumber: String(rec.page_number ?? rec.pageNumber ?? "").trim(),
+      citationUrl: String(rec.url ?? "").trim(),
+    };
+  }
+  return out;
+}
 
 function parseDateTokenToParts(raw: string): { day: string; month: string; year: string } {
   const s = String(raw || "").trim();
@@ -146,12 +253,32 @@ function parseDateRangeToken(raw: string): DatePair | null {
   };
 }
 
+function formatReferenceWorkForReferences(
+  work: ReferenceWorkRecord,
+  detail?: ReferenceDetailInput,
+): string {
+  const parts: string[] = [];
+  if (work.title?.trim()) parts.push(`Title: ${work.title.trim()}`);
+  if (work.authorship?.trim()) parts.push(`Authorship: ${work.authorship.trim()}`);
+  if (work.publisher?.trim()) parts.push(`Publisher: ${work.publisher.trim()}`);
+  if (work.publicationYear != null) parts.push(`Publication year: ${work.publicationYear}`);
+  if (work.edition?.trim()) parts.push(`Edition: ${work.edition.trim()}`);
+  if (work.volume?.trim()) parts.push(`Volume: ${work.volume.trim()}`);
+  if (work.isbn?.trim()) parts.push(`Isbn: ${work.isbn.trim()}`);
+  if (work.url?.trim()) parts.push(`Url: ${work.url.trim()}`);
+  if (detail?.pageNumber?.trim()) parts.push(`Page number: ${detail.pageNumber.trim()}`);
+  if (detail?.citationUrl?.trim()) parts.push(`Citation url: ${detail.citationUrl.trim()}`);
+  return parts.join("\n");
+}
+
 const Contribute = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const postmarkFileInputRef = useRef<HTMLInputElement>(null);
+  const ratemarkFileInputRef = useRef<HTMLInputElement>(null);
+  const auxmarkFileInputRef = useRef<HTMLInputElement>(null);
 
   const user = useAuth();
   const editContributionIdRaw =
@@ -205,9 +332,15 @@ const Contribute = () => {
   const [dateType, setDateType] = useState("");
   const [inscriptionText, setInscriptionText] = useState("");
   const [description, setDescription] = useState("");
-  const [references, setReferences] = useState("");
-  const [imageFiles, setImageFiles] = useState<File[]>([]);
-  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const [selectedReferenceWorks, setSelectedReferenceWorks] = useState<ReferenceWorkRecord[]>([]);
+  const [referenceDetailsById, setReferenceDetailsById] = useState<Record<number, ReferenceDetailInput>>({});
+  const [referenceDetailErrorsById, setReferenceDetailErrorsById] = useState<Record<number, ReferenceDetailFieldErrors>>({});
+  const [postmarkImageFiles, setPostmarkImageFiles] = useState<File[]>([]);
+  const [postmarkImagePreviews, setPostmarkImagePreviews] = useState<string[]>([]);
+  const [ratemarkImageFiles, setRatemarkImageFiles] = useState<File[]>([]);
+  const [ratemarkImagePreviews, setRatemarkImagePreviews] = useState<string[]>([]);
+  const [auxmarkImageFiles, setAuxmarkImageFiles] = useState<File[]>([]);
+  const [auxmarkImagePreviews, setAuxmarkImagePreviews] = useState<string[]>([]);
   const [diameterMm, setDiameterMm] = useState("");
   const [letteringId, setLetteringId] = useState("");
   const [framingIds, setFramingIds] = useState<string[]>([]);
@@ -239,6 +372,12 @@ const Contribute = () => {
   const [framingOptions, setFramingOptions] = useState<FramingOption[]>([]);
   const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
   const [catalogOptionsLoading, setCatalogOptionsLoading] = useState(false);
+  const [referenceModalOpen, setReferenceModalOpen] = useState(false);
+  const [referenceWorks, setReferenceWorks] = useState<ReferenceWorkRecord[]>([]);
+  const [pendingReferenceWorkIds, setPendingReferenceWorkIds] = useState<number[]>([]);
+  const [referenceWorksLoading, setReferenceWorksLoading] = useState(false);
+  const [referenceWorksError, setReferenceWorksError] = useState<string | null>(null);
+  const [referenceWorksFetched, setReferenceWorksFetched] = useState(false);
 
   // Editor-only: value and comment when approving (direct add to catalog)
   const isStateEditor = user?.role === "state_editor";
@@ -345,6 +484,41 @@ const Contribute = () => {
       .finally(() => setCatalogOptionsLoading(false));
   }, [editContributionId, letteringId, framingIds.length]);
 
+  useEffect(() => {
+    if ((!referenceModalOpen && pendingReferenceWorkIds.length === 0) || referenceWorksFetched || referenceWorksLoading) return;
+    setReferenceWorksLoading(true);
+    setReferenceWorksError(null);
+    getReferenceWorks()
+      .then((rows) => setReferenceWorks(rows))
+      .catch((err) => {
+        setReferenceWorksError(
+          err instanceof Error ? err.message : "Failed to load reference works"
+        );
+      })
+      .finally(() => {
+        setReferenceWorksFetched(true);
+        setReferenceWorksLoading(false);
+      });
+  }, [referenceModalOpen, pendingReferenceWorkIds.length, referenceWorksFetched, referenceWorksLoading]);
+
+  useEffect(() => {
+    if (pendingReferenceWorkIds.length === 0 || referenceWorks.length === 0) return;
+    const mapped = pendingReferenceWorkIds
+      .map((id) => referenceWorks.find((w) => w.id === id))
+      .filter((w): w is ReferenceWorkRecord => w != null);
+    if (mapped.length > 0) {
+      setSelectedReferenceWorks(mapped);
+      setReferenceDetailsById((prev) => {
+        const next = { ...prev };
+        mapped.forEach((work) => {
+          next[work.id] = next[work.id] ?? { pageNumber: "", citationUrl: "" };
+        });
+        return next;
+      });
+    }
+    setPendingReferenceWorkIds([]);
+  }, [pendingReferenceWorkIds, referenceWorks]);
+
   // Load contribution for edit-and-resubmit (rejected / needs_revision)
   useEffect(() => {
     if (!editContributionId) {
@@ -411,7 +585,20 @@ const Contribute = () => {
         setIsIrregular(Boolean(sd.is_irreg ?? (sd as Record<string, unknown>).isIrreg));
         setInscriptionText(getStr(sd.inscription_txt ?? (sd as Record<string, unknown>).inscriptionText));
         setDescription(getStr(sd.description));
-        setReferences(getStr(sd.references));
+        const referenceWorkIds = parseReferenceWorkIds(
+          (sd as Record<string, unknown>).reference_work_ids ??
+          (sd as Record<string, unknown>).referenceWorkIds ??
+          (sd as Record<string, unknown>)["reference_work_ids[]"],
+        );
+        const referenceDetails = parseReferenceWorkDetails(
+          (sd as Record<string, unknown>).reference_work_details ??
+          (sd as Record<string, unknown>).referenceWorkDetails,
+        );
+        setPendingReferenceWorkIds(referenceWorkIds);
+        setReferenceDetailsById(referenceDetails);
+        if (referenceWorkIds.length === 0) {
+          setSelectedReferenceWorks([]);
+        }
         const lid = sd.lettering_style_id ?? (sd as Record<string, unknown>).letteringStyleId;
         setLetteringId(lid != null ? String(lid) : "");
         const fids = (sd.framing_style_ids ?? (sd as Record<string, unknown>).framingStyleIds) as unknown;
@@ -434,20 +621,36 @@ const Contribute = () => {
           const did = sd.date_format_id ?? (sd as Record<string, unknown>).dateFormatId;
           setDateFormatIds(did != null ? [String(did)] : []);
         }
-        const metas = (sd.image_metas ?? (sd as Record<string, unknown>).imageMetas) as Array<{ storage_filename?: string; storageFilename?: string }> | undefined;
+        const asMetaArray = (raw: unknown): Array<{ storage_filename?: string; storageFilename?: string }> => {
+          if (!Array.isArray(raw)) return [];
+          return raw as Array<{ storage_filename?: string; storageFilename?: string }>;
+        };
+        const postmarkMetas = asMetaArray(sd.postmark_image_metas ?? (sd as Record<string, unknown>).postmarkImageMetas);
+        const ratemarkMetas = asMetaArray(sd.ratemark_image_metas ?? (sd as Record<string, unknown>).ratemarkImageMetas);
+        const auxmarkMetas = asMetaArray(sd.auxmark_image_metas ?? (sd as Record<string, unknown>).auxmarkImageMetas);
+        const metas = asMetaArray(sd.image_metas ?? (sd as Record<string, unknown>).imageMetas);
         const metaOne = sd.image_meta as { storage_filename?: string; storageFilename?: string } | undefined;
         const baseUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
-        const previews: string[] = [];
-        if (Array.isArray(metas) && metas.length > 0 && baseUrl) {
-          metas.forEach((m) => {
+        const toPreviewUrls = (items: Array<{ storage_filename?: string; storageFilename?: string }>) => {
+          const urls: string[] = [];
+          if (!baseUrl) return urls;
+          items.forEach((m) => {
             const sf = m?.storage_filename ?? (m as { storageFilename?: string })?.storageFilename;
-            if (sf) previews.push(`${baseUrl}/postmarks/${sf}`);
+            if (sf) urls.push(`${baseUrl}/postmarks/${sf}`);
           });
-        } else if (metaOne && baseUrl) {
-          const sf = metaOne.storage_filename ?? metaOne.storageFilename;
-          if (sf) previews.push(`${baseUrl}/postmarks/${sf}`);
+          return urls;
+        };
+        const hasCategorized = postmarkMetas.length > 0 || ratemarkMetas.length > 0 || auxmarkMetas.length > 0;
+        if (hasCategorized) {
+          setPostmarkImagePreviews(toPreviewUrls(postmarkMetas));
+          setRatemarkImagePreviews(toPreviewUrls(ratemarkMetas));
+          setAuxmarkImagePreviews(toPreviewUrls(auxmarkMetas));
+        } else {
+          const legacyItems = [...metas];
+          if (metaOne) legacyItems.push(metaOne);
+          const postmarkPreviews = toPreviewUrls(legacyItems);
+          if (postmarkPreviews.length > 0) setPostmarkImagePreviews(postmarkPreviews);
         }
-        if (previews.length > 0) setImagePreviews(previews);
         setEditLoadError(null);
         setEditLoadDone(true);
       })
@@ -505,7 +708,21 @@ const Contribute = () => {
     return `${selectedNames.slice(0, 2).join(", ")} +${selectedNames.length - 2} more`;
   }, [dateFormatIds, dateFormatOptions]);
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const appendCategoryFiles = (category: ImageCategory, files: File[]) => {
+    if (files.length === 0) return;
+    if (category === "postmark") setPostmarkImageFiles((prev) => [...prev, ...files]);
+    if (category === "ratemark") setRatemarkImageFiles((prev) => [...prev, ...files]);
+    if (category === "auxmark") setAuxmarkImageFiles((prev) => [...prev, ...files]);
+  };
+
+  const appendCategoryPreviews = (category: ImageCategory, previews: string[]) => {
+    if (previews.length === 0) return;
+    if (category === "postmark") setPostmarkImagePreviews((prev) => [...prev, ...previews]);
+    if (category === "ratemark") setRatemarkImagePreviews((prev) => [...prev, ...previews]);
+    if (category === "auxmark") setAuxmarkImagePreviews((prev) => [...prev, ...previews]);
+  };
+
+  const handleImageChange = (category: ImageCategory, e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files?.length) return;
     const toAdd: File[] = [];
@@ -541,10 +758,10 @@ const Contribute = () => {
       e.target.value = "";
       return;
     }
-    if (fieldErrors.images) {
+    if (category === "postmark" && fieldErrors.images) {
       setFieldErrors((prev) => ({ ...prev, images: undefined }));
     }
-    setImageFiles((prev) => [...prev, ...toAdd]);
+    appendCategoryFiles(category, toAdd);
     Promise.all(
       toAdd.map(
         (file) =>
@@ -555,15 +772,45 @@ const Contribute = () => {
           })
       )
     ).then((newPreviews) => {
-      setImagePreviews((prev) => [...prev, ...newPreviews]);
+      appendCategoryPreviews(category, newPreviews);
     });
     e.target.value = "";
   };
 
-  const removeImageAt = (index: number) => {
-    setImageFiles((prev) => prev.filter((_, i) => i !== index));
-    setImagePreviews((prev) => prev.filter((_, i) => i !== index));
-    if (fileInputRef.current) fileInputRef.current.value = "";
+  const removeImageAt = (category: ImageCategory, index: number) => {
+    if (category === "postmark") {
+      setPostmarkImageFiles((prev) => prev.filter((_, i) => i !== index));
+      setPostmarkImagePreviews((prev) => prev.filter((_, i) => i !== index));
+      if (postmarkFileInputRef.current) postmarkFileInputRef.current.value = "";
+    }
+    if (category === "ratemark") {
+      setRatemarkImageFiles((prev) => prev.filter((_, i) => i !== index));
+      setRatemarkImagePreviews((prev) => prev.filter((_, i) => i !== index));
+      if (ratemarkFileInputRef.current) ratemarkFileInputRef.current.value = "";
+    }
+    if (category === "auxmark") {
+      setAuxmarkImageFiles((prev) => prev.filter((_, i) => i !== index));
+      setAuxmarkImagePreviews((prev) => prev.filter((_, i) => i !== index));
+      if (auxmarkFileInputRef.current) auxmarkFileInputRef.current.value = "";
+    }
+  };
+
+  const getCategoryInputRef = (category: ImageCategory) => {
+    if (category === "postmark") return postmarkFileInputRef;
+    if (category === "ratemark") return ratemarkFileInputRef;
+    return auxmarkFileInputRef;
+  };
+
+  const getCategoryFiles = (category: ImageCategory) => {
+    if (category === "postmark") return postmarkImageFiles;
+    if (category === "ratemark") return ratemarkImageFiles;
+    return auxmarkImageFiles;
+  };
+
+  const getCategoryPreviews = (category: ImageCategory) => {
+    if (category === "postmark") return postmarkImagePreviews;
+    if (category === "ratemark") return ratemarkImagePreviews;
+    return auxmarkImagePreviews;
   };
 
   const buildName = () => {
@@ -618,6 +865,22 @@ const Contribute = () => {
     );
   };
 
+  const addReferenceWorkToNotes = (work: ReferenceWorkRecord) => {
+    setPendingReferenceWorkIds([]);
+    setSelectedReferenceWorks((prev) =>
+      prev.some((w) => w.id === work.id) ? prev : [...prev, work],
+    );
+    setReferenceDetailsById((prev) => ({
+      ...prev,
+      [work.id]: prev[work.id] ?? { pageNumber: "", citationUrl: "" },
+    }));
+    setReferenceDetailErrorsById((prev) => ({
+      ...prev,
+      [work.id]: prev[work.id] ?? {},
+    }));
+    setReferenceModalOpen(false);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -648,7 +911,7 @@ const Contribute = () => {
     if (!manuscript.trim()) {
       errors.manuscript = "Manuscript is required";
     }
-    if (!isEditMode && imageFiles.length === 0) {
+    if (!isEditMode && postmarkImageFiles.length === 0) {
       errors.images = "At least one image is required";
     }
 
@@ -686,6 +949,51 @@ const Contribute = () => {
       }
       if (!editorComment.trim()) errors.editorComment = "Comment is required when adding to catalog";
     }
+
+    const referenceDetailErrors: Record<number, ReferenceDetailFieldErrors> = {};
+    for (const work of selectedReferenceWorks) {
+      const detail = referenceDetailsById[work.id];
+      if (!detail) continue;
+      const page = detail.pageNumber.trim();
+      const citationUrl = detail.citationUrl.trim();
+      const rowErrors: ReferenceDetailFieldErrors = {};
+
+      if (page) {
+        if (page.length > 120) {
+          rowErrors.pageNumber = "Page number must be 120 characters or fewer";
+        } else if (!PAGE_NUMBER_RE.test(page)) {
+          rowErrors.pageNumber = "Page number has invalid characters";
+        }
+      }
+      if (citationUrl) {
+        if (citationUrl.length > 2000) {
+          rowErrors.citationUrl = "Citation URL must be 2000 characters or fewer";
+        } else {
+          try {
+            const parsed = new URL(citationUrl);
+            if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+              rowErrors.citationUrl = "Citation URL must start with http:// or https://";
+            }
+          } catch {
+            rowErrors.citationUrl = "Citation URL must be a valid URL";
+          }
+        }
+      }
+
+      if (rowErrors.pageNumber || rowErrors.citationUrl) {
+        referenceDetailErrors[work.id] = rowErrors;
+      }
+    }
+    setReferenceDetailErrorsById(referenceDetailErrors);
+    if (Object.keys(referenceDetailErrors).length > 0) {
+      toast({
+        title: "Fix reference details",
+        description: "Check page number and citation URL fields for selected references.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       return;
@@ -768,7 +1076,19 @@ const Contribute = () => {
       })
       .filter(Boolean)
       .join(", ");
-
+    const referencesToSend = selectedReferenceWorks
+      .map((work) => formatReferenceWorkForReferences(work, referenceDetailsById[work.id]))
+      .filter(Boolean)
+      .join("\n\n");
+    const referenceWorkIdsToSend = selectedReferenceWorks.map((work) => work.id);
+    const referenceWorkDetailsToSend: ReferenceDetailPayload[] = selectedReferenceWorks.map((work) => {
+      const detail = referenceDetailsById[work.id];
+      return {
+        reference_work_id: work.id,
+        page_number: detail?.pageNumber?.trim() || undefined,
+        url: detail?.citationUrl?.trim() || undefined,
+      };
+    });
     const apiBase = getApiBaseUrl();
     if (!apiBase) {
       toast({
@@ -779,7 +1099,8 @@ const Contribute = () => {
       return;
     }
 
-    const oversized = imageFiles.filter((f) => f.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
+    const allImageFiles = [...postmarkImageFiles, ...ratemarkImageFiles, ...auxmarkImageFiles];
+    const oversized = allImageFiles.filter((f) => f.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
     if (oversized.length) {
       toast({
         title: "Image too large",
@@ -794,7 +1115,6 @@ const Contribute = () => {
       const submitterName = user?.username || user?.email || undefined;
 
       let body: string | FormData;
-      let headers: Record<string, string> = {};
 
       const mkIso = (d: string, m: string, y: string) => {
         const yy = y.trim();
@@ -836,7 +1156,7 @@ const Contribute = () => {
           }
         : {};
 
-      if (imageFiles.length > 0) {
+      if (allImageFiles.length > 0) {
         const form = new FormData();
         if (editContributionId != null) form.append("edit_contribution_id", String(editContributionId));
         form.append("state", stateVal);
@@ -853,7 +1173,11 @@ const Contribute = () => {
         if (dateType.trim()) form.append("date_type", dateType.trim());
         if (inscriptionToSend) form.append("inscription_txt", inscriptionToSend);
         if (descriptionToSend) form.append("description", descriptionToSend);
-        if (references.trim()) form.append("references", references.trim());
+        if (referencesToSend) form.append("references", referencesToSend);
+        referenceWorkIdsToSend.forEach((id) => form.append("reference_work_ids[]", String(id)));
+        if (referenceWorkDetailsToSend.length > 0) {
+          form.append("reference_work_details", JSON.stringify(referenceWorkDetailsToSend));
+        }
         if (submitterName) form.append("submitterName", submitterName);
         form.append("lettering_style_id", letteringId);
         if (framingIds.length > 0) {
@@ -869,9 +1193,9 @@ const Contribute = () => {
           form.append("estimated_value", editorValue.trim());
           form.append("review_notes", editorComment.trim());
         }
-        for (const file of imageFiles) {
-          form.append("image", file, file.name);
-        }
+        for (const file of postmarkImageFiles) form.append("postmark_image", file, file.name);
+        for (const file of ratemarkImageFiles) form.append("ratemark_image", file, file.name);
+        for (const file of auxmarkImageFiles) form.append("auxmark_image", file, file.name);
         body = form;
         // Do not set Content-Type so browser sets multipart/form-data with boundary
       } else {
@@ -891,7 +1215,9 @@ const Contribute = () => {
           date_type: dateType.trim() || undefined,
           inscription_txt: inscriptionToSend || undefined,
           description: descriptionToSend || undefined,
-          references: references.trim() || undefined,
+          references: referencesToSend || undefined,
+          reference_work_ids: referenceWorkIdsToSend.length > 0 ? referenceWorkIdsToSend : undefined,
+          reference_work_details: referenceWorkDetailsToSend.length > 0 ? referenceWorkDetailsToSend : undefined,
           submitterName: submitterName || undefined,
           lettering_style_id: letteringId ? Number(letteringId) : undefined,
           framing_style_id: framingIds[0] ? Number(framingIds[0]) : undefined,
@@ -900,8 +1226,10 @@ const Contribute = () => {
           date_format_ids: dateFormatIds.length > 0 ? dateFormatIds.map((id) => Number(id)) : undefined,
           ...editorPayload,
         });
-        headers["Content-Type"] = "application/json";
       }
+
+      const headers: Record<string, string> =
+        typeof body === "string" ? { "Content-Type": "application/json" } : {};
 
       const res = await fetch(`${apiBase}/contributions/`, {
         method: "POST",
@@ -968,9 +1296,16 @@ const Contribute = () => {
       setDateType("");
       setInscriptionText("");
       setDescription("");
-      setReferences("");
-      setImageFiles([]);
-      setImagePreviews([]);
+      setPendingReferenceWorkIds([]);
+      setSelectedReferenceWorks([]);
+      setReferenceDetailsById({});
+      setReferenceDetailErrorsById({});
+      setPostmarkImageFiles([]);
+      setPostmarkImagePreviews([]);
+      setRatemarkImageFiles([]);
+      setRatemarkImagePreviews([]);
+      setAuxmarkImageFiles([]);
+      setAuxmarkImagePreviews([]);
       setLetteringId("");
       setFramingIds([]);
       setDateFormatIds([]);
@@ -979,7 +1314,9 @@ const Contribute = () => {
         setEditorValue("");
         setEditorComment("");
       }
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (postmarkFileInputRef.current) postmarkFileInputRef.current.value = "";
+      if (ratemarkFileInputRef.current) ratemarkFileInputRef.current.value = "";
+      if (auxmarkFileInputRef.current) auxmarkFileInputRef.current.value = "";
     } catch (err: unknown) {
       toast({
         title: "Submission failed",
@@ -994,6 +1331,83 @@ const Contribute = () => {
   const isEditMode = editContributionId != null;
   const effectiveTypeLabel = String(type === TYPE_OTHER_VALUE ? (typeOther ?? "") : (type ?? "")).trim();
   const showDiameter = isCircularType(effectiveTypeLabel);
+
+  const renderImageUploader = (
+    category: ImageCategory,
+    label: string,
+    helperText: string,
+    required = false,
+  ) => {
+    const inputRef = getCategoryInputRef(category);
+    const previews = getCategoryPreviews(category);
+    const files = getCategoryFiles(category);
+    return (
+      <div className="space-y-2">
+        <Label>{label}</Label>
+        {required && fieldErrors.images && <p className="text-sm text-destructive">{fieldErrors.images}</p>}
+        <input
+          ref={inputRef}
+          type="file"
+          accept={ALLOWED_IMAGE_TYPES.join(",")}
+          multiple
+          className="hidden"
+          onChange={(e) => handleImageChange(category, e)}
+        />
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => inputRef.current?.click()}
+          onKeyDown={(e) => e.key === "Enter" && inputRef.current?.click()}
+          className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer"
+        >
+          {previews.length > 0 ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                {previews.map((preview, i) => (
+                  <div key={i} className="relative rounded border bg-muted/30 overflow-hidden">
+                    <img src={preview} alt={`${label} preview ${i + 1}`} className="w-full aspect-square object-contain max-h-32" />
+                    <p className="text-xs text-muted-foreground truncate px-2 py-1">{files[i]?.name || "Existing image"}</p>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      className="absolute top-1 right-1 h-7 w-7 p-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeImageAt(category, i);
+                      }}
+                    >
+                      ×
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  inputRef.current?.click();
+                }}
+              >
+                Add more images
+              </Button>
+            </div>
+          ) : (
+            <>
+              <Upload className="mx-auto h-10 w-10 text-muted-foreground mb-3" />
+              <p className="text-sm text-muted-foreground mb-2">
+                Click to upload or drag and drop (multiple allowed)
+              </p>
+              <p className="text-xs text-muted-foreground">{helperText}</p>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
+
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -1845,15 +2259,138 @@ const Contribute = () => {
                       />
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="references">Citation References</Label>
-                      <Textarea
-                        id="references"
-                        placeholder="List any catalog numbers, publications, or other references..."
-                        rows={3}
-                        value={references}
-                        onChange={(e) => setReferences(e.target.value)}
-                      />
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label>Reference Works</Label>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setReferenceModalOpen(true)}
+                        >
+                          Browse reference works
+                        </Button>
+                      </div>
+                      {selectedReferenceWorks.length > 0 && (
+                        <div className="space-y-2">
+                          {selectedReferenceWorks.map((work) => (
+                            <div
+                              key={work.id}
+                              className="rounded-md border border-border px-3 py-2 space-y-3"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-foreground truncate">
+                                    {work.title || "Untitled"}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground truncate">
+                                    {[work.authorship, work.publisher]
+                                      .filter((x) => (x ?? "").trim() !== "")
+                                      .join(" — ")}
+                                  </p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setPendingReferenceWorkIds([]);
+                                    setSelectedReferenceWorks((prev) =>
+                                      prev.filter((w) => w.id !== work.id),
+                                    );
+                                    setReferenceDetailsById((prev) => {
+                                      const next = { ...prev };
+                                      delete next[work.id];
+                                      return next;
+                                    });
+                                    setReferenceDetailErrorsById((prev) => {
+                                      const next = { ...prev };
+                                      delete next[work.id];
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                  <Label htmlFor={`reference-page-${work.id}`} className="text-xs">
+                                    Page number
+                                  </Label>
+                                  <Input
+                                    id={`reference-page-${work.id}`}
+                                    placeholder="e.g. 42, plate 3"
+                                    value={referenceDetailsById[work.id]?.pageNumber ?? ""}
+                                    className={referenceDetailErrorsById[work.id]?.pageNumber ? "border-destructive" : ""}
+                                    onChange={(e) =>
+                                      {
+                                        setReferenceDetailsById((prev) => ({
+                                          ...prev,
+                                          [work.id]: {
+                                            pageNumber: e.target.value,
+                                            citationUrl: prev[work.id]?.citationUrl ?? "",
+                                          },
+                                        }));
+                                        setReferenceDetailErrorsById((prev) => ({
+                                          ...prev,
+                                          [work.id]: {
+                                            ...prev[work.id],
+                                            pageNumber: undefined,
+                                          },
+                                        }));
+                                      }
+                                    }
+                                  />
+                                  {referenceDetailErrorsById[work.id]?.pageNumber && (
+                                    <p className="text-xs text-destructive">
+                                      {referenceDetailErrorsById[work.id]?.pageNumber}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="space-y-1">
+                                  <Label htmlFor={`reference-url-${work.id}`} className="text-xs">
+                                    Citation URL
+                                  </Label>
+                                  <Input
+                                    id={`reference-url-${work.id}`}
+                                    type="url"
+                                    placeholder="https://..."
+                                    value={referenceDetailsById[work.id]?.citationUrl ?? ""}
+                                    className={referenceDetailErrorsById[work.id]?.citationUrl ? "border-destructive" : ""}
+                                    onChange={(e) =>
+                                      {
+                                        setReferenceDetailsById((prev) => ({
+                                          ...prev,
+                                          [work.id]: {
+                                            pageNumber: prev[work.id]?.pageNumber ?? "",
+                                            citationUrl: e.target.value,
+                                          },
+                                        }));
+                                        setReferenceDetailErrorsById((prev) => ({
+                                          ...prev,
+                                          [work.id]: {
+                                            ...prev[work.id],
+                                            citationUrl: undefined,
+                                          },
+                                        }));
+                                      }
+                                    }
+                                  />
+                                  {referenceDetailErrorsById[work.id]?.citationUrl && (
+                                    <p className="text-xs text-destructive">
+                                      {referenceDetailErrorsById[work.id]?.citationUrl}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-xs text-muted-foreground">
+                        Optional. Select one or more established reference works to associate with this submission.
+                      </p>
                     </div>
 
                     {isStateEditor && (
@@ -1888,60 +2425,22 @@ const Contribute = () => {
                       </div>
                     )}
 
-                    <div className="space-y-2">
-                      <Label>Upload Images</Label>
-                      {fieldErrors.images && <p className="text-sm text-destructive">{fieldErrors.images}</p>}
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept={ALLOWED_IMAGE_TYPES.join(",")}
-                        multiple
-                        className="hidden"
-                        onChange={handleImageChange}
-                      />
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => fileInputRef.current?.click()}
-                        onKeyDown={(e) => e.key === "Enter" && fileInputRef.current?.click()}
-                        className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
-                      >
-                        {imagePreviews.length > 0 ? (
-                          <div className="space-y-4">
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                              {imagePreviews.map((preview, i) => (
-                                <div key={i} className="relative rounded border bg-muted/30 overflow-hidden">
-                                  <img src={preview} alt={`Preview ${i + 1}`} className="w-full aspect-square object-contain max-h-32" />
-                                  <p className="text-xs text-muted-foreground truncate px-2 py-1">{imageFiles[i]?.name}</p>
-                                  <Button
-                                    type="button"
-                                    variant="destructive"
-                                    size="sm"
-                                    className="absolute top-1 right-1 h-7 w-7 p-0"
-                                    onClick={(e) => { e.stopPropagation(); removeImageAt(i); }}
-                                  >
-                                    ×
-                                  </Button>
-                                </div>
-                              ))}
-                            </div>
-                            <Button type="button" variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}>
-                              Add more images
-                            </Button>
-                          </div>
-                        ) : (
-                          <>
-                            <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-                            <p className="text-sm text-muted-foreground mb-2">
-                              Click to upload or drag and drop (multiple allowed)
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              PNG, JPG, or TIFF up to {MAX_IMAGE_SIZE_MB}MB each
-                            </p>
-                          </>
-                        )}
-                      </div>
-                    </div>
+                    {renderImageUploader(
+                      "postmark",
+                      "Postmark Images",
+                      `PNG, JPG, or TIFF up to ${MAX_IMAGE_SIZE_MB}MB each`,
+                      true,
+                    )}
+                    {renderImageUploader(
+                      "ratemark",
+                      "Ratemark Images (Optional)",
+                      `Upload separate ratemark scans/photos (PNG, JPG, TIFF up to ${MAX_IMAGE_SIZE_MB}MB each).`,
+                    )}
+                    {renderImageUploader(
+                      "auxmark",
+                      "Auxmark Images (Optional)",
+                      `Upload separate auxiliary mark scans/photos (PNG, JPG, TIFF up to ${MAX_IMAGE_SIZE_MB}MB each).`,
+                    )}
 
                     <Button
                       type="submit"
@@ -1953,7 +2452,7 @@ const Contribute = () => {
                   </form>
 
                   <p className="text-xs text-muted-foreground">
-                    Required: State, Town/City, Manuscript (Yes/No), and at least one image. Earliest Use requires Day, Month, Year, or Unknown. When approving (adding to catalog), editors must still add Value and Comment.
+                    Required: State, Town/City, Manuscript (Yes/No), and at least one postmark image. Earliest Use requires Day, Month, Year, or Unknown. When approving (adding to catalog), editors must still add Value and Comment.
                   </p>
                 </CardContent>
               </Card>
@@ -1972,7 +2471,7 @@ const Contribute = () => {
                     <strong className="text-foreground">Accuracy:</strong> Verify all dates, locations, and details before submission.
                   </p>
                   <p className="leading-relaxed">
-                    <strong className="text-foreground">Citations:</strong> Include references when available to help verification.
+                    <strong className="text-foreground">Reference works:</strong> Include references when available to help verification.
                   </p>
                   <p className="leading-relaxed">
                     <strong className="text-foreground">Review Time:</strong> Most submissions are reviewed within 5-7 business days.
@@ -1989,6 +2488,56 @@ const Contribute = () => {
       </div>
 
       <Footer />
+
+      <Dialog open={referenceModalOpen} onOpenChange={setReferenceModalOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Reference Work</DialogTitle>
+            <DialogDescription>
+              Choose a reference work to add it to this contribution.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-1">
+            {referenceWorksLoading ? (
+              <p className="text-sm text-muted-foreground">Loading reference works...</p>
+            ) : referenceWorksError ? (
+              <p className="text-sm text-destructive">{referenceWorksError}</p>
+            ) : referenceWorks.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No reference works found.</p>
+            ) : (
+              referenceWorks.map((work) => {
+                const subtitle = [work.authorship, work.publisher].filter(Boolean).join(" - ");
+                return (
+                  <div
+                    key={work.id}
+                    className="rounded-md border border-border p-3 flex items-start justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground">{work.title || "Untitled"}</p>
+                      {subtitle ? (
+                        <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
+                      ) : null}
+                      {work.publicationYear ? (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Publication year: {work.publicationYear}
+                        </p>
+                      ) : null}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => addReferenceWorkToNotes(work)}
+                    >
+                      Use
+                    </Button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

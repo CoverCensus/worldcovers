@@ -73,6 +73,13 @@ function shouldShowEditorCommentOnRecord(params: {
   return false;
 }
 
+type GalleryImage = {
+  imageUrl: string | null;
+  originalFilename?: string;
+  category: "Postmark" | "Ratemark" | "Auxmark";
+  description?: string;
+};
+
 const RecordDetail = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -102,7 +109,7 @@ const RecordDetail = () => {
     description: string;
     submitterName?: string;
     citationReferences?: string;
-    images: (string | { imageUrl?: string })[];
+    images: GalleryImage[];
     valuations?: Array<{
       estimatedValue?: string;
       condition?: string;
@@ -162,15 +169,25 @@ const RecordDetail = () => {
             || postmarkKey
             || "—";
           const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
+          const classifyImage = (description: string): GalleryImage["category"] => {
+            const d = description.trim().toLowerCase();
+            if (d.startsWith("ratemark")) return "Ratemark";
+            if (d.startsWith("auxmark")) return "Auxmark";
+            return "Postmark";
+          };
           const images =
             data.images?.length
               ? data.images.map((img: any) => ({
-                  imageUrl:
-                    img.imageUrl ??
-                    (baseImageUrl
-                      ? `${baseImageUrl.replace(/\/+$/, "")}/postmarks/${img.storageFilename ?? ""}`
-                      : null),
-                  originalFilename: img.originalFilename,
+                  imageUrl: normalizeImageUrl(
+                    img.image_url ??
+                      img.imageUrl ??
+                      (baseImageUrl
+                        ? `${baseImageUrl.replace(/\/+$/, "")}/postmarks/${img.storage_filename ?? img.storageFilename ?? ""}`
+                        : null),
+                  ),
+                  originalFilename: img.original_filename ?? img.originalFilename,
+                  description: String(img.image_description ?? img.imageDescription ?? "").trim(),
+                  category: classifyImage(String(img.image_description ?? img.imageDescription ?? "")),
                 }))
               : [];
           const sourceCatalog = String(
@@ -368,14 +385,17 @@ const RecordDetail = () => {
                   <Carousel setApi={setApi} className="w-full">
                   <CarouselContent>
                     {record?.images?.length ? (
-                      record.images.map((img: any, index) => (
+                      record.images.map((img, index) => (
                         <CarouselItem key={index}>
-                          <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
+                          <div className="relative flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
                             <img
-                              src={normalizeImageUrl(img.imageUrl)}
-                              alt={`${img.originalFilename} - Image ${index + 1}`}
+                              src={img.imageUrl || imageNotAvailable}
+                              alt={`${img.originalFilename || img.category} - Image ${index + 1}`}
                               className="w-full h-full object-contain"
                             />
+                            <Badge className="absolute top-2 left-2" variant="secondary">
+                              {img.category}
+                            </Badge>
                           </div>
                         </CarouselItem>
                       ))

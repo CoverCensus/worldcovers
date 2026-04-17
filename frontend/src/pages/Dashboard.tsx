@@ -297,8 +297,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           return;
         }
         const mapped: DashboardItem[] = data.map((c) => {
-          const state = (c.stateDisplay || c.state_display || c.submittedData?.state || "").trim();
-          const town = (c.townDisplay || c.town_display || c.submittedData?.town || "").trim();
+          const submittedData =
+            c.submittedData && typeof c.submittedData === "object"
+              ? c.submittedData
+              : c.submitted_data && typeof c.submitted_data === "object"
+                ? c.submitted_data
+                : {};
+          const state = (c.stateDisplay || c.state_display || submittedData.state || "").trim();
+          const town = (c.townDisplay || c.town_display || submittedData.town || "").trim();
 
           const mainImageFromList =
             c.mainImage?.imageUrl ??
@@ -315,7 +321,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             (c.display_name || c.displayName || "").trim() ||
             [
               [town, state].filter(Boolean).join(", "),
-              c.shapeName || c.typeDisplay || c.type || c.submittedData?.type,
+              c.shapeName || c.typeDisplay || c.type || submittedData.type,
             ]
               .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
               .join(" — ") ||
@@ -324,11 +330,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           const dateRange =
             c.dateRange ||
             c.date_range ||
-            c.submittedData?.dateRange ||
-            (c.submittedData?.firstSeen
-              ? c.submittedData.lastSeen
-                ? `${c.submittedData.firstSeen}-${c.submittedData.lastSeen}`
-                : String(c.submittedData.firstSeen)
+            submittedData.date_range ||
+            submittedData.dateRange ||
+            submittedData.first_seen ||
+            (submittedData.firstSeen
+              ? submittedData.lastSeen
+                ? `${submittedData.firstSeen}-${submittedData.lastSeen}`
+                : String(submittedData.firstSeen)
               : "");
 
           const postmarkId =
@@ -343,7 +351,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     : null;
           const isSuggestion =
             c.is_suggestion === true ||
-            !!(postmarkId || (c.submittedData?.original_postmark_id ?? c.original_postmark_id));
+            !!(postmarkId || submittedData.original_postmark_id || submittedData.originalPostmarkId || c.original_postmark_id);
 
           return {
             id: c.id,
@@ -354,14 +362,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             size:
               c.sizeDisplay ||
               c.size ||
-              formatSizeFromSubmittedData(c.submittedData as Record<string, unknown> | undefined) ||
-              (c.submittedData as { dimensions?: string } | undefined)?.dimensions ||
+              formatSizeFromSubmittedData(submittedData as Record<string, unknown> | undefined) ||
+              (submittedData as { dimensions?: string } | undefined)?.dimensions ||
               "",
-            type: c.shapeName || c.typeDisplay || c.type || c.submittedData?.type || "",
-            color: c.colorDisplay || c.color || c.submittedData?.color || "",
+            type: c.shapeName || c.typeDisplay || c.type || submittedData.type || "",
+            color: c.colorDisplay || c.color || submittedData.color || "",
             status: String(c.status || "pending"),
             created_at: String(c.createdAt || c.created_at || ""),
-            description: c.description || c.submittedData?.description || "",
+            description: c.description || submittedData.description || "",
             image_url: imageUrl,
             postmark_id: postmarkId ?? null,
             isSuggestion,
@@ -431,8 +439,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           return;
         }
         const mapped: DashboardItem[] = data.map((c) => {
-          const state = (c.stateDisplay || c.state_display || c.submittedData?.state || "").trim();
-          const town = (c.townDisplay || c.town_display || c.submittedData?.town || "").trim();
+          const submittedData =
+            c.submittedData && typeof c.submittedData === "object"
+              ? c.submittedData
+              : c.submitted_data && typeof c.submitted_data === "object"
+                ? c.submitted_data
+                : {};
+          const state = (c.stateDisplay || c.state_display || submittedData.state || "").trim();
+          const town = (c.townDisplay || c.town_display || submittedData.town || "").trim();
 
           const mainImageFromList =
             c.mainImage?.imageUrl ??
@@ -448,7 +462,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           const displayName =
             [
               [town, state].filter(Boolean).join(", "),
-              c.shapeName || c.typeDisplay || c.type || c.submittedData?.type,
+              c.shapeName || c.typeDisplay || c.type || submittedData.type,
             ]
               .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
               .join(" — ") || `Suggestion #${c.id}`;
@@ -456,11 +470,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           const dateRange =
             c.dateRange ||
             c.date_range ||
-            c.submittedData?.dateRange ||
-            (c.submittedData?.firstSeen
-              ? c.submittedData.lastSeen
-                ? `${c.submittedData.firstSeen}-${c.submittedData.lastSeen}`
-                : String(c.submittedData.firstSeen)
+            submittedData.date_range ||
+            submittedData.dateRange ||
+            submittedData.first_seen ||
+            (submittedData.firstSeen
+              ? submittedData.lastSeen
+                ? `${submittedData.firstSeen}-${submittedData.lastSeen}`
+                : String(submittedData.firstSeen)
               : "");
 
           return {
@@ -472,14 +488,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             size:
               c.sizeDisplay ||
               c.size ||
-              formatSizeFromSubmittedData(c.submittedData as Record<string, unknown> | undefined) ||
-              (c.submittedData as { dimensions?: string } | undefined)?.dimensions ||
+              formatSizeFromSubmittedData(submittedData as Record<string, unknown> | undefined) ||
+              (submittedData as { dimensions?: string } | undefined)?.dimensions ||
               "",
-            type: c.shapeName || c.typeDisplay || c.type || c.submittedData?.type || "",
-            color: c.colorDisplay || c.color || c.submittedData?.color || "",
+            type: c.shapeName || c.typeDisplay || c.type || submittedData.type || "",
+            color: c.colorDisplay || c.color || submittedData.color || "",
             status: String(c.status || "pending"),
             created_at: String(c.createdAt || c.created_at || ""),
-            description: c.description || c.submittedData?.description || "",
+            description: c.description || submittedData.description || "",
             image_url: imageUrl,
             postmark_id:
               typeof c.postmarkId === "number"

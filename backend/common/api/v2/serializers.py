@@ -537,10 +537,29 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         """Get the PostmarkV2 row, or None."""
         return getattr(obj, 'v2_data', None)
 
+    def _legacy_state_name(self, obj):
+        """State from legacy Postmark fields when v2_data is absent/incomplete."""
+        if obj.state_id and getattr(obj, 'state', None):
+            identity = obj.state.get_current_identity()
+            if identity and identity.unit_name:
+                return identity.unit_name
+            return obj.state.reference_code or ''
+        if not obj.postal_facility_identity_id:
+            return ''
+        aff = obj.postal_facility_identity.jurisdictions.filter(
+            effective_to_date__isnull=True
+        ).select_related('administrative_unit').first()
+        if not aff or not aff.administrative_unit:
+            return ''
+        identity = aff.administrative_unit.get_current_identity()
+        return identity.unit_name if identity and identity.unit_name else ''
+
     def get_postmark_key(self, obj):
         """PostmarkV2.V2PostmarkKey"""
         v2 = self._v2(obj)
-        return v2.postmark_key if v2 else ''
+        if v2 and v2.postmark_key:
+            return v2.postmark_key
+        return obj.postmark_key or ''
 
     # -- Town / State: V2 post_office --
 
@@ -552,16 +571,21 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         """PostmarkV2.post_office_id → post_office.name"""
         v2 = self._v2(obj)
         po = getattr(v2, 'post_office', None) if v2 else None
-        return getattr(po, 'name', '') or ''
+        if po and po.name:
+            return po.name
+        if obj.postal_facility_identity_id:
+            return getattr(obj.postal_facility_identity, 'facility_name', None) or ''
+        return ''
 
     def get_state(self, obj):
         """PostmarkV2.post_office_id → post_office.region_id → Region.name"""
         v2 = self._v2(obj)
         po = getattr(v2, 'post_office', None) if v2 else None
-        if not po:
-            return ''
-        region = getattr(po, 'region', None)
-        return getattr(region, 'name', '') or ''
+        if po:
+            region = getattr(po, 'region', None)
+            if region and region.name:
+                return region.name
+        return self._legacy_state_name(obj)
 
     # -- Shape --
 
@@ -569,24 +593,34 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         """PostmarkV2.shape_id → common_shape.name"""
         v2 = self._v2(obj)
         shape = getattr(v2, 'shape', None) if v2 else None
-        return getattr(shape, 'name', '') or ''
+        if shape and shape.name:
+            return shape.name
+        if obj.postmark_shape_id:
+            return getattr(obj.postmark_shape, 'shape_name', None) or ''
+        return ''
 
     # -- Manuscript, catalog text, inscription text: direct columns on PostmarkV2 --
 
     def get_is_manuscript(self, obj):
         """PostmarkV2.is_manuscript"""
         v2 = self._v2(obj)
-        return v2.is_manuscript if v2 else False
+        if v2:
+            return v2.is_manuscript
+        return bool(obj.is_manuscript)
 
     def get_catalog_txt(self, obj):
         """PostmarkV2.catalog_txt"""
         v2 = self._v2(obj)
-        return v2.catalog_txt or '' if v2 else ''
+        if v2 and v2.catalog_txt:
+            return v2.catalog_txt
+        return obj.catalog_txt or ''
 
     def get_inscription_txt(self, obj):
         """PostmarkV2.inscription_txt"""
         v2 = self._v2(obj)
-        return v2.inscription_txt or '' if v2 else ''
+        if v2 and v2.inscription_txt:
+            return v2.inscription_txt
+        return obj.inscription_txt or ''
 
     # -- Lettering / Framing --
 
@@ -594,7 +628,11 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         """PostmarkV2.lettering_id → common_lettering.name"""
         v2 = self._v2(obj)
         lettering = getattr(v2, 'lettering', None) if v2 else None
-        return getattr(lettering, 'name', '') or ''
+        if lettering and lettering.name:
+            return lettering.name
+        if obj.lettering_style_id:
+            return getattr(obj.lettering_style, 'lettering_style_name', None) or ''
+        return ''
 
     def get_framing_style_name(self, obj):
         """mark_framing (parent_mark_type=POSTMARK, parent_mark_id=PK) → common_framing.name"""
@@ -603,25 +641,38 @@ class PostmarkListSerializer(serializers.ModelSerializer):
             parent_mark_id=obj.postmark_id,
         ).select_related('framing').order_by('framing_pos')
         names = [mf.framing.name for mf in framings if mf.framing]
-        return ', '.join(names) if names else ''
+        if names:
+            return ', '.join(names)
+        if obj.framing_style_id:
+            return getattr(obj.framing_style, 'framing_style_name', None) or ''
+        return ''
 
     # -- Dimensions: V2 width/height --
 
     def get_size_display(self, obj):
         """PostmarkV2.width / PostmarkV2.height"""
         v2 = self._v2(obj)
-        if not v2:
-            return None
         fmt = lambda v: f"{float(v):g}" if v else None
-        w = fmt(v2.width)
-        h = fmt(v2.height)
+        w = fmt(v2.width) if v2 else None
+        h = fmt(v2.height) if v2 else None
         if w and h:
             return f"{w}×{h}"
         if w:
             return w
         if h:
             return h
-        return None
+        latest_size = obj.sizes.order_by('-created_date').first()
+        if not latest_size:
+            return None
+        lw = fmt(latest_size.width)
+        lh = fmt(latest_size.height)
+        if lw and lh:
+            return f"{lw}×{lh}"
+        if lw:
+            return lw
+        if lh:
+            return lh
+        return latest_size.size_notes or None
 
     # -- Color: V2 FK into Colors --
 
@@ -629,25 +680,30 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         """PostmarkV2.color_id → Colors.color_name"""
         v2 = self._v2(obj)
         color = getattr(v2, 'color', None) if v2 else None
-        return getattr(color, 'color_name', '') or ''
+        if color and color.color_name:
+            return color.color_name
+        legacy_colors = [pc.color.color_name for pc in obj.postmark_colors.all() if pc.color and pc.color.color_name]
+        return ', '.join(legacy_colors) if legacy_colors else ''
 
     # -- Dates: from date_observed (V2) --
 
     def get_earliest_use(self, obj):
         """min(date_observed.date) where postmark_id = PK"""
         dates = list(obj.dates_observed.all())
-        if not dates:
-            return None
-        earliest = min((d.date for d in dates if d.date), default=None)
-        return earliest.isoformat() if earliest else None
+        earliest = min((d.date for d in dates if d.date), default=None) if dates else None
+        if earliest:
+            return earliest.isoformat()
+        seen = min((d.earliest_date_seen for d in obj.dates_seen.all() if d.earliest_date_seen), default=None)
+        return seen.isoformat() if seen else None
 
     def get_latest_use(self, obj):
         """max(date_observed.date) where postmark_id = PK"""
         dates = list(obj.dates_observed.all())
-        if not dates:
-            return None
-        latest = max((d.date for d in dates if d.date), default=None)
-        return latest.isoformat() if latest else None
+        latest = max((d.date for d in dates if d.date), default=None) if dates else None
+        if latest:
+            return latest.isoformat()
+        seen = max((d.latest_date_seen for d in obj.dates_seen.all() if d.latest_date_seen), default=None)
+        return seen.isoformat() if seen else None
 
     # -- Image, groups, valuation: unchanged (no V2 equivalent) --
 
@@ -742,52 +798,90 @@ class PostmarkSerializer(serializers.ModelSerializer):
     def _v2(self, obj):
         return getattr(obj, 'v2_data', None)
 
+    def _legacy_state_name(self, obj):
+        """State from legacy Postmark fields when v2_data is absent/incomplete."""
+        if obj.state_id and getattr(obj, 'state', None):
+            identity = obj.state.get_current_identity()
+            if identity and identity.unit_name:
+                return identity.unit_name
+            return obj.state.reference_code or ''
+        if not obj.postal_facility_identity_id:
+            return ''
+        aff = obj.postal_facility_identity.jurisdictions.filter(
+            effective_to_date__isnull=True
+        ).select_related('administrative_unit').first()
+        if not aff or not aff.administrative_unit:
+            return ''
+        identity = aff.administrative_unit.get_current_identity()
+        return identity.unit_name if identity and identity.unit_name else ''
+
     def get_postmark_key(self, obj):
         """PostmarkV2.V2PostmarkKey"""
         v2 = self._v2(obj)
-        return v2.postmark_key if v2 else ''
+        if v2 and v2.postmark_key:
+            return v2.postmark_key
+        return obj.postmark_key or ''
 
     def get_town(self, obj):
         """PostmarkV2.post_office_id → post_office.name"""
         v2 = self._v2(obj)
         po = getattr(v2, 'post_office', None) if v2 else None
-        return getattr(po, 'name', '') or ''
+        if po and po.name:
+            return po.name
+        if obj.postal_facility_identity_id:
+            return getattr(obj.postal_facility_identity, 'facility_name', None) or ''
+        return ''
 
     def get_state(self, obj):
         """PostmarkV2.post_office_id → post_office.region_id → Region.name"""
         v2 = self._v2(obj)
         po = getattr(v2, 'post_office', None) if v2 else None
-        if not po:
-            return ''
-        region = getattr(po, 'region', None)
-        return getattr(region, 'name', '') or ''
+        if po:
+            region = getattr(po, 'region', None)
+            if region and region.name:
+                return region.name
+        return self._legacy_state_name(obj)
 
     def get_shape_name(self, obj):
         """PostmarkV2.shape_id → common_shape.name"""
         v2 = self._v2(obj)
         shape = getattr(v2, 'shape', None) if v2 else None
-        return getattr(shape, 'name', '') or ''
+        if shape and shape.name:
+            return shape.name
+        if obj.postmark_shape_id:
+            return getattr(obj.postmark_shape, 'shape_name', None) or ''
+        return ''
 
     def get_is_manuscript(self, obj):
         """PostmarkV2.is_manuscript"""
         v2 = self._v2(obj)
-        return v2.is_manuscript if v2 else False
+        if v2:
+            return v2.is_manuscript
+        return bool(obj.is_manuscript)
 
     def get_catalog_txt(self, obj):
         """PostmarkV2.catalog_txt"""
         v2 = self._v2(obj)
-        return v2.catalog_txt or '' if v2 else ''
+        if v2 and v2.catalog_txt:
+            return v2.catalog_txt
+        return obj.catalog_txt or ''
 
     def get_inscription_txt(self, obj):
         """PostmarkV2.inscription_txt"""
         v2 = self._v2(obj)
-        return v2.inscription_txt or '' if v2 else ''
+        if v2 and v2.inscription_txt:
+            return v2.inscription_txt
+        return obj.inscription_txt or ''
 
     def get_lettering_style_name(self, obj):
         """PostmarkV2.lettering_id → common_lettering.name"""
         v2 = self._v2(obj)
         lettering = getattr(v2, 'lettering', None) if v2 else None
-        return getattr(lettering, 'name', '') or ''
+        if lettering and lettering.name:
+            return lettering.name
+        if obj.lettering_style_id:
+            return getattr(obj.lettering_style, 'lettering_style_name', None) or ''
+        return ''
 
     def get_framing_style_name(self, obj):
         """mark_framing (parent_mark_type=POSTMARK, parent_mark_id=PK) → common_framing.name"""
@@ -796,45 +890,63 @@ class PostmarkSerializer(serializers.ModelSerializer):
             parent_mark_id=obj.postmark_id,
         ).select_related('framing').order_by('framing_pos')
         names = [mf.framing.name for mf in framings if mf.framing]
-        return ', '.join(names) if names else ''
+        if names:
+            return ', '.join(names)
+        if obj.framing_style_id:
+            return getattr(obj.framing_style, 'framing_style_name', None) or ''
+        return ''
 
     def get_size_display(self, obj):
         """PostmarkV2.width / PostmarkV2.height"""
         v2 = self._v2(obj)
-        if not v2:
-            return None
         fmt = lambda v: f"{float(v):g}" if v else None
-        w = fmt(v2.width)
-        h = fmt(v2.height)
+        w = fmt(v2.width) if v2 else None
+        h = fmt(v2.height) if v2 else None
         if w and h:
             return f"{w}×{h}"
         if w:
             return w
         if h:
             return h
-        return None
+        latest_size = obj.sizes.order_by('-created_date').first()
+        if not latest_size:
+            return None
+        lw = fmt(latest_size.width)
+        lh = fmt(latest_size.height)
+        if lw and lh:
+            return f"{lw}×{lh}"
+        if lw:
+            return lw
+        if lh:
+            return lh
+        return latest_size.size_notes or None
 
     def get_colors_display(self, obj):
         """PostmarkV2.color_id → Colors.color_name"""
         v2 = self._v2(obj)
         color = getattr(v2, 'color', None) if v2 else None
-        return getattr(color, 'color_name', '') or ''
+        if color and color.color_name:
+            return color.color_name
+        legacy_colors = [pc.color.color_name for pc in obj.postmark_colors.all() if pc.color and pc.color.color_name]
+        return ', '.join(legacy_colors) if legacy_colors else ''
 
     def get_earliest_use(self, obj):
         """min(date_observed.date) where postmark_id = PK"""
         dates = list(obj.dates_observed.all())
-        if not dates:
-            return None
-        earliest = min((d.date for d in dates if d.date), default=None)
-        return earliest.isoformat() if earliest else None
+        earliest = min((d.date for d in dates if d.date), default=None) if dates else None
+        if earliest:
+            return earliest.isoformat()
+        seen = min((d.earliest_date_seen for d in obj.dates_seen.all() if d.earliest_date_seen), default=None)
+        return seen.isoformat() if seen else None
 
     def get_latest_use(self, obj):
         """max(date_observed.date) where postmark_id = PK"""
         dates = list(obj.dates_observed.all())
-        if not dates:
-            return None
-        latest = max((d.date for d in dates if d.date), default=None)
-        return latest.isoformat() if latest else None
+        latest = max((d.date for d in dates if d.date), default=None) if dates else None
+        if latest:
+            return latest.isoformat()
+        seen = max((d.latest_date_seen for d in obj.dates_seen.all() if d.latest_date_seen), default=None)
+        return seen.isoformat() if seen else None
 
     def get_valuation_display(self, obj):
         val = obj.valuations.order_by('-valuation_date').first()
@@ -977,6 +1089,9 @@ class ContributionListSerializer(serializers.ModelSerializer):
     postmark_id = serializers.SerializerMethodField()
     state_display = serializers.SerializerMethodField()
     town_display = serializers.SerializerMethodField()
+    type_display = serializers.SerializerMethodField()
+    date_range = serializers.SerializerMethodField()
+    display_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Contribution
@@ -992,8 +1107,12 @@ class ContributionListSerializer(serializers.ModelSerializer):
             "review_notes",
             "created_at",
             "updated_at",
+            "submitted_data",
             "state_display",
             "town_display",
+            "type_display",
+            "date_range",
+            "display_name",
         ]
 
     def get_postmark_id(self, obj):
@@ -1006,6 +1125,30 @@ class ContributionListSerializer(serializers.ModelSerializer):
     def get_town_display(self, obj):
         sd = obj.submitted_data or {}
         return sd.get("town", "-")
+
+    def get_type_display(self, obj):
+        sd = obj.submitted_data or {}
+        return sd.get("type", "-")
+
+    def get_date_range(self, obj):
+        sd = obj.submitted_data or {}
+        date_range = (sd.get("date_range") or "").strip()
+        if date_range:
+            return date_range
+        first_seen = (sd.get("first_seen") or "").strip()
+        last_seen = (sd.get("last_seen") or "").strip()
+        if first_seen and last_seen:
+            return f"{first_seen}-{last_seen}"
+        return first_seen or ""
+
+    def get_display_name(self, obj):
+        sd = obj.submitted_data or {}
+        town = (sd.get("town") or "").strip()
+        state = (sd.get("state") or "").strip()
+        type_display = (sd.get("type") or "").strip()
+        location = ", ".join([x for x in [town, state] if x])
+        parts = [x for x in [location, type_display] if x and x.lower() != "unknown"]
+        return " — ".join(parts) if parts else f"Submission #{obj.id}"
 
 
 class ContributionDetailSerializer(serializers.ModelSerializer):
