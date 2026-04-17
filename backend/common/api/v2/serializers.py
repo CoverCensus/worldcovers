@@ -1081,6 +1081,20 @@ class AdminCsvUploadSerializer(serializers.ModelSerializer):
 
 # ========== CONTRIBUTION SERIALIZERS ==========
 
+_SUBMITTED_DATA_IMAGE_META_KEYS = {
+    "postmark_image_metas",
+    "ratemark_image_metas",
+    "auxmark_image_metas",
+    "image_metas",
+    "image_meta",
+}
+
+
+def _strip_submitted_data_image_metas(data):
+    if not isinstance(data, dict):
+        return data
+    return {k: v for k, v in data.items() if k not in _SUBMITTED_DATA_IMAGE_META_KEYS}
+
 
 class ContributionListSerializer(serializers.ModelSerializer):
     """List view for contributions (moderation queue)."""
@@ -1150,6 +1164,11 @@ class ContributionListSerializer(serializers.ModelSerializer):
         parts = [x for x in [location, type_display] if x and x.lower() != "unknown"]
         return " — ".join(parts) if parts else f"Submission #{obj.id}"
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["submitted_data"] = _strip_submitted_data_image_metas(data.get("submitted_data"))
+        return data
+
 
 class ContributionDetailSerializer(serializers.ModelSerializer):
     """Detail view for a single contribution."""
@@ -1172,6 +1191,11 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "contributor", "postmark", "created_at"]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["submitted_data"] = _strip_submitted_data_image_metas(data.get("submitted_data"))
+        return data
 
 
 class ContributionApproveRejectSerializer(serializers.Serializer):

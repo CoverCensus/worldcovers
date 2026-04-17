@@ -1249,10 +1249,15 @@ class CustomUserAdmin(DjangoUserAdmin):
     form = UserLocationUserChangeForm
 
     def save_related(self, request, form, formsets, change):
-        """Ensure locations are saved (runs after save_m2m)."""
+        """Ensure custom role/location mappings are persisted after related saves."""
         super().save_related(request, form, formsets, change)
         if hasattr(form, '_save_locations'):
             form._save_locations()
+        # Explicitly sync role -> Django auth group mapping here as well.
+        # In Django admin, form.save(commit=False) can replace save_m2m on the
+        # form instance, so relying only on the form's save_m2m override is brittle.
+        if hasattr(form, '_save_role_groups'):
+            form._save_role_groups()
 
     # Add a dedicated fieldset for role + locations, positioned between the built-in
     # "Permissions" and "Important dates" sections on the user detail page.
@@ -1470,7 +1475,6 @@ class CitationAdmin(TimestampedModelAdmin):
     list_display = ["reference_work", "subject_type", "subject_id", "citation_detail"]
     list_filter = ["subject_type"]
     search_fields = ["reference_work__title", "citation_detail"]
-    raw_id_fields = ["reference_work"]
     ordering = ["reference_work", "subject_type", "subject_id"]
 
 

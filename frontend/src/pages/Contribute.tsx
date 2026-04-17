@@ -14,7 +14,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Upload, CheckCircle, XCircle, Clock, Loader2 } from "lucide-react";
+import { Upload, CheckCircle, XCircle, Clock, Loader2, ChevronDown } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
@@ -29,13 +29,6 @@ import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getFramings, type FramingOption } from "@/services/framings";
 import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -372,7 +365,6 @@ const Contribute = () => {
   const [framingOptions, setFramingOptions] = useState<FramingOption[]>([]);
   const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
   const [catalogOptionsLoading, setCatalogOptionsLoading] = useState(false);
-  const [referenceModalOpen, setReferenceModalOpen] = useState(false);
   const [referenceWorks, setReferenceWorks] = useState<ReferenceWorkRecord[]>([]);
   const [pendingReferenceWorkIds, setPendingReferenceWorkIds] = useState<number[]>([]);
   const [referenceWorksLoading, setReferenceWorksLoading] = useState(false);
@@ -485,7 +477,7 @@ const Contribute = () => {
   }, [editContributionId, letteringId, framingIds.length]);
 
   useEffect(() => {
-    if ((!referenceModalOpen && pendingReferenceWorkIds.length === 0) || referenceWorksFetched || referenceWorksLoading) return;
+    if (referenceWorksFetched || referenceWorksLoading) return;
     setReferenceWorksLoading(true);
     setReferenceWorksError(null);
     getReferenceWorks()
@@ -499,7 +491,7 @@ const Contribute = () => {
         setReferenceWorksFetched(true);
         setReferenceWorksLoading(false);
       });
-  }, [referenceModalOpen, pendingReferenceWorkIds.length, referenceWorksFetched, referenceWorksLoading]);
+  }, [referenceWorksFetched, referenceWorksLoading]);
 
   useEffect(() => {
     if (pendingReferenceWorkIds.length === 0 || referenceWorks.length === 0) return;
@@ -863,22 +855,6 @@ const Contribute = () => {
       s.includes("double circle") ||
       s.includes("single circle")
     );
-  };
-
-  const addReferenceWorkToNotes = (work: ReferenceWorkRecord) => {
-    setPendingReferenceWorkIds([]);
-    setSelectedReferenceWorks((prev) =>
-      prev.some((w) => w.id === work.id) ? prev : [...prev, work],
-    );
-    setReferenceDetailsById((prev) => ({
-      ...prev,
-      [work.id]: prev[work.id] ?? { pageNumber: "", citationUrl: "" },
-    }));
-    setReferenceDetailErrorsById((prev) => ({
-      ...prev,
-      [work.id]: prev[work.id] ?? {},
-    }));
-    setReferenceModalOpen(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -2260,16 +2236,81 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="space-y-2">
                         <Label>Reference Works</Label>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setReferenceModalOpen(true)}
-                        >
-                          Browse reference works
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="w-full justify-between"
+                              disabled={referenceWorksLoading}
+                            >
+                              <span>
+                                {referenceWorksLoading
+                                  ? "Loading reference works..."
+                                  : selectedReferenceWorks.length > 0
+                                    ? `${selectedReferenceWorks.length} selected`
+                                    : "Select reference works"}
+                              </span>
+                              <ChevronDown className="h-4 w-4 opacity-60" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent
+                            className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-72 overflow-y-auto"
+                            align="start"
+                          >
+                            {referenceWorksError ? (
+                              <div className="px-2 py-1.5 text-sm text-destructive">
+                                {referenceWorksError}
+                              </div>
+                            ) : referenceWorks.length === 0 ? (
+                              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                                No reference works found.
+                              </div>
+                            ) : (
+                              referenceWorks.map((work) => {
+                                const checked = selectedReferenceWorks.some((w) => w.id === work.id);
+                                return (
+                                  <DropdownMenuCheckboxItem
+                                    key={work.id}
+                                    checked={checked}
+                                    onCheckedChange={(next) => {
+                                      setPendingReferenceWorkIds([]);
+                                      if (next) {
+                                        setSelectedReferenceWorks((prev) =>
+                                          prev.some((w) => w.id === work.id) ? prev : [...prev, work],
+                                        );
+                                        setReferenceDetailsById((prev) => ({
+                                          ...prev,
+                                          [work.id]: prev[work.id] ?? { pageNumber: "", citationUrl: "" },
+                                        }));
+                                        setReferenceDetailErrorsById((prev) => ({
+                                          ...prev,
+                                          [work.id]: prev[work.id] ?? {},
+                                        }));
+                                        return;
+                                      }
+                                      setSelectedReferenceWorks((prev) => prev.filter((w) => w.id !== work.id));
+                                      setReferenceDetailsById((prev) => {
+                                        const updated = { ...prev };
+                                        delete updated[work.id];
+                                        return updated;
+                                      });
+                                      setReferenceDetailErrorsById((prev) => {
+                                        const updated = { ...prev };
+                                        delete updated[work.id];
+                                        return updated;
+                                      });
+                                    }}
+                                  >
+                                    {work.title || `Reference work #${work.id}`}
+                                  </DropdownMenuCheckboxItem>
+                                );
+                              })
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                       {selectedReferenceWorks.length > 0 && (
                         <div className="space-y-2">
@@ -2488,56 +2529,6 @@ const Contribute = () => {
       </div>
 
       <Footer />
-
-      <Dialog open={referenceModalOpen} onOpenChange={setReferenceModalOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Reference Work</DialogTitle>
-            <DialogDescription>
-              Choose a reference work to add it to this contribution.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-1">
-            {referenceWorksLoading ? (
-              <p className="text-sm text-muted-foreground">Loading reference works...</p>
-            ) : referenceWorksError ? (
-              <p className="text-sm text-destructive">{referenceWorksError}</p>
-            ) : referenceWorks.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No reference works found.</p>
-            ) : (
-              referenceWorks.map((work) => {
-                const subtitle = [work.authorship, work.publisher].filter(Boolean).join(" - ");
-                return (
-                  <div
-                    key={work.id}
-                    className="rounded-md border border-border p-3 flex items-start justify-between gap-3"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground">{work.title || "Untitled"}</p>
-                      {subtitle ? (
-                        <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
-                      ) : null}
-                      {work.publicationYear ? (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Publication year: {work.publicationYear}
-                        </p>
-                      ) : null}
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => addReferenceWorkToNotes(work)}
-                    >
-                      Use
-                    </Button>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };
