@@ -1,6 +1,6 @@
 """
 Import parsed CSV data (from AdminCsvUpload) into catalog tables.
-Maps CSV columns to Django models: states, lettering, framing, date_format.
+Maps CSV columns to Django models: states, lettering, framing, colors.
 Staff-only; requires request.user for TimestampedModel (created_by, modified_by).
 """
 from datetime import date
@@ -10,9 +10,8 @@ from django.contrib.auth import get_user_model
 from .models import (
     AdministrativeUnit,
     AdministrativeUnitIdentity,
-    LetteringStyle,
-    FramingStyle,
-    DateFormat,
+    Lettering,
+    Framing,
     Color,
     LegacyAbbreviation,
     LegacyRateLocation,
@@ -104,11 +103,10 @@ def import_states(data, user):
 
 
 def import_lettering(data, user):
-    """Import rows into LetteringStyles. Expects txtTownmarkLettering, optional memTownmarkLettering."""
+    """Import rows into Lettering. Expects txtTownmarkLettering or lettering column."""
     headers = data.get("headers") or []
     rows = data.get("rows") or []
     name_idx = _col_index(headers, ["txtTownmarkLettering", "lettering", "name", "lettering_style_name"])
-    desc_idx = _col_index(headers, ["memTownmarkLettering", "description", "lettering_description"])
     if name_idx < 0:
         return {"created": 0, "skipped": 0, "errors": ["Missing column: lettering name"]}
 
@@ -117,17 +115,12 @@ def import_lettering(data, user):
     errors = []
     for i, row in enumerate(rows):
         name = _row_val(row, name_idx)
-        desc = _row_val(row, desc_idx) if desc_idx >= 0 else ""
         if not name or name.lower() in ("n/a", "na", ""):
             skipped += 1
             continue
-        _, was_created = LetteringStyle.objects.get_or_create(
-            lettering_style_name=name[:100],
-            defaults={
-                "lettering_description": desc[:500] if desc else "",
-                "created_by": user,
-                "modified_by": user,
-            },
+        _, was_created = Lettering.objects.get_or_create(
+            name=name[:100],
+            defaults={"created_by": user, "modified_by": user},
         )
         if was_created:
             created += 1
@@ -138,11 +131,10 @@ def import_lettering(data, user):
 
 
 def import_framing(data, user):
-    """Import rows into FramingStyles. Expects txtTownmarkFraming, optional memTownmarkFraming."""
+    """Import rows into Framing. Expects txtTownmarkFraming or framing column."""
     headers = data.get("headers") or []
     rows = data.get("rows") or []
     name_idx = _col_index(headers, ["txtTownmarkFraming", "framing", "name", "framing_style_name"])
-    desc_idx = _col_index(headers, ["memTownmarkFraming", "description", "framing_description"])
     if name_idx < 0:
         return {"created": 0, "skipped": 0, "errors": ["Missing column: framing name"]}
 
@@ -151,51 +143,12 @@ def import_framing(data, user):
     errors = []
     for i, row in enumerate(rows):
         name = _row_val(row, name_idx)
-        desc = _row_val(row, desc_idx) if desc_idx >= 0 else ""
         if not name or name.lower() in ("n/a", "na", ""):
             skipped += 1
             continue
-        _, was_created = FramingStyle.objects.get_or_create(
-            framing_style_name=name[:100],
-            defaults={
-                "framing_description": desc[:500] if desc else "",
-                "created_by": user,
-                "modified_by": user,
-            },
-        )
-        if was_created:
-            created += 1
-        else:
-            skipped += 1
-
-    return {"created": created, "skipped": skipped, "errors": errors[:20]}
-
-
-def import_date_format(data, user):
-    """Import rows into DateFormats. Expects txtTownmarkDateFormat, optional memTownmarkDateFormat."""
-    headers = data.get("headers") or []
-    rows = data.get("rows") or []
-    name_idx = _col_index(headers, ["txtTownmarkDateFormat", "dateformat", "format_name", "name"])
-    desc_idx = _col_index(headers, ["memTownmarkDateFormat", "format_description", "description"])
-    if name_idx < 0:
-        return {"created": 0, "skipped": 0, "errors": ["Missing column: format name"]}
-
-    created = 0
-    skipped = 0
-    errors = []
-    for i, row in enumerate(rows):
-        name = _row_val(row, name_idx)
-        desc = _row_val(row, desc_idx) if desc_idx >= 0 else ""
-        if not name or name.lower() in ("n/a", "na", ""):
-            skipped += 1
-            continue
-        _, was_created = DateFormat.objects.get_or_create(
-            format_name=name[:100],
-            defaults={
-                "format_description": desc[:500] if desc else "",
-                "created_by": user,
-                "modified_by": user,
-            },
+        _, was_created = Framing.objects.get_or_create(
+            name=name[:100],
+            defaults={"created_by": user, "modified_by": user},
         )
         if was_created:
             created += 1
@@ -226,9 +179,9 @@ def import_colors(data, user):
         if not hex_val.startswith("#"):
             hex_val = "#" + hex_val if hex_val else "#FFFFFF"
         _, was_created = Color.objects.get_or_create(
-            color_name=name[:50],
+            name=name[:50],
             defaults={
-                "color_value": hex_val[:50],
+                "hex_val": hex_val[:50],
                 "created_by": user,
                 "modified_by": user,
             },
@@ -529,7 +482,6 @@ IMPORTERS = {
     "states": import_states,
     "lettering": import_lettering,
     "framing": import_framing,
-    "date_format": import_date_format,
     "colors": import_colors,
     "abbreviations": import_abbreviations,
     "rate_location": import_rate_location,

@@ -1,0 +1,18 @@
+# /etc/systemd/system/worldcovers.service
+[Unit]
+Description=WorldCovers Gunicorn
+After=network.target
+
+[Service]
+User=wocod
+Group=wocod
+WorkingDirectory=/srv/woco/backend
+Environment=PYTHONPATH=/srv/woco/backend
+Environment=DJANGO_SETTINGS_MODULE=woco.settings
+Environment=DB_NAME=worldcovers
+ExecStart=/srv/woco/.venv/bin/gunicorn woco.wsgi:application --bind 127.0.0.1:8000 --workers 5
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

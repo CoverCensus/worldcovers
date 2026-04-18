@@ -60,7 +60,11 @@ export const SubmitImageDialog = ({ open, onOpenChange }: SubmitImageDialogProps
 
   const handleSubmit = () => {
     if (validateForm()) {
-      // TODO: Handle form submission
+      // TODO: POST to /api/v2/postmark-images/ as multipart/form-data.
+      // Backend is complete (PostmarkImageViewSet, images.py extract_image_metadata).
+      // Fields: file (binary), postmark key (passed via props — prop not yet added),
+      // display_order, image_view, image_description (from comment), submitter_name,
+      // submitter_email, notify_on_review (receiveEmail). Remove console.log when wired up.
       console.log({
         file,
         comment,

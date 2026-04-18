@@ -6,24 +6,12 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from common.models import (
-    PostalFacility,
-    PostalFacilityIdentity,
     AdministrativeUnit,
     AdministrativeUnitIdentity,
     AdministrativeUnitResponsibility,
-    JurisdictionalAffiliation,
-    PostmarkShape,
-    LetteringStyle,
-    FramingStyle,
     Color,
-    DateFormat,
     Postmark,
-    PostmarkColor,
-    PostmarkDatesSeen,
-    PostmarkSize,
     PostmarkValuation,
-    PostmarkPublication,
-    PostmarkPublicationReference,
     PostmarkImage,
     Postcover,
     PostcoverPostmark,
@@ -155,131 +143,6 @@ class AdministrativeUnitSerializer(serializers.ModelSerializer):
         return AdministrativeUnitIdentitySerializer(identity).data if identity else None
 
 
-class PostalFacilityListSerializer(serializers.ModelSerializer):
-    """Lightweight serializer for lists"""
-    current_name = serializers.SerializerMethodField()
-    current_type = serializers.SerializerMethodField()
-    state_name = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = PostalFacility
-        fields = [
-            'postal_facility_id',
-            'reference_code',
-            'current_name',
-            'current_type',
-            'latitude',
-            'longitude',
-            'state_name',
-        ]
-    
-    def get_current_name(self, obj):
-        identity = obj.get_current_identity()
-        return identity.facility_name if identity else None
-    
-    def get_current_type(self, obj):
-        identity = obj.get_current_identity()
-        return identity.facility_type if identity else None
-
-    def get_state_name(self, obj):
-        """
-        Derive the current state/location name for this facility from its
-        active jurisdictional affiliations, if any.
-        """
-        identity = obj.get_current_identity()
-        if not identity:
-            return None
-        # Look for a current jurisdiction (no effective_to_date) and use the
-        # administrative unit's current identity name.
-        aff = identity.jurisdictions.filter(
-            effective_to_date__isnull=True
-        ).select_related('administrative_unit').first()
-        if not aff or not aff.administrative_unit:
-            return None
-        admin_identity = aff.administrative_unit.get_current_identity()
-        if admin_identity and admin_identity.unit_name:
-            return admin_identity.unit_name
-        return aff.administrative_unit.reference_code
-
-
-class PostalFacilityIdentitySerializer(serializers.ModelSerializer):
-    """Serializer for postal facility identities"""
-    coordinates = serializers.SerializerMethodField()
-    created_by = UserSerializer(read_only=True)
-    modified_by = UserSerializer(read_only=True)
-    
-    class Meta:
-        model = PostalFacilityIdentity
-        fields = '__all__'
-        read_only_fields = ['postal_facility_identity_id', 'created_date', 'modified_date']
-    
-    def get_coordinates(self, obj):
-        coords = obj.get_coordinates()
-        if coords and coords[0] and coords[1]:
-            return {'latitude': coords[0], 'longitude': coords[1]}
-        return None
-
-
-class JurisdictionalAffiliationSerializer(serializers.ModelSerializer):
-    """Serializer for jurisdictional affiliations"""
-    facility_name = serializers.CharField(
-        source='postal_facility_identity.facility_name',
-        read_only=True
-    )
-    administrative_unit_name = serializers.SerializerMethodField()
-    created_by = UserSerializer(read_only=True)
-    modified_by = UserSerializer(read_only=True)
-    
-    class Meta:
-        model = JurisdictionalAffiliation
-        fields = '__all__'
-        read_only_fields = ['jurisdictional_affiliation_id', 'created_date', 'modified_date']
-    
-    def get_administrative_unit_name(self, obj):
-        identity = obj.get_administrative_unit_identity()
-        return identity.unit_name if identity else None
-
-
-class PostalFacilitySerializer(serializers.ModelSerializer):
-    """Full serializer with nested identities"""
-    identities = PostalFacilityIdentitySerializer(many=True, read_only=True)
-    current_identity = serializers.SerializerMethodField()
-    created_by = UserSerializer(read_only=True)
-    modified_by = UserSerializer(read_only=True)
-    
-    class Meta:
-        model = PostalFacility
-        fields = '__all__'
-        read_only_fields = ['postal_facility_id', 'created_date', 'modified_date']
-    
-    def get_current_identity(self, obj):
-        identity = obj.get_current_identity()
-        return PostalFacilityIdentitySerializer(identity).data if identity else None
-
-
-# ========== PHYSICAL CHARACTERISTICS SERIALIZERS ==========
-
-class PostmarkShapeSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PostmarkShape
-        fields = '__all__'
-        read_only_fields = ['postmark_shape_id', 'created_date', 'modified_date']
-
-
-class LetteringStyleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = LetteringStyle
-        fields = '__all__'
-        read_only_fields = ['lettering_style_id', 'created_date', 'modified_date']
-
-
-class FramingStyleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = FramingStyle
-        fields = '__all__'
-        read_only_fields = ['framing_style_id', 'created_date', 'modified_date']
-
-
 class ColorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Color
@@ -287,55 +150,15 @@ class ColorSerializer(serializers.ModelSerializer):
         read_only_fields = ['color_id', 'created_date', 'modified_date']
 
 
-class DateFormatSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = DateFormat
-        fields = '__all__'
-        read_only_fields = ['date_format_id', 'created_date', 'modified_date']
-
-
 # ========== POSTMARK SERIALIZERS ==========
-
-class PostmarkColorSerializer(serializers.ModelSerializer):
-    """Postmark color relationship"""
-    color_name = serializers.CharField(source='color.color_name', read_only=True)
-    color_id = serializers.PrimaryKeyRelatedField(
-        queryset=Color.objects.all(),
-        source='color',
-        write_only=True
-    )
-    
-    class Meta:
-        model = PostmarkColor
-        fields = ['postmark_color_id', 'color_id', 'color_name', 'created_date']
-        read_only_fields = ['postmark_color_id', 'created_date']
-
-
-class PostmarkDatesSeenSerializer(serializers.ModelSerializer):
-    """Date ranges when postmarks were observed"""
-    class Meta:
-        model = PostmarkDatesSeen
-        fields = ['postmark_dates_seen_id', 'earliest_date_seen', 'latest_date_seen', 'created_date']
-        read_only_fields = ['postmark_dates_seen_id', 'created_date']
-
-
-class PostmarkSizeSerializer(serializers.ModelSerializer):
-    """Postmark size observations"""
-    class Meta:
-        model = PostmarkSize
-        fields = ['postmark_size_id', 'width', 'height', 'size_notes', 'created_date']
-        read_only_fields = ['postmark_size_id', 'created_date']
-
 
 class PostmarkValuationSerializer(serializers.ModelSerializer):
     """Postmark valuations"""
-    valued_by = UserSerializer(source='valued_by_user', read_only=True)
-    
+
     class Meta:
         model = PostmarkValuation
-        fields = ['postmark_valuation_id', 'valued_by', 'estimated_value', 
-                  'valuation_date', 'created_date']
-        read_only_fields = ['postmark_valuation_id', 'created_date', 'modified_date']
+        fields = ['postmark_valuation_id', 'postmark', 'appraisal_pos', 'amt', 'appraisal_date']
+        read_only_fields = ['postmark_valuation_id']
 
 
 class PostmarkImageSerializer(serializers.ModelSerializer):
@@ -400,35 +223,27 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         model = Postmark
         fields = [
             'postmark_id',
-            'postmark_key',
+            'code',
             'facility_name',
             'shape_name',
-            'rate_location',
-            'rate_value',
             'is_manuscript',
             'main_image',
             'responsible_groups',
             'state',
-            'state_id',
             'town',
             'date_range',
             'size_display',
             'color',
             'colors_display',
             'valuation_display',
-            'contribution_approval_status',
             'created_date',
         ]
 
     def get_facility_name(self, obj):
-        if obj.postal_facility_identity_id:
-            return getattr(obj.postal_facility_identity, 'facility_name', None) or ''
         return ''
 
     def get_shape_name(self, obj):
-        if obj.postmark_shape_id:
-            return getattr(obj.postmark_shape, 'shape_name', None) or ''
-        return ''
+        return getattr(obj.shape, 'name', '') if obj.shape_id else ''
 
     def get_main_image(self, obj):
         """Get main image (display_order=0)"""
@@ -438,134 +253,64 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         return None
 
     def get_responsible_groups(self, obj):
-        """Get groups responsible for this postmark"""
-        groups = obj.get_responsible_groups()
+        from common.api.v2.views import _get_postmark_responsible_groups
+        groups = _get_postmark_responsible_groups(obj)
         return [{'id': g.id, 'name': g.name} for g in groups]
 
     def get_state(self, obj):
-        """State: direct FK (listing.state) if set, else from facility's current jurisdiction."""
-        if obj.state_id:
-            identity = obj.state.get_current_identity() if getattr(obj, 'state', None) else None
-            return identity.unit_name if identity else (obj.state.reference_code if getattr(obj, 'state', None) else None)
-        if not obj.postal_facility_identity_id:
-            return None
-        aff = obj.postal_facility_identity.jurisdictions.filter(
-            effective_to_date__isnull=True
-        ).select_related('administrative_unit').first()
-        if not aff or not aff.administrative_unit:
-            return None
-        identity = aff.administrative_unit.get_current_identity()
-        return identity.unit_name if identity else None
+        try:
+            region = obj.post_office.region if obj.post_office_id else None
+            if not region:
+                return None
+            unit = region.administrative_unit if hasattr(region, 'administrative_unit') else None
+            if unit:
+                identity = unit.get_current_identity()
+                return identity.unit_name if identity else unit.reference_code
+        except Exception:
+            pass
+        return None
 
     def get_town(self, obj):
-        """Town: facility name from identity."""
-        if obj.postal_facility_identity_id:
-            return getattr(obj.postal_facility_identity, 'facility_name', None) or ''
-        return ''
+        return obj.post_office.name if obj.post_office_id else ''
 
     def get_size_display(self, obj):
-        """
-        Compact size string for catalog list, derived from the most recent
-        PostmarkSize entry when available.
-        """
-        sizes_qs = getattr(obj, "sizes", None)
-        if sizes_qs is None:
-            return None
-        latest = sizes_qs.order_by("-created_date").first()
-        if not latest:
-            return None
-        width = latest.width
-        height = latest.height
-        # Prefer explicit width/height; fall back to notes if needed
-        if width and height:
-            return f"{width}×{height}"
-        if width:
-            return str(width)
-        if height:
-            return str(height)
-        return latest.size_notes or None
+        if obj.width and obj.height:
+            return f"{obj.width}×{obj.height}"
+        if obj.width:
+            return str(obj.width)
+        if obj.height:
+            return str(obj.height)
+        return None
 
     def get_date_range(self, obj):
-        """
-        Earliest–latest date seen as string.
-        - If stored as year-only bounds (Jan 1 / Dec 31), return legacy "YYYY" or "YYYY-YYYY"
-        - Otherwise return ISO "YYYY-MM-DD" or "YYYY-MM-DD - YYYY-MM-DD"
-        """
-        if not obj.dates_seen.exists():
+        dates = obj.dates_observed.order_by('date')
+        if not dates.exists():
             return None
-        earliest = obj.dates_seen.order_by("earliest_date_seen").first()
-        latest = obj.dates_seen.order_by("-latest_date_seen").first()
-        if not earliest or not earliest.earliest_date_seen:
-            return None
-        e = earliest.earliest_date_seen
-        l = (latest.latest_date_seen if latest and latest.latest_date_seen else e)
-        if e.month == 1 and e.day == 1 and l.month == 12 and l.day == 31:
-            ey = str(e.year)
-            ly = str(l.year)
-            return ey if ey == ly else f"{ey}-{ly}"
-        e_str = e.isoformat()
-        l_str = l.isoformat()
-        return e_str if e_str == l_str else f"{e_str} - {l_str}"
+        first_date = dates.first().date
+        last_date = dates.last().date
+        if first_date == last_date:
+            return str(first_date.year)
+        if first_date.year == last_date.year:
+            return str(first_date.year)
+        return f"{first_date.year}-{last_date.year}"
 
     def get_colors_display(self, obj):
-        """v2 Postmark.color FK -> Color.color_name."""
-        color = getattr(obj, 'color', None)
-        return getattr(color, 'color_name', None) if color else None
+        return obj.color.name if obj.color_id else None
 
     def get_color(self, obj):
-        """v2 Postmark.color FK as {id, color_name} for frontend dropdowns/filters."""
-        color = getattr(obj, 'color', None)
-        if not color:
+        if not obj.color_id:
             return None
-        return {'id': color.color_id, 'color_name': color.color_name}
+        return {'id': obj.color_id, 'name': obj.color.name}
 
     def get_valuation_display(self, obj):
-        """Latest valuation as string (e.g. Common, or numeric)."""
-        val = obj.valuations.order_by('-valuation_date').first()
+        val = obj.valuations.order_by('-appraisal_date').first()
         if not val:
             return None
-        return str(val.estimated_value)
+        return str(val.amt)
 
 
 class PostmarkSerializer(serializers.ModelSerializer):
-    """Full postmark serializer with all nested data"""
-    postal_facility_identity = PostalFacilityIdentitySerializer(read_only=True)
-    postmark_shape = PostmarkShapeSerializer(read_only=True)
-    lettering_style = LetteringStyleSerializer(read_only=True)
-    framing_style = FramingStyleSerializer(read_only=True)
-    date_format = DateFormatSerializer(read_only=True)
-    
-    # Write-only foreign key IDs
-    postal_facility_identity_id = serializers.PrimaryKeyRelatedField(
-        queryset=PostalFacilityIdentity.objects.all(),
-        source='postal_facility_identity',
-        write_only=True
-    )
-    postmark_shape_id = serializers.PrimaryKeyRelatedField(
-        queryset=PostmarkShape.objects.all(),
-        source='postmark_shape',
-        write_only=True
-    )
-    lettering_style_id = serializers.PrimaryKeyRelatedField(
-        queryset=LetteringStyle.objects.all(),
-        source='lettering_style',
-        write_only=True
-    )
-    framing_style_id = serializers.PrimaryKeyRelatedField(
-        queryset=FramingStyle.objects.all(),
-        source='framing_style',
-        write_only=True
-    )
-    date_format_id = serializers.PrimaryKeyRelatedField(
-        queryset=DateFormat.objects.all(),
-        source='date_format',
-        write_only=True
-    )
-    
-    # Nested related data
-    colors = PostmarkColorSerializer(source='postmark_colors', many=True, read_only=True)
-    dates_seen = PostmarkDatesSeenSerializer(many=True, read_only=True)
-    sizes = PostmarkSizeSerializer(many=True, read_only=True)
+    """Full postmark serializer (v1 compat layer over new Postmark model)"""
     valuations = PostmarkValuationSerializer(many=True, read_only=True)
     images = PostmarkImageSerializer(many=True, read_only=True)
     responsible_groups = serializers.SerializerMethodField()
@@ -574,106 +319,74 @@ class PostmarkSerializer(serializers.ModelSerializer):
     date_range = serializers.SerializerMethodField()
     colors_display = serializers.SerializerMethodField()
     valuation_display = serializers.SerializerMethodField()
-    
     created_by = UserSerializer(read_only=True)
     modified_by = UserSerializer(read_only=True)
-    
+
     class Meta:
         model = Postmark
-        fields = '__all__'
+        fields = [
+            'postmark_id', 'code', 'catalog_txt', 'inscription_txt',
+            'post_office', 'shape', 'lettering', 'color',
+            'is_manuscript', 'impression', 'is_irreg',
+            'width', 'height', 'date_type', 'date_fmt',
+            'valuations', 'images',
+            'responsible_groups', 'state', 'town', 'date_range',
+            'colors_display', 'valuation_display',
+            'created_by', 'modified_by', 'created_date', 'modified_date',
+        ]
         read_only_fields = ['postmark_id', 'created_date', 'modified_date']
-    
-    def get_state(self, obj):
-        """State: direct FK (listing.state) if set, else from facility's current jurisdiction."""
-        if obj.state_id:
-            identity = obj.state.get_current_identity() if getattr(obj, 'state', None) else None
-            return identity.unit_name if identity else (obj.state.reference_code if getattr(obj, 'state', None) else None)
-        if not obj.postal_facility_identity_id:
-            return None
-        aff = obj.postal_facility_identity.jurisdictions.filter(
-            effective_to_date__isnull=True
-        ).select_related('administrative_unit').first()
-        if not aff or not aff.administrative_unit:
-            return None
-        identity = aff.administrative_unit.get_current_identity()
-        return identity.unit_name if identity else None
-
-    def get_town(self, obj):
-        if obj.postal_facility_identity_id:
-            return getattr(obj.postal_facility_identity, 'facility_name', None) or ''
-        return ''
-
-    def get_date_range(self, obj):
-        if not obj.dates_seen.exists():
-            return None
-        earliest = obj.dates_seen.order_by("earliest_date_seen").first()
-        latest = obj.dates_seen.order_by("-latest_date_seen").first()
-        if not earliest or not earliest.earliest_date_seen:
-            return None
-        e = earliest.earliest_date_seen
-        l = (latest.latest_date_seen if latest and latest.latest_date_seen else e)
-        if e.month == 1 and e.day == 1 and l.month == 12 and l.day == 31:
-            ey = str(e.year)
-            ly = str(l.year)
-            return ey if ey == ly else f"{ey}-{ly}"
-        e_str = e.isoformat()
-        l_str = l.isoformat()
-        return e_str if e_str == l_str else f"{e_str} - {l_str}"
-
-    def get_colors_display(self, obj):
-        """v2 Postmark.color FK -> Color.color_name."""
-        color = getattr(obj, 'color', None)
-        return getattr(color, 'color_name', None) if color else None
-
-    def get_valuation_display(self, obj):
-        val = obj.valuations.order_by('-valuation_date').first()
-        if not val:
-            return None
-        return str(val.estimated_value)
 
     def get_responsible_groups(self, obj):
-        """Get groups responsible for this postmark"""
-        groups = obj.get_responsible_groups()
+        from common.api.v2.views import _get_postmark_responsible_groups
+        groups = _get_postmark_responsible_groups(obj)
         return [{'id': g.id, 'name': g.name} for g in groups]
+
+    def get_state(self, obj):
+        try:
+            region = obj.post_office.region if obj.post_office_id else None
+            if not region:
+                return None
+            unit = region.administrative_unit if hasattr(region, 'administrative_unit') else None
+            if unit:
+                identity = unit.get_current_identity()
+                return identity.unit_name if identity else unit.reference_code
+        except Exception:
+            pass
+        return None
+
+    def get_town(self, obj):
+        return obj.post_office.name if obj.post_office_id else ''
+
+    def get_date_range(self, obj):
+        dates = obj.dates_observed.order_by('date')
+        if not dates.exists():
+            return None
+        first_date = dates.first().date
+        last_date = dates.last().date
+        if first_date.year == last_date.year:
+            return str(first_date.year)
+        return f"{first_date.year}-{last_date.year}"
+
+    def get_colors_display(self, obj):
+        return obj.color.name if obj.color_id else None
+
+    def get_valuation_display(self, obj):
+        val = obj.valuations.order_by('-appraisal_date').first()
+        return str(val.amt) if val else None
 
 
 # ========== PUBLICATION SERIALIZERS ==========
-
-class PostmarkPublicationSerializer(serializers.ModelSerializer):
-    """Publication catalog"""
-    created_by = UserSerializer(read_only=True)
-    modified_by = UserSerializer(read_only=True)
-    
-    class Meta:
-        model = PostmarkPublication
-        fields = '__all__'
-        read_only_fields = ['postmark_publication_id', 'created_date', 'modified_date']
-
-
-class PostmarkPublicationReferenceSerializer(serializers.ModelSerializer):
-    """Publication references"""
-    publication_title = serializers.CharField(
-        source='postmark_publication.publication_title',
-        read_only=True
-    )
-    
-    class Meta:
-        model = PostmarkPublicationReference
-        fields = ['postmark_publication_reference_id', 'postmark_publication',
-                  'publication_title', 'published_id', 'reference_location', 'created_date']
-        read_only_fields = ['postmark_publication_reference_id', 'created_date']
-
 
 # ========== POSTCOVER SERIALIZERS ==========
 
 class PostcoverPostmarkSerializer(serializers.ModelSerializer):
     """Postmark on a postcover"""
-    postmark_key = serializers.CharField(source='postmark.postmark_key', read_only=True)
+    postmark_key = serializers.CharField(source='postmark.code', read_only=True)
     postmark_details = PostmarkListSerializer(source='postmark', read_only=True)
-    
+
     class Meta:
         model = PostcoverPostmark
-        fields = ['postcover_postmark_id', 'postmark', 'postmark_key', 
+        fields = ['postcover_postmark_id', 'postmark', 'postmark_key',
                   'postmark_details', 'position_order', 'postmark_location', 'created_date']
         read_only_fields = ['postcover_postmark_id', 'created_date']
 

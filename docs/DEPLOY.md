@@ -1,11 +1,50 @@
 # Deployment (e.g. https://hellowoco.app)
 
+For data import commands and ETL tools, see [TOOLS.md](TOOLS.md). For day-to-day operator tasks, see [RUNBOOK.md](RUNBOOK.md).
+
 ## Current setup (staging)
 
+- **Host:** `hellowoco.app` (Ubuntu LTS)
 - **Branch:** `staging`
-- **Server path:** `/srv/woco`
-- **App user:** `wocod`
-- **Frontend build:** `frontend/dist/` (built during deploy)
+- **Repo path:** `/srv/woco`
+- **App user:** `wocod` (owns the repo, runs gunicorn)
+- **Frontend build:** `frontend/dist/` (built during deploy, not committed)
+
+### Host layout
+
+```
+/srv/woco/
+  backend/        # Django source; gunicorn's working directory
+  frontend/       # React source + built dist/
+  tools/          # deploy.sh, worldcovers.service, notebooks
+  mysql.cnf       # DB user/password — gitignored, must be created on host
+  backend/.env    # SECRET_KEY, DEBUG, ALLOWED_HOSTS — gitignored, must be created on host
+  .venv/          # pipenv virtual environment
+  backups/        # database backups
+```
+
+### Service
+
+The app runs under the `worldcovers` systemd service. The canonical unit file lives at [tools/worldcovers.service](../tools/worldcovers.service) and is kept authoritative by `deploy.sh` (which installs it if it has changed).
+
+The unit file sets `PYTHONPATH`, `DJANGO_SETTINGS_MODULE`, and `DB_NAME` via `Environment=` directives. The remaining config is read from two gitignored files that must exist on the host:
+
+- `/srv/woco/mysql.cnf` — database user and password (Django reads via `read_default_file`; same format as the dev `mysql.cnf`, see [BUILD.md](BUILD.md))
+- `/srv/woco/backend/.env` — `DEBUG`, `SECRET_KEY`, `ALLOWED_HOSTS` (read by python-decouple)
+
+This is the intended home for the deferred production-mode config (see §10 of the remediation plan).
+
+### `wocod` sudoers
+
+`wocod` needs a narrow entry in `/etc/sudoers.d/wocod-deploy` so `deploy.sh` can update the unit file and restart the service without a password:
+
+```
+wocod ALL=(ALL) NOPASSWD: /usr/bin/systemctl daemon-reload
+wocod ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart worldcovers
+wocod ALL=(ALL) NOPASSWD: /usr/bin/install -m 644 * /etc/systemd/system/worldcovers.service
+```
+
+See [RUNBOOK.md](RUNBOOK.md) for full first-time host bootstrap instructions.
 
 ## After you push to GitHub – what to do
 
@@ -16,10 +55,10 @@
    ```bash
    cd /srv/woco
    git pull
-   ./scripts/deploy.sh       # installs deps, migrates, builds frontend
+   ./tools/deploy.sh         # installs deps, migrates, builds frontend
    # Then restart your app (gunicorn/systemd or the current runserver process)
    ```
-3. The server must have **Python 3.11+** and **Node.js + npm** (for the build step).
+3. The server must have **Python + pipenv** and **Node.js + npm** (for the build step).
 
 ### Option B: GitHub Actions (CI) + your host
 
@@ -50,7 +89,7 @@ So after a fresh deploy, the server has the Python/Django code and the React **s
 
 The **deploy process** must:
 
-1. **Install Python deps** and run Django as you do now (e.g. `pip install -r backend/requirements.txt`, `python backend/manage.py migrate`, etc.).
+1. **Install Python deps** and run Django migrations (e.g. `pipenv install`, `pipenv run manage migrate`).
 2. **Build the frontend** so `frontend/dist/` exists **before** Django serves the site:
    ```bash
    cd frontend
@@ -58,11 +97,11 @@ The **deploy process** must:
    npm run build
    cd ..
    ```
-3. **Start Django** (e.g. `gunicorn`, `python backend/manage.py runserver`, or your usual command).
+3. **Start Django** (e.g. `gunicorn`, `pipenv run manage runserver`, or your usual command).
 
 So the **deploy environment** needs:
 
-- **Python 3.11+** (and your Python deps)
+- **Python and pipenv** (and your Python deps)
 - **Node.js and npm** (only for the build step)
 
 ## Example: one-off deploy script
@@ -71,15 +110,15 @@ From the **project root** (worldcovers/):
 
 ```bash
 # 1. Python
-pip install -r backend/requirements.txt
-python backend/manage.py migrate --noinput
-python backend/manage.py collectstatic --noinput
+pipenv install
+pipenv run manage migrate --noinput
+pipenv run manage collectstatic --noinput
 
 # 2. Frontend (creates frontend/dist/)
 cd frontend && npm ci && npm run build && cd ..
 
 # 3. Run the app (example; use gunicorn/uwsgi in production)
-python backend/manage.py runserver 0.0.0.0:8000
+pipenv run manage runserver 0.0.0.0:8000
 ```
 
 ## Example: GitHub Actions (CI)
@@ -118,6 +157,6 @@ If the admin returns **502 Bad Gateway** for a heavy page (e.g. `/admin/postmark
 
 | After you push… | Do this |
 |-----------------|--------|
-| **Deploy on your own server** | On server: `git pull` → `./scripts/deploy.sh` → restart app |
+| **Deploy on your own server** | On server: `git pull` → `./tools/deploy.sh` → restart app |
 | **GitHub Actions only** | Workflow runs on push to `staging`; add a deploy job in `.github/workflows/build-and-deploy.yml` |
 | **PaaS (Railway, Render, etc.)** | Build command installs Python deps + builds frontend; start command = Django/gunicorn |

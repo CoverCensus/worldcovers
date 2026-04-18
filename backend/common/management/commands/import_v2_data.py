@@ -16,14 +16,8 @@ What this command does (order)
    - Updates additive v2 fields on `Postmark` (catalog/inscription text, shape,
      lettering, color, dimensions, impression, date_type/date_fmt, post_office,
      etc.) and merges the raw CSV row under `raw_import_payload["v2"]`.
-   - **`PostmarkV2`**: immediately after each successful `Postmark.save`, runs
-     `PostmarkV2.objects.update_or_create(postmark=postmark, ...)`.
-     - Creates the extension row on first import; updates it on every re-import.
-     - Copies legacy listing fields from `Postmark` (site, state, legacy shapes,
-       rate fields, slug, visibility, …) **plus** the same v2 FKs/texts saved on
-       `Postmark` in that loop.
-     - Sets `PostmarkV2.date_format` from the v2 CSV `date_format` string via
-       `DateFormat.get_or_create` (separate from legacy `Postmark.date_format`).
+   - Updates `Postmark` FK/text fields (date_format, color, shape, lettering,
+     post_office, inscription_txt, etc.) in the same pass.
 4. **Auxmark**, **DateObserved**, junction tables (cover↔postmark, postmark↔ratemark,
    mark framing), then **PostmarkValuation** where CSV rows are valid.
 
@@ -48,15 +42,10 @@ from common.models import (
     Shape,
     Lettering,
     Framing,
-    DateFormat,
     Region,
     PostOffice,
     Cover,
     Postmark,
-    PostmarkShape,
-    LetteringStyle,
-    FramingStyle,
-    PostmarkV2,
     Ratemark,
     Auxmark,
     CoverPostmark,
@@ -120,7 +109,7 @@ def read_csv_dicts(path):
 
 class Command(BaseCommand):
     help = (
-        "Import *.csv: lookups, Cover/Ratemark, update Postmark + PostmarkV2 per postmarks row, "
+        "Import *.csv: lookups, Cover/Ratemark, update Postmark per postmarks row, "
         "then auxmarks, relations, valuations. Requires Postmark.raw_state_data_id == v2 postmark_id."
     )
 
@@ -230,9 +219,9 @@ class Command(BaseCommand):
             if color_id is None:
                 continue
             color_obj, created = Color.objects.get_or_create(
-                color_name=color_name or "---",
+                name=color_name or "---",
                 defaults={
-                    "color_value": "#FFFFFF",
+                    "hex_val": "#FFFFFF",
                     "created_by": user,
                     "modified_by": user,
                 },
@@ -440,42 +429,17 @@ class Command(BaseCommand):
         postmark_ids = set(parse_int(r.get("postmark_id")) for r in postmarks_rows)
         postmark_ids.discard(None)
 
-        postmarks = Postmark.objects.filter(raw_state_data_id__in=postmark_ids)
-        postmark_by_raw_id = {p.raw_state_data_id: p for p in postmarks}
+        postmarks = Postmark.objects.filter(pk__in=postmark_ids)
+        postmark_by_raw_id = {p.pk: p for p in postmarks}
 
         missing_ids = postmark_ids - set(postmark_by_raw_id.keys())
 
         if missing_ids and missing_postmark_strategy == "create":
-            # Get or create pk=1 entries for required legacy lookup FKs.
-            # Nullable fields are left null.
-            def _get_or_create_pk1(Model, **name_field):
-                obj = Model.objects.filter(pk=1).first()
-                if obj is None:
-                    obj = Model.objects.get_or_create(
-                        **name_field,
-                        defaults={"created_by": user, "modified_by": user},
-                    )[0]
-                return obj
-
-            stub_shape = _get_or_create_pk1(PostmarkShape, shape_name="Unspecified")
-            stub_lettering = _get_or_create_pk1(LetteringStyle, lettering_style_name="Unspecified")
-            stub_framing = _get_or_create_pk1(FramingStyle, framing_style_name="Unspecified")
-            stub_date_format = _get_or_create_pk1(DateFormat, format_name="Unspecified")
-
             created_stubs = 0
             for mid in missing_ids:
                 stub, created = Postmark.objects.get_or_create(
-                    raw_state_data_id=mid,
+                    pk=mid,
                     defaults={
-                        "postmark_key": f"V2-{mid}",
-                        "postmark_shape": stub_shape,
-                        "lettering_style": stub_lettering,
-                        "framing_style": stub_framing,
-                        "date_format": stub_date_format,
-                        "rate_location": "NONE",
-                        "rate_value": "",
-                        "visibility": "DRAFT",
-                        "source_catalog": "",
                         "created_by": user,
                         "modified_by": user,
                     },
@@ -495,7 +459,6 @@ class Command(BaseCommand):
         postmark_date_fmt_allowed = {v for v, _ in Postmark.DATE_FMT_CHOICES}
         postmark_date_type_allowed = {v for v, _ in Postmark.DATE_TYPE_CHOICES}
         postmark_impression_allowed = {v for v, _ in Postmark.IMPRESSION_CHOICES}
-        date_format_cache = {}
 
         for row in postmarks_rows:
             postmark_id = parse_int(row.get("postmark_id"))
@@ -549,25 +512,6 @@ class Command(BaseCommand):
 
             post_office_id = parse_int(row.get("post_office_id"))
             postmark.post_office = post_office_map.get(post_office_id) if post_office_id is not None else None
-            date_format_name = _s(row.get("date_format"))
-            date_format_obj = None
-            if date_format_name:
-                date_format_obj = date_format_cache.get(date_format_name)
-                if date_format_obj is None:
-                    date_format_obj, _ = DateFormat.objects.get_or_create(
-                        format_name=date_format_name,
-                        defaults={
-                            "format_description": "",
-                            "created_by": user,
-                            "modified_by": user,
-                        },
-                    )
-                    date_format_cache[date_format_name] = date_format_obj
-
-            # Keep v2-specific payload for debugging/audit without touching legacy payload content.
-            payload = postmark.raw_import_payload or {}
-            payload["v2"] = row
-            postmark.raw_import_payload = payload
 
             postmark.modified_by = user
             postmark.save(
@@ -585,50 +529,8 @@ class Command(BaseCommand):
                     "date_type",
                     "date_fmt",
                     "post_office",
-                    "raw_import_payload",
                     "modified_by",
                 ]
-            )
-            PostmarkV2.objects.update_or_create(
-                postmark=postmark,
-                defaults={
-                    "site": postmark.site,
-                    "postal_facility_identity": postmark.postal_facility_identity,
-                    "state": postmark.state,
-                    "postmark_shape": postmark.postmark_shape,
-                    "lettering_style": postmark.lettering_style,
-                    "framing_style": postmark.framing_style,
-                    "legacy_date_format": postmark.date_format,
-                    "postmark_key": postmark.postmark_key,
-                    "raw_state_data_id": postmark.raw_state_data_id,
-                    "public_slug": postmark.public_slug,
-                    "visibility": postmark.visibility,
-                    "contribution_approval_status": postmark.contribution_approval_status,
-                    "source_catalog": postmark.source_catalog,
-                    "source_page": postmark.source_page,
-                    "last_public_update_at": postmark.last_public_update_at,
-                    "raw_import_payload": postmark.raw_import_payload,
-                    "rate_location": postmark.rate_location,
-                    "rate_value": postmark.rate_value,
-                    "other_characteristics": postmark.other_characteristics,
-                    "code": postmark.code,
-                    "catalog_txt": postmark.catalog_txt,
-                    "inscription_txt": postmark.inscription_txt,
-                    "post_office": postmark.post_office,
-                    "shape": postmark.shape,
-                    "lettering": postmark.lettering,
-                    "color": postmark.color,
-                    "is_manuscript": postmark.is_manuscript,
-                    "impression": postmark.impression,
-                    "is_irreg": postmark.is_irreg,
-                    "width": postmark.width,
-                    "height": postmark.height,
-                    "date_type": postmark.date_type,
-                    "date_fmt": postmark.date_fmt,
-                    "date_format": date_format_obj,
-                    "created_by": user,
-                    "modified_by": user,
-                },
             )
             updated_postmarks += 1
 
@@ -689,12 +591,12 @@ class Command(BaseCommand):
             width = parse_decimal(row.get("width"))
             height = parse_decimal(row.get("height"))
 
-            inscription_text = _s(row.get("inscription_text"))
+            inscription_txt = _s(row.get("inscription_text"))
 
             obj, _ = Auxmark.objects.get_or_create(
                 parent_mark_type=parent_mark_type,
                 parent_mark_id=parent_pk,
-                inscription_text=inscription_text,
+                inscription_txt=inscription_txt,
                 is_manuscript=is_manuscript,
                 shape=shape_obj,
                 lettering=lettering_obj,
@@ -866,10 +768,9 @@ class Command(BaseCommand):
                     continue
                 PostmarkValuation.objects.get_or_create(
                     postmark=postmark,
-                    estimated_value=amount,
-                    valuation_date=d,
+                    amt=amount,
+                    appraisal_date=d,
                     defaults={
-                        "valued_by_user": user,
                         "created_by": user,
                         "modified_by": user,
                     },

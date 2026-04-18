@@ -1,14 +1,28 @@
 import os
 import csv
-import re
 import hashlib
 import datetime as dt
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
-from common.models import *  # Import all models from common.models
+from common.models import (
+    AdministrativeUnit,
+    AdministrativeUnitIdentity,
+    Region,
+    PostOffice,
+    Shape,
+    Lettering,
+    Color,
+    Postmark,
+    PostmarkImage,
+    DateObserved,
+)
 from postmarks.models import Location
 
 DEFAULT_IMPORT_PATH = 'imports'
+
+DATE_FMT_MAP = {
+    'md': 'MD', 'mdd': 'MDD', 'yd': 'YD', 'ymd': 'YMD', 'ymdd': 'YMDD',
+}
 
 
 class Command(BaseCommand):
@@ -51,16 +65,16 @@ class Command(BaseCommand):
         self.stdout.write(f'Using user: {user.username} (id={self.user_id}), dir: {self.import_path}')
 
         self.state_by_id = {}
+        self.region_by_abv = {}
         self.shape_cache = {}
         self.lettering_cache = {}
-        self.framing_cache = {}
-        self.date_format_cache = {}
         self.color_cache = {}
+        # Maps nRawStateDataID → Postmark pk for use by import_townmark_images
+        self.listing_by_raw_id = {}
 
         self.import_states()
         self.import_raw_state_data()
         self.import_townmark_images()
-        # Add import functions for other CSVs as needed
 
     def import_states(self):
         filepath = os.path.join(self.import_path, 'tblStates.csv')
@@ -68,7 +82,8 @@ class Command(BaseCommand):
             reader = csv.DictReader(csvfile)
             for row in reader:
                 self.state_by_id[row['nStateID']] = row
-                reference_code = f"US-{row['txtStateAbv'].strip().upper()}"
+                abv = row['txtStateAbv'].strip().upper()
+                reference_code = f"US-{abv}"
                 loc, created = Location.objects.get_or_create(
                     reference_code=reference_code,
                     defaults={
@@ -76,31 +91,40 @@ class Command(BaseCommand):
                         'modified_by_id': self.user_id,
                     },
                 )
-                identity, identity_created = AdministrativeUnitIdentity.objects.get_or_create(
+                AdministrativeUnitIdentity.objects.get_or_create(
                     administrative_unit=loc,
                     effective_from_date='1900-01-01',
                     defaults={
                         'created_by_id': self.user_id,
                         'modified_by_id': self.user_id,
                         'unit_name': row['txtState'],
-                        'unit_abbreviation': row['txtStateAbv'],
-                        'unit_type': 'STATE',  # Default type
-                        'hierarchy_level': 2,  # State level hierarchy
+                        'unit_abbreviation': abv,
+                        'unit_type': 'STATE',
+                        'hierarchy_level': 2,
                         'change_reason': 'INITIAL',
                     },
                 )
-                print(f"State {loc} with identity {identity} {'created' if created else 'exists'}.")
+                # Create/cache a Region for this state so postmarks can link via PostOffice
+                region, _ = Region.objects.get_or_create(
+                    abbrev=abv[:3],
+                    region_tier='STATE',
+                    defaults={
+                        'name': row['txtState'],
+                        'created_by_id': self.user_id,
+                        'modified_by_id': self.user_id,
+                    },
+                )
+                self.region_by_abv[abv] = region
+                print(f"State {loc} {'created' if created else 'exists'}.")
 
-    def _state_admin_unit_for_row(self, row):
-        """Return AdministrativeUnit (state) for CSV row using nStateID, or None."""
+    def _region_for_row(self, row):
+        """Return Region for CSV row using nStateID lookup, or None."""
         n_state_id = row.get('nStateID')
         if not n_state_id or n_state_id not in self.state_by_id:
             return None
         state_row = self.state_by_id[n_state_id]
-        reference_code = f"US-{state_row.get('txtStateAbv', '').strip().upper()}"
-        if not reference_code or reference_code == 'US-':
-            return None
-        return Location.objects.filter(reference_code=reference_code).first()
+        abv = state_row.get('txtStateAbv', '').strip().upper()
+        return self.region_by_abv.get(abv)
 
     def normalize_value(self, value, fallback='Unknown'):
         if value is None:
@@ -109,17 +133,6 @@ class Command(BaseCommand):
         if value == '' or value.lower() in {'null', 'n/a', 'na', 'none'}:
             return fallback
         return value
-
-    def _first_meaningful_rate(self, row):
-        """First non-empty, non-null/n/a value from rate-related columns (for rate_value)."""
-        for key in ('txtTownmarkRateValue', 'txtTownmarkRateText', 'txtRatesText', 'txtRates', 'txtValue'):
-            value = row.get(key)
-            if value is None:
-                continue
-            value = str(value).strip()
-            if value and value.lower() not in {'null', 'n/a', 'na', 'none'}:
-                return value
-        return None
 
     def parse_bool(self, value):
         return str(value).strip() in {'1', 'true', 'True', 'yes', 'Y'}
@@ -160,119 +173,123 @@ class Command(BaseCommand):
         except ValueError:
             return None
 
-    def get_or_create_simple(self, model, field_name, value, cache):
-        name = self.normalize_value(value)
-        if name in cache:
-            return cache[name]
-        defaults = {}
-        if hasattr(model, 'created_by') or 'created_by' in [f.name for f in model._meta.fields]:
-            defaults = {
-                'created_by_id': self.user_id,
-                'modified_by_id': self.user_id,
-            }
-        obj, _ = model.objects.get_or_create(**{field_name: name}, defaults=defaults)
-        cache[name] = obj
+    def _get_or_create_shape(self, raw_value):
+        name = self.normalize_value(raw_value, 'Unknown')
+        if name in self.shape_cache:
+            return self.shape_cache[name]
+        obj, _ = Shape.objects.get_or_create(
+            name=name[:100],
+            defaults={'created_by_id': self.user_id, 'modified_by_id': self.user_id},
+        )
+        self.shape_cache[name] = obj
         return obj
 
-    def make_unique_postmark_key(self, base_key, raw_id):
-        base_key = self.normalize_value(base_key, str(raw_id))
-        candidate = base_key
-        if not Postmark.objects.filter(postmark_key=candidate).exists():
-            return candidate
-        suffix = f"-{raw_id}"
-        max_len = 100 - len(suffix)
-        trimmed = base_key[:max_len] if max_len > 0 else str(raw_id)
-        return f"{trimmed}{suffix}"
+    def _get_or_create_lettering(self, raw_value):
+        name = self.normalize_value(raw_value, 'Unknown')
+        if name in self.lettering_cache:
+            return self.lettering_cache[name]
+        obj, _ = Lettering.objects.get_or_create(
+            name=name[:100],
+            defaults={'created_by_id': self.user_id, 'modified_by_id': self.user_id},
+        )
+        self.lettering_cache[name] = obj
+        return obj
+
+    def _get_or_create_color(self, raw_value):
+        name = self.normalize_value(raw_value, '')
+        if not name or name == 'Unknown':
+            return None
+        if name in self.color_cache:
+            return self.color_cache[name]
+        obj, _ = Color.objects.get_or_create(
+            name=name[:50],
+            defaults={
+                'hex_val': '#FFFFFF',
+                'created_by_id': self.user_id,
+                'modified_by_id': self.user_id,
+            },
+        )
+        self.color_cache[name] = obj
+        return obj
+
+    def _map_date_fmt(self, raw_value):
+        if not raw_value:
+            return None
+        return DATE_FMT_MAP.get(str(raw_value).strip().lower())
 
     def import_raw_state_data(self):
         filepath = os.path.join(self.import_path, 'tblRawStateData.csv')
+        code_seen = set(Postmark.objects.values_list('code', flat=True).exclude(code=None))
+
         with open(filepath, newline='', encoding='utf-8-sig') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
-                shape = self.get_or_create_simple(
-                    PostmarkShape,
-                    'shape_name',
-                    row.get('txtTownmarkShape'),
-                    self.shape_cache,
-                )
-                lettering = self.get_or_create_simple(
-                    LetteringStyle,
-                    'lettering_style_name',
-                    row.get('txtTownmarkLettering'),
-                    self.lettering_cache,
-                )
-                framing = self.get_or_create_simple(
-                    FramingStyle,
-                    'framing_style_name',
-                    row.get('txtTownmarkFraming'),
-                    self.framing_cache,
-                )
-                date_format = self.get_or_create_simple(
-                    DateFormat,
-                    'format_name',
-                    row.get('txtTownmarkDateFormat'),
-                    self.date_format_cache,
-                )
+                raw_id = row.get('nRawStateDataID', '')
+                region = self._region_for_row(row)
 
-                rate_location_raw = self.normalize_value(row.get('txtTownmarkRateLocation'), 'NONE')
-                rate_location = rate_location_raw.upper()
-                valid_rate_locations = {choice[0] for choice in Postmark.RATE_LOCATION_CHOICES}
-                if rate_location not in valid_rate_locations:
-                    rate_location = 'NONE'
+                # Build a unique code from the postmark key column
+                base_code = self.normalize_value(row.get('txtPostmark'), raw_id)[:30]
+                code = base_code
+                suffix_n = 1
+                while code in code_seen:
+                    suffix = f"-{raw_id}"
+                    code = base_code[:30 - len(suffix)] + suffix
+                    suffix_n += 1
+                    if suffix_n > 1:
+                        break
 
-                raw_rate = self._first_meaningful_rate(row)
-                rate_value = self.normalize_value(raw_rate, 'Unknown')
-                if rate_value and len(rate_value) > 50:  # Postmark.rate_value max_length
-                    rate_value = rate_value[:50]
+                # Resolve FK lookups
+                shape = self._get_or_create_shape(row.get('txtTownmarkShape'))
+                lettering = self._get_or_create_lettering(row.get('txtTownmarkLettering'))
+                color = self._get_or_create_color(row.get('txtTownmarkColor'))
+                date_fmt = self._map_date_fmt(row.get('txtTownmarkDateFormat'))
 
-                postmark_key = self.make_unique_postmark_key(
-                    row.get('txtPostmark'),
-                    row.get('nRawStateDataID')
-                )
-
-                defaults = {
-                    'postmark_key': postmark_key,
-                    'site_id': 1,
-                    'postmark_shape': shape,
-                    'lettering_style': lettering,
-                    'framing_style': framing,
-                    'date_format': date_format,
-                    'rate_location': rate_location,
-                    'rate_value': rate_value,
-                    'is_manuscript': self.parse_bool(row.get('ynManuscript')),
-                    'other_characteristics': row.get('txtOther') or '',
-                    'source_page': row.get('txtPDFPage') or '',
-                    'created_by_id': self.user_id,
-                    'modified_by_id': self.user_id,
-                    'raw_import_payload': row
-                }
-                state_unit = self._state_admin_unit_for_row(row)
-                if state_unit:
-                    defaults['state'] = state_unit
-
-                listing, created = Postmark.objects.get_or_create(
-                    raw_state_data_id=row['nRawStateDataID'],
-                    defaults=defaults,
-                )
-                if not created and state_unit and not listing.state_id:
-                    listing.state = state_unit
-                    listing.save(update_fields=['state'])
-
-                if created:
-                    color_name = self.normalize_value(row.get('txtTownmarkColor'), '')
-                    if color_name:
-                        if len(color_name) > 50:  # Color.color_name max_length
-                            color_name = color_name[:50]
-                        color = self.get_or_create_simple(Color, 'color_name', color_name, self.color_cache)
-                        PostmarkColor.objects.get_or_create(
-                            postmark=listing,
-                            color=color,
-                            defaults={
-                                'created_by_id': self.user_id,
-                                'modified_by_id': self.user_id,
-                            }
+                # PostOffice: get or create from region + town name
+                post_office = None
+                if region:
+                    town = self.normalize_value(row.get('txtTown') or row.get('txtPostmark'), '')
+                    if town and town != 'Unknown':
+                        post_office, _ = PostOffice.objects.get_or_create(
+                            name=town[:255],
+                            region=region,
+                            defaults={'created_by_id': self.user_id, 'modified_by_id': self.user_id},
                         )
 
+                width_val = None
+                height_val = None
+                try:
+                    width_val = float(row['nWidth']) if row.get('nWidth') else None
+                except ValueError:
+                    pass
+                try:
+                    height_val = float(row['nHeight']) if row.get('nHeight') else None
+                except ValueError:
+                    pass
+
+                catalog_txt = row.get('txtPostmark') or ''
+                inscription_txt = row.get('txtInscription') or row.get('txtOther') or ''
+
+                listing, created = Postmark.objects.get_or_create(
+                    code=code,
+                    defaults={
+                        'catalog_txt': catalog_txt[:],
+                        'inscription_txt': inscription_txt,
+                        'post_office': post_office,
+                        'shape': shape,
+                        'lettering': lettering,
+                        'color': color,
+                        'is_manuscript': self.parse_bool(row.get('ynManuscript')),
+                        'width': width_val,
+                        'height': height_val,
+                        'date_fmt': date_fmt,
+                        'created_by_id': self.user_id,
+                        'modified_by_id': self.user_id,
+                    },
+                )
+                code_seen.add(code)
+                self.listing_by_raw_id[raw_id] = listing
+
+                if created:
                     earliest_date = self.parse_date(
                         row.get('nEarliestUseDay'),
                         row.get('txtEarliestUseMonth'),
@@ -283,39 +300,16 @@ class Command(BaseCommand):
                         row.get('txtLatestUseMonth'),
                         row.get('nLatestUseYear') or row.get('txtLatestUseYear'),
                     )
-                    if earliest_date or latest_date:
-                        PostmarkDatesSeen.objects.get_or_create(
+                    for observed_date in filter(None, {earliest_date, latest_date}):
+                        DateObserved.objects.get_or_create(
                             postmark=listing,
-                            earliest_date_seen=earliest_date or latest_date,
-                            latest_date_seen=latest_date or earliest_date,
+                            date=observed_date,
                             defaults={
+                                'granularity': 'YEAR',
                                 'created_by_id': self.user_id,
                                 'modified_by_id': self.user_id,
-                            }
+                            },
                         )
-
-                    width = row.get('nWidth')
-                    height = row.get('nHeight')
-                    if width or height:
-                        try:
-                            width_val = float(width) if width else None
-                        except ValueError:
-                            width_val = None
-                        try:
-                            height_val = float(height) if height else None
-                        except ValueError:
-                            height_val = None
-                        if width_val is not None or height_val is not None:
-                            PostmarkSize.objects.get_or_create(
-                                postmark=listing,
-                                width=width_val or 0,
-                                height=height_val or 0,
-                                defaults={
-                                    'size_notes': row.get('txtSizes') or '',
-                                    'created_by_id': self.user_id,
-                                    'modified_by_id': self.user_id,
-                                }
-                            )
 
                 print(f"Listing {listing} {'created' if created else 'exists'}.")
 
@@ -324,27 +318,26 @@ class Command(BaseCommand):
         with open(filepath, newline='', encoding='utf-8-sig') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
-                listing_id = row['nRawStateDataID']
-                postmark = Postmark.objects.filter(raw_state_data_id=listing_id).first()
+                raw_id = row.get('nRawStateDataID', '')
+                postmark = self.listing_by_raw_id.get(raw_id)
+                if not postmark:
+                    postmark = Postmark.objects.filter(
+                        code=self.normalize_value(row.get('txtPostmark'), '')
+                    ).first()
                 if not postmark:
                     continue
 
-                state_id = None
-                if postmark.raw_import_payload and 'nStateID' in postmark.raw_import_payload:
-                    state_id = postmark.raw_import_payload.get('nStateID')
-                image_dir = None
-                if state_id and state_id in self.state_by_id:
-                    image_dir = self.state_by_id[state_id].get('txtImageDirectory')
+                state_row = None
+                n_state_id = row.get('nStateID')
+                if n_state_id and n_state_id in self.state_by_id:
+                    state_row = self.state_by_id[n_state_id]
+                image_dir = state_row.get('txtImageDirectory', '') if state_row else ''
 
                 filename = self.normalize_value(row.get('txtFilename'), '')
                 if not filename or filename.lower() == 'null':
                     continue
 
-                image_dir = self.normalize_value(image_dir, '') if image_dir else ''
                 storage_filename = f"{image_dir}/{filename}" if image_dir else filename
-                if not storage_filename:
-                    continue
-
                 checksum = hashlib.sha256(storage_filename.encode('utf-8')).hexdigest()
 
                 image, created = PostmarkImage.objects.get_or_create(

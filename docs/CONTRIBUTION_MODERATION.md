@@ -79,7 +79,7 @@ The Contribution model lives in the existing `common` app because:
 
 ## Migration Plan
 
-1. **Run migration**: `python manage.py migrate common`
+1. **Run migration**: `pipenv run manage migrate common`
 2. **Existing data**: Current system writes directly to Postmark. No migration of existing Postmarks to Contributions; new submissions use the Contribution workflow.
 3. **Frontend**: Update Contribute form to handle `contributionId` in response; Dashboard to show pending contributions from GET `/api/contributions/`.
 

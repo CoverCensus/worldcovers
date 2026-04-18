@@ -1,8 +1,8 @@
 """
-Import reference/lookup CSVs (from docs/data_model-v1.erd) into catalog tables.
+Import reference/lookup CSVs into catalog tables.
 
 Reads CSV files from a directory and uses the same import logic as Admin CSV Upload
-(states → AdministrativeUnit/Identity, lettering → LetteringStyle, etc.).
+(states → AdministrativeUnit/Identity, lettering → Lettering, framing → Framing).
 
 Usage:
   python manage.py import_reference_csv --dir "frontend/public/Old Data"
@@ -25,7 +25,6 @@ REFERENCE_CSV_MAP = {
     "tblStates.csv": "states",
     "tblTownmarkLettering.csv": "lettering",
     "tblTownmarkFraming.csv": "framing",
-    "tblTownmarkDateFormat.csv": "date_format",
 }
 
 
@@ -45,7 +44,7 @@ def parse_csv_path(dir_path, filename):
 
 class Command(BaseCommand):
     help = (
-        "Import reference CSVs (states, lettering, framing, date_format) from a directory "
+        "Import reference CSVs (states, lettering, framing) from a directory "
         "into catalog tables. Same logic as Admin CSV Upload import."
     )
 

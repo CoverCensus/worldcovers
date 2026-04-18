@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Rebuild staging database: ensure DB exists, migrate, create admin, run imports.
-# Uses database "worldcovers" by default. One-time setup: run scripts/setup_worldcovers_db.sql as MySQL root.
+# Uses database "worldcovers" by default. One-time setup: run tools/setup_worldcovers_db.sql as MySQL root.
 # Run from repo root. Requires mysql.cnf in repo root (with database=worldcovers) and CSV files in backend/imports/.
-# Usage: ./scripts/rebuild_staging_db.sh [--no-import]
+# Usage: ./tools/rebuild_staging_db.sh [--no-import]
 set -e
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"

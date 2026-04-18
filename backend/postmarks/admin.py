@@ -5,13 +5,7 @@ from common.admin import (
     InlineRevisionMixin,
     PostmarkAdmin,
     PostmarkImageAdmin,
-    PostmarkPublicationAdmin,
-    PostmarkPublicationReferenceAdmin,
-    PostmarkShapeAdmin,
-    LetteringStyleAdmin,
-    FramingStyleAdmin,
     ColorAdmin,
-    DateFormatAdmin,
     PostcoverAdmin,
     PostcoverImageAdmin,
     AdministrativeUnitAdmin,
@@ -22,16 +16,7 @@ from .models import (
     Listing,
     CatalogRequest,
     ListingImage,
-    PostmarkShape,
-    LetteringStyle,
-    FramingStyle,
     Color,
-    DateFormat,
-    PostmarkPublication,
-    PostmarkPublicationReference,
-    PostmarkColor,
-    PostmarkDatesSeen,
-    PostmarkSize,
     PostmarkValuation,
     Postcover,
     PostcoverPostmark,
@@ -49,8 +34,8 @@ class ListingAdmin(PostmarkAdmin):
     def get_queryset(self, request):
         return (
             super().get_queryset(request)
-            .select_related('postmark_shape', 'state')
-            .order_by('postmark_id')
+            .select_related('post_office', 'shape', 'color')
+            .order_by('id')
         )
 
 
@@ -63,19 +48,14 @@ class CatalogRequestAdmin(ListingAdmin):
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
-        return qs.filter(source_catalog="User contribution")
+        return qs.filter(contribution__isnull=False)
 
 
 admin.site.register(ListingImage, PostmarkImageAdmin)
-admin.site.register(PostmarkShape, PostmarkShapeAdmin)
-admin.site.register(LetteringStyle, LetteringStyleAdmin)
-admin.site.register(FramingStyle, FramingStyleAdmin)
 admin.site.register(Color, ColorAdmin)
-admin.site.register(DateFormat, DateFormatAdmin)
-admin.site.register(PostmarkPublication, PostmarkPublicationAdmin)
-admin.site.register(PostmarkPublicationReference, PostmarkPublicationReferenceAdmin)
 admin.site.register(Postcover, PostcoverAdmin)
 admin.site.register(PostcoverImage, PostcoverImageAdmin)
+
 
 # Locations (proxy of AdministrativeUnit) — under Postmarks; only show rows from tblStates.csv
 class LocationAdmin(AdministrativeUnitAdmin):
@@ -90,28 +70,10 @@ class LocationAdmin(AdministrativeUnitAdmin):
 admin.site.register(Location, LocationAdmin)
 
 
-@admin.register(PostmarkColor)
-class PostmarkColorAdmin(TimestampedModelAdmin):
-    list_display = ['postmark', 'color']
-    raw_id_fields = ['postmark', 'color']
-
-
-@admin.register(PostmarkDatesSeen)
-class PostmarkDatesSeenAdmin(TimestampedModelAdmin):
-    list_display = ['postmark', 'earliest_date_seen', 'latest_date_seen']
-    raw_id_fields = ['postmark']
-
-
-@admin.register(PostmarkSize)
-class PostmarkSizeAdmin(TimestampedModelAdmin):
-    list_display = ['postmark', 'width', 'height', 'size_notes']
-    raw_id_fields = ['postmark']
-
-
 @admin.register(PostmarkValuation)
 class PostmarkValuationAdmin(TimestampedModelAdmin):
-    list_display = ['postmark', 'estimated_value', 'valuation_date', 'valued_by_user']
-    raw_id_fields = ['postmark', 'valued_by_user']
+    list_display = ['postmark', 'amt', 'appraisal_date']
+    raw_id_fields = ['postmark']
 
 
 @admin.register(PostcoverPostmark)

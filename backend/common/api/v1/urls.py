@@ -13,18 +13,6 @@ router = DefaultRouter()
 
 # ========== GEOGRAPHIC & JURISDICTIONAL CORE ==========
 
-# Postal facilities (stable containers + identities + jurisdiction)
-router.register(
-    r"postal-facilities",
-    views.PostalFacilityViewSet,
-    basename="postal-facility",
-)
-router.register(
-    r"postal-facility-identities",
-    views.PostalFacilityIdentityViewSet,
-    basename="postal-facility-identity",
-)
-
 # Administrative units (stable containers + identities + group responsibilities)
 router.register(
     r"administrative-units",
@@ -40,13 +28,6 @@ router.register(
     r"administrative-unit-responsibilities",
     views.AdministrativeUnitResponsibilityViewSet,
     basename="administrative-unit-responsibility",
-)
-
-# Jurisdictional links between facilities and units
-router.register(
-    r"jurisdictional-affiliations",
-    views.JurisdictionalAffiliationViewSet,
-    basename="jurisdictional-affiliation",
 )
 
 # ========== PHYSICAL CHARACTERISTICS ==========
@@ -142,7 +123,6 @@ router.register(
 # The API URLs are now determined automatically by the router
 # csrf_exempt on login/logout/login-requests so the SPA can POST without a CSRF token
 urlpatterns = [
-    path("help-docs/", views.HelpDocsView.as_view(), name="help-docs"),
     path("login/", csrf_exempt(views.LoginView.as_view()), name="login"),
     path("logout/", csrf_exempt(views.LogoutView.as_view()), name="logout"),
     path("login-requests/", csrf_exempt(views.LoginRequestView.as_view()), name="login-request"),

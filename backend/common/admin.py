@@ -28,25 +28,12 @@ from reversion.admin import VersionAdmin
 from reversion_compare.admin import CompareVersionAdmin
 
 from .models import (
-    PostalFacility,
-    PostalFacilityIdentity,
     AdministrativeUnit,
     AdministrativeUnitIdentity,
     AdministrativeUnitResponsibility,
-    JurisdictionalAffiliation,
-    PostmarkShape,
-    LetteringStyle,
-    FramingStyle,
     Color,
-    DateFormat,
     Postmark,
-    PostmarkV2,
-    PostmarkColor,
-    PostmarkDatesSeen,
-    PostmarkSize,
     PostmarkValuation,
-    PostmarkPublication,
-    PostmarkPublicationReference,
     PostmarkImage,
     Postcover,
     PostcoverPostmark,
@@ -79,7 +66,6 @@ from .models import (
 )
 from .csv_import import IMPORTERS
 from .utils import get_canonical_location_reference_codes
-from .api.v1.views import _apply_contribution_to_catalog
 
 User = get_user_model()
 
@@ -171,24 +157,6 @@ class ReversionImportExportAdmin(CompareVersionAdmin, ImportExportModelAdmin):
 
 # ========== RESOURCES (for Import-Export) ==========
 
-class PostalFacilityResource(TimestampedModelResource):
-    class Meta(TimestampedModelResource.Meta):
-        model = PostalFacility
-        import_id_fields = ['postal_facility_id']
-
-
-class PostalFacilityIdentityResource(TimestampedModelResource):
-    postal_facility = fields.Field(
-        column_name='postal_facility',
-        attribute='postal_facility',
-        widget=ForeignKeyWidget(PostalFacility, 'postal_facility_id')
-    )
-    
-    class Meta(TimestampedModelResource.Meta):
-        model = PostalFacilityIdentity
-        import_id_fields = ['postal_facility_identity_id']
-
-
 class AdministrativeUnitResource(TimestampedModelResource):
     class Meta(TimestampedModelResource.Meta):
         model = AdministrativeUnit
@@ -229,142 +197,19 @@ class AdministrativeUnitResponsibilityResource(TimestampedModelResource):
         import_id_fields = ['administrative_unit_responsibility_id']
 
 
-class JurisdictionalAffiliationResource(TimestampedModelResource):
-    postal_facility_identity = fields.Field(
-        column_name='postal_facility_identity',
-        attribute='postal_facility_identity',
-        widget=ForeignKeyWidget(PostalFacilityIdentity, 'postal_facility_identity_id')
-    )
-    administrative_unit = fields.Field(
-        column_name='administrative_unit',
-        attribute='administrative_unit',
-        widget=ForeignKeyWidget(AdministrativeUnit, 'administrative_unit_id')
-    )
-    
-    class Meta(TimestampedModelResource.Meta):
-        model = JurisdictionalAffiliation
-        import_id_fields = ['jurisdictional_affiliation_id']
-
-
-class PostmarkShapeResource(TimestampedModelResource):
-    class Meta(TimestampedModelResource.Meta):
-        model = PostmarkShape
-        import_id_fields = ['postmark_shape_id']
-
-
-class LetteringStyleResource(TimestampedModelResource):
-    class Meta(TimestampedModelResource.Meta):
-        model = LetteringStyle
-        import_id_fields = ['lettering_style_id']
-
-
-class FramingStyleResource(TimestampedModelResource):
-    class Meta(TimestampedModelResource.Meta):
-        model = FramingStyle
-        import_id_fields = ['framing_style_id']
-
-
 class ColorResource(TimestampedModelResource):
     class Meta(TimestampedModelResource.Meta):
         model = Color
         import_id_fields = ['color_id']
 
 
-class DateFormatResource(TimestampedModelResource):
-    class Meta(TimestampedModelResource.Meta):
-        model = DateFormat
-        import_id_fields = ['date_format_id']
-
-
 class PostmarkResource(TimestampedModelResource):
-    postal_facility_identity = fields.Field(
-        column_name='postal_facility_identity',
-        attribute='postal_facility_identity',
-        widget=ForeignKeyWidget(PostalFacilityIdentity, 'postal_facility_identity_id')
-    )
-    postmark_shape = fields.Field(
-        column_name='postmark_shape',
-        attribute='postmark_shape',
-        widget=ForeignKeyWidget(PostmarkShape, 'postmark_shape_id')
-    )
-    lettering_style = fields.Field(
-        column_name='lettering_style',
-        attribute='lettering_style',
-        widget=ForeignKeyWidget(LetteringStyle, 'lettering_style_id')
-    )
-    framing_style = fields.Field(
-        column_name='framing_style',
-        attribute='framing_style',
-        widget=ForeignKeyWidget(FramingStyle, 'framing_style_id')
-    )
-    date_format = fields.Field(
-        column_name='date_format',
-        attribute='date_format',
-        widget=ForeignKeyWidget(DateFormat, 'date_format_id')
-    )
-    
     class Meta(TimestampedModelResource.Meta):
         model = Postmark
-        import_id_fields = ['postmark_id']
+        import_id_fields = ['id']
 
 
 # ========== GEOGRAPHIC ADMIN ==========
-
-class PostalFacilityIdentityInline(admin.TabularInline):
-    model = PostalFacilityIdentity
-    extra = 1
-    fields = ['facility_name', 'facility_type', 'effective_from_date', 'effective_to_date', 'is_operational']
-    exclude = ["created_by", "modified_by", "created_date", "modified_date"]
-
-
-@admin.register(PostalFacility)
-class PostalFacilityAdmin(InlineRevisionMixin, TimestampedModelAdmin):
-    resource_class = PostalFacilityResource
-    list_display = ['reference_code', 'get_current_name', 'latitude', 'longitude']
-    search_fields = ['reference_code']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-    inlines = [PostalFacilityIdentityInline]
-    
-    def get_current_name(self, obj):
-        identity = obj.get_current_identity()
-        return identity.facility_name if identity else '-'
-    get_current_name.short_description = 'Current Name'
-
-
-@admin.register(PostalFacilityIdentity)
-class PostalFacilityIdentityAdmin(TimestampedModelAdmin):
-    resource_class = PostalFacilityIdentityResource
-    list_display = ['facility_name', 'postal_facility', 'facility_type', 
-                    'effective_from_date', 'effective_to_date', 'is_operational']
-    list_filter = ['facility_type', 'is_operational', 'effective_from_date']
-    search_fields = ['facility_name', 'postal_facility__reference_code']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-    raw_id_fields = ['postal_facility']
-    date_hierarchy = 'effective_from_date'
-    
-    fieldsets = (
-        ('Facility Reference', {
-            'fields': ('postal_facility',)
-        }),
-        ('Identity Information', {
-            'fields': ('facility_name', 'facility_type', 'is_operational', 'discontinuation_reason')
-        }),
-        ('Temporal Bounds', {
-            'fields': ('effective_from_date', 'effective_to_date')
-        }),
-        ('Location Override (if facility moved)', {
-            'fields': ('latitude', 'longitude'),
-            'classes': ('collapse',)
-        }),
-        ('Additional Information', {
-            'fields': ('notes',)
-        }),
-        ('Metadata', {
-            'fields': ('created_date', 'modified_date', 'created_by', 'modified_by'),
-            'classes': ('collapse',)
-        }),
-    )
-
 
 class AdministrativeUnitIdentityInline(admin.TabularInline):
     model = AdministrativeUnitIdentity
@@ -461,98 +306,36 @@ class AdministrativeUnitResponsibilityAdmin(TimestampedModelAdmin):
     get_unit_name.short_description = 'Location'
 
 
-@admin.register(JurisdictionalAffiliation)
-class JurisdictionalAffiliationAdmin(TimestampedModelAdmin):
-    resource_class = JurisdictionalAffiliationResource
-    list_display = ['get_facility_name', 'get_admin_unit_name', 
-                    'effective_from_date', 'effective_to_date']
-    list_filter = ['effective_from_date', 'administrative_unit']
-    search_fields = ['postal_facility_identity__facility_name', 
-                     'administrative_unit__reference_code']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-    raw_id_fields = ['postal_facility_identity', 'administrative_unit']
-    date_hierarchy = 'effective_from_date'
-    
-    fieldsets = (
-        ('Affiliation', {
-            'fields': ('postal_facility_identity', 'administrative_unit')
-        }),
-        ('Temporal Bounds', {
-            'fields': ('effective_from_date', 'effective_to_date')
-        }),
-        ('Source', {
-            'fields': ('affiliation_source',)
-        }),
-        ('Metadata', {
-            'fields': ('created_date', 'modified_date', 'created_by', 'modified_by'),
-            'classes': ('collapse',)
-        }),
-    )
-    
-    def get_facility_name(self, obj):
-        return obj.postal_facility_identity.facility_name
-    get_facility_name.short_description = 'Facility'
-    
-    def get_admin_unit_name(self, obj):
-        identity = obj.get_administrative_unit_identity()
-        return identity.unit_name if identity else obj.administrative_unit.reference_code
-    get_admin_unit_name.short_description = 'Location'
-
-
 # ========== PHYSICAL CHARACTERISTICS ADMIN ==========
-
-class PostmarkShapeAdmin(TimestampedModelAdmin):
-    resource_class = PostmarkShapeResource
-    list_display = ['shape_name', 'shape_description']
-    search_fields = ['shape_name', 'shape_description']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-
-
-class LetteringStyleAdmin(TimestampedModelAdmin):
-    resource_class = LetteringStyleResource
-    list_display = ['lettering_style_name', 'lettering_description']
-    search_fields = ['lettering_style_name', 'lettering_description']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-
-
-class FramingStyleAdmin(TimestampedModelAdmin):
-    resource_class = FramingStyleResource
-    list_display = ['framing_style_name', 'framing_description']
-    search_fields = ['framing_style_name', 'framing_description']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-
 
 class ColorAdmin(TimestampedModelAdmin):
     resource_class = ColorResource
-    list_display = ['color_name', 'color_value']
-    search_fields = ['color_name', 'color_value']
+    list_display = ['name', 'hex_val']
+    search_fields = ['name', 'hex_val']
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
     actions = ['delete_colors_keep_listings']
 
     @admin.action(description='Delete selected colors (keep listings)')
     def delete_colors_keep_listings(self, request, queryset):
         """
-        Admin action to delete Color records without deleting any Postmark listings.
-        It first removes all PostmarkColor links that use the selected colors,
-        then deletes the Color rows themselves.
+        Delete Color records while preserving Postmark listings. Postmarks whose
+        color FK points to a deleted color have their color nulled out first.
         """
         from django.db import transaction
 
         total_colors = queryset.count()
-        total_links = 0
+        total_nulled = 0
 
         with transaction.atomic():
             for color in queryset:
-                links_qs = PostmarkColor.objects.filter(color=color)
-                link_count = links_qs.count()
-                total_links += link_count
-                links_qs.delete()
+                count = Postmark.objects.filter(color=color).update(color=None)
+                total_nulled += count
                 color.delete()
 
         messages.success(
             request,
-            f"Deleted {total_colors} color(s) and {total_links} postmark color link(s). "
-            "All catalog listings were kept; they just no longer reference these colors."
+            f"Deleted {total_colors} color(s); nulled color on {total_nulled} postmark(s). "
+            "All catalog listings were kept."
         )
 
     def get_actions(self, request):
@@ -567,45 +350,11 @@ class ColorAdmin(TimestampedModelAdmin):
         return actions
 
 
-class DateFormatAdmin(TimestampedModelAdmin):
-    resource_class = DateFormatResource
-    list_display = ['format_name', 'format_description']
-    search_fields = ['format_name', 'format_description']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-
-
 # ========== POSTMARK ADMIN ==========
-
-class PostmarkColorInline(admin.TabularInline):
-    model = PostmarkColor
-    extra = 1
-    raw_id_fields = ['color']
-    exclude = ["created_by", "modified_by", "created_date", "modified_date"]
-
-
-class PostmarkDatesSeenInline(admin.TabularInline):
-    model = PostmarkDatesSeen
-    extra = 1
-    exclude = ["created_by", "modified_by", "created_date", "modified_date"]
-
-
-class PostmarkSizeInline(admin.TabularInline):
-    model = PostmarkSize
-    extra = 1
-    exclude = ["created_by", "modified_by", "created_date", "modified_date"]
-
 
 class PostmarkValuationInline(admin.TabularInline):
     model = PostmarkValuation
     extra = 0
-    raw_id_fields = ['valued_by_user']
-    exclude = ["created_by", "modified_by", "created_date", "modified_date"]
-
-
-class PostmarkPublicationReferenceInline(admin.TabularInline):
-    model = PostmarkPublicationReference
-    extra = 1
-    raw_id_fields = ['postmark_publication']
     exclude = ["created_by", "modified_by", "created_date", "modified_date"]
 
 
@@ -626,118 +375,37 @@ class ExampleCoverInline(admin.TabularInline):
     exclude = ["created_by", "modified_by", "created_date", "modified_date"]
 
 
+@admin.register(Postmark)
 class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     resource_class = PostmarkResource
-    list_display = [
-        'postmark_key', 'get_postmark_shape_display', 'state', 'rate_value', 'visibility',
-        'source_catalog',
-    ]
-    list_filter = ['state', 'source_catalog']
-    search_fields = ['postmark_key', 'postal_facility_identity__facility_name', 'rate_value', 'public_slug', 'raw_state_data_id']
+    list_display = ['code', 'post_office', 'color', 'shape', 'is_manuscript']
+    list_filter = ['is_manuscript', 'color', 'shape']
+    search_fields = ['code', 'catalog_txt', 'inscription_txt', 'post_office__name']
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-    raw_id_fields = ['site', 'postal_facility_identity', 'state', 'postmark_shape', 'lettering_style',
-                     'framing_style', 'date_format']
-    
+    raw_id_fields = ['post_office', 'shape', 'lettering', 'color']
+
     inlines = [
-        PostmarkColorInline,
-        PostmarkDatesSeenInline,
-        PostmarkSizeInline,
         PostmarkValuationInline,
-        PostmarkPublicationReferenceInline,
         PostmarkImageInline,
         ExampleCoverInline,
     ]
-    
+
     fieldsets = (
-        ('Basic Information', {
-            'fields': ('postmark_key', 'site', 'postal_facility_identity', 'state')
-        }),
-        ('Listing Status & Source', {
-            'fields': (
-                'visibility',
-                'contribution_approval_status',
-                'public_slug',
-                'source_catalog',
-                'source_page',
-                'last_public_update_at',
-            )
-        }),
-        ('Import Linkage', {
-            'fields': ('raw_state_data_id', 'raw_import_payload'),
-            'classes': ('collapse',)
+        ('Identity', {
+            'fields': ('code', 'post_office')
         }),
         ('Physical Characteristics', {
-            'fields': ('postmark_shape', 'lettering_style', 'framing_style', 'date_format')
+            'fields': ('shape', 'lettering', 'color', 'is_manuscript', 'impression',
+                       'is_irreg', 'width', 'height', 'date_type', 'date_fmt')
         }),
-        ('Rate Information', {
-            'fields': ('rate_location', 'rate_value')
-        }),
-        ('Additional Details', {
-            'fields': ('is_manuscript', 'other_characteristics')
+        ('Text', {
+            'fields': ('catalog_txt', 'inscription_txt')
         }),
         ('Metadata', {
             'fields': ('created_date', 'modified_date', 'created_by', 'modified_by'),
             'classes': ('collapse',)
         }),
     )
-
-    def save_model(self, request, obj, form, change):
-        """
-        When an admin approves a user-contribution listing, record the time
-        of that approval in last_public_update_at. This marks the listing as
-        having at least one approved public version so that catalog/search
-        can continue to show it even if later edits are pending re-approval.
-        """
-        # Determine previous status so we can detect transition → approved
-        previous_status = None
-        if change and obj.pk:
-            try:
-                previous = obj.__class__.objects.only("contribution_approval_status").get(pk=obj.pk)
-                previous_status = previous.contribution_approval_status
-            except obj.__class__.DoesNotExist:
-                previous_status = None
-
-        super().save_model(request, obj, form, change)
-
-        if (
-            obj.source_catalog == "User contribution"
-            and obj.contribution_approval_status == "approved"
-        ):
-            # First time this listing is approved, or a re-approval after edits.
-            if not obj.last_public_update_at:
-                obj.last_public_update_at = timezone.now()
-                obj.save(update_fields=["last_public_update_at"])
-    
-    def get_postmark_shape_display(self, obj):
-        """Safe list_display for postmark_shape so one bad FK does not break the changelist."""
-        try:
-            return obj.postmark_shape if obj.postmark_shape_id else '-'
-        except Exception:
-            return '-'
-    get_postmark_shape_display.short_description = 'Postmark shape'
-
-    def get_facility_name(self, obj):
-        if not obj.postal_facility_identity:
-            return '-'
-        return obj.postal_facility_identity.facility_name
-    get_facility_name.short_description = 'Facility'
-    
-    def get_admin_unit(self, obj):
-        if not obj.postal_facility_identity:
-            return '-'
-        affiliations = obj.postal_facility_identity.jurisdictions.filter(
-            effective_to_date__isnull=True
-        ).first()
-        if affiliations:
-            identity = affiliations.get_administrative_unit_identity()
-            return identity.unit_name if identity else '-'
-        return '-'
-    get_admin_unit.short_description = 'Location'
-    
-    def get_responsible_groups(self, obj):
-        groups = obj.get_responsible_groups()
-        return ', '.join([g.name for g in groups]) if groups else '-'
-    get_responsible_groups.short_description = 'Responsible Groups'
 
     def example_cover_count(self, obj):
         return obj.postcover_postmarks.count()
@@ -746,7 +414,7 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     def example_cover_link(self, obj):
         url = (
             reverse('admin:common_postcover_changelist')
-            + f"?postcover_postmarks__postmark__postmark_id__exact={obj.postmark_id}"
+            + f"?postcover_postmarks__postmark__id__exact={obj.pk}"
         )
         return format_html('<a href="{}">View</a>', url)
     example_cover_link.short_description = 'Example Covers Link'
@@ -755,7 +423,7 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
 class PostmarkImageAdmin(TimestampedModelAdmin):
     list_display = ['get_postmark_key', 'original_filename', 'image_view', 'display_order', 'uploaded_by']
     list_filter = ['image_view']
-    search_fields = ['postmark__postmark_key', 'original_filename', 'uploaded_by']
+    search_fields = ['postmark__code', 'original_filename', 'uploaded_by']
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date', 'file_checksum']
     raw_id_fields = ['postmark']
     # Avoid slow COUNT(*) on large tables in production (prevents 502 from timeout)
@@ -763,7 +431,7 @@ class PostmarkImageAdmin(TimestampedModelAdmin):
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
-        return qs.select_related('postmark', 'uploaded_by').order_by('-postmark_image_id')
+        return qs.select_related('postmark', 'uploaded_by').order_by('-id')
 
     fieldsets = (
         ('Postmark', {
@@ -786,45 +454,11 @@ class PostmarkImageAdmin(TimestampedModelAdmin):
     )
     
     def get_postmark_key(self, obj):
-        """
-        Safe accessor for the related postmark key so that a broken
-        foreign key does not crash the changelist view.
-        """
         try:
-            if obj.postmark_id:
-                return obj.postmark.postmark_key
+            return str(obj.postmark) if obj.postmark_id else '-'
         except Exception:
-            # If the FK is stale or the related Postmark row is missing,
-            # fall back to a neutral placeholder so the row can still render.
             return '-'
-        return '-'
     get_postmark_key.short_description = 'Postmark'
-
-
-# ========== PUBLICATION ADMIN ==========
-
-class PostmarkPublicationAdmin(TimestampedModelAdmin):
-    list_display = ['publication_title', 'author', 'publisher', 'publication_date', 'publication_type']
-    list_filter = ['publication_type', 'publication_date']
-    search_fields = ['publication_title', 'author', 'publisher', 'isbn']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-    date_hierarchy = 'publication_date'
-
-
-class PostmarkPublicationReferenceAdmin(TimestampedModelAdmin):
-    list_display = ['get_postmark_key', 'get_publication_title', 'published_id', 'reference_location']
-    list_filter = ['postmark_publication__publication_type']
-    search_fields = ['postmark__postmark_key', 'postmark_publication__publication_title', 'published_id']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-    raw_id_fields = ['postmark', 'postmark_publication']
-    
-    def get_postmark_key(self, obj):
-        return obj.postmark.postmark_key
-    get_postmark_key.short_description = 'Postmark'
-    
-    def get_publication_title(self, obj):
-        return obj.postmark_publication.publication_title
-    get_publication_title.short_description = 'Publication'
 
 
 # ========== POSTCOVER ADMIN ==========
@@ -886,7 +520,7 @@ class AdminCsvUploadForm(forms.ModelForm):
     csv_file = forms.FileField(
         label='CSV file',
         required=False,
-        help_text='Upload a CSV (e.g. tblTownmarkDateFormat.csv). Required when adding new.',
+        help_text='Upload a CSV (e.g. tblStates.csv, tblTownmarkLettering.csv). Required when adding new.',
     )
 
     class Meta:
@@ -1317,7 +951,7 @@ class ContributionAdmin(admin.ModelAdmin):
         # Only act on a fresh transition from pending -> approved
         if previous_status == Contribution.STATUS_PENDING and obj.status == Contribution.STATUS_APPROVED:
             try:
-                postmark = _apply_contribution_to_catalog(obj)
+                postmark = obj.apply_to_catalog()
                 if not postmark:
                     self.message_user(
                         request,
@@ -1327,13 +961,9 @@ class ContributionAdmin(admin.ModelAdmin):
                     return
 
                 # Ensure the Contribution is linked to the Postmark (for new entries)
-                if obj.postmark_id != postmark.postmark_id:
+                if obj.postmark_id != postmark.pk:
                     obj.postmark = postmark
                     obj.save(update_fields=["postmark", "updated_at"])
-
-                # Mark the Postmark as approved so it appears in listings/search
-                postmark.contribution_approval_status = "approved"
-                postmark.save(update_fields=["contribution_approval_status"])
             except Exception:
                 self.message_user(
                     request,
@@ -1347,11 +977,10 @@ class ContributionAdmin(admin.ModelAdmin):
         """
         Admin bulk action to approve pending contributions.
         Mirrors the API behaviour:
-        - Applies submitted_data to the catalog via _apply_contribution_to_catalog
+        - Applies submitted_data to the catalog via contribution.apply_to_catalog()
           (creates a Postmark for new entries or updates the existing one).
         - Marks the Contribution as approved and links it to the Postmark.
-        - Marks the Postmark's contribution_approval_status as 'approved' so it
-          appears in the public catalog/search listing.
+        - Marks the Contribution as approved so it appears in the public catalog/search listing.
         """
         approved = 0
         failed = 0
@@ -1360,7 +989,7 @@ class ContributionAdmin(admin.ModelAdmin):
             if contrib.status != Contribution.STATUS_PENDING:
                 continue
             try:
-                postmark = _apply_contribution_to_catalog(contrib)
+                postmark = contrib.apply_to_catalog()
                 if not postmark:
                     failed += 1
                     continue
@@ -1368,9 +997,6 @@ class ContributionAdmin(admin.ModelAdmin):
                 contrib.reviewer = request.user
                 contrib.postmark = postmark
                 contrib.save(update_fields=["status", "reviewer", "postmark", "updated_at"])
-
-                postmark.contribution_approval_status = "approved"
-                postmark.save(update_fields=["contribution_approval_status"])
                 approved += 1
             except Exception:
                 failed += 1
@@ -1454,7 +1080,7 @@ class AuxmarkAdmin(TimestampedModelAdmin):
     list_display = [
         "parent_mark_type",
         "parent_mark_id",
-        "inscription_text",
+        "inscription_txt",
         "is_manuscript",
         "shape",
         "lettering",
@@ -1465,7 +1091,7 @@ class AuxmarkAdmin(TimestampedModelAdmin):
         "height",
     ]
     list_filter = ["parent_mark_type", "is_manuscript", "impression", "is_irreg"]
-    search_fields = ["inscription_text", "parent_mark_type"]
+    search_fields = ["inscription_txt", "parent_mark_type"]
     raw_id_fields = ["shape", "lettering", "color"]
     ordering = ["parent_mark_type", "parent_mark_id"]
 
@@ -1500,7 +1126,7 @@ class PostOfficeAdmin(TimestampedModelAdmin):
 class DateObservedAdmin(TimestampedModelAdmin):
     list_display = ["postmark", "date", "granularity"]
     list_filter = ["granularity"]
-    search_fields = ["postmark__postmark_key"]
+    search_fields = ["postmark__code"]
     raw_id_fields = ["postmark"]
     ordering = ["postmark", "date"]
 
@@ -1516,7 +1142,7 @@ class RatemarkAdmin(TimestampedModelAdmin):
 @admin.register(CoverPostmark)
 class CoverPostmarkAdmin(TimestampedModelAdmin):
     list_display = ["cover", "postmark", "is_backstamp"]
-    search_fields = ["cover__code", "postmark__postmark_key"]
+    search_fields = ["cover__code", "postmark__code"]
     raw_id_fields = ["cover", "postmark"]
 
 
@@ -1524,7 +1150,7 @@ class CoverPostmarkAdmin(TimestampedModelAdmin):
 class PostmarkRatemarkAdmin(TimestampedModelAdmin):
     list_display = ["postmark", "ratemark", "placement_type"]
     list_filter = ["placement_type"]
-    search_fields = ["postmark__postmark_key", "ratemark__inscription_txt"]
+    search_fields = ["postmark__code", "ratemark__inscription_txt"]
     raw_id_fields = ["postmark", "ratemark"]
 
 
@@ -1541,13 +1167,6 @@ class ReferenceWorkAdmin(TimestampedModelAdmin):
     list_display = ["title", "authorship", "publication_year", "publisher"]
     search_fields = ["title", "authorship", "publisher", "isbn"]
     ordering = ["title"]
-
-
-@admin.register(PostmarkV2)
-class PostmarkV2Admin(InlineRevisionMixin, TimestampedModelAdmin):
-    list_display = ["postmark", "code", "date_type", "date_fmt", "date_format", "is_manuscript", "post_office"]
-    search_fields = ["postmark__postmark_key", "code", "catalog_txt", "inscription_txt"]
-    raw_id_fields = ["postmark", "post_office", "shape", "lettering", "color", "date_format"]
 
 
 ###################################################################################################

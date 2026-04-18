@@ -24,18 +24,10 @@ lsof -ti :8000 | xargs kill
 
 ## 2. Start Django again
 
-From the project root (with venv activated):
+From the project root:
 
 ```bash
-cd backend
-python manage.py runserver
-```
-
-Or from repo root:
-
-```bash
-source .venv/bin/activate
-cd backend && python manage.py runserver
+pipenv run manage runserver
 ```
 
 ---

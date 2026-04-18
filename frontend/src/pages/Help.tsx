@@ -89,7 +89,7 @@ const Help = () => {
               Help
             </h1>
             <p className="text-muted-foreground">
-              This page is built from all markdown files in <code>help-docs/</code>.
+              This page is built from all markdown files in <code>docs/</code>.
             </p>
           </header>
 

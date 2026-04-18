@@ -3,7 +3,7 @@
 
 Welcome to _**WorldCovers**_, a stampless cover and postmark catalog application
 
-This build, nicknamed _Warp_, is version **2.0.0**
+This build, nicknamed _Warp_, is version **2.0.0** (beta).
 
 > Another success is the post-office, with its educating energy augmented by cheapness and guarded by a certain religious sentiment in mankind; so that the power of a wafer or a drop of wax or gluten to guard a letter, as it flies over sea over land and comes to its address as if a battalion of artillery brought it, I look upon as a fine meter of civilization.
 
@@ -19,7 +19,7 @@ This build, nicknamed _Warp_, is version **2.0.0**
 
 ## Project Overview
 
-Version strings follow the **MAJOR**(\d+) . **MINOR**(\d+) . **REVISION**(#?) format.
+Version strings follow the **MAJOR**(\d+) . **MINOR**(\d+) . **REVISION**(\d+) format.
 
 Current planned Milestones are `alpha`, `beta`, and `rtm`.  
 
@@ -36,18 +36,16 @@ For licensing details, see [LICENSE](LICENSE)
   * The public UI at [hellowoco.app](https://hellowoco.app) is a React SPA (e.g. from Lovable) contained in `frontend`. Django serves it as the site home and all frontend routes, with API and admin staying under the `/api/` and `/admin/` URLs.
 
 
-For more details see [DESIGN.md](./docs/DESIGN.md)
+For more details see [design.md](./docs/design.md)
 
 
 ## Building
 
 ### Quickstart
 
-This project uses `pipenv`, and `django`. Make sure you have at least `python` 3.13 installed.
+This project uses `pipenv` and `django`. Make sure you have at least `python` 3.13 installed. All Django commands use `pipenv run manage <cmd>` — for example `pipenv run manage runserver`.
 
-`dotenv` is used as well, but strictly for convenience.  It allows you to directly call `django-admin` for all project commands, instead of `python backend/manage.py`. 
-
-For building other targets, and instructions for packaging in preparation for deployment, see [BUILD.md](./docs/BUILD.md).
+For full setup instructions (dependencies, database credentials, frontend build, migrations), see [docs/BUILD.md](./docs/BUILD.md).
 
 To have the site home and routes served by the React app (e.g. at hellowoco.app), add your frontend in [frontend/](./frontend) and **run `npm run build` there before deployment**. The built output (`frontend/dist/`) is not in git, so your **deploy must run the frontend build** (e.g. `cd frontend && npm ci && npm run build`) before starting Django. See [docs/DEPLOY.md](./docs/DEPLOY.md) and [frontend/README.md](./frontend/README.md).
 
@@ -58,17 +56,20 @@ To have the site home and routes served by the React app (e.g. at hellowoco.app)
 
 ## Execution
 
-To run **WorldCovers** in Production mode, execute the following:
+To run **WorldCovers** in production, deploy with `tools/deploy.sh` then manage the process via systemd:
 ```sh
-./TODO
+sudo systemctl start worldcovers
 ```
 
-To run both the backend and frontend in debug mode, execute the following instead:
+To run in development, build the frontend once, then start Django (it serves the built SPA at `/`):
 ```sh
-./TODO
+cd frontend && npm ci && npm run build && cd ..
+pipenv run manage runserver
 ```
 
-For information on how to run the separate sub-projects, and perform administrative actions post-deployment, see [RUNBOOK.md](./docs/RUNBOOK.md)
+For day-to-day operator tasks (restarts, imports, backups, approving contributions), see [docs/RUNBOOK.md](./docs/RUNBOOK.md).
+
+For data import and management commands, see [docs/TOOLS.md](./docs/TOOLS.md).
 
 
 ## Errata

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getStoredUser, setStoredUser, fetchCurrentUser, type AuthUser } from "@/lib/auth";
+import { getStoredUser, setStoredUser, clearStoredUser, fetchCurrentUser, type AuthUser } from "@/lib/auth";
 
 export function useAuth(): AuthUser | null {
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser());
@@ -10,8 +10,12 @@ export function useAuth(): AuthUser | null {
     if (!stored) return;
     let cancelled = false;
     fetchCurrentUser().then((serverUser) => {
-      if (cancelled || !serverUser) return;
-      setStoredUser(serverUser);
+      if (cancelled) return;
+      if (serverUser) {
+        setStoredUser(serverUser);
+      } else {
+        clearStoredUser();
+      }
     });
     return () => {
       cancelled = true;

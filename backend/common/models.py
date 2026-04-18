@@ -2,83 +2,19 @@ import hashlib
 from django.db import models
 from django.db.models import Q
 from django.contrib.auth.models import Group
-from django.contrib.sites.models import Site
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
 from colorfield.fields import ColorField
 
 class TimestampedModel(models.Model):
     """Abstract base model with creation and modification tracking"""
-    created_date = models.DateTimeField(auto_now_add=True, db_column='CreatedDate')
-    modified_date = models.DateTimeField(auto_now=True, db_column='ModifiedDate')
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='%(class)s_created', db_column='CreatedByUserID')
-    modified_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='%(class)s_modified', db_column='ModifiedByUserID')
+    created_date = models.DateTimeField(auto_now_add=True)
+    modified_date = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='%(class)s_created')
+    modified_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='%(class)s_modified')
 
     class Meta:
         abstract = True
-
-class PostalFacility(TimestampedModel):
-    """
-    Stable container for a postal facility.
-    This is a pure pointer - all temporal data is in PostalFacilityIdentity.
-    """
-    postal_facility_id = models.AutoField(primary_key=True, db_column='PostalFacilityID')
-    reference_code = models.CharField(max_length=50, unique=True, db_column='ReferenceCode', help_text="Stable identifier (e.g., 'US-VA-RICHMOND-001', 'TR-IST-001')")
-    latitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True, db_column='Latitude', help_text='Primary coordinates - if facility moved, use PostalFacilityIdentity override')
-    longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True, db_column='Longitude', help_text='Primary coordinates - if facility moved, use PostalFacilityIdentity override')
-
-    class Meta:
-        db_table = 'PostalFacilities'
-        verbose_name = 'Postal Facility'
-        verbose_name_plural = 'Postal Facilities'
-        indexes = [models.Index(fields=['reference_code'])]
-
-    def get_current_identity(self):
-        """Get currently active identity"""
-        return self.identities.filter(effective_to_date__isnull=True).first()
-
-    def get_identity_at_date(self, target_date):
-        """Get identity at specific date"""
-        return self.identities.filter(Q(effective_from_date__lte=target_date) & (Q(effective_to_date__isnull=True) | Q(effective_to_date__gt=target_date))).first()
-
-    def __str__(self):
-        current = self.get_current_identity()
-        if current:
-            return f'{current.facility_name} ({self.reference_code})'
-        return self.reference_code
-
-class PostalFacilityIdentity(TimestampedModel):
-    """
-    Temporal identity of a postal facility.
-    Captures what it was called, its status, and optionally location during a specific period.
-    """
-    postal_facility_identity_id = models.AutoField(primary_key=True, db_column='PostalFacilityIdentityID')
-    postal_facility = models.ForeignKey(PostalFacility, on_delete=models.PROTECT, related_name='identities', db_column='PostalFacilityID')
-    effective_from_date = models.DateField(db_column='EffectiveFromDate')
-    effective_to_date = models.DateField(null=True, blank=True, db_column='EffectiveToDate')
-    facility_name = models.CharField(max_length=255, db_column='FacilityName', help_text='Name as it appeared on postmarks')
-    facility_type = models.CharField(max_length=50, db_column='FacilityType', choices=[('POST_OFFICE', 'Post Office'), ('BRANCH', 'Branch Office'), ('STATION', 'Station'), ('SUB_STATION', 'Sub-Station'), ('CONTRACT_STATION', 'Contract Station'), ('RURAL_ROUTE', 'Rural Route'), ('DISCONTINUED', 'Discontinued')])
-    is_operational = models.BooleanField(default=True, db_column='IsOperational')
-    discontinuation_reason = models.CharField(max_length=100, blank=True, db_column='DiscontinuationReason')
-    latitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True, db_column='Latitude', help_text='Override location if facility moved during this period')
-    longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True, db_column='Longitude', help_text='Override location if facility moved during this period')
-    notes = models.TextField(blank=True, db_column='Notes')
-
-    class Meta:
-        db_table = 'PostalFacilityIdentities'
-        verbose_name = 'Postal Facility Identity'
-        verbose_name_plural = 'Postal Facility Identities'
-        indexes = [models.Index(fields=['facility_name', 'effective_from_date']), models.Index(fields=['postal_facility', 'effective_from_date'])]
-        ordering = ['postal_facility', 'effective_from_date']
-
-    def get_coordinates(self):
-        """Get coordinates, using override if present, otherwise from facility"""
-        if self.latitude and self.longitude:
-            return (self.latitude, self.longitude)
-        return (self.postal_facility.latitude, self.postal_facility.longitude)
-
-    def __str__(self):
-        return f"{self.facility_name} ({self.effective_from_date} - {self.effective_to_date or 'present'})"
 
 class AdministrativeUnit(TimestampedModel):
     """
@@ -163,275 +99,64 @@ class AdministrativeUnitResponsibility(TimestampedModel):
         unit_name = unit_identity.unit_name if unit_identity else self.administrative_unit.reference_code
         return f'{self.group.name} → {unit_name}'
 
-class JurisdictionalAffiliation(TimestampedModel):
-    """
-    Temporal relationship between a postal facility and its governing jurisdiction.
-    """
-    jurisdictional_affiliation_id = models.AutoField(primary_key=True, db_column='JurisdictionalAffiliationID')
-    postal_facility_identity = models.ForeignKey(PostalFacilityIdentity, on_delete=models.CASCADE, related_name='jurisdictions', db_column='PostalFacilityIdentityID')
-    administrative_unit = models.ForeignKey('postmarks.Location', on_delete=models.PROTECT, related_name='governed_facilities', db_column='AdministrativeUnitID')
-    effective_from_date = models.DateField(db_column='EffectiveFromDate')
-    effective_to_date = models.DateField(null=True, blank=True, db_column='EffectiveToDate')
-    affiliation_source = models.CharField(max_length=255, db_column='AffiliationSource', help_text='Treaty, Organic Act, Congressional Act, etc.')
-
-    class Meta:
-        db_table = 'JurisdictionalAffiliations'
-        verbose_name = 'Jurisdictional Affiliation'
-        verbose_name_plural = 'Jurisdictional Affiliations'
-        indexes = [models.Index(fields=['postal_facility_identity', 'effective_from_date']), models.Index(fields=['administrative_unit', 'effective_from_date'])]
-
-    def get_administrative_unit_identity(self):
-        """Get the administrative unit's identity during this affiliation"""
-        return self.administrative_unit.get_identity_at_date(self.effective_from_date)
-
-    def __str__(self):
-        facility = self.postal_facility_identity.facility_name
-        admin_identity = self.get_administrative_unit_identity()
-        admin_name = admin_identity.unit_name if admin_identity else 'Unknown'
-        return f'{facility} in {admin_name} ({self.effective_from_date})'
-
-class PostmarkShape(TimestampedModel):
-    """Physical shapes of postmarks"""
-    postmark_shape_id = models.AutoField(primary_key=True, db_column='PostmarkShapeID')
-    shape_name = models.CharField(max_length=100, unique=True, db_column='ShapeName')
-    shape_description = models.TextField(blank=True, db_column='ShapeDescription')
-
-    class Meta:
-        db_table = 'PostmarkShapes'
-        verbose_name = 'Postmark Shape'
-        verbose_name_plural = 'Postmark Shapes'
-        ordering = ['shape_name']
-
-    def __str__(self):
-        return self.shape_name
-
-class LetteringStyle(TimestampedModel):
-    """Lettering styles used in postmarks"""
-    lettering_style_id = models.AutoField(primary_key=True, db_column='LetteringStyleID')
-    lettering_style_name = models.CharField(max_length=100, unique=True, db_column='LetteringStyleName')
-    lettering_description = models.TextField(blank=True, db_column='LetteringDescription')
-
-    class Meta:
-        db_table = 'LetteringStyles'
-        verbose_name = 'Lettering Style'
-        verbose_name_plural = 'Lettering Styles'
-        ordering = ['lettering_style_name']
-
-    def __str__(self):
-        return self.lettering_style_name
-
-class FramingStyle(TimestampedModel):
-    """Framing styles for postmarks"""
-    framing_style_id = models.AutoField(primary_key=True, db_column='FramingStyleID')
-    framing_style_name = models.CharField(max_length=100, unique=True, db_column='FramingStyleName')
-    framing_description = models.TextField(blank=True, db_column='FramingDescription')
-
-    class Meta:
-        db_table = 'FramingStyles'
-        verbose_name = 'Framing Style'
-        verbose_name_plural = 'Framing Styles'
-        ordering = ['framing_style_name']
-
-    def __str__(self):
-        return self.framing_style_name
 
 class Color(TimestampedModel):
     """Colors used in postmarks"""
-    color_id = models.AutoField(primary_key=True, db_column='ColorID')
-    color_name = models.CharField(max_length=50, unique=True, db_column='ColorName')
-    color_value = ColorField(default='#FFFFFF', db_column='ColorValue')
+    color_id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=50, unique=True)
+    hex_val = ColorField(default='#FFFFFF')
+    pantone_code = models.CharField(max_length=50, null=True, blank=True)
 
     class Meta:
         db_table = 'Colors'
         verbose_name = 'Color'
         verbose_name_plural = 'Colors'
-        ordering = ['color_name']
+        ordering = ['name']
 
     def __str__(self):
-        return self.color_name
+        return self.name
 
-class DateFormat(TimestampedModel):
-    """Date formats used in postmarks"""
-    date_format_id = models.AutoField(primary_key=True, db_column='DateFormatID')
-    format_name = models.CharField(max_length=100, unique=True, db_column='FormatName')
-    format_description = models.TextField(blank=True, db_column='FormatDescription')
-
-    class Meta:
-        db_table = 'DateFormats'
-        verbose_name = 'Date Format'
-        verbose_name_plural = 'Date Formats'
-        ordering = ['format_name']
-
-    def __str__(self):
-        return self.format_name
 
 class Postmark(TimestampedModel):
-    """Main postmark records with pure postmark data"""
-    RATE_LOCATION_CHOICES = [('TOP', 'Top'), ('BOTTOM', 'Bottom'), ('LEFT', 'Left'), ('RIGHT', 'Right'), ('CENTER', 'Center'), ('NONE', 'None')]
-    VISIBILITY_CHOICES = [('PUBLIC', 'Public'), ('DRAFT', 'Draft'), ('ARCHIVED', 'Archived')]
-    CONTRIBUTION_APPROVAL_CHOICES = [('pending', 'Pending'), ('approved', 'Approved'), ('rejected', 'Rejected'), ('needs_revision', 'Needs revision')]
-    postmark_id = models.AutoField(primary_key=True, db_column='PostmarkID')
-    site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name='postmarks', db_column='SiteID', default=1, help_text='Owning site for this listing')
-    postal_facility_identity = models.ForeignKey(PostalFacilityIdentity, on_delete=models.PROTECT, related_name='postmarks', db_column='PostalFacilityIdentityID', null=True, blank=True, help_text='The facility identity when this postmark was used')
-    state = models.ForeignKey('postmarks.Location', on_delete=models.PROTECT, related_name='postmarks_by_state', db_column='StateID', null=True, blank=True, help_text='Location (state/region) this listing belongs to; from import nStateID or facility jurisdiction')
-    postmark_shape = models.ForeignKey(PostmarkShape, on_delete=models.PROTECT, related_name='postmarks', db_column='PostmarkShapeID')
-    lettering_style = models.ForeignKey(LetteringStyle, on_delete=models.PROTECT, related_name='postmarks', db_column='LetteringStyleID')
-    framing_style = models.ForeignKey(FramingStyle, on_delete=models.PROTECT, related_name='postmarks', db_column='FramingStyleID')
-    date_format = models.ForeignKey(DateFormat, on_delete=models.PROTECT, related_name='postmarks', db_column='DateFormatID')
-    postmark_key = models.CharField(max_length=255, unique=True, db_column='PostmarkKey')
-    raw_state_data_id = models.IntegerField(null=True, blank=True, unique=True, db_column='RawStateDataID', help_text='Original nRawStateDataID from CSV import')
-    public_slug = models.SlugField(max_length=150, unique=True, null=True, blank=True, db_column='PublicSlug')
-    visibility = models.CharField(max_length=10, choices=VISIBILITY_CHOICES, default='PUBLIC', db_column='Visibility')
-    contribution_approval_status = models.CharField(max_length=20, choices=CONTRIBUTION_APPROVAL_CHOICES, null=True, blank=True, db_column='ContributionApprovalStatus', help_text="Approval status for user-contributed catalog entries. Only 'approved' appear in public search.")
-    source_catalog = models.CharField(max_length=255, blank=True, default='ASCC 5th ed. (1997)', db_column='SourceCatalog')
-    source_page = models.CharField(max_length=50, blank=True, db_column='SourcePage')
-    last_public_update_at = models.DateTimeField(null=True, blank=True, db_column='LastPublicUpdateAt')
-    raw_import_payload = models.JSONField(null=True, blank=True, db_column='RawImportPayload', help_text='Full raw CSV row payload for import/backfill')
-    rate_location = models.CharField(max_length=10, choices=RATE_LOCATION_CHOICES, db_column='RateLocation')
-    rate_value = models.CharField(max_length=50, db_column='RateValue', help_text='5c, 10c, Free, Paid, etc')
-    is_manuscript = models.BooleanField(default=False, db_column='IsManuscript', help_text='Hand-written or hand-stamped vs printed')
-    other_characteristics = models.TextField(blank=True, db_column='OtherCharacteristics')
+    """
+    A town marking device (or manuscript marking) as observed on one or more Covers.
 
-    class Meta:
-        db_table = 'Postmarks'
-        verbose_name = 'Listing'
-        verbose_name_plural = 'Listings'
-        ordering = ['postmark_id']
-        indexes = [models.Index(fields=['postal_facility_identity']), models.Index(fields=['postmark_key']), models.Index(fields=['state'])]
-
-    def get_responsible_groups(self):
-        """Get the groups responsible for this postmark's region.
-        Uses prefetched jurisdictions/responsibilities when available to avoid N+1 queries.
-        """
-        if not self.postal_facility_identity:
-            return []
-        affiliations = self.postal_facility_identity.jurisdictions.filter(Q(effective_to_date__isnull=True) | Q(effective_to_date__gte=models.functions.Now()))
-        admin_units = [aff.administrative_unit for aff in affiliations]
-        seen_ids = set()
-        result = []
-        for unit in admin_units:
-            for resp in unit.responsibilities.filter(is_active=True):
-                g = resp.group
-                if g.id not in seen_ids:
-                    seen_ids.add(g.id)
-                    result.append(g)
-        return result
-
-    def __str__(self):
-        facility_name = self.postal_facility_identity.facility_name if self.postal_facility_identity else 'Unknown'
-        return f'{self.postmark_key} - {facility_name}'
+    model.md domain type: Postmark
+    """
     DATE_TYPE_CHOICES = [('BISHOP MARK', 'Bishop Mark'), ('FRANKLIN MARK', 'Franklin Mark'), ('QUAKER DATE', 'Quaker Date')]
     DATE_FMT_CHOICES = [('MD', 'MD'), ('MDD', 'MDD'), ('YD', 'YD'), ('YMD', 'YMD'), ('YMDD', 'YMDD')]
     IMPRESSION_CHOICES = [('Normal', 'Normal'), ('Stencil', 'Stencil'), ('Negative', 'Negative')]
-    code = models.CharField(max_length=30, null=True, blank=True, help_text='Editor-assigned reference identifier')
-    catalog_txt = models.TextField(blank=True, help_text='Authoritative ASCC catalog entry text')
+    postmark_id = models.AutoField(primary_key=True)
+    code = models.CharField(max_length=30, unique=True, null=True, blank=True, help_text='Editor-assigned reference identifier')
+    catalog_txt = models.TextField(blank=True, help_text='Authoritative catalog entry text for this listing')
     inscription_txt = models.TextField(blank=True, help_text='Text as physically inscribed on the town marking device')
-    post_office = models.ForeignKey('PostOffice', on_delete=models.PROTECT, related_name='postmarks', null=True, blank=True)
-    shape = models.ForeignKey('Shape', on_delete=models.PROTECT, null=True, blank=True, related_name='postmarks', help_text='Required when isManuscript is false')
-    lettering = models.ForeignKey('Lettering', on_delete=models.PROTECT, null=True, blank=True, related_name='postmarks', help_text='Must be null when isManuscript is true')
-    color = models.ForeignKey(Color, on_delete=models.PROTECT, null=True, blank=True, related_name='postmarks', help_text='Ink color of this marking; defaults to BLACK (id=1)')
-    impression = models.CharField(max_length=10, choices=IMPRESSION_CHOICES, null=True, blank=True, help_text='Required when isManuscript is false; must be null when true')
-    is_irreg = models.BooleanField(null=True, blank=True, help_text='Required when isManuscript is false; must be null when true')
-    width = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, help_text='Horizontal dimension in millimeters')
-    height = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, help_text='Vertical dimension in millimeters')
-    date_type = models.CharField(max_length=20, choices=DATE_TYPE_CHOICES, null=True, blank=True, help_text='Named date convention: BISHOP MARK, FRANKLIN MARK, QUAKER DATE')
-    date_fmt = models.CharField(max_length=10, choices=DATE_FMT_CHOICES, null=True, blank=True, help_text='Arrangement of date components: MD, MDD, YD, YMD, YMDD')
-
-
-
-class PostmarkV2(TimestampedModel):
-    """
-    V2 extension row for Postmark data.
-    This avoids changing/overloading legacy Postmark reverse relations.
-    """
-    postmark = models.OneToOneField(Postmark, on_delete=models.CASCADE, related_name='v2_data')
-    # Legacy app-layer compatibility fields (v2-scoped copy)
-    site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name='postmarks_v2_site', db_column='V2SiteID', default=1)
-    postal_facility_identity = models.ForeignKey(
-        PostalFacilityIdentity,
-        on_delete=models.PROTECT,
-        related_name='postmarks_v2_facility',
-        db_column='V2PostalFacilityIdentityID',
-        null=True,
-        blank=True,
-    )
-    state = models.ForeignKey(
-        'postmarks.Location',
-        on_delete=models.PROTECT,
-        related_name='postmarks_v2_state',
-        db_column='V2StateID',
-        null=True,
-        blank=True,
-    )
-    postmark_shape = models.ForeignKey(
-        PostmarkShape,
-        on_delete=models.PROTECT,
-        related_name='postmarks_v2_shape',
-        db_column='V2PostmarkShapeID',
-        null=True,
-        blank=True,
-    )
-    lettering_style = models.ForeignKey(
-        LetteringStyle,
-        on_delete=models.PROTECT,
-        related_name='postmarks_v2_lettering_style',
-        db_column='V2LetteringStyleID',
-        null=True,
-        blank=True,
-    )
-    framing_style = models.ForeignKey(
-        FramingStyle,
-        on_delete=models.PROTECT,
-        related_name='postmarks_v2_framing_style',
-        db_column='V2FramingStyleID',
-        null=True,
-        blank=True,
-    )
-    legacy_date_format = models.ForeignKey(
-        DateFormat,
-        on_delete=models.PROTECT,
-        related_name='postmarks_v2_legacy_date_format',
-        db_column='V2LegacyDateFormatID',
-        null=True,
-        blank=True,
-    )
-    postmark_key = models.CharField(max_length=255, unique=True, db_column='V2PostmarkKey', null=True, blank=True)
-    raw_state_data_id = models.IntegerField(null=True, blank=True, unique=True, db_column='V2RawStateDataID')
-    public_slug = models.SlugField(max_length=150, unique=True, null=True, blank=True, db_column='V2PublicSlug')
-    visibility = models.CharField(max_length=10, choices=Postmark.VISIBILITY_CHOICES, default='PUBLIC', db_column='V2Visibility')
-    contribution_approval_status = models.CharField(max_length=20, choices=Postmark.CONTRIBUTION_APPROVAL_CHOICES, null=True, blank=True, db_column='V2ContributionApprovalStatus')
-    source_catalog = models.CharField(max_length=255, blank=True, default='ASCC 5th ed. (1997)', db_column='V2SourceCatalog')
-    source_page = models.CharField(max_length=50, blank=True, db_column='V2SourcePage')
-    last_public_update_at = models.DateTimeField(null=True, blank=True, db_column='V2LastPublicUpdateAt')
-    raw_import_payload = models.JSONField(null=True, blank=True, db_column='V2RawImportPayload')
-    rate_location = models.CharField(max_length=10, choices=Postmark.RATE_LOCATION_CHOICES, db_column='V2RateLocation', default='NONE')
-    rate_value = models.CharField(max_length=50, db_column='V2RateValue', blank=True, default='')
-    other_characteristics = models.TextField(blank=True, db_column='V2OtherCharacteristics')
-
-    # model.md domain fields
-    code = models.CharField(max_length=30, unique=True, null=True, blank=True)
-    catalog_txt = models.TextField(blank=True)
-    inscription_txt = models.TextField(blank=True)
-    post_office = models.ForeignKey('PostOffice', on_delete=models.PROTECT, null=True, blank=True, related_name='postmark_v2_entries')
-    shape = models.ForeignKey('Shape', on_delete=models.PROTECT, null=True, blank=True, related_name='postmark_v2_entries')
-    lettering = models.ForeignKey('Lettering', on_delete=models.PROTECT, null=True, blank=True, related_name='postmark_v2_entries')
-    color = models.ForeignKey(Color, on_delete=models.PROTECT, null=True, blank=True, related_name='postmark_v2_entries')
+    post_office = models.ForeignKey('PostOffice', on_delete=models.PROTECT, null=True, blank=True, related_name='postmarks')
+    shape = models.ForeignKey('Shape', on_delete=models.PROTECT, null=True, blank=True, related_name='postmarks')
+    lettering = models.ForeignKey('Lettering', on_delete=models.PROTECT, null=True, blank=True, related_name='postmarks')
+    color = models.ForeignKey(Color, on_delete=models.PROTECT, null=True, blank=True, related_name='postmarks')
     is_manuscript = models.BooleanField(default=False)
-    impression = models.CharField(max_length=10, choices=Postmark.IMPRESSION_CHOICES, null=True, blank=True)
+    impression = models.CharField(max_length=10, choices=IMPRESSION_CHOICES, null=True, blank=True)
     is_irreg = models.BooleanField(null=True, blank=True)
     width = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     height = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
-    date_type = models.CharField(max_length=20, choices=Postmark.DATE_TYPE_CHOICES, null=True, blank=True)
-    date_fmt = models.CharField(max_length=10, choices=Postmark.DATE_FMT_CHOICES, null=True, blank=True)
-    date_format = models.ForeignKey(DateFormat, on_delete=models.PROTECT, related_name='postmark_v2_entries', null=True, blank=True)
+    date_type = models.CharField(max_length=20, choices=DATE_TYPE_CHOICES, null=True, blank=True)
+    date_fmt = models.CharField(max_length=10, choices=DATE_FMT_CHOICES, null=True, blank=True)
 
     class Meta:
-        db_table = 'PostmarkV2'
-        verbose_name = 'Postmark V2'
-        verbose_name_plural = 'Postmark V2'
+        db_table = 'Postmarks'
+        verbose_name = 'Postmark'
+        verbose_name_plural = 'Postmarks'
+        ordering = ['postmark_id']
 
     def __str__(self):
-        return f'PostmarkV2({self.postmark_id})'
+        if self.code:
+            return f'Postmark {self.code}'
+        if self.post_office_id:
+            try:
+                return f'Postmark #{self.pk} ({self.post_office})'
+            except Exception:
+                pass
+        return f'Postmark #{self.pk}'
 
 
 class Contribution(models.Model):
@@ -445,15 +170,15 @@ class Contribution(models.Model):
     STATUS_REJECTED = 'rejected'
     STATUS_NEEDS_REVISION = 'needs_revision'
     STATUS_CHOICES = [(STATUS_PENDING, 'Pending'), (STATUS_APPROVED, 'Approved'), (STATUS_REJECTED, 'Rejected'), (STATUS_NEEDS_REVISION, 'Needs revision')]
-    id = models.AutoField(primary_key=True, db_column='ContributionID')
-    contributor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='contributions', db_column='ContributorUserID')
-    postmark = models.OneToOneField(Postmark, on_delete=models.CASCADE, related_name='contribution', db_column='PostmarkID', null=True, blank=True, help_text='Set when approved; Postmark created from submitted_data for new entries')
-    submitted_data = models.JSONField(default=dict, blank=True, db_column='SubmittedData', help_text='Proposed changes (state, town, type, color, description, etc.)')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING, db_column='Status')
-    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_contributions', db_column='ReviewerUserID')
-    review_notes = models.TextField(blank=True, db_column='ReviewNotes')
-    created_at = models.DateTimeField(auto_now_add=True, db_column='CreatedAt')
-    updated_at = models.DateTimeField(auto_now=True, db_column='UpdatedAt')
+    id = models.AutoField(primary_key=True)
+    contributor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='contributions')
+    postmark = models.OneToOneField(Postmark, on_delete=models.CASCADE, related_name='contribution', null=True, blank=True, help_text='Set when approved; Postmark created from submitted_data for new entries')
+    submitted_data = models.JSONField(default=dict, blank=True, help_text='Proposed changes (state, town, type, color, description, etc.)')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_contributions')
+    review_notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'Contributions'
@@ -464,138 +189,46 @@ class Contribution(models.Model):
     def __str__(self):
         return f'Contribution #{self.id} ({self.status})'
 
-class PostmarkColor(TimestampedModel):
-    """Many-to-many relationship between postmarks and colors"""
-    postmark_color_id = models.AutoField(primary_key=True, db_column='PostmarkColorID')
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='postmark_colors', db_column='PostmarkID')
-    color = models.ForeignKey(Color, on_delete=models.PROTECT, related_name='postmark_colors', db_column='ColorID')
+    def apply_to_catalog(self):
+        from common.contribution_apply import apply_contribution_to_catalog
+        return apply_contribution_to_catalog(self)
 
-    class Meta:
-        db_table = 'PostmarkColors'
-        verbose_name = 'Postmark Color'
-        verbose_name_plural = 'Postmark Colors'
-        unique_together = [['postmark', 'color']]
-
-    def __str__(self):
-        return f'{self.postmark} - {self.color}'
-
-class PostmarkDatesSeen(TimestampedModel):
-    """Date ranges when postmarks were observed"""
-    postmark_dates_seen_id = models.AutoField(primary_key=True, db_column='PostmarkDatesSeenID')
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='dates_seen', db_column='PostmarkID')
-    earliest_date_seen = models.DateField(db_column='EarliestDateSeen')
-    latest_date_seen = models.DateField(db_column='LatestDateSeen')
-
-    class Meta:
-        db_table = 'PostmarkDatesSeen'
-        verbose_name = 'Postmark Dates Seen'
-        verbose_name_plural = 'Postmark Dates Seen'
-        ordering = ['earliest_date_seen']
-
-    def __str__(self):
-        return f'{self.postmark} ({self.earliest_date_seen} - {self.latest_date_seen})'
-
-class PostmarkSize(TimestampedModel):
-    """Different size observations for postmarks"""
-    postmark_size_id = models.AutoField(primary_key=True, db_column='PostmarkSizeID')
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='sizes', db_column='PostmarkID')
-    width = models.DecimalField(max_digits=8, decimal_places=2, db_column='Width')
-    height = models.DecimalField(max_digits=8, decimal_places=2, db_column='Height')
-    size_notes = models.CharField(max_length=255, blank=True, db_column='SizeNotes')
-
-    class Meta:
-        db_table = 'PostmarkSizes'
-        verbose_name = 'Postmark Size'
-        verbose_name_plural = 'Postmark Sizes'
-
-    def __str__(self):
-        return f'{self.postmark} - {self.width}x{self.height}'
 
 class PostmarkValuation(TimestampedModel):
     """Valuations for postmarks"""
-    postmark_valuation_id = models.AutoField(primary_key=True, db_column='PostmarkValuationID')
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='valuations', db_column='PostmarkID')
-    # V2 fields
+    postmark_valuation_id = models.AutoField(primary_key=True)
+    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='valuations')
     appraisal_pos = models.PositiveSmallIntegerField(default=0, help_text='Ordinal position within the postmark valuation sequence')
     amt = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Non-negative USD; null = unpriced entry')
-    appraisal_date = models.DateField(null=True, blank=True, db_column='AppraisalDate')
-    # Legacy/app-layer fields retained for compatibility
-    valued_by_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name='postmark_valuations_made',
-        db_column='ValuedByUserID',
-        null=True,
-        blank=True,
-    )
-    estimated_value = models.DecimalField(max_digits=10, decimal_places=2, db_column='EstimatedValue', null=True, blank=True)
-    valuation_date = models.DateField(db_column='ValuationDate', null=True, blank=True)
+    appraisal_date = models.DateField(null=True, blank=True)
 
     class Meta:
         db_table = 'PostmarkValuations'
         verbose_name = 'Postmark Valuation'
         verbose_name_plural = 'Postmark Valuations'
         unique_together = [['postmark', 'appraisal_pos']]
-        ordering = ['-appraisal_date', '-valuation_date']
+        ordering = ['-appraisal_date']
 
     def __str__(self):
-        return f'{self.postmark} - ${self.estimated_value} ({self.valuation_date})'
+        return f'{self.postmark} - ${self.amt} ({self.appraisal_date})'
 
-class PostmarkPublication(TimestampedModel):
-    """Catalog of publications that reference postmarks"""
-    PUBLICATION_TYPE_CHOICES = [('BOOK', 'Book'), ('CATALOG', 'Catalog'), ('JOURNAL', 'Journal'), ('WEBSITE', 'Website'), ('NEWSLETTER', 'Newsletter')]
-    postmark_publication_id = models.AutoField(primary_key=True, db_column='PostmarkPublicationID')
-    publication_title = models.CharField(max_length=500, db_column='PublicationTitle')
-    author = models.CharField(max_length=255, db_column='Author')
-    publisher = models.CharField(max_length=255, db_column='Publisher')
-    publication_date = models.DateField(db_column='PublicationDate')
-    isbn = models.CharField(max_length=20, blank=True, db_column='ISBN')
-    edition = models.CharField(max_length=50, blank=True, db_column='Edition')
-    publication_type = models.CharField(max_length=20, choices=PUBLICATION_TYPE_CHOICES, db_column='PublicationType')
-
-    class Meta:
-        db_table = 'PostmarkPublications'
-        verbose_name = 'Postmark Publication'
-        verbose_name_plural = 'Postmark Publications'
-        ordering = ['-publication_date']
-
-    def __str__(self):
-        year = getattr(self.publication_date, 'year', 'Unknown') if self.publication_date else 'Unknown'
-        return f'{self.publication_title} ({self.author}, {year})'
-
-class PostmarkPublicationReference(TimestampedModel):
-    """Many-to-many junction table for postmark publication references"""
-    postmark_publication_reference_id = models.AutoField(primary_key=True, db_column='PostmarkPublicationReferenceID')
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='publication_references', db_column='PostmarkID')
-    postmark_publication = models.ForeignKey(PostmarkPublication, on_delete=models.CASCADE, related_name='postmark_references', db_column='PostmarkPublicationID')
-    published_id = models.CharField(max_length=100, db_column='PublishedID')
-    reference_location = models.CharField(max_length=255, db_column='ReferenceLocation')
-
-    class Meta:
-        db_table = 'PostmarkPublicationReferences'
-        verbose_name = 'Postmark Publication Reference'
-        verbose_name_plural = 'Postmark Publication References'
-        unique_together = [['postmark', 'postmark_publication', 'published_id']]
-
-    def __str__(self):
-        return f'{self.postmark} in {self.postmark_publication} (ID: {self.published_id})'
 
 class PostmarkImage(TimestampedModel):
     """Images of postmarks with metadata"""
     IMAGE_VIEW_CHOICES = [('FULL', 'Full'), ('DETAIL', 'Detail'), ('COMPARISON', 'Comparison')]
-    postmark_image_id = models.AutoField(primary_key=True, db_column='PostmarkImageID')
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='images', db_column='PostmarkID')
-    original_filename = models.CharField(max_length=255, db_column='OriginalFileName')
-    storage_filename = models.CharField(max_length=255, unique=True, db_column='StorageFileName')
-    file_checksum = models.CharField(max_length=64, db_column='FileChecksum')
-    mime_type = models.CharField(max_length=50, db_column='MimeType')
-    image_width = models.IntegerField(db_column='ImageWidth')
-    image_height = models.IntegerField(db_column='ImageHeight')
-    file_size_bytes = models.BigIntegerField(db_column='FileSizeBytes')
-    image_view = models.CharField(max_length=20, choices=IMAGE_VIEW_CHOICES, db_column='ImageView')
-    image_description = models.TextField(blank=True, db_column='ImageDescription')
-    display_order = models.IntegerField(default=0, db_column='DisplayOrder')
-    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='postmark_images_uploaded', db_column='UploadedByUserID')
+    postmark_image_id = models.AutoField(primary_key=True)
+    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='images')
+    original_filename = models.CharField(max_length=255)
+    storage_filename = models.CharField(max_length=255, unique=True)
+    file_checksum = models.CharField(max_length=64)
+    mime_type = models.CharField(max_length=50)
+    image_width = models.IntegerField()
+    image_height = models.IntegerField()
+    file_size_bytes = models.BigIntegerField()
+    image_view = models.CharField(max_length=20, choices=IMAGE_VIEW_CHOICES)
+    image_description = models.TextField(blank=True)
+    display_order = models.IntegerField(default=0)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='postmark_images_uploaded')
 
     class Meta:
         db_table = 'PostmarkImages'
@@ -632,10 +265,10 @@ class PostmarkImage(TimestampedModel):
 
 class Postcover(TimestampedModel):
     """Physical postal covers/envelopes that collectors own"""
-    postcover_id = models.AutoField(primary_key=True, db_column='PostcoverID')
-    owner_user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='postcovers_owned', db_column='OwnerUserID')
-    postcover_key = models.CharField(max_length=100, unique=True, db_column='PostcoverKey')
-    description = models.TextField(blank=True, db_column='Description')
+    postcover_id = models.AutoField(primary_key=True)
+    owner_user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='postcovers_owned')
+    postcover_key = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True)
 
     class Meta:
         db_table = 'Postcovers'
@@ -649,11 +282,11 @@ class Postcover(TimestampedModel):
 class PostcoverPostmark(TimestampedModel):
     """Many-to-many relationship: Postcovers contain Postmarks"""
     POSTMARK_LOCATION_CHOICES = [('FRONT', 'Front'), ('BACK', 'Back'), ('FRONT_UPPER_RIGHT', 'Front Upper Right'), ('FRONT_UPPER_LEFT', 'Front Upper Left'), ('BACK_UPPER_RIGHT', 'Back Upper Right'), ('BACK_UPPER_LEFT', 'Back Upper Left'), ('BACK_LOWER_LEFT', 'Back Lower Left'), ('BACK_LOWER_RIGHT', 'Back Lower Right')]
-    postcover_postmark_id = models.AutoField(primary_key=True, db_column='PostcoverPostmarkID')
-    postcover = models.ForeignKey(Postcover, on_delete=models.CASCADE, related_name='postcover_postmarks', db_column='PostcoverID')
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='postcover_postmarks', db_column='PostmarkID')
-    position_order = models.IntegerField(db_column='PositionOrder')
-    postmark_location = models.CharField(max_length=20, choices=POSTMARK_LOCATION_CHOICES, db_column='PostmarkLocation')
+    postcover_postmark_id = models.AutoField(primary_key=True)
+    postcover = models.ForeignKey(Postcover, on_delete=models.CASCADE, related_name='postcover_postmarks')
+    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='postcover_postmarks')
+    position_order = models.IntegerField()
+    postmark_location = models.CharField(max_length=20, choices=POSTMARK_LOCATION_CHOICES)
 
     class Meta:
         db_table = 'PostcoverPostmarks'
@@ -668,19 +301,19 @@ class PostcoverPostmark(TimestampedModel):
 class PostcoverImage(TimestampedModel):
     """Images of physical postal covers"""
     IMAGE_VIEW_CHOICES = [('FRONT', 'Front'), ('BACK', 'Back'), ('INTERIOR', 'Interior'), ('DETAIL', 'Detail')]
-    postcover_image_id = models.AutoField(primary_key=True, db_column='PostcoverImageID')
-    postcover = models.ForeignKey(Postcover, on_delete=models.CASCADE, related_name='images', db_column='PostcoverID')
-    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='postcover_images_uploaded', db_column='UploadedByUserID')
-    original_filename = models.CharField(max_length=255, db_column='OriginalFileName')
-    storage_filename = models.CharField(max_length=255, unique=True, db_column='StorageFileName')
-    file_checksum = models.CharField(max_length=64, db_column='FileChecksum')
-    mime_type = models.CharField(max_length=50, db_column='MimeType')
-    image_width = models.IntegerField(db_column='ImageWidth')
-    image_height = models.IntegerField(db_column='ImageHeight')
-    file_size_bytes = models.BigIntegerField(db_column='FileSizeBytes')
-    image_view = models.CharField(max_length=20, choices=IMAGE_VIEW_CHOICES, db_column='ImageView')
-    image_description = models.TextField(blank=True, db_column='ImageDescription')
-    display_order = models.IntegerField(default=0, db_column='DisplayOrder')
+    postcover_image_id = models.AutoField(primary_key=True)
+    postcover = models.ForeignKey(Postcover, on_delete=models.CASCADE, related_name='images')
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='postcover_images_uploaded')
+    original_filename = models.CharField(max_length=255)
+    storage_filename = models.CharField(max_length=255, unique=True)
+    file_checksum = models.CharField(max_length=64)
+    mime_type = models.CharField(max_length=50)
+    image_width = models.IntegerField()
+    image_height = models.IntegerField()
+    file_size_bytes = models.BigIntegerField()
+    image_view = models.CharField(max_length=20, choices=IMAGE_VIEW_CHOICES)
+    image_description = models.TextField(blank=True)
+    display_order = models.IntegerField(default=0)
 
     class Meta:
         db_table = 'PostcoverImages'
@@ -838,13 +471,13 @@ class AdminCsvUpload(models.Model):
     Stores a CSV file uploaded by a staff user for admin reference.
     Data is parsed and stored as JSON (headers + rows) for display in the dashboard.
     """
-    id = models.AutoField(primary_key=True, db_column='AdminCsvUploadID')
-    name = models.CharField(max_length=255, db_column='Name', help_text='Display name for this upload (e.g. from filename or user input)')
-    file_name = models.CharField(max_length=255, db_column='FileName', help_text='Original filename of the CSV')
-    uploaded_at = models.DateTimeField(auto_now_add=True, db_column='UploadedAt')
-    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='admin_csv_uploads', db_column='UploadedByUserID')
-    data = models.JSONField(default=dict, db_column='Data', help_text='Parsed CSV: headers and rows')
-    row_count = models.PositiveIntegerField(default=0, db_column='RowCount', help_text='Number of data rows (denormalized for list views without loading Data).')
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=255, help_text='Display name for this upload (e.g. from filename or user input)')
+    file_name = models.CharField(max_length=255, help_text='Original filename of the CSV')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='admin_csv_uploads')
+    data = models.JSONField(default=dict, help_text='Parsed CSV: headers and rows')
+    row_count = models.PositiveIntegerField(default=0, help_text='Number of data rows (denormalized for list views without loading Data).')
 
     class Meta:
         db_table = 'AdminCsvUploads'
@@ -866,9 +499,9 @@ class UserLocationAssignment(models.Model):
     Used in the admin user detail page so staff can see and manage which
     locations a user is associated with.
     """
-    id = models.AutoField(primary_key=True, db_column='UserLocationAssignmentID')
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='location_assignments', db_column='UserID')
-    administrative_unit = models.ForeignKey(AdministrativeUnit, on_delete=models.CASCADE, related_name='user_location_assignments', db_column='AdministrativeUnitID', help_text='Location this user is associated with')
+    id = models.AutoField(primary_key=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='location_assignments')
+    administrative_unit = models.ForeignKey(AdministrativeUnit, on_delete=models.CASCADE, related_name='user_location_assignments', help_text='Location this user is associated with')
 
     class Meta:
         db_table = 'UserLocationAssignments'
@@ -884,11 +517,11 @@ class FAQEntry(TimestampedModel):
     Simple FAQ entry for the public site, managed in Django admin
     and exposed to the SPA via a read-only API.
     """
-    faq_entry_id = models.AutoField(primary_key=True, db_column='FAQEntryID')
-    question = models.CharField(max_length=500, db_column='Question')
-    answer = models.TextField(db_column='Answer')
-    is_active = models.BooleanField(default=True, db_column='IsActive')
-    display_order = models.PositiveIntegerField(default=0, db_column='DisplayOrder', help_text='Lower numbers appear first.')
+    faq_entry_id = models.AutoField(primary_key=True)
+    question = models.CharField(max_length=500)
+    answer = models.TextField()
+    is_active = models.BooleanField(default=True)
+    display_order = models.PositiveIntegerField(default=0, help_text='Lower numbers appear first.')
 
     class Meta:
         db_table = 'FAQEntries'
@@ -1066,7 +699,7 @@ class Ratemark(TimestampedModel):
         ordering = ['id']
 
     def __str__(self):
-        return f'Ratemark #{self.pk} ({self.inscription_text[:40]})'
+        return f'Ratemark #{self.pk} ({self.inscription_txt[:40]})'
 
 class Auxmark(TimestampedModel):
     """
@@ -1077,13 +710,13 @@ class Auxmark(TimestampedModel):
     """
     PARENT_MARK_TYPE_CHOICES = [('POSTMARK', 'Postmark'), ('RATEMARK', 'Ratemark')]
     IMPRESSION_CHOICES = [('Normal', 'Normal'), ('Stencil', 'Stencil'), ('Negative', 'Negative')]
-    parent_mark_type = models.CharField(max_length=10, choices=PARENT_MARK_TYPE_CHOICES, db_column='ParentMarkType')
-    parent_mark_id = models.PositiveIntegerField(db_column='ParentMarkID', help_text='PK of the associated Postmark or Ratemark')
-    inscription_text = models.TextField(db_column='InscriptionText', help_text='Text as physically inscribed on the auxiliary marking')
-    is_manuscript = models.BooleanField(db_column='IsManuscript')
-    shape = models.ForeignKey(Shape, on_delete=models.PROTECT, null=True, blank=True, related_name='auxmarks', db_column='ShapeID', help_text='Required when isManuscript is false; must be null when true')
-    lettering = models.ForeignKey(Lettering, on_delete=models.PROTECT, null=True, blank=True, related_name='auxmarks', db_column='LetteringID', help_text='Must be null when isManuscript is true')
-    color = models.ForeignKey(Color, on_delete=models.PROTECT, null=True, blank=True, related_name='auxmarks', db_column='ColorID', help_text='Ink color of this marking; defaults to BLACK (id=1)')
+    parent_mark_type = models.CharField(max_length=10, choices=PARENT_MARK_TYPE_CHOICES)
+    parent_mark_id = models.PositiveIntegerField(help_text='PK of the associated Postmark or Ratemark')
+    inscription_txt = models.TextField(help_text='Text as physically inscribed on the auxiliary marking')
+    is_manuscript = models.BooleanField()
+    shape = models.ForeignKey(Shape, on_delete=models.PROTECT, null=True, blank=True, related_name='auxmarks', help_text='Required when isManuscript is false; must be null when true')
+    lettering = models.ForeignKey(Lettering, on_delete=models.PROTECT, null=True, blank=True, related_name='auxmarks', help_text='Must be null when isManuscript is true')
+    color = models.ForeignKey(Color, on_delete=models.PROTECT, null=True, blank=True, related_name='auxmarks', help_text='Ink color of this marking; defaults to BLACK (id=1)')
     impression = models.CharField(max_length=10, choices=IMPRESSION_CHOICES, null=True, blank=True, help_text='Required when isManuscript is false; must be null when true')
     is_irreg = models.BooleanField(null=True, blank=True, help_text='Required when isManuscript is false; must be null when true')
     width = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, help_text='Horizontal dimension in millimeters')
@@ -1155,7 +788,7 @@ class MarkFraming(TimestampedModel):
         unique_together = [['parent_mark_type', 'parent_mark_id', 'framing']]
 
     def __str__(self):
-        pos = f' pos={self.framing_position}' if self.framing_position is not None else ''
+        pos = f' pos={self.framing_pos}' if self.framing_pos is not None else ''
         return f'{self.parent_mark_type} #{self.parent_mark_id} -- {self.framing}{pos}'
 
 class ReferenceWork(TimestampedModel):

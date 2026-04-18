@@ -61,8 +61,8 @@ router.register(
 )
 router.register(
     r"cover-postmarks",
-    views.CoverPostmarkV2ViewSet,
-    basename="cover-postmark-v2",
+    views.CoverPostmarkViewSet,
+    basename="cover-postmark",
 )
 router.register(
     r"postmark-ratemarks",
@@ -93,11 +93,6 @@ router.register(
     basename="color",
 )
 router.register(
-    r"postmark-shapes",
-    views.PostmarkShapeViewSet,
-    basename="postmark-shape",
-)
-router.register(
     r"administrative-units",
     views.AdministrativeUnitViewSet,
     basename="administrative-unit",
@@ -105,11 +100,6 @@ router.register(
 
 # ========== POSTMARKS ==========
 
-router.register(
-    r"postmarks-v2",
-    views.PostmarkV2ViewSet,
-    basename="postmark-v2",
-)
 router.register(
     r"postmarks",
     views.PostmarkViewSet,
@@ -126,10 +116,6 @@ router.register(
     basename="postmark-valuation",
 )
 
-# Note: legacy v1-oriented resources intentionally removed from v2 router:
-# postal-facilities, administrative-units, jurisdictional-affiliations,
-# postmark-shapes/lettering-styles/framing-styles/date-formats,
-# publications/publication-references, and postcovers/postcover-images.
 
 # ========== ADMIN (STAFF ONLY) ==========
 
@@ -164,6 +150,7 @@ urlpatterns = [
     path("postmarks/<int:pk>/delete-mine/", views.DeleteMySubmissionView.as_view(), name="postmark-delete-mine"),
     path("me/", views.CurrentUserView.as_view(), name="current-user"),
     path("postmarks-range/", views.PostmarkDateRangeView.as_view(), name="postmarks-range"),
+    path("help-docs/", views.HelpDocsView.as_view(), name="help-docs"),
     path("", include(router.urls)),
 ]
 
