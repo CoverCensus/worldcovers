@@ -1,16 +1,9 @@
 #!/usr/bin/env bash
 # Run this on the server after "git pull" (or in CI). From project root: ./tools/deploy.sh
+# Note: privileged operations (unit file install, daemon-reload, service restart) are handled
+# by the caller — either the CI workflow or a sysadmin with sudo — not by this script.
 set -e
 cd "$(dirname "$0")/.."
-
-# Sync unit file if it has changed (skipped on macOS/dev where systemd is absent)
-if command -v systemctl > /dev/null 2>&1; then
-    if ! diff -q tools/worldcovers.service /etc/systemd/system/worldcovers.service > /dev/null 2>&1; then
-        echo "Updating systemd unit file..."
-        sudo install -m 644 tools/worldcovers.service /etc/systemd/system/worldcovers.service
-        sudo systemctl daemon-reload
-    fi
-fi
 
 echo "[1/4] Installing Python dependencies..."
 pipenv install
@@ -27,10 +20,5 @@ rm -rf frontend/dist
 
 echo "[4/4] Collecting static files (Django)..."
 pipenv run manage collectstatic --noinput
-
-if command -v systemctl > /dev/null 2>&1; then
-    echo "Restarting worldcovers service..."
-    sudo systemctl restart worldcovers
-fi
 
 echo "Done."
