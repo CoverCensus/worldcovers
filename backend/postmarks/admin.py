@@ -5,10 +5,11 @@ from common.admin import (
     InlineRevisionMixin,
     PostmarkAdmin,
     PostmarkImageAdmin,
-    ColorAdmin,
     PostcoverAdmin,
     PostcoverImageAdmin,
     AdministrativeUnitAdmin,
+    FAQEntryAdmin,
+    ContributionAdmin,
 )
 from common.utils import get_canonical_location_reference_codes
 
@@ -16,12 +17,13 @@ from .models import (
     Listing,
     CatalogRequest,
     ListingImage,
-    Color,
     PostmarkValuation,
     Postcover,
     PostcoverPostmark,
     PostcoverImage,
     Location,
+    FAQEntry,
+    Contribution,
 )
 
 
@@ -52,7 +54,6 @@ class CatalogRequestAdmin(ListingAdmin):
 
 
 admin.site.register(ListingImage, PostmarkImageAdmin)
-admin.site.register(Color, ColorAdmin)
 admin.site.register(Postcover, PostcoverAdmin)
 admin.site.register(PostcoverImage, PostcoverImageAdmin)
 
@@ -80,3 +81,7 @@ class PostmarkValuationAdmin(TimestampedModelAdmin):
 class PostcoverPostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     list_display = ['postcover', 'postmark', 'position_order', 'postmark_location']
     raw_id_fields = ['postcover', 'postmark']
+
+
+admin.site.register(FAQEntry, FAQEntryAdmin)
+admin.site.register(Contribution, ContributionAdmin)

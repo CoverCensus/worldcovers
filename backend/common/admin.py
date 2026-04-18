@@ -7,6 +7,7 @@ import io
 
 from django.contrib import admin
 from django.contrib.admin.sites import NotRegistered
+from allauth.account.models import EmailAddress
 from django.contrib.admin.widgets import FilteredSelectMultiple
 from django.contrib.auth import get_user_model
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
@@ -308,6 +309,7 @@ class AdministrativeUnitResponsibilityAdmin(TimestampedModelAdmin):
 
 # ========== PHYSICAL CHARACTERISTICS ADMIN ==========
 
+@admin.register(Color)
 class ColorAdmin(TimestampedModelAdmin):
     resource_class = ColorResource
     list_display = ['name', 'hex_val']
@@ -705,6 +707,12 @@ class UserLocationAssignmentInline(admin.TabularInline):
     verbose_name_plural = 'Locations'
 
 
+class EmailAddressInline(admin.TabularInline):
+    model = EmailAddress
+    extra = 0
+    fields = ['email', 'verified', 'primary']
+
+
 ROLE_CONTRIBUTOR = "contributor"
 ROLE_STATE_EDITOR = "state_editor"
 
@@ -872,6 +880,11 @@ except NotRegistered:
     # Default User admin may not be registered in some configurations.
     pass
 
+try:
+    admin.site.unregister(EmailAddress)
+except NotRegistered:
+    pass
+
 
 @admin.register(User)
 class CustomUserAdmin(DjangoUserAdmin):
@@ -881,6 +894,7 @@ class CustomUserAdmin(DjangoUserAdmin):
     """
 
     form = UserLocationUserChangeForm
+    inlines = [EmailAddressInline]
 
     def save_related(self, request, form, formsets, change):
         """Ensure custom role/location mappings are persisted after related saves."""
@@ -915,7 +929,6 @@ class CustomUserAdmin(DjangoUserAdmin):
 # ========== CONTRIBUTION ADMIN ==========
 
 
-@admin.register(Contribution)
 class ContributionAdmin(admin.ModelAdmin):
     list_display = ["id", "contributor", "status", "get_state", "get_town", "reviewer", "created_at"]
     list_filter = ["status"]
@@ -1038,7 +1051,6 @@ class ContributionAdmin(admin.ModelAdmin):
             )
 
 
-@admin.register(FAQEntry)
 class FAQEntryAdmin(TimestampedModelAdmin, ReversionAdminBase):
     list_display = ("question", "is_active", "display_order")
     list_filter = ("is_active",)

@@ -1,7 +1,6 @@
 from common.models import (
     Postmark as CommonPostmark,
     PostmarkImage as CommonPostmarkImage,
-    Color as CommonColor,
     PostmarkValuation as CommonPostmarkValuation,
     Postcover as CommonPostcover,
     PostcoverPostmark as CommonPostcoverPostmark,
@@ -9,6 +8,8 @@ from common.models import (
     AdministrativeUnit as CommonAdministrativeUnit,
     AdministrativeUnitIdentity as CommonAdministrativeUnitIdentity,
     AdministrativeUnitResponsibility as CommonAdministrativeUnitResponsibility,
+    FAQEntry as CommonFAQEntry,
+    Contribution as CommonContribution,
 )
 
 
@@ -41,14 +42,6 @@ class ListingImage(CommonPostmarkImage):
         verbose_name_plural = "Listing Images"
 
 
-class Color(CommonColor):
-    class Meta:
-        proxy = True
-        app_label = "postmarks"
-        verbose_name = "Color"
-        verbose_name_plural = "Colors"
-
-
 class PostmarkValuation(CommonPostmarkValuation):
     class Meta:
         proxy = True
@@ -61,24 +54,24 @@ class Postcover(CommonPostcover):
     class Meta:
         proxy = True
         app_label = "postmarks"
-        verbose_name = "Example Cover"
-        verbose_name_plural = "Example Covers"
+        verbose_name = "Example Cover (Deprecated)"
+        verbose_name_plural = "Example Covers (Deprecated)"
 
 
 class PostcoverPostmark(CommonPostcoverPostmark):
     class Meta:
         proxy = True
         app_label = "postmarks"
-        verbose_name = "Example Cover Marking"
-        verbose_name_plural = "Example Cover Markings"
+        verbose_name = "Example Cover Marking (Deprecated)"
+        verbose_name_plural = "Example Cover Markings (Deprecated)"
 
 
 class PostcoverImage(CommonPostcoverImage):
     class Meta:
         proxy = True
         app_label = "postmarks"
-        verbose_name = "Example Image"
-        verbose_name_plural = "Example Images"
+        verbose_name = "Example Image (Deprecated)"
+        verbose_name_plural = "Example Images (Deprecated)"
 
 
 class Location(CommonAdministrativeUnit):
@@ -106,3 +99,19 @@ class LocationResponsibility(CommonAdministrativeUnitResponsibility):
         app_label = "postmarks"
         verbose_name = "Location responsibility"
         verbose_name_plural = "Location responsibilities"
+
+
+class FAQEntry(CommonFAQEntry):
+    class Meta:
+        proxy = True
+        app_label = "postmarks"
+        verbose_name = "FAQ entry"
+        verbose_name_plural = "FAQ entries"
+
+
+class Contribution(CommonContribution):
+    class Meta:
+        proxy = True
+        app_label = "postmarks"
+        verbose_name = "Contribution"
+        verbose_name_plural = "Contributions"
