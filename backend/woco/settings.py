@@ -116,7 +116,7 @@ WSGI_APPLICATION = "woco.wsgi.application"
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-_db_name = config("DB_NAME", default="woco")
+_db_name = config("DB_NAME", default="worldcovers")
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
