@@ -222,7 +222,8 @@ const RecordDetail = () => {
           const colorDisplay =
             fromNested(data, ["color", "color_name"]) ||
             fromNested(data, ["color", "colorName"]) ||
-            fromNested(data, ["color", "name"]);
+            fromNested(data, ["color", "name"]) ||
+            String(data.colors_display ?? data.colorsDisplay ?? "").trim();
           const rawDatesObserved = data.dates_observed ?? data.datesObserved ?? [];
           const datesObserved = Array.isArray(rawDatesObserved)
             ? rawDatesObserved
