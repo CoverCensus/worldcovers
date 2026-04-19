@@ -480,7 +480,7 @@ export interface PostmarkApiResponse {
       params.shape = String(shapeId);
     }
     if (excludeManuscripts) {
-      params.is_manuscript = String(excludeManuscripts);
+      params.is_manuscript = "false";
     }
     if (color !== "all" && color !== null && color !== "") {
       params.color = color;

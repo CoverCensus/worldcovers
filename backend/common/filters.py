@@ -49,7 +49,7 @@ class PostmarkListFilter(django_filters.FilterSet):
         if raw == 'true':
             return queryset.filter(is_manuscript=True)
         if raw == 'false':
-            return queryset.filter(is_manuscript=False)
+            return queryset.exclude(is_manuscript=True)
         return queryset
 
     @staticmethod

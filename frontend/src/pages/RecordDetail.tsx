@@ -162,12 +162,12 @@ const RecordDetail = () => {
             fromNested(data, ["postmarkShape", "shapeName"]) ||
             fromNested(data, ["shape", "name"]);
           const townState = [town, state].filter(Boolean).join(", ");
-          const displayName = [townState, shapeNameForTitle]
-            .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
-            .join(" — ")
-            || townState
-            || postmarkKey
-            || "—";
+          const catalogTxt = (data.catalog_txt ?? data.catalogTxt ?? "").trim();
+          const displayName =
+            catalogTxt ||
+            townState ||
+            postmarkKey ||
+            "—";
           const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
           const classifyImage = (description: string): GalleryImage["category"] => {
             const d = description.trim().toLowerCase();
@@ -505,21 +505,7 @@ const RecordDetail = () => {
                   {record.name}
                 </h1>
                 
-                <div className="flex flex-wrap gap-2">
-                  {(() => {
-                    const show = (v: string | undefined) => {
-                      const s = (v ?? "").trim();
-                      return s !== "" && s.toLowerCase() !== "unknown";
-                    };
-                    return (
-                      <>
-                        {show(record?.type) ? <Badge variant="secondary">{record.type}</Badge> : null}
-                        {show(record?.color) ? <Badge variant="secondary">{record.color}</Badge> : null}
-                        {show(record?.isIrregular) ? <Badge variant="outline">Irregular: {record.isIrregular}</Badge> : null}
-                      </>
-                    );
-                  })()}
-                </div>
+                {/* TODO: future record tags go here — shape/irregular badges removed as redundant with fields below; tagging not yet implemented on backend */}
               </div>
 
               <Card className="shadow-archival-md">

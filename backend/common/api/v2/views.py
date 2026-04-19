@@ -1789,6 +1789,9 @@ def _postmark_list_queryset():
         'dates_observed',
         'valuations',
         'images',
+    ).annotate(
+        earliest_date_observed=Min('dates_observed__date'),
+        latest_date_observed=Max('dates_observed__date'),
     )
 
 
@@ -1850,8 +1853,8 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         'lettering__name',
         'color__name',
     ]
-    ordering_fields = ['code', 'created_date']
-    ordering = ['-created_date']
+    ordering_fields = ['code', 'created_date', 'earliest_date_observed', 'latest_date_observed']
+    ordering = ['post_office__region__name', 'post_office__name', 'earliest_date_observed', 'postmark_id']
     
     def get_serializer_class(self):
         if self.action == 'list':

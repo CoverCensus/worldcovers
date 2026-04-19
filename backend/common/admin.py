@@ -136,10 +136,9 @@ class TimestampedModelResource(resources.ModelResource):
         attribute='modified_by',
         widget=ForeignKeyWidget(User, 'id')
     )
-    
+
     class Meta:
         abstract = True
-        exclude = ('id',)
 
 
 class ReversionAdminBase(CompareVersionAdmin, admin.ModelAdmin):
@@ -205,8 +204,343 @@ class ColorResource(TimestampedModelResource):
 
 
 class PostmarkResource(TimestampedModelResource):
+    post_office = fields.Field(
+        column_name='post_office',
+        attribute='post_office',
+        widget=ForeignKeyWidget(PostOffice, 'id')
+    )
+    shape = fields.Field(
+        column_name='shape',
+        attribute='shape',
+        widget=ForeignKeyWidget(Shape, 'id')
+    )
+    lettering = fields.Field(
+        column_name='lettering',
+        attribute='lettering',
+        widget=ForeignKeyWidget(Lettering, 'id')
+    )
+    color = fields.Field(
+        column_name='color',
+        attribute='color',
+        widget=ForeignKeyWidget(Color, 'color_id')
+    )
+
     class Meta(TimestampedModelResource.Meta):
         model = Postmark
+        import_id_fields = ['postmark_id']
+
+
+class ShapeResource(TimestampedModelResource):
+    class Meta(TimestampedModelResource.Meta):
+        model = Shape
+        import_id_fields = ['id']
+
+
+class LetteringResource(TimestampedModelResource):
+    class Meta(TimestampedModelResource.Meta):
+        model = Lettering
+        import_id_fields = ['id']
+
+
+class FramingResource(TimestampedModelResource):
+    class Meta(TimestampedModelResource.Meta):
+        model = Framing
+        import_id_fields = ['id']
+
+
+class RegionResource(TimestampedModelResource):
+    parent_region = fields.Field(
+        column_name='parent_region',
+        attribute='parent_region',
+        widget=ForeignKeyWidget(Region, 'id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = Region
+        import_id_fields = ['id']
+
+
+class PostOfficeResource(TimestampedModelResource):
+    region = fields.Field(
+        column_name='region',
+        attribute='region',
+        widget=ForeignKeyWidget(Region, 'id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = PostOffice
+        import_id_fields = ['id']
+
+
+class CoverResource(TimestampedModelResource):
+    color = fields.Field(
+        column_name='color',
+        attribute='color',
+        widget=ForeignKeyWidget(Color, 'color_id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = Cover
+        import_id_fields = ['id']
+
+
+class RatemarkResource(TimestampedModelResource):
+    shape = fields.Field(
+        column_name='shape',
+        attribute='shape',
+        widget=ForeignKeyWidget(Shape, 'id')
+    )
+    lettering = fields.Field(
+        column_name='lettering',
+        attribute='lettering',
+        widget=ForeignKeyWidget(Lettering, 'id')
+    )
+    color = fields.Field(
+        column_name='color',
+        attribute='color',
+        widget=ForeignKeyWidget(Color, 'color_id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = Ratemark
+        import_id_fields = ['id']
+
+
+class AuxmarkResource(TimestampedModelResource):
+    shape = fields.Field(
+        column_name='shape',
+        attribute='shape',
+        widget=ForeignKeyWidget(Shape, 'id')
+    )
+    lettering = fields.Field(
+        column_name='lettering',
+        attribute='lettering',
+        widget=ForeignKeyWidget(Lettering, 'id')
+    )
+    color = fields.Field(
+        column_name='color',
+        attribute='color',
+        widget=ForeignKeyWidget(Color, 'color_id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = Auxmark
+        import_id_fields = ['id']
+
+
+class PostmarkValuationResource(TimestampedModelResource):
+    postmark = fields.Field(
+        column_name='postmark',
+        attribute='postmark',
+        widget=ForeignKeyWidget(Postmark, 'postmark_id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = PostmarkValuation
+        import_id_fields = ['postmark_valuation_id']
+
+
+class PostmarkImageResource(TimestampedModelResource):
+    postmark = fields.Field(
+        column_name='postmark',
+        attribute='postmark',
+        widget=ForeignKeyWidget(Postmark, 'postmark_id')
+    )
+    uploaded_by = fields.Field(
+        column_name='uploaded_by',
+        attribute='uploaded_by',
+        widget=ForeignKeyWidget(User, 'id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = PostmarkImage
+        import_id_fields = ['postmark_image_id']
+
+
+class DateObservedResource(TimestampedModelResource):
+    postmark = fields.Field(
+        column_name='postmark',
+        attribute='postmark',
+        widget=ForeignKeyWidget(Postmark, 'postmark_id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = DateObserved
+        import_id_fields = ['id']
+
+
+class PostcoverResource(TimestampedModelResource):
+    owner_user = fields.Field(
+        column_name='owner_user',
+        attribute='owner_user',
+        widget=ForeignKeyWidget(User, 'id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = Postcover
+        import_id_fields = ['postcover_id']
+
+
+class PostcoverPostmarkResource(TimestampedModelResource):
+    postcover = fields.Field(
+        column_name='postcover',
+        attribute='postcover',
+        widget=ForeignKeyWidget(Postcover, 'postcover_id')
+    )
+    postmark = fields.Field(
+        column_name='postmark',
+        attribute='postmark',
+        widget=ForeignKeyWidget(Postmark, 'postmark_id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = PostcoverPostmark
+        import_id_fields = ['postcover_postmark_id']
+
+
+class PostcoverImageResource(TimestampedModelResource):
+    postcover = fields.Field(
+        column_name='postcover',
+        attribute='postcover',
+        widget=ForeignKeyWidget(Postcover, 'postcover_id')
+    )
+    uploaded_by = fields.Field(
+        column_name='uploaded_by',
+        attribute='uploaded_by',
+        widget=ForeignKeyWidget(User, 'id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = PostcoverImage
+        import_id_fields = ['postcover_image_id']
+
+
+class CoverPostmarkResource(TimestampedModelResource):
+    cover = fields.Field(
+        column_name='cover',
+        attribute='cover',
+        widget=ForeignKeyWidget(Cover, 'id')
+    )
+    postmark = fields.Field(
+        column_name='postmark',
+        attribute='postmark',
+        widget=ForeignKeyWidget(Postmark, 'postmark_id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = CoverPostmark
+        import_id_fields = ['id']
+
+
+class PostmarkRatemarkResource(TimestampedModelResource):
+    postmark = fields.Field(
+        column_name='postmark',
+        attribute='postmark',
+        widget=ForeignKeyWidget(Postmark, 'postmark_id')
+    )
+    ratemark = fields.Field(
+        column_name='ratemark',
+        attribute='ratemark',
+        widget=ForeignKeyWidget(Ratemark, 'id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = PostmarkRatemark
+        import_id_fields = ['id']
+
+
+class MarkFramingResource(TimestampedModelResource):
+    framing = fields.Field(
+        column_name='framing',
+        attribute='framing',
+        widget=ForeignKeyWidget(Framing, 'id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = MarkFraming
+        import_id_fields = ['id']
+
+
+class ReferenceWorkResource(TimestampedModelResource):
+    class Meta(TimestampedModelResource.Meta):
+        model = ReferenceWork
+        import_id_fields = ['id']
+
+
+class CitationResource(TimestampedModelResource):
+    reference_work = fields.Field(
+        column_name='reference_work',
+        attribute='reference_work',
+        widget=ForeignKeyWidget(ReferenceWork, 'id')
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = Citation
+        import_id_fields = ['id']
+
+
+class UserLocationAssignmentResource(resources.ModelResource):
+    user = fields.Field(
+        column_name='user',
+        attribute='user',
+        widget=ForeignKeyWidget(User, 'id')
+    )
+    administrative_unit = fields.Field(
+        column_name='administrative_unit',
+        attribute='administrative_unit',
+        widget=ForeignKeyWidget(AdministrativeUnit, 'administrative_unit_id')
+    )
+
+    class Meta:
+        model = UserLocationAssignment
+        import_id_fields = ['id']
+
+
+class FAQEntryResource(TimestampedModelResource):
+    class Meta(TimestampedModelResource.Meta):
+        model = FAQEntry
+        import_id_fields = ['faq_entry_id']
+
+
+class LegacyAbbreviationResource(resources.ModelResource):
+    class Meta:
+        model = LegacyAbbreviation
+        import_id_fields = ['id']
+
+
+class LegacyRateLocationResource(resources.ModelResource):
+    class Meta:
+        model = LegacyRateLocation
+        import_id_fields = ['id']
+
+
+class LegacyRateValueResource(resources.ModelResource):
+    class Meta:
+        model = LegacyRateValue
+        import_id_fields = ['id']
+
+
+class LegacyParseStepResource(resources.ModelResource):
+    class Meta:
+        model = LegacyParseStep
+        import_id_fields = ['id']
+
+
+class LegacyUserStateResource(resources.ModelResource):
+    class Meta:
+        model = LegacyUserState
+        import_id_fields = ['id']
+
+
+class LegacyRawStateDataPendingUpdateResource(resources.ModelResource):
+    class Meta:
+        model = LegacyRawStateDataPendingUpdate
+        import_id_fields = ['id']
+
+
+class LegacyCoverResource(resources.ModelResource):
+    class Meta:
+        model = LegacyCover
         import_id_fields = ['id']
 
 
@@ -422,47 +756,6 @@ class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     example_cover_link.short_description = 'Example Covers Link'
 
 
-class PostmarkImageAdmin(TimestampedModelAdmin):
-    list_display = ['get_postmark_key', 'original_filename', 'image_view', 'display_order', 'uploaded_by']
-    list_filter = ['image_view']
-    search_fields = ['postmark__code', 'original_filename', 'uploaded_by']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date', 'file_checksum']
-    raw_id_fields = ['postmark']
-    # Avoid slow COUNT(*) on large tables in production (prevents 502 from timeout)
-    paginator = NoCountPaginator
-
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        return qs.select_related('postmark', 'uploaded_by').order_by('-id')
-
-    fieldsets = (
-        ('Postmark', {
-            'fields': ('postmark',)
-        }),
-        ('File Information', {
-            'fields': ('original_filename', 'storage_filename', 'file_checksum', 
-                      'mime_type', 'image_width', 'image_height', 'file_size_bytes')
-        }),
-        ('Display Settings', {
-            'fields': ('image_view', 'image_description', 'display_order')
-        }),
-        ('Submission Information', {
-            'fields': ('uploaded_by',)
-        }),
-        ('Metadata', {
-            'fields': ('created_date', 'modified_date', 'created_by', 'modified_by'),
-            'classes': ('collapse',)
-        }),
-    )
-    
-    def get_postmark_key(self, obj):
-        try:
-            return str(obj.postmark) if obj.postmark_id else '-'
-        except Exception:
-            return '-'
-    get_postmark_key.short_description = 'Postmark'
-
-
 # ========== POSTCOVER ADMIN ==========
 
 class PostcoverPostmarkInline(admin.TabularInline):
@@ -480,29 +773,6 @@ class PostcoverImageInline(admin.TabularInline):
     exclude = ["created_by", "modified_by", "created_date", "modified_date"]
 
 
-class PostcoverAdmin(InlineRevisionMixin, TimestampedModelAdmin):
-    list_display = ['postcover_key', 'owner_user']
-    search_fields = ['postcover_key', 'owner_user__username', 'description']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-    raw_id_fields = ['owner_user']
-    
-    inlines = [
-        PostcoverPostmarkInline,
-        PostcoverImageInline,
-    ]
-
-
-class PostcoverImageAdmin(TimestampedModelAdmin):
-    list_display = ['get_postcover_key', 'original_filename', 'image_view', 
-                    'display_order', 'uploaded_by']
-    list_filter = ['image_view']
-    search_fields = ['postcover__postcover_key', 'original_filename']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date', 'file_checksum']
-    raw_id_fields = ['postcover']
-    
-    def get_postcover_key(self, obj):
-        return obj.postcover.postcover_key
-    get_postcover_key.short_description = 'Postcover'
 
 
 def _parse_csv_file(uploaded_file) -> dict:
@@ -547,7 +817,8 @@ class AdminCsvUploadForm(forms.ModelForm):
 
 
 @admin.register(LegacyAbbreviation)
-class LegacyAbbreviationAdmin(admin.ModelAdmin):
+class LegacyAbbreviationAdmin(ImportExportModelAdmin):
+    resource_class = LegacyAbbreviationResource
     list_display = ['id', 'txt_abbreviation', 'txt_meaning', 'n_order', 'yn_active']
     list_filter = ['yn_active']
     search_fields = ['txt_abbreviation', 'txt_meaning']
@@ -555,21 +826,24 @@ class LegacyAbbreviationAdmin(admin.ModelAdmin):
 
 
 @admin.register(LegacyRateLocation)
-class LegacyRateLocationAdmin(admin.ModelAdmin):
+class LegacyRateLocationAdmin(ImportExportModelAdmin):
+    resource_class = LegacyRateLocationResource
     list_display = ['id', 'txt_townmark_rate_location', 'n_order', 'yn_active']
     list_filter = ['yn_active']
     ordering = ['n_order']
 
 
 @admin.register(LegacyRateValue)
-class LegacyRateValueAdmin(admin.ModelAdmin):
+class LegacyRateValueAdmin(ImportExportModelAdmin):
+    resource_class = LegacyRateValueResource
     list_display = ['id', 'txt_townmark_rate_value', 'n_order', 'yn_active']
     list_filter = ['yn_active']
     ordering = ['n_order']
 
 
 @admin.register(LegacyParseStep)
-class LegacyParseStepAdmin(admin.ModelAdmin):
+class LegacyParseStepAdmin(ImportExportModelAdmin):
+    resource_class = LegacyParseStepResource
     list_display = ['id', 'txt_parse_step', 'n_state_id', 'yn_completed', 'n_order', 'yn_active']
     list_filter = ['yn_completed', 'yn_active']
     search_fields = ['txt_parse_step']
@@ -577,14 +851,16 @@ class LegacyParseStepAdmin(admin.ModelAdmin):
 
 
 @admin.register(LegacyUserState)
-class LegacyUserStateAdmin(admin.ModelAdmin):
+class LegacyUserStateAdmin(ImportExportModelAdmin):
+    resource_class = LegacyUserStateResource
     list_display = ['id', 'n_user_id', 'n_state_id', 'mem_roles']
     list_filter = ['n_state_id']
     ordering = ['n_user_id', 'n_state_id']
 
 
 @admin.register(LegacyRawStateDataPendingUpdate)
-class LegacyRawStateDataPendingUpdateAdmin(admin.ModelAdmin):
+class LegacyRawStateDataPendingUpdateAdmin(ImportExportModelAdmin):
+    resource_class = LegacyRawStateDataPendingUpdateResource
     list_display = ['id', 'n_raw_state_data_id', 'n_state_id']
     list_filter = ['n_state_id']
     readonly_fields = ['payload']
@@ -592,7 +868,8 @@ class LegacyRawStateDataPendingUpdateAdmin(admin.ModelAdmin):
 
 
 @admin.register(LegacyCover)
-class LegacyCoverAdmin(admin.ModelAdmin):
+class LegacyCoverAdmin(ImportExportModelAdmin):
+    resource_class = LegacyCoverResource
     list_display = ['id', 'n_user_id', 'txt_cover_key_id', 'txt_state_abv', 'txt_town', 'n_estimated_value']
     list_filter = ['txt_state_abv']
     search_fields = ['txt_town', 'txt_cover_key_id', 'mem_notes']
@@ -929,6 +1206,7 @@ class CustomUserAdmin(DjangoUserAdmin):
 # ========== CONTRIBUTION ADMIN ==========
 
 
+@admin.register(Contribution)
 class ContributionAdmin(admin.ModelAdmin):
     list_display = ["id", "contributor", "status", "get_state", "get_town", "reviewer", "created_at"]
     list_filter = ["status"]
@@ -1051,15 +1329,9 @@ class ContributionAdmin(admin.ModelAdmin):
             )
 
 
-class FAQEntryAdmin(TimestampedModelAdmin, ReversionAdminBase):
-    list_display = ("question", "is_active", "display_order")
-    list_filter = ("is_active",)
-    search_fields = ("question", "answer")
-    ordering = ("display_order", "faq_entry_id")
-
-
 @admin.register(Lettering)
 class LetteringAdmin(TimestampedModelAdmin):
+    resource_class = LetteringResource
     list_display = ["name"]
     search_fields = ["name"]
     ordering = ["name"]
@@ -1067,6 +1339,7 @@ class LetteringAdmin(TimestampedModelAdmin):
 
 @admin.register(Framing)
 class FramingAdmin(TimestampedModelAdmin):
+    resource_class = FramingResource
     list_display = ["name", "code"]
     search_fields = ["name", "code"]
     ordering = ["name"]
@@ -1074,6 +1347,7 @@ class FramingAdmin(TimestampedModelAdmin):
 
 @admin.register(Shape)
 class ShapeAdmin(TimestampedModelAdmin):
+    resource_class = ShapeResource
     list_display = ["name", "code"]
     search_fields = ["name", "code"]
     ordering = ["name"]
@@ -1081,6 +1355,7 @@ class ShapeAdmin(TimestampedModelAdmin):
 
 @admin.register(Cover)
 class CoverAdmin(TimestampedModelAdmin):
+    resource_class = CoverResource
     list_display = ["code", "type", "color", "has_adhesive", "height", "width", "is_institutional"]
     list_filter = ["type", "has_adhesive", "is_institutional"]
     search_fields = ["code", "type"]
@@ -1089,6 +1364,7 @@ class CoverAdmin(TimestampedModelAdmin):
 
 @admin.register(Auxmark)
 class AuxmarkAdmin(TimestampedModelAdmin):
+    resource_class = AuxmarkResource
     list_display = [
         "parent_mark_type",
         "parent_mark_id",
@@ -1110,6 +1386,7 @@ class AuxmarkAdmin(TimestampedModelAdmin):
 
 @admin.register(Citation)
 class CitationAdmin(TimestampedModelAdmin):
+    resource_class = CitationResource
     list_display = ["reference_work", "subject_type", "subject_id", "citation_detail"]
     list_filter = ["subject_type"]
     search_fields = ["reference_work__title", "citation_detail"]
@@ -1118,6 +1395,7 @@ class CitationAdmin(TimestampedModelAdmin):
 
 @admin.register(Region)
 class RegionAdmin(TimestampedModelAdmin):
+    resource_class = RegionResource
     list_display = ["name", "abbrev", "region_tier", "parent_region"]
     list_filter = ["region_tier"]
     search_fields = ["name", "abbrev"]
@@ -1127,6 +1405,7 @@ class RegionAdmin(TimestampedModelAdmin):
 
 @admin.register(PostOffice)
 class PostOfficeAdmin(TimestampedModelAdmin):
+    resource_class = PostOfficeResource
     list_display = ["name", "region"]
     list_filter = ["region"]
     search_fields = ["name", "region__name"]
@@ -1136,6 +1415,7 @@ class PostOfficeAdmin(TimestampedModelAdmin):
 
 @admin.register(DateObserved)
 class DateObservedAdmin(TimestampedModelAdmin):
+    resource_class = DateObservedResource
     list_display = ["postmark", "date", "granularity"]
     list_filter = ["granularity"]
     search_fields = ["postmark__code"]
@@ -1145,6 +1425,7 @@ class DateObservedAdmin(TimestampedModelAdmin):
 
 @admin.register(Ratemark)
 class RatemarkAdmin(TimestampedModelAdmin):
+    resource_class = RatemarkResource
     list_display = ["id", "inscription_txt", "is_manuscript", "shape", "lettering", "color", "rate_val"]
     list_filter = ["is_manuscript", "impression", "is_irreg"]
     search_fields = ["inscription_txt"]
@@ -1153,6 +1434,7 @@ class RatemarkAdmin(TimestampedModelAdmin):
 
 @admin.register(CoverPostmark)
 class CoverPostmarkAdmin(TimestampedModelAdmin):
+    resource_class = CoverPostmarkResource
     list_display = ["cover", "postmark", "is_backstamp"]
     search_fields = ["cover__code", "postmark__code"]
     raw_id_fields = ["cover", "postmark"]
@@ -1160,6 +1442,7 @@ class CoverPostmarkAdmin(TimestampedModelAdmin):
 
 @admin.register(PostmarkRatemark)
 class PostmarkRatemarkAdmin(TimestampedModelAdmin):
+    resource_class = PostmarkRatemarkResource
     list_display = ["postmark", "ratemark", "placement_type"]
     list_filter = ["placement_type"]
     search_fields = ["postmark__code", "ratemark__inscription_txt"]
@@ -1168,6 +1451,7 @@ class PostmarkRatemarkAdmin(TimestampedModelAdmin):
 
 @admin.register(MarkFraming)
 class MarkFramingAdmin(TimestampedModelAdmin):
+    resource_class = MarkFramingResource
     list_display = ["parent_mark_type", "parent_mark_id", "framing", "framing_pos"]
     list_filter = ["parent_mark_type"]
     search_fields = ["parent_mark_type", "parent_mark_id", "framing__name"]
@@ -1176,9 +1460,118 @@ class MarkFramingAdmin(TimestampedModelAdmin):
 
 @admin.register(ReferenceWork)
 class ReferenceWorkAdmin(TimestampedModelAdmin):
+    resource_class = ReferenceWorkResource
     list_display = ["title", "authorship", "publication_year", "publisher"]
     search_fields = ["title", "authorship", "publisher", "isbn"]
     ordering = ["title"]
+
+
+@admin.register(PostmarkValuation)
+class PostmarkValuationAdmin(TimestampedModelAdmin):
+    resource_class = PostmarkValuationResource
+    list_display = ["postmark_valuation_id", "postmark", "appraisal_pos", "amt", "appraisal_date"]
+    list_filter = ["appraisal_date"]
+    search_fields = ["postmark__code"]
+    raw_id_fields = ["postmark"]
+    ordering = ["postmark", "appraisal_pos"]
+
+
+@admin.register(PostmarkImage)
+class PostmarkImageAdmin(TimestampedModelAdmin):
+    resource_class = PostmarkImageResource
+    list_display = ['get_postmark_key', 'original_filename', 'image_view', 'display_order', 'uploaded_by']
+    list_filter = ['image_view']
+    search_fields = ['postmark__code', 'original_filename', 'uploaded_by']
+    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date', 'file_checksum']
+    raw_id_fields = ['postmark']
+    paginator = NoCountPaginator
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        return qs.select_related('postmark', 'uploaded_by').order_by('-id')
+
+    fieldsets = (
+        ('Postmark', {
+            'fields': ('postmark',)
+        }),
+        ('File Information', {
+            'fields': ('original_filename', 'storage_filename', 'file_checksum',
+                      'mime_type', 'image_width', 'image_height', 'file_size_bytes')
+        }),
+        ('Display Settings', {
+            'fields': ('image_view', 'image_description', 'display_order')
+        }),
+        ('Submission Information', {
+            'fields': ('uploaded_by',)
+        }),
+        ('Metadata', {
+            'fields': ('created_date', 'modified_date', 'created_by', 'modified_by'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def get_postmark_key(self, obj):
+        try:
+            return str(obj.postmark) if obj.postmark_id else '-'
+        except Exception:
+            return '-'
+    get_postmark_key.short_description = 'Postmark'
+
+
+@admin.register(Postcover)
+class PostcoverAdmin(InlineRevisionMixin, TimestampedModelAdmin):
+    resource_class = PostcoverResource
+    list_display = ['postcover_key', 'owner_user']
+    search_fields = ['postcover_key', 'owner_user__username', 'description']
+    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
+    raw_id_fields = ['owner_user']
+
+    inlines = [
+        PostcoverPostmarkInline,
+        PostcoverImageInline,
+    ]
+
+
+@admin.register(PostcoverPostmark)
+class PostcoverPostmarkAdmin(TimestampedModelAdmin):
+    resource_class = PostcoverPostmarkResource
+    list_display = ['postcover', 'postmark', 'position_order', 'postmark_location']
+    list_filter = ['postmark_location']
+    search_fields = ['postcover__postcover_key', 'postmark__code']
+    raw_id_fields = ['postcover', 'postmark']
+    ordering = ['postcover', 'position_order']
+
+
+@admin.register(PostcoverImage)
+class PostcoverImageAdmin(TimestampedModelAdmin):
+    resource_class = PostcoverImageResource
+    list_display = ['get_postcover_key', 'original_filename', 'image_view',
+                    'display_order', 'uploaded_by']
+    list_filter = ['image_view']
+    search_fields = ['postcover__postcover_key', 'original_filename']
+    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date', 'file_checksum']
+    raw_id_fields = ['postcover']
+
+    def get_postcover_key(self, obj):
+        return obj.postcover.postcover_key
+    get_postcover_key.short_description = 'Postcover'
+
+
+@admin.register(UserLocationAssignment)
+class UserLocationAssignmentAdmin(ImportExportModelAdmin):
+    resource_class = UserLocationAssignmentResource
+    list_display = ['user', 'administrative_unit']
+    search_fields = ['user__username', 'administrative_unit__reference_code']
+    raw_id_fields = ['user', 'administrative_unit']
+
+
+@admin.register(FAQEntry)
+class FAQEntryAdmin(TimestampedModelAdmin):
+    resource_class = FAQEntryResource
+    list_display = ("question", "is_active", "display_order")
+    list_filter = ("is_active",)
+    search_fields = ("question", "answer")
+    ordering = ("display_order", "faq_entry_id")
 
 
 ###################################################################################################

@@ -114,11 +114,8 @@ export type CatalogSearchRowDisplay = CatalogFieldValues & {
 
 export function buildCatalogSearchRow(record: PostmarkRecord): CatalogSearchRowDisplay {
   const fields = buildCatalogFieldValues(record);
-  const townState = [record.town?.trim(), record.state?.trim()].filter(Boolean).join(", ");
-  const shape = record.shapeName?.trim() || record.listingType?.trim() || "";
   const displayName =
-    [townState, shape].filter(Boolean).join(" - ") ||
-    townState ||
+    record.catalogTxt?.trim() ||
     record.postmarkKey?.trim() ||
     record.inscriptionTxt?.trim() ||
     CATALOG_FIELD_EMPTY;

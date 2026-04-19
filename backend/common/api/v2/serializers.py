@@ -423,14 +423,12 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         return color.name if color and color.name else ''
 
     def get_earliest_use(self, obj):
-        dates = list(obj.dates_observed.all())
-        earliest = min((d.date for d in dates if d.date), default=None) if dates else None
-        return earliest.isoformat() if earliest else None
+        d = getattr(obj, 'earliest_date_observed', None)
+        return d.isoformat() if d else None
 
     def get_latest_use(self, obj):
-        dates = list(obj.dates_observed.all())
-        latest = max((d.date for d in dates if d.date), default=None) if dates else None
-        return latest.isoformat() if latest else None
+        d = getattr(obj, 'latest_date_observed', None)
+        return d.isoformat() if d else None
 
     def get_main_image(self, obj):
         main_img = obj.images.filter(display_order=0).first()
@@ -508,14 +506,12 @@ class PostmarkSerializer(serializers.ModelSerializer):
         return color.name if color and color.name else ''
 
     def get_earliest_use(self, obj):
-        dates = list(obj.dates_observed.all())
-        earliest = min((d.date for d in dates if d.date), default=None) if dates else None
-        return earliest.isoformat() if earliest else None
+        d = getattr(obj, 'earliest_date_observed', None)
+        return d.isoformat() if d else None
 
     def get_latest_use(self, obj):
-        dates = list(obj.dates_observed.all())
-        latest = max((d.date for d in dates if d.date), default=None) if dates else None
-        return latest.isoformat() if latest else None
+        d = getattr(obj, 'latest_date_observed', None)
+        return d.isoformat() if d else None
 
     def get_valuation_display(self, obj):
         val = obj.valuations.order_by('-appraisal_date').first()

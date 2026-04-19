@@ -670,6 +670,7 @@ class DateObserved(TimestampedModel):
         verbose_name = 'Date Observed'
         verbose_name_plural = 'Dates Observed'
         ordering = ['postmark', 'date']
+        indexes = [models.Index(fields=['postmark', 'date'], name='date_obs_pm_date_idx')]
 
     def __str__(self):
         return f'{self.postmark} -- {self.date} ({self.granularity})'
