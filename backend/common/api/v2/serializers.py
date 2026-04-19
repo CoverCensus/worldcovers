@@ -342,6 +342,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
     shape_name = serializers.SerializerMethodField()
     main_image = serializers.SerializerMethodField()
     state = serializers.SerializerMethodField()
+    state_abbrev = serializers.SerializerMethodField()
     town = serializers.SerializerMethodField()
     colors_display = serializers.SerializerMethodField()
     valuation_display = serializers.SerializerMethodField()
@@ -369,6 +370,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
             'date_fmt',
             'main_image',
             'state',
+            'state_abbrev',
             'town',
             'size_display',
             'colors_display',
@@ -393,6 +395,14 @@ class PostmarkListSerializer(serializers.ModelSerializer):
             region = getattr(po, 'region', None)
             if region and region.name:
                 return region.name
+        return ''
+
+    def get_state_abbrev(self, obj):
+        po = getattr(obj, 'post_office', None)
+        if po:
+            region = getattr(po, 'region', None)
+            if region and region.abbrev:
+                return region.abbrev
         return ''
 
     def get_shape_name(self, obj):
@@ -449,6 +459,7 @@ class PostmarkSerializer(serializers.ModelSerializer):
     valuations = PostmarkValuationSerializer(many=True, read_only=True)
     images = PostmarkImageSerializer(many=True, read_only=True)
     state = serializers.SerializerMethodField()
+    state_abbrev = serializers.SerializerMethodField()
     town = serializers.SerializerMethodField()
     shape_name = serializers.SerializerMethodField()
     lettering_style_name = serializers.SerializerMethodField()
@@ -476,6 +487,14 @@ class PostmarkSerializer(serializers.ModelSerializer):
             region = getattr(po, 'region', None)
             if region and region.name:
                 return region.name
+        return ''
+
+    def get_state_abbrev(self, obj):
+        po = getattr(obj, 'post_office', None)
+        if po:
+            region = getattr(po, 'region', None)
+            if region and region.abbrev:
+                return region.abbrev
         return ''
 
     def get_shape_name(self, obj):

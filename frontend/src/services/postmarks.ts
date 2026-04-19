@@ -25,6 +25,7 @@ export interface PostmarkApiResponse {
     rateLocation: string;
     rateValue: string;
     state: string,
+    regionAbbrev: string,
     dateRange: string,
     town: string,
     sizeDisplay?: string,
@@ -340,6 +341,7 @@ export interface PostmarkApiResponse {
       isManuscript: item.is_manuscript ?? item.isManuscript,
       mainImage: (mainImage ?? null) as PostmarkRecord["mainImage"],
       state: item.state ?? "",
+      regionAbbrev: (item.state_abbrev ?? item.stateAbbrev ?? item.region_abbrev ?? item.regionAbbrev ?? "").trim(),
       dateRange: dateRange ?? "",
       town: item.town ?? "",
       sizeDisplay,

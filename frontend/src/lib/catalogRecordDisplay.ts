@@ -46,6 +46,7 @@ function framingField(record: PostmarkRecord): string {
 export type CatalogFieldValues = {
   town: string;
   state: string;
+  regionAbbrev: string;
   manuscript: string;
   postmarkTextLines: string[];
   postmarkTextSingle: string;
@@ -85,6 +86,7 @@ export function buildCatalogFieldValues(record: PostmarkRecord): CatalogFieldVal
   return {
     town: displayCatalogField(record.town),
     state: displayCatalogField(record.state),
+    regionAbbrev: displayCatalogField(record.regionAbbrev),
     manuscript: displayCatalogField(record.isManuscript ? "Yes" : "No"),
     postmarkTextLines: postmarkTextLines.length > 1 ? postmarkTextLines : [],
     postmarkTextSingle,
