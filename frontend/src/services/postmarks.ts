@@ -36,7 +36,7 @@ export interface PostmarkApiResponse {
     catalogTxt?: string;
     inscriptionTxt?: string;
     letteringStyleName?: string;
-    framingStyleName?: string;
+    framing?: string;
     postmarkTextCombined?: string;
     postmarkTextVariations?: string[];
     /** v2 list: `type` (shape type display) */
@@ -316,7 +316,8 @@ export interface PostmarkApiResponse {
         : undefined) ?? item.lettering_style_name ?? item.letteringStyleName ?? "";
 
     const fs = item.framing_style ?? item.framingStyle;
-    const framingStyleName =
+    const framing =
+      item.framing ??
       (typeof fs === "object" && fs != null
         ? (fs as { framing_style_name?: string }).framing_style_name ??
           (fs as { framingStyleName?: string }).framingStyleName
@@ -349,7 +350,7 @@ export interface PostmarkApiResponse {
       catalogTxt: item.catalog_txt ?? item.catalogTxt ?? "",
       inscriptionTxt: item.inscription_txt ?? item.inscriptionTxt ?? "",
       letteringStyleName,
-      framingStyleName,
+      framing,
       postmarkTextCombined: item.postmark_text ?? item.postmarkText ?? "",
       postmarkTextVariations: Array.isArray(item.postmark_text_variations)
         ? item.postmark_text_variations.map((x: unknown) => String(x ?? "").trim()).filter(Boolean)
@@ -466,7 +467,7 @@ export interface PostmarkApiResponse {
     pageSize: number = 10,
     search?: string,
     shapeId?: string | number,
-    excludeManuscripts?: boolean,
+    manuscripts?: "both" | "only" | "none" | boolean,
     color?: string,
     state?: string,
     town?: string,
@@ -481,7 +482,16 @@ export interface PostmarkApiResponse {
     if (shapeId != null && shapeId !== "" && String(shapeId) !== "all") {
       params.shape = String(shapeId);
     }
-    if (excludeManuscripts) {
+    // Back-compat: a true boolean means "exclude manuscripts" (previous signature).
+    const manuscriptMode =
+      typeof manuscripts === "boolean"
+        ? manuscripts
+          ? "none"
+          : "both"
+        : manuscripts ?? "both";
+    if (manuscriptMode === "only") {
+      params.is_manuscript = "true";
+    } else if (manuscriptMode === "none") {
       params.is_manuscript = "false";
     }
     if (color !== "all" && color !== null && color !== "") {

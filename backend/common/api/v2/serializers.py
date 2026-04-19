@@ -19,6 +19,28 @@ from common.models import (
 User = get_user_model()
 
 
+def _format_date_by_granularity(date, granularity):
+    """Render an observed date per its granularity: YEAR→YYYY, MONTH→YYYY-MM, DAY→YYYY-MM-DD."""
+    if not date:
+        return None
+    iso = date.isoformat()
+    if granularity == 'YEAR':
+        return iso[:4]
+    if granularity == 'MONTH':
+        return iso[:7]
+    return iso[:10]
+
+
+def _granularity_for_date(obj, target_date):
+    """Look up the granularity of the DateObserved row matching target_date (uses prefetch cache)."""
+    if not target_date:
+        return 'DAY'
+    for row in obj.dates_observed.all():
+        if row.date == target_date:
+            return row.granularity
+    return 'DAY'
+
+
 # ========== USER AND GROUP SERIALIZERS ==========
 
 class UserSerializer(serializers.ModelSerializer):
@@ -348,7 +370,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
     valuation_display = serializers.SerializerMethodField()
     size_display = serializers.SerializerMethodField()
     lettering_style_name = serializers.SerializerMethodField()
-    framing_style_name = serializers.SerializerMethodField()
+    framing = serializers.SerializerMethodField()
     earliest_use = serializers.SerializerMethodField()
     latest_use = serializers.SerializerMethodField()
 
@@ -377,7 +399,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
             'valuation_display',
             'created_date',
             'lettering_style_name',
-            'framing_style_name',
+            'framing',
             'earliest_use',
             'latest_use',
         ]
@@ -413,7 +435,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         lettering = getattr(obj, 'lettering', None)
         return lettering.name if lettering and lettering.name else ''
 
-    def get_framing_style_name(self, obj):
+    def get_framing(self, obj):
         framings = MarkFraming.objects.filter(
             parent_mark_type='POSTMARK',
             parent_mark_id=obj.pk,
@@ -434,11 +456,11 @@ class PostmarkListSerializer(serializers.ModelSerializer):
 
     def get_earliest_use(self, obj):
         d = getattr(obj, 'earliest_date_observed', None)
-        return d.isoformat() if d else None
+        return _format_date_by_granularity(d, _granularity_for_date(obj, d))
 
     def get_latest_use(self, obj):
         d = getattr(obj, 'latest_date_observed', None)
-        return d.isoformat() if d else None
+        return _format_date_by_granularity(d, _granularity_for_date(obj, d))
 
     def get_main_image(self, obj):
         main_img = obj.images.filter(display_order=0).first()
@@ -463,7 +485,9 @@ class PostmarkSerializer(serializers.ModelSerializer):
     town = serializers.SerializerMethodField()
     shape_name = serializers.SerializerMethodField()
     lettering_style_name = serializers.SerializerMethodField()
-    framing_style_name = serializers.SerializerMethodField()
+    framing = serializers.SerializerMethodField()
+    framings = serializers.SerializerMethodField()
+    dates_observed = serializers.SerializerMethodField()
     size_display = serializers.SerializerMethodField()
     colors_display = serializers.SerializerMethodField()
     earliest_use = serializers.SerializerMethodField()
@@ -505,13 +529,30 @@ class PostmarkSerializer(serializers.ModelSerializer):
         lettering = getattr(obj, 'lettering', None)
         return lettering.name if lettering and lettering.name else ''
 
-    def get_framing_style_name(self, obj):
+    def get_framing(self, obj):
         framings = MarkFraming.objects.filter(
             parent_mark_type='POSTMARK',
             parent_mark_id=obj.pk,
         ).select_related('framing').order_by('framing_pos')
         names = [mf.framing.name for mf in framings if mf.framing]
         return ', '.join(names)
+
+    def get_framings(self, obj):
+        framings = MarkFraming.objects.filter(
+            parent_mark_type='POSTMARK',
+            parent_mark_id=obj.pk,
+        ).select_related('framing').order_by('framing_pos')
+        return [
+            {'name': mf.framing.name, 'framing_pos': mf.framing_pos}
+            for mf in framings
+            if mf.framing
+        ]
+
+    def get_dates_observed(self, obj):
+        return [
+            {'date': d.date.isoformat(), 'granularity': d.granularity}
+            for d in obj.dates_observed.order_by('date')
+        ]
 
     def get_size_display(self, obj):
         fmt = lambda v: f"{float(v):g}" if v else None
@@ -526,11 +567,11 @@ class PostmarkSerializer(serializers.ModelSerializer):
 
     def get_earliest_use(self, obj):
         d = getattr(obj, 'earliest_date_observed', None)
-        return d.isoformat() if d else None
+        return _format_date_by_granularity(d, _granularity_for_date(obj, d))
 
     def get_latest_use(self, obj):
         d = getattr(obj, 'latest_date_observed', None)
-        return d.isoformat() if d else None
+        return _format_date_by_granularity(d, _granularity_for_date(obj, d))
 
     def get_valuation_display(self, obj):
         val = obj.valuations.order_by('-appraisal_date').first()

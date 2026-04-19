@@ -105,6 +105,7 @@ const RecordDetail = () => {
     isIrregular?: string;
     impression?: string;
     dateType?: string;
+    dateFmt?: string;
     inscriptionText?: string;
     description: string;
     submitterName?: string;
@@ -117,7 +118,7 @@ const RecordDetail = () => {
       valuedBy?: { username?: string; firstName?: string; lastName?: string };
     }>;
     letteringStyle?: string;
-    framingStyle?: string;
+    framing?: string;
     /** From API source_catalog — used to decide if editor Comment is visible to logged-in users */
     sourceCatalog?: string;
     /** Parsed from other_characteristics `Comment:` (editor feedback at approval) */
@@ -202,23 +203,36 @@ const RecordDetail = () => {
             fromNested(data, ["lettering_style", "lettering_style_name"]) ||
             fromNested(data, ["letteringStyle", "letteringStyleName"]) ||
             fromNested(data, ["lettering", "name"]);
-          const framingStyleName =
+          const framingsArr = Array.isArray(data.framings ?? data.framingStyles)
+            ? (data.framings ?? data.framingStyles)
+            : [];
+          const framingNames = framingsArr
+            .map((row: any) => String(row?.name ?? "").trim())
+            .filter(Boolean);
+          const framingFallback =
+            String(data.framing ?? "").trim() ||
             (data.framing_style_name ?? data.framingStyleName ?? "").trim() ||
             fromNested(data, ["framing_style", "framing_style_name"]) ||
             fromNested(data, ["framingStyle", "framingStyleName"]) ||
             fromNested(data, ["framing", "name"]);
+          const framingDisplay =
+            framingNames.length > 0
+              ? framingNames.join("\n")
+              : framingFallback;
           const colorDisplay =
             fromNested(data, ["color", "color_name"]) ||
             fromNested(data, ["color", "colorName"]) ||
             fromNested(data, ["color", "name"]);
-          const rawDatesSeen = data.dates_seen ?? data.datesSeen ?? [];
-          const datesObserved = Array.isArray(rawDatesSeen)
-            ? rawDatesSeen
+          const rawDatesObserved = data.dates_observed ?? data.datesObserved ?? [];
+          const datesObserved = Array.isArray(rawDatesObserved)
+            ? rawDatesObserved
                 .map((row: any) => {
-                  const earliest = String(row?.earliest_date_seen ?? row?.earliestDateSeen ?? "").slice(0, 10);
-                  const latest = String(row?.latest_date_seen ?? row?.latestDateSeen ?? "").slice(0, 10);
-                  if (earliest && latest && earliest !== latest) return `${earliest} - ${latest}`;
-                  return earliest || latest || "";
+                  const iso = String(row?.date ?? "");
+                  if (!iso) return "";
+                  const granularity = String(row?.granularity ?? "").toUpperCase();
+                  if (granularity === "YEAR") return iso.slice(0, 4);
+                  if (granularity === "MONTH") return iso.slice(0, 7);
+                  return iso.slice(0, 10);
                 })
                 .filter(Boolean)
             : [];
@@ -243,8 +257,9 @@ const RecordDetail = () => {
                   : "",
             impression: String(data.impression ?? "").trim(),
             dateType: String(data.date_type ?? data.dateType ?? "").trim(),
+            dateFmt: String(data.date_fmt ?? data.dateFmt ?? "").trim(),
             letteringStyle: letteringStyleName,
-            framingStyle: framingStyleName,
+            framing: framingDisplay,
             inscriptionText: String(
               data.inscription_txt ??
                 data.inscriptionTxt ??
@@ -525,10 +540,11 @@ const RecordDetail = () => {
                         { label: "Manuscript", value: record.manuscript },
                         { label: "Impression", value: record.impression },
                         { label: "Date Type", value: record.dateType },
+                        { label: "Date Format", value: record.dateFmt },
                         { label: "Shape", value: record.type },
                         { label: "Is Irregular", value: record.isIrregular },
                         { label: "Lettering style", value: record.letteringStyle },
-                        { label: "Framing style", value: record.framingStyle },
+                        { label: "Framing", value: record.framing },
                         { label: "Dimensions", value: record.dimensions },
                         { label: "Color", value: record.color },
                         { label: "Dates observed", value: (record.datesObserved ?? []).join("\n") },

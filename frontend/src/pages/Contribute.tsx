@@ -48,10 +48,6 @@ const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 10;
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/tiff"];
 
-/** Value when user chooses "Other" and types color manually */
-const COLOR_OTHER_VALUE = "__other__";
-/** Value when user chooses "Other" and types postmark type manually */
-const TYPE_OTHER_VALUE = "__other__";
 
 const MANUSCRIPT_OPTIONS = [
   { value: "Yes", label: "Yes" },
@@ -105,6 +101,41 @@ const NUM_TO_MONTH: Record<string, string> = {
   "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec",
 };
 const PAGE_NUMBER_RE = /^[A-Za-z0-9][A-Za-z0-9\s\-–—.,:;()/#]*$/;
+
+/** Field-error key → element id, in DOM order (drives scroll-to-first-error). */
+const FIELD_ERROR_SCROLL_TARGETS: Array<[string, string]> = [
+  ["state", "state"],
+  ["town", "town"],
+  ["manuscript", "manuscript"],
+  ["earliestDate", "earliest-year"],
+  ["datePairs", "earliest-year"],
+  ["type", "type"],
+  ["color", "color"],
+  ["lettering", "lettering"],
+  ["framing", "framing"],
+  ["dateFormat", "date-format"],
+  ["diameterMm", "diameter-mm"],
+  ["widthMm", "width-mm"],
+  ["heightMm", "height-mm"],
+  ["inscriptionText", "inscription-text"],
+  ["images", "postmark-images-input"],
+  ["editorValue", "editor-value"],
+  ["editorComment", "editor-comment"],
+];
+
+function scrollToFirstError(errors: Record<string, string | undefined>) {
+  for (const [key, id] of FIELD_ERROR_SCROLL_TARGETS) {
+    if (!errors[key]) continue;
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const focusable = el as HTMLElement & { focus?: () => void };
+    if (typeof focusable.focus === "function") {
+      window.setTimeout(() => focusable.focus?.(), 300);
+    }
+    return;
+  }
+}
 
 type DatePair = {
   earliestDay: string;
@@ -314,9 +345,7 @@ const Contribute = () => {
   const [latestUnknown, setLatestUnknown] = useState(false);
   const [additionalDatePairs, setAdditionalDatePairs] = useState<DatePair[]>([]);
   const [type, setType] = useState("");
-  const [typeOther, setTypeOther] = useState("");
   const [color, setColor] = useState("");
-  const [colorOther, setColorOther] = useState("");
   const [widthMm, setWidthMm] = useState("");
   const [heightMm, setHeightMm] = useState("");
   const [manuscript, setManuscript] = useState("");
@@ -324,7 +353,6 @@ const Contribute = () => {
   const [impression, setImpression] = useState("");
   const [dateType, setDateType] = useState("");
   const [inscriptionText, setInscriptionText] = useState("");
-  const [description, setDescription] = useState("");
   const [selectedReferenceWorks, setSelectedReferenceWorks] = useState<ReferenceWorkRecord[]>([]);
   const [referenceDetailsById, setReferenceDetailsById] = useState<Record<number, ReferenceDetailInput>>({});
   const [referenceDetailErrorsById, setReferenceDetailErrorsById] = useState<Record<number, ReferenceDetailFieldErrors>>({});
@@ -354,6 +382,7 @@ const Contribute = () => {
     lettering?: string;
     framing?: string;
     dateFormat?: string;
+    inscriptionText?: string;
     editorValue?: string;
     editorComment?: string;
   }>({});
@@ -565,9 +594,7 @@ const Contribute = () => {
           .filter((x): x is DatePair => x != null);
         setAdditionalDatePairs(extraPairs);
         setType(typeVal || "");
-        setTypeOther("");
         setColor(colorVal || "");
-        setColorOther("");
         const wh = submittedDataToWidthHeightStrings(sd as Record<string, unknown>);
         setWidthMm(wh.width);
         setHeightMm(wh.height);
@@ -576,7 +603,6 @@ const Contribute = () => {
         setDateType(getStr(sd.date_type ?? (sd as Record<string, unknown>).dateType));
         setIsIrregular(Boolean(sd.is_irreg ?? (sd as Record<string, unknown>).isIrreg));
         setInscriptionText(getStr(sd.inscription_txt ?? (sd as Record<string, unknown>).inscriptionText));
-        setDescription(getStr(sd.description));
         const referenceWorkIds = parseReferenceWorkIds(
           (sd as Record<string, unknown>).reference_work_ids ??
           (sd as Record<string, unknown>).referenceWorkIds ??
@@ -896,34 +922,22 @@ const Contribute = () => {
 
     const stateVal = state.trim();
     const townVal = town.trim();
-    const typeVal = type === TYPE_OTHER_VALUE ? typeOther.trim() : type.trim();
-    const colorVal = color === COLOR_OTHER_VALUE ? colorOther.trim() : color.trim();
+    const typeVal = type.trim();
+    const colorVal = color.trim();
     const isCircular = isCircularType(typeVal);
 
     const errors: typeof fieldErrors = {};
     if (!stateVal) {
       errors.state = "State is required";
     }
-    if (!townVal) {
-      errors.town = "Town/City is required";
-    } else if (/[0-9]/.test(townVal)) {
+    if (townVal && /[0-9]/.test(townVal)) {
       errors.town = "Town/City must contain only letters and spaces";
     }
     if (!manuscript.trim()) {
       errors.manuscript = "Manuscript is required";
     }
-    if (!isEditMode && postmarkImageFiles.length === 0) {
-      errors.images = "At least one image is required";
-    }
-
-    // Earliest Use date: Day / Month / Year OR Unknown (one of the four required)
-    if (!earliestUnknown && !earliestDay.trim() && !earliestMonth.trim() && !earliestYear.trim()) {
-      errors.earliestDate = "Enter Day, Month, Year, or choose Unknown";
-    }
-    // Latest Use date: optional, but if anything is entered it must be valid; Unknown allowed.
-    const latestHasAny = !!latestDay.trim() || !!latestMonth.trim() || !!latestYear.trim();
-    if (!latestUnknown && latestHasAny === false) {
-      // ok: completely blank
+    if (!inscriptionText.trim()) {
+      errors.inscriptionText = "Inscription Text is required";
     }
 
     // Dimensions: if circular, use diameter; otherwise width/height pair.
@@ -997,10 +1011,11 @@ const Contribute = () => {
 
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
+      scrollToFirstError(errors);
       return;
     }
 
-    // Validate years (required; day/month are optional but will be sent when provided)
+    // Year format: validated only when a year is entered (no longer required).
     const earliestYearRangeError = validateYearString(earliestYear.trim());
     setEarliestYearError(earliestYearRangeError);
     if (earliestYearRangeError) {
@@ -1009,6 +1024,7 @@ const Contribute = () => {
         description: earliestYearRangeError,
         variant: "destructive",
       });
+      document.getElementById("earliest-year")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
     const latestYearRangeError = validateYearString(latestYear.trim());
@@ -1019,6 +1035,7 @@ const Contribute = () => {
         description: latestYearRangeError,
         variant: "destructive",
       });
+      document.getElementById("latest-year")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
 
@@ -1034,26 +1051,23 @@ const Contribute = () => {
       const first = mkIsoOrYear(pair.earliestDay, pair.earliestMonth, pair.earliestYear);
       const last = mkIsoOrYear(pair.latestDay, pair.latestMonth, pair.latestYear);
       if (!first || !last) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          datePairs: "Each additional pair requires both Earliest Use and Latest Use.",
-        }));
+        const msg = "Each additional pair requires both Earliest Use and Latest Use.";
+        setFieldErrors((prev) => ({ ...prev, datePairs: msg }));
+        scrollToFirstError({ datePairs: msg });
         return;
       }
       const firstErr = validateYearString(pair.earliestYear.trim());
       const lastErr = validateYearString(pair.latestYear.trim());
       if (firstErr || lastErr) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          datePairs: firstErr || lastErr || "Invalid additional date pair.",
-        }));
+        const msg = firstErr || lastErr || "Invalid additional date pair.";
+        setFieldErrors((prev) => ({ ...prev, datePairs: msg }));
+        scrollToFirstError({ datePairs: msg });
         return;
       }
       if (Number(first) > Number(last)) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          datePairs: "Earliest Year must be less than or equal to Latest Year in each pair.",
-        }));
+        const msg = "Earliest Year must be less than or equal to Latest Year in each pair.";
+        setFieldErrors((prev) => ({ ...prev, datePairs: msg }));
+        scrollToFirstError({ datePairs: msg });
         return;
       }
     }
@@ -1143,10 +1157,9 @@ const Contribute = () => {
         if (w && h) return `${w}×${h} mm`;
         return "";
       })();
-      const descriptionToSend = description.trim();
       const inscriptionToSend = inscriptionText.trim();
 
-      const derivedShapeId = isStateEditor && type && type !== TYPE_OTHER_VALUE
+      const derivedShapeId = isStateEditor && type
         ? typeOptions.find((t) => t.name === type)?.id
         : undefined;
       const editorPayload = isStateEditor
@@ -1173,7 +1186,6 @@ const Contribute = () => {
         if (impression.trim()) form.append("impression", impression.trim());
         if (dateType.trim()) form.append("date_type", dateType.trim());
         if (inscriptionToSend) form.append("inscription_txt", inscriptionToSend);
-        if (descriptionToSend) form.append("description", descriptionToSend);
         if (referencesToSend) form.append("references", referencesToSend);
         referenceWorkIdsToSend.forEach((id) => form.append("reference_work_ids[]", String(id)));
         if (referenceWorkDetailsToSend.length > 0) {
@@ -1215,7 +1227,6 @@ const Contribute = () => {
           impression: impression.trim() || undefined,
           date_type: dateType.trim() || undefined,
           inscription_txt: inscriptionToSend || undefined,
-          description: descriptionToSend || undefined,
           references: referencesToSend || undefined,
           reference_work_ids: referenceWorkIdsToSend.length > 0 ? referenceWorkIdsToSend : undefined,
           reference_work_details: referenceWorkDetailsToSend.length > 0 ? referenceWorkDetailsToSend : undefined,
@@ -1285,9 +1296,7 @@ const Contribute = () => {
       setLatestUnknown(false);
       setAdditionalDatePairs([]);
       setType("");
-      setTypeOther("");
       setColor("");
-      setColorOther("");
       setWidthMm("");
       setHeightMm("");
       setDiameterMm("");
@@ -1296,7 +1305,6 @@ const Contribute = () => {
       setImpression("");
       setDateType("");
       setInscriptionText("");
-      setDescription("");
       setPendingReferenceWorkIds([]);
       setSelectedReferenceWorks([]);
       setReferenceDetailsById({});
@@ -1330,7 +1338,7 @@ const Contribute = () => {
   };
 
   const isEditMode = editContributionId != null;
-  const effectiveTypeLabel = String(type === TYPE_OTHER_VALUE ? (typeOther ?? "") : (type ?? "")).trim();
+  const effectiveTypeLabel = String(type ?? "").trim();
   const showDiameter = isCircularType(effectiveTypeLabel);
 
   const renderImageUploader = (
@@ -1478,7 +1486,31 @@ const Contribute = () => {
 
                   <form onSubmit={handleSubmit} className="space-y-6" noValidate>
                     <div className="space-y-2">
-                      <Label htmlFor="state">State</Label>
+                      <Label htmlFor="inscription-text">
+                        Inscription Text <span className="text-destructive" aria-hidden="true">*</span>
+                      </Label>
+                      <Textarea
+                        id="inscription-text"
+                        placeholder="Exact text inscribed on the marking device (abbreviations/annotations)."
+                        value={inscriptionText}
+                        onChange={(e) => {
+                          setInscriptionText(e.target.value);
+                          if (fieldErrors.inscriptionText) {
+                            setFieldErrors((prev) => ({ ...prev, inscriptionText: undefined }));
+                          }
+                        }}
+                        rows={3}
+                        className={fieldErrors.inscriptionText ? "border-destructive" : ""}
+                      />
+                      {fieldErrors.inscriptionText && (
+                        <p className="text-sm text-destructive">{fieldErrors.inscriptionText}</p>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="state">
+                        State <span className="text-destructive" aria-hidden="true">*</span>
+                      </Label>
                       <SearchableSelect
                         id="state"
                         value={state}
@@ -1542,7 +1574,9 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="manuscript">Manuscript</Label>
+                      <Label htmlFor="manuscript">
+                        Manuscript <span className="text-destructive" aria-hidden="true">*</span>
+                      </Label>
                       <Select
                         value={manuscript}
                         onValueChange={(v) => {
@@ -1948,10 +1982,7 @@ const Contribute = () => {
                           }
                         }}
                         placeholder="Select type..."
-                        options={[
-                          ...typeOptions.map((t) => ({ value: t.name, label: t.name })),
-                          { value: TYPE_OTHER_VALUE, label: "Other (type below)" },
-                        ]}
+                        options={typeOptions.map((t) => ({ value: t.name, label: t.name }))}
                         loading={loadingTypes}
                         error={!!typeOptionsError}
                         errorMessage={typeOptionsError ?? "Failed to load postmark types"}
@@ -1962,16 +1993,6 @@ const Contribute = () => {
                       />
                       {fieldErrors.type && (
                         <p className="text-sm text-destructive">{fieldErrors.type}</p>
-                      )}
-                      {type === TYPE_OTHER_VALUE && (
-                        <Input
-                          id="type-other"
-                          placeholder="e.g. Circular Date Stamp, Straight Line"
-                          value={typeOther}
-                          onChange={(e) => setTypeOther(e.target.value)}
-                          className="mt-2"
-                          aria-label="Postmark type (other)"
-                        />
                       )}
                     </div>
 
@@ -2009,23 +2030,10 @@ const Contribute = () => {
                               {c.name}
                             </SelectItem>
                           ))}
-                          <SelectItem value={COLOR_OTHER_VALUE}>
-                            Other (type below)
-                          </SelectItem>
                         </SelectContent>
                       </Select>
                       {fieldErrors.color && (
                         <p className="text-sm text-destructive">{fieldErrors.color}</p>
-                      )}
-                      {color === COLOR_OTHER_VALUE && (
-                        <Input
-                          id="color-other"
-                          placeholder="e.g. Sepia, Blue-black"
-                          value={colorOther}
-                          onChange={(e) => setColorOther(e.target.value)}
-                          className="mt-2"
-                          aria-label="Color (other)"
-                        />
                       )}
                     </div>
 
@@ -2237,28 +2245,6 @@ const Contribute = () => {
                         </p>
                       </>
                     )}
-
-                    <div className="space-y-2">
-                      <Label htmlFor="inscription-text">Inscription Text</Label>
-                      <Textarea
-                        id="inscription-text"
-                        placeholder="Exact text inscribed on the marking device (abbreviations/annotations)."
-                        value={inscriptionText}
-                        onChange={(e) => setInscriptionText(e.target.value)}
-                        rows={3}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="description">Description</Label>
-                      <Textarea
-                        id="description"
-                        placeholder="Provide details about the postmark, its characteristics, and any notable features..."
-                        rows={4}
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                      />
-                    </div>
 
                     <div className="space-y-3">
                       <div className="space-y-2">
@@ -2495,7 +2481,6 @@ const Contribute = () => {
                       "postmark",
                       "Postmark Images",
                       `PNG, JPG, or TIFF up to ${MAX_IMAGE_SIZE_MB}MB each`,
-                      true,
                     )}
                     {renderImageUploader(
                       "ratemark",
@@ -2518,7 +2503,7 @@ const Contribute = () => {
                   </form>
 
                   <p className="text-xs text-muted-foreground">
-                    Required: State, Town/City, Manuscript (Yes/No), and at least one postmark image. Earliest Use requires Day, Month, Year, or Unknown. When approving (adding to catalog), editors must still add Value and Comment.
+                    Required: State, Manuscript (Yes/No), and Inscription Text.
                   </p>
                 </CardContent>
               </Card>
@@ -2540,7 +2525,7 @@ const Contribute = () => {
                     <strong className="text-foreground">Reference works:</strong> Include references when available to help verification.
                   </p>
                   <p className="leading-relaxed">
-                    <strong className="text-foreground">Review Time:</strong> Most submissions are reviewed within 5-7 business days.
+                    <strong className="text-foreground">Review Time:</strong> Most submissions are reviewed within 1-3 business days.
                   </p>
                 </CardContent>
               </Card>

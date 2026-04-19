@@ -372,11 +372,14 @@ def _create_postmark_in_catalog(payload):
             defaults={"created_by": user, "modified_by": user},
         )
 
+        inscription_txt_str = str(payload.get("inscription_txt") or "").strip()
         postmark = Postmark.objects.create(
             post_office=post_office,
             shape=shape,
             color=color,
             is_manuscript=is_manuscript,
+            inscription_txt=inscription_txt_str,
+            catalog_txt=inscription_txt_str,
             created_by=user,
             modified_by=user,
         )

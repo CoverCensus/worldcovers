@@ -13,10 +13,6 @@ export interface FramingApiResultItem {
   name?: string;
   code?: string | null;
   notes?: string | null;
-  // Legacy (pre-v2) fields; kept as or-coalesce inputs until backend drops them.
-  framingStyleId?: number;
-  framingStyleName?: string;
-  framingDescription?: string;
 }
 
 /** Paginated response from GET /framings/ */
@@ -36,9 +32,9 @@ export interface FramingOption {
 
 function mapApiResultToOption(item: FramingApiResultItem): FramingOption {
   return {
-    id: item.framing_id ?? item.framingId ?? item.id ?? item.framingStyleId ?? 0,
-    name: item.name ?? item.framingStyleName ?? "",
-    description: item.notes ?? item.framingDescription ?? "",
+    id: item.framing_id ?? item.framingId ?? item.id ?? 0,
+    name: item.name ?? "",
+    description: item.notes ?? "",
   };
 }
 

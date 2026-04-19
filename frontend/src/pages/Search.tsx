@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
@@ -115,7 +116,12 @@ const Search = () => {
   const [typeFilter, setTypeFilter] = useState(() => getSearchParam(searchParams, "type", "all"));
   const [colorFilter, setColorFilter] = useState(() => getSearchParam(searchParams, "color", "all"));
   const [valuationFilter, setValuationFilter] = useState("all");
-  const [excludeManuscripts, setExcludeManuscripts] = useState(() => getSearchParam(searchParams, "noManuscripts", "") === "true");
+  const [manuscriptFilter, setManuscriptFilter] = useState<"both" | "only" | "none">(() => {
+    const raw = getSearchParam(searchParams, "manuscripts", "");
+    if (raw === "only" || raw === "none" || raw === "both") return raw;
+    if (getSearchParam(searchParams, "noManuscripts", "") === "true") return "none";
+    return "both";
+  });
   const [imagesOnly, setImagesOnly] = useState(() => getSearchParam(searchParams, "images", "") === "true");
 
   // Debounced values for text inputs - API called only after user stops typing
@@ -141,10 +147,26 @@ const Search = () => {
   const prevBeginYearRef = useRef(debouncedBeginYear.trim().length === 4 ? debouncedBeginYear.trim() : "");
   const prevEndYearRef = useRef(debouncedEndYear.trim().length === 4 ? debouncedEndYear.trim() : "");
   const prevImagesOnlyRef = useRef(imagesOnly);
-  const prevExcludeManuscriptsRef = useRef(excludeManuscripts);
+  const prevManuscriptFilterRef = useRef(manuscriptFilter);
 
   const beginYearError = useMemo(() => validateYearString(beginYear), [beginYear]);
   const endYearError = useMemo(() => validateYearString(endYear), [endYear]);
+
+  // Manuscripts have null shape, so the two filters are mutually exclusive:
+  // - manuscripts=Only → Shape field is cleared and hidden (no shape to filter on).
+  // - shape selected  → "Only" option in the manuscripts dropdown is disabled
+  //   (and snapped back to "both" if somehow already on "only" via URL state).
+  useEffect(() => {
+    if (manuscriptFilter === "only" && typeFilter !== "all") {
+      setTypeFilter("all");
+    }
+  }, [manuscriptFilter, typeFilter]);
+
+  useEffect(() => {
+    if (typeFilter !== "all" && manuscriptFilter === "only") {
+      setManuscriptFilter("both");
+    }
+  }, [typeFilter, manuscriptFilter]);
 
   // Reset page to 1 when filters change
   useEffect(() => {
@@ -159,7 +181,7 @@ const Search = () => {
     const beginYearJustChanged = prevBeginYearRef.current !== currentNormalizedBegin;
     const endYearJustChanged = prevEndYearRef.current !== currentNormalizedEnd;
     const imagesOnlyJustChanged = prevImagesOnlyRef.current !== imagesOnly;
-    const excludeManuscriptsJustChanged = prevExcludeManuscriptsRef.current !== excludeManuscripts;
+    const manuscriptFilterJustChanged = prevManuscriptFilterRef.current !== manuscriptFilter;
     if (searchJustChanged) prevKeywordRef.current = debouncedKeywordSearch;
     if (typeFilterJustChanged) prevTypeFilterRef.current = typeFilter;
     if (colorFilterJustChanged) prevColorFilterRef.current = colorFilter;
@@ -168,7 +190,7 @@ const Search = () => {
     if (beginYearJustChanged) prevBeginYearRef.current = currentNormalizedBegin;
     if (endYearJustChanged) prevEndYearRef.current = currentNormalizedEnd;
     if (imagesOnlyJustChanged) prevImagesOnlyRef.current = imagesOnly;
-    if (excludeManuscriptsJustChanged) prevExcludeManuscriptsRef.current = excludeManuscripts;
+    if (manuscriptFilterJustChanged) prevManuscriptFilterRef.current = manuscriptFilter;
 
     const anyFilterChanged =
       searchJustChanged ||
@@ -179,11 +201,11 @@ const Search = () => {
       beginYearJustChanged ||
       endYearJustChanged ||
       imagesOnlyJustChanged ||
-      excludeManuscriptsJustChanged;
+      manuscriptFilterJustChanged;
     if (anyFilterChanged) {
       setCurrentPage(1);
     }
-  }, [debouncedKeywordSearch, typeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, excludeManuscripts]);
+  }, [debouncedKeywordSearch, typeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, manuscriptFilter]);
 
   // Treat years as active filters only when they are valid and 4 digits.
   const normalizedBeginYear = useMemo(() => {
@@ -211,7 +233,7 @@ const Search = () => {
       normalizedEndYear,
       imagesOnly,
       colorFilter,
-      excludeManuscripts,
+      manuscriptFilter,
       itemsPerPage,
     ],
     queryFn: async () => {
@@ -225,7 +247,7 @@ const Search = () => {
         itemsPerPage,
         debouncedKeywordSearch.trim() || undefined,
         typeFilter !== "all" ? typeFilter : undefined,
-        excludeManuscripts,
+        manuscriptFilter,
         colorFilter !== "all" ? colorFilter : null,
         stateFilter !== "all" ? stateFilter : undefined,
         debouncedTownFilter.trim() || undefined,
@@ -267,7 +289,7 @@ const Search = () => {
     if (normalizedEndYear) params.set("to", normalizedEndYear);
     if (typeFilter !== "all") params.set("type", typeFilter);
     if (colorFilter !== "all") params.set("color", colorFilter);
-    if (excludeManuscripts) params.set("noManuscripts", "true");
+    if (manuscriptFilter !== "both") params.set("manuscripts", manuscriptFilter);
     if (imagesOnly) params.set("images", "true");
     if (currentPage > 1) params.set("page", String(currentPage));
     const next = params.toString();
@@ -275,7 +297,7 @@ const Search = () => {
     if (next !== current) {
       setSearchParams(next ? params : {}, { replace: true });
     }
-  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, typeFilter, colorFilter, excludeManuscripts, imagesOnly, searchParams, setSearchParams]);
+  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, typeFilter, colorFilter, manuscriptFilter, imagesOnly, searchParams, setSearchParams]);
 
   // Enforce exactly itemsPerPage (10) per page — slice in case API returns more
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
@@ -291,7 +313,7 @@ const Search = () => {
     setTypeFilter("all");
     setColorFilter("all");
     setValuationFilter("all");
-    setExcludeManuscripts(false);
+    setManuscriptFilter("both");
     setImagesOnly(false);
     setCurrentPage(1);
     setSearchParams("", { replace: true });
@@ -424,24 +446,26 @@ const Search = () => {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="type">Shape</Label>
-                    <SearchableSelect
-                      id="type"
-                      disabled={filtersDisabled}
-                      value={typeFilter}
-                      onValueChange={setTypeFilter}
-                      placeholder="All Shapes"
-                      allOption={{ value: "all", label: "All Shapes" }}
-                      options={Array.isArray(shapeOptions) ? shapeOptions : []}
-                      loading={isLoadingFilters}
-                      error={!!filterError}
-                      errorMessage="Failed to load shapes"
-                      searchPlaceholder="Search shapes..."
-                      emptyMessage="No shape found."
-                      aria-label="Filter by shape"
-                    />
-                  </div>
+                  {manuscriptFilter !== "only" && (
+                    <div className="space-y-2">
+                      <Label htmlFor="type">Shape</Label>
+                      <SearchableSelect
+                        id="type"
+                        disabled={filtersDisabled}
+                        value={typeFilter}
+                        onValueChange={setTypeFilter}
+                        placeholder="All Shapes"
+                        allOption={{ value: "all", label: "All Shapes" }}
+                        options={Array.isArray(shapeOptions) ? shapeOptions : []}
+                        loading={isLoadingFilters}
+                        error={!!filterError}
+                        errorMessage="Failed to load shapes"
+                        searchPlaceholder="Search shapes..."
+                        emptyMessage="No shape found."
+                        aria-label="Filter by shape"
+                      />
+                    </div>
+                  )}
 
                   <div className="space-y-2">
                     <Label htmlFor="color">Color</Label>
@@ -478,21 +502,25 @@ const Search = () => {
                     </Select>
                   </div> */}
 
+                  <div className="space-y-2">
+                    <Label htmlFor="manuscripts">Show Manuscripts</Label>
+                    <Select
+                      value={manuscriptFilter}
+                      onValueChange={(v) => setManuscriptFilter(v as "both" | "only" | "none")}
+                      disabled={filtersDisabled}
+                    >
+                      <SelectTrigger id="manuscripts" aria-label="Show manuscripts">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="both">Both (Default)</SelectItem>
+                        <SelectItem value="only" disabled={typeFilter !== "all"}>Only</SelectItem>
+                        <SelectItem value="none">None</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
                   <div className="space-y-3 pt-2">
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="manuscripts"
-                        disabled={filtersDisabled}
-                        checked={excludeManuscripts}
-                        onCheckedChange={(checked) => setExcludeManuscripts(checked as boolean)}
-                      />
-                      <label
-                        htmlFor="manuscripts"
-                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                      >
-                        Exclude Manuscripts
-                      </label>
-                    </div>
                     <div className="flex items-center space-x-2">
                       <Checkbox
                         disabled={filtersDisabled}

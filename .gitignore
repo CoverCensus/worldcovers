@@ -253,9 +253,9 @@ backups/*
 
 #Local WIP files for the one-off utilities in tools/
 tools/wip/in/*
-!tools/wip/in/DELETE.ME
+!tools/wip/in/_DELETE.ME
 tools/wip/out/*
-!tools/wip/out/DELETE.ME
+!tools/wip/out/_DELETE.ME
 .DS_Store
 /backend/imports
 docs/data/

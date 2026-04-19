@@ -39,7 +39,7 @@ function letteringField(record: PostmarkRecord): string {
 }
 
 function framingField(record: PostmarkRecord): string {
-  return record.framingStyleName?.trim() ?? "";
+  return record.framing?.trim() ?? "";
 }
 
 /** Values for the fixed catalog field block (search cards + record detail). */

@@ -20,7 +20,7 @@ export function CatalogRecordFields({ row }: { row: CatalogFieldValues }) {
         <span className="text-foreground break-words">{row.type}</span>
       </div>
       <div className="min-w-0">
-        <span className="text-muted-foreground">Framing style:</span>{" "}
+        <span className="text-muted-foreground">Framing:</span>{" "}
         <span className="text-foreground break-words">{row.framing}</span>
       </div>
       <div className="min-w-0">
@@ -36,11 +36,11 @@ export function CatalogRecordFields({ row }: { row: CatalogFieldValues }) {
         <span className="text-foreground break-words">{row.color}</span>
       </div>
       <div className="min-w-0">
-        <span className="text-muted-foreground">Earliest Use:</span>{" "}
+        <span className="text-muted-foreground">Earliest Seen:</span>{" "}
         <span className="text-foreground break-words">{row.earliestUse}</span>
       </div>
       <div className="min-w-0">
-        <span className="text-muted-foreground">Latest Use:</span>{" "}
+        <span className="text-muted-foreground">Latest Seen:</span>{" "}
         <span className="text-foreground break-words">{row.latestUse}</span>
       </div>
     </dl>

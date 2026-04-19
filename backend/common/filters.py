@@ -3,7 +3,7 @@
 ## MPC: 2025/11/15
 ###################################################################################################
 import django_filters
-from django.db.models import Q
+from django.db.models import Q, Min, Max
 
 from .models import (
     Postmark,
@@ -40,6 +40,30 @@ class PostmarkListFilter(django_filters.FilterSet):
         label='Shape id',
     )
     has_images = django_filters.CharFilter(method='filter_has_images', label='Has images')
+    earliest_use_year_min = django_filters.NumberFilter(
+        method='filter_earliest_use_year_min',
+        label='Earliest observed year is at least',
+    )
+    latest_use_year_max = django_filters.NumberFilter(
+        method='filter_latest_use_year_max',
+        label='Latest observed year is at most',
+    )
+
+    @staticmethod
+    def filter_earliest_use_year_min(queryset, name, value):
+        if value is None:
+            return queryset
+        return queryset.annotate(
+            _filter_earliest_date=Min('dates_observed__date')
+        ).filter(_filter_earliest_date__year__gte=int(value))
+
+    @staticmethod
+    def filter_latest_use_year_max(queryset, name, value):
+        if value is None:
+            return queryset
+        return queryset.annotate(
+            _filter_latest_date=Max('dates_observed__date')
+        ).filter(_filter_latest_date__year__lte=int(value))
 
     @staticmethod
     def filter_is_manuscript(queryset, name, value):
