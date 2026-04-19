@@ -232,8 +232,8 @@ def _as_decimal(value):
         return None
 
 
-def _resolve_shape_for_mark(type_str):
-    name = str(type_str or "").strip()
+def _resolve_shape_for_mark(shape_str):
+    name = str(shape_str or "").strip()
     if not name:
         return None
     return Shape.objects.filter(name__iexact=name).first()
@@ -265,7 +265,7 @@ def _sync_ratemarks_auxmarks_from_payload(postmark, user, payload):
         ratemark = Ratemark.objects.create(
             inscription_txt=str(row.get("inscription_txt") or "").strip(),
             is_manuscript=manuscript,
-            shape=_resolve_shape_for_mark(row.get("type")),
+            shape=_resolve_shape_for_mark(row.get("shape") or row.get("type")),
             lettering=None if manuscript else default_lettering,
             color=_resolve_color_for_mark(row.get("color")),
             impression=str(row.get("impression") or "").strip() or None,
@@ -297,7 +297,7 @@ def _sync_ratemarks_auxmarks_from_payload(postmark, user, payload):
             parent_mark_id=parent_mark_id,
             inscription_txt=str(row.get("inscription_txt") or "").strip(),
             is_manuscript=manuscript,
-            shape=_resolve_shape_for_mark(row.get("type")),
+            shape=_resolve_shape_for_mark(row.get("shape") or row.get("type")),
             lettering=None if manuscript else default_lettering,
             color=_resolve_color_for_mark(row.get("color")),
             impression=str(row.get("impression") or "").strip() or None,
@@ -321,7 +321,7 @@ def _create_postmark_in_catalog(payload):
     try:
         state_str = (payload.get("state") or "").strip()
         town_str = (payload.get("town") or "").strip()
-        type_str = (payload.get("type") or "").strip()
+        shape_str = (payload.get("shape") or payload.get("type") or "").strip()
         color_str = (payload.get("color") or "").strip()
         manuscript_str = (payload.get("manuscript") or "").strip()
         is_manuscript = manuscript_str.lower() == "yes"
@@ -364,7 +364,7 @@ def _create_postmark_in_catalog(payload):
                 defaults={"created_by": user, "modified_by": user},
             )
 
-        shape = Shape.objects.filter(name__iexact=type_str).first() if type_str else None
+        shape = Shape.objects.filter(name__iexact=shape_str).first() if shape_str else None
 
         color_name = color_str or "Black"
         color, _ = Color.objects.get_or_create(
@@ -415,7 +415,7 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
 
         state_str = (payload.get("state") or "").strip()
         town_str = (payload.get("town") or "").strip()
-        type_str = (payload.get("type") or "").strip()
+        shape_str = (payload.get("shape") or payload.get("type") or "").strip()
         color_str = (payload.get("color") or "").strip()
         manuscript_str = (payload.get("manuscript") or "").strip()
         is_manuscript = manuscript_str.lower() == "yes"
@@ -456,7 +456,7 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
                 defaults={"created_by": user, "modified_by": user},
             )
 
-        shape = Shape.objects.filter(name__iexact=type_str).first() if type_str else None
+        shape = Shape.objects.filter(name__iexact=shape_str).first() if shape_str else None
         color_name = color_str or "Black"
         color, _ = Color.objects.get_or_create(
             name=color_name[:50],

@@ -14,7 +14,7 @@ type EditSubmissionDialogProps = {
     town: string;
     firstSeen: string;
     lastSeen: string;
-    type: string;
+    shape: string;
     color: string;
     description: string;
   };
@@ -32,17 +32,17 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
   const [town, setTown] = useState(initial.town);
   const [firstSeen, setFirstSeen] = useState(initial.firstSeen);
   const [lastSeen, setLastSeen] = useState(initial.lastSeen);
-  const [type, setType] = useState(initial.type);
+  const [shape, setShape] = useState(initial.shape);
   const [color, setColor] = useState(initial.color);
   const [description, setDescription] = useState(initial.description);
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!state.trim() || !town.trim() || !firstSeen.trim() || !type.trim() || !color.trim()) {
+    if (!state.trim() || !town.trim() || !firstSeen.trim() || !shape.trim() || !color.trim()) {
       toast({
         title: "Missing required fields",
-        description: "State, town, first seen year, type, and color are required.",
+        description: "State, town, first seen year, shape, and color are required.",
         variant: "destructive",
       });
       return;
@@ -65,7 +65,7 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
         town: town.trim(),
         firstSeen: firstSeen.trim(),
         lastSeen: lastSeen.trim(),
-        type: type.trim(),
+        shape: shape.trim(),
         color: color.trim(),
         description: description.trim() || undefined,
       };
@@ -152,11 +152,11 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-type">Shape</Label>
+              <Label htmlFor="edit-shape">Shape</Label>
               <Input
-                id="edit-type"
-                value={type}
-                onChange={(e) => setType(e.target.value)}
+                id="edit-shape"
+                value={shape}
+                onChange={(e) => setShape(e.target.value)}
               />
             </div>
             <div className="space-y-2">

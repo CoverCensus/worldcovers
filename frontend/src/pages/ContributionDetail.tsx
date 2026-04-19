@@ -27,7 +27,6 @@ import { getColors, type ColorOption } from "@/services/colors";
 
 const STATE_OTHER_VALUE = "__other__";
 const COLOR_OTHER_VALUE = "__other__";
-const TYPE_OTHER_VALUE = "__other__";
 const MIN_YEAR = 1661;
 const CURRENT_YEAR = new Date().getFullYear();
 
@@ -95,6 +94,7 @@ interface SubmittedData {
   state?: string;
   town?: string;
   date_range?: string;
+  shape?: string;
   type?: string;
   color?: string;
   manuscript?: string;
@@ -213,9 +213,9 @@ const ContributionDetail = () => {
   const [postOffices, setPostOffices] = useState<PostOfficeOption[]>([]);
   const [loadingTowns, setLoadingTowns] = useState(false);
   const [townOptionsError, setTownOptionsError] = useState<string | null>(null);
-  const [typeOptions, setTypeOptions] = useState<ShapeOption[]>([]);
-  const [loadingTypes, setLoadingTypes] = useState(false);
-  const [typeOptionsError, setTypeOptionsError] = useState<string | null>(null);
+  const [shapeOptions, setShapeOptions] = useState<ShapeOption[]>([]);
+  const [loadingShapes, setLoadingShapes] = useState(false);
+  const [shapeOptionsError, setShapeOptionsError] = useState<string | null>(null);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [catalogOptionsLoading, setCatalogOptionsLoading] = useState(false);
   const [editorFieldErrors, setEditorFieldErrors] = useState<{
@@ -224,7 +224,7 @@ const ContributionDetail = () => {
     firstSeen?: string;
     lastSeen?: string;
     datePairs?: string;
-    type?: string;
+    shape?: string;
     color?: string;
     width_mm?: string;
     height_mm?: string;
@@ -240,8 +240,7 @@ const ContributionDetail = () => {
     town: string;
     firstSeen: string;
     lastSeen: string;
-    type: string;
-    typeOther: string;
+    shape: string;
     color: string;
     colorOther: string;
     width_mm: string;
@@ -259,8 +258,7 @@ const ContributionDetail = () => {
     town: "",
     firstSeen: "",
     lastSeen: "",
-    type: "",
-    typeOther: "",
+    shape: "",
     color: "",
     colorOther: "",
     width_mm: "",
@@ -434,44 +432,42 @@ const ContributionDetail = () => {
     };
   }, []);
 
-  // Postmark types
+  // Postmark shapes
   useEffect(() => {
     let cancelled = false;
-    setLoadingTypes(true);
-    setTypeOptionsError(null);
+    setLoadingShapes(true);
+    setShapeOptionsError(null);
     getShapes()
       .then((rows) => {
-        if (!cancelled) setTypeOptions(rows);
+        if (!cancelled) setShapeOptions(rows);
       })
       .catch((err) => {
         if (!cancelled) {
-          setTypeOptionsError(err instanceof Error ? err.message : "Failed to load types");
-          setTypeOptions([]);
+          setShapeOptionsError(err instanceof Error ? err.message : "Failed to load shapes");
+          setShapeOptions([]);
         }
       })
       .finally(() => {
-        if (!cancelled) setLoadingTypes(false);
+        if (!cancelled) setLoadingShapes(false);
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Sync editor form from submitted_data when contribution loads (and when type/color options arrive for "Other" mapping)
+  // Sync editor form from submitted_data when contribution loads (and when color options arrive for "Other" mapping)
   useEffect(() => {
     if (!contribution?.submitted_data) return;
     const sd = contribution.submitted_data as Record<string, unknown>;
     const dr = String(sd.date_range ?? sd.dateRange ?? "").trim();
     const [firstSeen = "", lastSeen = ""] = dr ? dr.split(/[-–—]/).map((s) => s.trim()) : ["", ""];
     const wh = submittedDataToWidthHeightStrings(sd);
-    const rawType = String(sd.type ?? "").trim();
+    const rawShape = String(sd.shape ?? sd.type ?? "").trim();
     const rawColor = String(sd.color ?? "").trim();
-    let typeSel = rawType;
-    let typeOth = "";
-    if (typeOptions.length > 0 && rawType && !typeOptions.some((t) => t.name === rawType)) {
-      typeSel = TYPE_OTHER_VALUE;
-      typeOth = rawType;
-    }
+    const shapeSel =
+      shapeOptions.length > 0 && rawShape && !shapeOptions.some((t) => t.name === rawShape)
+        ? ""
+        : rawShape;
     let colorSel = rawColor;
     let colorOth = "";
     if (colorOptions.length > 0 && rawColor && !colorOptions.some((c) => c.name === rawColor)) {
@@ -484,8 +480,7 @@ const ContributionDetail = () => {
       town: String(sd.town ?? "").trim(),
       firstSeen: firstSeen || "",
       lastSeen: lastSeen || "",
-      type: typeSel,
-      typeOther: typeOth,
+      shape: shapeSel,
       color: colorSel,
       colorOther: colorOth,
       width_mm: wh.width,
@@ -509,7 +504,7 @@ const ContributionDetail = () => {
     });
     setAdditionalDatePairs(parseDatesObservedToYearPairs(sd.dates_observed ?? sd.datesObserved));
     setEditorFieldErrors({});
-  }, [contribution?.id, contribution?.submitted_data, typeOptions, colorOptions]);
+  }, [contribution?.id, contribution?.submitted_data, shapeOptions, colorOptions]);
 
   const effectiveStateKey = useMemo(() => {
     return editorEdits.state === STATE_OTHER_VALUE
@@ -557,9 +552,10 @@ const ContributionDetail = () => {
     const stateVal =
       editorEdits.state === STATE_OTHER_VALUE ? editorEdits.stateOther.trim() : editorEdits.state.trim();
     const townVal = editorEdits.town.trim();
-    const typeVal = editorEdits.type === TYPE_OTHER_VALUE ? editorEdits.typeOther.trim() : editorEdits.type.trim();
+    const shapeVal = editorEdits.shape.trim();
     const colorVal =
       editorEdits.color === COLOR_OTHER_VALUE ? editorEdits.colorOther.trim() : editorEdits.color.trim();
+    const manuscriptVal = editorEdits.manuscript.trim();
 
     const errors: typeof editorFieldErrors = {};
     if (!stateVal) errors.state = "State is required";
@@ -568,7 +564,9 @@ const ContributionDetail = () => {
     if (fe) errors.firstSeen = fe;
     const le = getYearError(editorEdits.lastSeen, { required: false, label: "Last Seen Year" });
     if (le) errors.lastSeen = le;
-    if (!typeVal) errors.type = "Postmark type is required";
+    if (manuscriptVal === "No" && !shapeVal) {
+      errors.shape = "Shape is required when Manuscript is No";
+    }
     if (!colorVal) errors.color = "Color is required";
     if (!editorEdits.lettering_style_id) errors.lettering = "Lettering style is required";
     if (!editorEdits.framing_style_id) errors.framing = "Framing style is required";
@@ -613,7 +611,7 @@ const ContributionDetail = () => {
       firstSeen: first,
       lastSeen: last,
       dates_observed: datesObservedStr || undefined,
-      type: typeVal,
+      shape: shapeVal,
       color: colorVal,
       width_mm: editorEdits.width_mm.trim() || undefined,
       height_mm: editorEdits.height_mm.trim() || undefined,
@@ -799,7 +797,7 @@ const ContributionDetail = () => {
       : {};
   const state = String(sd.state ?? "").trim();
   const town = String(sd.town ?? "").trim();
-  const type = String(sd.type ?? "").trim();
+  const shape = String(sd.shape ?? sd.type ?? "").trim();
   const color = String(sd.color ?? "").trim();
   const contributorComment = String(
     sd.contributor_comment ??
@@ -814,7 +812,7 @@ const ContributionDetail = () => {
   const manuscript = String(sd.manuscript ?? "").trim();
   const isIrregular = Boolean(sd.is_irreg ?? sd.isIrreg);
   const title = [town, state].filter(Boolean).join(", ") || `Submission #${contribution.id}`;
-  const displayName = [title, type].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") || title;
+  const displayName = [title, shape].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") || title;
   const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
   const imageMetasRaw = (sd.image_metas ?? sd.imageMetas) as SubmittedData["image_metas"] | undefined;
   const imageMetaSingle = sd.image_meta as SubmittedData["image_meta"] | undefined;
@@ -1120,7 +1118,7 @@ const ContributionDetail = () => {
               <div>
                 <h1 className="font-heading text-3xl font-bold text-foreground mb-2">{displayName}</h1>
                 <div className="flex flex-wrap gap-2">
-                  {hasValue(type) ? <Badge variant="secondary">{type}</Badge> : null}
+                  {hasValue(shape) ? <Badge variant="secondary">{shape}</Badge> : null}
                   {hasValue(color) ? <Badge variant="secondary">{color}</Badge> : null}
                   <Badge variant="outline">Irregular: {isIrregular ? "Yes" : "No"}</Badge>
                 </div>
@@ -1494,46 +1492,34 @@ const ContributionDetail = () => {
                       )}
                     </div>
 
+                    {editorEdits.manuscript !== "Yes" && (
                     <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-type">
+                      <Label htmlFor="contrib-edit-shape">
                         Shape <span className="text-destructive">*</span>
                       </Label>
                       <SearchableSelect
-                        id="contrib-edit-type"
-                        value={editorEdits.type}
+                        id="contrib-edit-shape"
+                        value={editorEdits.shape}
                         onValueChange={(v) => {
-                          setEditorEdits((p) => ({ ...p, type: v }));
-                          setEditorFieldErrors((prev) => ({ ...prev, type: undefined }));
+                          setEditorEdits((p) => ({ ...p, shape: v }));
+                          setEditorFieldErrors((prev) => ({ ...prev, shape: undefined }));
                         }}
-                        placeholder="Select type..."
-                        options={[
-                          ...typeOptions.map((t) => ({ value: t.name, label: t.name })),
-                          { value: TYPE_OTHER_VALUE, label: "Other (type below)" },
-                        ]}
-                        loading={loadingTypes}
-                        error={!!typeOptionsError}
-                        errorMessage={typeOptionsError ?? "Failed to load postmark types"}
-                        searchPlaceholder="Search types..."
-                        emptyMessage="No type found."
-                        aria-label="Postmark type"
+                        placeholder="Select shape..."
+                        options={shapeOptions.map((t) => ({ value: t.name, label: t.name }))}
+                        loading={loadingShapes}
+                        error={!!shapeOptionsError}
+                        errorMessage={shapeOptionsError ?? "Failed to load postmark shapes"}
+                        searchPlaceholder="Search shapes..."
+                        emptyMessage="No shape found."
+                        aria-label="Postmark shape"
                         disabled={submitting}
-                        triggerClassName={editorFieldErrors.type ? "border-destructive" : ""}
+                        triggerClassName={editorFieldErrors.shape ? "border-destructive" : ""}
                       />
-                      {editorFieldErrors.type && (
-                        <p className="text-sm text-destructive">{editorFieldErrors.type}</p>
-                      )}
-                      {editorEdits.type === TYPE_OTHER_VALUE && (
-                        <Input
-                          id="contrib-edit-type-other"
-                          placeholder="e.g. Circular Date Stamp"
-                          value={editorEdits.typeOther}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, typeOther: e.target.value }))}
-                          className="mt-2"
-                          disabled={submitting}
-                          aria-label="Postmark type (other)"
-                        />
+                      {editorFieldErrors.shape && (
+                        <p className="text-sm text-destructive">{editorFieldErrors.shape}</p>
                       )}
                     </div>
+                    )}
 
                     <div className="flex items-center gap-2">
                       <input
@@ -1727,10 +1713,21 @@ const ContributionDetail = () => {
                     </p>
 
                     <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-manuscript">Manuscript</Label>
+                      <Label htmlFor="contrib-edit-manuscript">
+                        Manuscript <span className="text-destructive">*</span>
+                      </Label>
                       <Select
                         value={editorEdits.manuscript}
-                        onValueChange={(v) => setEditorEdits((p) => ({ ...p, manuscript: v }))}
+                        onValueChange={(v) => {
+                          setEditorEdits((p) => ({
+                            ...p,
+                            manuscript: v,
+                            ...(v === "Yes" ? { shape: "" } : {}),
+                          }));
+                          if (v === "Yes") {
+                            setEditorFieldErrors((prev) => ({ ...prev, shape: undefined }));
+                          }
+                        }}
                         disabled={submitting}
                       >
                         <SelectTrigger id="contrib-edit-manuscript">

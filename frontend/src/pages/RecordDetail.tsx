@@ -99,7 +99,7 @@ const RecordDetail = () => {
     dateLastSeen: string;
     datesObserved?: string[];
     color: string;
-    type: any;
+    shape: any;
     dimensions: string;
     manuscript: string;
     isIrregular?: string;
@@ -246,7 +246,7 @@ const RecordDetail = () => {
             dateLastSeen: latestUse,
             datesObserved,
             color: colorDisplay,
-            type: shapeName,
+            shape: shapeName,
             dimensions: dimensionsDisplay,
             manuscript: (data.is_manuscript ?? data.isManuscript) ? "Yes" : "No",
             isIrregular:
@@ -541,7 +541,7 @@ const RecordDetail = () => {
                         { label: "Impression", value: record.impression },
                         { label: "Date Type", value: record.dateType },
                         { label: "Date Format", value: record.dateFmt },
-                        { label: "Shape", value: record.type },
+                        { label: "Shape", value: record.shape },
                         { label: "Is Irregular", value: record.isIrregular },
                         { label: "Lettering style", value: record.letteringStyle },
                         { label: "Framing", value: record.framing },

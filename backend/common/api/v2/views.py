@@ -868,7 +868,7 @@ def _create_contribution_only(payload, contributor):
             "state": (payload.get("state") or "").strip(),
             "town": (payload.get("town") or "").strip(),
             "date_range": (payload.get("date_range") or "").strip(),
-            "type": (payload.get("type") or "").strip(),
+            "shape": (payload.get("shape") or payload.get("type") or "").strip(),
             "color": (payload.get("color") or "").strip(),
             "manuscript": (payload.get("manuscript") or "").strip(),
             "dimensions": (payload.get("dimensions") or "").strip(),
@@ -940,12 +940,23 @@ class ContributionView(APIView):
         town = (data.get("town") or "").strip()
         first_seen = (data.get("firstSeen") or "").strip()
         last_seen = (data.get("lastSeen") or "").strip()
-        type_val = (data.get("type") or "").strip()
+        shape_val = (data.get("shape") or data.get("type") or "").strip()
         color = (data.get("color") or "").strip()
         manuscript = (data.get("manuscript") or "").strip()
         if not state or not town or not manuscript:
             return Response(
                 {"detail": "Missing required fields: state, town, manuscript."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        is_manuscript = manuscript.lower() == "yes"
+        if not is_manuscript and not shape_val:
+            return Response(
+                {"detail": "Shape is required when Manuscript is No."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if is_manuscript and shape_val:
+            return Response(
+                {"detail": "Shape must be empty when Manuscript is Yes."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         user = request.user
@@ -998,7 +1009,7 @@ class ContributionView(APIView):
             "date_range": date_range,
             "first_seen": first_seen,
             "last_seen": last_seen,
-            "type": type_val,
+            "shape": shape_val,
             "color": color,
             "manuscript": manuscript,
             "dimensions": (data.get("dimensions") or "").strip(),
@@ -1083,7 +1094,7 @@ class ContributionView(APIView):
                         "state": payload.get("state", ""),
                         "town": payload.get("town", ""),
                         "date_range": payload.get("date_range", ""),
-                        "type": payload.get("type", ""),
+                        "shape": payload.get("shape") or payload.get("type", ""),
                         "color": payload.get("color", ""),
                         "manuscript": payload.get("manuscript", ""),
                         "dimensions": payload.get("dimensions", ""),
@@ -1847,7 +1858,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     search_fields = [
         'code',
         'catalog_txt',
-        'inscription_txt',
+        'post_office__region__name',
         'post_office__name',
         'shape__name',
         'lettering__name',

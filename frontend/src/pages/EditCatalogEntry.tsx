@@ -39,7 +39,6 @@ const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/tiff
 
 const STATE_OTHER_VALUE = "__other__";
 const COLOR_OTHER_VALUE = "__other__";
-const TYPE_OTHER_VALUE = "__other__";
 
 const MANUSCRIPT_OPTIONS = [
   { value: "Yes", label: "Yes" },
@@ -304,12 +303,12 @@ const EditCatalogEntry = () => {
 
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [stateOptions, setStateOptions] = useState<StateOption[]>([]);
-  const [typeOptions, setTypeOptions] = useState<ShapeOption[]>([]);
+  const [shapeOptions, setShapeOptions] = useState<ShapeOption[]>([]);
   const [postOffices, setPostOffices] = useState<PostOfficeOption[]>([]);
   const [loadingStates, setLoadingStates] = useState(true);
   const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
-  const [loadingTypes, setLoadingTypes] = useState(true);
-  const [typeOptionsError, setTypeOptionsError] = useState<string | null>(null);
+  const [loadingShapes, setLoadingShapes] = useState(true);
+  const [shapeOptionsError, setShapeOptionsError] = useState<string | null>(null);
   const [loadingTowns, setLoadingTowns] = useState(false);
   const [townOptionsError, setTownOptionsError] = useState<string | null>(null);
   const [loadingRecord, setLoadingRecord] = useState(true);
@@ -330,8 +329,7 @@ const EditCatalogEntry = () => {
   const [latestYear, setLatestYear] = useState("");
   const [latestUnknown, setLatestUnknown] = useState(false);
   const [additionalDatePairs, setAdditionalDatePairs] = useState<DatePair[]>([]);
-  const [type, setType] = useState("");
-  const [typeOther, setTypeOther] = useState("");
+  const [shape, setShape] = useState("");
   const [color, setColor] = useState("");
   const [colorOther, setColorOther] = useState("");
   const [widthMm, setWidthMm] = useState("");
@@ -373,7 +371,7 @@ const EditCatalogEntry = () => {
     earliestDate?: string;
     latestDate?: string;
     datePairs?: string;
-    type?: string;
+    shape?: string;
     color?: string;
     widthMm?: string;
     heightMm?: string;
@@ -433,15 +431,15 @@ const EditCatalogEntry = () => {
   }, [user?.role]);
 
   useEffect(() => {
-    setLoadingTypes(true);
-    setTypeOptionsError(null);
+    setLoadingShapes(true);
+    setShapeOptionsError(null);
     getShapes()
-      .then(setTypeOptions)
+      .then(setShapeOptions)
       .catch((err) => {
-        setTypeOptionsError(err instanceof Error ? err.message : "Failed to load postmark types");
-        setTypeOptions([]);
+        setShapeOptionsError(err instanceof Error ? err.message : "Failed to load postmark shapes");
+        setShapeOptions([]);
       })
-      .finally(() => setLoadingTypes(false));
+      .finally(() => setLoadingShapes(false));
   }, []);
 
   useEffect(() => {
@@ -564,7 +562,7 @@ const EditCatalogEntry = () => {
           .map((row) => datesSeenRowToPair(row))
           .filter((p): p is DatePair => p != null);
         setAdditionalDatePairs(extraPairs);
-        setType(data?.postmarkShape?.shapeName || "");
+        setShape(data?.postmarkShape?.shapeName || "");
         setColor(data.color?.color_name || data.color?.colorName || data.color?.name || "");
         setWidthMm(wh.width);
         setHeightMm(wh.height);
@@ -749,9 +747,9 @@ const EditCatalogEntry = () => {
 
     const stateVal = state === STATE_OTHER_VALUE ? stateOther.trim() : state.trim();
     const townVal = town.trim();
-    const typeVal = type === TYPE_OTHER_VALUE ? typeOther.trim() : type.trim();
+    const shapeVal = shape.trim();
     const colorVal = color === COLOR_OTHER_VALUE ? colorOther.trim() : color.trim();
-    const isCircular = isCircularType(typeVal);
+    const isCircular = isCircularType(shapeVal);
 
     const errors: typeof fieldErrors = {};
     if (!stateVal) {
@@ -762,6 +760,9 @@ const EditCatalogEntry = () => {
     }
     if (!manuscript.trim()) {
       errors.manuscript = "Manuscript is required";
+    }
+    if (manuscript === "No" && !shapeVal) {
+      errors.shape = "Shape is required when Manuscript is No";
     }
 
     // Earliest Use date: Day / Month / Year OR Unknown (one of the four required)
@@ -945,7 +946,7 @@ const EditCatalogEntry = () => {
         form.append("firstSeen", firstSeenToSend);
         form.append("lastSeen", lastSeenToSend);
         if (datesObservedToSend) form.append("dates_observed", datesObservedToSend);
-        form.append("type", typeVal);
+        form.append("shape", shapeVal);
         form.append("color", colorVal);
         form.append("lettering_style_id", letteringId);
         if (framingIds.length > 0) {
@@ -984,7 +985,7 @@ const EditCatalogEntry = () => {
           firstSeen: firstSeenToSend,
           lastSeen: lastSeenToSend,
           dates_observed: datesObservedToSend || undefined,
-          type: typeVal,
+          shape: shapeVal,
           color: colorVal,
           lettering_style_id: letteringId ? Number(letteringId) : undefined,
           framing_style_id: framingIds[0] ? Number(framingIds[0]) : undefined,
@@ -1357,12 +1358,18 @@ const EditCatalogEntry = () => {
                     </div>
 
                       <div className="space-y-2">
-                      <Label htmlFor="edit-manuscript">Manuscript</Label>
+                      <Label htmlFor="edit-manuscript">
+                        Manuscript <span className="text-destructive" aria-hidden="true">*</span>
+                      </Label>
                       <Select
                         value={manuscript}
                         onValueChange={(v) => {
                           setManuscript(v);
                           if (fieldErrors.manuscript) setFieldErrors((p) => ({ ...p, manuscript: undefined }));
+                          if (v === "Yes") {
+                            setShape("");
+                            setFieldErrors((p) => ({ ...p, shape: undefined }));
+                          }
                         }}
                       >
                         <SelectTrigger
@@ -1744,44 +1751,35 @@ const EditCatalogEntry = () => {
                       </div>
                     </div>
 
+                    {manuscript !== "Yes" && (
                     <div className="space-y-2">
-                      <Label htmlFor="edit-type">Shape</Label>
+                      <Label htmlFor="edit-shape">
+                        Shape <span className="text-destructive" aria-hidden="true">*</span>
+                      </Label>
                       <SearchableSelect
-                        id="edit-type"
-                        value={type}
+                        id="edit-shape"
+                        value={shape}
                         onValueChange={(value) => {
-                          setType(value);
-                          if (fieldErrors.type) {
-                            setFieldErrors((prev) => ({ ...prev, type: undefined }));
+                          setShape(value);
+                          if (fieldErrors.shape) {
+                            setFieldErrors((prev) => ({ ...prev, shape: undefined }));
                           }
                         }}
-                        placeholder="Select type..."
-                        options={[
-                          ...typeOptions.map((t) => ({ value: t.name, label: t.name })),
-                          { value: TYPE_OTHER_VALUE, label: "Other (type below)" },
-                        ]}
-                        loading={loadingTypes}
-                        error={!!typeOptionsError}
-                        errorMessage={typeOptionsError ?? "Failed to load postmark types"}
-                        searchPlaceholder="Search types..."
-                        emptyMessage="No type found."
-                        aria-label="Postmark type"
-                        triggerClassName={fieldErrors.type ? "border-destructive" : ""}
+                        placeholder="Select shape..."
+                        options={shapeOptions.map((t) => ({ value: t.name, label: t.name }))}
+                        loading={loadingShapes}
+                        error={!!shapeOptionsError}
+                        errorMessage={shapeOptionsError ?? "Failed to load postmark shapes"}
+                        searchPlaceholder="Search shapes..."
+                        emptyMessage="No shape found."
+                        aria-label="Postmark shape"
+                        triggerClassName={fieldErrors.shape ? "border-destructive" : ""}
                       />
-                      {fieldErrors.type && (
-                        <p className="text-sm text-destructive">{fieldErrors.type}</p>
-                      )}
-                      {type === TYPE_OTHER_VALUE && (
-                        <Input
-                          id="edit-type-other"
-                          placeholder="e.g. Circular Date Stamp"
-                          value={typeOther}
-                          onChange={(e) => setTypeOther(e.target.value)}
-                          className="mt-2"
-                          aria-label="Postmark type (other)"
-                        />
+                      {fieldErrors.shape && (
+                        <p className="text-sm text-destructive">{fieldErrors.shape}</p>
                       )}
                     </div>
+                    )}
 
                     <div className="flex items-center gap-2">
                       <input
@@ -1852,6 +1850,35 @@ const EditCatalogEntry = () => {
                       <Label>
                         <span
                           className="cursor-help border-b border-dotted border-muted-foreground/40"
+                          title="Date format is how the date appears in the postmark (e.g. month/day order, abbreviations)."
+                        >
+                          Date format
+                        </span>
+                      </Label>
+                      <SearchableMultiSelect
+                        id="edit-date-format"
+                        values={dateFormatIds}
+                        onValuesChange={(values) => {
+                          setDateFormatIds(values);
+                          setFieldErrors((prev) => ({ ...prev, dateFormat: undefined }));
+                        }}
+                        options={dateFormatOptions.map((opt) => ({
+                          value: String(opt.id),
+                          label: opt.name,
+                        }))}
+                        loading={catalogOptionsLoading}
+                        placeholder="Select one or more date formats"
+                        searchPlaceholder="Search date formats..."
+                        emptyMessage="No date format found."
+                        triggerClassName={fieldErrors.dateFormat ? "border-destructive" : ""}
+                        aria-label="Date format"
+                      />
+                      {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>
+                        <span
+                          className="cursor-help border-b border-dotted border-muted-foreground/40"
                           title="Lettering style describes the shape/appearance of the letters used in the postmark text."
                         >
                           Lettering style
@@ -1898,37 +1925,8 @@ const EditCatalogEntry = () => {
                       />
                       {fieldErrors.framing && <p className="text-sm text-destructive">{fieldErrors.framing}</p>}
                     </div>
-                    <div className="space-y-2">
-                      <Label>
-                        <span
-                          className="cursor-help border-b border-dotted border-muted-foreground/40"
-                          title="Date format is how the date appears in the postmark (e.g. month/day order, abbreviations)."
-                        >
-                          Date format
-                        </span>
-                      </Label>
-                      <SearchableMultiSelect
-                        id="edit-date-format"
-                        values={dateFormatIds}
-                        onValuesChange={(values) => {
-                          setDateFormatIds(values);
-                          setFieldErrors((prev) => ({ ...prev, dateFormat: undefined }));
-                        }}
-                        options={dateFormatOptions.map((opt) => ({
-                          value: String(opt.id),
-                          label: opt.name,
-                        }))}
-                        loading={catalogOptionsLoading}
-                        placeholder="Select one or more date formats"
-                        searchPlaceholder="Search date formats..."
-                        emptyMessage="No date format found."
-                        triggerClassName={fieldErrors.dateFormat ? "border-destructive" : ""}
-                        aria-label="Date format"
-                      />
-                      {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
-                    </div>
 
-                    {isCircularType((type === TYPE_OTHER_VALUE ? typeOther : type).trim()) ? (
+                    {isCircularType(shape.trim()) ? (
                       <div className="space-y-2">
                         <Label htmlFor="edit-diameter-mm">Diameter (mm)</Label>
                         <Input

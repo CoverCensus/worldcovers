@@ -17,7 +17,7 @@ export function CatalogRecordFields({ row }: { row: CatalogFieldValues }) {
       </div>
       <div className="min-w-0">
         <span className="text-muted-foreground">Shape:</span>{" "}
-        <span className="text-foreground break-words">{row.type}</span>
+        <span className="text-foreground break-words">{row.shape}</span>
       </div>
       <div className="min-w-0">
         <span className="text-muted-foreground">Framing:</span>{" "}

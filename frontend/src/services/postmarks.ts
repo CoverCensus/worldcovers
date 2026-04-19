@@ -39,8 +39,8 @@ export interface PostmarkApiResponse {
     framing?: string;
     postmarkTextCombined?: string;
     postmarkTextVariations?: string[];
-    /** v2 list: `type` (shape type display) */
-    listingType?: string;
+    /** v2 list: `shape` (postmark shape display) */
+    listingShape?: string;
     shapeLetteringDisplay?: string;
     dimensionsDisplay?: string;
     datesSeenDisplay?: string;
@@ -238,7 +238,7 @@ export interface PostmarkApiResponse {
       postmark_text: postmarkTextCombined,
       postmark_text_variations:
         data.postmark_text_variations ?? data.postmarkTextVariations ?? postmarkTextVariations,
-      type: data.type ?? shapeName,
+      shape: data.shape ?? data.type ?? shapeName,
       shape_lettering: data.shape_lettering ?? data.shapeLettering ?? shapeLetteringDisplay,
       dimensions: data.dimensions ?? dimensionsFromSizes,
       dates_seen: data.dates_seen ?? data.datesSeen ?? dateRange,
@@ -357,7 +357,7 @@ export interface PostmarkApiResponse {
         : Array.isArray(item.postmarkTextVariations)
           ? item.postmarkTextVariations.map((x: unknown) => String(x ?? "").trim()).filter(Boolean)
           : undefined,
-      listingType: item.type ?? item.listingType ?? shapeName,
+      listingShape: item.shape ?? item.type ?? item.listingShape ?? item.listingType ?? shapeName,
       shapeLetteringDisplay: item.shape_lettering ?? item.shapeLettering ?? "",
       dimensionsDisplay: item.dimensions ?? item.dimensionsDisplay ?? "",
       datesSeenDisplay:
@@ -385,21 +385,21 @@ export interface PostmarkApiResponse {
    * Fetches a single page of catalog entries for the current user's assigned states.
    * Used by state editors to manage (view, edit, delete) all catalog entries in their states.
    * Requires authentication; returns paginated results.
-   * Optional filters match catalog list (state, town, type/postmark_shape, color, search).
+   * Optional filters match catalog list (state, town, shape/postmark_shape, color, search).
    */
   export async function getAssignedCatalogPage(
     page: number = 1,
     pageSize: number = 10,
     options?: {
       credentials?: RequestCredentials;
-      filters?: { state?: string; town?: string; type?: string; color?: string; search?: string };
+      filters?: { state?: string; town?: string; shape?: string; color?: string; search?: string };
     }
   ): Promise<GetPostmarksPageResult> {
     const params: Record<string, string> = { page: String(page), page_size: String(pageSize) };
     const f = options?.filters;
     if (f?.state && f.state !== "all") params.state = f.state;
     if (f?.town?.trim()) params.town = f.town.trim();
-    if (f?.type && f.type !== "all") params.postmark_shape = f.type;
+    if (f?.shape && f.shape !== "all") params.postmark_shape = f.shape;
     if (f?.color && f.color !== "all") params.color = f.color;
     if (f?.search?.trim()) params.search = f.search.trim();
 

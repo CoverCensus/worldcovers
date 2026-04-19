@@ -109,7 +109,7 @@ const FIELD_ERROR_SCROLL_TARGETS: Array<[string, string]> = [
   ["manuscript", "manuscript"],
   ["earliestDate", "earliest-year"],
   ["datePairs", "earliest-year"],
-  ["type", "type"],
+  ["shape", "shape"],
   ["color", "color"],
   ["lettering", "lettering"],
   ["framing", "framing"],
@@ -318,13 +318,13 @@ const Contribute = () => {
   const [editLoadError, setEditLoadError] = useState<string | null>(null);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [stateOptions, setStateOptions] = useState<StateOption[]>([]);
-  const [typeOptions, setTypeOptions] = useState<ShapeOption[]>([]);
+  const [shapeOptions, setShapeOptions] = useState<ShapeOption[]>([]);
   const [postOffices, setPostOffices] = useState<PostOfficeOption[]>([]);
   const [loadingStates, setLoadingStates] = useState(true);
   const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
   const [confirmedNoAssignedStates, setConfirmedNoAssignedStates] = useState(false);
-  const [loadingTypes, setLoadingTypes] = useState(true);
-  const [typeOptionsError, setTypeOptionsError] = useState<string | null>(null);
+  const [loadingShapes, setLoadingShapes] = useState(true);
+  const [shapeOptionsError, setShapeOptionsError] = useState<string | null>(null);
   const [loadingTowns, setLoadingTowns] = useState(false);
   const [townOptionsError, setTownOptionsError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -344,7 +344,7 @@ const Contribute = () => {
   const [latestYear, setLatestYear] = useState("");
   const [latestUnknown, setLatestUnknown] = useState(false);
   const [additionalDatePairs, setAdditionalDatePairs] = useState<DatePair[]>([]);
-  const [type, setType] = useState("");
+  const [shape, setShape] = useState("");
   const [color, setColor] = useState("");
   const [widthMm, setWidthMm] = useState("");
   const [heightMm, setHeightMm] = useState("");
@@ -372,7 +372,7 @@ const Contribute = () => {
     earliestDate?: string;
     latestDate?: string;
     datePairs?: string;
-    type?: string;
+    shape?: string;
     color?: string;
     widthMm?: string;
     heightMm?: string;
@@ -466,15 +466,15 @@ const Contribute = () => {
   }, [user]);
 
   useEffect(() => {
-    setLoadingTypes(true);
-    setTypeOptionsError(null);
+    setLoadingShapes(true);
+    setShapeOptionsError(null);
     getShapes()
-      .then(setTypeOptions)
+      .then(setShapeOptions)
       .catch((err) => {
-        setTypeOptionsError(err instanceof Error ? err.message : "Failed to load postmark types");
-        setTypeOptions([]);
+        setShapeOptionsError(err instanceof Error ? err.message : "Failed to load postmark shapes");
+        setShapeOptions([]);
       })
-      .finally(() => setLoadingTypes(false));
+      .finally(() => setLoadingShapes(false));
   }, []);
 
   useEffect(() => {
@@ -574,7 +574,7 @@ const Contribute = () => {
         const townVal = getStr(sd.town);
         const dateRange = getStr(sd.date_range ?? (sd as Record<string, unknown>).dateRange);
         const [first, last] = parseDateRange(dateRange);
-        const typeVal = getStr(sd.type);
+        const shapeVal = getStr(sd.shape ?? sd.type);
         const colorVal = getStr(sd.color);
         setState(stateVal);
         setTown(townVal);
@@ -593,7 +593,7 @@ const Contribute = () => {
           .map((x) => parseDateRangeToken(x))
           .filter((x): x is DatePair => x != null);
         setAdditionalDatePairs(extraPairs);
-        setType(typeVal || "");
+        setShape(shapeVal || "");
         setColor(colorVal || "");
         const wh = submittedDataToWidthHeightStrings(sd as Record<string, unknown>);
         setWidthMm(wh.width);
@@ -706,7 +706,7 @@ const Contribute = () => {
     return () => {
       cancelled = true;
     };
-  }, [editContributionId]); // typeOptions/colorOptions may not be loaded yet; we set type/color as strings
+  }, [editContributionId]); // shapeOptions/colorOptions may not be loaded yet; we set shape/color as strings
 
   const noAssignedStates =
     !!user &&
@@ -858,7 +858,7 @@ const Contribute = () => {
 
   const buildName = () => {
     const stateLabel = state.trim();
-    return `${town.trim()}, ${stateLabel} ${type}`.trim();
+    return `${town.trim()}, ${stateLabel} ${shape}`.trim();
   };
 
   const buildDateRange = () => {
@@ -922,9 +922,9 @@ const Contribute = () => {
 
     const stateVal = state.trim();
     const townVal = town.trim();
-    const typeVal = type.trim();
+    const shapeVal = shape.trim();
     const colorVal = color.trim();
-    const isCircular = isCircularType(typeVal);
+    const isCircular = isCircularType(shapeVal);
 
     const errors: typeof fieldErrors = {};
     if (!stateVal) {
@@ -935,6 +935,9 @@ const Contribute = () => {
     }
     if (!manuscript.trim()) {
       errors.manuscript = "Manuscript is required";
+    }
+    if (manuscript === "No" && !shapeVal) {
+      errors.shape = "Shape is required when Manuscript is No";
     }
     if (!inscriptionText.trim()) {
       errors.inscriptionText = "Inscription Text is required";
@@ -1148,7 +1151,7 @@ const Contribute = () => {
         : mkIso(latestDay, latestMonth, latestYear) || latestYear.trim();
       const earliestLabel = formatDateLabel(earliestDay, earliestMonth, earliestYear, earliestUnknown);
       const latestLabel = formatDateLabel(latestDay, latestMonth, latestYear, latestUnknown);
-      const derivedIsCircular = isCircularType(typeVal);
+      const derivedIsCircular = isCircularType(shapeVal);
       const derivedDimensions = (() => {
         const d = diameterMm.trim();
         const w = widthMm.trim();
@@ -1159,8 +1162,8 @@ const Contribute = () => {
       })();
       const inscriptionToSend = inscriptionText.trim();
 
-      const derivedShapeId = isStateEditor && type
-        ? typeOptions.find((t) => t.name === type)?.id
+      const derivedShapeId = isStateEditor && shape
+        ? shapeOptions.find((t) => t.name === shape)?.id
         : undefined;
       const editorPayload = isStateEditor
         ? {
@@ -1178,7 +1181,7 @@ const Contribute = () => {
         form.append("firstSeen", firstSeenToSend);
         form.append("lastSeen", lastSeenToSend);
         if (datesObservedToSend) form.append("dates_observed", datesObservedToSend);
-        form.append("type", typeVal);
+        form.append("shape", shapeVal);
         form.append("color", colorVal);
         if (derivedDimensions) form.append("dimensions", derivedDimensions);
         if (manuscript.trim()) form.append("manuscript", manuscript.trim());
@@ -1219,7 +1222,7 @@ const Contribute = () => {
           firstSeen: firstSeenToSend,
           lastSeen: lastSeenToSend,
           dates_observed: datesObservedToSend || undefined,
-          type: typeVal,
+          shape: shapeVal,
           color: colorVal,
           dimensions: derivedDimensions || undefined,
           manuscript: manuscript.trim() || undefined,
@@ -1295,7 +1298,7 @@ const Contribute = () => {
       setLatestYear("");
       setLatestUnknown(false);
       setAdditionalDatePairs([]);
-      setType("");
+      setShape("");
       setColor("");
       setWidthMm("");
       setHeightMm("");
@@ -1338,8 +1341,8 @@ const Contribute = () => {
   };
 
   const isEditMode = editContributionId != null;
-  const effectiveTypeLabel = String(type ?? "").trim();
-  const showDiameter = isCircularType(effectiveTypeLabel);
+  const effectiveShapeLabel = String(shape ?? "").trim();
+  const showDiameter = isCircularType(effectiveShapeLabel);
 
   const renderImageUploader = (
     category: ImageCategory,
@@ -1583,6 +1586,10 @@ const Contribute = () => {
                           setManuscript(v);
                           if (fieldErrors.manuscript) {
                             setFieldErrors((prev) => ({ ...prev, manuscript: undefined }));
+                          }
+                          if (v === "Yes") {
+                            setShape("");
+                            setFieldErrors((prev) => ({ ...prev, shape: undefined }));
                           }
                         }}
                       >
@@ -1970,31 +1977,35 @@ const Contribute = () => {
                       </div>
                     </div>
 
+                    {manuscript !== "Yes" && (
                     <div className="space-y-2">
-                      <Label htmlFor="type">Shape</Label>
+                      <Label htmlFor="shape">
+                        Shape <span className="text-destructive" aria-hidden="true">*</span>
+                      </Label>
                       <SearchableSelect
-                        id="type"
-                        value={type}
+                        id="shape"
+                        value={shape}
                         onValueChange={(value) => {
-                          setType(value);
-                          if (fieldErrors.type) {
-                            setFieldErrors((prev) => ({ ...prev, type: undefined }));
+                          setShape(value);
+                          if (fieldErrors.shape) {
+                            setFieldErrors((prev) => ({ ...prev, shape: undefined }));
                           }
                         }}
-                        placeholder="Select type..."
-                        options={typeOptions.map((t) => ({ value: t.name, label: t.name }))}
-                        loading={loadingTypes}
-                        error={!!typeOptionsError}
-                        errorMessage={typeOptionsError ?? "Failed to load postmark types"}
-                        searchPlaceholder="Search types..."
-                        emptyMessage="No type found."
-                        aria-label="Postmark type"
-                        triggerClassName={fieldErrors.type ? "border-destructive" : ""}
+                        placeholder="Select shape..."
+                        options={shapeOptions.map((t) => ({ value: t.name, label: t.name }))}
+                        loading={loadingShapes}
+                        error={!!shapeOptionsError}
+                        errorMessage={shapeOptionsError ?? "Failed to load postmark shapes"}
+                        searchPlaceholder="Search shapes..."
+                        emptyMessage="No shape found."
+                        aria-label="Postmark shape"
+                        triggerClassName={fieldErrors.shape ? "border-destructive" : ""}
                       />
-                      {fieldErrors.type && (
-                        <p className="text-sm text-destructive">{fieldErrors.type}</p>
+                      {fieldErrors.shape && (
+                        <p className="text-sm text-destructive">{fieldErrors.shape}</p>
                       )}
                     </div>
+                    )}
 
                     <div className="flex items-center gap-2">
                       <input
@@ -2051,6 +2062,50 @@ const Contribute = () => {
                           ))}
                         </SelectContent>
                       </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>
+                        <span
+                          className="cursor-help border-b border-dotted border-muted-foreground/40"
+                          title="Date format is how the date appears in the postmark (e.g. month/day order, abbreviations)."
+                        >
+                          Date format
+                        </span>
+                      </Label>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={`w-full justify-between ${fieldErrors.dateFormat ? "border-destructive" : ""}`}
+                            disabled={catalogOptionsLoading}
+                          >
+                            {catalogOptionsLoading ? "Loading..." : selectedDateFormatSummary}
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64 overflow-auto">
+                          {dateFormatOptions.map((opt) => {
+                            const value = String(opt.id);
+                            const checked = dateFormatIds.includes(value);
+                            return (
+                              <DropdownMenuCheckboxItem
+                                key={opt.id}
+                                checked={checked}
+                                onCheckedChange={(next) => {
+                                  setDateFormatIds((prev) => {
+                                    if (next) return prev.includes(value) ? prev : [...prev, value];
+                                    return prev.filter((id) => id !== value);
+                                  });
+                                  setFieldErrors((prev) => ({ ...prev, dateFormat: undefined }));
+                                }}
+                              >
+                                {opt.name}
+                              </DropdownMenuCheckboxItem>
+                            );
+                          })}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
                     </div>
                     <div className="space-y-2">
                       <Label>
@@ -2115,50 +2170,6 @@ const Contribute = () => {
                         </DropdownMenuContent>
                       </DropdownMenu>
                       {fieldErrors.framing && <p className="text-sm text-destructive">{fieldErrors.framing}</p>}
-                    </div>
-                    <div className="space-y-2">
-                      <Label>
-                        <span
-                          className="cursor-help border-b border-dotted border-muted-foreground/40"
-                          title="Date format is how the date appears in the postmark (e.g. month/day order, abbreviations)."
-                        >
-                          Date format
-                        </span>
-                      </Label>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className={`w-full justify-between ${fieldErrors.dateFormat ? "border-destructive" : ""}`}
-                            disabled={catalogOptionsLoading}
-                          >
-                            {catalogOptionsLoading ? "Loading..." : selectedDateFormatSummary}
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64 overflow-auto">
-                          {dateFormatOptions.map((opt) => {
-                            const value = String(opt.id);
-                            const checked = dateFormatIds.includes(value);
-                            return (
-                              <DropdownMenuCheckboxItem
-                                key={opt.id}
-                                checked={checked}
-                                onCheckedChange={(next) => {
-                                  setDateFormatIds((prev) => {
-                                    if (next) return prev.includes(value) ? prev : [...prev, value];
-                                    return prev.filter((id) => id !== value);
-                                  });
-                                  setFieldErrors((prev) => ({ ...prev, dateFormat: undefined }));
-                                }}
-                              >
-                                {opt.name}
-                              </DropdownMenuCheckboxItem>
-                            );
-                          })}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
                     </div>
 
                     {showDiameter ? (

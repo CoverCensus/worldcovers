@@ -768,7 +768,7 @@ class ContributionListSerializer(serializers.ModelSerializer):
     postmark_id = serializers.SerializerMethodField()
     state_display = serializers.SerializerMethodField()
     town_display = serializers.SerializerMethodField()
-    type_display = serializers.SerializerMethodField()
+    shape_display = serializers.SerializerMethodField()
     date_range = serializers.SerializerMethodField()
     display_name = serializers.SerializerMethodField()
 
@@ -789,7 +789,7 @@ class ContributionListSerializer(serializers.ModelSerializer):
             "submitted_data",
             "state_display",
             "town_display",
-            "type_display",
+            "shape_display",
             "date_range",
             "display_name",
         ]
@@ -805,9 +805,9 @@ class ContributionListSerializer(serializers.ModelSerializer):
         sd = obj.submitted_data or {}
         return sd.get("town", "-")
 
-    def get_type_display(self, obj):
+    def get_shape_display(self, obj):
         sd = obj.submitted_data or {}
-        return sd.get("type", "-")
+        return sd.get("shape") or sd.get("type", "-")
 
     def get_date_range(self, obj):
         sd = obj.submitted_data or {}
@@ -824,9 +824,9 @@ class ContributionListSerializer(serializers.ModelSerializer):
         sd = obj.submitted_data or {}
         town = (sd.get("town") or "").strip()
         state = (sd.get("state") or "").strip()
-        type_display = (sd.get("type") or "").strip()
+        shape_display = (sd.get("shape") or sd.get("type") or "").strip()
         location = ", ".join([x for x in [town, state] if x])
-        parts = [x for x in [location, type_display] if x and x.lower() != "unknown"]
+        parts = [x for x in [location, shape_display] if x and x.lower() != "unknown"]
         return " — ".join(parts) if parts else f"Submission #{obj.id}"
 
     def to_representation(self, instance):

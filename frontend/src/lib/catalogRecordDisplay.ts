@@ -50,8 +50,8 @@ export type CatalogFieldValues = {
   manuscript: string;
   postmarkTextLines: string[];
   postmarkTextSingle: string;
-  /** Legacy “postmark type” / outline (API `type` or postmark_shape name). */
-  type: string;
+  /** Postmark shape / outline (API `shape` or postmark_shape name). */
+  shape: string;
   lettering: string;
   framing: string;
   dimensions: string;
@@ -90,7 +90,7 @@ export function buildCatalogFieldValues(record: PostmarkRecord): CatalogFieldVal
     manuscript: displayCatalogField(record.isManuscript ? "Yes" : "No"),
     postmarkTextLines: postmarkTextLines.length > 1 ? postmarkTextLines : [],
     postmarkTextSingle,
-    type: displayCatalogField(record.listingType?.trim() || record.shapeName),
+    shape: displayCatalogField(record.listingShape?.trim() || record.shapeName),
     lettering: displayCatalogField(letteringField(record)),
     framing: displayCatalogField(framingField(record)),
     dimensions: displayCatalogField(

@@ -113,7 +113,9 @@ const Search = () => {
   const [townFilter, setTownFilter] = useState(() => getSearchParam(searchParams, "town", ""));
   const [beginYear, setBeginYear] = useState(() => getSearchParam(searchParams, "from", ""));
   const [endYear, setEndYear] = useState(() => getSearchParam(searchParams, "to", ""));
-  const [typeFilter, setTypeFilter] = useState(() => getSearchParam(searchParams, "type", "all"));
+  const [shapeFilter, setShapeFilter] = useState(() =>
+    getSearchParam(searchParams, "shape", "") || getSearchParam(searchParams, "type", "all"),
+  );
   const [colorFilter, setColorFilter] = useState(() => getSearchParam(searchParams, "color", "all"));
   const [valuationFilter, setValuationFilter] = useState("all");
   const [manuscriptFilter, setManuscriptFilter] = useState<"both" | "only" | "none">(() => {
@@ -140,7 +142,7 @@ const Search = () => {
   const itemsPerPage = 10;
 
   const prevKeywordRef = useRef(debouncedKeywordSearch);
-  const prevTypeFilterRef = useRef(typeFilter);
+  const prevShapeFilterRef = useRef(shapeFilter);
   const prevColorFilterRef = useRef(colorFilter);
   const prevStateFilterRef = useRef(stateFilter);
   const prevTownFilterRef = useRef(debouncedTownFilter);
@@ -157,16 +159,16 @@ const Search = () => {
   // - shape selected  → "Only" option in the manuscripts dropdown is disabled
   //   (and snapped back to "both" if somehow already on "only" via URL state).
   useEffect(() => {
-    if (manuscriptFilter === "only" && typeFilter !== "all") {
-      setTypeFilter("all");
+    if (manuscriptFilter === "only" && shapeFilter !== "all") {
+      setShapeFilter("all");
     }
-  }, [manuscriptFilter, typeFilter]);
+  }, [manuscriptFilter, shapeFilter]);
 
   useEffect(() => {
-    if (typeFilter !== "all" && manuscriptFilter === "only") {
+    if (shapeFilter !== "all" && manuscriptFilter === "only") {
       setManuscriptFilter("both");
     }
-  }, [typeFilter, manuscriptFilter]);
+  }, [shapeFilter, manuscriptFilter]);
 
   // Reset page to 1 when filters change
   useEffect(() => {
@@ -174,7 +176,7 @@ const Search = () => {
     const currentNormalizedEnd = debouncedEndYear.trim().length === 4 ? debouncedEndYear.trim() : "";
 
     const searchJustChanged = prevKeywordRef.current !== debouncedKeywordSearch;
-    const typeFilterJustChanged = prevTypeFilterRef.current !== typeFilter;
+    const shapeFilterJustChanged = prevShapeFilterRef.current !== shapeFilter;
     const colorFilterJustChanged = prevColorFilterRef.current !== colorFilter;
     const stateFilterJustChanged = prevStateFilterRef.current !== stateFilter;
     const townFilterJustChanged = prevTownFilterRef.current !== debouncedTownFilter;
@@ -183,7 +185,7 @@ const Search = () => {
     const imagesOnlyJustChanged = prevImagesOnlyRef.current !== imagesOnly;
     const manuscriptFilterJustChanged = prevManuscriptFilterRef.current !== manuscriptFilter;
     if (searchJustChanged) prevKeywordRef.current = debouncedKeywordSearch;
-    if (typeFilterJustChanged) prevTypeFilterRef.current = typeFilter;
+    if (shapeFilterJustChanged) prevShapeFilterRef.current = shapeFilter;
     if (colorFilterJustChanged) prevColorFilterRef.current = colorFilter;
     if (stateFilterJustChanged) prevStateFilterRef.current = stateFilter;
     if (townFilterJustChanged) prevTownFilterRef.current = debouncedTownFilter;
@@ -194,7 +196,7 @@ const Search = () => {
 
     const anyFilterChanged =
       searchJustChanged ||
-      typeFilterJustChanged ||
+      shapeFilterJustChanged ||
       colorFilterJustChanged ||
       stateFilterJustChanged ||
       townFilterJustChanged ||
@@ -205,7 +207,7 @@ const Search = () => {
     if (anyFilterChanged) {
       setCurrentPage(1);
     }
-  }, [debouncedKeywordSearch, typeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, manuscriptFilter]);
+  }, [debouncedKeywordSearch, shapeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, manuscriptFilter]);
 
   // Treat years as active filters only when they are valid and 4 digits.
   const normalizedBeginYear = useMemo(() => {
@@ -226,7 +228,7 @@ const Search = () => {
       "postmarks",
       currentPage,
       debouncedKeywordSearch,
-      typeFilter,
+      shapeFilter,
       stateFilter,
       debouncedTownFilter,
       normalizedBeginYear,
@@ -246,7 +248,7 @@ const Search = () => {
         currentPage,
         itemsPerPage,
         debouncedKeywordSearch.trim() || undefined,
-        typeFilter !== "all" ? typeFilter : undefined,
+        shapeFilter !== "all" ? shapeFilter : undefined,
         manuscriptFilter,
         colorFilter !== "all" ? colorFilter : null,
         stateFilter !== "all" ? stateFilter : undefined,
@@ -287,7 +289,7 @@ const Search = () => {
     // Only persist valid years (normalized values) to the URL
     if (normalizedBeginYear) params.set("from", normalizedBeginYear);
     if (normalizedEndYear) params.set("to", normalizedEndYear);
-    if (typeFilter !== "all") params.set("type", typeFilter);
+    if (shapeFilter !== "all") params.set("shape", shapeFilter);
     if (colorFilter !== "all") params.set("color", colorFilter);
     if (manuscriptFilter !== "both") params.set("manuscripts", manuscriptFilter);
     if (imagesOnly) params.set("images", "true");
@@ -297,7 +299,7 @@ const Search = () => {
     if (next !== current) {
       setSearchParams(next ? params : {}, { replace: true });
     }
-  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, typeFilter, colorFilter, manuscriptFilter, imagesOnly, searchParams, setSearchParams]);
+  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, shapeFilter, colorFilter, manuscriptFilter, imagesOnly, searchParams, setSearchParams]);
 
   // Enforce exactly itemsPerPage (10) per page — slice in case API returns more
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
@@ -310,7 +312,7 @@ const Search = () => {
     setTownFilter("");
     setBeginYear("");
     setEndYear("");
-    setTypeFilter("all");
+    setShapeFilter("all");
     setColorFilter("all");
     setValuationFilter("all");
     setManuscriptFilter("both");
@@ -359,11 +361,11 @@ const Search = () => {
                       <Input
                         id="keyword-search"
                         type="search"
-                        placeholder="Search by name..."
+                        placeholder="Search across fields..."
                         value={keywordSearch}
                         onChange={(e) => setKeywordSearch(e.target.value)}
                         className="pl-9"
-                        aria-label="Search records by name, town, state, or type"
+                        aria-label="Search records by code, catalog text, town, state, shape, lettering, or color"
                         disabled={filtersDisabled}
                       />
                     </div>
@@ -448,12 +450,12 @@ const Search = () => {
 
                   {manuscriptFilter !== "only" && (
                     <div className="space-y-2">
-                      <Label htmlFor="type">Shape</Label>
+                      <Label htmlFor="shape">Shape</Label>
                       <SearchableSelect
-                        id="type"
+                        id="shape"
                         disabled={filtersDisabled}
-                        value={typeFilter}
-                        onValueChange={setTypeFilter}
+                        value={shapeFilter}
+                        onValueChange={setShapeFilter}
                         placeholder="All Shapes"
                         allOption={{ value: "all", label: "All Shapes" }}
                         options={Array.isArray(shapeOptions) ? shapeOptions : []}
@@ -514,7 +516,7 @@ const Search = () => {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="both">Both (Default)</SelectItem>
-                        <SelectItem value="only" disabled={typeFilter !== "all"}>Only</SelectItem>
+                        <SelectItem value="only" disabled={shapeFilter !== "all"}>Only</SelectItem>
                         <SelectItem value="none">None</SelectItem>
                       </SelectContent>
                     </Select>

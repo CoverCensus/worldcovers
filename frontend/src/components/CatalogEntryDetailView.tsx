@@ -10,7 +10,7 @@ export type CatalogEntry = {
   town: string;
   state: string;
   date_range: string;
-  type: string;
+  shape: string;
   color: string;
   image_url: string | null;
   description?: string | null;
@@ -105,7 +105,7 @@ export const CatalogEntryDetailView = ({
           </CardContent>
         </Card>
 
-        {/* Metadata - matches Record Detail: title, then badges (type, color, rarity/status) */}
+        {/* Metadata - matches Record Detail: title, then badges (shape, color, rarity/status) */}
         <div className="space-y-6">
           <div>
             <h1 className="font-heading text-3xl font-bold text-foreground mb-2">
@@ -113,7 +113,7 @@ export const CatalogEntryDetailView = ({
             </h1>
             <div className="flex flex-wrap gap-2">
               {entry.status != null && getStatusBadge(entry.status)}
-              <Badge variant="secondary">{entry.type}</Badge>
+              <Badge variant="secondary">{entry.shape}</Badge>
               <Badge variant="secondary">{entry.color}</Badge>
               {(entry.rarity ?? entry.valuation) != null && (entry.rarity ?? entry.valuation) !== "" && (
                 <Badge variant="outline">{entry.rarity ?? entry.valuation}</Badge>

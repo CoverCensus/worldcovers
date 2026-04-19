@@ -63,7 +63,7 @@ interface DashboardItem {
   state: string;
   dateRange?: string;
   size?: string;
-  type?: string;
+  shape?: string;
   color?: string;
   status: string;
   created_at: string;
@@ -84,7 +84,7 @@ interface PendingReviewItem {
   display_name: string;
   state_display: string;
   town_display: string;
-  type_display: string;
+  shape_display: string;
   postmark_id: number | null;
   status: string;
   created_at: string;
@@ -224,7 +224,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [statusFilter, setStatusFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
   const [townFilter, setTownFilter] = useState("");
-  const [typeFilter, setTypeFilter] = useState("all");
+  const [shapeFilter, setShapeFilter] = useState("all");
   const [colorFilter, setColorFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -321,7 +321,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             (c.display_name || c.displayName || "").trim() ||
             [
               [town, state].filter(Boolean).join(", "),
-              c.shapeName || c.typeDisplay || c.type || submittedData.type,
+              c.shapeName || c.shapeDisplay || c.typeDisplay || c.shape || c.type || submittedData.shape || submittedData.type,
             ]
               .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
               .join(" — ") ||
@@ -365,7 +365,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               formatSizeFromSubmittedData(submittedData as Record<string, unknown> | undefined) ||
               (submittedData as { dimensions?: string } | undefined)?.dimensions ||
               "",
-            type: c.shapeName || c.typeDisplay || c.type || submittedData.type || "",
+            shape: c.shapeName || c.shapeDisplay || c.typeDisplay || c.shape || c.type || submittedData.shape || submittedData.type || "",
             color: c.colorDisplay || c.color || submittedData.color || "",
             status: String(c.status || "pending"),
             created_at: String(c.createdAt || c.created_at || ""),
@@ -462,7 +462,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           const displayName =
             [
               [town, state].filter(Boolean).join(", "),
-              c.shapeName || c.typeDisplay || c.type || submittedData.type,
+              c.shapeName || c.shapeDisplay || c.typeDisplay || c.shape || c.type || submittedData.shape || submittedData.type,
             ]
               .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
               .join(" — ") || `Suggestion #${c.id}`;
@@ -491,7 +491,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               formatSizeFromSubmittedData(submittedData as Record<string, unknown> | undefined) ||
               (submittedData as { dimensions?: string } | undefined)?.dimensions ||
               "",
-            type: c.shapeName || c.typeDisplay || c.type || submittedData.type || "",
+            shape: c.shapeName || c.shapeDisplay || c.typeDisplay || c.shape || c.type || submittedData.shape || submittedData.type || "",
             color: c.colorDisplay || c.color || submittedData.color || "",
             status: String(c.status || "pending"),
             created_at: String(c.createdAt || c.created_at || ""),
@@ -540,7 +540,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       filters: {
         state: stateFilter !== "all" ? stateFilter : undefined,
         town: townFilter.trim() || undefined,
-        type: typeFilter !== "all" ? typeFilter : undefined,
+        shape: shapeFilter !== "all" ? shapeFilter : undefined,
         color: colorFilter !== "all" ? colorFilter : undefined,
         search: searchQuery.trim() || undefined,
       },
@@ -564,14 +564,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     return () => {
       cancelled = true;
     };
-  }, [isStateEditor, activeTab, assignedCatalogPage, stateFilter, townFilter, typeFilter, colorFilter, searchQuery, assignedCatalogRefetchKey]);
+  }, [isStateEditor, activeTab, assignedCatalogPage, stateFilter, townFilter, shapeFilter, colorFilter, searchQuery, assignedCatalogRefetchKey]);
 
   // Reset User Submissions pagination when filters change
   useEffect(() => {
     if (activeTab === "editor" && isStateEditor) {
       setAssignedCatalogPage(1);
     }
-  }, [activeTab, isStateEditor, stateFilter, townFilter, typeFilter, colorFilter, searchQuery]);
+  }, [activeTab, isStateEditor, stateFilter, townFilter, shapeFilter, colorFilter, searchQuery]);
 
   // Load pending contributions for editor review (approve/reject/request revision)
   useEffect(() => {
@@ -617,7 +617,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
             state_display: c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "",
             town_display: c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "",
-            type_display: c.type_display ?? (c as { typeDisplay?: string }).typeDisplay ?? "",
+            shape_display:
+              c.shape_display ??
+              (c as { shapeDisplay?: string }).shapeDisplay ??
+              c.type_display ??
+              (c as { typeDisplay?: string }).typeDisplay ??
+              "",
             postmark_id: c.postmark_id ?? (c as { postmarkId?: number | null }).postmarkId ?? null,
             status: String(c.status ?? "pending"),
             created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
@@ -681,7 +686,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
           state_display: c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "",
           town_display: c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "",
-          type_display: c.type_display ?? (c as { typeDisplay?: string }).typeDisplay ?? "",
+          shape_display:
+            c.shape_display ??
+            (c as { shapeDisplay?: string }).shapeDisplay ??
+            c.type_display ??
+            (c as { typeDisplay?: string }).typeDisplay ??
+            "",
           postmark_id: c.postmark_id ?? (c as { postmarkId?: number | null }).postmarkId ?? null,
           status: String(c.status ?? "pending"),
           created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
@@ -847,8 +857,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         if (!submission.town || !submission.town.toLowerCase().includes(tq)) return false;
       }
 
-      // Type filter
-      if (typeFilter !== "all" && submission.type !== typeFilter) return false;
+      // Shape filter
+      if (shapeFilter !== "all" && submission.shape !== shapeFilter) return false;
 
       // Color filter
       if (colorFilter !== "all" && submission.color !== colorFilter) return false;
@@ -865,7 +875,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     statusFilter,
     stateFilter,
     townFilter,
-    typeFilter,
+    shapeFilter,
     colorFilter,
     dateFrom,
     dateTo,
@@ -924,7 +934,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Reset submissions pagination when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, statusFilter, stateFilter, townFilter, typeFilter, colorFilter, dateFrom, dateTo]);
+  }, [searchQuery, statusFilter, stateFilter, townFilter, shapeFilter, colorFilter, dateFrom, dateTo]);
 
   // Suggestions derived state – reuse same filter semantics as submissions
   const filteredSuggestions = useMemo(() => {
@@ -954,7 +964,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       }
 
       // Type filter
-      if (typeFilter !== "all" && suggestion.type !== typeFilter) return false;
+      if (shapeFilter !== "all" && suggestion.shape !== shapeFilter) return false;
 
       // Color filter
       if (colorFilter !== "all" && suggestion.color !== colorFilter) return false;
@@ -971,7 +981,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     statusFilter,
     stateFilter,
     townFilter,
-    typeFilter,
+    shapeFilter,
     colorFilter,
     dateFrom,
     dateTo,
@@ -990,7 +1000,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Reset suggestions pagination when shared filters change
   useEffect(() => {
     setSuggestionsPage(1);
-  }, [searchQuery, statusFilter, stateFilter, townFilter, typeFilter, colorFilter, dateFrom, dateTo]);
+  }, [searchQuery, statusFilter, stateFilter, townFilter, shapeFilter, colorFilter, dateFrom, dateTo]);
 
   const assignedCatalogTotalPages = Math.max(
     1,
@@ -1154,13 +1164,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="type">Shape</Label>
+                    <Label htmlFor="shape">Shape</Label>
                     <SearchableSelect
-                      id="type"
-                      value={typeFilter}
-                      onValueChange={setTypeFilter}
-                      placeholder="All Types"
-                      allOption={{ value: "all", label: "All Types" }}
+                      id="shape"
+                      value={shapeFilter}
+                      onValueChange={setShapeFilter}
+                      placeholder="All Shapes"
+                      allOption={{ value: "all", label: "All Shapes" }}
                       options={Array.isArray(shapeOptions) ? shapeOptions : []}
                       loading={isLoadingFilters}
                       error={!!filterError}
@@ -1250,7 +1260,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       setStatusFilter("all");
                       setStateFilter("all");
                       setTownFilter("");
-                      setTypeFilter("all");
+                      setShapeFilter("all");
                       setColorFilter("all");
                       setDateFrom("");
                       setDateTo("");
@@ -1781,9 +1791,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           <ul className="space-y-3">
                             {pendingReviewItems.map((item) => {
                               const title = [item.town_display, item.state_display].filter(Boolean).join(", ");
-                              const typeStr = (item.type_display || "").trim();
+                              const shapeStr = (item.shape_display || "").trim();
                               const fallbackName =
-                                [title, typeStr].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") ||
+                                [title, shapeStr].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") ||
                                 title ||
                                 `Submission #${item.id}`;
                               const displayLabel = item.display_name || fallbackName;
@@ -1982,9 +1992,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   <ul className="space-y-3">
                     {editorHistoryItems.map((item) => {
                       const title = [item.town_display, item.state_display].filter(Boolean).join(", ");
-                      const typeStr = (item.type_display || "").trim();
+                      const shapeStr = (item.shape_display || "").trim();
                       const fallbackName =
-                        [title, typeStr].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") ||
+                        [title, shapeStr].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") ||
                         title ||
                         `Submission #${item.id}`;
                       const displayLabel = item.display_name || fallbackName;
