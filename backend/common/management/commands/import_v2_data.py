@@ -81,6 +81,12 @@ class Command(BaseCommand):
             default=False,
             help="Validate without writing — reports what would be created/updated",
         )
+        parser.add_argument(
+            "--truncate",
+            action="store_true",
+            default=False,
+            help="Delete all existing rows in each target table (reverse FK order) before importing",
+        )
 
     def _get_user(self, username):
         User = get_user_model()
@@ -97,10 +103,21 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         dir_ = options["dir"]
         dry_run = options["dry_run"]
+        truncate = options["truncate"]
         user = self._get_user(options.get("user"))
 
         if dry_run:
             self.stdout.write(self.style.WARNING("DRY RUN — no changes will be saved\n"))
+
+        if truncate and not dry_run:
+            self.stdout.write(self.style.WARNING("TRUNCATE — clearing target tables in reverse FK order"))
+            for resource_class, filename in reversed(MODEL_FILES):
+                model = resource_class._meta.model
+                n, _ = model._default_manager.all().delete()
+                self.stdout.write(f"  {model.__name__:<24s} -{n} rows")
+            self.stdout.write("")
+        elif truncate and dry_run:
+            self.stdout.write(self.style.WARNING("--truncate ignored under --dry-run\n"))
 
         total_new = total_updated = total_errors = 0
 
@@ -138,6 +155,16 @@ class Command(BaseCommand):
                 self.stdout.write(f"        {err.error}")
             for row in result.invalid_rows[:3]:
                 self.stdout.write(f"        row {row.number}: {row.error}")
+            # result.rows carries per-row errors raised during save (FK misses,
+            # unique violations, etc.) — invalid_rows only covers validation
+            shown = 0
+            for i, row in enumerate(result.rows, start=1):
+                if row.errors and shown < 3:
+                    for e in row.errors:
+                        self.stdout.write(f"        row {i}: {e.error} | row_data={row.row_values}")
+                        shown += 1
+                        if shown >= 3:
+                            break
 
         self.stdout.write(
             self.style.SUCCESS(

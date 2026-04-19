@@ -63,14 +63,10 @@ class PostmarkListFilter(django_filters.FilterSet):
         if not value or not str(value).strip():
             return queryset
         value = str(value).strip()
-        unit_ids = AdministrativeUnitIdentity.objects.filter(
-            effective_to_date__isnull=True
-        ).filter(
-            Q(unit_name__iexact=value) | Q(unit_abbreviation__iexact=value)
-        ).values_list('administrative_unit_id', flat=True).distinct()
-        if not unit_ids:
-            return queryset.none()
-        return queryset.filter(post_office__region__administrative_unit_id__in=unit_ids)
+        return queryset.filter(
+            Q(post_office__region__name__iexact=value)
+            | Q(post_office__region__abbrev__iexact=value)
+        )
 
     @staticmethod
     def filter_has_images(queryset, name, value):
@@ -108,14 +104,11 @@ class PostmarkFilter(django_filters.FilterSet):
     def filter_by_state(self, queryset, name, value):
         if not value:
             return queryset
-        unit_ids = AdministrativeUnitIdentity.objects.filter(
-            effective_to_date__isnull=True
-        ).filter(
-            Q(unit_name__iexact=value) | Q(unit_abbreviation__iexact=value)
-        ).values_list('administrative_unit_id', flat=True).distinct()
-        if not unit_ids:
-            return queryset.none()
-        return queryset.filter(post_office__region__administrative_unit_id__in=unit_ids)
+        value = str(value).strip()
+        return queryset.filter(
+            Q(post_office__region__name__iexact=value)
+            | Q(post_office__region__abbrev__iexact=value)
+        )
 
     def filter_has_images(self, queryset, name, value):
         if value is None:

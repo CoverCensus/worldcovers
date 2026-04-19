@@ -173,15 +173,15 @@ venv.bak/
 
 # createstatic Static files
 /static/*
-!/static/DELETE.ME
+!/static/_DELETE.ME
 /backend/static/*
-!/backend/static/DELETE.ME
+!/backend/static/_DELETE.ME
 
 # runtime uploaded media
 media/*
-!media/DELETE.ME
+!media/_DELETE.ME
 /backend/media/*
-!/backend/media/DELETE.ME
+!/backend/media/_DELETE.ME
 
 # mypy
 .mypy_cache/
@@ -248,7 +248,7 @@ mysql.cnf
 
 # System backups
 backups/*
-!backups/DELETE.ME
+!backups/_DELETE.ME
 *.bak
 
 #Local WIP files for the one-off utilities in tools/
