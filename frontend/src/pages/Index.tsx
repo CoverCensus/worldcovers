@@ -14,7 +14,9 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import heroImage from "@/assets/hero-cover.jpg";
 import { getRegions } from "@/services/regions";
-import { getPostOffices } from "@/services/postOffices";
+import { getPostOfficeCount } from "@/services/postOffices";
+import { getPostmarkCount } from "@/services/postmarks";
+import { usePostmarkYearRange } from "@/hooks/usePostmarkYearRange";
 
 type FAQItem = {
   id: string;
@@ -102,35 +104,41 @@ const Index = () => {
     void fetchFaqs();
   }, []);
 
-  /** Static display for postmarks cataloged (no API fetch). */
-  const postmarksStatDisplay = "52,000+";
-
   const [stats, setStats] = useState<{
+    postmarks: number | null;
     towns: number | null;
     states: number | null;
   }>({
+    postmarks: null,
     towns: null,
     states: null,
   });
+
+  const { earliestYear, latestYear } = usePostmarkYearRange();
 
   useEffect(() => {
     let cancelled = false;
 
     const loadStats = async () => {
-      const [officesResult, regionsResult] = await Promise.allSettled([
-        getPostOffices(),
-        getRegions(false),
-      ]);
+      const [postmarksResult, officesResult, regionsResult] =
+        await Promise.allSettled([
+          getPostmarkCount(),
+          getPostOfficeCount(),
+          getRegions(false),
+        ]);
 
       if (cancelled) return;
 
+      const postmarks =
+        postmarksResult.status === "fulfilled" ? postmarksResult.value : null;
       const offices =
-        officesResult.status === "fulfilled" ? officesResult.value : [];
+        officesResult.status === "fulfilled" ? officesResult.value : null;
       const regions =
         regionsResult.status === "fulfilled" ? regionsResult.value : [];
 
       setStats({
-        towns: Array.isArray(offices) ? offices.length : null,
+        postmarks: typeof postmarks === "number" ? postmarks : null,
+        towns: typeof offices === "number" ? offices : null,
         states: Array.isArray(regions) ? regions.length : null,
       });
     };
@@ -141,6 +149,10 @@ const Index = () => {
       cancelled = true;
     };
   }, []);
+
+  const postmarksStatDisplay =
+    stats.postmarks != null ? stats.postmarks.toLocaleString() : "—";
+  const historicalRangeDisplay = `${earliestYear}–${latestYear}`;
 
   const handleContributeClick = () => {
     if (user) {
@@ -169,7 +181,10 @@ const Index = () => {
               American Stampless Cover Catalog
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground mb-8 leading-relaxed">
-              Explore over {postmarksStatDisplay} historical postal markings from across America. A comprehensive, open-access archive for researchers, collectors, and philatelic enthusiasts.
+              {stats.postmarks != null
+                ? `Explore ${postmarksStatDisplay} historical postal markings from across America. `
+                : "Explore historical postal markings from across America. "}
+              A comprehensive, open-access archive for researchers, collectors, and philatelic enthusiasts.
             </p>
             <div className="flex flex-col sm:flex-row gap-4">
               <Button 
@@ -218,7 +233,7 @@ const Index = () => {
             </div>
             <div className="text-center">
               <div className="text-3xl md:text-4xl font-heading font-bold text-primary mb-2">
-                1661–1989
+                {historicalRangeDisplay}
               </div>
               <div className="text-sm text-muted-foreground">Historical Range</div>
             </div>

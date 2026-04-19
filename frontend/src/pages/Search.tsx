@@ -22,20 +22,19 @@ import { CatalogRecordFields } from "@/components/CatalogRecordFields";
 import { useToast } from "@/hooks/use-toast";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
 import { useDebounce } from "@/hooks/useDebounce";
+import { usePostmarkYearRange } from "@/hooks/usePostmarkYearRange";
 import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 400;
-const MIN_YEAR = 1661;
-const CURRENT_YEAR = new Date().getFullYear();
 
-function validateYearString(raw: string): string | null {
+function validateYearString(raw: string, minYear: number, maxYear: number): string | null {
   const v = raw.trim();
   if (!v) return null;
   if (v.length !== 4) return null; // wait until user types 4 digits
   const n = Number(v);
   if (Number.isNaN(n)) return "Year must be a number";
-  if (n < MIN_YEAR || n > CURRENT_YEAR) {
-    return `Year must be between ${MIN_YEAR} and ${CURRENT_YEAR}`;
+  if (n < minYear || n > maxYear) {
+    return `Year must be between ${minYear} and ${maxYear}`;
   }
   return null;
 }
@@ -107,6 +106,9 @@ const Search = () => {
   const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } =
     useFilterOptions();
 
+  // Catalog's earliest/latest observed year — used for input placeholders and validation bounds.
+  const { earliestYear: minYear, latestYear: maxYear } = usePostmarkYearRange();
+
   // Filter states - initialize from URL so filters persist when navigating back from detail
   const [keywordSearch, setKeywordSearch] = useState(() => getSearchParam(searchParams, "q", ""));
   const [stateFilter, setStateFilter] = useState(() => getSearchParam(searchParams, "state", "all"));
@@ -151,8 +153,14 @@ const Search = () => {
   const prevImagesOnlyRef = useRef(imagesOnly);
   const prevManuscriptFilterRef = useRef(manuscriptFilter);
 
-  const beginYearError = useMemo(() => validateYearString(beginYear), [beginYear]);
-  const endYearError = useMemo(() => validateYearString(endYear), [endYear]);
+  const beginYearError = useMemo(
+    () => validateYearString(beginYear, minYear, maxYear),
+    [beginYear, minYear, maxYear],
+  );
+  const endYearError = useMemo(
+    () => validateYearString(endYear, minYear, maxYear),
+    [endYear, minYear, maxYear],
+  );
 
   // Manuscripts have null shape, so the two filters are mutually exclusive:
   // - manuscripts=Only → Shape field is cleared and hidden (no shape to filter on).
@@ -211,11 +219,15 @@ const Search = () => {
 
   // Treat years as active filters only when they are valid and 4 digits.
   const normalizedBeginYear = useMemo(() => {
-    return validateYearString(debouncedBeginYear) ? "" : (debouncedBeginYear.trim().length === 4 ? debouncedBeginYear.trim() : "");
-  }, [debouncedBeginYear]);
+    return validateYearString(debouncedBeginYear, minYear, maxYear)
+      ? ""
+      : (debouncedBeginYear.trim().length === 4 ? debouncedBeginYear.trim() : "");
+  }, [debouncedBeginYear, minYear, maxYear]);
   const normalizedEndYear = useMemo(() => {
-    return validateYearString(debouncedEndYear) ? "" : (debouncedEndYear.trim().length === 4 ? debouncedEndYear.trim() : "");
-  }, [debouncedEndYear]);
+    return validateYearString(debouncedEndYear, minYear, maxYear)
+      ? ""
+      : (debouncedEndYear.trim().length === 4 ? debouncedEndYear.trim() : "");
+  }, [debouncedEndYear, minYear, maxYear]);
 
   // Fetch postmarks with React Query - cached so Back shows previous results immediately
   const {
@@ -407,7 +419,7 @@ const Search = () => {
                       <Input
                         id="beginYear"
                         type="number"
-                        placeholder={String(MIN_YEAR)}
+                        placeholder={String(minYear)}
                         inputMode="numeric"
                         value={beginYear}
                         onChange={(e) => {
@@ -429,7 +441,7 @@ const Search = () => {
                       <Input
                         id="endYear"
                         type="number"
-                        placeholder={String(CURRENT_YEAR)}
+                        placeholder={String(maxYear)}
                         inputMode="numeric"
                         value={endYear}
                         onChange={(e) => {

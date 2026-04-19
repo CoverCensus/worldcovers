@@ -51,6 +51,14 @@ export interface TownOptionItem {
   state: string;
 }
 
+/** Returns the total number of post office records from the paginated list endpoint. */
+export async function getPostOfficeCount(): Promise<number> {
+  const res = await apiClient.get<PostOfficesApiResponse>("/post-offices/", {
+    params: { page_size: "1" },
+  });
+  return typeof res.data.count === "number" ? res.data.count : 0;
+}
+
 /** Fetches post office town options from GET /post-offices/town-options/. */
 export async function getPostOffices(): Promise<PostOfficeOption[]> {
   const res = await apiClient.get<TownOptionItem[]>("/post-offices/town-options/");

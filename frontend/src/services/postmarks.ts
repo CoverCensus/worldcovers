@@ -435,6 +435,37 @@ export interface PostmarkApiResponse {
   }
 
   /**
+   * Returns the total number of postmark records from the paginated list endpoint.
+   */
+  export async function getPostmarkCount(): Promise<number> {
+    const res = await apiClient.get<PostmarkApiResponse>("/postmarks/", {
+      params: { page_size: "1" },
+    });
+    return typeof res.data.count === "number" ? res.data.count : 0;
+  }
+
+  export interface PostmarkYearRange {
+    earliestYear: number | null;
+    latestYear: number | null;
+  }
+
+  /**
+   * Returns the overall earliest / latest year from any cataloged postmark's observed dates.
+   */
+  export async function getPostmarkYearRange(): Promise<PostmarkYearRange> {
+    const res = await apiClient.get<Record<string, number | null | undefined>>(
+      "/postmarks-range/"
+    );
+    const data = res.data ?? {};
+    const earliest = data.earliestYear ?? data.earliest_year;
+    const latest = data.latestYear ?? data.latest_year;
+    return {
+      earliestYear: typeof earliest === "number" ? earliest : null,
+      latestYear: typeof latest === "number" ? latest : null,
+    };
+  }
+
+  /**
    * Fetches postmarks from GET /postmarks/.
    */
   export async function getPostmarks(): Promise<PostmarkRecord[]> {
