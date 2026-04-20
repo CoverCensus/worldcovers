@@ -856,7 +856,7 @@ def _save_contribution_image(uploaded_file):
     content_type = getattr(uploaded_file, "content_type", "") or ""
     if content_type not in allowed_types:
         return None
-    max_size_bytes = 10 * 1024 * 1024  # 10 MB
+    max_size_bytes = 100 * 1024 * 1024  # 100 MB
     uploaded_file.seek(0)
     content = uploaded_file.read()
     if len(content) > max_size_bytes:

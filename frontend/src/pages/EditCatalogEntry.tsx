@@ -34,7 +34,7 @@ function getApiBaseUrl(): string | null {
   return env.trim().replace(/\/+$/, "");
 }
 
-const MAX_IMAGE_SIZE_MB = 10;
+const MAX_IMAGE_SIZE_MB = 100;
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/tiff"];
 
 const STATE_OTHER_VALUE = "__other__";
@@ -654,14 +654,11 @@ const EditCatalogEntry = () => {
     if (category === "auxmark") setAuxmarkImagePreviews((prev) => [...prev, ...previews]);
   };
 
-  const handleImageChange = (category: ImageCategory, e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files?.length) return;
+  const processImageFiles = (category: ImageCategory, files: File[]) => {
     const toAdd: File[] = [];
     const rejectedType: string[] = [];
     const rejectedSize: string[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
+    for (const file of files) {
       if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
         rejectedType.push(file.name);
         continue;
@@ -686,10 +683,7 @@ const EditCatalogEntry = () => {
         variant: "destructive",
       });
     }
-    if (toAdd.length === 0) {
-      e.target.value = "";
-      return;
-    }
+    if (toAdd.length === 0) return;
     appendCategoryFiles(category, toAdd);
     Promise.all(
       toAdd.map(
@@ -703,6 +697,12 @@ const EditCatalogEntry = () => {
     ).then((newPreviews) => {
       appendCategoryPreviews(category, newPreviews);
     });
+  };
+
+  const handleImageChange = (category: ImageCategory, e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files?.length) return;
+    processImageFiles(category, Array.from(files));
     e.target.value = "";
   };
 
@@ -1139,6 +1139,12 @@ const EditCatalogEntry = () => {
           tabIndex={0}
           onClick={() => inputRef.current?.click()}
           onKeyDown={(e) => e.key === "Enter" && inputRef.current?.click()}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            const files = Array.from(e.dataTransfer.files);
+            if (files.length) processImageFiles(category, files);
+          }}
           className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
         >
           {previews.length > 0 ? (
