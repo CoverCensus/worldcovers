@@ -256,6 +256,10 @@ tools/wip/in/*
 !tools/wip/in/_DELETE.ME
 tools/wip/out/*
 !tools/wip/out/_DELETE.ME
+tools/wip/**/*.pdf
+tools/wip/**/*.png
+tools/wip/**/*.jpg
+tools/wip/**/*.jpeg
 .DS_Store
 /backend/imports
 docs/data/

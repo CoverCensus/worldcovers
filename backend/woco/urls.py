@@ -59,7 +59,7 @@ urlpatterns = [
     ),
     # React SPA: catch-all only for paths that are NOT backend URLs (so /api, /admin, etc. go to Django)
     re_path(
-        r"^(?!/(?:api|admin|accounts|api-auth|media|static|assets)(?:/|$))(?P<frontend_path>.*)$",
+        r"^(?!(?:api|admin|accounts|api-auth|media|static|assets)(?:/|$))(?P<frontend_path>.*)$",
         ServeSPAView.as_view(),
         name="spa",
     ),
