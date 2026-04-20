@@ -41,7 +41,19 @@ class Command(BaseCommand):
     help = "Import catalog-extracted postmark images from a CSV mapping."
 
     def add_arguments(self, parser):
-        parser.add_argument("--csv", required=True, help="Path to mapping CSV.")
+        parser.add_argument(
+            "paths",
+            nargs="*",
+            help=(
+                "CSV file(s) and/or directories of CSVs to import. "
+                "If omitted, discovers *_image_mapping.csv under MEDIA_ROOT."
+            ),
+        )
+        parser.add_argument(
+            "-r", "--recursive",
+            action="store_true",
+            help="Recurse into subdirectories when a directory path is given.",
+        )
         parser.add_argument(
             "--user",
             default=None,
@@ -63,15 +75,21 @@ class Command(BaseCommand):
             action="store_true",
             default=False,
             help=(
-                "Rewrite the source CSV, removing rows with blank filenames or "
+                "Rewrite each source CSV, removing rows with blank filenames or "
                 "whose image file is missing on disk. Preview with --dry-run."
             ),
         )
 
     def handle(self, *args, **options):
-        csv_path = Path(options["csv"])
-        if not csv_path.is_file():
-            raise CommandError(f"CSV not found: {csv_path}")
+        media_root = Path(settings.MEDIA_ROOT)
+        csv_paths = self._resolve_csv_paths(
+            options["paths"], options["recursive"], media_root
+        )
+        if not csv_paths:
+            raise CommandError(
+                "No CSVs found. Pass file(s)/dir(s) or drop *_image_mapping.csv "
+                f"under MEDIA_ROOT ({media_root})."
+            )
 
         User = get_user_model()
         username = options.get("user")
@@ -88,7 +106,6 @@ class Command(BaseCommand):
         dry_run = options["dry_run"]
         truncate = options["truncate"]
         clean = options["clean"]
-        media_root = Path(settings.MEDIA_ROOT)
 
         if truncate and not dry_run:
             n, _ = PostmarkImage.objects.all().delete()
@@ -98,6 +115,57 @@ class Command(BaseCommand):
         elif truncate and dry_run:
             self.stdout.write(self.style.WARNING("--truncate ignored under --dry-run"))
 
+        self.stdout.write(
+            f"Importing {len(csv_paths)} CSV file(s): "
+            + ", ".join(str(p) for p in csv_paths)
+        )
+
+        total_created = total_updated = total_skipped = 0
+        for csv_path in csv_paths:
+            c, u, s = self._import_one_csv(csv_path, media_root, user.pk, dry_run, clean)
+            total_created += c
+            total_updated += u
+            total_skipped += s
+
+        self.stdout.write(self.style.SUCCESS(
+            f"Done. created={total_created} updated={total_updated} skipped={total_skipped}"
+            f"{' (dry-run, rolled back)' if dry_run else ''}"
+        ))
+
+    def _resolve_csv_paths(self, raw_paths, recursive, media_root: Path):
+        """Expand user-supplied paths (files/dirs) into a list of CSV files.
+
+        No paths → auto-discover ``*_image_mapping.csv`` under MEDIA_ROOT.
+        """
+        if not raw_paths:
+            return sorted(media_root.glob("*_image_mapping.csv"))
+
+        resolved = []
+        seen = set()
+        for raw in raw_paths:
+            p = Path(raw)
+            if p.is_file():
+                candidates = [p]
+            elif p.is_dir():
+                pattern = "**/*.csv" if recursive else "*.csv"
+                candidates = sorted(p.glob(pattern))
+                if not candidates:
+                    self.stdout.write(self.style.WARNING(
+                        f"No CSVs found in directory: {p}"
+                    ))
+            else:
+                raise CommandError(f"Path not found: {p}")
+
+            for c in candidates:
+                key = c.resolve()
+                if key not in seen:
+                    seen.add(key)
+                    resolved.append(c)
+        return resolved
+
+    def _import_one_csv(self, csv_path: Path, media_root: Path, user_id: int,
+                        dry_run: bool, clean: bool):
+        self.stdout.write(f"→ {csv_path}")
         created = updated = skipped = 0
         kept_rows = []
         dropped_rows = []  # (lineno, reason, row)
@@ -107,11 +175,13 @@ class Command(BaseCommand):
             fieldnames = list(reader.fieldnames or [])
             missing = REQUIRED_COLUMNS - set(fieldnames)
             if missing:
-                raise CommandError(f"CSV missing required columns: {sorted(missing)}")
+                raise CommandError(
+                    f"{csv_path}: missing required columns: {sorted(missing)}"
+                )
 
             with transaction.atomic():
                 for lineno, row in enumerate(reader, start=2):
-                    result = self._process_row(row, media_root, user.pk, dry_run)
+                    result = self._process_row(row, media_root, user_id, dry_run)
                     if result == RESULT_CREATED:
                         created += 1
                     elif result == RESULT_UPDATED:
@@ -131,10 +201,10 @@ class Command(BaseCommand):
         if clean:
             self._apply_clean(csv_path, fieldnames, kept_rows, dropped_rows, dry_run)
 
-        self.stdout.write(self.style.SUCCESS(
-            f"Done. created={created} updated={updated} skipped={skipped}"
-            f"{' (dry-run, rolled back)' if dry_run else ''}"
-        ))
+        self.stdout.write(
+            f"  {csv_path.name}: created={created} updated={updated} skipped={skipped}"
+        )
+        return created, updated, skipped
 
     def _apply_clean(self, csv_path, fieldnames, kept_rows, dropped_rows, dry_run):
         if not dropped_rows:

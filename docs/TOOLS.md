@@ -176,8 +176,10 @@ Import catalog-extracted images as `PostmarkImage` records.
 
 **Invocation:**
 ```sh
-pipenv run manage import_catalog_images --csv /path/to/images.csv
-pipenv run manage import_catalog_images --csv /path/to/images.csv --dry-run
+pipenv run manage import_catalog_images                              # auto-discover *_image_mapping.csv in MEDIA_ROOT
+pipenv run manage import_catalog_images backend/media/               # all *.csv in a directory
+pipenv run manage import_catalog_images backend/media/VA*.csv        # shell-expanded file list
+pipenv run manage import_catalog_images path/to/one.csv --dry-run    # single file, no writes
 ```
 
 **CSV columns:**
@@ -194,9 +196,12 @@ pipenv run manage import_catalog_images --csv /path/to/images.csv --dry-run
 
 | Flag | Default | Effect |
 |------|---------|--------|
-| `--csv` | (required) | Path to the mapping CSV |
+| `paths` (positional) | MEDIA_ROOT/`*_image_mapping.csv` | CSV files and/or directories; directories are scanned for `*.csv` |
+| `-r`, `--recursive` | off | Recurse into subdirectories when a directory is given |
 | `--user` | first superuser | Username for `uploaded_by` / `created_by` / `modified_by` |
 | `--dry-run` | off | Parse and validate without writing; rolls back the transaction |
+| `--truncate` | off | Delete all existing `PostmarkImage` rows before importing |
+| `--clean` | off | Rewrite each source CSV, dropping rows whose file is missing on disk |
 
 **Side effects:** `PostmarkImage.objects.update_or_create` — creates on first run, updates on subsequent runs. Rows with missing `postmark_key`, unreadable files, or invalid `image_view` are skipped with a log message.
 

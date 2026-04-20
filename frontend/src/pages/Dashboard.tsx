@@ -54,6 +54,65 @@ function getCsrfTokenFromCookie(): string | null {
 
 const noImageClassName = "w-full h-full min-w-0 min-h-0 object-cover bg-muted";
 
+function resolveSubmissionImageUrl(
+  c: Record<string, unknown>,
+  submittedData: Record<string, unknown>,
+): string | null {
+  const mainImage = c.mainImage as { imageUrl?: unknown } | string | null | undefined;
+  const mainImageFromList =
+    (mainImage && typeof mainImage === "object" && typeof mainImage.imageUrl === "string"
+      ? mainImage.imageUrl
+      : null) ??
+    (typeof mainImage === "string" ? mainImage : null);
+
+  const direct = normalizeImageUrl(
+    mainImageFromList ??
+      (typeof c.imageUrl === "string" ? c.imageUrl : null) ??
+      (typeof c.image_url === "string" ? c.image_url : null) ??
+      null,
+  );
+  if (direct) return direct;
+
+  const asUrlArray = (raw: unknown): string[] => {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((item) => {
+        if (typeof item === "string") return item.trim();
+        if (!item || typeof item !== "object") return "";
+        const obj = item as Record<string, unknown>;
+        const fromUrl = obj.url ?? obj.image_url ?? obj.imageUrl ?? obj.public_url ?? obj.publicUrl;
+        return typeof fromUrl === "string" ? fromUrl.trim() : "";
+      })
+      .filter((url) => url.length > 0);
+  };
+  const categorized = [
+    ...asUrlArray(submittedData.postmark_images ?? submittedData.postmarkImages ?? submittedData.PostmarkImages),
+    ...asUrlArray(submittedData.ratemark_images ?? submittedData.ratemarkImages ?? submittedData.RatemarkImages),
+    ...asUrlArray(submittedData.auxmark_images ?? submittedData.auxmarkImages ?? submittedData.AuxmarkImages),
+  ];
+  for (const url of categorized) {
+    const normalized = normalizeImageUrl(url);
+    if (normalized) return normalized;
+  }
+
+  const baseImageUrl = (import.meta.env.VITE_IMAGE_URL as string | undefined) ?? "";
+  const fromMeta = (meta: unknown): string | null => {
+    if (!meta || typeof meta !== "object") return null;
+    const obj = meta as Record<string, unknown>;
+    const sf = obj.storage_filename ?? obj.storageFilename;
+    if (typeof sf !== "string" || !sf || !baseImageUrl) return null;
+    return normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${sf}`);
+  };
+  const metas = submittedData.image_metas ?? submittedData.imageMetas;
+  if (Array.isArray(metas)) {
+    for (const meta of metas) {
+      const url = fromMeta(meta);
+      if (url) return url;
+    }
+  }
+  return fromMeta(submittedData.image_meta ?? submittedData.imageMeta);
+}
+
 type DashboardTab = "submissions" | "suggestions" | "editor";
 
 interface DashboardItem {
@@ -306,16 +365,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           const state = (c.stateDisplay || c.state_display || submittedData.state || "").trim();
           const town = (c.townDisplay || c.town_display || submittedData.town || "").trim();
 
-          const mainImageFromList =
-            c.mainImage?.imageUrl ??
-            (typeof c.mainImage === "string" ? c.mainImage : null);
-
-          const imageUrl = normalizeImageUrl(
-            mainImageFromList ??
-              c.imageUrl ??
-              c.image_url ??
-              null,
-          );
+          const imageUrl = resolveSubmissionImageUrl(c, submittedData);
 
           const displayName =
             (c.display_name || c.displayName || "").trim() ||
@@ -448,16 +498,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           const state = (c.stateDisplay || c.state_display || submittedData.state || "").trim();
           const town = (c.townDisplay || c.town_display || submittedData.town || "").trim();
 
-          const mainImageFromList =
-            c.mainImage?.imageUrl ??
-            (typeof c.mainImage === "string" ? c.mainImage : null);
-
-          const imageUrl = normalizeImageUrl(
-            mainImageFromList ??
-              c.imageUrl ??
-              c.image_url ??
-              null,
-          );
+          const imageUrl = resolveSubmissionImageUrl(c, submittedData);
 
           const displayName =
             [

@@ -46,6 +46,32 @@ wocod ALL=(ALL) NOPASSWD: /usr/bin/install -m 644 * /etc/systemd/system/worldcov
 
 See [RUNBOOK.md](RUNBOOK.md) for full first-time host bootstrap instructions.
 
+## Pushing catalog data to staging
+
+Fresh CSV exports in `tools/wip/out/` and catalog images under `backend/media/` are kept out of git and pushed straight to the server with [tools/push_data.sh](../tools/push_data.sh).
+
+```sh
+./tools/push_data.sh            # rsync tools/wip/ and backend/media/ only
+./tools/push_data.sh --import   # rsync, then run import_v2_data + import_catalog_images as wocod
+./tools/push_data.sh --dry-run  # show what rsync would change
+```
+
+How it works:
+
+- Two `rsync` passes: `tools/wip/` → `/srv/woco/tools/wip/` and `backend/media/` → `/srv/woco/backend/media/`.
+- Remote rsync runs via `sudo -n rsync` so `--chown=wocod:wocod` takes effect — files land owned by the app user, no manual `chown` dance.
+- `--delete` mirrors source to destination (previous `rm -rf` step is unnecessary).
+- `--import` SSHes back in and runs [tools/reload_data.sh](../tools/reload_data.sh) as `wocod`, which does `import_v2_data --truncate` (from `tools/wip/out/`) then `import_catalog_images` (auto-discovers `*_image_mapping.csv` under `MEDIA_ROOT`).
+
+Prerequisites on the host:
+
+- The SSH user (env `WOCO_HOST`, default `mpc@hellowoco.app`) can run `sudo` without a password. Blanket passwordless sudo is fine; a minimal drop-in is documented at the top of `push_data.sh` if you want to narrow it later.
+- One-time `setgid` on the target trees so any stray `scp` also lands group=`wocod` (safety net, not required by `push_data.sh`):
+  ```sh
+  sudo chown -R wocod:wocod /srv/woco/tools/wip /srv/woco/backend/media
+  sudo chmod -R g+s         /srv/woco/tools/wip /srv/woco/backend/media
+  ```
+
 ## After you push to GitHub – what to do
 
 ### Option A: Deploy on the server (VPS)
