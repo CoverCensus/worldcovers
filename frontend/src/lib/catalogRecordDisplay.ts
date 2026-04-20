@@ -112,6 +112,8 @@ export type CatalogSearchRowDisplay = CatalogFieldValues & {
   cardId: string;
   title: string;
   image: string | null;
+  ratemarkCount: number;
+  auxmarkCount: number;
 };
 
 export function buildCatalogSearchRow(record: PostmarkRecord): CatalogSearchRowDisplay {
@@ -127,5 +129,7 @@ export function buildCatalogSearchRow(record: PostmarkRecord): CatalogSearchRowD
     cardId: `api-${record.id}`,
     title: displayName,
     image: normalizeImageUrl(getPostmarkListImageUrl(record.mainImage)),
+    ratemarkCount: typeof record.ratemarkCount === "number" ? record.ratemarkCount : 0,
+    auxmarkCount: typeof record.auxmarkCount === "number" ? record.auxmarkCount : 0,
   };
 }

@@ -4,12 +4,23 @@ import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Download, Upload, ArrowLeft, Loader2, Pencil, MessageSquare } from "lucide-react";
+import { Download, Upload, ArrowLeft, Loader2, Pencil, MessageSquare, ChevronDown } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { SubmitImageDialog } from "@/components/SubmitImageDialog";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
-import { getPostmarkById, normalizeImageUrl, formatPostmarkDimensionsDisplay } from "@/services/postmarks";
+import {
+  getPostmarkById,
+  normalizeImageUrl,
+  formatPostmarkDimensionsDisplay,
+  getPostmarkRatemarks,
+  getPostmarkAuxmarks,
+  getPostmarkCovers,
+  type AssociatedRatemark,
+  type AssociatedAuxmark,
+  type AssociatedCover,
+} from "@/services/postmarks";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
 
@@ -80,6 +91,227 @@ type GalleryImage = {
   description?: string;
 };
 
+function displayField(v: unknown): string {
+  const s = v == null ? "" : String(v).trim();
+  return s !== "" && s.toLowerCase() !== "unknown" ? s : "—";
+}
+
+function displayDimensions(width: unknown, height: unknown): string {
+  const fmt = (n: unknown) => {
+    if (n == null || n === "") return null;
+    const num = typeof n === "number" ? n : parseFloat(String(n));
+    if (!Number.isFinite(num) || num <= 0) return null;
+    return num.toFixed(2).replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
+  };
+  const w = fmt(width);
+  const h = fmt(height);
+  if (w && h) return `${w} × ${h} mm`;
+  if (w) return `${w} mm`;
+  if (h) return `${h} mm`;
+  return "—";
+}
+
+function displayBool(v: unknown): string {
+  if (v === true) return "Yes";
+  if (v === false) return "No";
+  return "—";
+}
+
+function DetailRow({ label, value, last = false }: { label: string; value: string; last?: boolean }) {
+  return (
+    <div className={`flex justify-between py-2 ${last ? "" : "border-b border-border"}`}>
+      <dt className="text-muted-foreground font-medium">{label}</dt>
+      <dd className="text-foreground whitespace-pre-line text-right">{value}</dd>
+    </div>
+  );
+}
+
+function AssociatedRatemarksCard({ items }: { items: AssociatedRatemark[] }) {
+  const entries: (AssociatedRatemark | null)[] = items.length === 0 ? [null] : items;
+  const [open, setOpen] = useState(items.length > 0);
+  return (
+    <Card className="shadow-archival-md">
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <CardHeader>
+          <CardTitle className="font-heading text-lg">
+            <CollapsibleTrigger className="flex w-full items-baseline justify-between gap-3 cursor-pointer">
+              <span>Associated Ratemarks</span>
+              <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>{items.length}</span>
+                <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+              </span>
+            </CollapsibleTrigger>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {items.length === 0 && (
+            <p className="text-sm italic text-muted-foreground">No ratemarks recorded.</p>
+          )}
+          <CollapsibleContent>
+            <div className="space-y-0">
+              {entries.map((item, idx) => {
+            const rm = item?.ratemarkDetails ?? null;
+            const rows: { label: string; value: string }[] = [
+              { label: "Inscription", value: displayField(rm?.inscriptionTxt) },
+              { label: "Rate value", value: displayField(rm?.rateVal) },
+              { label: "Placement", value: displayField(item?.placementType) },
+              { label: "Shape", value: displayField(rm?.shapeName) },
+              { label: "Lettering", value: displayField(rm?.letteringName) },
+              { label: "Impression", value: displayField(rm?.impression) },
+              { label: "Color", value: displayField(rm?.colorName) },
+              { label: "Dimensions", value: displayDimensions(rm?.width, rm?.height) },
+              { label: "Manuscript", value: rm?.isManuscript != null ? displayBool(rm.isManuscript) : "—" },
+            ];
+            return (
+              <div
+                key={item?.id ?? `empty-${idx}`}
+                className={idx > 0 ? "border-t-2 border-primary/40 pt-6 mt-6" : ""}
+              >
+                <dl className="text-sm">
+                  {rows.map((r, i) => (
+                    <DetailRow key={r.label} label={r.label} value={r.value} last={i === rows.length - 1} />
+                  ))}
+                </dl>
+                {item != null && (
+                  <div className="flex justify-between py-2 text-sm border-t border-border">
+                    <span className="text-muted-foreground font-medium">Associated auxmarks</span>
+                    <span className="text-primary cursor-pointer underline-offset-2 hover:underline">
+                      {item.auxmarkCount ?? 0}
+                    </span>
+                  </div>
+                )}
+                  </div>
+                );
+              })}
+            </div>
+          </CollapsibleContent>
+        </CardContent>
+      </Collapsible>
+    </Card>
+  );
+}
+
+function AssociatedAuxmarksCard({ items }: { items: AssociatedAuxmark[] }) {
+  const entries: (AssociatedAuxmark | null)[] = items.length === 0 ? [null] : items;
+  const [open, setOpen] = useState(items.length > 0);
+  return (
+    <Card className="shadow-archival-md">
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <CardHeader>
+          <CardTitle className="font-heading text-lg">
+            <CollapsibleTrigger className="flex w-full items-baseline justify-between gap-3 cursor-pointer">
+              <span>Associated Auxmarks</span>
+              <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>{items.length}</span>
+                <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+              </span>
+            </CollapsibleTrigger>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {items.length === 0 && (
+            <p className="text-sm italic text-muted-foreground">No auxmarks recorded.</p>
+          )}
+          <CollapsibleContent>
+            <div className="space-y-0">
+              {entries.map((item, idx) => {
+                const rows: { label: string; value: string }[] = [
+                  { label: "Inscription", value: displayField(item?.inscriptionTxt) },
+                  { label: "Shape", value: displayField(item?.shapeName) },
+                  { label: "Lettering", value: displayField(item?.letteringName) },
+                  { label: "Impression", value: displayField(item?.impression) },
+                  { label: "Color", value: displayField(item?.colorName) },
+                  { label: "Dimensions", value: displayDimensions(item?.width, item?.height) },
+                  { label: "Manuscript", value: item?.isManuscript != null ? displayBool(item.isManuscript) : "—" },
+                ];
+                return (
+                  <div
+                    key={item?.id ?? `empty-${idx}`}
+                    className={idx > 0 ? "border-t-2 border-primary/40 pt-6 mt-6" : ""}
+                  >
+                    <dl className="text-sm">
+                      {rows.map((r, i) => (
+                        <DetailRow key={r.label} label={r.label} value={r.value} last={i === rows.length - 1} />
+                      ))}
+                    </dl>
+                  </div>
+                );
+              })}
+            </div>
+          </CollapsibleContent>
+        </CardContent>
+      </Collapsible>
+    </Card>
+  );
+}
+
+function AssociatedCoversCard({ items }: { items: AssociatedCover[] }) {
+  const entries: (AssociatedCover | null)[] = items.length === 0 ? [null] : items;
+  const [open, setOpen] = useState(items.length > 0);
+  return (
+    <Card className="shadow-archival-md">
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <CardHeader>
+          <CardTitle className="font-heading text-lg">
+            <CollapsibleTrigger className="flex w-full items-baseline justify-between gap-3 cursor-pointer">
+              <span>Associated Covers</span>
+              <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>{items.length}</span>
+                <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+              </span>
+            </CollapsibleTrigger>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {items.length === 0 && (
+            <p className="text-sm italic text-muted-foreground">No covers recorded.</p>
+          )}
+          <CollapsibleContent>
+            <div className="space-y-0">
+              {entries.map((item, idx) => {
+                const c = item?.coverDetails ?? null;
+                const attrsAllNull =
+                  item == null ||
+                  (c != null &&
+                    (c.colorName == null || c.colorName === "") &&
+                    (c.type == null || c.type === "") &&
+                    c.width == null &&
+                    c.height == null);
+                const rows: { label: string; value: string }[] = [
+                  { label: "Catalog key", value: displayField(c?.code) },
+                  { label: "Color", value: displayField(c?.colorName) },
+                  { label: "Type", value: displayField(c?.type) },
+                  { label: "Dimensions", value: displayDimensions(c?.width, c?.height) },
+                  { label: "Has adhesive", value: item != null ? displayBool(c?.hasAdhesive) : "—" },
+                  { label: "Institutional", value: item != null ? displayBool(c?.isInstitutional) : "—" },
+                  { label: "Backstamp", value: item != null ? displayBool(item.isBackstamp) : "—" },
+                ];
+                return (
+                  <div
+                    key={item?.id ?? `empty-${idx}`}
+                    className={idx > 0 ? "border-t-2 border-primary/40 pt-6 mt-6" : ""}
+                  >
+                    <dl className="text-sm">
+                      {rows.map((r, i) => (
+                        <DetailRow key={r.label} label={r.label} value={r.value} last={i === rows.length - 1} />
+                      ))}
+                    </dl>
+                    {attrsAllNull && (
+                      <p className="text-xs italic text-muted-foreground mt-2">
+                        Cover attributes not yet cataloged from source material.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </CollapsibleContent>
+        </CardContent>
+      </Collapsible>
+    </Card>
+  );
+}
+
 const RecordDetail = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -126,6 +358,9 @@ const RecordDetail = () => {
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [associatedRatemarks, setAssociatedRatemarks] = useState<AssociatedRatemark[]>([]);
+  const [associatedAuxmarks, setAssociatedAuxmarks] = useState<AssociatedAuxmark[]>([]);
+  const [associatedCovers, setAssociatedCovers] = useState<AssociatedCover[]>([]);
 
   // Parse id from URL: "api-1" -> 1 (from Search when using API)
   const postmarkId = id ? parseInt(String(id).replace(/^api-/, ""), 10) : null;
@@ -292,6 +527,30 @@ const RecordDetail = () => {
       cancelled = true;
     };
   }, [postmarkId]);
+
+  // Associated items (ratemarks / auxmarks / covers) are fetched in parallel and
+  // swallow errors per-section so they never block the main record render.
+  useEffect(() => {
+    if (postmarkId == null || isNaN(postmarkId)) return;
+    let cancelled = false;
+    setAssociatedRatemarks([]);
+    setAssociatedAuxmarks([]);
+    setAssociatedCovers([]);
+    Promise.all([
+      getPostmarkRatemarks(postmarkId),
+      getPostmarkAuxmarks(postmarkId),
+      getPostmarkCovers(postmarkId),
+    ]).then(([ratemarks, auxmarks, covers]) => {
+      if (cancelled) return;
+      setAssociatedRatemarks(ratemarks);
+      setAssociatedAuxmarks(auxmarks);
+      setAssociatedCovers(covers);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [postmarkId]);
+
   // Carousel pagination
   useEffect(() => {
     if (!api) return;
@@ -550,6 +809,7 @@ const RecordDetail = () => {
                         { label: "Color", value: record.color },
                         { label: "Dates observed", value: (record.datesObserved ?? []).join("\n") },
                         { label: "Inscription text", value: record.inscriptionText },
+                        { label: "Catalog key", value: record.postmarkKey },
                       ];
                       return details.map(({ label, value }, index) => (
                         <div
@@ -557,7 +817,7 @@ const RecordDetail = () => {
                           className={`flex justify-between py-2 ${index < details.length - 1 ? "border-b border-border" : ""}`}
                         >
                           <dt className="text-muted-foreground font-medium">{label}</dt>
-                          <dd className="text-foreground whitespace-pre-line">{displayValue(value)}</dd>
+                          <dd className="text-foreground whitespace-pre-line text-right">{displayValue(value)}</dd>
                         </div>
                       ));
                     })()}
@@ -596,6 +856,10 @@ const RecordDetail = () => {
                   </CardContent>
                 </Card>
               ) : null}
+
+              <AssociatedRatemarksCard items={associatedRatemarks} />
+              <AssociatedAuxmarksCard items={associatedAuxmarks} />
+              <AssociatedCoversCard items={associatedCovers} />
             </div>
           </div>
 

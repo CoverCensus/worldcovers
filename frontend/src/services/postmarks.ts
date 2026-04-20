@@ -47,6 +47,66 @@ export interface PostmarkApiResponse {
     earliestUse?: string;
     latestUse?: string;
     color?: PostmarkIdNameRef | null;
+    ratemarkCount?: number;
+    auxmarkCount?: number;
+  }
+
+  /** v2 postmark-ratemarks/?postmark=<id> row (enriched with nested ratemark + auxmark count). */
+  export interface AssociatedRatemark {
+    id: number;
+    postmark: number;
+    ratemark: number;
+    placementType: string | null;
+    auxmarkCount: number;
+    ratemarkDetails: {
+      id: number;
+      inscriptionTxt?: string | null;
+      rateVal?: string | number | null;
+      impression?: string | null;
+      width?: number | string | null;
+      height?: number | string | null;
+      isManuscript?: boolean;
+      isIrreg?: boolean | null;
+      shapeName?: string | null;
+      letteringName?: string | null;
+      colorName?: string | null;
+      [k: string]: unknown;
+    } | null;
+  }
+
+  /** v2 auxmarks/?parent_mark_type=POSTMARK&parent_mark_id=<id> row. */
+  export interface AssociatedAuxmark {
+    id: number;
+    parentMarkType: string;
+    parentMarkId: number;
+    inscriptionTxt?: string | null;
+    impression?: string | null;
+    width?: number | string | null;
+    height?: number | string | null;
+    isManuscript?: boolean;
+    shapeName?: string | null;
+    letteringName?: string | null;
+    colorName?: string | null;
+    [k: string]: unknown;
+  }
+
+  /** v2 cover-postmarks/?postmark=<id> row (enriched with nested cover). */
+  export interface AssociatedCover {
+    id: number;
+    cover: number;
+    postmark: number;
+    isBackstamp: boolean;
+    coverDetails: {
+      id: number;
+      code?: string | null;
+      colorName?: string | null;
+      type?: string | null;
+      hasAdhesive?: boolean | null;
+      width?: number | string | null;
+      height?: number | string | null;
+      isInstitutional?: boolean | null;
+      [k: string]: unknown;
+    } | null;
   }
   
   /**
@@ -378,6 +438,18 @@ export interface PostmarkApiResponse {
             ? String(item.latestUse)
             : "",
       color: normalizedColor,
+      ratemarkCount:
+        typeof item.ratemark_count === "number"
+          ? item.ratemark_count
+          : typeof item.ratemarkCount === "number"
+            ? item.ratemarkCount
+            : undefined,
+      auxmarkCount:
+        typeof item.auxmark_count === "number"
+          ? item.auxmark_count
+          : typeof item.auxmarkCount === "number"
+            ? item.auxmarkCount
+            : undefined,
     };
   }
 
@@ -431,6 +503,52 @@ export interface PostmarkApiResponse {
       return res.data;
     } catch {
       return null;
+    }
+  }
+
+  function unwrapResults<T>(data: any): T[] {
+    if (Array.isArray(data)) return data as T[];
+    if (data && Array.isArray(data.results)) return data.results as T[];
+    return [];
+  }
+
+  /** Fetch PostmarkRatemark junctions for a postmark (enriched with nested ratemark_details + auxmark_count). */
+  export async function getPostmarkRatemarks(postmarkId: number): Promise<AssociatedRatemark[]> {
+    try {
+      const res = await apiClient.get(`/postmark-ratemarks/`, {
+        params: { postmark: postmarkId, page_size: 100 },
+      });
+      return unwrapResults<AssociatedRatemark>(res.data);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Fetch Auxmarks whose parent is this postmark (polymorphic parent_mark_type='POSTMARK'). */
+  export async function getPostmarkAuxmarks(postmarkId: number): Promise<AssociatedAuxmark[]> {
+    try {
+      const res = await apiClient.get(`/auxmarks/`, {
+        params: {
+          parent_mark_type: "POSTMARK",
+          parent_mark_id: postmarkId,
+          page_size: 100,
+        },
+      });
+      return unwrapResults<AssociatedAuxmark>(res.data);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Fetch CoverPostmark junctions for a postmark (enriched with nested cover_details). */
+  export async function getPostmarkCovers(postmarkId: number): Promise<AssociatedCover[]> {
+    try {
+      const res = await apiClient.get(`/cover-postmarks/`, {
+        params: { postmark: postmarkId, page_size: 100 },
+      });
+      return unwrapResults<AssociatedCover>(res.data);
+    } catch {
+      return [];
     }
   }
 

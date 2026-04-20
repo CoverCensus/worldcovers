@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
 import { Grid3x3, List, Search as SearchIcon, SlidersHorizontal, Loader2 } from "lucide-react";
@@ -644,9 +645,19 @@ const Search = () => {
                               className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border"
                             />
                             <div className="flex-1 min-w-0">
-                              <h3 className="font-heading text-xl font-semibold text-foreground mb-2">
-                                {row.title}
-                              </h3>
+                              <div className="flex items-start justify-between gap-3 mb-2">
+                                <h3 className="font-heading text-xl font-semibold text-foreground">
+                                  {row.title}
+                                </h3>
+                                <div className="flex flex-shrink-0 gap-1.5">
+                                  <Badge variant="secondary" className="text-xs" title="Associated ratemarks">
+                                    Rates {row.ratemarkCount}
+                                  </Badge>
+                                  <Badge variant="secondary" className="text-xs" title="Associated auxmarks">
+                                    Aux {row.auxmarkCount}
+                                  </Badge>
+                                </div>
+                              </div>
                               <CatalogRecordFields row={row} />
                             </div>
                           </div>
@@ -673,9 +684,19 @@ const Search = () => {
                           className="w-full h-48 object-cover"
                         />
                         <CardContent className="p-4">
-                          <h3 className="font-heading text-lg font-semibold text-foreground mb-2">
-                            {row.title}
-                          </h3>
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <h3 className="font-heading text-lg font-semibold text-foreground">
+                              {row.title}
+                            </h3>
+                            <div className="flex flex-shrink-0 gap-1.5">
+                              <Badge variant="secondary" className="text-xs" title="Associated ratemarks">
+                                Rates {row.ratemarkCount}
+                              </Badge>
+                              <Badge variant="secondary" className="text-xs" title="Associated auxmarks">
+                                Aux {row.auxmarkCount}
+                              </Badge>
+                            </div>
+                          </div>
                           <CatalogRecordFields row={row} />
                         </CardContent>
                       </Card>

@@ -152,6 +152,9 @@ class DateObservedSerializer(serializers.ModelSerializer):
 
 class RatemarkSerializer(serializers.ModelSerializer):
     """Serializer for v2 Ratemark model."""
+    shape_name = serializers.CharField(source='shape.name', read_only=True)
+    lettering_name = serializers.CharField(source='lettering.name', read_only=True)
+    color_name = serializers.CharField(source='color.name', read_only=True)
 
     class Meta:
         model = Ratemark
@@ -161,6 +164,9 @@ class RatemarkSerializer(serializers.ModelSerializer):
 
 class AuxmarkSerializer(serializers.ModelSerializer):
     """Serializer for v2 Auxmark model."""
+    shape_name = serializers.CharField(source='shape.name', read_only=True)
+    lettering_name = serializers.CharField(source='lettering.name', read_only=True)
+    color_name = serializers.CharField(source='color.name', read_only=True)
 
     class Meta:
         model = Auxmark
@@ -170,6 +176,7 @@ class AuxmarkSerializer(serializers.ModelSerializer):
 
 class CoverPostmarkSerializer(serializers.ModelSerializer):
     """Serializer for v2 CoverPostmark model."""
+    cover_details = CoverSerializer(source='cover', read_only=True)
 
     class Meta:
         model = CoverPostmark
@@ -179,11 +186,21 @@ class CoverPostmarkSerializer(serializers.ModelSerializer):
 
 class PostmarkRatemarkSerializer(serializers.ModelSerializer):
     """Serializer for v2 PostmarkRatemark model."""
+    ratemark_details = RatemarkSerializer(source='ratemark', read_only=True)
+    auxmark_count = serializers.SerializerMethodField()
 
     class Meta:
         model = PostmarkRatemark
         fields = "__all__"
         read_only_fields = ["id", "created_date", "modified_date"]
+
+    def get_auxmark_count(self, obj):
+        annotated = getattr(obj, 'auxmark_count', None)
+        if annotated is not None:
+            return annotated
+        return Auxmark.objects.filter(
+            parent_mark_type='RATEMARK', parent_mark_id=obj.ratemark_id
+        ).count()
 
 
 class MarkFramingSerializer(serializers.ModelSerializer):
@@ -373,6 +390,8 @@ class PostmarkListSerializer(serializers.ModelSerializer):
     framing = serializers.SerializerMethodField()
     earliest_use = serializers.SerializerMethodField()
     latest_use = serializers.SerializerMethodField()
+    ratemark_count = serializers.IntegerField(read_only=True)
+    auxmark_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Postmark
@@ -402,6 +421,8 @@ class PostmarkListSerializer(serializers.ModelSerializer):
             'framing',
             'earliest_use',
             'latest_use',
+            'ratemark_count',
+            'auxmark_count',
         ]
 
     def get_facility_name(self, obj):

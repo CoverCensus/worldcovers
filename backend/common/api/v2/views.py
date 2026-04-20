@@ -17,7 +17,8 @@ from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core.mail import send_mail
-from django.db.models import Q, Count, Prefetch, Min, Max
+from django.db.models import Q, Count, Prefetch, Min, Max, Subquery, OuterRef, IntegerField
+from django.db.models.functions import Coalesce
 from django.db.utils import ProgrammingError
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
@@ -1574,7 +1575,23 @@ class CoverPostmarkViewSet(viewsets.ModelViewSet):
 
 class PostmarkRatemarkViewSet(viewsets.ModelViewSet):
     """ViewSet for v2 postmark-ratemark links."""
-    queryset = PostmarkRatemark.objects.all().select_related("postmark", "ratemark")
+    queryset = PostmarkRatemark.objects.all().select_related(
+        "postmark", "ratemark", "ratemark__shape", "ratemark__lettering", "ratemark__color"
+    ).annotate(
+        auxmark_count=Coalesce(
+            Subquery(
+                Auxmark.objects.filter(
+                    parent_mark_type='RATEMARK',
+                    parent_mark_id=OuterRef('ratemark_id'),
+                )
+                .values('parent_mark_id')
+                .annotate(c=Count('*'))
+                .values('c')[:1],
+                output_field=IntegerField(),
+            ),
+            0,
+        )
+    )
     serializer_class = PostmarkRatemarkSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -1803,6 +1820,20 @@ def _postmark_list_queryset():
     ).annotate(
         earliest_date_observed=Min('dates_observed__date'),
         latest_date_observed=Max('dates_observed__date'),
+        ratemark_count=Count('postmark_ratemarks', distinct=True),
+        auxmark_count=Coalesce(
+            Subquery(
+                Auxmark.objects.filter(
+                    parent_mark_type='POSTMARK',
+                    parent_mark_id=OuterRef('postmark_id'),
+                )
+                .values('parent_mark_id')
+                .annotate(c=Count('*'))
+                .values('c')[:1],
+                output_field=IntegerField(),
+            ),
+            0,
+        ),
     )
 
 
