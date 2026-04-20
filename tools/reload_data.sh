@@ -5,12 +5,14 @@
 
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$REPO_ROOT/backend"
+# Must run from repo root so pipenv finds the [scripts] Pipfile + shared venv
+# (there's also a backend/Pipfile without [scripts] — don't let pipenv grab it).
+cd "$REPO_ROOT"
 
-echo "[1/2] import_v2_data --truncate (from $REPO_ROOT/tools/wip/out)"
-pipenv run manage import_v2_data --truncate --dir "$REPO_ROOT/tools/wip/out"
+echo "[1/2] import_v2_data --truncate"
+pipenv run manage import_v2_data --truncate
 
-echo "[2/2] import_catalog_images (from MEDIA_ROOT)"
+echo "[2/2] import_catalog_images"
 pipenv run manage import_catalog_images
 
 echo "Done."
