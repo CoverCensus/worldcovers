@@ -60,6 +60,7 @@ export interface PostmarkApiResponse {
     auxmarkCount: number;
     ratemarkDetails: {
       id: number;
+      code?: string | null;
       inscriptionTxt?: string | null;
       rateVal?: string | number | null;
       impression?: string | null;
@@ -77,6 +78,7 @@ export interface PostmarkApiResponse {
   /** v2 auxmarks/?parent_mark_type=POSTMARK&parent_mark_id=<id> row. */
   export interface AssociatedAuxmark {
     id: number;
+    code?: string | null;
     parentMarkType: string;
     parentMarkId: number;
     inscriptionTxt?: string | null;

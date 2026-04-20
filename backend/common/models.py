@@ -683,6 +683,7 @@ class Ratemark(TimestampedModel):
     model.md domain type: Ratemark
     """
     IMPRESSION_CHOICES = [('Normal', 'Normal'), ('Stencil', 'Stencil'), ('Negative', 'Negative')]
+    code = models.CharField(max_length=30, unique=True, null=True, blank=True, help_text='Editor-assigned reference identifier')
     inscription_txt = models.TextField(help_text='Text as physically inscribed on the rate marking')
     is_manuscript = models.BooleanField()
     shape = models.ForeignKey(Shape, on_delete=models.PROTECT, null=True, blank=True, related_name='ratemarks', help_text='Required when isManuscript is false')
@@ -711,6 +712,7 @@ class Auxmark(TimestampedModel):
     """
     PARENT_MARK_TYPE_CHOICES = [('POSTMARK', 'Postmark'), ('RATEMARK', 'Ratemark')]
     IMPRESSION_CHOICES = [('Normal', 'Normal'), ('Stencil', 'Stencil'), ('Negative', 'Negative')]
+    code = models.CharField(max_length=30, unique=True, null=True, blank=True, help_text='Editor-assigned reference identifier')
     parent_mark_type = models.CharField(max_length=10, choices=PARENT_MARK_TYPE_CHOICES)
     parent_mark_id = models.PositiveIntegerField(help_text='PK of the associated Postmark or Ratemark')
     inscription_txt = models.TextField(help_text='Text as physically inscribed on the auxiliary marking')

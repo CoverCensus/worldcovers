@@ -152,6 +152,7 @@ function AssociatedRatemarksCard({ items }: { items: AssociatedRatemark[] }) {
               {entries.map((item, idx) => {
             const rm = item?.ratemarkDetails ?? null;
             const rows: { label: string; value: string }[] = [
+              { label: "Catalog key", value: displayField(rm?.code) },
               { label: "Inscription", value: displayField(rm?.inscriptionTxt) },
               { label: "Rate value", value: displayField(rm?.rateVal) },
               { label: "Placement", value: displayField(item?.placementType) },
@@ -216,6 +217,7 @@ function AssociatedAuxmarksCard({ items }: { items: AssociatedAuxmark[] }) {
             <div className="space-y-0">
               {entries.map((item, idx) => {
                 const rows: { label: string; value: string }[] = [
+                  { label: "Catalog key", value: displayField(item?.code) },
                   { label: "Inscription", value: displayField(item?.inscriptionTxt) },
                   { label: "Shape", value: displayField(item?.shapeName) },
                   { label: "Lettering", value: displayField(item?.letteringName) },
@@ -587,10 +589,8 @@ const RecordDetail = () => {
   const handleBack = () => {
     if (fromDashboard) {
       navigate("/dashboard");
-    } else if (fromSearch) {
-      navigate("/search");
     } else {
-      navigate("/search");
+      navigate(-1);
     }
   };
 

@@ -484,7 +484,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         return _format_date_by_granularity(d, _granularity_for_date(obj, d))
 
     def get_main_image(self, obj):
-        main_img = obj.images.filter(display_order=0).first()
+        main_img = obj.images.order_by('display_order').first()
         if main_img:
             return PostmarkImageSerializer(main_img, context=self.context).data
         return None

@@ -18,6 +18,7 @@ An auxiliary or instructional marking (e.g., PAID, FREE) associated with a speci
 
 *Fields:*
 
+* code \- An editor-assigned reference identifier  
 * color\_id \- Related Color, the ink tone of this marking.  
 * height (nullable) \- Vertical dimension of the marking impression.  
 * impression (nullable) \- Printing technique of the handstamp device.  
@@ -411,6 +412,7 @@ A postal rate marking device or manuscript rate marking. Classified by the same 
 
 *Fields:*
 
+* code \- An editor-assigned reference identifier  
 * color\_id \- Related Color, the ink color of this marking.  
 * height (nullable) \- Vertical dimension of the marking impression.  
 * impression (nullable) \- Printing technique of the handstamp device.  
@@ -544,6 +546,7 @@ Editorial value table for the primary form assigned to a postal marking. This vo
 
  Cover {  
  int id PK  
+ string code  
  int color\_id FK  
  decimal width  
  decimal height  
@@ -626,6 +629,7 @@ PostmarkValuation {
 
 Ratemark {    
     int id PK    
+    string code  
     boolean is\_manuscript    
     int shape\_id FK    
     int lettering\_id FK    
@@ -640,6 +644,7 @@ Ratemark {
 
 Auxmark {    
     int id PK    
+    string code  
     string parent\_mark\_type    
     int parent\_mark\_id    
     boolean is\_manuscript    
