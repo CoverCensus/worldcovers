@@ -206,7 +206,7 @@ export interface PostmarkApiResponse {
       console.error("mapPostmarkDetailApiToPostmarkRecord", e);
       return mapApiResultToRecord({
         postmark_id: data?.postmark_id ?? data?.postmarkId,
-        postmark_key: data?.postmark_key ?? data?.postmarkKey ?? "",
+        postmark_key: data?.postmark_key ?? data?.postmarkKey ?? data?.code ?? "",
         facility_name: data?.facility_name ?? data?.facilityName,
         shape_name: "",
         town: data?.town ?? "",
@@ -289,7 +289,7 @@ export interface PostmarkApiResponse {
 
     const synthetic = {
       postmark_id: data.postmark_id ?? data.postmarkId,
-      postmark_key: data.postmark_key ?? data.postmarkKey,
+      postmark_key: data.postmark_key ?? data.postmarkKey ?? data.code,
       facility_name: data.facility_name ?? data.facilityName,
       shape_name: shapeName,
       town: data.town,
@@ -396,7 +396,7 @@ export interface PostmarkApiResponse {
 
     return {
       id,
-      postmarkKey: item.postmark_key ?? item.postmarkKey,
+      postmarkKey: item.postmark_key ?? item.postmarkKey ?? item.code,
       facilityName: facilityName ?? "",
       shapeName: shapeName ?? "",
       rateLocation: item.rate_location ?? item.rateLocation,

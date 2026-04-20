@@ -389,7 +389,7 @@ const RecordDetail = () => {
           const parsed = parseOtherCharacteristics(
             data.otherCharacteristics ?? data.other_characteristics,
           );
-          const postmarkKey = data.postmark_key ?? data.postmarkKey ?? "";
+          const postmarkKey = data.postmark_key ?? data.postmarkKey ?? data.code ?? "";
           const town = data.town ?? "";
           const state = data.state ?? "";
           const earliestUse = data.earliest_use ?? data.earliestUse ?? "";
