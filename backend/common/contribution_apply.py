@@ -4,8 +4,11 @@ Called via Contribution.apply_to_catalog(); isolated here to avoid circular
 imports between models.py and the API view layer.
 """
 import json
+import logging
 import re
 from datetime import date, datetime
+
+logger = logging.getLogger(__name__)
 from decimal import Decimal, InvalidOperation
 from typing import Optional, Tuple
 
@@ -352,10 +355,16 @@ def _create_postmark_in_catalog(payload):
                 created_by=user,
                 modified_by=user,
             )
-        region, _ = Region.objects.get_or_create(
-            administrative_unit=admin_unit,
-            defaults={"name": state_str[:255] or "Unknown", "created_by": user, "modified_by": user},
+        if not state_str:
+            logger.error("contribution_apply: empty state on payload")
+            return None
+        region = (
+            Region.objects.filter(name__iexact=state_str).first()
+            or Region.objects.filter(abbrev__iexact=state_str).first()
         )
+        if region is None:
+            logger.error("contribution_apply: no Region matches state=%r", state_str)
+            return None
         post_office = None
         if town_str:
             post_office, _ = PostOffice.objects.get_or_create(
@@ -396,6 +405,7 @@ def _create_postmark_in_catalog(payload):
         _sync_ratemarks_auxmarks_from_payload(postmark, user, payload)
         return postmark
     except Exception:
+        logger.exception("_create_postmark_in_catalog failed for payload keys=%s", list(payload.keys()))
         return None
 
 
@@ -444,10 +454,16 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
                 created_by=user,
                 modified_by=user,
             )
-        region, _ = Region.objects.get_or_create(
-            administrative_unit=admin_unit,
-            defaults={"name": state_str[:255] or "Unknown", "created_by": user, "modified_by": user},
+        if not state_str:
+            logger.error("contribution_apply: empty state on payload")
+            return None
+        region = (
+            Region.objects.filter(name__iexact=state_str).first()
+            or Region.objects.filter(abbrev__iexact=state_str).first()
         )
+        if region is None:
+            logger.error("contribution_apply: no Region matches state=%r", state_str)
+            return None
         post_office = None
         if town_str:
             post_office, _ = PostOffice.objects.get_or_create(
@@ -481,6 +497,7 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
         _sync_ratemarks_auxmarks_from_payload(postmark, user, payload)
         return postmark
     except Exception:
+        logger.exception("_update_postmark_in_catalog failed for postmark_id=%s", postmark_id)
         return None
 
 

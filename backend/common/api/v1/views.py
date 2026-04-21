@@ -2220,18 +2220,6 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
                 {"detail": f"Contribution is not pending (status: {contrib.status})."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # State editors cannot approve their own submissions; another editor assigned to the state must review.
-        if (
-            not getattr(request.user, "is_superuser", False)
-            and contrib.contributor_id == request.user.id
-            and _get_user_role(request.user) == "state_editor"
-        ):
-            return Response(
-                {
-                    "detail": "You cannot approve your own submission. Another state editor assigned to this state must review it.",
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
         serializer = ContributionApproveRejectSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data

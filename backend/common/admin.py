@@ -23,7 +23,29 @@ from django.db import connection
 
 from import_export import resources, fields
 from import_export.admin import ImportExportModelAdmin
-from import_export.widgets import ForeignKeyWidget
+from import_export.widgets import ForeignKeyWidget, Widget
+from django.utils.dateparse import parse_datetime
+
+
+class IsoDateTimeWidget(Widget):
+    """Accepts ISO 8601 datetimes (with or without microseconds / tz offset) on import,
+    and renders ISO format on export. Tolerates the exact output produced by this resource's
+    CSV export (which was tripping up the default DateTimeWidget)."""
+
+    def clean(self, value, row=None, *args, **kwargs):
+        if value in (None, ""):
+            return None
+        if hasattr(value, "isoformat"):
+            return value
+        parsed = parse_datetime(str(value).strip())
+        if parsed is None:
+            raise ValueError(f"Could not parse datetime: {value!r}")
+        return parsed
+
+    def render(self, value, obj=None):
+        if value is None:
+            return ""
+        return value.isoformat()
 
 from reversion.admin import VersionAdmin
 from reversion_compare.admin import CompareVersionAdmin
@@ -135,6 +157,16 @@ class TimestampedModelResource(resources.ModelResource):
         column_name='modified_by',
         attribute='modified_by',
         widget=ForeignKeyWidget(User, 'id')
+    )
+    created_date = fields.Field(
+        column_name='created_date',
+        attribute='created_date',
+        widget=IsoDateTimeWidget(),
+    )
+    modified_date = fields.Field(
+        column_name='modified_date',
+        attribute='modified_date',
+        widget=IsoDateTimeWidget(),
     )
 
     class Meta:
@@ -485,10 +517,10 @@ class UserLocationAssignmentResource(resources.ModelResource):
         attribute='user',
         widget=ForeignKeyWidget(User, 'id')
     )
-    administrative_unit = fields.Field(
-        column_name='administrative_unit',
-        attribute='administrative_unit',
-        widget=ForeignKeyWidget(AdministrativeUnit, 'administrative_unit_id')
+    region = fields.Field(
+        column_name='region',
+        attribute='region',
+        widget=ForeignKeyWidget(Region, 'id')
     )
 
     class Meta:
@@ -979,7 +1011,7 @@ class UserLocationAssignmentInline(admin.TabularInline):
     """
     model = UserLocationAssignment
     extra = 0
-    raw_id_fields = ['administrative_unit']
+    raw_id_fields = ['region']
     verbose_name = 'Location'
     verbose_name_plural = 'Locations'
 
@@ -1007,10 +1039,10 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
 
     locations = forms.ModelMultipleChoiceField(
         label='Locations',
-        queryset=AdministrativeUnit.objects.none(),
+        queryset=Region.objects.none(),
         required=False,
         widget=FilteredSelectMultiple('Locations', is_stacked=False),
-        help_text='Select which locations this user is associated with.',
+        help_text='Select which locations (Regions) this user is associated with.',
     )
 
     role = forms.ChoiceField(
@@ -1030,15 +1062,11 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Base queryset: all AdministrativeUnits. If a canonical list of state
-        # reference codes is available, mirror the Location admin behavior by
-        # restricting to those codes; otherwise, show all locations.
-        location_qs = AdministrativeUnit.objects.all()
-        codes = get_canonical_location_reference_codes()
-        if codes is not None:
-            location_qs = location_qs.filter(reference_code__in=codes)
-
-        location_qs = location_qs.order_by('reference_code')
+        # Locations = state-tier Regions still in force.
+        location_qs = Region.objects.filter(
+            region_tier='STATE',
+            defunct_date__isnull=True,
+        ).order_by('name')
         self.fields['locations'].queryset = location_qs
 
         # Preselect Chosen Locations from UserLocationAssignment when editing a user
@@ -1064,27 +1092,27 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
         if not _user_location_table_available():
             return
         # locations is in Meta.fields so it is in cleaned_data after validation
-        selected_qs = self.cleaned_data.get('locations') or AdministrativeUnit.objects.none()
+        selected_qs = self.cleaned_data.get('locations') or Region.objects.none()
 
         user = self.instance
         selected_ids = set(selected_qs.values_list('pk', flat=True))
 
         # Remove assignments that are no longer selected
         UserLocationAssignment.objects.filter(user=user).exclude(
-            administrative_unit_id__in=selected_ids
+            region_id__in=selected_ids
         ).delete()
 
         # Add new assignments for newly selected locations
         existing_ids = set(
             UserLocationAssignment.objects.filter(user=user).values_list(
-                'administrative_unit_id', flat=True
+                'region_id', flat=True
             )
         )
         to_create_ids = selected_ids - existing_ids
 
         UserLocationAssignment.objects.bulk_create(
             [
-                UserLocationAssignment(user=user, administrative_unit_id=pk)
+                UserLocationAssignment(user=user, region_id=pk)
                 for pk in to_create_ids
             ]
         )
@@ -1560,9 +1588,9 @@ class PostcoverImageAdmin(TimestampedModelAdmin):
 @admin.register(UserLocationAssignment)
 class UserLocationAssignmentAdmin(ImportExportModelAdmin):
     resource_class = UserLocationAssignmentResource
-    list_display = ['user', 'administrative_unit']
-    search_fields = ['user__username', 'administrative_unit__reference_code']
-    raw_id_fields = ['user', 'administrative_unit']
+    list_display = ['user', 'region']
+    search_fields = ['user__username', 'region__name', 'region__abbrev']
+    raw_id_fields = ['user', 'region']
 
 
 @admin.register(FAQEntry)

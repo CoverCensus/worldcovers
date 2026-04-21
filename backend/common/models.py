@@ -495,22 +495,22 @@ class AdminCsvUpload(models.Model):
 
 class UserLocationAssignment(models.Model):
     """
-    Links a Django user account to one or more locations (AdministrativeUnit).
-    Used in the admin user detail page so staff can see and manage which
-    locations a user is associated with.
+    Links a Django user account to one or more Regions. Used in the admin user
+    detail page so staff can see and manage which regions a user is associated
+    with (e.g., State Editors are assigned to the states they curate).
     """
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='location_assignments')
-    administrative_unit = models.ForeignKey(AdministrativeUnit, on_delete=models.CASCADE, related_name='user_location_assignments', help_text='Location this user is associated with')
+    region = models.ForeignKey('Region', on_delete=models.CASCADE, related_name='user_location_assignments', help_text='Region this user is associated with')
 
     class Meta:
         db_table = 'UserLocationAssignments'
         verbose_name = 'User location assignment'
         verbose_name_plural = 'User location assignments'
-        unique_together = [['user', 'administrative_unit']]
+        unique_together = [['user', 'region']]
 
     def __str__(self):
-        return f'{self.user} → {self.administrative_unit}'
+        return f'{self.user} → {self.region}'
 
 class FAQEntry(TimestampedModel):
     """

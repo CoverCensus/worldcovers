@@ -119,8 +119,6 @@ const FIELD_ERROR_SCROLL_TARGETS: Array<[string, string]> = [
   ["heightMm", "height-mm"],
   ["inscriptionText", "inscription-text"],
   ["images", "postmark-images-input"],
-  ["editorValue", "editor-value"],
-  ["editorComment", "editor-comment"],
 ];
 
 function scrollToFirstError(errors: Record<string, string | undefined>) {
@@ -383,8 +381,6 @@ const Contribute = () => {
     framing?: string;
     dateFormat?: string;
     inscriptionText?: string;
-    editorValue?: string;
-    editorComment?: string;
   }>({});
   const [earliestYearError, setEarliestYearError] = useState<string | null>(null);
   const [latestYearError, setLatestYearError] = useState<string | null>(null);
@@ -400,10 +396,7 @@ const Contribute = () => {
   const [referenceWorksError, setReferenceWorksError] = useState<string | null>(null);
   const [referenceWorksFetched, setReferenceWorksFetched] = useState(false);
 
-  // Editor-only: value and comment when approving (direct add to catalog)
   const isStateEditor = user?.role === "state_editor";
-  const [editorValue, setEditorValue] = useState("");
-  const [editorComment, setEditorComment] = useState("");
 
   /** Town/City: letters, spaces, hyphens, apostrophes only */
   const sanitizeTown = (v: string) => v.replace(/[^a-zA-Z\s\-']/g, "");
@@ -961,13 +954,6 @@ const Contribute = () => {
       if (mmErr.height) errors.heightMm = mmErr.height;
     }
 
-    if (isStateEditor) {
-      if (editorValue.trim() === "" || Number.isNaN(parseFloat(editorValue)) || parseFloat(editorValue) < 0) {
-        errors.editorValue = "Value is required when approving (adding to catalog) and must be a non-negative number";
-      }
-      if (!editorComment.trim()) errors.editorComment = "Comment is required when adding to catalog";
-    }
-
     const referenceDetailErrors: Record<number, ReferenceDetailFieldErrors> = {};
     for (const work of selectedReferenceWorks) {
       const detail = referenceDetailsById[work.id];
@@ -1162,17 +1148,6 @@ const Contribute = () => {
       })();
       const inscriptionToSend = inscriptionText.trim();
 
-      const derivedShapeId = isStateEditor && shape
-        ? shapeOptions.find((t) => t.name === shape)?.id
-        : undefined;
-      const editorPayload = isStateEditor
-        ? {
-            postmark_shape_id: derivedShapeId,
-            estimated_value: parseFloat(editorValue),
-            review_notes: editorComment.trim() || undefined,
-          }
-        : {};
-
       if (allImageFiles.length > 0) {
         const form = new FormData();
         if (editContributionId != null) form.append("edit_contribution_id", String(editContributionId));
@@ -1204,11 +1179,6 @@ const Contribute = () => {
           form.append("date_format_id", dateFormatIds[0]);
           dateFormatIds.forEach((id) => form.append("date_format_ids[]", id));
         }
-        if (isStateEditor) {
-          if (derivedShapeId != null) form.append("postmark_shape_id", String(derivedShapeId));
-          form.append("estimated_value", editorValue.trim());
-          form.append("review_notes", editorComment.trim());
-        }
         for (const file of postmarkImageFiles) form.append("postmark_image", file, file.name);
         for (const file of ratemarkImageFiles) form.append("ratemark_image", file, file.name);
         for (const file of auxmarkImageFiles) form.append("auxmark_image", file, file.name);
@@ -1239,7 +1209,6 @@ const Contribute = () => {
           framing_style_ids: framingIds.length > 0 ? framingIds.map((id) => Number(id)) : undefined,
           date_format_id: dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
           date_format_ids: dateFormatIds.length > 0 ? dateFormatIds.map((id) => Number(id)) : undefined,
-          ...editorPayload,
         });
       }
 
@@ -1267,19 +1236,14 @@ const Contribute = () => {
         throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
 
-      const resData = (await res.json().catch(() => ({}))) as { postmarkId?: number; contributionId?: number; detail?: string };
-      const directAdd = resData?.postmarkId != null;
+      const resData = (await res.json().catch(() => ({}))) as { contributionId?: number; detail?: string };
       const wasEdit = editContributionId != null;
 
       toast({
-        title: directAdd ? "Catalog entry added" : wasEdit ? "Changes submitted" : "Submission sent",
-        description: directAdd
-          ? "The postmark has been added to the catalog and is now visible in Search."
-          : wasEdit
-            ? "Your updated submission has been sent for review again."
-            : isStateEditor
-              ? "Your entry was sent for peer review. Another state editor assigned to this state must approve it before it appears in Search."
-              : "Your catalog entry has been submitted for approval. It will appear in Search after an admin approves it.",
+        title: wasEdit ? "Changes submitted" : "Submission sent",
+        description: wasEdit
+          ? "Your updated submission has been sent for review again."
+          : "Your catalog entry has been submitted for approval. It will appear in Search after an editor approves it.",
       });
 
       if (wasEdit && resData?.contributionId != null) {
@@ -1322,10 +1286,6 @@ const Contribute = () => {
       setFramingIds([]);
       setDateFormatIds([]);
       setDateType("");
-      if (directAdd) {
-        setEditorValue("");
-        setEditorComment("");
-      }
       if (postmarkFileInputRef.current) postmarkFileInputRef.current.value = "";
       if (ratemarkFileInputRef.current) ratemarkFileInputRef.current.value = "";
       if (auxmarkFileInputRef.current) auxmarkFileInputRef.current.value = "";
@@ -1435,18 +1395,12 @@ const Contribute = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="mb-8">
             <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">
-              {isEditMode
-                ? "Edit and resubmit"
-                : isStateEditor
-                  ? "Editor: Add to catalog"
-                  : "Contributor Dashboard"}
+              {isEditMode ? "Edit and resubmit" : "Contributor Dashboard"}
             </h1>
             <p className="text-muted-foreground">
               {isEditMode
                 ? "Update your submission using the editor feedback, then submit to send it back for review."
-                : isStateEditor
-                  ? "Fill the form and the catalog details below to add a postmark directly to Search. Entries you submit here appear in the catalog immediately."
-                  : "Submit new postmark records or corrections. All fields match what reviewers see on the Submission Detail page."}
+                : "Submit new postmark records or corrections. All fields match what reviewers see on the Submission Detail page."}
             </p>
           </div>
 
@@ -2461,38 +2415,6 @@ const Contribute = () => {
                         Optional. Select one or more established reference works to associate with this submission.
                       </p>
                     </div>
-
-                    {isStateEditor && (
-                      <div className="border-t pt-6 mt-6 space-y-4">
-                        <p className="text-sm text-muted-foreground">When approving (adding directly to the catalog), Value and Comment are required.</p>
-                        <div className="space-y-2">
-                          <Label htmlFor="editor-value">Value (of this postmark)</Label>
-                          <Input
-                            id="editor-value"
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            placeholder="e.g. 25.00 (required when approving)"
-                            value={editorValue}
-                            onChange={(e) => { setEditorValue(e.target.value); setFieldErrors((prev) => ({ ...prev, editorValue: undefined })); }}
-                            className={fieldErrors.editorValue ? "border-destructive" : ""}
-                          />
-                          {fieldErrors.editorValue && <p className="text-sm text-destructive">{fieldErrors.editorValue}</p>}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="editor-comment">Comment</Label>
-                          <Textarea
-                            id="editor-comment"
-                            placeholder="Add a comment for this catalog entry (required when adding to catalog)..."
-                            rows={2}
-                            value={editorComment}
-                            onChange={(e) => { setEditorComment(e.target.value); setFieldErrors((prev) => ({ ...prev, editorComment: undefined })); }}
-                            className={fieldErrors.editorComment ? "border-destructive" : ""}
-                          />
-                          {fieldErrors.editorComment && <p className="text-sm text-destructive">{fieldErrors.editorComment}</p>}
-                        </div>
-                      </div>
-                    )}
 
                     {renderImageUploader(
                       "postmark",

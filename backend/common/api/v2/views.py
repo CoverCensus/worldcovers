@@ -297,6 +297,22 @@ from common.contribution_apply import _extract_mark_entries, _update_postmark_in
 _password_reset_token_generator = PasswordResetTokenGenerator()
 
 
+def _assigned_locations_payload(user):
+    """Return the list of regions assigned to a State Editor for the auth payload."""
+    from common.models import Region  # local import to avoid circular concerns
+    if not user or not user.is_authenticated:
+        return []
+    # Inline the role check to avoid forward-reference issues.
+    if not user.groups.filter(name__iexact="State Editors").exists():
+        return []
+    return [
+        {"name": r.name, "reference_code": r.abbrev}
+        for r in Region.objects.filter(
+            user_location_assignments__user=user
+        ).distinct().order_by('name')
+    ]
+
+
 def _get_user_role(user):
     """
     Derive a simple role string for the frontend from Django auth state.
@@ -365,6 +381,7 @@ class LoginView(APIView):
                 "email": getattr(user, "email", "") or "",
                 "is_staff": getattr(user, "is_staff", False),
                 "role": _get_user_role(user),
+                "assigned_locations": _assigned_locations_payload(user),
             },
         })
 
@@ -384,6 +401,7 @@ class CurrentUserView(APIView):
                 "email": getattr(user, "email", "") or "",
                 "is_staff": getattr(user, "is_staff", False),
                 "role": _get_user_role(user),
+                "assigned_locations": _assigned_locations_payload(user),
             },
         })
 
@@ -402,28 +420,24 @@ class AssignedStatesView(APIView):
         role = _get_user_role(user)
 
         if role == "state_editor":
-            units = _get_user_assigned_units(user)
-            identities = AdministrativeUnitIdentity.objects.filter(
-                administrative_unit__in=units,
-                effective_to_date__isnull=True,
-            )
+            regions = _get_user_assigned_regions(user)
         else:
-            # Contributors can submit to any state; return all current identities
-            identities = AdministrativeUnitIdentity.objects.filter(
-                effective_to_date__isnull=True,
+            # Contributors can submit to any current state-tier region
+            regions = Region.objects.filter(
+                region_tier='STATE',
+                defunct_date__isnull=True,
             )
         seen = set()
         items = []
-        for ident in identities:
-            name = (ident.unit_name or "").strip()
+        for region in regions:
+            name = (region.name or "").strip()
             if not name or name in seen:
                 continue
             seen.add(name)
             items.append({
                 "value": name,
                 "label": name,
-                "administrativeUnitId": ident.administrative_unit_id,
-                "abbreviation": (ident.unit_abbreviation or "").strip(),
+                "abbreviation": (region.abbrev or "").strip(),
             })
         items.sort(key=lambda x: x["label"].lower())
         return Response(items)
@@ -810,50 +824,40 @@ def _save_contribution_image(uploaded_file):
     }
 
 
-def _get_user_assigned_units(user):
-    """Return queryset of AdministrativeUnits explicitly assigned to this user."""
-    return AdministrativeUnit.objects.filter(
+def _get_user_assigned_regions(user):
+    """Return queryset of Regions explicitly assigned to this user."""
+    return Region.objects.filter(
         user_location_assignments__user=user
     ).distinct()
 
 
 def _get_allowed_state_strings(user):
-    """Return (allowed_strings_set, assigned_units_queryset)."""
-    units = _get_user_assigned_units(user)
+    """Return (allowed_strings_set, assigned_regions_queryset)."""
+    regions = _get_user_assigned_regions(user)
     allowed = set()
-    if not units.exists():
-        return allowed, units
-    identities = AdministrativeUnitIdentity.objects.filter(
-        administrative_unit__in=units,
-        effective_to_date__isnull=True,
-    )
-    for ident in identities:
-        name = (ident.unit_name or "").strip()
-        abv = (ident.unit_abbreviation or "").strip()
+    if not regions.exists():
+        return allowed, regions
+    for region in regions:
+        name = (region.name or "").strip()
+        abv = (region.abbrev or "").strip()
         if name:
             allowed.add(name.lower())
         if abv:
             allowed.add(abv.lower())
-    return allowed, units
+    return allowed, regions
 
 
-def _resolve_assigned_admin_unit(user, state_str):
-    """Match a state string to one of the user's assigned AdministrativeUnits."""
+def _resolve_assigned_region(user, state_str):
+    """Match a state string to one of the user's assigned Regions."""
     state_norm = (state_str or "").strip().lower()
     if not state_norm:
         return None
-    allowed, units = _get_allowed_state_strings(user)
-    if not allowed:
-        return None
-    identities = AdministrativeUnitIdentity.objects.filter(
-        administrative_unit__in=units,
-        effective_to_date__isnull=True,
-    )
-    for ident in identities:
-        name = (ident.unit_name or "").strip().lower()
-        abv = (ident.unit_abbreviation or "").strip().lower()
+    regions = _get_user_assigned_regions(user)
+    for region in regions:
+        name = (region.name or "").strip().lower()
+        abv = (region.abbrev or "").strip().lower()
         if state_norm == name or state_norm == abv:
-            return ident.administrative_unit
+            return region
     return None
 
 
@@ -961,7 +965,6 @@ class ContributionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         user = request.user
-        assigned_admin_unit = None
         if not user.is_authenticated:
             return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -971,8 +974,7 @@ class ContributionView(APIView):
         if edit_postmark_id is None and edit_contribution_id is None:
             role = _get_user_role(user)
             if role == "state_editor" and not getattr(user, "is_superuser", False):
-                assigned_admin_unit = _resolve_assigned_admin_unit(user, state)
-                if not assigned_admin_unit:
+                if _resolve_assigned_region(user, state) is None:
                     return Response(
                         {"detail": "You are not assigned to submit listings for this state."},
                         status=status.HTTP_403_FORBIDDEN,
@@ -1023,8 +1025,6 @@ class ContributionView(APIView):
             "ratemarks": ratemarks,
             "auxmarks": auxmarks,
         }
-        if assigned_admin_unit is not None:
-            payload["admin_unit"] = assigned_admin_unit
         postmark_files = request.FILES.getlist("postmark_image") or request.FILES.getlist("postmark_images")
         ratemark_files = request.FILES.getlist("ratemark_image") or request.FILES.getlist("ratemark_images")
         auxmark_files = request.FILES.getlist("auxmark_image") or request.FILES.getlist("auxmark_images")
@@ -1088,8 +1088,6 @@ class ContributionView(APIView):
             # - State Editors / superusers: apply directly to the catalog.
             role = _get_user_role(user)
             if role == "contributor" and not getattr(user, "is_superuser", False):
-                from common.models import Contribution  # local import to avoid circulars at top
-
                 try:
                     submitted_data = {
                         "state": payload.get("state", ""),
@@ -1187,10 +1185,9 @@ def _can_review_contribution(user, contrib):
         return True
     sd = contrib.submitted_data or {}
     state_str = (sd.get("state") or "").strip()
-    assigned = _get_user_assigned_units(user)
-    if not assigned.exists():
+    if not _get_user_assigned_regions(user).exists():
         return False
-    return _resolve_assigned_admin_unit(user, state_str) is not None
+    return _resolve_assigned_region(user, state_str) is not None
 
 
 class IsStateEditorOrContributor(BasePermission):
@@ -1228,12 +1225,7 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         role = _get_user_role(user)
         base_qs = Contribution.objects.select_related("contributor", "reviewer", "postmark")
         if role == "state_editor":
-            assigned = _get_user_assigned_units(user)
-            state_names = []
-            for u in assigned:
-                ident = u.get_current_identity()
-                if ident and ident.unit_name:
-                    state_names.append(ident.unit_name)
+            state_names = [r.name for r in _get_user_assigned_regions(user) if r.name]
             if state_names:
                 return base_qs.filter(
                     Q(contributor=user) | Q(submitted_data__state__in=state_names)
@@ -1298,30 +1290,23 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
 
 # ========== CUSTOM PERMISSIONS ==========
 
-def _get_postmark_responsible_groups(postmark):
-    """Return the groups responsible for a postmark's region (via post_office chain)."""
-    from django.contrib.auth.models import Group
-    try:
-        po = postmark.post_office
-        if not po:
-            return Group.objects.none()
-        region = po.region
-        if not region:
-            return Group.objects.none()
-        admin_unit = region.administrative_unit
-        if not admin_unit:
-            return Group.objects.none()
-        return Group.objects.filter(
-            administrative_unit_responsibilities__administrative_unit=admin_unit,
-            administrative_unit_responsibilities__is_active=True,
-        )
-    except Exception:
-        return Group.objects.none()
+
+def _user_is_responsible_for_postmark(user, postmark):
+    """True if user is assigned to the Region of this postmark's post office."""
+    if not user or not user.is_authenticated:
+        return False
+    if getattr(user, "is_superuser", False):
+        return True
+    po = getattr(postmark, "post_office", None)
+    region_id = getattr(po, "region_id", None) if po else None
+    if not region_id:
+        return False
+    return _get_user_assigned_regions(user).filter(pk=region_id).exists()
 
 
 class IsResponsibleForRegion(BasePermission):
     """
-    Permission check: User must be in a group responsible for the postmark's region.
+    Permission check: User must be assigned to the postmark's region.
     Exception: the contribution's original submitter may edit/delete their own submission.
     """
     def has_object_permission(self, request, view, obj):
@@ -1335,9 +1320,7 @@ class IsResponsibleForRegion(BasePermission):
                     return True
             except Exception:
                 pass
-            responsible_groups = _get_postmark_responsible_groups(obj)
-            user_groups = request.user.groups.all()
-            return any(group in responsible_groups for group in user_groups)
+            return _user_is_responsible_for_postmark(request.user, obj)
 
         return request.user and request.user.is_authenticated
 
@@ -1372,12 +1355,11 @@ class DeleteMySubmissionView(APIView):
             return Response(status=status.HTTP_204_NO_CONTENT)
 
         # 2. Users assigned to this postmark's region can delete any listing in that region
-        assigned_units = _get_user_assigned_units(user)
         try:
-            au_id = postmark.post_office.region.administrative_unit_id if postmark.post_office else None
+            region_id = postmark.post_office.region_id if postmark.post_office else None
         except Exception:
-            au_id = None
-        if au_id and assigned_units.filter(pk=au_id).exists():
+            region_id = None
+        if region_id and _get_user_assigned_regions(user).filter(pk=region_id).exists():
             postmark.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1400,7 +1382,8 @@ class DeleteMySubmissionView(APIView):
 # ========== GEOGRAPHIC HIERARCHY VIEWSETS ==========
 
 class RegionViewSet(viewsets.ModelViewSet):
-    """ViewSet for v2 regions."""
+    """ViewSet for v2 regions. Supports ?assigned_only=true to restrict
+    State Editors to their assigned regions (used by Contribute, Dashboard)."""
     queryset = Region.objects.all().select_related("parent_region")
     serializer_class = RegionSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
@@ -1409,6 +1392,24 @@ class RegionViewSet(viewsets.ModelViewSet):
     search_fields = ["name", "abbrev"]
     ordering_fields = ["name", "abbrev", "established_date", "defunct_date", "created_date"]
     ordering = ["name"]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.request.query_params.get('assigned_only', '').lower() != 'true':
+            return qs
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return qs.none()
+        if _get_user_role(user) == "state_editor":
+            return qs.filter(user_location_assignments__user=user).distinct()
+        # Contributors (and others) see all regions when assigned_only=true
+        return qs
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        if request.query_params.get('assigned_only', '').lower() == 'true':
+            response['Cache-Control'] = 'no-store, private, max-age=0'
+        return response
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, modified_by=self.request.user)
@@ -1677,36 +1678,6 @@ class AdministrativeUnitViewSet(viewsets.ModelViewSet):
     ordering_fields = ['reference_code', 'created_date']
     ordering = ['reference_code']
 
-    def get_queryset(self):
-        qs = super().get_queryset()
-        # Only filter when assigned_only=true (Contribute, Dashboard); Search uses all states
-        if self.request.query_params.get('assigned_only', '').lower() != 'true':
-            return qs
-        user = self.request.user
-        # assigned_only requires auth; unauthenticated gets empty (avoids inconsistent "all" when session missing)
-        if not user or not user.is_authenticated:
-            return qs.none()
-        role = _get_user_role(user)
-        if role == "state_editor":
-            # For State Editors, restrict to their explicit assignments.
-            assigned_ids = list(
-                UserLocationAssignment.objects.filter(user=user).values_list(
-                    'administrative_unit_id', flat=True
-                )
-            )
-            if assigned_ids:
-                return qs.filter(pk__in=assigned_ids)
-            return qs.none()
-        # Contributors (and others) can see all states when assigned_only=true
-        return qs
-
-    def list(self, request, *args, **kwargs):
-        response = super().list(request, *args, **kwargs)
-        # assigned_only responses are user-specific; prevent caching
-        if request.query_params.get('assigned_only', '').lower() == 'true':
-            response['Cache-Control'] = 'no-store, private, max-age=0'
-        return response
-
     def get_serializer_class(self):
         if self.action == 'list':
             return AdministrativeUnitListSerializer
@@ -1906,14 +1877,11 @@ class PostmarkViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='my-assigned', permission_classes=[IsAuthenticated])
     def my_assigned(self, request):
         """
-        Get catalog listings for all states assigned to the current user.
-        Uses UserLocationAssignment-based helpers rather than group responsibilities
-        and matches listings either by their direct state pointer or by the
-        jurisdiction of their postal facility.
+        Get catalog listings for all regions assigned to the current user.
         """
         user = request.user
-        assigned_units = _get_user_assigned_units(user)
-        if not assigned_units.exists():
+        assigned_regions = _get_user_assigned_regions(user)
+        if not assigned_regions.exists():
             # Still return a paginated response structure for consistency
             empty_qs = self.get_queryset().none()
             page = self.paginate_queryset(empty_qs)
@@ -1923,7 +1891,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
             serializer = self.get_serializer(empty_qs, many=True)
             return Response(serializer.data)
         qs = self.get_queryset().filter(
-            Q(post_office__region__administrative_unit__in=assigned_units)
+            post_office__region__in=assigned_regions
         ).distinct().order_by('-created_date')
         page = self.paginate_queryset(qs)
         if page is not None:
@@ -1960,9 +1928,9 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         user = request.user
         qs = self.get_queryset().filter(contribution__contributor=user).order_by('-created_date')
         if not getattr(user, "is_superuser", False):
-            assigned_units = _get_user_assigned_units(user)
-            if assigned_units.exists():
-                qs = qs.filter(post_office__region__administrative_unit__in=assigned_units)
+            assigned_regions = _get_user_assigned_regions(user)
+            if assigned_regions.exists():
+                qs = qs.filter(post_office__region__in=assigned_regions)
             else:
                 qs = qs.none()
         page = self.paginate_queryset(qs)
@@ -1997,9 +1965,7 @@ class PostmarkImageViewSet(viewsets.ModelViewSet):
     def approve(self, request, pk=None):
         """Approve an image (requires regional permission)"""
         image = self.get_object()
-        responsible_groups = _get_postmark_responsible_groups(image.postmark)
-        user_groups = request.user.groups.all()
-        if not any(group in responsible_groups for group in user_groups):
+        if not _user_is_responsible_for_postmark(request.user, image.postmark):
             return Response(
                 {'error': 'You are not responsible for this region'},
                 status=status.HTTP_403_FORBIDDEN
@@ -2011,9 +1977,7 @@ class PostmarkImageViewSet(viewsets.ModelViewSet):
     def reject(self, request, pk=None):
         """Reject an image (requires regional permission)"""
         image = self.get_object()
-        responsible_groups = _get_postmark_responsible_groups(image.postmark)
-        user_groups = request.user.groups.all()
-        if not any(group in responsible_groups for group in user_groups):
+        if not _user_is_responsible_for_postmark(request.user, image.postmark):
             return Response(
                 {'error': 'You are not responsible for this region'},
                 status=status.HTTP_403_FORBIDDEN

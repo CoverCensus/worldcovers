@@ -196,8 +196,8 @@ const ContributionDetail = () => {
   const [error, setError] = useState<string | null>(null);
 
   // Editor form state (only Value and Comment; lettering/framing/date format come from contribution's submitted_data when approving)
-  const [value, setValue] = useState("");
   const [comment, setComment] = useState("");
+  const [commentError, setCommentError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [resubmitting, setResubmitting] = useState(false);
   // Options to display names for lettering/framing/date format in Submitted data
@@ -687,6 +687,11 @@ const ContributionDetail = () => {
 
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
     if (!contribution) return;
+    if (kind !== "approve" && !comment.trim()) {
+      setCommentError("A comment is required to reject or request revision.");
+      return;
+    }
+    setCommentError(null);
 
     const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
     if (!apiBase) {
@@ -699,13 +704,7 @@ const ContributionDetail = () => {
     if (comment.trim()) {
       body.review_notes = comment.trim();
     }
-    if (kind === "approve") {
-      const valueNum = value.trim() === "" ? NaN : parseFloat(value);
-      if (!Number.isNaN(valueNum) && valueNum >= 0) {
-        body.estimated_value = valueNum;
-      }
-      // lettering_style_id, framing_style_id, date_format_id come from contribution's submitted_data (required on form)
-    }
+    // lettering_style_id, framing_style_id, date_format_id come from contribution's submitted_data (required on form)
 
     setSubmitting(true);
     // New postmark submissions: submitted_data is authoritative; editors do not PATCH catalog fields.
@@ -890,10 +889,10 @@ const ContributionDetail = () => {
         : normalizedStatus === "needs_revision"
           ? "rounded-full border border-orange-600 bg-orange-500 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-orange-500"
           : "rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500";
-  const canReview = isStateEditor && isPending && !!user && !isContributor;
+  const canReview = isStateEditor && isPending && !!user;
   const isCatalogSuggestion = contributionIsCatalogSuggestion(contribution);
   const showSubmittedData = !canReview || !isCatalogSuggestion;
-  const showPeerReviewNotice = isStateEditor && isPending && isContributor && !user?.is_superuser;
+  const showPeerReviewNotice = false;
   const showEditorFeedbackCard =
     contribution.status !== "pending" || !!(contribution.review_notes && contribution.review_notes.trim());
   const canContributorResubmit =
@@ -1003,34 +1002,27 @@ const ContributionDetail = () => {
                   <CardHeader>
                     <CardTitle className="font-heading text-lg">Review this submission</CardTitle>
                     <p className="text-sm text-muted-foreground">
-                      Add value and a comment, then choose Approve, Reject, or Request revision.
+                      Choose Approve, Reject, or Request revision.
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="space-y-2 max-w-xs">
-                      <Label htmlFor="contribution-value">Value (of this postmark)</Label>
-                      <Input
-                        id="contribution-value"
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        placeholder="Enter value (optional)"
-                        value={value}
-                        onChange={(e) => setValue(e.target.value)}
-                        disabled={submitting}
-                      />
-                    </div>
                     <div className="space-y-2">
                       <Label htmlFor="contribution-comment">Comment</Label>
                       <Textarea
                         id="contribution-comment"
-                        placeholder="Optional comment for the contributor."
+                        placeholder="Optional for approvals, required for rejection/revision."
                         rows={4}
                         value={comment}
-                        onChange={(e) => setComment(e.target.value)}
+                        onChange={(e) => {
+                          setComment(e.target.value);
+                          if (commentError && e.target.value.trim()) setCommentError(null);
+                        }}
                         disabled={submitting}
-                        className="resize-none"
+                        className={`resize-none ${commentError ? "border-destructive" : ""}`}
                       />
+                      {commentError ? (
+                        <p className="text-sm text-destructive">{commentError}</p>
+                      ) : null}
                     </div>
                     <div className="flex flex-wrap gap-2 pt-2">
                       <Button
@@ -1122,12 +1114,6 @@ const ContributionDetail = () => {
                   {hasValue(color) ? <Badge variant="secondary">{color}</Badge> : null}
                   <Badge variant="outline">Irregular: {isIrregular ? "Yes" : "No"}</Badge>
                 </div>
-                {showPeerReviewNotice ? (
-                  <p className="mt-4 text-sm rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-foreground">
-                    <span className="font-medium">Peer review required.</span> Another state editor assigned to this
-                    state must approve this entry before it appears in Search. You cannot approve your own submission.
-                  </p>
-                ) : null}
               </div>
 
               {/* Read-only submitted fields; editors see this for new postmarks (suggestions use "Edit submission data" instead). */}
@@ -1155,10 +1141,10 @@ const ContributionDetail = () => {
                   <CardHeader>
                     <CardTitle className="font-heading text-lg">Submitted data</CardTitle>
                     <p className="text-sm text-muted-foreground">
-                      {isContributor
-                        ? "What you submitted. An editor will review this and add a catalog value and comment."
-                        : canReview
-                          ? "Contributor submission (read-only). Use Review this submission to add catalog value and comment."
+                      {canReview
+                        ? "Contributor submission (read-only). Use Review this submission to add a comment and decide."
+                        : isContributor
+                          ? "What you submitted. An editor will review this and add a catalog value and comment."
                           : "Snapshot of fields stored on this contribution."}
                     </p>
                   </CardHeader>

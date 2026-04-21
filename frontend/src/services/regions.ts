@@ -1,7 +1,6 @@
 /**
  * State options for filters/contribution forms.
- * Primary source: GET /administrative-units/ (supports assigned_only=true).
- * Legacy fallback (non-assigned requests only): GET /regions/.
+ * Single source: GET /regions/ (supports assigned_only=true for State Editors).
  */
 import apiClient from "@/lib/api";
 
@@ -23,14 +22,6 @@ export interface RegionsApiResponse {
   next: string | null;
   previous: string | null;
   results: RegionApiItem[];
-}
-
-interface AdministrativeUnitApiItem {
-  administrative_unit_id?: number;
-  reference_code?: string | null;
-  current_name?: string | null;
-  current_type?: string | null;
-  name?: string | null;
 }
 
 type PagedApiResponse<T> = {
@@ -59,16 +50,12 @@ function getResponseRows<T>(data: unknown): { rows: T[]; next: string | null } {
   throw new Error("State options API: invalid response (missing results array)");
 }
 
-async function collectStateNamesFromEndpoint(
-  endpoint: string,
-  assignedOnly: boolean,
-  extractName: (row: unknown) => string,
-): Promise<string[]> {
+async function collectRegionNames(assignedOnly: boolean): Promise<string[]> {
   const names: string[] = [];
   const params: Record<string, string> = { page_size: "500" };
   if (assignedOnly) params.assigned_only = "true";
 
-  let nextUrl: string | null = endpoint;
+  let nextUrl: string | null = "/regions/";
   let useParams: Record<string, string> | undefined = params;
   let safetyCounter = 0;
 
@@ -77,9 +64,9 @@ async function collectStateNamesFromEndpoint(
       params: useParams,
       withCredentials: true,
     });
-    const { rows, next } = getResponseRows<unknown>(res.data);
+    const { rows, next } = getResponseRows<RegionApiItem>(res.data);
     rows.forEach((row) => {
-      const name = extractName(row).trim();
+      const name = String(row.name ?? "").trim();
       if (name) names.push(name);
     });
     nextUrl = next;
@@ -93,40 +80,13 @@ async function collectStateNamesFromEndpoint(
 /**
  * Fetches regions from GET /regions/.
  * Follows pagination so the filter dropdown gets every region.
- * @param assignedOnly - when true, only regions assigned to the current user.
+ * @param assignedOnly - when true, only regions assigned to the current State Editor.
  */
 export async function getRegions(assignedOnly?: boolean): Promise<StateOption[]> {
-  const collectedNames: string[] = [];
-
-  try {
-    const administrativeUnitNames = await collectStateNamesFromEndpoint(
-      "/administrative-units/",
-      Boolean(assignedOnly),
-      (row) => {
-        const item = row as AdministrativeUnitApiItem;
-        return String(item.current_name ?? item.name ?? "").trim();
-      },
-    );
-    collectedNames.push(...administrativeUnitNames);
-  } catch (err) {
-    // For assigned-only queries we need to surface auth/API failures.
-    if (assignedOnly) {
-      throw err;
-    }
-    // Non-assigned filters can fallback to legacy /regions.
-  }
-
-  // Legacy fallback only for non-assigned requests.
-  if (!assignedOnly && collectedNames.length === 0) {
-    const regionNames = await collectStateNamesFromEndpoint("/regions/", false, (row) => {
-      const item = row as RegionApiItem;
-      return String(item.name ?? "").trim();
-    });
-    collectedNames.push(...regionNames);
-  }
+  const collected = await collectRegionNames(Boolean(assignedOnly));
 
   const seen = new Set<string>();
-  return collectedNames
+  return collected
     .map((name) => String(name).trim())
     .filter((name) => {
       if (!name || seen.has(name)) return false;
@@ -138,7 +98,7 @@ export async function getRegions(assignedOnly?: boolean): Promise<StateOption[]>
 }
 
 /**
- * Fetches only the states assigned to the current user.
+ * Fetches only the regions assigned to the current user.
  */
 export async function getAssignedRegions(): Promise<StateOption[]> {
   return getRegions(true);

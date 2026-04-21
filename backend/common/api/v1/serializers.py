@@ -253,9 +253,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         return None
 
     def get_responsible_groups(self, obj):
-        from common.api.v2.views import _get_postmark_responsible_groups
-        groups = _get_postmark_responsible_groups(obj)
-        return [{'id': g.id, 'name': g.name} for g in groups]
+        return []
 
     def get_state(self, obj):
         try:
@@ -337,9 +335,7 @@ class PostmarkSerializer(serializers.ModelSerializer):
         read_only_fields = ['postmark_id', 'created_date', 'modified_date']
 
     def get_responsible_groups(self, obj):
-        from common.api.v2.views import _get_postmark_responsible_groups
-        groups = _get_postmark_responsible_groups(obj)
-        return [{'id': g.id, 'name': g.name} for g in groups]
+        return []
 
     def get_state(self, obj):
         try:
