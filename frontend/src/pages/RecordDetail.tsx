@@ -4,6 +4,7 @@ import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { Download, Upload, ArrowLeft, Loader2, Pencil, MessageSquare, ChevronDown } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -21,6 +22,7 @@ import {
   type AssociatedAuxmark,
   type AssociatedCover,
 } from "@/services/postmarks";
+import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
 
@@ -89,6 +91,14 @@ type GalleryImage = {
   originalFilename?: string;
   category: "Postmark" | "Ratemark" | "Auxmark";
   description?: string;
+};
+
+type CommentSubmission = {
+  id: number;
+  comment_text: string;
+  status: string;
+  review_reason?: string | null;
+  created_at: string;
 };
 
 function displayField(v: unknown): string {
@@ -317,6 +327,7 @@ function AssociatedCoversCard({ items }: { items: AssociatedCover[] }) {
 const RecordDetail = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { toast } = useToast();
   const user = useAuth();
   const { id } = useParams();
   const [submitImageOpen, setSubmitImageOpen] = useState(false);
@@ -357,15 +368,31 @@ const RecordDetail = () => {
     sourceCatalog?: string;
     /** Parsed from other_characteristics `Comment:` (editor feedback at approval) */
     editorComment?: string;
+    approvedComments?: Array<{
+      id: number;
+      comment_text: string;
+      contributor_username: string;
+      created_at: string;
+    }>;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [associatedRatemarks, setAssociatedRatemarks] = useState<AssociatedRatemark[]>([]);
   const [associatedAuxmarks, setAssociatedAuxmarks] = useState<AssociatedAuxmark[]>([]);
   const [associatedCovers, setAssociatedCovers] = useState<AssociatedCover[]>([]);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
+  const [myCommentSubmissions, setMyCommentSubmissions] = useState<CommentSubmission[]>([]);
 
   // Parse id from URL: "api-1" -> 1 (from Search when using API)
   const postmarkId = id ? parseInt(String(id).replace(/^api-/, ""), 10) : null;
+  const apiBase = (() => {
+    const full = import.meta.env.VITE_API_URL;
+    if (typeof full === "string" && full.trim()) return full.trim().replace(/\/+$/, "");
+    const base = import.meta.env.VITE_API_BASE_URL;
+    if (typeof base === "string" && base.trim()) return base.trim().replace(/\/+$/, "");
+    return "/api/v2";
+  })();
 
   useEffect(() => {
     if (postmarkId == null || isNaN(postmarkId)) {
@@ -474,6 +501,16 @@ const RecordDetail = () => {
                 })
                 .filter(Boolean)
             : [];
+          const approvedComments = Array.isArray(data.approved_comments)
+            ? data.approved_comments
+                .map((row: any) => ({
+                  id: Number(row?.id),
+                  comment_text: String(row?.comment_text ?? "").trim(),
+                  contributor_username: String(row?.contributor_username ?? "").trim(),
+                  created_at: String(row?.created_at ?? ""),
+                }))
+                .filter((row: any) => Number.isFinite(row.id) && row.comment_text)
+            : [];
           setRecord({
             id: data.postmark_id ?? data.postmarkId,
             name: displayName,
@@ -510,6 +547,7 @@ const RecordDetail = () => {
             citationReferences: parsed.citationReferences || "",
             sourceCatalog,
             editorComment: parsed.editorComment || "",
+            approvedComments,
             images,
             valuations: data.valuations?.map((v: any) => ({
               estimatedValue: v.estimatedValue ?? v.estimated_value,
@@ -552,6 +590,99 @@ const RecordDetail = () => {
       cancelled = true;
     };
   }, [postmarkId]);
+
+  useEffect(() => {
+    if (!user || postmarkId == null || Number.isNaN(postmarkId)) {
+      setMyCommentSubmissions([]);
+      return;
+    }
+    let cancelled = false;
+    fetch(`${apiBase}/comments/?postmark=${postmarkId}&mine=1`, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(res.statusText || "Failed to load comments");
+        return await res.json();
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const rows = Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : [];
+        setMyCommentSubmissions(
+          rows.map((row: any) => ({
+            id: Number(row?.id),
+            comment_text: String(row?.comment_text ?? "").trim(),
+            status: String(row?.status ?? "pending"),
+            review_reason: row?.review_reason ?? null,
+            created_at: String(row?.created_at ?? ""),
+          })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setMyCommentSubmissions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, postmarkId, apiBase]);
+
+  const submitComment = async () => {
+    const text = commentDraft.trim();
+    if (!user) {
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to submit a comment.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!record?.id || !text) return;
+    setCommentSubmitting(true);
+    try {
+      const res = await fetch(`${apiBase}/comments/`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          target_type: "postmark",
+          postmark: record.id,
+          comment_text: text,
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = payload?.detail || payload?.comment_text?.[0] || res.statusText;
+        throw new Error(detail || "Could not submit comment.");
+      }
+      setCommentDraft("");
+      setMyCommentSubmissions((prev) => [
+        {
+          id: Number(payload?.id),
+          comment_text: String(payload?.comment_text ?? text),
+          status: String(payload?.status ?? "pending"),
+          review_reason: payload?.review_reason ?? null,
+          created_at: String(payload?.created_at ?? new Date().toISOString()),
+        },
+        ...prev,
+      ]);
+      toast({
+        title: "Comment submitted",
+        description: "Your comment is pending editor review.",
+      });
+    } catch (err) {
+      toast({
+        title: "Could not submit comment",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setCommentSubmitting(false);
+    }
+  };
 
   // Carousel pagination
   useEffect(() => {
@@ -601,6 +732,8 @@ const RecordDetail = () => {
       editorComment: record.editorComment ?? "",
       sourceCatalog: record.sourceCatalog ?? "",
     });
+  const approvedComments = record?.approvedComments ?? [];
+  const showCommunityCommentsCard = approvedComments.length > 0 || !!user;
 
   if (error || !record) {
     return (
@@ -853,6 +986,92 @@ const RecordDetail = () => {
                     <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
                       {record.editorComment.trim()}
                     </p>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {showCommunityCommentsCard ? (
+                <Card className="shadow-archival-md">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">
+                      {approvedComments.length > 0 ? "Community comments" : "Submit a comment"}
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      {approvedComments.length > 0
+                        ? "Approved observations and minor corrections from contributors."
+                        : "Share an observation or correction for editor review."}
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {approvedComments.length > 0 ? (
+                      <div className="space-y-3">
+                        {approvedComments.map((row) => (
+                          <div key={row.id} className="rounded-md border border-border p-3">
+                            <p className="text-sm text-foreground whitespace-pre-line">{row.comment_text}</p>
+                            <p className="mt-2 text-xs text-muted-foreground">
+                              By {row.contributor_username || "Contributor"}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {user ? (
+                      <div className={`space-y-2 ${approvedComments.length > 0 ? "pt-2 border-t border-border" : ""}`}>
+                        <p className="text-sm font-medium text-foreground">Submit a comment for review</p>
+                        <Textarea
+                          value={commentDraft}
+                          onChange={(e) => setCommentDraft(e.target.value)}
+                          placeholder="Add an observation or a small correction..."
+                          rows={4}
+                        />
+                        <div className="flex justify-end">
+                          <Button
+                            onClick={submitComment}
+                            disabled={commentSubmitting || commentDraft.trim().length < 5}
+                            size="sm"
+                          >
+                            {commentSubmitting ? "Submitting..." : "Submit comment"}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {user && myCommentSubmissions.length > 0 ? (
+                <Card className="shadow-archival-md">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">Your comment submissions</CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      Track moderation status and editor feedback for this record.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {myCommentSubmissions.map((row) => {
+                      const normalizedStatus = row.status.toLowerCase();
+                      const badgeClassName =
+                        normalizedStatus === "approved"
+                          ? "bg-green-100 text-green-700 border-green-200"
+                          : normalizedStatus === "denied"
+                            ? "bg-red-100 text-red-700 border-red-200"
+                            : "bg-yellow-100 text-yellow-800 border-yellow-200";
+                      return (
+                        <div key={row.id} className="rounded-md border border-border p-3 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <Badge className={badgeClassName}>{row.status}</Badge>
+                          </div>
+                          <p className="text-sm text-foreground whitespace-pre-line">{row.comment_text}</p>
+                          {normalizedStatus === "denied" && row.review_reason?.trim() ? (
+                            <p className="text-sm text-muted-foreground">
+                              <span className="font-medium text-foreground">Denied reason:</span>{" "}
+                              {row.review_reason.trim()}
+                            </p>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </CardContent>
                 </Card>
               ) : null}

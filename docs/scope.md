@@ -13,7 +13,7 @@ Not every feature in [design.md](design.md) is implemented in the React SPA. The
 | F5 | Personal Collection Management | SPA (`/dashboard`, `/contribute`, `/edit`) |
 | F6 | Audit Trail | SPA (`/my-suggestions`, `/submission/:id`) |
 | F7 | Submission Workflow | SPA (both contributor submission and Editor review/approval) |
-| F8 | Comment Workflow | Not yet implemented |
+| F8 | Comment Workflow | SPA (`/record/:id`) + API moderation (`/api/v2/comments`) |
 | F9 | System Maintenance | Django `/admin/` only |
 | F10 | Catalog Data Pipeline | Offline tooling only — see [TOOLS.md](TOOLS.md) |
 

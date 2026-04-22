@@ -269,7 +269,7 @@ from common.models import (
     Color,
     Postmark, PostmarkValuation,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
-    AdminCsvUpload, UserLocationAssignment, Contribution, FAQEntry,
+    AdminCsvUpload, UserLocationAssignment, Contribution, CommentSubmission, FAQEntry,
 )
 
 from .serializers import (
@@ -287,6 +287,7 @@ from .serializers import (
     AdminCsvUploadListSerializer, AdminCsvUploadSerializer,
     LoginRequestSerializer,
     ContributionListSerializer, ContributionDetailSerializer, ContributionApproveRejectSerializer,
+    CommentSubmissionListSerializer, CommentSubmissionCreateSerializer, CommentSubmissionDecisionSerializer,
     FAQEntrySerializer,
 )
 from common.filters import PostmarkListFilter
@@ -1286,6 +1287,159 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
             {"detail": "Contribution rejected."},
             status=status.HTTP_200_OK,
         )
+
+
+def _can_review_comment_submission(user, comment_submission):
+    """True if user can approve/deny this comment submission."""
+    if getattr(user, "is_superuser", False):
+        return True
+    if _get_user_role(user) != "state_editor":
+        return False
+    if comment_submission.target_type != CommentSubmission.TARGET_POSTMARK:
+        return False
+    postmark = comment_submission.postmark
+    if not postmark:
+        return False
+    try:
+        admin_unit_id = postmark.post_office.region.administrative_unit_id
+    except Exception:
+        admin_unit_id = None
+    if not admin_unit_id:
+        return False
+    assigned = _get_user_assigned_units(user)
+    if not assigned.exists():
+        return False
+    return assigned.filter(pk=admin_unit_id).exists()
+
+
+class CommentSubmissionViewSet(viewsets.ModelViewSet):
+    """
+    Moderated comments on records/collections.
+    - Contributors can create comments and view their own history.
+    - State Editors can review comments in their assigned states.
+    - Approved comments are exposed publicly via the `public` action.
+    """
+
+    queryset = CommentSubmission.objects.all().select_related("contributor", "reviewer", "postmark")
+    serializer_class = CommentSubmissionListSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["status", "target_type", "postmark"]
+
+    def get_permissions(self):
+        if self.action == "public":
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        user = self.request.user
+        base_qs = super().get_queryset()
+        mine_only = str(self.request.query_params.get("mine", "")).strip().lower() in {"1", "true", "yes"}
+        if mine_only and user.is_authenticated:
+            return base_qs.filter(contributor=user)
+        if getattr(user, "is_superuser", False):
+            return base_qs
+
+        role = _get_user_role(user)
+        if role == "state_editor":
+            assigned = _get_user_assigned_units(user)
+            if assigned.exists():
+                return base_qs.filter(
+                    Q(contributor=user)
+                    | Q(
+                        target_type=CommentSubmission.TARGET_POSTMARK,
+                        postmark__post_office__region__administrative_unit__in=assigned,
+                    )
+                ).distinct()
+            return base_qs.filter(contributor=user)
+
+        return base_qs.filter(contributor=user)
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return CommentSubmissionCreateSerializer
+        if self.action == "decision":
+            return CommentSubmissionDecisionSerializer
+        return CommentSubmissionListSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        comment_submission = serializer.save(
+            contributor=request.user,
+            status=CommentSubmission.STATUS_PENDING,
+            reviewer=None,
+            review_reason="",
+            reviewed_at=None,
+        )
+        out = CommentSubmissionListSerializer(comment_submission)
+        return Response(out.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="decision")
+    def decision(self, request, pk=None):
+        comment_submission = self.get_object()
+        if not _can_review_comment_submission(request.user, comment_submission):
+            return Response(
+                {"detail": "You are not allowed to review this comment."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if comment_submission.status != CommentSubmission.STATUS_PENDING:
+            return Response(
+                {"detail": f"Comment is not pending (status: {comment_submission.status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = self.get_serializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        decision = serializer.validated_data["decision"]
+        review_reason = serializer.validated_data.get("review_reason", "")
+
+        comment_submission.status = (
+            CommentSubmission.STATUS_APPROVED
+            if decision == "approve"
+            else CommentSubmission.STATUS_DENIED
+        )
+        comment_submission.reviewer = request.user
+        comment_submission.review_reason = review_reason
+        comment_submission.reviewed_at = timezone.now()
+        comment_submission.save(
+            update_fields=["status", "reviewer", "review_reason", "reviewed_at", "updated_at"]
+        )
+        return Response(CommentSubmissionListSerializer(comment_submission).data)
+
+    @action(detail=False, methods=["get"], url_path="public")
+    def public(self, request):
+        postmark_id = request.query_params.get("postmark")
+        if not postmark_id:
+            return Response(
+                {"detail": "Query parameter `postmark` is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            postmark_id = int(postmark_id)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Query parameter `postmark` must be an integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        qs = (
+            CommentSubmission.objects.filter(
+                target_type=CommentSubmission.TARGET_POSTMARK,
+                postmark_id=postmark_id,
+                status=CommentSubmission.STATUS_APPROVED,
+            )
+            .select_related("contributor")
+            .order_by("created_at")
+        )
+        data = [
+            {
+                "id": c.id,
+                "comment_text": c.comment_text,
+                "contributor_username": c.contributor.username,
+                "created_at": c.created_at,
+            }
+            for c in qs
+        ]
+        return Response(data)
 
 
 # ========== CUSTOM PERMISSIONS ==========
