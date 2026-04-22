@@ -990,6 +990,10 @@ const RecordDetail = () => {
                 </Card>
               ) : null}
 
+              <AssociatedRatemarksCard items={associatedRatemarks} />
+              <AssociatedAuxmarksCard items={associatedAuxmarks} />
+              <AssociatedCoversCard items={associatedCovers} />
+
               {showCommunityCommentsCard ? (
                 <Card className="shadow-archival-md">
                   <CardHeader>
@@ -1075,10 +1079,6 @@ const RecordDetail = () => {
                   </CardContent>
                 </Card>
               ) : null}
-
-              <AssociatedRatemarksCard items={associatedRatemarks} />
-              <AssociatedAuxmarksCard items={associatedAuxmarks} />
-              <AssociatedCoversCard items={associatedCovers} />
             </div>
           </div>
 

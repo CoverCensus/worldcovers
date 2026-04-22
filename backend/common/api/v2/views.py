@@ -1322,6 +1322,7 @@ class CommentSubmissionViewSet(viewsets.ModelViewSet):
 
     queryset = CommentSubmission.objects.all().select_related("contributor", "reviewer", "postmark")
     serializer_class = CommentSubmissionListSerializer
+    authentication_classes = [SessionAuthenticationNoCSRF]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["status", "target_type", "postmark"]
 
