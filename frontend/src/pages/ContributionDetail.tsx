@@ -1155,8 +1155,25 @@ const ContributionDetail = () => {
                       </p>
                     ) : (
                       <dl className="space-y-0 text-sm">
+                        {contributorComment ? (
+                          <div className="flex justify-between py-2 border-b border-border gap-4">
+                            <dt className="text-muted-foreground font-medium shrink-0">Comment for editor</dt>
+                            <dd className="text-foreground whitespace-pre-line text-right">{contributorComment}</dd>
+                          </div>
+                        ) : null}
                         {Object.entries(sd)
                           .filter(([k]) => {
+                            if (
+                              k === "contributor_comment" ||
+                              k === "contributorComment" ||
+                              k === "comment_for_editor" ||
+                              k === "commentForEditor" ||
+                              k === "review_notes" ||
+                              k === "reviewNotes" ||
+                              k === "comment"
+                            ) {
+                              return false;
+                            }
                             if (k === "image_meta") return false;
                             if (k === "image_metas" || k === "imageMetas") return false;
                             if (

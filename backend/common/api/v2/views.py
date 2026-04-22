@@ -861,6 +861,42 @@ def _resolve_assigned_region(user, state_str):
     return None
 
 
+def _resolve_region_from_state_value(state_str):
+    """Resolve a submitted state string to a Region row when possible."""
+    state_norm = (state_str or "").strip()
+    if not state_norm:
+        return None
+    return (
+        Region.objects.filter(
+            Q(name__iexact=state_norm) | Q(abbrev__iexact=state_norm)
+        )
+        .order_by("region_tier", "name")
+        .first()
+    )
+
+
+def _resolve_assigned_region_from_submitted_data(user, submitted_data):
+    """Resolve assigned Region from contribution submitted_data payload."""
+    sd = submitted_data or {}
+    assigned_regions = _get_user_assigned_regions(user)
+    if not assigned_regions.exists():
+        return None
+
+    state_region_id = sd.get("state_region_id")
+    try:
+        state_region_id_int = int(state_region_id)
+    except (TypeError, ValueError):
+        state_region_id_int = None
+
+    if state_region_id_int is not None:
+        matched = assigned_regions.filter(pk=state_region_id_int).first()
+        if matched:
+            return matched
+
+    state_str = (sd.get("state") or "").strip()
+    return _resolve_assigned_region(user, state_str)
+
+
 def _create_contribution_only(payload, contributor):
     """
     Create a Contribution record only (no Postmark). Acts as a moderation ticket.
@@ -871,6 +907,7 @@ def _create_contribution_only(payload, contributor):
     try:
         submitted_data = {
             "state": (payload.get("state") or "").strip(),
+            "state_region_id": payload.get("state_region_id"),
             "town": (payload.get("town") or "").strip(),
             "date_range": (payload.get("date_range") or "").strip(),
             "shape": (payload.get("shape") or payload.get("type") or "").strip(),
@@ -908,6 +945,41 @@ def _create_contribution_only(payload, contributor):
         return None
 
 
+def _get_editor_contribution_queryset(user):
+    """Base queryset for editor contribution/history listing."""
+    base_qs = Contribution.objects.select_related("contributor", "reviewer", "postmark")
+    if getattr(user, "is_superuser", False):
+        return base_qs
+    assigned_regions = list(_get_user_assigned_regions(user))
+    state_match_q = Q()
+    for region in assigned_regions:
+        state_match_q |= Q(submitted_data__state_region_id=region.pk)
+        for candidate in ((region.name or "").strip(), (region.abbrev or "").strip()):
+            if candidate:
+                state_match_q |= Q(submitted_data__state__iexact=candidate)
+    if assigned_regions and state_match_q:
+        return base_qs.filter(Q(contributor=user) | state_match_q).distinct()
+    return base_qs.filter(contributor=user).distinct()
+
+
+def _apply_state_filter_to_contributions(qs, state_value):
+    """Apply optional state filter against both state text and region id."""
+    state_norm = (state_value or "").strip()
+    if not state_norm or state_norm.lower() == "all":
+        return qs
+    state_region = _resolve_region_from_state_value(state_norm)
+    state_q = Q(submitted_data__state__iexact=state_norm)
+    if state_region is not None:
+        state_q |= Q(submitted_data__state_region_id=state_region.pk)
+        region_name = (state_region.name or "").strip()
+        region_abbrev = (state_region.abbrev or "").strip()
+        if region_name:
+            state_q |= Q(submitted_data__state__iexact=region_name)
+        if region_abbrev:
+            state_q |= Q(submitted_data__state__iexact=region_abbrev)
+    return qs.filter(state_q)
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class ContributionView(APIView):
     """
@@ -921,7 +993,45 @@ class ContributionView(APIView):
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get(self, request):
-        """List the current user's contributions."""
+        """List contributions for current user or editor moderation/history mode."""
+        mode = (request.query_params.get("mode") or "").strip().lower()
+        status_filter = (request.query_params.get("status") or "").strip().lower()
+        state_filter = (request.query_params.get("state") or "").strip()
+
+        if mode == "editor":
+            qs = _get_editor_contribution_queryset(request.user).order_by("-created_at")
+            if status_filter in {
+                Contribution.STATUS_PENDING,
+                Contribution.STATUS_APPROVED,
+                Contribution.STATUS_REJECTED,
+                Contribution.STATUS_NEEDS_REVISION,
+            }:
+                qs = qs.filter(status=status_filter)
+            qs = _apply_state_filter_to_contributions(qs, state_filter)
+
+            try:
+                page = max(1, int(request.query_params.get("page", 1)))
+            except (TypeError, ValueError):
+                page = 1
+            try:
+                page_size = int(request.query_params.get("page_size", 10))
+            except (TypeError, ValueError):
+                page_size = 10
+            page_size = max(1, min(page_size, 100))
+            total = qs.count()
+            start = (page - 1) * page_size
+            end = start + page_size
+            page_items = qs[start:end]
+            serializer = ContributionListSerializer(page_items, many=True)
+            return Response(
+                {
+                    "count": total,
+                    "page": page,
+                    "page_size": page_size,
+                    "results": serializer.data,
+                }
+            )
+
         qs = Contribution.objects.filter(contributor=request.user).select_related(
             "contributor", "reviewer", "postmark"
         ).order_by("-created_at")
@@ -1008,6 +1118,7 @@ class ContributionView(APIView):
             )
         payload = {
             "state": state,
+            "state_region_id": None,
             "town": town,
             "date_range": date_range,
             "first_seen": first_seen,
@@ -1025,6 +1136,9 @@ class ContributionView(APIView):
             "ratemarks": ratemarks,
             "auxmarks": auxmarks,
         }
+        matched_state_region = _resolve_region_from_state_value(state)
+        if matched_state_region is not None:
+            payload["state_region_id"] = matched_state_region.pk
         postmark_files = request.FILES.getlist("postmark_image") or request.FILES.getlist("postmark_images")
         ratemark_files = request.FILES.getlist("ratemark_image") or request.FILES.getlist("ratemark_images")
         auxmark_files = request.FILES.getlist("auxmark_image") or request.FILES.getlist("auxmark_images")
@@ -1091,6 +1205,7 @@ class ContributionView(APIView):
                 try:
                     submitted_data = {
                         "state": payload.get("state", ""),
+                        "state_region_id": payload.get("state_region_id"),
                         "town": payload.get("town", ""),
                         "date_range": payload.get("date_range", ""),
                         "shape": payload.get("shape") or payload.get("type", ""),
@@ -1183,11 +1298,7 @@ def _can_review_contribution(user, contrib):
     """True if user can approve/reject this contribution (State Editor)."""
     if getattr(user, "is_superuser", False):
         return True
-    sd = contrib.submitted_data or {}
-    state_str = (sd.get("state") or "").strip()
-    if not _get_user_assigned_regions(user).exists():
-        return False
-    return _resolve_assigned_region(user, state_str) is not None
+    return _resolve_assigned_region_from_submitted_data(user, contrib.submitted_data) is not None
 
 
 class IsStateEditorOrContributor(BasePermission):
@@ -1225,14 +1336,7 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         role = _get_user_role(user)
         base_qs = Contribution.objects.select_related("contributor", "reviewer", "postmark")
         if role == "state_editor":
-            assigned_regions = list(_get_user_assigned_regions(user))
-            state_match_q = Q()
-            for region in assigned_regions:
-                for candidate in ((region.name or "").strip(), (region.abbrev or "").strip()):
-                    if candidate:
-                        state_match_q |= Q(submitted_data__state__iexact=candidate)
-            if assigned_regions and state_match_q:
-                return base_qs.filter(Q(contributor=user) | state_match_q).distinct()
+            return _get_editor_contribution_queryset(user)
         # Contributors: only their own contributions
         return base_qs.filter(contributor=user).distinct()
 
