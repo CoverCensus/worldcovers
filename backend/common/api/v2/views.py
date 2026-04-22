@@ -924,6 +924,8 @@ def _create_contribution_only(payload, contributor):
             "ratemarks": payload.get("ratemarks", []),
             "auxmarks": payload.get("auxmarks", []),
         }
+        if payload.get("contributor_comment"):
+            submitted_data["contributor_comment"] = (payload.get("contributor_comment") or "").strip()
         if payload.get("postmark_image_metas"):
             submitted_data["postmark_image_metas"] = payload["postmark_image_metas"]
         if payload.get("ratemark_image_metas"):
@@ -1101,6 +1103,14 @@ class ContributionView(APIView):
         submitter_name = (data.get("submitterName") or "").strip()
         if user.is_authenticated:
             submitter_name = user.username or getattr(user, "email", "") or submitter_name
+        contributor_comment = (
+            data.get("contributor_comment")
+            or data.get("contributorComment")
+            or data.get("comment_for_editor")
+            or data.get("commentForEditor")
+            or ""
+        )
+        contributor_comment = str(contributor_comment).strip()
         reference_work_ids = _extract_reference_work_ids(data)
         reference_work_details = _extract_reference_work_details_from_payload(data)
         ratemarks = _extract_mark_entries(data, "ratemarks")
@@ -1136,6 +1146,8 @@ class ContributionView(APIView):
             "ratemarks": ratemarks,
             "auxmarks": auxmarks,
         }
+        if contributor_comment:
+            payload["contributor_comment"] = contributor_comment
         matched_state_region = _resolve_region_from_state_value(state)
         if matched_state_region is not None:
             payload["state_region_id"] = matched_state_region.pk
@@ -1222,6 +1234,8 @@ class ContributionView(APIView):
                         "submitter_name": submitter_name,
                         "original_postmark_id": str(edit_postmark_id),
                     }
+                    if payload.get("contributor_comment"):
+                        submitted_data["contributor_comment"] = (payload.get("contributor_comment") or "").strip()
                     if payload.get("postmark_image_metas"):
                         submitted_data["postmark_image_metas"] = payload["postmark_image_metas"]
                     if payload.get("ratemark_image_metas"):

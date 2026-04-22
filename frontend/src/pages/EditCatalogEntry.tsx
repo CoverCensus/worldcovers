@@ -971,6 +971,9 @@ const EditCatalogEntry = () => {
         }
         if (!isStateEditor && contributorComment.trim()) {
           form.append("contributorComment", contributorComment.trim());
+          form.append("contributor_comment", contributorComment.trim());
+          form.append("commentForEditor", contributorComment.trim());
+          form.append("comment_for_editor", contributorComment.trim());
         }
         if (submitterName) form.append("submitterName", submitterName);
         for (const file of postmarkImageFiles) form.append("postmark_image", file, file.name);
@@ -1004,7 +1007,12 @@ const EditCatalogEntry = () => {
           reference_work_details: referenceWorkDetailsToSend.length > 0 ? referenceWorkDetailsToSend : undefined,
           ...(isStateEditor || !contributorComment.trim()
             ? {}
-            : { contributorComment: contributorComment.trim() }),
+            : {
+                contributorComment: contributorComment.trim(),
+                contributor_comment: contributorComment.trim(),
+                commentForEditor: contributorComment.trim(),
+                comment_for_editor: contributorComment.trim(),
+              }),
           submitterName: submitterName || undefined,
         });
         headers["Content-Type"] = "application/json";

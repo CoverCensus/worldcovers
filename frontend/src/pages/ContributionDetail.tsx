@@ -1286,6 +1286,20 @@ const ContributionDetail = () => {
                   </CardHeader>
                   <CardContent className="space-y-6">
                     <div className="space-y-2">
+                      <Label htmlFor="contrib-edit-contributor-comment">Contributor comment</Label>
+                      <Textarea
+                        id="contrib-edit-contributor-comment"
+                        value={contributorComment || "No contributor comment provided."}
+                        readOnly
+                        rows={3}
+                        className="resize-none bg-muted/40"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Use this note while reviewing and editing the submitted data.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
                       <Label htmlFor="contrib-edit-state">
                         State <span className="text-destructive">*</span>
                       </Label>
