@@ -812,7 +812,10 @@ const ContributionDetail = () => {
   const isIrregular = Boolean(sd.is_irreg ?? sd.isIrreg);
   const title = [town, state].filter(Boolean).join(", ") || `Submission #${contribution.id}`;
   const displayName = [title, shape].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") || title;
-  const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
+  const baseImageUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
+  const imageRoot = baseImageUrl || "/media";
+  const resolveStorageImageUrl = (storageFilename: string) =>
+    normalizeImageUrl(`${imageRoot}/postmarks/${storageFilename.replace(/^\/+/, "")}`);
   const imageMetasRaw = (sd.image_metas ?? sd.imageMetas) as SubmittedData["image_metas"] | undefined;
   const imageMetaSingle = sd.image_meta as SubmittedData["image_meta"] | undefined;
   const imageMetaList: Array<{ imageUrl: string; originalFilename?: string }> = [];
@@ -845,8 +848,8 @@ const ContributionDetail = () => {
     for (const meta of imageMetasRaw) {
       if (meta && typeof meta === "object") {
         const sf = meta.storage_filename ?? meta.storageFilename;
-        if (sf && baseImageUrl) {
-          const imageUrl = normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${sf}`);
+        if (sf) {
+          const imageUrl = resolveStorageImageUrl(sf);
           if (!imageUrl || seenImageUrls.has(imageUrl)) continue;
           seenImageUrls.add(imageUrl);
           imageMetaList.push({
@@ -859,8 +862,8 @@ const ContributionDetail = () => {
   }
   if (imageMetaList.length === 0 && imageMetaSingle) {
     const sf = imageMetaSingle.storage_filename ?? imageMetaSingle.storageFilename;
-    if (sf && baseImageUrl) {
-      const imageUrl = normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${sf}`);
+    if (sf) {
+      const imageUrl = resolveStorageImageUrl(sf);
       if (imageUrl) {
         imageMetaList.push({
           imageUrl,
@@ -1285,20 +1288,6 @@ const ContributionDetail = () => {
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-6">
-                    <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-contributor-comment">Contributor comment</Label>
-                      <Textarea
-                        id="contrib-edit-contributor-comment"
-                        value={contributorComment || "No contributor comment provided."}
-                        readOnly
-                        rows={3}
-                        className="resize-none bg-muted/40"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Use this note while reviewing and editing the submitted data.
-                      </p>
-                    </div>
-
                     <div className="space-y-2">
                       <Label htmlFor="contrib-edit-state">
                         State <span className="text-destructive">*</span>

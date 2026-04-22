@@ -1179,7 +1179,11 @@ const Contribute = () => {
           form.append("date_format_id", dateFormatIds[0]);
           dateFormatIds.forEach((id) => form.append("date_format_ids[]", id));
         }
-        for (const file of postmarkImageFiles) form.append("postmark_image", file, file.name);
+        for (const file of postmarkImageFiles) {
+          form.append("postmark_image", file, file.name);
+          // Backward compatibility for v1 contribution endpoint, which expects "image".
+          form.append("image", file, file.name);
+        }
         for (const file of ratemarkImageFiles) form.append("ratemark_image", file, file.name);
         for (const file of auxmarkImageFiles) form.append("auxmark_image", file, file.name);
         body = form;

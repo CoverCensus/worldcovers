@@ -405,7 +405,8 @@ const RecordDetail = () => {
             townState ||
             postmarkKey ||
             "—";
-          const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
+          const baseImageUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
+          const imageRoot = baseImageUrl || "/media";
           const classifyImage = (description: string): GalleryImage["category"] => {
             const d = description.trim().toLowerCase();
             if (d.startsWith("ratemark")) return "Ratemark";
@@ -418,9 +419,7 @@ const RecordDetail = () => {
                   imageUrl: normalizeImageUrl(
                     img.image_url ??
                       img.imageUrl ??
-                      (baseImageUrl
-                        ? `${baseImageUrl.replace(/\/+$/, "")}/postmarks/${img.storage_filename ?? img.storageFilename ?? ""}`
-                        : null),
+                      `${imageRoot}/postmarks/${String(img.storage_filename ?? img.storageFilename ?? "").replace(/^\/+/, "")}`,
                   ),
                   originalFilename: img.original_filename ?? img.originalFilename,
                   description: String(img.image_description ?? img.imageDescription ?? "").trim(),
