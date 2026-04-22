@@ -101,6 +101,14 @@ type CommentSubmission = {
   created_at: string;
 };
 
+function firstNonEmptyString(values: unknown[]): string {
+  for (const value of values) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (text) return text;
+  }
+  return "";
+}
+
 function displayField(v: unknown): string {
   const s = v == null ? "" : String(v).trim();
   return s !== "" && s.toLowerCase() !== "unknown" ? s : "—";
@@ -612,10 +620,25 @@ const RecordDetail = () => {
         setMyCommentSubmissions(
           rows.map((row: any) => ({
             id: Number(row?.id),
-            comment_text: String(row?.comment_text ?? "").trim(),
-            status: String(row?.status ?? "pending"),
-            review_reason: row?.review_reason ?? null,
-            created_at: String(row?.created_at ?? ""),
+            comment_text: firstNonEmptyString([
+              row?.comment_text,
+              row?.commentText,
+              row?.comment,
+              row?.text,
+              row?.body,
+              row?.submitted_data?.comment_text,
+              row?.submitted_data?.commentText,
+              row?.submitted_data?.comment,
+              row?.submitted_data?.text,
+              row?.submitted_data?.body,
+            ]),
+            status: String(row?.status ?? row?.state ?? "pending"),
+            review_reason: firstNonEmptyString([
+              row?.review_reason,
+              row?.reviewReason,
+              row?.reason,
+            ]) || null,
+            created_at: String(row?.created_at ?? row?.createdAt ?? ""),
           })),
         );
       })
@@ -1066,7 +1089,9 @@ const RecordDetail = () => {
                           <div className="flex items-center justify-between gap-2">
                             <Badge className={badgeClassName}>{row.status}</Badge>
                           </div>
-                          <p className="text-sm text-foreground whitespace-pre-line">{row.comment_text}</p>
+                          <p className="text-sm text-foreground whitespace-pre-line">
+                            {row.comment_text || "Comment text unavailable for this submission."}
+                          </p>
                           {normalizedStatus === "denied" && row.review_reason?.trim() ? (
                             <p className="text-sm text-muted-foreground">
                               <span className="font-medium text-foreground">Denied reason:</span>{" "}
