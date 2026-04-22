@@ -13,15 +13,45 @@ const apiClient = axios.create({
   timeout: 10000, // 10 second timeout
 });
 
+function extractErrorMessage(data: unknown): string | null {
+  if (!data) return null;
+  if (typeof data === 'string') return data;
+  if (Array.isArray(data)) {
+    const first = data.find((v) => typeof v === 'string');
+    return typeof first === 'string' ? first : null;
+  }
+  if (typeof data !== 'object') return null;
+
+  const payload = data as Record<string, unknown>;
+  const direct =
+    (typeof payload.detail === 'string' && payload.detail) ||
+    (typeof payload.message === 'string' && payload.message) ||
+    (typeof payload.error === 'string' && payload.error) ||
+    (typeof payload.non_field_errors === 'string' && payload.non_field_errors);
+  if (direct) return direct;
+
+  if (Array.isArray(payload.non_field_errors)) {
+    const first = payload.non_field_errors.find((v) => typeof v === 'string');
+    if (typeof first === 'string') return first;
+  }
+
+  for (const value of Object.values(payload)) {
+    if (typeof value === 'string' && value.trim()) return value;
+    if (Array.isArray(value)) {
+      const first = value.find((v) => typeof v === 'string' && v.trim());
+      if (typeof first === 'string') return first;
+    }
+  }
+
+  return null;
+}
+
 // Response interceptor for error handling
 apiClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
-    const message = error.response?.data
-      ? typeof error.response.data === 'string'
-        ? error.response.data
-        : (error.response.data as { message?: string }).message || 'An error occurred'
-      : error.message || 'Network error';
+    const parsedMessage = extractErrorMessage(error.response?.data);
+    const message = parsedMessage || error.message || 'Network error';
     
     console.error('API Error:', message);
     return Promise.reject(new Error(message));

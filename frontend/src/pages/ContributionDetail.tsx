@@ -94,6 +94,11 @@ interface SubmittedData {
   state?: string;
   town?: string;
   date_range?: string;
+  dateRange?: string;
+  first_seen?: string;
+  last_seen?: string;
+  firstSeen?: string;
+  lastSeen?: string;
   shape?: string;
   type?: string;
   color?: string;
@@ -140,10 +145,14 @@ interface SubmittedData {
   lettering_style_id?: number;
   framing_style_id?: number;
   date_format_id?: number;
+  framing_style_ids?: number[];
+  date_format_ids?: number[];
   /** API may return camelCase */
   letteringStyleId?: number;
   framingStyleId?: number;
   dateFormatId?: number;
+  framingStyleIds?: number[];
+  dateFormatIds?: number[];
   dates_observed?: string;
   datesObserved?: string;
 }
@@ -460,7 +469,11 @@ const ContributionDetail = () => {
     if (!contribution?.submitted_data) return;
     const sd = contribution.submitted_data as Record<string, unknown>;
     const dr = String(sd.date_range ?? sd.dateRange ?? "").trim();
-    const [firstSeen = "", lastSeen = ""] = dr ? dr.split(/[-–—]/).map((s) => s.trim()) : ["", ""];
+    const drParts = dr ? dr.split(/\s*[-–—]\s*/).map((s) => s.trim()) : [];
+    const firstSeenRaw = String(sd.first_seen ?? sd.firstSeen ?? drParts[0] ?? "").trim();
+    const lastSeenRaw = String(sd.last_seen ?? sd.lastSeen ?? drParts[1] ?? "").trim();
+    const firstSeen = /^\d{4}/.test(firstSeenRaw) ? firstSeenRaw.slice(0, 4) : "";
+    const lastSeen = /^\d{4}/.test(lastSeenRaw) ? lastSeenRaw.slice(0, 4) : "";
     const wh = submittedDataToWidthHeightStrings(sd);
     const rawShape = String(sd.shape ?? sd.type ?? "").trim();
     const rawColor = String(sd.color ?? "").trim();
@@ -474,6 +487,43 @@ const ContributionDetail = () => {
       colorSel = COLOR_OTHER_VALUE;
       colorOth = rawColor;
     }
+    const letteringStyleIdRaw =
+      sd.lettering_style_id ??
+      sd.letteringStyleId ??
+      (sd.lettering_style as { lettering_style_id?: number; letteringStyleId?: number } | undefined)
+        ?.lettering_style_id ??
+      (sd.lettering_style as { lettering_style_id?: number; letteringStyleId?: number } | undefined)
+        ?.letteringStyleId ??
+      (sd.letteringStyle as { lettering_style_id?: number; letteringStyleId?: number } | undefined)
+        ?.lettering_style_id ??
+      (sd.letteringStyle as { lettering_style_id?: number; letteringStyleId?: number } | undefined)
+        ?.letteringStyleId;
+    const framingStyleIdRaw =
+      sd.framing_style_id ??
+      sd.framingStyleId ??
+      (Array.isArray(sd.framing_style_ids) ? sd.framing_style_ids[0] : undefined) ??
+      (Array.isArray(sd.framingStyleIds) ? sd.framingStyleIds[0] : undefined) ??
+      (sd.framing_style as { framing_style_id?: number; framingStyleId?: number } | undefined)
+        ?.framing_style_id ??
+      (sd.framing_style as { framing_style_id?: number; framingStyleId?: number } | undefined)
+        ?.framingStyleId ??
+      (sd.framingStyle as { framing_style_id?: number; framingStyleId?: number } | undefined)
+        ?.framing_style_id ??
+      (sd.framingStyle as { framing_style_id?: number; framingStyleId?: number } | undefined)
+        ?.framingStyleId;
+    const dateFormatIdRaw =
+      sd.date_format_id ??
+      sd.dateFormatId ??
+      (Array.isArray(sd.date_format_ids) ? sd.date_format_ids[0] : undefined) ??
+      (Array.isArray(sd.dateFormatIds) ? sd.dateFormatIds[0] : undefined) ??
+      (sd.date_format as { date_format_id?: number; dateFormatId?: number } | undefined)
+        ?.date_format_id ??
+      (sd.date_format as { date_format_id?: number; dateFormatId?: number } | undefined)
+        ?.dateFormatId ??
+      (sd.dateFormat as { date_format_id?: number; dateFormatId?: number } | undefined)
+        ?.date_format_id ??
+      (sd.dateFormat as { date_format_id?: number; dateFormatId?: number } | undefined)
+        ?.dateFormatId;
     setEditorEdits({
       state: String(sd.state ?? "").trim(),
       stateOther: "",
@@ -489,18 +539,9 @@ const ContributionDetail = () => {
       description: String(sd.description ?? "").trim(),
       references: String(sd.references ?? "").trim(),
       is_irreg: Boolean(sd.is_irreg ?? sd.isIrreg),
-      lettering_style_id:
-        sd.lettering_style_id != null || sd.letteringStyleId != null
-          ? String(sd.lettering_style_id ?? sd.letteringStyleId ?? "")
-          : "",
-      framing_style_id:
-        sd.framing_style_id != null || sd.framingStyleId != null
-          ? String(sd.framing_style_id ?? sd.framingStyleId ?? "")
-          : "",
-      date_format_id:
-        sd.date_format_id != null || sd.dateFormatId != null
-          ? String(sd.date_format_id ?? sd.dateFormatId ?? "")
-          : "",
+      lettering_style_id: letteringStyleIdRaw != null ? String(letteringStyleIdRaw) : "",
+      framing_style_id: framingStyleIdRaw != null ? String(framingStyleIdRaw) : "",
+      date_format_id: dateFormatIdRaw != null ? String(dateFormatIdRaw) : "",
     });
     setAdditionalDatePairs(parseDatesObservedToYearPairs(sd.dates_observed ?? sd.datesObserved));
     setEditorFieldErrors({});
@@ -1281,7 +1322,7 @@ const ContributionDetail = () => {
                   <CardHeader>
                     <CardTitle className="font-heading text-lg flex items-center gap-2">
                       <Pencil className="h-5 w-5" />
-                      Edit submission data
+                      Edit Catalog Entry
                     </CardTitle>
                     <p className="text-sm text-muted-foreground">
                       Same fields as <strong>Edit Catalog Entry</strong>. Changes are saved automatically when you approve (after validation).

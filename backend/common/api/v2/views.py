@@ -129,6 +129,35 @@ def _extract_reference_work_ids_from_payload(payload: dict) -> list[int]:
     return _coerce_reference_work_ids(values)
 
 
+def _coerce_optional_int(raw_value):
+    if raw_value is None:
+        return None
+    s = str(raw_value).strip()
+    if not s:
+        return None
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_int_list(data, list_key: str, singular_key: str, camel_singular_key: str = "") -> list[int]:
+    values = []
+    if hasattr(data, "getlist"):
+        values.extend(data.getlist(list_key))
+        values.extend(data.getlist(singular_key))
+        if camel_singular_key:
+            values.extend(data.getlist(camel_singular_key))
+    elif isinstance(data, dict):
+        if list_key in data:
+            values.append(data.get(list_key))
+        if singular_key in data:
+            values.append(data.get(singular_key))
+        if camel_singular_key and camel_singular_key in data:
+            values.append(data.get(camel_singular_key))
+    return _coerce_reference_work_ids(values)
+
+
 def _extract_reference_work_details_from_payload(payload: dict) -> dict[int, dict]:
     """
     Read optional per-reference citation metadata from payload:
@@ -913,6 +942,9 @@ def _create_contribution_only(payload, contributor):
             "shape": (payload.get("shape") or payload.get("type") or "").strip(),
             "color": (payload.get("color") or "").strip(),
             "manuscript": (payload.get("manuscript") or "").strip(),
+            "is_irreg": payload.get("is_irreg"),
+            "impression": (payload.get("impression") or "").strip(),
+            "date_type": (payload.get("date_type") or "").strip(),
             "dimensions": (payload.get("dimensions") or "").strip(),
             "inscription_txt": (payload.get("inscription_txt") or "").strip(),
             "references": (payload.get("references") or "").strip(),
@@ -921,6 +953,11 @@ def _create_contribution_only(payload, contributor):
             "rarity": (payload.get("rarity") or "").strip(),
             "submitter_name": (payload.get("submitter_name") or "").strip(),
             "original_postmark_id": str(payload.get("original_postmark_id", "")),
+            "lettering_style_id": payload.get("lettering_style_id"),
+            "framing_style_id": payload.get("framing_style_id"),
+            "framing_style_ids": payload.get("framing_style_ids", []),
+            "date_format_id": payload.get("date_format_id"),
+            "date_format_ids": payload.get("date_format_ids", []),
             "ratemarks": payload.get("ratemarks", []),
             "auxmarks": payload.get("auxmarks", []),
         }
@@ -1136,6 +1173,9 @@ class ContributionView(APIView):
             "shape": shape_val,
             "color": color,
             "manuscript": manuscript,
+            "is_irreg": data.get("is_irreg"),
+            "impression": (data.get("impression") or "").strip(),
+            "date_type": (data.get("date_type") or data.get("dateType") or "").strip(),
             "dimensions": (data.get("dimensions") or "").strip(),
             "inscription_txt": (data.get("inscription_txt") or data.get("inscriptionText") or "").strip(),
             "references": (data.get("references") or "").strip(),
@@ -1146,6 +1186,44 @@ class ContributionView(APIView):
             "ratemarks": ratemarks,
             "auxmarks": auxmarks,
         }
+        lettering_style_id = _coerce_optional_int(
+            data.get("lettering_style_id") or data.get("letteringStyleId")
+        )
+        if lettering_style_id is not None:
+            payload["lettering_style_id"] = lettering_style_id
+
+        framing_style_ids = _extract_int_list(
+            data,
+            "framing_style_ids[]",
+            "framing_style_id",
+            "framingStyleId",
+        )
+        if framing_style_ids:
+            payload["framing_style_id"] = framing_style_ids[0]
+            payload["framing_style_ids"] = framing_style_ids
+        else:
+            framing_style_id = _coerce_optional_int(
+                data.get("framing_style_id") or data.get("framingStyleId")
+            )
+            if framing_style_id is not None:
+                payload["framing_style_id"] = framing_style_id
+
+        date_format_ids = _extract_int_list(
+            data,
+            "date_format_ids[]",
+            "date_format_id",
+            "dateFormatId",
+        )
+        if date_format_ids:
+            payload["date_format_id"] = date_format_ids[0]
+            payload["date_format_ids"] = date_format_ids
+        else:
+            date_format_id = _coerce_optional_int(
+                data.get("date_format_id") or data.get("dateFormatId")
+            )
+            if date_format_id is not None:
+                payload["date_format_id"] = date_format_id
+
         if contributor_comment:
             payload["contributor_comment"] = contributor_comment
         matched_state_region = _resolve_region_from_state_value(state)
@@ -1223,11 +1301,19 @@ class ContributionView(APIView):
                         "shape": payload.get("shape") or payload.get("type", ""),
                         "color": payload.get("color", ""),
                         "manuscript": payload.get("manuscript", ""),
+                        "is_irreg": payload.get("is_irreg"),
+                        "impression": payload.get("impression", ""),
+                        "date_type": payload.get("date_type", ""),
                         "dimensions": payload.get("dimensions", ""),
                         "inscription_txt": payload.get("inscription_txt", ""),
                         "references": payload.get("references", ""),
                         "reference_work_ids": payload.get("reference_work_ids", []),
                         "reference_work_details": payload.get("reference_work_details", {}),
+                        "lettering_style_id": payload.get("lettering_style_id"),
+                        "framing_style_id": payload.get("framing_style_id"),
+                        "framing_style_ids": payload.get("framing_style_ids", []),
+                        "date_format_id": payload.get("date_format_id"),
+                        "date_format_ids": payload.get("date_format_ids", []),
                         "ratemarks": payload.get("ratemarks", []),
                         "auxmarks": payload.get("auxmarks", []),
                         "rarity": payload.get("rarity", ""),
@@ -1325,7 +1411,7 @@ class IsStateEditorOrContributor(BasePermission):
             if obj.contributor_id == request.user.id:
                 return True
             return _can_review_contribution(request.user, obj)
-        if request.method in ("POST",):  # approve/reject
+        if request.method in ("POST", "PATCH"):  # approve/reject/editor-edit
             return _can_review_contribution(request.user, obj)
         return False
 
@@ -1407,6 +1493,154 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
             {"detail": "Contribution rejected."},
             status=status.HTTP_200_OK,
         )
+
+    @action(detail=True, methods=["patch"], url_path="editor-edit")
+    def editor_edit(self, request, pk=None):
+        """
+        State editors: directly edit the contribution's submitted_data (postmark fields).
+        Merges request body over existing submitted_data; approval will then apply these
+        values to the catalog.
+        """
+        contrib = self.get_object()
+        if not _can_review_contribution(request.user, contrib):
+            return Response(
+                {"detail": "Only state editors can edit contribution data."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if contrib.status != Contribution.STATUS_PENDING:
+            return Response(
+                {"detail": "Only pending contributions can be edited."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = request.data or {}
+
+        def _get(*keys, default=None):
+            for key in keys:
+                value = data.get(key)
+                if value is not None and value != "":
+                    return value
+            return default
+
+        def _parse_optional_bool(value):
+            if value is None:
+                return None
+            if isinstance(value, bool):
+                return value
+            s = str(value).strip().lower()
+            if s in {"true", "1", "yes", "y", "on"}:
+                return True
+            if s in {"false", "0", "no", "n", "off"}:
+                return False
+            return None
+
+        existing = contrib.submitted_data or {}
+        overlay = dict(existing)
+
+        state = _get("state", "State")
+        if state is not None:
+            overlay["state"] = str(state).strip()
+        town = _get("town", "Town")
+        if town is not None:
+            overlay["town"] = str(town).strip()
+        first_seen = _get("firstSeen", "first_seen")
+        last_seen = _get("lastSeen", "last_seen")
+        if first_seen is not None or last_seen is not None:
+            fs = (
+                str(first_seen or "").strip()
+                or existing.get("date_range", "").split("-")[0].strip()
+            ).strip()
+            ls = (
+                str(last_seen or "").strip()
+                if last_seen is not None
+                else (existing.get("date_range", "") or "").split("-")[-1].strip()
+            )
+            overlay["date_range"] = f"{fs}-{ls}" if ls else fs
+            overlay["first_seen"] = fs
+            overlay["last_seen"] = ls
+        shape = _get("shape", "type", "Type")
+        if shape is not None:
+            overlay["shape"] = str(shape).strip()
+            overlay["type"] = str(shape).strip()
+        color = _get("color", "Color")
+        if color is not None:
+            overlay["color"] = str(color).strip()
+        dimensions = _get("dimensions", "Dimensions")
+        if dimensions is not None:
+            overlay["dimensions"] = str(dimensions).strip()
+        width_mm = _get("width_mm", "widthMm")
+        if width_mm is not None:
+            overlay["width_mm"] = str(width_mm).strip()
+        height_mm = _get("height_mm", "heightMm")
+        if height_mm is not None:
+            overlay["height_mm"] = str(height_mm).strip()
+        manuscript = _get("manuscript", "Manuscript")
+        if manuscript is not None:
+            overlay["manuscript"] = str(manuscript).strip()
+        description = _get("description", "Description")
+        if description is not None:
+            overlay["description"] = str(description).strip()
+        references = _get("references", "References")
+        if references is not None:
+            overlay["references"] = str(references).strip()
+        is_irreg = _get("is_irreg", "isIrreg", "isIrregular")
+        parsed_is_irreg = _parse_optional_bool(is_irreg)
+        if parsed_is_irreg is not None:
+            overlay["is_irreg"] = parsed_is_irreg
+        date_type = _get("date_type", "dateType")
+        if date_type is not None:
+            overlay["date_type"] = str(date_type).strip()
+        if "dates_observed" in data or "datesObserved" in data:
+            raw_dates_observed = data.get("dates_observed")
+            if raw_dates_observed is None or raw_dates_observed == "":
+                raw_dates_observed = data.get("datesObserved")
+            overlay["dates_observed"] = str(raw_dates_observed or "").strip()
+
+        raw_lettering = _get("lettering_style_id", "letteringStyleId")
+        if raw_lettering is not None:
+            try:
+                overlay["lettering_style_id"] = int(raw_lettering)
+            except (TypeError, ValueError):
+                pass
+
+        framing_style_ids = _extract_int_list(
+            data,
+            "framing_style_ids[]",
+            "framing_style_ids",
+            "framing_style_id",
+            "framingStyleId",
+        )
+        if framing_style_ids:
+            overlay["framing_style_id"] = framing_style_ids[0]
+            overlay["framing_style_ids"] = framing_style_ids
+        elif (
+            "framing_style_ids[]" in data
+            or "framing_style_ids" in data
+            or "framingStyleIds" in data
+        ):
+            overlay["framing_style_ids"] = []
+
+        date_format_ids = _extract_int_list(
+            data,
+            "date_format_ids[]",
+            "date_format_ids",
+            "date_format_id",
+            "dateFormatId",
+        )
+        if date_format_ids:
+            overlay["date_format_id"] = date_format_ids[0]
+            overlay["date_format_ids"] = date_format_ids
+        elif (
+            "date_format_ids[]" in data
+            or "date_format_ids" in data
+            or "dateFormatIds" in data
+        ):
+            overlay["date_format_ids"] = []
+
+        contrib.submitted_data = overlay
+        contrib.save(update_fields=["submitted_data", "updated_at"])
+        serializer = self.get_serializer(contrib)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # ========== CUSTOM PERMISSIONS ==========
@@ -1555,6 +1789,28 @@ class PostOfficeViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         serializer.save(modified_by=self.request.user)
+
+    @action(detail=False, methods=["get"], url_path="town-options")
+    def town_options(self, request):
+        """
+        Lightweight endpoint used by town/state autocomplete controls.
+        Returns objects shaped like: { town, state }.
+        """
+        rows = (
+            PostOffice.objects.select_related("region")
+            .exclude(name__isnull=True)
+            .exclude(name__exact="")
+            .values_list("name", "region__name")
+            .order_by("name", "region__name")
+        )
+        out = [
+            {
+                "town": (town or "").strip(),
+                "state": (state or "").strip(),
+            }
+            for town, state in rows
+        ]
+        return Response(out, status=status.HTTP_200_OK)
 
 
 class LetteringViewSet(viewsets.ModelViewSet):

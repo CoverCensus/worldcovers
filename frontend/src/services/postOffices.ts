@@ -51,6 +51,88 @@ export interface TownOptionItem {
   state: string;
 }
 
+interface PostOfficesV2Item {
+  id?: number;
+  name?: string;
+  region_name?: string;
+  regionName?: string;
+}
+
+interface PaginatedResponse<T> {
+  count?: number;
+  next?: string | null;
+  previous?: string | null;
+  results?: T[];
+}
+
+function dedupeTownState(options: PostOfficeOption[]): PostOfficeOption[] {
+  const seen = new Set<string>();
+  const out: PostOfficeOption[] = [];
+  for (const option of options) {
+    const town = (option.town ?? "").trim();
+    const state = (option.state ?? "").trim();
+    if (!town) continue;
+    const key = `${town.toLowerCase()}|${state.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      ...option,
+      town,
+      state,
+      name: `${town}${state ? `, ${state}` : ""}`,
+    });
+  }
+  return out;
+}
+
+function mapTownOptionsPayload(data: unknown): PostOfficeOption[] {
+  if (!Array.isArray(data)) return [];
+  return dedupeTownState(
+    data
+      .map((item, i) => {
+        const row = item as Partial<TownOptionItem>;
+        const town = (row.town ?? "").trim();
+        const state = (row.state ?? "").trim();
+        if (!town) return null;
+        return {
+          id: i,
+          referenceCode: "",
+          name: `${town}${state ? `, ${state}` : ""}`,
+          type: "",
+          latitude: null,
+          longitude: null,
+          town,
+          state,
+        } as PostOfficeOption;
+      })
+      .filter((item): item is PostOfficeOption => Boolean(item))
+  );
+}
+
+function mapPaginatedPostOfficesPayload(data: unknown): PostOfficeOption[] {
+  const payload = data as PaginatedResponse<PostOfficesV2Item>;
+  const results = Array.isArray(payload?.results) ? payload.results : [];
+  return dedupeTownState(
+    results
+      .map((item, i) => {
+        const town = (item?.name ?? "").trim();
+        const state = (item?.region_name ?? item?.regionName ?? "").trim();
+        if (!town) return null;
+        return {
+          id: typeof item?.id === "number" ? item.id : i,
+          referenceCode: "",
+          name: `${town}${state ? `, ${state}` : ""}`,
+          type: "",
+          latitude: null,
+          longitude: null,
+          town,
+          state,
+        } as PostOfficeOption;
+      })
+      .filter((item): item is PostOfficeOption => Boolean(item))
+  );
+}
+
 /** Returns the total number of post office records from the paginated list endpoint. */
 export async function getPostOfficeCount(): Promise<number> {
   const res = await apiClient.get<PostOfficesApiResponse>("/post-offices/", {
@@ -61,19 +143,23 @@ export async function getPostOfficeCount(): Promise<number> {
 
 /** Fetches post office town options from GET /post-offices/town-options/. */
 export async function getPostOffices(): Promise<PostOfficeOption[]> {
-  const res = await apiClient.get<TownOptionItem[]>("/post-offices/town-options/");
-  const data = res.data;
-  if (!Array.isArray(data)) {
-    throw new Error("Post offices API: invalid town-options response");
+  try {
+    const res = await apiClient.get<TownOptionItem[]>("/post-offices/town-options/");
+    const fromTownOptions = mapTownOptionsPayload(res.data);
+    if (fromTownOptions.length > 0) {
+      return fromTownOptions;
+    }
+  } catch {
+    // Fallback below keeps forms functional when town-options endpoint is unavailable.
   }
-  return data.map((item, i) => ({
-    id: i,
-    referenceCode: "",
-    name: `${item.town}, ${item.state}`,
-    type: "",
-    latitude: null,
-    longitude: null,
-    town: item.town.trim(),
-    state: item.state.trim(),
-  }));
+
+  const fallbackRes = await apiClient.get<PaginatedResponse<PostOfficesV2Item>>("/post-offices/", {
+    params: { page_size: "5000" },
+  });
+  const fromPostOffices = mapPaginatedPostOfficesPayload(fallbackRes.data);
+  if (fromPostOffices.length > 0) {
+    return fromPostOffices;
+  }
+
+  throw new Error("Could not load town/city options.");
 }
