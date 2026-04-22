@@ -129,11 +129,6 @@ router.register(
     views.ContributionViewSet,
     basename="contribution",
 )
-router.register(
-    r"comments",
-    views.CommentSubmissionViewSet,
-    basename="comment-submission",
-)
 
 # FAQ entries (public site)
 router.register(

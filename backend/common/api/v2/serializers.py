@@ -13,7 +13,7 @@ from common.models import (
     Color,
     Postmark, PostmarkValuation,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
-    AdminCsvUpload, Contribution, CommentSubmission, FAQEntry,
+    AdminCsvUpload, Contribution, FAQEntry,
 )
 
 User = get_user_model()
@@ -514,7 +514,6 @@ class PostmarkSerializer(serializers.ModelSerializer):
     earliest_use = serializers.SerializerMethodField()
     latest_use = serializers.SerializerMethodField()
     valuation_display = serializers.SerializerMethodField()
-    approved_comments = serializers.SerializerMethodField()
     created_by = UserSerializer(read_only=True)
     modified_by = UserSerializer(read_only=True)
 
@@ -600,23 +599,6 @@ class PostmarkSerializer(serializers.ModelSerializer):
         if not val:
             return None
         return str(val.amt)
-
-    def get_approved_comments(self, obj):
-        comments = (
-            obj.comment_submissions.filter(status=CommentSubmission.STATUS_APPROVED)
-            .select_related("contributor")
-            .order_by("created_at")
-        )
-        return [
-            {
-                "id": row.id,
-                "comment_text": row.comment_text,
-                "contributor_username": row.contributor.username,
-                "created_at": row.created_at,
-            }
-            for row in comments
-        ]
-
 
 # ========== POSTCOVER SERIALIZERS ==========
 
@@ -911,71 +893,5 @@ class ContributionApproveRejectSerializer(serializers.Serializer):
     """Payload for approve/reject actions."""
     review_notes = serializers.CharField(required=False, allow_blank=True)
 
-
-class CommentSubmissionListSerializer(serializers.ModelSerializer):
-    contributor_username = serializers.CharField(source="contributor.username", read_only=True)
-    reviewer_username = serializers.CharField(source="reviewer.username", read_only=True, allow_null=True)
-
-    class Meta:
-        model = CommentSubmission
-        fields = [
-            "id",
-            "target_type",
-            "postmark",
-            "collection_name",
-            "comment_text",
-            "status",
-            "review_reason",
-            "reviewed_at",
-            "contributor",
-            "contributor_username",
-            "reviewer",
-            "reviewer_username",
-            "created_at",
-            "updated_at",
-        ]
-
-
-class CommentSubmissionCreateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = CommentSubmission
-        fields = [
-            "target_type",
-            "postmark",
-            "collection_name",
-            "comment_text",
-        ]
-
-    def validate(self, attrs):
-        target_type = attrs.get("target_type") or CommentSubmission.TARGET_POSTMARK
-        postmark = attrs.get("postmark")
-        collection_name = (attrs.get("collection_name") or "").strip()
-        comment_text = (attrs.get("comment_text") or "").strip()
-
-        if target_type == CommentSubmission.TARGET_POSTMARK and not postmark:
-            raise serializers.ValidationError({"postmark": "Postmark is required for record comments."})
-        if target_type == CommentSubmission.TARGET_COLLECTION and not collection_name:
-            raise serializers.ValidationError({"collection_name": "Collection name is required for collection comments."})
-        if not comment_text:
-            raise serializers.ValidationError({"comment_text": "Comment text is required."})
-        if len(comment_text) < 5:
-            raise serializers.ValidationError({"comment_text": "Comment must be at least 5 characters long."})
-
-        attrs["collection_name"] = collection_name
-        attrs["comment_text"] = comment_text
-        return attrs
-
-
-class CommentSubmissionDecisionSerializer(serializers.Serializer):
-    decision = serializers.ChoiceField(choices=["approve", "deny"])
-    review_reason = serializers.CharField(required=False, allow_blank=True)
-
-    def validate(self, attrs):
-        decision = attrs.get("decision")
-        reason = (attrs.get("review_reason") or "").strip()
-        if decision == "deny" and not reason:
-            raise serializers.ValidationError({"review_reason": "A denial reason is required."})
-        attrs["review_reason"] = reason
-        return attrs
 
 ###################################################################################################

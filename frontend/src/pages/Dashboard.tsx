@@ -150,17 +150,6 @@ interface PendingReviewItem {
   review_notes: string | null;
 }
 
-/** Pending user comment for editor moderation (approve / deny). */
-interface PendingCommentReviewItem {
-  id: number;
-  contributor_username: string;
-  comment_text: string;
-  status: string;
-  review_reason: string | null;
-  created_at: string;
-  postmark_id: number | null;
-}
-
 type PaginatedResponse<T> = {
   count: number;
   page: number;
@@ -288,20 +277,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [editorHistoryTotal, setEditorHistoryTotal] = useState<number | null>(null);
   const [editorHistoryGoToInput, setEditorHistoryGoToInput] = useState("");
   const editorHistoryPageSize = 10;
-
-  // Pending comment moderation (state editor): user-submitted comments on records.
-  const [pendingCommentItems, setPendingCommentItems] = useState<PendingCommentReviewItem[]>([]);
-  const [pendingCommentLoading, setPendingCommentLoading] = useState(false);
-  const [pendingCommentError, setPendingCommentError] = useState<string | null>(null);
-  const [pendingCommentPage, setPendingCommentPage] = useState(1);
-  const [pendingCommentTotal, setPendingCommentTotal] = useState<number | null>(null);
-  const [pendingCommentGoToInput, setPendingCommentGoToInput] = useState("");
-  const pendingCommentPageSize = 10;
-  const [pendingCommentRefetchKey, setPendingCommentRefetchKey] = useState(0);
-  const [commentDecisionTarget, setCommentDecisionTarget] = useState<PendingCommentReviewItem | null>(null);
-  const [commentDecisionKind, setCommentDecisionKind] = useState<"approve" | "deny">("approve");
-  const [commentDecisionReason, setCommentDecisionReason] = useState("");
-  const [commentDecisionSubmitting, setCommentDecisionSubmitting] = useState(false);
 
   // Filter states (mirror Catalog Search)
   const [searchQuery, setSearchQuery] = useState("");
@@ -788,70 +763,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     setPendingReviewPage(1);
   }, [isStateEditor, activeTab, editorStateFilter]);
 
-  // Load pending user comments for editor moderation.
-  useEffect(() => {
-    if (!isStateEditor || activeTab !== "editor") return;
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      setPendingCommentError("VITE_API_URL is not set.");
-      setPendingCommentItems([]);
-      setPendingCommentTotal(null);
-      return;
-    }
-    setPendingCommentError(null);
-    setPendingCommentLoading(true);
-    fetch(
-      `${apiBase}/comments/?status=pending&target_type=postmark&page=${pendingCommentPage}&page_size=${pendingCommentPageSize}`,
-      {
-        method: "GET",
-        credentials: "include",
-        headers: { Accept: "application/json" },
-      },
-    )
-      .then((res) => {
-        if (!res.ok) throw new Error(res.statusText || "Failed to load pending comments");
-        return res.json();
-      })
-      .then((data: any[] | PaginatedResponse<any>) => {
-        const list = Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : null;
-        const total = Array.isArray(data)
-          ? data.length
-          : typeof (data as PaginatedResponse<any>)?.count === "number"
-            ? (data as PaginatedResponse<any>).count
-            : null;
-        setPendingCommentTotal(total);
-        if (!Array.isArray(list)) {
-          setPendingCommentItems([]);
-          return;
-        }
-        setPendingCommentItems(
-          list.map((row) => ({
-            id: Number(row?.id),
-            contributor_username: String(row?.contributor_username ?? ""),
-            comment_text: String(row?.comment_text ?? "").trim(),
-            status: String(row?.status ?? "pending"),
-            review_reason:
-              typeof row?.review_reason === "string" && row.review_reason.trim().length > 0
-                ? row.review_reason.trim()
-                : null,
-            created_at: String(row?.created_at ?? ""),
-            postmark_id: row?.postmark != null ? Number(row.postmark) : null,
-          })),
-        );
-      })
-      .catch((err) => {
-        setPendingCommentError(err instanceof Error ? err.message : "Could not load pending comments.");
-        setPendingCommentItems([]);
-        setPendingCommentTotal(null);
-      })
-      .finally(() => setPendingCommentLoading(false));
-  }, [isStateEditor, activeTab, pendingCommentPage, pendingCommentRefetchKey]);
-
-  useEffect(() => {
-    if (!isStateEditor || activeTab !== "editor") return;
-    setPendingCommentPage(1);
-  }, [isStateEditor, activeTab]);
-
   const submitStatusDecision = async () => {
     if (!statusDecisionTarget || !statusComment.trim()) return;
     if (statusDecisionKind === "approve") {
@@ -904,52 +815,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       });
     } finally {
       setStatusSubmitting(false);
-    }
-  };
-
-  const submitCommentDecision = async () => {
-    if (!commentDecisionTarget) return;
-    if (commentDecisionKind === "deny" && !commentDecisionReason.trim()) return;
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      toast({ title: "Configuration error", description: "VITE_API_URL is not set.", variant: "destructive" });
-      return;
-    }
-    setCommentDecisionSubmitting(true);
-    const csrfToken = getCsrfTokenFromCookie();
-    const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
-    if (csrfToken) headers["X-CSRFToken"] = csrfToken;
-    const payload: Record<string, unknown> = { decision: commentDecisionKind };
-    if (commentDecisionKind === "deny") {
-      payload.review_reason = commentDecisionReason.trim();
-    }
-    try {
-      const res = await fetch(`${apiBase}/comments/${commentDecisionTarget.id}/decision/`, {
-        method: "POST",
-        credentials: "include",
-        headers,
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        const resBody = await res.json().catch(() => ({}));
-        const msg = resBody?.review_reason?.[0] ?? resBody?.detail ?? res.statusText;
-        throw new Error(typeof msg === "string" ? msg : "Request failed");
-      }
-      toast({
-        title: commentDecisionKind === "approve" ? "Comment approved" : "Comment denied",
-        description: "The contributor status has been updated.",
-      });
-      setCommentDecisionTarget(null);
-      setCommentDecisionReason("");
-      setPendingCommentRefetchKey((k) => k + 1);
-    } catch (err) {
-      toast({
-        title: "Could not submit decision",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setCommentDecisionSubmitting(false);
     }
   };
 
@@ -1191,15 +1056,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     pendingReviewTotalCount === 0
       ? 0
       : Math.min((pendingReviewPage - 1) * pendingReviewPageSize + pendingReviewItems.length, pendingReviewTotalCount);
-
-  const pendingCommentTotalCount = pendingCommentTotal ?? pendingCommentItems.length;
-  const pendingCommentTotalPages = Math.max(1, Math.ceil(pendingCommentTotalCount / pendingCommentPageSize));
-  const pendingCommentPageStart =
-    pendingCommentTotalCount === 0 ? 0 : (pendingCommentPage - 1) * pendingCommentPageSize + 1;
-  const pendingCommentPageEnd =
-    pendingCommentTotalCount === 0
-      ? 0
-      : Math.min((pendingCommentPage - 1) * pendingCommentPageSize + pendingCommentItems.length, pendingCommentTotalCount);
 
   const editorHistoryTotalCount = editorHistoryTotal ?? editorHistoryItems.length;
   const editorHistoryTotalPages = Math.max(1, Math.ceil(editorHistoryTotalCount / editorHistoryPageSize));
@@ -2120,203 +1976,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 */}
 
               <main className="flex-1 space-y-4">
-                <Card className="shadow-archival-md">
-                  <CardContent className="pt-6 space-y-4">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                      <div>
-                        <h2 className="font-heading text-lg font-semibold text-foreground">Pending comment reviews</h2>
-                        {!pendingCommentLoading && !pendingCommentError && (
-                          <p className="text-sm text-muted-foreground">
-                            {pendingCommentTotalCount === 0 ? (
-                              "0 results"
-                            ) : (
-                              <>
-                                Showing{" "}
-                                <span className="font-semibold text-foreground">
-                                  {pendingCommentPageStart.toLocaleString()}-{pendingCommentPageEnd.toLocaleString()}
-                                </span>{" "}
-                                of{" "}
-                                <span className="font-semibold text-foreground">
-                                  {pendingCommentTotalCount.toLocaleString()}
-                                </span>{" "}
-                                pending comment{pendingCommentTotalCount !== 1 ? "s" : ""}
-                              </>
-                            )}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    {pendingCommentLoading ? (
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        <span>Loading pending comments...</span>
-                      </div>
-                    ) : pendingCommentError ? (
-                      <p className="text-sm text-destructive">{pendingCommentError}</p>
-                    ) : pendingCommentItems.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        No pending comments to review right now.
-                      </p>
-                    ) : (
-                      <>
-                        <ul className="space-y-3">
-                          {pendingCommentItems.map((item) => (
-                            <li
-                              key={item.id}
-                              className="rounded-lg border border-border p-4 bg-card hover:shadow-archival-sm transition-shadow"
-                            >
-                              <div className="flex flex-wrap items-start justify-between gap-3">
-                                <div className="min-w-0 space-y-2">
-                                  <p className="text-sm text-muted-foreground">
-                                    by <span className="font-medium text-foreground">{item.contributor_username}</span>
-                                    {" · "}
-                                    {item.created_at ? new Date(item.created_at).toLocaleDateString() : "Unknown date"}
-                                  </p>
-                                  <p className="text-sm text-foreground whitespace-pre-line">{item.comment_text || "No comment text provided."}</p>
-                                </div>
-                                <div className="flex flex-wrap gap-2 shrink-0">
-                                  {item.postmark_id ? (
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => navigate(`/record/${item.postmark_id}`)}
-                                    >
-                                      View record
-                                    </Button>
-                                  ) : null}
-                                  <Button
-                                    variant="default"
-                                    size="sm"
-                                    onClick={() => {
-                                      setCommentDecisionKind("approve");
-                                      setCommentDecisionReason("");
-                                      setCommentDecisionTarget(item);
-                                    }}
-                                  >
-                                    Approve
-                                  </Button>
-                                  <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    onClick={() => {
-                                      setCommentDecisionKind("deny");
-                                      setCommentDecisionReason("");
-                                      setCommentDecisionTarget(item);
-                                    }}
-                                  >
-                                    Deny
-                                  </Button>
-                                </div>
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-
-                        {pendingCommentTotalPages > 1 && (
-                          <div className="mt-5 flex flex-col items-center gap-4">
-                            <Pagination>
-                              <PaginationContent>
-                                <PaginationItem>
-                                  <PaginationPrevious
-                                    onClick={() => {
-                                      setPendingCommentPage((p) => Math.max(1, p - 1));
-                                      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                                    }}
-                                    className={pendingCommentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
-                                  />
-                                </PaginationItem>
-                                {getPaginationPages(pendingCommentPage, pendingCommentTotalPages).map((p, i) =>
-                                  p === "ellipsis" ? (
-                                    <PaginationItem key={`ellipsis-pending-comments-${i}`}>
-                                      <PaginationEllipsis />
-                                    </PaginationItem>
-                                  ) : (
-                                    <PaginationItem key={`pending-comments-${p}`}>
-                                      <PaginationLink
-                                        onClick={() => {
-                                          setPendingCommentPage(p);
-                                          window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                                        }}
-                                        isActive={pendingCommentPage === p}
-                                        className="cursor-pointer"
-                                      >
-                                        {p}
-                                      </PaginationLink>
-                                    </PaginationItem>
-                                  ),
-                                )}
-                                <PaginationItem>
-                                  <PaginationNext
-                                    onClick={() => {
-                                      setPendingCommentPage((p) => Math.min(pendingCommentTotalPages, p + 1));
-                                      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                                    }}
-                                    className={
-                                      pendingCommentPage === pendingCommentTotalPages ? "pointer-events-none opacity-50" : "cursor-pointer"
-                                    }
-                                  />
-                                </PaginationItem>
-                              </PaginationContent>
-                            </Pagination>
-
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm text-muted-foreground">Go to page</span>
-                              <Input
-                                type="number"
-                                min={1}
-                                max={pendingCommentTotalPages}
-                                placeholder="Page"
-                                value={pendingCommentGoToInput}
-                                onChange={(e) => {
-                                  const raw = e.target.value;
-                                  if (raw === "") {
-                                    setPendingCommentGoToInput("");
-                                    return;
-                                  }
-                                  const n = parseInt(raw, 10);
-                                  if (Number.isNaN(n)) return;
-                                  const clamped = Math.max(1, Math.min(pendingCommentTotalPages, n));
-                                  setPendingCommentGoToInput(String(clamped));
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    const n = parseInt(pendingCommentGoToInput, 10);
-                                    if (!Number.isNaN(n)) {
-                                      setPendingCommentPage(Math.max(1, Math.min(pendingCommentTotalPages, n)));
-                                      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                                      setPendingCommentGoToInput("");
-                                    }
-                                  }
-                                }}
-                                className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                aria-label="Go to pending comments page number"
-                              />
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-9"
-                                onClick={() => {
-                                  const n = parseInt(pendingCommentGoToInput, 10);
-                                  if (!Number.isNaN(n)) {
-                                    setPendingCommentPage(Math.max(1, Math.min(pendingCommentTotalPages, n)));
-                                    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                                    setPendingCommentGoToInput("");
-                                  }
-                                }}
-                              >
-                                Go
-                              </Button>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </CardContent>
-                </Card>
-
                 {/* History of user suggestions (contributions in assigned states) */}
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
                   <div>
@@ -2566,67 +2225,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deletingId ? "Deleting..." : "Delete"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog
-        open={!!commentDecisionTarget}
-        onOpenChange={(open) => {
-          if (!open && !commentDecisionSubmitting) {
-            setCommentDecisionTarget(null);
-            setCommentDecisionReason("");
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {commentDecisionKind === "approve" ? "Approve comment" : "Deny comment"}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {commentDecisionKind === "approve"
-                ? "This will publish the user comment on the record."
-                : "Add a reason so the contributor knows why this comment was denied."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="space-y-2 py-2">
-            <p className="text-sm text-muted-foreground whitespace-pre-line">
-              {commentDecisionTarget?.comment_text || "No comment text provided."}
-            </p>
-            {commentDecisionKind === "deny" && (
-              <div className="space-y-2">
-                <Label htmlFor="comment-deny-reason">
-                  Denial reason <span className="text-destructive">(required)</span>
-                </Label>
-                <Textarea
-                  id="comment-deny-reason"
-                  value={commentDecisionReason}
-                  onChange={(e) => setCommentDecisionReason(e.target.value)}
-                  rows={3}
-                  placeholder="Explain what needs to be changed."
-                  disabled={commentDecisionSubmitting}
-                  className="resize-none"
-                />
-              </div>
-            )}
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={commentDecisionSubmitting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              type="button"
-              disabled={commentDecisionSubmitting || (commentDecisionKind === "deny" && !commentDecisionReason.trim())}
-              onClick={(e) => {
-                e.preventDefault();
-                submitCommentDecision();
-              }}
-            >
-              {commentDecisionSubmitting
-                ? "Submitting..."
-                : commentDecisionKind === "approve"
-                  ? "Approve"
-                  : "Deny"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

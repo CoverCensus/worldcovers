@@ -85,7 +85,6 @@ from .models import (
     AdminCsvUpload,
     UserLocationAssignment,
     Contribution,
-    CommentSubmission,
     FAQEntry,
 )
 from .csv_import import IMPORTERS
@@ -1356,58 +1355,6 @@ class ContributionAdmin(admin.ModelAdmin):
                 f"Rejected {rejected} contribution(s).",
                 level=messages.SUCCESS,
             )
-
-
-@admin.register(CommentSubmission)
-class CommentSubmissionAdmin(admin.ModelAdmin):
-    list_display = [
-        "id",
-        "target_type",
-        "postmark",
-        "collection_name",
-        "contributor",
-        "status",
-        "reviewer",
-        "created_at",
-    ]
-    list_filter = ["status", "target_type"]
-    search_fields = ["comment_text", "collection_name", "contributor__username", "review_reason"]
-    readonly_fields = ["created_at", "updated_at", "reviewed_at"]
-    actions = ["approve_comments", "deny_comments"]
-
-    @admin.action(description="Approve selected pending comments")
-    def approve_comments(self, request, queryset):
-        count = 0
-        for row in queryset:
-            if row.status != CommentSubmission.STATUS_PENDING:
-                continue
-            row.status = CommentSubmission.STATUS_APPROVED
-            row.reviewer = request.user
-            row.reviewed_at = timezone.now()
-            row.save(update_fields=["status", "reviewer", "reviewed_at", "updated_at"])
-            count += 1
-        if count:
-            self.message_user(request, f"Approved {count} comment(s).", level=messages.SUCCESS)
-
-    @admin.action(description="Deny selected pending comments")
-    def deny_comments(self, request, queryset):
-        count = 0
-        for row in queryset:
-            if row.status != CommentSubmission.STATUS_PENDING:
-                continue
-            row.status = CommentSubmission.STATUS_DENIED
-            row.reviewer = request.user
-            row.reviewed_at = timezone.now()
-            if not row.review_reason:
-                row.review_reason = "Denied by editor in admin moderation."
-                row.save(
-                    update_fields=["status", "reviewer", "reviewed_at", "review_reason", "updated_at"]
-                )
-            else:
-                row.save(update_fields=["status", "reviewer", "reviewed_at", "updated_at"])
-            count += 1
-        if count:
-            self.message_user(request, f"Denied {count} comment(s).", level=messages.SUCCESS)
 
 
 @admin.register(Lettering)
