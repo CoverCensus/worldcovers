@@ -17,6 +17,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core.mail import send_mail
+from django.db import transaction
 from django.db.models import Q, Count, Prefetch, Min, Max, Subquery, OuterRef, IntegerField
 from django.db.models.functions import Coalesce
 from django.db.utils import ProgrammingError
@@ -298,6 +299,13 @@ from common.models import (
     Postmark, PostmarkValuation,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
     AdminCsvUpload, UserLocationAssignment, Contribution, FAQEntry,
+    SubmissionTransaction, PostmarkVersion,
+)
+from common.audit import (
+    build_postmark_snapshot,
+    create_postmark_version,
+    log_submission_transaction,
+    restore_postmark_from_snapshot,
 )
 
 from .serializers import (
@@ -1273,10 +1281,20 @@ class ContributionView(APIView):
                     {"detail": "Contribution not found or you cannot edit it."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
+            before_submission = dict(contrib.submitted_data or {})
             submitted_data = {k: v for k, v in payload.items() if k != "admin_unit"}
             contrib.submitted_data = submitted_data
             contrib.status = Contribution.STATUS_PENDING
             contrib.save(update_fields=["submitted_data", "status", "updated_at"])
+            log_submission_transaction(
+                action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
+                actor=user,
+                contribution=contrib,
+                postmark=contrib.postmark,
+                source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
+                before_payload=before_submission,
+                after_payload=submitted_data,
+            )
             return Response(
                 {"detail": "Submission updated successfully.", "contributionId": contrib.id},
                 status=status.HTTP_200_OK,
@@ -1289,6 +1307,7 @@ class ContributionView(APIView):
             role = _get_user_role(user)
             if role == "contributor" and not getattr(user, "is_superuser", False):
                 try:
+                    existing_contrib = Contribution.objects.filter(postmark_id=edit_postmark_id).first()
                     submitted_data = {
                         "state": payload.get("state", ""),
                         "state_region_id": payload.get("state_region_id"),
@@ -1341,6 +1360,20 @@ class ContributionView(APIView):
                             "submitted_data": submitted_data,
                         },
                     )
+                    log_submission_transaction(
+                        action=(
+                            SubmissionTransaction.ACTION_SUBMIT
+                            if created
+                            else SubmissionTransaction.ACTION_EDIT_SUBMISSION
+                        ),
+                        actor=user,
+                        contribution=contrib,
+                        postmark=contrib.postmark,
+                        source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
+                        before_payload={} if created else (existing_contrib.submitted_data if existing_contrib else {}),
+                        after_payload=submitted_data,
+                        extra_payload={"created": created, "mode": "suggested_catalog_edit"},
+                    )
                     detail_msg = (
                         "Correction submitted for review. A State Editor will review and apply it."
                         if created
@@ -1360,6 +1393,8 @@ class ContributionView(APIView):
                     )
 
             # State Editors and superusers: update catalog directly.
+            pre_update_postmark = Postmark.objects.filter(pk=edit_postmark_id).first()
+            before_snapshot = build_postmark_snapshot(pre_update_postmark)
             postmark = _update_postmark_in_catalog(edit_postmark_id, payload, submitter_name)
             if not postmark:
                 return Response(
@@ -1367,6 +1402,18 @@ class ContributionView(APIView):
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
             _sync_postmark_citations_from_payload(postmark, payload, request.user)
+            postmark.refresh_from_db()
+            after_snapshot = build_postmark_snapshot(postmark)
+            txn = log_submission_transaction(
+                action=SubmissionTransaction.ACTION_CATALOG_DIRECT_EDIT,
+                actor=request.user,
+                postmark=postmark,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload=before_snapshot,
+                after_payload=after_snapshot,
+                extra_payload={"edit_postmark_id": edit_postmark_id},
+            )
+            create_postmark_version(postmark, txn, request.user)
             return Response(
                 {"detail": "Catalog entry updated successfully.", "postmarkId": postmark.postmark_id},
                 status=status.HTTP_200_OK,
@@ -1378,6 +1425,15 @@ class ContributionView(APIView):
                 {"detail": "Could not save your submission. Please try again."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+        log_submission_transaction(
+            action=SubmissionTransaction.ACTION_SUBMIT,
+            actor=user,
+            contribution=contrib,
+            postmark=None,
+            source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
+            before_payload={},
+            after_payload=contrib.submitted_data or {},
+        )
         return Response(
             {
                 "detail": "Submission sent. Your entry will appear in the catalog after review.",
@@ -1453,17 +1509,33 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = ContributionApproveRejectSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
         review_notes = serializer.validated_data.get("review_notes", "")
-        postmark = contrib.apply_to_catalog()
-        if not postmark:
-            return Response(
-                {"detail": "Could not apply contribution to catalog. Check submitted_data."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        pre_postmark = Postmark.objects.filter(pk=contrib.postmark_id).first() if contrib.postmark_id else None
+        before_snapshot = build_postmark_snapshot(pre_postmark)
+        with transaction.atomic():
+            postmark = contrib.apply_to_catalog()
+            if not postmark:
+                return Response(
+                    {"detail": "Could not apply contribution to catalog. Check submitted_data."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            contrib.status = Contribution.STATUS_APPROVED
+            contrib.reviewer = request.user
+            contrib.review_notes = review_notes
+            contrib.save(update_fields=["status", "reviewer", "review_notes", "postmark", "updated_at"])
+            _sync_postmark_citations_from_payload(postmark, contrib.submitted_data or {}, request.user)
+            postmark.refresh_from_db()
+            after_snapshot = build_postmark_snapshot(postmark)
+            txn = log_submission_transaction(
+                action=SubmissionTransaction.ACTION_APPROVE,
+                actor=request.user,
+                contribution=contrib,
+                postmark=postmark,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload=before_snapshot,
+                after_payload=after_snapshot,
+                extra_payload={"review_notes": review_notes},
             )
-        contrib.status = Contribution.STATUS_APPROVED
-        contrib.reviewer = request.user
-        contrib.review_notes = review_notes
-        contrib.save(update_fields=["status", "reviewer", "review_notes", "postmark", "updated_at"])
-        _sync_postmark_citations_from_payload(postmark, contrib.submitted_data or {}, request.user)
+            create_postmark_version(postmark, txn, request.user)
         return Response(
             {"detail": "Contribution approved.", "postmarkId": postmark.pk},
             status=status.HTTP_200_OK,
@@ -1481,10 +1553,21 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = ContributionApproveRejectSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
         review_notes = serializer.validated_data.get("review_notes", "")
+        before_submission = dict(contrib.submitted_data or {})
         contrib.status = Contribution.STATUS_REJECTED
         contrib.reviewer = request.user
         contrib.review_notes = review_notes
         contrib.save(update_fields=["status", "reviewer", "review_notes", "updated_at"])
+        log_submission_transaction(
+            action=SubmissionTransaction.ACTION_REJECT,
+            actor=request.user,
+            contribution=contrib,
+            postmark=contrib.postmark,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload=before_submission,
+            after_payload=before_submission,
+            extra_payload={"review_notes": review_notes},
+        )
         return Response(
             {"detail": "Contribution rejected."},
             status=status.HTTP_200_OK,
@@ -1635,6 +1718,15 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
 
         contrib.submitted_data = overlay
         contrib.save(update_fields=["submitted_data", "updated_at"])
+        log_submission_transaction(
+            action=SubmissionTransaction.ACTION_EDITOR_EDIT,
+            actor=request.user,
+            contribution=contrib,
+            postmark=contrib.postmark,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload=existing,
+            after_payload=overlay,
+        )
         serializer = self.get_serializer(contrib)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -1676,6 +1768,85 @@ class IsResponsibleForRegion(BasePermission):
         return request.user and request.user.is_authenticated
 
 
+def _postmark_ids_for_ratemark(ratemark_id):
+    if not ratemark_id:
+        return set()
+    return set(
+        PostmarkRatemark.objects.filter(ratemark_id=ratemark_id).values_list("postmark_id", flat=True)
+    )
+
+
+def _postmark_ids_for_auxmark(parent_mark_type, parent_mark_id):
+    mark_type = str(parent_mark_type or "").upper()
+    try:
+        mark_id = int(parent_mark_id)
+    except (TypeError, ValueError):
+        return set()
+    if mark_type == "POSTMARK":
+        return {mark_id}
+    if mark_type == "RATEMARK":
+        return _postmark_ids_for_ratemark(mark_id)
+    return set()
+
+
+def _postmark_ids_for_mark_framing(parent_mark_type, parent_mark_id):
+    mark_type = str(parent_mark_type or "").upper()
+    try:
+        mark_id = int(parent_mark_id)
+    except (TypeError, ValueError):
+        return set()
+    if mark_type == "POSTMARK":
+        return {mark_id}
+    if mark_type == "RATEMARK":
+        return _postmark_ids_for_ratemark(mark_id)
+    if mark_type == "AUXMARK":
+        aux = Auxmark.objects.filter(pk=mark_id).first()
+        if not aux:
+            return set()
+        return _postmark_ids_for_auxmark(aux.parent_mark_type, aux.parent_mark_id)
+    return set()
+
+
+def _postmark_ids_for_citation(subject_type, subject_id):
+    subj_type = str(subject_type or "").upper()
+    if subj_type != "POSTMARK":
+        return set()
+    try:
+        return {int(subject_id)}
+    except (TypeError, ValueError):
+        return set()
+
+
+def _snapshot_map_for_postmark_ids(postmark_ids):
+    ids = [int(pid) for pid in set(postmark_ids or []) if pid is not None]
+    if not ids:
+        return {}
+    return {
+        postmark.pk: build_postmark_snapshot(postmark)
+        for postmark in Postmark.objects.filter(pk__in=ids)
+    }
+
+
+def _log_postmark_updates_for_ids(*, postmark_ids, actor, before_snapshots=None, source, extra_payload=None):
+    ids = [int(pid) for pid in set(postmark_ids or []) if pid is not None]
+    if not ids:
+        return
+    before_map = before_snapshots or {}
+    for postmark in Postmark.objects.filter(pk__in=ids):
+        after_snapshot = build_postmark_snapshot(postmark)
+        txn = log_submission_transaction(
+            action=SubmissionTransaction.ACTION_RECORD_UPDATE,
+            actor=actor,
+            contribution=getattr(postmark, "contribution", None),
+            postmark=postmark,
+            source=source,
+            before_payload=before_map.get(postmark.pk, {}),
+            after_payload=after_snapshot,
+            extra_payload=extra_payload or {},
+        )
+        create_postmark_version(postmark, txn, actor)
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class DeleteMySubmissionView(APIView):
     """
@@ -1699,9 +1870,23 @@ class DeleteMySubmissionView(APIView):
             return Response({"detail": "Catalog entry not found."}, status=status.HTTP_404_NOT_FOUND)
 
         user = request.user
+        before_snapshot = build_postmark_snapshot(postmark)
+
+        def _log_delete_event():
+            log_submission_transaction(
+                action=SubmissionTransaction.ACTION_RECORD_DELETE,
+                actor=user,
+                contribution=getattr(postmark, "contribution", None),
+                postmark=postmark,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload=before_snapshot,
+                after_payload={},
+                extra_payload={"deleted_postmark_id": postmark_id},
+            )
 
         # 1. Superusers can always delete
         if getattr(user, "is_superuser", False):
+            _log_delete_event()
             postmark.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1711,6 +1896,7 @@ class DeleteMySubmissionView(APIView):
         except Exception:
             region_id = None
         if region_id and _get_user_assigned_regions(user).filter(pk=region_id).exists():
+            _log_delete_event()
             postmark.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1726,6 +1912,7 @@ class DeleteMySubmissionView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        _log_delete_event()
         postmark.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1888,10 +2075,43 @@ class DateObservedViewSet(viewsets.ModelViewSet):
     ordering = ["postmark", "date"]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        postmark_id = serializer.validated_data.get("postmark").pk if serializer.validated_data.get("postmark") else None
+        before_map = _snapshot_map_for_postmark_ids([postmark_id] if postmark_id else [])
+        row = serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=[row.postmark_id],
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "date_observed", "event": "create", "date_observed_id": row.pk},
+        )
 
     def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
+        old_postmark_id = serializer.instance.postmark_id
+        new_postmark = serializer.validated_data.get("postmark")
+        new_postmark_id = new_postmark.pk if new_postmark else old_postmark_id
+        ids = {old_postmark_id, new_postmark_id}
+        before_map = _snapshot_map_for_postmark_ids(ids)
+        row = serializer.save(modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=ids | {row.postmark_id},
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "date_observed", "event": "update", "date_observed_id": row.pk},
+        )
+
+    def perform_destroy(self, instance):
+        postmark_id = instance.postmark_id
+        before_map = _snapshot_map_for_postmark_ids([postmark_id] if postmark_id else [])
+        super().perform_destroy(instance)
+        _log_postmark_updates_for_ids(
+            postmark_ids=[postmark_id] if postmark_id else [],
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "date_observed", "event": "delete"},
+        )
 
 
 class RatemarkViewSet(viewsets.ModelViewSet):
@@ -1906,10 +2126,41 @@ class RatemarkViewSet(viewsets.ModelViewSet):
     ordering = ["id"]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        row = serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        postmark_ids = _postmark_ids_for_ratemark(row.pk)
+        before_map = _snapshot_map_for_postmark_ids(postmark_ids)
+        _log_postmark_updates_for_ids(
+            postmark_ids=postmark_ids,
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "ratemark", "event": "create", "ratemark_id": row.pk},
+        )
 
     def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
+        ratemark_id = serializer.instance.pk
+        postmark_ids = _postmark_ids_for_ratemark(ratemark_id)
+        before_map = _snapshot_map_for_postmark_ids(postmark_ids)
+        row = serializer.save(modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=postmark_ids | _postmark_ids_for_ratemark(row.pk),
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "ratemark", "event": "update", "ratemark_id": row.pk},
+        )
+
+    def perform_destroy(self, instance):
+        postmark_ids = _postmark_ids_for_ratemark(instance.pk)
+        before_map = _snapshot_map_for_postmark_ids(postmark_ids)
+        super().perform_destroy(instance)
+        _log_postmark_updates_for_ids(
+            postmark_ids=postmark_ids,
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "ratemark", "event": "delete"},
+        )
 
 
 class AuxmarkViewSet(viewsets.ModelViewSet):
@@ -1924,10 +2175,45 @@ class AuxmarkViewSet(viewsets.ModelViewSet):
     ordering = ["parent_mark_type", "parent_mark_id"]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        parent_type = serializer.validated_data.get("parent_mark_type")
+        parent_id = serializer.validated_data.get("parent_mark_id")
+        postmark_ids = _postmark_ids_for_auxmark(parent_type, parent_id)
+        before_map = _snapshot_map_for_postmark_ids(postmark_ids)
+        row = serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=postmark_ids | _postmark_ids_for_auxmark(row.parent_mark_type, row.parent_mark_id),
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "auxmark", "event": "create", "auxmark_id": row.pk},
+        )
 
     def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
+        old_ids = _postmark_ids_for_auxmark(serializer.instance.parent_mark_type, serializer.instance.parent_mark_id)
+        new_type = serializer.validated_data.get("parent_mark_type", serializer.instance.parent_mark_type)
+        new_id = serializer.validated_data.get("parent_mark_id", serializer.instance.parent_mark_id)
+        new_ids = _postmark_ids_for_auxmark(new_type, new_id)
+        before_map = _snapshot_map_for_postmark_ids(old_ids | new_ids)
+        row = serializer.save(modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=old_ids | new_ids | _postmark_ids_for_auxmark(row.parent_mark_type, row.parent_mark_id),
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "auxmark", "event": "update", "auxmark_id": row.pk},
+        )
+
+    def perform_destroy(self, instance):
+        postmark_ids = _postmark_ids_for_auxmark(instance.parent_mark_type, instance.parent_mark_id)
+        before_map = _snapshot_map_for_postmark_ids(postmark_ids)
+        super().perform_destroy(instance)
+        _log_postmark_updates_for_ids(
+            postmark_ids=postmark_ids,
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "auxmark", "event": "delete"},
+        )
 
 
 class CoverPostmarkViewSet(viewsets.ModelViewSet):
@@ -1974,10 +2260,43 @@ class PostmarkRatemarkViewSet(viewsets.ModelViewSet):
     ordering = ["id"]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        postmark_id = serializer.validated_data.get("postmark").pk if serializer.validated_data.get("postmark") else None
+        before_map = _snapshot_map_for_postmark_ids([postmark_id] if postmark_id else [])
+        row = serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=[row.postmark_id],
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "postmark_ratemark", "event": "create", "link_id": row.pk},
+        )
 
     def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
+        old_postmark_id = serializer.instance.postmark_id
+        new_postmark = serializer.validated_data.get("postmark")
+        new_postmark_id = new_postmark.pk if new_postmark else old_postmark_id
+        ids = {old_postmark_id, new_postmark_id}
+        before_map = _snapshot_map_for_postmark_ids(ids)
+        row = serializer.save(modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=ids | {row.postmark_id},
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "postmark_ratemark", "event": "update", "link_id": row.pk},
+        )
+
+    def perform_destroy(self, instance):
+        postmark_id = instance.postmark_id
+        before_map = _snapshot_map_for_postmark_ids([postmark_id] if postmark_id else [])
+        super().perform_destroy(instance)
+        _log_postmark_updates_for_ids(
+            postmark_ids=[postmark_id] if postmark_id else [],
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "postmark_ratemark", "event": "delete"},
+        )
 
 
 class MarkFramingViewSet(viewsets.ModelViewSet):
@@ -1991,10 +2310,48 @@ class MarkFramingViewSet(viewsets.ModelViewSet):
     ordering = ["parent_mark_type", "parent_mark_id"]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        parent_type = serializer.validated_data.get("parent_mark_type")
+        parent_id = serializer.validated_data.get("parent_mark_id")
+        ids = _postmark_ids_for_mark_framing(parent_type, parent_id)
+        before_map = _snapshot_map_for_postmark_ids(ids)
+        row = serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=ids | _postmark_ids_for_mark_framing(row.parent_mark_type, row.parent_mark_id),
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "mark_framing", "event": "create", "mark_framing_id": row.pk},
+        )
 
     def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
+        old_ids = _postmark_ids_for_mark_framing(
+            serializer.instance.parent_mark_type,
+            serializer.instance.parent_mark_id,
+        )
+        new_type = serializer.validated_data.get("parent_mark_type", serializer.instance.parent_mark_type)
+        new_id = serializer.validated_data.get("parent_mark_id", serializer.instance.parent_mark_id)
+        new_ids = _postmark_ids_for_mark_framing(new_type, new_id)
+        before_map = _snapshot_map_for_postmark_ids(old_ids | new_ids)
+        row = serializer.save(modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=old_ids | new_ids | _postmark_ids_for_mark_framing(row.parent_mark_type, row.parent_mark_id),
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "mark_framing", "event": "update", "mark_framing_id": row.pk},
+        )
+
+    def perform_destroy(self, instance):
+        ids = _postmark_ids_for_mark_framing(instance.parent_mark_type, instance.parent_mark_id)
+        before_map = _snapshot_map_for_postmark_ids(ids)
+        super().perform_destroy(instance)
+        _log_postmark_updates_for_ids(
+            postmark_ids=ids,
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "mark_framing", "event": "delete"},
+        )
 
 
 class ReferenceWorkViewSet(viewsets.ModelViewSet):
@@ -2027,10 +2384,45 @@ class CitationViewSet(viewsets.ModelViewSet):
     ordering = ["reference_work", "subject_type", "subject_id"]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        subject_type = serializer.validated_data.get("subject_type")
+        subject_id = serializer.validated_data.get("subject_id")
+        ids = _postmark_ids_for_citation(subject_type, subject_id)
+        before_map = _snapshot_map_for_postmark_ids(ids)
+        row = serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=ids | _postmark_ids_for_citation(row.subject_type, row.subject_id),
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "citation", "event": "create", "citation_id": row.pk},
+        )
 
     def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
+        old_ids = _postmark_ids_for_citation(serializer.instance.subject_type, serializer.instance.subject_id)
+        new_type = serializer.validated_data.get("subject_type", serializer.instance.subject_type)
+        new_id = serializer.validated_data.get("subject_id", serializer.instance.subject_id)
+        new_ids = _postmark_ids_for_citation(new_type, new_id)
+        before_map = _snapshot_map_for_postmark_ids(old_ids | new_ids)
+        row = serializer.save(modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=old_ids | new_ids | _postmark_ids_for_citation(row.subject_type, row.subject_id),
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "citation", "event": "update", "citation_id": row.pk},
+        )
+
+    def perform_destroy(self, instance):
+        ids = _postmark_ids_for_citation(instance.subject_type, instance.subject_id)
+        before_map = _snapshot_map_for_postmark_ids(ids)
+        super().perform_destroy(instance)
+        _log_postmark_updates_for_ids(
+            postmark_ids=ids,
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "citation", "event": "delete"},
+        )
 
 
 # ========== PHYSICAL CHARACTERISTICS VIEWSETS ==========
@@ -2187,10 +2579,47 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
     
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        postmark = serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        after_snapshot = build_postmark_snapshot(postmark)
+        txn = log_submission_transaction(
+            action=SubmissionTransaction.ACTION_RECORD_CREATE,
+            actor=self.request.user,
+            contribution=getattr(postmark, "contribution", None),
+            postmark=postmark,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload={},
+            after_payload=after_snapshot,
+        )
+        create_postmark_version(postmark, txn, self.request.user)
     
     def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
+        before_snapshot = build_postmark_snapshot(serializer.instance)
+        postmark = serializer.save(modified_by=self.request.user)
+        after_snapshot = build_postmark_snapshot(postmark)
+        txn = log_submission_transaction(
+            action=SubmissionTransaction.ACTION_RECORD_UPDATE,
+            actor=self.request.user,
+            contribution=getattr(postmark, "contribution", None),
+            postmark=postmark,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload=before_snapshot,
+            after_payload=after_snapshot,
+        )
+        create_postmark_version(postmark, txn, self.request.user)
+
+    def perform_destroy(self, instance):
+        before_snapshot = build_postmark_snapshot(instance)
+        log_submission_transaction(
+            action=SubmissionTransaction.ACTION_RECORD_DELETE,
+            actor=self.request.user,
+            contribution=getattr(instance, "contribution", None),
+            postmark=instance,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload=before_snapshot,
+            after_payload={},
+            extra_payload={"deleted_postmark_id": instance.pk},
+        )
+        super().perform_destroy(instance)
     
     @action(detail=False, methods=['get'], url_path='my-submissions', permission_classes=[IsAuthenticated])
     def my_submissions(self, request):
@@ -2209,6 +2638,133 @@ class PostmarkViewSet(viewsets.ModelViewSet):
             return self.get_paginated_response(serializer.data)
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
+
+    @action(detail=True, methods=["get"], url_path="changelog", permission_classes=[IsAuthenticated])
+    def changelog(self, request, pk=None):
+        postmark = self.get_object()
+        if not _user_is_responsible_for_postmark(request.user, postmark):
+            return Response(
+                {"detail": "You are not allowed to view changelog for this record."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        txns = list(
+            SubmissionTransaction.objects.filter(postmark=postmark)
+            .select_related("actor", "contribution")
+            .order_by("-created_at", "-id")
+        )
+        versions = list(
+            PostmarkVersion.objects.filter(postmark=postmark)
+            .select_related("created_by", "transaction")
+            .order_by("-version_no")
+        )
+        version_no_by_txn_id = {
+            v.transaction_id: v.version_no
+            for v in versions
+            if v.transaction_id is not None
+        }
+        action_labels = dict(SubmissionTransaction.ACTION_CHOICES)
+
+        events = []
+        for txn in txns:
+            actor_name = None
+            if txn.actor:
+                actor_name = txn.actor.get_username() or getattr(txn.actor, "email", "") or str(txn.actor.pk)
+            events.append(
+                {
+                    "event_id": txn.id,
+                    "transaction_uuid": str(txn.transaction_uuid),
+                    "timestamp": txn.created_at,
+                    "action": txn.action,
+                    "action_label": action_labels.get(txn.action, txn.action.replace("_", " ").title()),
+                    "actor": actor_name,
+                    "source": txn.source,
+                    "contribution_id": txn.contribution_id,
+                    "version_no": version_no_by_txn_id.get(txn.id),
+                    "diff": txn.diff_payload or [],
+                    "summary": f"{action_labels.get(txn.action, txn.action)} by {actor_name or 'system'}",
+                }
+            )
+
+        version_rows = []
+        for version in versions:
+            created_by_name = None
+            if version.created_by:
+                created_by_name = (
+                    version.created_by.get_username()
+                    or getattr(version.created_by, "email", "")
+                    or str(version.created_by.pk)
+                )
+            version_rows.append(
+                {
+                    "version_no": version.version_no,
+                    "created_at": version.created_at,
+                    "created_by": created_by_name,
+                    "transaction_id": version.transaction_id,
+                }
+            )
+
+        return Response(
+            {
+                "postmark_id": postmark.pk,
+                "events": events,
+                "versions": version_rows,
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="restore-version", permission_classes=[IsAuthenticated])
+    def restore_version(self, request, pk=None):
+        postmark = self.get_object()
+        if not _user_is_responsible_for_postmark(request.user, postmark):
+            return Response(
+                {"detail": "You are not allowed to restore this record."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        raw_version_no = (request.data or {}).get("version_no")
+        try:
+            version_no = int(raw_version_no)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "version_no must be an integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        restore_from = PostmarkVersion.objects.filter(
+            postmark=postmark,
+            version_no=version_no,
+        ).first()
+        if not restore_from:
+            return Response(
+                {"detail": f"Version {version_no} not found for this record."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        before_snapshot = build_postmark_snapshot(postmark)
+        with transaction.atomic():
+            restore_postmark_from_snapshot(postmark, restore_from.snapshot or {}, request.user)
+            postmark.refresh_from_db()
+            after_snapshot = build_postmark_snapshot(postmark)
+            txn = log_submission_transaction(
+                action=SubmissionTransaction.ACTION_RESTORE_VERSION,
+                actor=request.user,
+                contribution=getattr(postmark, "contribution", None),
+                postmark=postmark,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload=before_snapshot,
+                after_payload=after_snapshot,
+                extra_payload={"restored_from_version_no": restore_from.version_no},
+            )
+            new_version = create_postmark_version(postmark, txn, request.user)
+
+        return Response(
+            {
+                "detail": f"Record restored from version {restore_from.version_no}.",
+                "restored_from_version_no": restore_from.version_no,
+                "new_version_no": new_version.version_no,
+            },
+            status=status.HTTP_200_OK,
+        )
     
     # Catalog action commented out: keep only list + pagination (PageSizePagination in settings)
     # @action(detail=False, methods=['get'], url_path='catalog')
@@ -2226,10 +2782,43 @@ class PostmarkImageViewSet(viewsets.ModelViewSet):
     ordering = ['display_order']
     
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        postmark_id = serializer.validated_data.get("postmark").pk if serializer.validated_data.get("postmark") else None
+        before_map = _snapshot_map_for_postmark_ids([postmark_id] if postmark_id else [])
+        image = serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=[image.postmark_id],
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "postmark_image", "event": "create", "postmark_image_id": image.pk},
+        )
     
     def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
+        old_postmark_id = serializer.instance.postmark_id
+        new_postmark = serializer.validated_data.get("postmark")
+        new_postmark_id = new_postmark.pk if new_postmark else old_postmark_id
+        ids = {old_postmark_id, new_postmark_id}
+        before_map = _snapshot_map_for_postmark_ids(ids)
+        image = serializer.save(modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=ids | {image.postmark_id},
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "postmark_image", "event": "update", "postmark_image_id": image.pk},
+        )
+
+    def perform_destroy(self, instance):
+        postmark_id = instance.postmark_id
+        before_map = _snapshot_map_for_postmark_ids([postmark_id] if postmark_id else [])
+        super().perform_destroy(instance)
+        _log_postmark_updates_for_ids(
+            postmark_ids=[postmark_id] if postmark_id else [],
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "postmark_image", "event": "delete"},
+        )
     
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -2240,7 +2829,15 @@ class PostmarkImageViewSet(viewsets.ModelViewSet):
                 {'error': 'You are not responsible for this region'},
                 status=status.HTTP_403_FORBIDDEN
             )
+        before_map = _snapshot_map_for_postmark_ids([image.postmark_id])
         image.save()
+        _log_postmark_updates_for_ids(
+            postmark_ids=[image.postmark_id],
+            actor=request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "postmark_image", "event": "approve", "postmark_image_id": image.pk},
+        )
         return Response({'status': 'image approved'})
 
     @action(detail=True, methods=['post'])
@@ -2252,7 +2849,15 @@ class PostmarkImageViewSet(viewsets.ModelViewSet):
                 {'error': 'You are not responsible for this region'},
                 status=status.HTTP_403_FORBIDDEN
             )
+        before_map = _snapshot_map_for_postmark_ids([image.postmark_id])
         image.save()
+        _log_postmark_updates_for_ids(
+            postmark_ids=[image.postmark_id],
+            actor=request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "postmark_image", "event": "reject", "postmark_image_id": image.pk},
+        )
         return Response({'status': 'image rejected'})
 
 
@@ -2267,6 +2872,45 @@ class PostmarkValuationViewSet(viewsets.ModelViewSet):
     filterset_fields = ['postmark']
     ordering_fields = ['appraisal_date', 'amt']
     ordering = ['-appraisal_date']
+
+    def perform_create(self, serializer):
+        postmark_id = serializer.validated_data.get("postmark").pk if serializer.validated_data.get("postmark") else None
+        before_map = _snapshot_map_for_postmark_ids([postmark_id] if postmark_id else [])
+        valuation = serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=[valuation.postmark_id],
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "postmark_valuation", "event": "create", "postmark_valuation_id": valuation.pk},
+        )
+
+    def perform_update(self, serializer):
+        old_postmark_id = serializer.instance.postmark_id
+        new_postmark = serializer.validated_data.get("postmark")
+        new_postmark_id = new_postmark.pk if new_postmark else old_postmark_id
+        ids = {old_postmark_id, new_postmark_id}
+        before_map = _snapshot_map_for_postmark_ids(ids)
+        valuation = serializer.save(modified_by=self.request.user)
+        _log_postmark_updates_for_ids(
+            postmark_ids=ids | {valuation.postmark_id},
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "postmark_valuation", "event": "update", "postmark_valuation_id": valuation.pk},
+        )
+
+    def perform_destroy(self, instance):
+        postmark_id = instance.postmark_id
+        before_map = _snapshot_map_for_postmark_ids([postmark_id] if postmark_id else [])
+        super().perform_destroy(instance)
+        _log_postmark_updates_for_ids(
+            postmark_ids=[postmark_id] if postmark_id else [],
+            actor=self.request.user,
+            before_snapshots=before_map,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            extra_payload={"entity": "postmark_valuation", "event": "delete"},
+        )
 
 
 # ========== POSTCOVER VIEWSETS ==========

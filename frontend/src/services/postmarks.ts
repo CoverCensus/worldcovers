@@ -155,6 +155,33 @@ export interface PostmarkApiResponse {
     return "";
   }
 
+export interface PostmarkChangelogEvent {
+  event_id: number;
+  transaction_uuid: string;
+  timestamp: string;
+  action: string;
+  action_label: string;
+  actor: string | null;
+  source: string;
+  contribution_id: number | null;
+  version_no: number | null;
+  summary: string;
+  diff: Array<{ field: string; before: unknown; after: unknown }>;
+}
+
+export interface PostmarkVersionRow {
+  version_no: number;
+  created_at: string;
+  created_by: string | null;
+  transaction_id: number | null;
+}
+
+export interface PostmarkChangelogResponse {
+  postmark_id: number;
+  events: PostmarkChangelogEvent[];
+  versions: PostmarkVersionRow[];
+}
+
   /** Normalize image URL to absolute using the API origin when needed. */
   export function normalizeImageUrl(path: string | null | undefined): string | null {
     if (!path) return null;
@@ -507,6 +534,37 @@ export interface PostmarkApiResponse {
       return null;
     }
   }
+
+export async function getPostmarkChangelog(postmarkId: number): Promise<PostmarkChangelogResponse | null> {
+  try {
+    const res = await apiClient.get<PostmarkChangelogResponse>(`/postmarks/${postmarkId}/changelog/`, {
+      withCredentials: true,
+      headers: { Accept: "application/json" },
+    });
+    return res.data;
+  } catch {
+    return null;
+  }
+}
+
+export async function restorePostmarkVersion(
+  postmarkId: number,
+  versionNo: number
+): Promise<{ detail?: string; restored_from_version_no?: number; new_version_no?: number } | null> {
+  try {
+    const res = await apiClient.post(
+      `/postmarks/${postmarkId}/restore-version/`,
+      { version_no: versionNo },
+      {
+        withCredentials: true,
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+      }
+    );
+    return res.data ?? null;
+  } catch {
+    return null;
+  }
+}
 
   function unwrapResults<T>(data: any): T[] {
     if (Array.isArray(data)) return data as T[];

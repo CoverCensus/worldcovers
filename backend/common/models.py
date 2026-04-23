@@ -1,4 +1,5 @@
 import hashlib
+import uuid
 from django.db import models
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
@@ -107,6 +108,124 @@ class Contribution(models.Model):
     def apply_to_catalog(self):
         from common.contribution_apply import apply_contribution_to_catalog
         return apply_contribution_to_catalog(self)
+
+
+class SubmissionTransaction(models.Model):
+    """Immutable audit events for submission and moderation workflows."""
+    ACTION_SUBMIT = "submit"
+    ACTION_EDIT_SUBMISSION = "edit_submission"
+    ACTION_EDITOR_EDIT = "editor_edit"
+    ACTION_APPROVE = "approve"
+    ACTION_REJECT = "reject"
+    ACTION_CATALOG_DIRECT_EDIT = "catalog_direct_edit"
+    ACTION_RESTORE_VERSION = "restore_version"
+    ACTION_RECORD_CREATE = "record_create"
+    ACTION_RECORD_UPDATE = "record_update"
+    ACTION_RECORD_DELETE = "record_delete"
+    ACTION_CHOICES = [
+        (ACTION_SUBMIT, "Submit"),
+        (ACTION_EDIT_SUBMISSION, "Edit submission"),
+        (ACTION_EDITOR_EDIT, "Editor edit"),
+        (ACTION_APPROVE, "Approve"),
+        (ACTION_REJECT, "Reject"),
+        (ACTION_CATALOG_DIRECT_EDIT, "Catalog direct edit"),
+        (ACTION_RESTORE_VERSION, "Restore version"),
+        (ACTION_RECORD_CREATE, "Record create"),
+        (ACTION_RECORD_UPDATE, "Record update"),
+        (ACTION_RECORD_DELETE, "Record delete"),
+    ]
+
+    SOURCE_CONTRIBUTOR_PORTAL = "contributor_portal"
+    SOURCE_EDITOR_PORTAL = "editor_portal"
+    SOURCE_SYSTEM = "system"
+    SOURCE_CHOICES = [
+        (SOURCE_CONTRIBUTOR_PORTAL, "Contributor portal"),
+        (SOURCE_EDITOR_PORTAL, "Editor portal"),
+        (SOURCE_SYSTEM, "System"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    transaction_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="submission_transactions",
+    )
+    action = models.CharField(max_length=40, choices=ACTION_CHOICES)
+    contribution = models.ForeignKey(
+        Contribution,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transactions",
+    )
+    postmark = models.ForeignKey(
+        Postmark,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transactions",
+    )
+    source = models.CharField(max_length=30, choices=SOURCE_CHOICES, default=SOURCE_SYSTEM)
+    before_payload = models.JSONField(default=dict, blank=True)
+    after_payload = models.JSONField(default=dict, blank=True)
+    diff_payload = models.JSONField(default=list, blank=True)
+    extra_payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "SubmissionTransactions"
+        verbose_name = "Submission Transaction"
+        verbose_name_plural = "Submission Transactions"
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["postmark", "created_at"]),
+            models.Index(fields=["contribution", "created_at"]),
+            models.Index(fields=["actor", "created_at"]),
+            models.Index(fields=["action", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"Transaction #{self.id} ({self.action})"
+
+
+class PostmarkVersion(models.Model):
+    """Snapshot history for recoverable postmark states."""
+    id = models.AutoField(primary_key=True)
+    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name="versions")
+    version_no = models.PositiveIntegerField()
+    snapshot = models.JSONField(default=dict, blank=True)
+    transaction = models.ForeignKey(
+        SubmissionTransaction,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="versions",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="postmark_versions_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "PostmarkVersions"
+        verbose_name = "Postmark Version"
+        verbose_name_plural = "Postmark Versions"
+        ordering = ["-version_no", "-id"]
+        unique_together = [["postmark", "version_no"]]
+        indexes = [
+            models.Index(fields=["postmark", "version_no"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        return f"Postmark #{self.postmark_id} v{self.version_no}"
 
 
 class PostmarkValuation(TimestampedModel):

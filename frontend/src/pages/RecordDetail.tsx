@@ -12,6 +12,8 @@ import { SubmitImageDialog } from "@/components/SubmitImageDialog";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import {
   getPostmarkById,
+  getPostmarkChangelog,
+  restorePostmarkVersion,
   normalizeImageUrl,
   formatPostmarkDimensionsDisplay,
   getPostmarkRatemarks,
@@ -20,6 +22,8 @@ import {
   type AssociatedRatemark,
   type AssociatedAuxmark,
   type AssociatedCover,
+  type PostmarkChangelogEvent,
+  type PostmarkVersionRow,
 } from "@/services/postmarks";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
@@ -124,6 +128,13 @@ function DetailRow({ label, value, last = false }: { label: string; value: strin
       <dd className="text-foreground whitespace-pre-line text-right">{value}</dd>
     </div>
   );
+}
+
+function formatEventTimestamp(iso: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
 }
 
 function AssociatedRatemarksCard({ items }: { items: AssociatedRatemark[] }) {
@@ -363,6 +374,10 @@ const RecordDetail = () => {
   const [associatedRatemarks, setAssociatedRatemarks] = useState<AssociatedRatemark[]>([]);
   const [associatedAuxmarks, setAssociatedAuxmarks] = useState<AssociatedAuxmark[]>([]);
   const [associatedCovers, setAssociatedCovers] = useState<AssociatedCover[]>([]);
+  const [changelogEvents, setChangelogEvents] = useState<PostmarkChangelogEvent[]>([]);
+  const [versionRows, setVersionRows] = useState<PostmarkVersionRow[]>([]);
+  const [restoringVersionNo, setRestoringVersionNo] = useState<number | null>(null);
+  const canViewChangelog = !!user && (user.role === "state_editor" || user.is_superuser);
 
   // Parse id from URL: "api-1" -> 1 (from Search when using API)
   const postmarkId = id ? parseInt(String(id).replace(/^api-/, ""), 10) : null;
@@ -550,6 +565,37 @@ const RecordDetail = () => {
       cancelled = true;
     };
   }, [postmarkId]);
+
+  useEffect(() => {
+    if (!canViewChangelog || postmarkId == null || isNaN(postmarkId)) {
+      setChangelogEvents([]);
+      setVersionRows([]);
+      return;
+    }
+    let cancelled = false;
+    getPostmarkChangelog(postmarkId).then((data) => {
+      if (cancelled || !data) return;
+      setChangelogEvents(Array.isArray(data.events) ? data.events : []);
+      setVersionRows(Array.isArray(data.versions) ? data.versions : []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [canViewChangelog, postmarkId]);
+
+  const handleRestoreVersion = async (versionNo: number) => {
+    if (!canViewChangelog || postmarkId == null || isNaN(postmarkId)) return;
+    const confirmed = window.confirm(`Restore this record from version ${versionNo}?`);
+    if (!confirmed) return;
+    setRestoringVersionNo(versionNo);
+    const result = await restorePostmarkVersion(postmarkId, versionNo);
+    setRestoringVersionNo(null);
+    if (!result) {
+      window.alert("Could not restore this version. Please try again.");
+      return;
+    }
+    navigate(0);
+  };
 
   // Carousel pagination
   useEffect(() => {
@@ -851,6 +897,74 @@ const RecordDetail = () => {
                     <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
                       {record.editorComment.trim()}
                     </p>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {canViewChangelog ? (
+                <Card className="shadow-archival-md border-primary/15">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">Change History</CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      Audit trail of submissions, moderation decisions, and version restores.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {changelogEvents.length === 0 ? (
+                      <p className="text-sm italic text-muted-foreground">No changelog entries yet for this record.</p>
+                    ) : (
+                      <div className="space-y-4">
+                        {changelogEvents.map((event) => (
+                          <div key={event.event_id} className="rounded-md border border-border p-3">
+                            <div className="flex flex-wrap items-center gap-2 mb-2">
+                              <Badge variant="outline">{event.action_label || event.action}</Badge>
+                              {event.version_no != null ? (
+                                <Badge variant="secondary">Version {event.version_no}</Badge>
+                              ) : null}
+                              {event.contribution_id != null ? (
+                                <Badge variant="secondary">Contribution #{event.contribution_id}</Badge>
+                              ) : null}
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {formatEventTimestamp(event.timestamp)} by {event.actor || "system"}
+                            </p>
+                            {Array.isArray(event.diff) && event.diff.length > 0 ? (
+                              <dl className="mt-3 space-y-1 text-xs">
+                                {event.diff.slice(0, 8).map((d, idx) => (
+                                  <div key={`${event.event_id}-${d.field}-${idx}`} className="grid grid-cols-[120px_1fr] gap-2">
+                                    <dt className="text-muted-foreground">{d.field}</dt>
+                                    <dd className="text-foreground truncate">{String(d.after ?? "—")}</dd>
+                                  </div>
+                                ))}
+                              </dl>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {versionRows.length > 0 ? (
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground">Versions</p>
+                        <div className="flex flex-wrap gap-2">
+                          {versionRows.map((v) => (
+                            <Button
+                              key={v.version_no}
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8"
+                              onClick={() => handleRestoreVersion(v.version_no)}
+                              disabled={restoringVersionNo === v.version_no}
+                            >
+                              {restoringVersionNo === v.version_no ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : null}
+                              Restore v{v.version_no}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </CardContent>
                 </Card>
               ) : null}
