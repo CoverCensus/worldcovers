@@ -344,6 +344,7 @@ const Contribute = () => {
   const [additionalDatePairs, setAdditionalDatePairs] = useState<DatePair[]>([]);
   const [shape, setShape] = useState("");
   const [color, setColor] = useState("");
+  const [rarity, setRarity] = useState("");
   const [widthMm, setWidthMm] = useState("");
   const [heightMm, setHeightMm] = useState("");
   const [manuscript, setManuscript] = useState("");
@@ -588,6 +589,7 @@ const Contribute = () => {
         setAdditionalDatePairs(extraPairs);
         setShape(shapeVal || "");
         setColor(colorVal || "");
+        setRarity(getStr(sd.rarity));
         const wh = submittedDataToWidthHeightStrings(sd as Record<string, unknown>);
         setWidthMm(wh.width);
         setHeightMm(wh.height);
@@ -1157,7 +1159,9 @@ const Contribute = () => {
         form.append("lastSeen", lastSeenToSend);
         if (datesObservedToSend) form.append("dates_observed", datesObservedToSend);
         form.append("shape", shapeVal);
+        if (shapeVal) form.append("type", shapeVal);
         form.append("color", colorVal);
+        if (rarity.trim()) form.append("rarity", rarity.trim());
         if (derivedDimensions) form.append("dimensions", derivedDimensions);
         if (manuscript.trim()) form.append("manuscript", manuscript.trim());
         form.append("is_irreg", String(isIrregular));
@@ -1197,7 +1201,9 @@ const Contribute = () => {
           lastSeen: lastSeenToSend,
           dates_observed: datesObservedToSend || undefined,
           shape: shapeVal,
+          type: shapeVal || undefined,
           color: colorVal,
+          rarity: rarity.trim() || undefined,
           dimensions: derivedDimensions || undefined,
           manuscript: manuscript.trim() || undefined,
           is_irreg: isIrregular,
@@ -1268,6 +1274,7 @@ const Contribute = () => {
       setAdditionalDatePairs([]);
       setShape("");
       setColor("");
+      setRarity("");
       setWidthMm("");
       setHeightMm("");
       setDiameterMm("");
@@ -1550,10 +1557,6 @@ const Contribute = () => {
                           setManuscript(v);
                           if (fieldErrors.manuscript) {
                             setFieldErrors((prev) => ({ ...prev, manuscript: undefined }));
-                          }
-                          if (v === "Yes") {
-                            setShape("");
-                            setFieldErrors((prev) => ({ ...prev, shape: undefined }));
                           }
                         }}
                       >
@@ -1941,10 +1944,12 @@ const Contribute = () => {
                       </div>
                     </div>
 
-                    {manuscript !== "Yes" && (
                     <div className="space-y-2">
                       <Label htmlFor="shape">
-                        Shape <span className="text-destructive" aria-hidden="true">*</span>
+                        Shape
+                        {manuscript === "No" ? (
+                          <span className="text-destructive" aria-hidden="true">*</span>
+                        ) : null}
                       </Label>
                       <SearchableSelect
                         id="shape"
@@ -1969,7 +1974,6 @@ const Contribute = () => {
                         <p className="text-sm text-destructive">{fieldErrors.shape}</p>
                       )}
                     </div>
-                    )}
 
                     <div className="flex items-center gap-2">
                       <input
@@ -2010,6 +2014,16 @@ const Contribute = () => {
                       {fieldErrors.color && (
                         <p className="text-sm text-destructive">{fieldErrors.color}</p>
                       )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="rarity">Rarity</Label>
+                      <Input
+                        id="rarity"
+                        type="text"
+                        value={rarity}
+                        onChange={(e) => setRarity(e.target.value)}
+                        placeholder="e.g., Common, Scarce, Rare"
+                      />
                     </div>
 
                     <div className="space-y-2">

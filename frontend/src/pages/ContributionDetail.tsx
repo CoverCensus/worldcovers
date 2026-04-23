@@ -35,6 +35,12 @@ const MANUSCRIPT_OPTIONS = [
   { value: "No", label: "No" },
 ];
 
+const IMPRESSION_OPTIONS = [
+  { value: "Normal", label: "Normal" },
+  { value: "Stencil", label: "Stencil" },
+  { value: "Negative", label: "Negative" },
+];
+
 function getYearError(value: string, opts: { required: boolean; label: string }): string | null {
   const v = value.trim();
   if (!v) {
@@ -257,6 +263,7 @@ const ContributionDetail = () => {
     manuscript: string;
     description: string;
     references: string;
+    impression: string;
     is_irreg: boolean;
     lettering_style_id: string;
     framing_style_id: string;
@@ -275,6 +282,7 @@ const ContributionDetail = () => {
     manuscript: "",
     description: "",
     references: "",
+    impression: "",
     is_irreg: false,
     lettering_style_id: "",
     framing_style_id: "",
@@ -477,10 +485,6 @@ const ContributionDetail = () => {
     const wh = submittedDataToWidthHeightStrings(sd);
     const rawShape = String(sd.shape ?? sd.type ?? "").trim();
     const rawColor = String(sd.color ?? "").trim();
-    const shapeSel =
-      shapeOptions.length > 0 && rawShape && !shapeOptions.some((t) => t.name === rawShape)
-        ? ""
-        : rawShape;
     let colorSel = rawColor;
     let colorOth = "";
     if (colorOptions.length > 0 && rawColor && !colorOptions.some((c) => c.name === rawColor)) {
@@ -530,7 +534,7 @@ const ContributionDetail = () => {
       town: String(sd.town ?? "").trim(),
       firstSeen: firstSeen || "",
       lastSeen: lastSeen || "",
-      shape: shapeSel,
+      shape: rawShape,
       color: colorSel,
       colorOther: colorOth,
       width_mm: wh.width,
@@ -538,6 +542,7 @@ const ContributionDetail = () => {
       manuscript: String(sd.manuscript ?? "").trim(),
       description: String(sd.description ?? "").trim(),
       references: String(sd.references ?? "").trim(),
+      impression: String(sd.impression ?? "").trim(),
       is_irreg: Boolean(sd.is_irreg ?? sd.isIrreg),
       lettering_style_id: letteringStyleIdRaw != null ? String(letteringStyleIdRaw) : "",
       framing_style_id: framingStyleIdRaw != null ? String(framingStyleIdRaw) : "",
@@ -587,6 +592,15 @@ const ContributionDetail = () => {
     }
     return base;
   }, [townOptions, editorEdits.town]);
+
+  const shapeSelectOptions = useMemo(() => {
+    const base = shapeOptions.map((t) => ({ value: t.name, label: t.name }));
+    const submittedShape = editorEdits.shape.trim();
+    if (submittedShape && !base.some((o) => o.value === submittedShape)) {
+      return [{ value: submittedShape, label: `${submittedShape} (from submission)` }, ...base];
+    }
+    return base;
+  }, [shapeOptions, editorEdits.shape]);
 
   /** Validate editor fields (same rules as Edit Catalog Entry) and build PATCH body; returns null if invalid. */
   const buildValidatedEditorPatch = (): Record<string, unknown> | null => {
@@ -659,6 +673,7 @@ const ContributionDetail = () => {
       manuscript: editorEdits.manuscript.trim() || undefined,
       description: editorEdits.description.trim() || undefined,
       references: editorEdits.references.trim() || undefined,
+      impression: editorEdits.impression.trim() || undefined,
       is_irreg: editorEdits.is_irreg,
       lettering_style_id: editorEdits.lettering_style_id
         ? parseInt(editorEdits.lettering_style_id, 10)
@@ -1262,10 +1277,26 @@ const ContributionDetail = () => {
                                 display = opt ? opt.name : String(val);
                               }
                             } else if (key === "framing_style_id" || key === "framingStyleId") {
-                              const numVal = typeof val === "number" ? val : typeof val === "string" ? parseInt(val, 10) : NaN;
-                              if (!Number.isNaN(numVal)) {
-                                const opt = framingOptions.find((o) => o.id === numVal);
-                                display = opt ? opt.name : String(val);
+                              const idsFromArray = (
+                                Array.isArray(sd.framing_style_ids)
+                                  ? sd.framing_style_ids
+                                  : Array.isArray(sd.framingStyleIds)
+                                    ? sd.framingStyleIds
+                                    : []
+                              )
+                                .map((x) => (typeof x === "number" ? x : typeof x === "string" ? parseInt(x, 10) : NaN))
+                                .filter((x): x is number => !Number.isNaN(x));
+                              if (idsFromArray.length > 0) {
+                                const names = idsFromArray.map(
+                                  (id) => framingOptions.find((o) => o.id === id)?.name ?? String(id)
+                                );
+                                display = names.join(", ");
+                              } else {
+                                const numVal = typeof val === "number" ? val : typeof val === "string" ? parseInt(val, 10) : NaN;
+                                if (!Number.isNaN(numVal)) {
+                                  const opt = framingOptions.find((o) => o.id === numVal);
+                                  display = opt ? opt.name : String(val);
+                                }
                               }
                             } else if (key === "framing_style_ids" || key === "framingStyleIds") {
                               const ids = Array.isArray(val)
@@ -1552,7 +1583,7 @@ const ContributionDetail = () => {
                           setEditorFieldErrors((prev) => ({ ...prev, shape: undefined }));
                         }}
                         placeholder="Select shape..."
-                        options={shapeOptions.map((t) => ({ value: t.name, label: t.name }))}
+                        options={shapeSelectOptions}
                         loading={loadingShapes}
                         error={!!shapeOptionsError}
                         errorMessage={shapeOptionsError ?? "Failed to load postmark shapes"}
@@ -1568,18 +1599,41 @@ const ContributionDetail = () => {
                     </div>
                     )}
 
-                    <div className="flex items-center gap-2">
-                      <input
-                        id="contrib-edit-is-irregular"
-                        type="checkbox"
-                        className="h-4 w-4 accent-primary"
-                        checked={editorEdits.is_irreg}
-                        onChange={(e) =>
-                          setEditorEdits((p) => ({ ...p, is_irreg: e.target.checked }))
-                        }
+                    <div className="space-y-2">
+                      <Label htmlFor="contrib-edit-impression">Impression</Label>
+                      <Select
+                        value={editorEdits.impression}
+                        onValueChange={(v) => setEditorEdits((p) => ({ ...p, impression: v }))}
                         disabled={submitting}
-                      />
+                      >
+                        <SelectTrigger id="contrib-edit-impression">
+                          <SelectValue placeholder="Select impression..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {IMPRESSION_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
                       <Label htmlFor="contrib-edit-is-irregular">Is Irregular</Label>
+                      <Select
+                        value={editorEdits.is_irreg ? "yes" : "no"}
+                        onValueChange={(v) => setEditorEdits((p) => ({ ...p, is_irreg: v === "yes" }))}
+                        disabled={submitting}
+                      >
+                        <SelectTrigger id="contrib-edit-is-irregular">
+                          <SelectValue placeholder="Select..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="yes">Yes</SelectItem>
+                          <SelectItem value="no">No</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     <div className="space-y-2">

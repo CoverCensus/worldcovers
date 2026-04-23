@@ -377,6 +377,7 @@ const RecordDetail = () => {
   const [changelogEvents, setChangelogEvents] = useState<PostmarkChangelogEvent[]>([]);
   const [versionRows, setVersionRows] = useState<PostmarkVersionRow[]>([]);
   const [restoringVersionNo, setRestoringVersionNo] = useState<number | null>(null);
+  const [changelogLoadError, setChangelogLoadError] = useState<string | null>(null);
   const canViewChangelog = !!user && (user.role === "state_editor" || user.is_superuser);
 
   // Parse id from URL: "api-1" -> 1 (from Search when using API)
@@ -570,11 +571,17 @@ const RecordDetail = () => {
     if (!canViewChangelog || postmarkId == null || isNaN(postmarkId)) {
       setChangelogEvents([]);
       setVersionRows([]);
+      setChangelogLoadError(null);
       return;
     }
     let cancelled = false;
+    setChangelogLoadError(null);
     getPostmarkChangelog(postmarkId).then((data) => {
-      if (cancelled || !data) return;
+      if (cancelled) return;
+      if (!data) {
+        setChangelogLoadError("Could not load changelog for this record.");
+        return;
+      }
       setChangelogEvents(Array.isArray(data.events) ? data.events : []);
       setVersionRows(Array.isArray(data.versions) ? data.versions : []);
     });
@@ -910,7 +917,9 @@ const RecordDetail = () => {
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {changelogEvents.length === 0 ? (
+                    {changelogLoadError ? (
+                      <p className="text-sm italic text-muted-foreground">{changelogLoadError}</p>
+                    ) : changelogEvents.length === 0 ? (
                       <p className="text-sm italic text-muted-foreground">No changelog entries yet for this record.</p>
                     ) : (
                       <div className="space-y-4">

@@ -944,6 +944,7 @@ def _create_contribution_only(payload, contributor):
             "town": (payload.get("town") or "").strip(),
             "date_range": (payload.get("date_range") or "").strip(),
             "shape": (payload.get("shape") or payload.get("type") or "").strip(),
+            "type": (payload.get("type") or payload.get("shape") or "").strip(),
             "color": (payload.get("color") or "").strip(),
             "manuscript": (payload.get("manuscript") or "").strip(),
             "is_irreg": payload.get("is_irreg"),
@@ -1112,11 +1113,6 @@ class ContributionView(APIView):
                 {"detail": "Shape is required when Manuscript is No."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if is_manuscript and shape_val:
-            return Response(
-                {"detail": "Shape must be empty when Manuscript is Yes."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         user = request.user
         if not user.is_authenticated:
             return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
@@ -1175,6 +1171,7 @@ class ContributionView(APIView):
             "first_seen": first_seen,
             "last_seen": last_seen,
             "shape": shape_val,
+            "type": shape_val,
             "color": color,
             "manuscript": manuscript,
             "is_irreg": data.get("is_irreg"),
@@ -1314,6 +1311,7 @@ class ContributionView(APIView):
                         "town": payload.get("town", ""),
                         "date_range": payload.get("date_range", ""),
                         "shape": payload.get("shape") or payload.get("type", ""),
+                        "type": payload.get("type") or payload.get("shape", ""),
                         "color": payload.get("color", ""),
                         "manuscript": payload.get("manuscript", ""),
                         "is_irreg": payload.get("is_irreg"),
@@ -1352,6 +1350,7 @@ class ContributionView(APIView):
                     # exist per catalog postmark. Update existing suggestion
                     # instead of creating a duplicate that would violate the
                     # unique constraint.
+                    target_postmark = Postmark.objects.filter(pk=edit_postmark_id).first()
                     contrib, created = Contribution.objects.update_or_create(
                         postmark_id=edit_postmark_id,
                         defaults={
@@ -1368,7 +1367,7 @@ class ContributionView(APIView):
                         ),
                         actor=user,
                         contribution=contrib,
-                        postmark=contrib.postmark,
+                        postmark=target_postmark or contrib.postmark,
                         source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
                         before_payload={} if created else (existing_contrib.submitted_data if existing_contrib else {}),
                         after_payload=submitted_data,
@@ -1662,6 +1661,9 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         references = _get("references", "References")
         if references is not None:
             overlay["references"] = str(references).strip()
+        impression = _get("impression", "Impression")
+        if impression is not None:
+            overlay["impression"] = str(impression).strip()
         is_irreg = _get("is_irreg", "isIrreg", "isIrregular")
         parsed_is_irreg = _parse_optional_bool(is_irreg)
         if parsed_is_irreg is not None:
@@ -2509,12 +2511,11 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         }:
             return base_qs
 
-        # List-style actions: only expose postmarks that are either not linked to a
-        # Contribution (catalog entries) or have an approved Contribution.
-        return base_qs.filter(
-            Q(contribution__isnull=True)
-            | Q(contribution__status=Contribution.STATUS_APPROVED)
-        )
+        # List-style actions should expose all catalog postmarks. A contributor
+        # suggestion against an existing postmark reuses the linked Contribution
+        # row and sets it back to pending; filtering by Contribution.status would
+        # incorrectly hide already-approved catalog records from search/list pages.
+        return base_qs
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = PostmarkListFilter
     # Search across both legacy and V2-backed display fields used in catalog cards.
@@ -2649,9 +2650,12 @@ class PostmarkViewSet(viewsets.ModelViewSet):
             )
 
         txns = list(
-            SubmissionTransaction.objects.filter(postmark=postmark)
+            SubmissionTransaction.objects.filter(
+                Q(postmark=postmark) | Q(contribution__postmark=postmark)
+            )
             .select_related("actor", "contribution")
             .order_by("-created_at", "-id")
+            .distinct()
         )
         versions = list(
             PostmarkVersion.objects.filter(postmark=postmark)

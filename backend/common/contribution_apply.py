@@ -18,7 +18,9 @@ from common.models import (
     Auxmark,
     Color,
     DateObserved,
+    Framing,
     Lettering,
+    MarkFraming,
     Postmark,
     PostmarkImage,
     PostmarkRatemark,
@@ -37,6 +39,33 @@ def _get_contribution_user():
     """User for creating Postmark and related TimestampedModel from a contribution (no request user)."""
     User = get_user_model()
     return User.objects.filter(is_superuser=True).first() or User.objects.first()
+
+
+def _coerce_optional_bool(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    s = str(value).strip().lower()
+    if s in {"true", "1", "yes", "y", "on"}:
+        return True
+    if s in {"false", "0", "no", "n", "off"}:
+        return False
+    return None
+
+
+def _first_present(payload: dict, *keys: str):
+    for key in keys:
+        if key in payload:
+            value = payload.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str):
+                value = value.strip()
+                if value == "":
+                    continue
+            return value
+    return None
 
 
 def _parse_dates_seen_from_payload(payload: dict) -> Tuple[date, date]:
@@ -232,6 +261,325 @@ def _as_decimal(value):
         return None
 
 
+def _parse_dimensions_from_payload(payload: dict):
+    width = _as_decimal(_first_present(payload, "width_mm", "widthMm"))
+    height = _as_decimal(_first_present(payload, "height_mm", "heightMm"))
+    if width is not None or height is not None:
+        return width, height
+
+    dimensions_raw = _first_present(payload, "dimensions")
+    if not dimensions_raw:
+        return None, None
+
+    text = str(dimensions_raw).lower().replace("mm", " ").strip()
+    match = re.search(r"(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)", text)
+    if not match:
+        return None, None
+    return _as_decimal(match.group(1)), _as_decimal(match.group(2))
+
+
+def _resolve_lettering_from_payload(payload: dict, *, is_manuscript: bool):
+    if is_manuscript:
+        return None
+    lettering_id = _first_present(
+        payload, "lettering_style_id", "letteringStyleId", "lettering_id", "letteringId"
+    )
+    if lettering_id is not None:
+        try:
+            return Lettering.objects.filter(pk=int(lettering_id)).first()
+        except (TypeError, ValueError):
+            pass
+    lettering_name = _first_present(payload, "lettering", "lettering_style_name", "letteringStyleName")
+    if lettering_name is not None:
+        return Lettering.objects.filter(name__iexact=str(lettering_name).strip()).first()
+    return None
+
+
+def _normalize_choice(value, allowed_values):
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    lowered = raw.lower()
+    for allowed in allowed_values:
+        if lowered == str(allowed).lower():
+            return allowed
+    return None
+
+
+def _resolve_date_fmt_from_payload(payload: dict):
+    direct = _first_present(payload, "date_fmt", "dateFmt")
+    normalized_direct = _normalize_choice(
+        direct, [choice[0] for choice in Postmark.DATE_FMT_CHOICES]
+    )
+    if normalized_direct:
+        return normalized_direct
+
+    raw_ids = _first_present(
+        payload,
+        "date_format_ids",
+        "dateFormatIds",
+        "date_format_id",
+        "dateFormatId",
+    )
+    format_ids = []
+    if isinstance(raw_ids, list):
+        format_ids = raw_ids
+    elif raw_ids is not None:
+        format_ids = [raw_ids]
+
+    for raw in format_ids:
+        try:
+            idx = int(raw) - 1
+        except (TypeError, ValueError):
+            continue
+        if 0 <= idx < len(Postmark.DATE_FMT_CHOICES):
+            return Postmark.DATE_FMT_CHOICES[idx][0]
+    return None
+
+
+def _resolve_region_from_payload(payload: dict):
+    state_region_id = _first_present(payload, "state_region_id", "stateRegionId")
+    if state_region_id is not None:
+        try:
+            region_by_id = Region.objects.filter(pk=int(state_region_id)).first()
+            if region_by_id:
+                return region_by_id
+        except (TypeError, ValueError):
+            pass
+
+    state_str = str(_first_present(payload, "state") or "").strip()
+    if not state_str:
+        return None
+    return (
+        Region.objects.filter(name__iexact=state_str).first()
+        or Region.objects.filter(abbrev__iexact=state_str).first()
+    )
+
+
+def _resolve_shape_from_payload(payload: dict):
+    shape_id = _first_present(payload, "shape_id", "shapeId")
+    if shape_id is not None:
+        try:
+            shape_by_id = Shape.objects.filter(pk=int(shape_id)).first()
+            if shape_by_id:
+                return shape_by_id
+        except (TypeError, ValueError):
+            pass
+
+    shape_str = str(_first_present(payload, "shape", "type") or "").strip()
+    if not shape_str:
+        return None
+    return Shape.objects.filter(name__iexact=shape_str).first()
+
+
+def _resolve_color_from_payload(payload: dict, user):
+    color_id = _first_present(payload, "color_id", "colorId")
+    if color_id is not None:
+        try:
+            color_by_id = Color.objects.filter(pk=int(color_id)).first()
+            if color_by_id:
+                return color_by_id
+        except (TypeError, ValueError):
+            pass
+
+    color_name = str(_first_present(payload, "color") or "").strip()
+    if color_name:
+        color = Color.objects.filter(name__iexact=color_name).first()
+        if color:
+            return color
+
+    return (
+        Color.objects.filter(name__iexact="Black").first()
+        or Color.objects.first()
+        or Color.objects.create(
+            name="Black",
+            created_by=user,
+            modified_by=user,
+        )
+    )
+
+
+def _resolve_post_office(region, town_str, user, payload=None):
+    post_office_id = _first_present(
+        payload if isinstance(payload, dict) else {},
+        "post_office_id",
+        "postOfficeId",
+    )
+    if post_office_id is not None:
+        try:
+            po = PostOffice.objects.select_related("region").filter(pk=int(post_office_id)).first()
+            if po:
+                if region is None or po.region_id == region.pk:
+                    return po
+                logger.warning(
+                    "contribution_apply: post_office_id=%s region mismatch (expected=%s got=%s); using payload state/town",
+                    post_office_id,
+                    region.pk,
+                    po.region_id,
+                )
+        except (TypeError, ValueError):
+            pass
+
+    if not region or not town_str:
+        return None
+    return PostOffice.objects.get_or_create(
+        region=region,
+        name=town_str[:255],
+        defaults={"created_by": user, "modified_by": user},
+    )[0]
+
+
+def _build_postmark_updates_from_payload(payload: dict, user):
+    state_str = str(_first_present(payload, "state") or "").strip()
+    town_str = str(_first_present(payload, "town") or "").strip()
+    manuscript_raw = _first_present(payload, "manuscript")
+    is_manuscript = str(manuscript_raw or "").strip().lower() == "yes"
+    is_irreg = _coerce_optional_bool(_first_present(payload, "is_irreg", "isIrreg"))
+    impression = _normalize_choice(
+        _first_present(payload, "impression"),
+        [choice[0] for choice in Postmark.IMPRESSION_CHOICES],
+    )
+    date_type = _normalize_choice(
+        _first_present(payload, "date_type", "dateType"),
+        [choice[0] for choice in Postmark.DATE_TYPE_CHOICES],
+    )
+    date_fmt = _resolve_date_fmt_from_payload(payload)
+    width, height = _parse_dimensions_from_payload(payload)
+    inscription_txt = str(_first_present(payload, "inscription_txt", "inscriptionTxt") or "").strip()
+
+    if not state_str:
+        logger.error("contribution_apply: empty state on payload")
+        return None
+
+    region = _resolve_region_from_payload(payload)
+    if region is None:
+        logger.error("contribution_apply: no Region matches state=%r", state_str)
+        return None
+
+    return {
+        "post_office": _resolve_post_office(region, town_str, user, payload),
+        "shape": _resolve_shape_from_payload(payload),
+        "color": _resolve_color_from_payload(payload, user),
+        "is_manuscript": is_manuscript,
+        "inscription_txt": inscription_txt,
+        "catalog_txt": inscription_txt,
+        "lettering": _resolve_lettering_from_payload(payload, is_manuscript=is_manuscript),
+        "impression": impression,
+        "is_irreg": is_irreg,
+        "width": width,
+        "height": height,
+        "date_type": date_type,
+        "date_fmt": date_fmt,
+    }
+
+
+def _sync_dates_observed_from_payload(postmark, user, payload, replace_existing=False):
+    if replace_existing:
+        postmark.dates_observed.all().delete()
+
+    earliest, latest = _parse_dates_seen_from_payload(payload)
+    rows = [(earliest, "DAY")]
+    if latest and latest != earliest:
+        rows.append((latest, "DAY"))
+
+    for observed_date, granularity in rows:
+        if not observed_date:
+            continue
+        DateObserved.objects.create(
+            postmark=postmark,
+            date=observed_date,
+            granularity=granularity,
+            created_by=user,
+            modified_by=user,
+        )
+
+
+def _extract_framing_ids_from_payload(payload):
+    """
+    Normalize framing ids from contribution payload.
+    Supports framing_style_ids/framingStyleIds as list or JSON string,
+    with fallback to single framing_style_id/framingStyleId.
+    """
+    if not isinstance(payload, dict):
+        return []
+
+    raw_ids = payload.get("framing_style_ids")
+    if raw_ids in (None, ""):
+        raw_ids = payload.get("framingStyleIds")
+
+    parsed_ids = []
+    if isinstance(raw_ids, list):
+        parsed_ids = raw_ids
+    elif isinstance(raw_ids, str):
+        s = raw_ids.strip()
+        if s:
+            try:
+                loaded = json.loads(s)
+                if isinstance(loaded, list):
+                    parsed_ids = loaded
+                else:
+                    parsed_ids = [loaded]
+            except json.JSONDecodeError:
+                parsed_ids = [part.strip() for part in s.split(",") if part.strip()]
+
+    normalized = []
+    seen = set()
+    for v in parsed_ids:
+        try:
+            iv = int(v)
+        except (TypeError, ValueError):
+            continue
+        if iv > 0 and iv not in seen:
+            seen.add(iv)
+            normalized.append(iv)
+
+    if normalized:
+        return normalized
+
+    single_raw = payload.get("framing_style_id")
+    if single_raw in (None, ""):
+        single_raw = payload.get("framingStyleId")
+    try:
+        single_id = int(single_raw)
+        if single_id > 0:
+            return [single_id]
+    except (TypeError, ValueError):
+        pass
+    return []
+
+
+def _sync_postmark_framings_from_payload(postmark, user, payload):
+    """
+    Replace POSTMARK MarkFraming rows with all selected framing styles in payload.
+    Keeps order from framing_style_ids and assigns framing_pos sequentially.
+    """
+    framing_ids = _extract_framing_ids_from_payload(payload)
+    MarkFraming.objects.filter(
+        parent_mark_type="POSTMARK",
+        parent_mark_id=postmark.pk,
+    ).delete()
+    if not framing_ids:
+        return
+
+    framings_by_id = {
+        f.id: f for f in Framing.objects.filter(id__in=framing_ids)
+    }
+    for idx, framing_id in enumerate(framing_ids, start=1):
+        framing = framings_by_id.get(framing_id)
+        if not framing:
+            continue
+        MarkFraming.objects.create(
+            parent_mark_type="POSTMARK",
+            parent_mark_id=postmark.pk,
+            framing=framing,
+            framing_pos=idx,
+            created_by=user,
+            modified_by=user,
+        )
+
+
 def _resolve_shape_for_mark(shape_str):
     name = str(shape_str or "").strip()
     if not name:
@@ -269,7 +617,7 @@ def _sync_ratemarks_auxmarks_from_payload(postmark, user, payload):
             lettering=None if manuscript else default_lettering,
             color=_resolve_color_for_mark(row.get("color")),
             impression=str(row.get("impression") or "").strip() or None,
-            is_irreg=bool(row.get("is_irreg")) if row.get("is_irreg") is not None else None,
+            is_irreg=_coerce_optional_bool(row.get("is_irreg", row.get("isIrreg"))),
             width=_as_decimal(row.get("width_mm")),
             height=_as_decimal(row.get("height_mm")),
             rate_val=_as_decimal(row.get("rate_val")),
@@ -301,7 +649,7 @@ def _sync_ratemarks_auxmarks_from_payload(postmark, user, payload):
             lettering=None if manuscript else default_lettering,
             color=_resolve_color_for_mark(row.get("color")),
             impression=str(row.get("impression") or "").strip() or None,
-            is_irreg=bool(row.get("is_irreg")) if row.get("is_irreg") is not None else None,
+            is_irreg=_coerce_optional_bool(row.get("is_irreg", row.get("isIrreg"))),
             width=_as_decimal(row.get("width_mm")),
             height=_as_decimal(row.get("height_mm")),
             created_by=user,
@@ -319,59 +667,17 @@ def _create_postmark_in_catalog(payload):
     if not user:
         return None
     try:
-        state_str = (payload.get("state") or "").strip()
-        town_str = (payload.get("town") or "").strip()
-        shape_str = (payload.get("shape") or payload.get("type") or "").strip()
-        color_str = (payload.get("color") or "").strip()
-        manuscript_str = (payload.get("manuscript") or "").strip()
-        is_manuscript = manuscript_str.lower() == "yes"
-
-        if not state_str:
-            logger.error("contribution_apply: empty state on payload")
+        updates = _build_postmark_updates_from_payload(payload, user)
+        if updates is None:
             return None
-        region = (
-            Region.objects.filter(name__iexact=state_str).first()
-            or Region.objects.filter(abbrev__iexact=state_str).first()
-        )
-        if region is None:
-            logger.error("contribution_apply: no Region matches state=%r", state_str)
-            return None
-        post_office = None
-        if town_str:
-            post_office, _ = PostOffice.objects.get_or_create(
-                region=region,
-                name=town_str[:255],
-                defaults={"created_by": user, "modified_by": user},
-            )
-
-        shape = Shape.objects.filter(name__iexact=shape_str).first() if shape_str else None
-
-        color_name = color_str or "Black"
-        color, _ = Color.objects.get_or_create(
-            name=color_name[:50],
-            defaults={"created_by": user, "modified_by": user},
-        )
-
-        inscription_txt_str = str(payload.get("inscription_txt") or "").strip()
         postmark = Postmark.objects.create(
-            post_office=post_office,
-            shape=shape,
-            color=color,
-            is_manuscript=is_manuscript,
-            inscription_txt=inscription_txt_str,
-            catalog_txt=inscription_txt_str,
             created_by=user,
             modified_by=user,
+            **updates,
         )
-        earliest, latest = _parse_dates_seen_from_payload(payload)
-        if earliest:
-            DateObserved.objects.create(
-                postmark=postmark,
-                date=earliest,
-                created_by=user,
-                modified_by=user,
-            )
+        _sync_dates_observed_from_payload(postmark, user, payload, replace_existing=False)
 
+        _sync_postmark_framings_from_payload(postmark, user, payload)
         _create_postmark_images_from_payload(postmark, user, payload, replace_existing=False)
         _sync_ratemarks_auxmarks_from_payload(postmark, user, payload)
         return postmark
@@ -394,52 +700,46 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
         if not user:
             return None
 
-        state_str = (payload.get("state") or "").strip()
-        town_str = (payload.get("town") or "").strip()
-        shape_str = (payload.get("shape") or payload.get("type") or "").strip()
-        color_str = (payload.get("color") or "").strip()
-        manuscript_str = (payload.get("manuscript") or "").strip()
-        is_manuscript = manuscript_str.lower() == "yes"
-
-        if not state_str:
-            logger.error("contribution_apply: empty state on payload")
+        updates = _build_postmark_updates_from_payload(payload, user)
+        if updates is None:
             return None
-        region = (
-            Region.objects.filter(name__iexact=state_str).first()
-            or Region.objects.filter(abbrev__iexact=state_str).first()
-        )
-        if region is None:
-            logger.error("contribution_apply: no Region matches state=%r", state_str)
-            return None
-        post_office = None
-        if town_str:
-            post_office, _ = PostOffice.objects.get_or_create(
-                region=region,
-                name=town_str[:255],
-                defaults={"created_by": user, "modified_by": user},
-            )
 
-        shape = Shape.objects.filter(name__iexact=shape_str).first() if shape_str else None
-        color_name = color_str or "Black"
-        color, _ = Color.objects.get_or_create(
-            name=color_name[:50],
-            defaults={"created_by": user, "modified_by": user},
-        )
-
-        postmark.post_office = post_office
-        postmark.shape = shape
-        postmark.color = color
-        postmark.is_manuscript = is_manuscript
+        postmark.post_office = updates["post_office"]
+        postmark.shape = updates["shape"]
+        postmark.color = updates["color"]
+        postmark.is_manuscript = updates["is_manuscript"]
+        postmark.inscription_txt = updates["inscription_txt"]
+        postmark.catalog_txt = updates["catalog_txt"]
+        postmark.lettering = updates["lettering"]
+        postmark.impression = updates["impression"]
+        postmark.is_irreg = updates["is_irreg"]
+        postmark.width = updates["width"]
+        postmark.height = updates["height"]
+        postmark.date_type = updates["date_type"]
+        postmark.date_fmt = updates["date_fmt"]
         postmark.modified_by = user
-        postmark.save(update_fields=["post_office", "shape", "color", "is_manuscript", "modified_by"])
+        postmark.save(
+            update_fields=[
+                "post_office",
+                "shape",
+                "color",
+                "is_manuscript",
+                "inscription_txt",
+                "catalog_txt",
+                "lettering",
+                "impression",
+                "is_irreg",
+                "width",
+                "height",
+                "date_type",
+                "date_fmt",
+                "modified_by",
+            ]
+        )
 
-        postmark.dates_observed.all().delete()
-        earliest, latest = _parse_dates_seen_from_payload(payload)
-        if earliest:
-            DateObserved.objects.create(
-                postmark=postmark, date=earliest, created_by=user, modified_by=user
-            )
+        _sync_dates_observed_from_payload(postmark, user, payload, replace_existing=True)
 
+        _sync_postmark_framings_from_payload(postmark, user, payload)
         _create_postmark_images_from_payload(postmark, user, payload, replace_existing=True)
         _sync_ratemarks_auxmarks_from_payload(postmark, user, payload)
         return postmark
