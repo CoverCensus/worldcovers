@@ -13,11 +13,8 @@ from decimal import Decimal, InvalidOperation
 from typing import Optional, Tuple
 
 from django.contrib.auth import get_user_model
-from django.utils.text import slugify
 
 from common.models import (
-    AdministrativeUnit,
-    AdministrativeUnitIdentity,
     Auxmark,
     Color,
     DateObserved,
@@ -329,32 +326,6 @@ def _create_postmark_in_catalog(payload):
         manuscript_str = (payload.get("manuscript") or "").strip()
         is_manuscript = manuscript_str.lower() == "yes"
 
-        state_slug = slugify(state_str)[:40] or "unknown"
-        admin_unit = payload.get("admin_unit")
-        if not admin_unit:
-            ref_code = f"CONTRIB-{state_slug}"
-            admin_unit, _ = AdministrativeUnit.objects.get_or_create(
-                reference_code=ref_code,
-                defaults={"created_by": user, "modified_by": user},
-            )
-        effective_from = date(1900, 1, 1)
-        if admin_unit and state_str and not AdministrativeUnitIdentity.objects.filter(
-            administrative_unit=admin_unit,
-            unit_name=state_str[:255],
-            effective_from_date=effective_from,
-        ).exists():
-            AdministrativeUnitIdentity.objects.create(
-                administrative_unit=admin_unit,
-                unit_name=state_str[:255],
-                unit_abbreviation=(state_slug.upper()[:10] if state_slug != "unknown" else "CONTRIB"),
-                unit_type="STATE",
-                hierarchy_level=2,
-                change_reason="INITIAL",
-                effective_from_date=effective_from,
-                effective_to_date=None,
-                created_by=user,
-                modified_by=user,
-            )
         if not state_str:
             logger.error("contribution_apply: empty state on payload")
             return None
@@ -430,30 +401,6 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name):
         manuscript_str = (payload.get("manuscript") or "").strip()
         is_manuscript = manuscript_str.lower() == "yes"
 
-        state_slug = slugify(state_str)[:40] or "unknown"
-        ref_code = f"CONTRIB-{state_slug}"
-        admin_unit, _ = AdministrativeUnit.objects.get_or_create(
-            reference_code=ref_code,
-            defaults={"created_by": user, "modified_by": user},
-        )
-        effective_from = date(1900, 1, 1)
-        if not AdministrativeUnitIdentity.objects.filter(
-            administrative_unit=admin_unit,
-            unit_name=state_str[:255],
-            effective_from_date=effective_from,
-        ).exists():
-            AdministrativeUnitIdentity.objects.create(
-                administrative_unit=admin_unit,
-                unit_name=state_str[:255],
-                unit_abbreviation=(state_slug.upper()[:10] if state_slug != "unknown" else "CONTRIB"),
-                unit_type="STATE",
-                hierarchy_level=2,
-                change_reason="INITIAL",
-                effective_from_date=effective_from,
-                effective_to_date=None,
-                created_by=user,
-                modified_by=user,
-            )
         if not state_str:
             logger.error("contribution_apply: empty state on payload")
             return None

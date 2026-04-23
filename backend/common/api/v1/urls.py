@@ -11,25 +11,6 @@ from . import views
 # Create a router and register our viewsets
 router = DefaultRouter()
 
-# ========== GEOGRAPHIC & JURISDICTIONAL CORE ==========
-
-# Administrative units (stable containers + identities + group responsibilities)
-router.register(
-    r"administrative-units",
-    views.AdministrativeUnitViewSet,
-    basename="administrative-unit",
-)
-router.register(
-    r"administrative-unit-identities",
-    views.AdministrativeUnitIdentityViewSet,
-    basename="administrative-unit-identity",
-)
-router.register(
-    r"administrative-unit-responsibilities",
-    views.AdministrativeUnitResponsibilityViewSet,
-    basename="administrative-unit-responsibility",
-)
-
 # ========== PHYSICAL CHARACTERISTICS ==========
 
 router.register(
@@ -131,8 +112,7 @@ urlpatterns = [
     path("change-password/", csrf_exempt(views.ChangePasswordApiView.as_view()), name="change-password"),
     path("contributions/", csrf_exempt(views.ContributionView.as_view()), name="contribution"),
     path("me/", views.CurrentUserView.as_view(), name="current-user"),
-    path("assigned-states/", views.AssignedStatesView.as_view(), name="assigned-states"),
-    path("postmarks-range/", views.PostmarkDateRangeView.as_view(), name="postmarks-range"),
+path("postmarks-range/", views.PostmarkDateRangeView.as_view(), name="postmarks-range"),
     path("", include(router.urls)),
 ]
 

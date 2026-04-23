@@ -5,9 +5,6 @@ from common.models import (
     Postcover as CommonPostcover,
     PostcoverPostmark as CommonPostcoverPostmark,
     PostcoverImage as CommonPostcoverImage,
-    AdministrativeUnit as CommonAdministrativeUnit,
-    AdministrativeUnitIdentity as CommonAdministrativeUnitIdentity,
-    AdministrativeUnitResponsibility as CommonAdministrativeUnitResponsibility,
     FAQEntry as CommonFAQEntry,
     Contribution as CommonContribution,
 )
@@ -72,33 +69,6 @@ class PostcoverImage(CommonPostcoverImage):
         app_label = "postmarks"
         verbose_name = "Example Image (Deprecated)"
         verbose_name_plural = "Example Images (Deprecated)"
-
-
-class Location(CommonAdministrativeUnit):
-    """Proxy for AdministrativeUnit; appears under Postmarks in admin as 'Locations'."""
-    class Meta:
-        proxy = True
-        app_label = "postmarks"
-        verbose_name = "Location"
-        verbose_name_plural = "Locations"
-
-
-class LocationIdentity(CommonAdministrativeUnitIdentity):
-    """Proxy for AdministrativeUnitIdentity; appears under Postmarks in admin."""
-    class Meta:
-        proxy = True
-        app_label = "postmarks"
-        verbose_name = "Location identity"
-        verbose_name_plural = "Location identities"
-
-
-class LocationResponsibility(CommonAdministrativeUnitResponsibility):
-    """Proxy for AdministrativeUnitResponsibility; appears under Postmarks in admin."""
-    class Meta:
-        proxy = True
-        app_label = "postmarks"
-        verbose_name = "Location responsibility"
-        verbose_name_plural = "Location responsibilities"
 
 
 class FAQEntry(CommonFAQEntry):

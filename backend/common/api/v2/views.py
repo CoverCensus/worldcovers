@@ -294,7 +294,6 @@ from common.models import (
     Region, PostOffice, Lettering, Framing, Shape, Cover, DateObserved,
     Ratemark, Auxmark, CoverPostmark, PostmarkRatemark, MarkFraming,
     ReferenceWork, Citation,
-    AdministrativeUnit, AdministrativeUnitIdentity, AdministrativeUnitResponsibility,
     Color,
     Postmark, PostmarkValuation,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
@@ -306,9 +305,6 @@ from .serializers import (
     ShapeSerializer, CoverSerializer, DateObservedSerializer, RatemarkSerializer,
     AuxmarkSerializer, CoverPostmarkSerializer, PostmarkRatemarkSerializer,
     MarkFramingSerializer, ReferenceWorkSerializer, CitationSerializer,
-    AdministrativeUnitSerializer,
-    AdministrativeUnitListSerializer, AdministrativeUnitIdentitySerializer,
-    AdministrativeUnitResponsibilitySerializer,
     ColorSerializer, PostmarkSerializer,
     PostmarkListSerializer, PostmarkValuationSerializer, PostmarkImageSerializer,
     PostcoverSerializer, PostcoverListSerializer, PostcoverPostmarkSerializer,
@@ -2029,109 +2025,6 @@ class CitationViewSet(viewsets.ModelViewSet):
     search_fields = ["citation_detail", "reference_work__title"]
     ordering_fields = ["reference_work", "subject_type", "subject_id", "created_date"]
     ordering = ["reference_work", "subject_type", "subject_id"]
-
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
-
-    def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
-
-
-class AdministrativeUnitViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for administrative units (stable containers).
-    Uses larger max page_size so filter dropdowns can request all states in one call.
-    For authenticated users with location assignments: returns only assigned locations.
-    For users without assignments (or staff/superuser): returns all.
-    """
-    pagination_class = LargePageSizePagination
-    queryset = AdministrativeUnit.objects.all().select_related(
-        'created_by', 'modified_by'
-    ).prefetch_related('identities', 'responsibilities__group')
-    permission_classes = [IsAuthenticatedOrReadOnly]
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['reference_code']
-    search_fields = ['reference_code']
-    ordering_fields = ['reference_code', 'created_date']
-    ordering = ['reference_code']
-
-    def get_serializer_class(self):
-        if self.action == 'list':
-            return AdministrativeUnitListSerializer
-        return AdministrativeUnitSerializer
-    
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
-    
-    def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
-    
-    @action(detail=True, methods=['get'])
-    def identities_timeline(self, request, pk=None):
-        """Get all historical identities for this unit"""
-        unit = self.get_object()
-        identities = unit.identities.all().order_by('effective_from_date')
-        serializer = AdministrativeUnitIdentitySerializer(identities, many=True)
-        return Response(serializer.data)
-    
-    @action(detail=True, methods=['get'])
-    def children(self, request, pk=None):
-        """Get all child administrative units (current)"""
-        parent = self.get_object()
-        # Get identities where this unit is the parent
-        child_identities = AdministrativeUnitIdentity.objects.filter(
-            parent_administrative_unit=parent,
-            effective_to_date__isnull=True
-        )
-        # Get the administrative units
-        child_units = [identity.administrative_unit for identity in child_identities]
-        serializer = AdministrativeUnitListSerializer(child_units, many=True)
-        return Response(serializer.data)
-    
-    @action(detail=True, methods=['get'])
-    def responsible_groups(self, request, pk=None):
-        """Get groups responsible for this unit"""
-        unit = self.get_object()
-        responsibilities = unit.responsibilities.filter(is_active=True)
-        serializer = AdministrativeUnitResponsibilitySerializer(responsibilities, many=True)
-        return Response(serializer.data)
-
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
-    def my_responsibilities(self, request):
-        """Get administrative units the current user's groups are responsible for"""
-        user_groups = request.user.groups.all()
-        responsibilities = AdministrativeUnitResponsibility.objects.filter(
-            group__in=user_groups,
-            is_active=True
-        ).select_related('administrative_unit')
-
-        units = [resp.administrative_unit for resp in responsibilities]
-        serializer = AdministrativeUnitListSerializer(units, many=True)
-        return Response(serializer.data)
-
-
-class AdministrativeUnitIdentityViewSet(viewsets.ModelViewSet):
-    """ViewSet for administrative unit identities"""
-    queryset = AdministrativeUnitIdentity.objects.all().select_related(
-        'administrative_unit', 'parent_administrative_unit', 'created_by'
-    )
-    serializer_class = AdministrativeUnitIdentitySerializer
-    permission_classes = [IsAuthenticatedOrReadOnly]
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['administrative_unit', 'unit_type', 'change_reason']
-    ordering = ['-effective_from_date']
-
-
-class AdministrativeUnitResponsibilityViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing group responsibilities"""
-    queryset = AdministrativeUnitResponsibility.objects.all().select_related(
-        'administrative_unit', 'group', 'created_by', 'modified_by'
-    )
-    serializer_class = AdministrativeUnitResponsibilitySerializer
-    permission_classes = [IsAuthenticated]  # Only authenticated users can manage
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['administrative_unit', 'group', 'is_active']
-    ordering = ['administrative_unit']
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, modified_by=self.request.user)

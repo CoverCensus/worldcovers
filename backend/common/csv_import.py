@@ -1,15 +1,11 @@
 """
 Import parsed CSV data (from AdminCsvUpload) into catalog tables.
-Maps CSV columns to Django models: states, lettering, framing, colors.
+Maps CSV columns to Django models: lettering, framing, colors.
 Staff-only; requires request.user for TimestampedModel (created_by, modified_by).
 """
-from datetime import date
-
 from django.contrib.auth import get_user_model
 
 from .models import (
-    AdministrativeUnit,
-    AdministrativeUnitIdentity,
     Lettering,
     Framing,
     Color,
@@ -41,65 +37,6 @@ def _row_val(row, idx, default=""):
         return default
     v = row[idx]
     return (v.strip() if v is not None else "") or default
-
-
-def import_states(data, user):
-    """
-    Import rows into AdministrativeUnits + AdministrativeUnitIdentities.
-    Expects CSV columns: txtState (state name), txtStateAbv (abbreviation).
-    """
-    headers = data.get("headers") or []
-    rows = data.get("rows") or []
-    name_idx = _col_index(headers, ["txtState", "state", "name", "unit_name"])
-    abv_idx = _col_index(headers, ["txtStateAbv", "abv", "abbreviation", "unit_abbreviation"])
-    if name_idx < 0 or abv_idx < 0:
-        return {"created": 0, "skipped": 0, "errors": ["Missing columns: need state name and abbreviation"]}
-
-    created = 0
-    skipped = 0
-    errors = []
-    # Default date for identity
-    effective_from = date(1900, 1, 1)
-
-    for i, row in enumerate(rows):
-        name = _row_val(row, name_idx)
-        abv = _row_val(row, abv_idx)
-        if not name or not abv:
-            skipped += 1
-            continue
-        reference_code = f"US-{abv.upper()}"
-        unit, unit_created = AdministrativeUnit.objects.get_or_create(
-            reference_code=reference_code,
-            defaults={"created_by": user, "modified_by": user},
-        )
-        if unit_created:
-            created += 1
-        # Create identity if none exists for this unit with this name
-        existing = AdministrativeUnitIdentity.objects.filter(
-            administrative_unit=unit,
-            unit_name=name,
-            effective_from_date=effective_from,
-        ).exists()
-        if not existing:
-            try:
-                AdministrativeUnitIdentity.objects.create(
-                    administrative_unit=unit,
-                    unit_name=name,
-                    unit_abbreviation=abv.upper()[:10],
-                    unit_type="STATE",
-                    hierarchy_level=2,
-                    change_reason="INITIAL",
-                    effective_from_date=effective_from,
-                    effective_to_date=None,
-                    created_by=user,
-                    modified_by=user,
-                )
-                if not unit_created:
-                    created += 1
-            except Exception as e:
-                errors.append(f"Row {i + 2}: {e!s}")
-
-    return {"created": created, "skipped": skipped, "errors": errors[:20]}
 
 
 def import_lettering(data, user):
@@ -479,7 +416,6 @@ def import_legacy_covers(data, user=None):
 
 
 IMPORTERS = {
-    "states": import_states,
     "lettering": import_lettering,
     "framing": import_framing,
     "colors": import_colors,

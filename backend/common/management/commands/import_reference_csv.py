@@ -2,13 +2,11 @@
 Import reference/lookup CSVs into catalog tables.
 
 Reads CSV files from a directory and uses the same import logic as Admin CSV Upload
-(states → AdministrativeUnit/Identity, lettering → Lettering, framing → Framing).
+(lettering → Lettering, framing → Framing).
 
 Usage:
   python manage.py import_reference_csv --dir "frontend/public/Old Data"
   python manage.py import_reference_csv --dir /path/to/csvs --user admin
-
-Run this before import_ascc if you want reference tables populated from the same CSVs.
 """
 import csv
 import io
@@ -22,7 +20,6 @@ from common.csv_import import IMPORTERS
 
 # CSV filename → import_type for reference tables (ERD: TBLSTATES, TBLTOWNMARK*, etc.)
 REFERENCE_CSV_MAP = {
-    "tblStates.csv": "states",
     "tblTownmarkLettering.csv": "lettering",
     "tblTownmarkFraming.csv": "framing",
 }

@@ -51,9 +51,6 @@ from reversion.admin import VersionAdmin
 from reversion_compare.admin import CompareVersionAdmin
 
 from .models import (
-    AdministrativeUnit,
-    AdministrativeUnitIdentity,
-    AdministrativeUnitResponsibility,
     Color,
     Postmark,
     PostmarkValuation,
@@ -188,46 +185,6 @@ class ReversionImportExportAdmin(CompareVersionAdmin, ImportExportModelAdmin):
 
 
 # ========== RESOURCES (for Import-Export) ==========
-
-class AdministrativeUnitResource(TimestampedModelResource):
-    class Meta(TimestampedModelResource.Meta):
-        model = AdministrativeUnit
-        import_id_fields = ['administrative_unit_id']
-
-
-class AdministrativeUnitIdentityResource(TimestampedModelResource):
-    administrative_unit = fields.Field(
-        column_name='administrative_unit',
-        attribute='administrative_unit',
-        widget=ForeignKeyWidget(AdministrativeUnit, 'administrative_unit_id')
-    )
-    parent_administrative_unit = fields.Field(
-        column_name='parent_administrative_unit',
-        attribute='parent_administrative_unit',
-        widget=ForeignKeyWidget(AdministrativeUnit, 'administrative_unit_id')
-    )
-    
-    class Meta:
-        model = AdministrativeUnitIdentity
-        import_id_fields = ['administrative_unit_identity_id']
-
-
-class AdministrativeUnitResponsibilityResource(TimestampedModelResource):
-    administrative_unit = fields.Field(
-        column_name='administrative_unit',
-        attribute='administrative_unit',
-        widget=ForeignKeyWidget(AdministrativeUnit, 'administrative_unit_id')
-    )
-    group = fields.Field(
-        column_name='group',
-        attribute='group',
-        widget=ForeignKeyWidget(Group, 'id')
-    )
-    
-    class Meta(TimestampedModelResource.Meta):
-        model = AdministrativeUnitResponsibility
-        import_id_fields = ['administrative_unit_responsibility_id']
-
 
 class ColorResource(TimestampedModelResource):
     class Meta(TimestampedModelResource.Meta):
@@ -574,103 +531,6 @@ class LegacyCoverResource(resources.ModelResource):
     class Meta:
         model = LegacyCover
         import_id_fields = ['id']
-
-
-# ========== GEOGRAPHIC ADMIN ==========
-
-class AdministrativeUnitIdentityInline(admin.TabularInline):
-    model = AdministrativeUnitIdentity
-    extra = 1
-    fk_name = "administrative_unit"
-    fields = ['unit_name', 'unit_abbreviation', 'unit_type', 'hierarchy_level',
-              'effective_from_date', 'effective_to_date', 'change_reason']
-    raw_id_fields = ['parent_administrative_unit']
-    exclude = ["created_by", "modified_by", "created_date", "modified_date"]
-
-
-class AdministrativeUnitResponsibilityInline(admin.TabularInline):
-    model = AdministrativeUnitResponsibility
-    extra = 1
-    fields = ['group', 'is_active', 'notes']
-    exclude = ["created_by", "modified_by", "created_date", "modified_date"]
-
-
-class AdministrativeUnitAdmin(InlineRevisionMixin, TimestampedModelAdmin):
-    resource_class = AdministrativeUnitResource
-    list_display = ['reference_code', 'get_current_name', 'get_current_type', 
-                    'get_responsible_groups']
-    search_fields = ['reference_code']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-    inlines = [AdministrativeUnitIdentityInline, AdministrativeUnitResponsibilityInline]
-    
-    def get_current_name(self, obj):
-        identity = obj.get_current_identity()
-        return identity.unit_name if identity else '-'
-    get_current_name.short_description = 'Current Name'
-    
-    def get_current_type(self, obj):
-        identity = obj.get_current_identity()
-        return identity.unit_type if identity else '-'
-    get_current_type.short_description = 'Type'
-    
-    def get_responsible_groups(self, obj):
-        groups = [resp.group.name for resp in obj.responsibilities.filter(is_active=True)]
-        return ', '.join(groups) if groups else '-'
-    get_responsible_groups.short_description = 'Responsible Groups'
-
-
-class AdministrativeUnitIdentityAdmin(TimestampedModelAdmin):
-    resource_class = AdministrativeUnitIdentityResource
-    list_display = ['unit_name', 'administrative_unit', 'unit_type', 'hierarchy_level',
-                    'effective_from_date', 'effective_to_date', 'change_reason']
-    list_filter = ['unit_type', 'hierarchy_level', 'change_reason', 'effective_from_date']
-    search_fields = ['unit_name', 'unit_abbreviation', 'administrative_unit__reference_code']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-    raw_id_fields = ['administrative_unit', 'parent_administrative_unit']
-    date_hierarchy = 'effective_from_date'
-    
-    fieldsets = (
-        ('Location Reference', {
-            'fields': ('administrative_unit', 'parent_administrative_unit')
-        }),
-        ('Identity Information', {
-            'fields': ('unit_name', 'unit_abbreviation', 'unit_type', 'hierarchy_level')
-        }),
-        ('Temporal Bounds', {
-            'fields': ('effective_from_date', 'effective_to_date', 'change_reason')
-        }),
-        ('Metadata', {
-            'fields': ('created_date', 'created_by'),
-            'classes': ('collapse',)
-        }),
-    )
-
-
-class AdministrativeUnitResponsibilityAdmin(TimestampedModelAdmin):
-    resource_class = AdministrativeUnitResponsibilityResource
-    list_display = ['get_unit_name', 'group', 'is_active']
-    list_filter = ['is_active', 'group']
-    search_fields = ['administrative_unit__reference_code', 'group__name']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-    raw_id_fields = ['administrative_unit']
-    
-    fieldsets = (
-        ('Responsibility Assignment', {
-            'fields': ('administrative_unit', 'group', 'is_active')
-        }),
-        ('Notes', {
-            'fields': ('notes',)
-        }),
-        ('Metadata', {
-            'fields': ('created_date', 'modified_date', 'created_by', 'modified_by'),
-            'classes': ('collapse',)
-        }),
-    )
-    
-    def get_unit_name(self, obj):
-        identity = obj.administrative_unit.get_current_identity()
-        return identity.unit_name if identity else obj.administrative_unit.reference_code
-    get_unit_name.short_description = 'Location'
 
 
 # ========== PHYSICAL CHARACTERISTICS ADMIN ==========
@@ -1155,7 +1015,7 @@ class UserLocationUserChangeForm(DjangoUserAdmin.form):
 
         if role == ROLE_CONTRIBUTOR:
             # Contributors should not carry any explicit location assignments
-            cleaned["locations"] = AdministrativeUnit.objects.none()
+            cleaned["locations"] = Region.objects.none()
         elif role == ROLE_STATE_EDITOR:
             # State Editors must have at least one location
             if not locations or not list(locations):

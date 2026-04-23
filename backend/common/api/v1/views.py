@@ -161,9 +161,6 @@ def _parse_dates_seen_rows_from_payload(payload: dict) -> list[Tuple[date, date]
         return date(1900, 1, 1), date(1900, 12, 31)
 
 from common.models import (
-    AdministrativeUnit,
-    AdministrativeUnitIdentity,
-    AdministrativeUnitResponsibility,
     Color,
     Shape,
     Postmark,
@@ -181,10 +178,6 @@ from common.models import (
 )
 
 from .serializers import (
-    AdministrativeUnitSerializer,
-    AdministrativeUnitListSerializer,
-    AdministrativeUnitIdentitySerializer,
-    AdministrativeUnitResponsibilitySerializer,
     ColorSerializer,
     PostmarkSerializer,
     PostmarkValuationSerializer,
@@ -252,16 +245,11 @@ def _build_user_payload(user):
         "role": role,
     }
     if role == "state_editor":
-        units = _get_user_assigned_units(user)
-        assigned_locations = []
-        for unit in units:
-            ident = unit.get_current_identity()
-            name = (ident.unit_name or unit.reference_code or "").strip() or unit.reference_code
-            assigned_locations.append({
-                "name": name,
-                "reference_code": unit.reference_code or "",
-            })
-        payload["assigned_locations"] = assigned_locations
+        regions = _get_user_assigned_regions(user)
+        payload["assigned_locations"] = [
+            {"name": r.name, "reference_code": r.abbrev or ""}
+            for r in regions
+        ]
     return payload
 
 
@@ -321,47 +309,6 @@ class CurrentUserView(APIView):
         if not request.user.is_authenticated:
             return Response(status=status.HTTP_401_UNAUTHORIZED)
         return Response({"user": _build_user_payload(request.user)})
-
-
-class AssignedStatesView(APIView):
-    """Return state options assigned to the current user.
-
-    - For State Editors: only their assigned states.
-    - For Contributors/others: all current states.
-    """
-    permission_classes = [IsAuthenticated]
-    renderer_classes = [JSONRenderer]
-
-    def get(self, request):
-        user = request.user
-        role = _get_user_role(user)
-
-        if role == "state_editor":
-            units = _get_user_assigned_units(user)
-            identities = AdministrativeUnitIdentity.objects.filter(
-                administrative_unit__in=units,
-                effective_to_date__isnull=True,
-            )
-        else:
-            # Contributors can submit to any state; return all current identities
-            identities = AdministrativeUnitIdentity.objects.filter(
-                effective_to_date__isnull=True,
-            )
-        seen = set()
-        items = []
-        for ident in identities:
-            name = (ident.unit_name or "").strip()
-            if not name or name in seen:
-                continue
-            seen.add(name)
-            items.append({
-                "value": name,
-                "label": name,
-                "administrativeUnitId": ident.administrative_unit_id,
-                "abbreviation": (ident.unit_abbreviation or "").strip(),
-            })
-        items.sort(key=lambda x: x["label"].lower())
-        return Response(items)
 
 
 class FAQEntryViewSet(viewsets.ReadOnlyModelViewSet):
@@ -900,51 +847,19 @@ def _save_contribution_image(uploaded_file):
     }
 
 
-def _get_user_assigned_units(user):
-    """Return queryset of AdministrativeUnits explicitly assigned to this user."""
-    return AdministrativeUnit.objects.filter(
-        user_location_assignments__user=user
-    ).distinct()
+def _get_user_assigned_regions(user):
+    """Return queryset of Regions explicitly assigned to this user."""
+    from common.models import Region
+    return Region.objects.filter(user_location_assignments__user=user).distinct()
 
 
-def _get_allowed_state_strings(user):
-    """Return (allowed_strings_set, assigned_units_queryset)."""
-    units = _get_user_assigned_units(user)
-    allowed = set()
-    if not units.exists():
-        return allowed, units
-    identities = AdministrativeUnitIdentity.objects.filter(
-        administrative_unit__in=units,
-        effective_to_date__isnull=True,
-    )
-    for ident in identities:
-        name = (ident.unit_name or "").strip()
-        abv = (ident.unit_abbreviation or "").strip()
-        if name:
-            allowed.add(name.lower())
-        if abv:
-            allowed.add(abv.lower())
-    return allowed, units
-
-
-def _resolve_assigned_admin_unit(user, state_str):
-    """Match a state string to one of the user's assigned AdministrativeUnits."""
-    state_norm = (state_str or "").strip().lower()
-    if not state_norm:
+def _resolve_assigned_region(user, state_str):
+    """Match a state string to one of the user's assigned Regions."""
+    if not (state_str or "").strip():
         return None
-    allowed, units = _get_allowed_state_strings(user)
-    if not allowed:
-        return None
-    identities = AdministrativeUnitIdentity.objects.filter(
-        administrative_unit__in=units,
-        effective_to_date__isnull=True,
-    )
-    for ident in identities:
-        name = (ident.unit_name or "").strip().lower()
-        abv = (ident.unit_abbreviation or "").strip().lower()
-        if state_norm == name or state_norm == abv:
-            return ident.administrative_unit
-    return None
+    return _get_user_assigned_regions(user).filter(
+        Q(name__iexact=state_str) | Q(abbrev__iexact=state_str)
+    ).first()
 
 
 def _is_own_approved_catalog_postmark(user, postmark_id):
@@ -1074,33 +989,6 @@ def _create_postmark_in_catalog(payload, editor_data=None, created_by_user=None)
         references_str = (_get_payload_value(payload, "references", "References") or "").strip()
         original_postmark_id = _get_payload_value(payload, "original_postmark_id", "originalPostmarkId")
 
-        # State: get or create AdministrativeUnit + Identity
-        state_slug = slugify(state_str)[:40] or "unknown"
-        admin_unit = payload.get("admin_unit")
-        if not admin_unit:
-            ref_code = f"CONTRIB-{state_slug}"
-            admin_unit, _ = AdministrativeUnit.objects.get_or_create(
-                reference_code=ref_code,
-                defaults={"created_by": user, "modified_by": user},
-            )
-        effective_from = date(1900, 1, 1)
-        if admin_unit and state_str and not AdministrativeUnitIdentity.objects.filter(
-            administrative_unit=admin_unit,
-            unit_name=state_str[:255],
-            effective_from_date=effective_from,
-        ).exists():
-            AdministrativeUnitIdentity.objects.create(
-                administrative_unit=admin_unit,
-                unit_name=state_str[:255],
-                unit_abbreviation=(state_slug.upper()[:10] if state_slug != "unknown" else "CONTRIB"),
-                unit_type="STATE",
-                hierarchy_level=2,
-                change_reason="INITIAL",
-                effective_from_date=effective_from,
-                effective_to_date=None,
-                created_by=user,
-                modified_by=user,
-            )
         # Shape: editor approve payload, else contribution submitted_data postmark_shape_id, else type name
         shape = None
         if editor_data and editor_data.get("postmark_shape_id") is not None:
@@ -1298,31 +1186,6 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name, *, keep_pu
         inscription_txt_str = (_get_payload_value(payload, "inscription_txt", "inscriptionText", "inscription_text", "inscriptionText") or "").strip()
         references_str = (_get_payload_value(payload, "references", "References") or "").strip()
 
-        # State / facility / identity (same as create)
-        state_slug = slugify(state_str)[:40] or "unknown"
-        ref_code = f"CONTRIB-{state_slug}"
-        admin_unit, _ = AdministrativeUnit.objects.get_or_create(
-            reference_code=ref_code,
-            defaults={"created_by": user, "modified_by": user},
-        )
-        effective_from = date(1900, 1, 1)
-        if not AdministrativeUnitIdentity.objects.filter(
-            administrative_unit=admin_unit,
-            unit_name=state_str[:255],
-            effective_from_date=effective_from,
-        ).exists():
-            AdministrativeUnitIdentity.objects.create(
-                administrative_unit=admin_unit,
-                unit_name=state_str[:255],
-                unit_abbreviation=(state_slug.upper()[:10] if state_slug != "unknown" else "CONTRIB"),
-                unit_type="STATE",
-                hierarchy_level=2,
-                change_reason="INITIAL",
-                effective_from_date=effective_from,
-                effective_to_date=None,
-                created_by=user,
-                modified_by=user,
-            )
         shape = PostmarkShape.objects.filter(shape_name=type_str).first() or PostmarkShape.objects.first()
         if not shape:
             return None
@@ -1342,7 +1205,6 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name, *, keep_pu
         other_characteristics = "\n".join(other_parts) if other_parts else ""
 
         # Update Postmark core fields
-        postmark.state = admin_unit
         postmark.postmark_shape = shape
         postmark.framing_style = framing
         postmark.is_manuscript = is_manuscript
@@ -1371,7 +1233,6 @@ def _update_postmark_in_catalog(postmark_id, payload, submitter_name, *, keep_pu
         postmark.modified_by = user
         postmark.save(
             update_fields=[
-                "state",
                 "postmark_shape",
                 "framing_style",
                 "is_manuscript",
@@ -1586,12 +1447,8 @@ class ContributionView(APIView):
 
             # Limit to editor's assigned states unless superuser
             if not getattr(user, "is_superuser", False):
-                assigned = _get_user_assigned_units(user)
-                state_names = []
-                for u in assigned:
-                    ident = u.get_current_identity()
-                    if ident and ident.unit_name:
-                        state_names.append(ident.unit_name)
+                assigned = _get_user_assigned_regions(user)
+                state_names = list(assigned.values_list('name', flat=True))
                 if state_names:
                     qs = qs.filter(submitted_data__state__in=state_names)
                 else:
@@ -1676,7 +1533,6 @@ class ContributionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         user = request.user
-        assigned_admin_unit = None
         if not user.is_authenticated:
             return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -1686,8 +1542,7 @@ class ContributionView(APIView):
         if edit_postmark_id is None and edit_contribution_id is None:
             role = _get_user_role(user)
             if role == "state_editor" and not getattr(user, "is_superuser", False):
-                assigned_admin_unit = _resolve_assigned_admin_unit(user, state)
-                if not assigned_admin_unit:
+                if not _resolve_assigned_region(user, state):
                     return Response(
                         {"detail": "You are not assigned to submit listings for this state."},
                         status=status.HTTP_403_FORBIDDEN,
@@ -1784,8 +1639,6 @@ class ContributionView(APIView):
             payload["date_format_id"] = date_fmt_payload
         if date_fmt_payload_ids:
             payload["date_format_ids"] = date_fmt_payload_ids
-        if assigned_admin_unit is not None:
-            payload["admin_unit"] = assigned_admin_unit
         image_files = request.FILES.getlist("image") or []
         if image_files:
             image_metas = []
@@ -2084,7 +1937,7 @@ class ContributionView(APIView):
                 and not getattr(user, "is_superuser", False)
                 and own_approved_catalog
             ):
-                if not _resolve_assigned_admin_unit(user, state):
+                if not _resolve_assigned_region(user, state):
                     return Response(
                         {
                             "detail": "You are not assigned to publish catalog edits for this state.",
@@ -2137,20 +1990,16 @@ def _can_review_contribution(user, contrib):
     """True if user can approve/reject this contribution (State Editor)."""
     if getattr(user, "is_superuser", False):
         return True
-    assigned = _get_user_assigned_units(user)
+    assigned = _get_user_assigned_regions(user)
     if not assigned.exists():
         return False
-    # For suggestions on existing catalog entries, permission should be based on the
-    # linked postmark region as well (submitted_data can be edited before approval).
     postmark = getattr(contrib, "postmark", None)
-    if postmark:
-        if postmark.state_id and assigned.filter(pk=postmark.state_id).exists():
+    if postmark and postmark.post_office_id:
+        if assigned.filter(post_offices__postmarks=postmark).exists():
             return True
-
-    # Fallback for new submissions: evaluate state from submitted payload.
     sd = contrib.submitted_data or {}
     state_str = (sd.get("state") or "").strip()
-    return _resolve_assigned_admin_unit(user, state_str) is not None
+    return _resolve_assigned_region(user, state_str) is not None
 
 
 class IsStateEditorOrContributor(BasePermission):
@@ -2193,12 +2042,8 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         role = _get_user_role(user)
         base_qs = Contribution.objects.select_related("contributor", "reviewer", "postmark")
         if role == "state_editor":
-            assigned = _get_user_assigned_units(user)
-            state_names = []
-            for u in assigned:
-                ident = u.get_current_identity()
-                if ident and ident.unit_name:
-                    state_names.append(ident.unit_name)
+            assigned = _get_user_assigned_regions(user)
+            state_names = list(assigned.values_list('name', flat=True))
             if state_names:
                 return base_qs.filter(
                     Q(contributor=user) | Q(submitted_data__state__in=state_names)
@@ -2656,12 +2501,11 @@ class DeleteMySubmissionView(APIView):
             postmark.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
 
-        # 2. Users assigned to this postmark's state (or its facility's jurisdiction) can delete
-        assigned_units = _get_user_assigned_units(user)
-        if assigned_units.exists():
-            if postmark.state_id and assigned_units.filter(pk=postmark.state_id).exists():
-                postmark.delete()
-                return Response(status=status.HTTP_204_NO_CONTENT)
+        # 2. Users assigned to this postmark's region can delete
+        assigned = _get_user_assigned_regions(user)
+        if assigned.exists() and assigned.filter(post_offices__postmarks=postmark).exists():
+            postmark.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
 
         # 3. Original submitter of a user-contribution listing can delete their own
         if postmark.source_catalog != "User contribution":
@@ -2694,141 +2538,6 @@ class DeleteMySubmissionView(APIView):
 
         postmark.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-# ========== GEOGRAPHIC HIERARCHY VIEWSETS ==========
-
-class AdministrativeUnitViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for administrative units (stable containers).
-    Uses larger max page_size so filter dropdowns can request all states in one call.
-    For authenticated users with location assignments: returns only assigned locations.
-    For users without assignments (or staff/superuser): returns all.
-    """
-    pagination_class = LargePageSizePagination
-    queryset = AdministrativeUnit.objects.all().select_related(
-        'created_by', 'modified_by'
-    ).prefetch_related('identities', 'responsibilities__group')
-    permission_classes = [IsAuthenticatedOrReadOnly]
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['reference_code']
-    search_fields = ['reference_code']
-    ordering_fields = ['reference_code', 'created_date']
-    ordering = ['reference_code']
-
-    def get_queryset(self):
-        qs = super().get_queryset()
-        # Only filter when assigned_only=true (Contribute, Dashboard); Search uses all states
-        if self.request.query_params.get('assigned_only', '').lower() != 'true':
-            return qs
-        user = self.request.user
-        # assigned_only requires auth; unauthenticated gets empty (avoids inconsistent "all" when session missing)
-        if not user or not user.is_authenticated:
-            return qs.none()
-        role = _get_user_role(user)
-        if role == "state_editor":
-            # For State Editors, restrict to their explicit assignments.
-            assigned_ids = list(
-                UserLocationAssignment.objects.filter(user=user).values_list(
-                    'administrative_unit_id', flat=True
-                )
-            )
-            if assigned_ids:
-                return qs.filter(pk__in=assigned_ids)
-            return qs.none()
-        # Contributors (and others) can see all states when assigned_only=true
-        return qs
-
-    def list(self, request, *args, **kwargs):
-        response = super().list(request, *args, **kwargs)
-        # assigned_only responses are user-specific; prevent caching
-        if request.query_params.get('assigned_only', '').lower() == 'true':
-            response['Cache-Control'] = 'no-store, private, max-age=0'
-        return response
-
-    def get_serializer_class(self):
-        if self.action == 'list':
-            return AdministrativeUnitListSerializer
-        return AdministrativeUnitSerializer
-    
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
-    
-    def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
-    
-    @action(detail=True, methods=['get'])
-    def identities_timeline(self, request, pk=None):
-        """Get all historical identities for this unit"""
-        unit = self.get_object()
-        identities = unit.identities.all().order_by('effective_from_date')
-        serializer = AdministrativeUnitIdentitySerializer(identities, many=True)
-        return Response(serializer.data)
-    
-    @action(detail=True, methods=['get'])
-    def children(self, request, pk=None):
-        """Get all child administrative units (current)"""
-        parent = self.get_object()
-        # Get identities where this unit is the parent
-        child_identities = AdministrativeUnitIdentity.objects.filter(
-            parent_administrative_unit=parent,
-            effective_to_date__isnull=True
-        )
-        # Get the administrative units
-        child_units = [identity.administrative_unit for identity in child_identities]
-        serializer = AdministrativeUnitListSerializer(child_units, many=True)
-        return Response(serializer.data)
-    
-    @action(detail=True, methods=['get'])
-    def responsible_groups(self, request, pk=None):
-        """Get groups responsible for this unit"""
-        unit = self.get_object()
-        responsibilities = unit.responsibilities.filter(is_active=True)
-        serializer = AdministrativeUnitResponsibilitySerializer(responsibilities, many=True)
-        return Response(serializer.data)
-
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
-    def my_responsibilities(self, request):
-        """Get administrative units the current user's groups are responsible for"""
-        user_groups = request.user.groups.all()
-        responsibilities = AdministrativeUnitResponsibility.objects.filter(
-            group__in=user_groups,
-            is_active=True
-        ).select_related('administrative_unit')
-
-        units = [resp.administrative_unit for resp in responsibilities]
-        serializer = AdministrativeUnitListSerializer(units, many=True)
-        return Response(serializer.data)
-
-
-class AdministrativeUnitIdentityViewSet(viewsets.ModelViewSet):
-    """ViewSet for administrative unit identities"""
-    queryset = AdministrativeUnitIdentity.objects.all().select_related(
-        'administrative_unit', 'parent_administrative_unit', 'created_by'
-    )
-    serializer_class = AdministrativeUnitIdentitySerializer
-    permission_classes = [IsAuthenticatedOrReadOnly]
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['administrative_unit', 'unit_type', 'change_reason']
-    ordering = ['-effective_from_date']
-
-
-class AdministrativeUnitResponsibilityViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing group responsibilities"""
-    queryset = AdministrativeUnitResponsibility.objects.all().select_related(
-        'administrative_unit', 'group', 'created_by', 'modified_by'
-    )
-    serializer_class = AdministrativeUnitResponsibilitySerializer
-    permission_classes = [IsAuthenticated]  # Only authenticated users can manage
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['administrative_unit', 'group', 'is_active']
-    ordering = ['administrative_unit']
-
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
-
-    def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
 
 
 # ========== PHYSICAL CHARACTERISTICS VIEWSETS ==========
@@ -2904,14 +2613,7 @@ def _postmark_list_queryset():
     """Queryset for postmark list + detail: matches data needed by PostmarkSerializer (same shape as retrieve).
     List uses the same serializer as GET /postmarks/{id}/ so clients see identical fields per row.
     """
-    current_identities = AdministrativeUnitIdentity.objects.filter(effective_to_date__isnull=True)
     return Postmark.objects.all().select_related(
-        'site',
-        'state',
-        'postmark_shape',
-        'lettering_style',
-        'framing_style',
-        'date_format',
         'post_office',
         'post_office__region',
         'shape',
@@ -2920,21 +2622,11 @@ def _postmark_list_queryset():
         'created_by',
         'modified_by',
     ).prefetch_related(
-        Prefetch(
-            'postmark_colors',
-            queryset=PostmarkColor.objects.select_related('color'),
-        ),
-        'dates_seen',
-        Prefetch(
-            'valuations',
-            queryset=PostmarkValuation.objects.select_related('valued_by_user'),
-        ),
+        'dates_observed',
         Prefetch(
             'images',
             queryset=PostmarkImage.objects.select_related('uploaded_by'),
         ),
-        Prefetch('sizes', queryset=PostmarkSize.objects.order_by('-created_date')),
-        Prefetch('state__identities', queryset=current_identities),
     )
 
 
@@ -3016,12 +2708,11 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         if getattr(user, "is_superuser", False):
             postmark.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
-        # 2. State editors: delete if in assigned state
-        assigned_units = _get_user_assigned_units(user)
-        if assigned_units.exists():
-            if postmark.state_id and assigned_units.filter(pk=postmark.state_id).exists():
-                postmark.delete()
-                return Response(status=status.HTTP_204_NO_CONTENT)
+        # 2. State editors: delete if in assigned region
+        assigned = _get_user_assigned_regions(user)
+        if assigned.exists() and assigned.filter(post_offices__postmarks=postmark).exists():
+            postmark.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
         # 3. Original submitter of a user-contribution listing
         if postmark.source_catalog != "User contribution":
             return Response(
@@ -3051,8 +2742,8 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         State editors can view, edit, and delete any catalog entry in their assigned states.
         """
         user = request.user
-        assigned_units = _get_user_assigned_units(user)
-        if not assigned_units.exists():
+        assigned = _get_user_assigned_regions(user)
+        if not assigned.exists():
             empty_qs = self.get_queryset().none()
             page = self.paginate_queryset(empty_qs)
             if page is not None:
@@ -3061,7 +2752,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
             serializer = self.get_serializer(empty_qs, many=True)
             return Response(serializer.data)
         qs = self.get_queryset().filter(
-            Q(state__in=assigned_units)
+            post_office__region__in=assigned
         ).distinct().order_by('-created_date')
         qs = self.filter_queryset(qs)
         page = self.paginate_queryset(qs)
@@ -3104,9 +2795,9 @@ class PostmarkViewSet(viewsets.ModelViewSet):
             source_catalog="User contribution",
         ).filter(needle_q).order_by('-created_date')
         if not getattr(user, "is_superuser", False):
-            assigned_units = _get_user_assigned_units(user)
-            if assigned_units.exists():
-                qs = qs.filter(state__in=assigned_units)
+            assigned = _get_user_assigned_regions(user)
+            if assigned.exists():
+                qs = qs.filter(post_office__region__in=assigned)
             else:
                 qs = qs.none()
         page = self.paginate_queryset(qs)

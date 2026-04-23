@@ -1,8 +1,7 @@
 """
-Import all 13 CSV files from the ERD (docs/data_model-v1.erd) directly into the database.
+Import legacy CSV files from the ERD directly into the database.
 
-Reads from a directory (e.g. frontend/public/Old Data), runs reference and legacy
-importers, then runs import_ascc for raw state data and townmark images.
+Reads from a directory (e.g. frontend/public/Old Data) and runs legacy importers.
 
 Usage:
   python manage.py import_all_legacy_csv --dir "frontend/public/Old Data"
@@ -12,7 +11,6 @@ import csv
 import io
 import os
 
-from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 
@@ -22,7 +20,6 @@ from common.csv_import import IMPORTERS
 # All 13 ERD CSVs: filename → import_type (must exist in IMPORTERS)
 # tblRawStateData.csv and tblTownmarkImages.csv are imported via import_ascc at the end.
 ALL_ERD_CSV_MAP = [
-    ("tblStates.csv", "states"),
     ("tblAbbreviations.csv", "abbreviations"),
     ("tblTownmarkLettering.csv", "lettering"),
     ("tblTownmarkFraming.csv", "framing"),
@@ -52,8 +49,7 @@ def parse_csv_path(dir_path, filename):
 
 class Command(BaseCommand):
     help = (
-        "Import all 13 ERD CSV files from a directory into the database. "
-        "Runs reference + legacy importers, then import_ascc (raw state data + images)."
+        "Import legacy ERD CSV files from a directory into the database."
     )
 
     def add_arguments(self, parser):
@@ -68,11 +64,6 @@ class Command(BaseCommand):
             "-u",
             default=None,
             help="Username for created_by/modified_by (default: first superuser)",
-        )
-        parser.add_argument(
-            "--skip-ascc",
-            action="store_true",
-            help="Skip import_ascc (states/raw data/images); only run the 11 CSV importers.",
         )
 
     def handle(self, *args, **options):
@@ -98,7 +89,6 @@ class Command(BaseCommand):
                 return
         self.stdout.write(f"Using user: {user.username} (id={user.pk})")
 
-        # 1) Run all 11 CSV importers (tblStates through tblCovers)
         for filename, import_type in ALL_ERD_CSV_MAP:
             importer = IMPORTERS.get(import_type)
             if not importer:
@@ -132,13 +122,3 @@ class Command(BaseCommand):
                     self.style.ERROR(f"{filename} → {import_type}: {e!s}")
                 )
 
-        # 2) Run import_ascc for tblStates (again), tblRawStateData, tblTownmarkImages
-        if not options.get("skip_ascc"):
-            self.stdout.write(self.style.SUCCESS("Running import_ascc (states, raw state data, images)..."))
-            call_command(
-                "import_ascc",
-                dir=dir_path,
-                user=user.username,
-                stdout=self.stdout,
-                stderr=self.stderr,
-            )

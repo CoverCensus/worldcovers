@@ -92,12 +92,6 @@ router.register(
     views.ColorViewSet,
     basename="color",
 )
-router.register(
-    r"administrative-units",
-    views.AdministrativeUnitViewSet,
-    basename="administrative-unit",
-)
-
 # ========== POSTMARKS ==========
 
 router.register(

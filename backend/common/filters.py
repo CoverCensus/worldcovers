@@ -7,8 +7,6 @@ from django.db.models import Q, Min, Max
 
 from .models import (
     Postmark,
-    AdministrativeUnit,
-    AdministrativeUnitIdentity,
     Postcover,
 )
 

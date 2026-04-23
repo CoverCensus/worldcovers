@@ -1,7 +1,6 @@
 import hashlib
 from django.db import models
 from django.db.models import Q
-from django.contrib.auth.models import Group
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
 from colorfield.fields import ColorField
@@ -15,90 +14,6 @@ class TimestampedModel(models.Model):
 
     class Meta:
         abstract = True
-
-class AdministrativeUnit(TimestampedModel):
-    """
-    Stable container for an administrative jurisdiction.
-    This is a pure pointer - all temporal data is in AdministrativeUnitIdentity.
-    """
-    administrative_unit_id = models.AutoField(primary_key=True, db_column='AdministrativeUnitID')
-    reference_code = models.CharField(max_length=50, unique=True, db_column='ReferenceCode', help_text="Stable identifier (e.g., 'US-VA', 'RUS', 'DAK-TER')")
-
-    class Meta:
-        db_table = 'AdministrativeUnits'
-        verbose_name = 'Location'
-        verbose_name_plural = 'Locations'
-        indexes = [models.Index(fields=['reference_code'])]
-
-    def get_current_identity(self):
-        """Get the currently active identity"""
-        return self.identities.filter(effective_to_date__isnull=True).first()
-
-    def get_identity_at_date(self, target_date):
-        """Get the identity effective at a specific date"""
-        return self.identities.filter(Q(effective_from_date__lte=target_date) & (Q(effective_to_date__isnull=True) | Q(effective_to_date__gt=target_date))).first()
-
-    def __str__(self):
-        current = self.get_current_identity()
-        if current:
-            return f'{current.unit_name} ({self.reference_code})'
-        return self.reference_code
-
-class AdministrativeUnitIdentity(TimestampedModel):
-    """
-    Temporal identity of an administrative unit during a specific period.
-    Tracks name, abbreviation, type, hierarchy, and parent during this period.
-    """
-    administrative_unit_identity_id = models.AutoField(primary_key=True, db_column='AdministrativeUnitIdentityID')
-    administrative_unit = models.ForeignKey('postmarks.Location', on_delete=models.CASCADE, related_name='identities', db_column='AdministrativeUnitID')
-    parent_administrative_unit = models.ForeignKey('postmarks.Location', on_delete=models.PROTECT, null=True, blank=True, related_name='child_identities', db_column='ParentAdministrativeUnitID')
-    effective_from_date = models.DateField(db_column='EffectiveFromDate')
-    effective_to_date = models.DateField(null=True, blank=True, db_column='EffectiveToDate')
-    unit_name = models.CharField(max_length=255, db_column='UnitName')
-    unit_abbreviation = models.CharField(max_length=10, db_column='UnitAbbreviation')
-    unit_type = models.CharField(max_length=20, db_column='UnitType', choices=[('COUNTRY', 'Country'), ('STATE', 'State'), ('PROVINCE', 'Province'), ('TERRITORY', 'Territory'), ('PREFECTURE', 'Prefecture'), ('COUNTY', 'County'), ('DISTRICT', 'District'), ('MUNICIPALITY', 'Municipality')])
-    hierarchy_level = models.IntegerField(db_column='HierarchyLevel', help_text='1=Country, 2=State, 3=County, etc')
-    change_reason = models.CharField(max_length=20, db_column='ChangeReason', choices=[('INITIAL', 'Initial Creation'), ('RENAMED', 'Renamed'), ('SPLIT', 'Split'), ('MERGED', 'Merged'), ('REORGANIZED', 'Reorganized'), ('INDEPENDENCE', 'Gained Independence'), ('ANNEXED', 'Annexed'), ('DISSOLVED', 'Dissolved')])
-
-    class Meta:
-        db_table = 'AdministrativeUnitIdentities'
-        verbose_name = 'Location identity'
-        verbose_name_plural = 'Location identities'
-        indexes = [models.Index(fields=['administrative_unit', 'effective_from_date']), models.Index(fields=['effective_from_date', 'effective_to_date'])]
-        ordering = ['administrative_unit', '-effective_from_date']
-
-    def get_parent_identity_at_this_time(self):
-        """Get the parent's identity during this child's time period"""
-        if not self.parent_administrative_unit:
-            return None
-        return self.parent_administrative_unit.get_identity_at_date(self.effective_from_date)
-
-    def __str__(self):
-        return f"{self.unit_name} ({self.effective_from_date} - {self.effective_to_date or 'present'})"
-
-class AdministrativeUnitResponsibility(TimestampedModel):
-    """
-    Assigns a Django Group as responsible for managing submissions
-    related to a specific AdministrativeUnit.
-    """
-    administrative_unit_responsibility_id = models.AutoField(primary_key=True, db_column='AdministrativeUnitResponsibilityID')
-    administrative_unit = models.ForeignKey('postmarks.Location', on_delete=models.CASCADE, related_name='responsibilities', db_column='AdministrativeUnitID', help_text='The location this group is responsible for')
-    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='administrative_responsibilities', db_column='GroupID', help_text='The Django group responsible for this region')
-    is_active = models.BooleanField(default=True, db_column='IsActive', help_text='Whether this responsibility is currently active')
-    notes = models.TextField(blank=True, db_column='Notes')
-
-    class Meta:
-        db_table = 'AdministrativeUnitResponsibilities'
-        verbose_name = 'Location responsibility'
-        verbose_name_plural = 'Location responsibilities'
-        unique_together = [['administrative_unit', 'group']]
-        indexes = [models.Index(fields=['administrative_unit', 'is_active']), models.Index(fields=['group', 'is_active'])]
-
-    def __str__(self):
-        unit_identity = self.administrative_unit.get_current_identity()
-        unit_name = unit_identity.unit_name if unit_identity else self.administrative_unit.reference_code
-        return f'{self.group.name} → {unit_name}'
-
 
 class Color(TimestampedModel):
     """Colors used in postmarks"""

@@ -7,11 +7,9 @@ from common.admin import (
     PostmarkImageAdmin,
     PostcoverAdmin,
     PostcoverImageAdmin,
-    AdministrativeUnitAdmin,
     FAQEntryAdmin,
     ContributionAdmin,
 )
-from common.utils import get_canonical_location_reference_codes
 
 from .models import (
     Listing,
@@ -21,7 +19,6 @@ from .models import (
     Postcover,
     PostcoverPostmark,
     PostcoverImage,
-    Location,
     FAQEntry,
     Contribution,
 )
@@ -56,19 +53,6 @@ class CatalogRequestAdmin(ListingAdmin):
 admin.site.register(ListingImage, PostmarkImageAdmin)
 admin.site.register(Postcover, PostcoverAdmin)
 admin.site.register(PostcoverImage, PostcoverImageAdmin)
-
-
-# Locations (proxy of AdministrativeUnit) — under Postmarks; only show rows from tblStates.csv
-class LocationAdmin(AdministrativeUnitAdmin):
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        codes = get_canonical_location_reference_codes()
-        if codes is not None:
-            return qs.filter(reference_code__in=codes)
-        return qs
-
-
-admin.site.register(Location, LocationAdmin)
 
 
 @admin.register(PostmarkValuation)

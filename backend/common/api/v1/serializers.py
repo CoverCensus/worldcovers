@@ -6,9 +6,6 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from common.models import (
-    AdministrativeUnit,
-    AdministrativeUnitIdentity,
-    AdministrativeUnitResponsibility,
     Color,
     Postmark,
     PostmarkValuation,
@@ -64,83 +61,6 @@ class FAQEntrySerializer(serializers.ModelSerializer):
         model = FAQEntry
         fields = ["faq_entry_id", "question", "answer", "is_active", "display_order"]
         read_only_fields = ["faq_entry_id", "is_active", "display_order"]
-
-
-# ========== GEOGRAPHIC HIERARCHY SERIALIZERS ==========
-
-class AdministrativeUnitListSerializer(serializers.ModelSerializer):
-    """Lightweight serializer for lists"""
-    current_name = serializers.SerializerMethodField()
-    current_type = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = AdministrativeUnit
-        fields = ['administrative_unit_id', 'reference_code', 'current_name', 'current_type']
-    
-    def get_current_name(self, obj):
-        identity = obj.get_current_identity()
-        return identity.unit_name if identity else None
-    
-    def get_current_type(self, obj):
-        identity = obj.get_current_identity()
-        return identity.unit_type if identity else None
-
-
-class AdministrativeUnitIdentitySerializer(serializers.ModelSerializer):
-    """Serializer for administrative unit identities"""
-    parent_name = serializers.SerializerMethodField()
-    created_by = UserSerializer(read_only=True)
-    
-    class Meta:
-        model = AdministrativeUnitIdentity
-        fields = '__all__'
-        read_only_fields = ['administrative_unit_identity_id', 'created_date']
-    
-    def get_parent_name(self, obj):
-        if obj.parent_administrative_unit:
-            parent_identity = obj.get_parent_identity_at_this_time()
-            return parent_identity.unit_name if parent_identity else None
-        return None
-
-
-class AdministrativeUnitResponsibilitySerializer(serializers.ModelSerializer):
-    """Serializer for group responsibilities"""
-    group = GroupSerializer(read_only=True)
-    group_id = serializers.PrimaryKeyRelatedField(
-        queryset=Group.objects.all(),
-        source='group',
-        write_only=True
-    )
-    administrative_unit_name = serializers.SerializerMethodField()
-    created_by = UserSerializer(read_only=True)
-    modified_by = UserSerializer(read_only=True)
-    
-    class Meta:
-        model = AdministrativeUnitResponsibility
-        fields = '__all__'
-        read_only_fields = ['administrative_unit_responsibility_id', 'created_date', 'modified_date']
-    
-    def get_administrative_unit_name(self, obj):
-        identity = obj.administrative_unit.get_current_identity()
-        return identity.unit_name if identity else obj.administrative_unit.reference_code
-
-
-class AdministrativeUnitSerializer(serializers.ModelSerializer):
-    """Full serializer with nested identities and responsibilities"""
-    identities = AdministrativeUnitIdentitySerializer(many=True, read_only=True)
-    responsibilities = AdministrativeUnitResponsibilitySerializer(many=True, read_only=True)
-    current_identity = serializers.SerializerMethodField()
-    created_by = UserSerializer(read_only=True)
-    modified_by = UserSerializer(read_only=True)
-    
-    class Meta:
-        model = AdministrativeUnit
-        fields = '__all__'
-        read_only_fields = ['administrative_unit_id', 'created_date', 'modified_date']
-    
-    def get_current_identity(self, obj):
-        identity = obj.get_current_identity()
-        return AdministrativeUnitIdentitySerializer(identity).data if identity else None
 
 
 class ColorSerializer(serializers.ModelSerializer):
@@ -258,15 +178,9 @@ class PostmarkListSerializer(serializers.ModelSerializer):
     def get_state(self, obj):
         try:
             region = obj.post_office.region if obj.post_office_id else None
-            if not region:
-                return None
-            unit = region.administrative_unit if hasattr(region, 'administrative_unit') else None
-            if unit:
-                identity = unit.get_current_identity()
-                return identity.unit_name if identity else unit.reference_code
+            return region.name if region else None
         except Exception:
-            pass
-        return None
+            return None
 
     def get_town(self, obj):
         return obj.post_office.name if obj.post_office_id else ''
@@ -340,15 +254,9 @@ class PostmarkSerializer(serializers.ModelSerializer):
     def get_state(self, obj):
         try:
             region = obj.post_office.region if obj.post_office_id else None
-            if not region:
-                return None
-            unit = region.administrative_unit if hasattr(region, 'administrative_unit') else None
-            if unit:
-                identity = unit.get_current_identity()
-                return identity.unit_name if identity else unit.reference_code
+            return region.name if region else None
         except Exception:
-            pass
-        return None
+            return None
 
     def get_town(self, obj):
         return obj.post_office.name if obj.post_office_id else ''
