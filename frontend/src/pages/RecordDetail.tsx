@@ -4,7 +4,7 @@ import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Download, Upload, ArrowLeft, Loader2, Pencil, MessageSquare, ChevronDown } from "lucide-react";
+import { ArrowLeft, Loader2, Pencil, MessageSquare, ChevronDown } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
@@ -22,7 +22,6 @@ import {
   type AssociatedRatemark,
   type AssociatedAuxmark,
   type AssociatedCover,
-  type PostmarkChangelogEvent,
   type PostmarkVersionRow,
 } from "@/services/postmarks";
 import { useAuth } from "@/hooks/useAuth";
@@ -130,11 +129,26 @@ function DetailRow({ label, value, last = false }: { label: string; value: strin
   );
 }
 
-function formatEventTimestamp(iso: string): string {
+function formatTimestamp(iso: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString();
+}
+
+function formatSnapshotMm(width: unknown, height: unknown): string {
+  const fmt = (n: unknown) => {
+    if (n == null || n === "") return null;
+    const num = typeof n === "number" ? n : parseFloat(String(n));
+    if (!Number.isFinite(num) || num <= 0) return null;
+    return num.toFixed(2).replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
+  };
+  const w = fmt(width);
+  const h = fmt(height);
+  if (w && h) return `${w} x ${h} mm`;
+  if (w) return `${w} mm`;
+  if (h) return `${h} mm`;
+  return "—";
 }
 
 function AssociatedRatemarksCard({ items }: { items: AssociatedRatemark[] }) {
@@ -333,7 +347,9 @@ const RecordDetail = () => {
   const [submitImageOpen, setSubmitImageOpen] = useState(false);
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(0);
-  const [count, setCount] = useState(0);
+  const [historyApi, setHistoryApi] = useState<CarouselApi>();
+  const [historyCurrent, setHistoryCurrent] = useState(0);
+  const [historyCount, setHistoryCount] = useState(0);
   const [record, setRecord] = useState<{
     id: number;
     name: string;
@@ -374,7 +390,6 @@ const RecordDetail = () => {
   const [associatedRatemarks, setAssociatedRatemarks] = useState<AssociatedRatemark[]>([]);
   const [associatedAuxmarks, setAssociatedAuxmarks] = useState<AssociatedAuxmark[]>([]);
   const [associatedCovers, setAssociatedCovers] = useState<AssociatedCover[]>([]);
-  const [changelogEvents, setChangelogEvents] = useState<PostmarkChangelogEvent[]>([]);
   const [versionRows, setVersionRows] = useState<PostmarkVersionRow[]>([]);
   const [restoringVersionNo, setRestoringVersionNo] = useState<number | null>(null);
   const [changelogLoadError, setChangelogLoadError] = useState<string | null>(null);
@@ -569,7 +584,6 @@ const RecordDetail = () => {
 
   useEffect(() => {
     if (!canViewChangelog || postmarkId == null || isNaN(postmarkId)) {
-      setChangelogEvents([]);
       setVersionRows([]);
       setChangelogLoadError(null);
       return;
@@ -582,8 +596,8 @@ const RecordDetail = () => {
         setChangelogLoadError("Could not load changelog for this record.");
         return;
       }
-      setChangelogEvents(Array.isArray(data.events) ? data.events : []);
-      setVersionRows(Array.isArray(data.versions) ? data.versions : []);
+      const approvedOnly = Array.isArray(data.approved_versions) ? data.approved_versions : [];
+      setVersionRows(approvedOnly);
     });
     return () => {
       cancelled = true;
@@ -607,20 +621,24 @@ const RecordDetail = () => {
   // Carousel pagination
   useEffect(() => {
     if (!api) return;
-
-    setCount(api.scrollSnapList().length);
     setCurrent(api.selectedScrollSnap());
-
-    api.on("select", () => {
-      setCurrent(api.selectedScrollSnap());
-    });
-
+    const onSelect = () => setCurrent(api.selectedScrollSnap());
+    api.on("select", onSelect);
     return () => {
-      api.off("select", () => {
-        setCurrent(api.selectedScrollSnap());
-      });
+      api.off("select", onSelect);
     };
   }, [api]);
+
+  useEffect(() => {
+    if (!historyApi) return;
+    setHistoryCount(historyApi.scrollSnapList().length);
+    setHistoryCurrent(historyApi.selectedScrollSnap());
+    const onSelect = () => setHistoryCurrent(historyApi.selectedScrollSnap());
+    historyApi.on("select", onSelect);
+    return () => {
+      historyApi.off("select", onSelect);
+    };
+  }, [historyApi]);
 
   if (loading) {
     return (
@@ -652,6 +670,8 @@ const RecordDetail = () => {
       editorComment: record.editorComment ?? "",
       sourceCatalog: record.sourceCatalog ?? "",
     });
+  const selectedHistoryVersion = versionRows[historyCurrent] ?? null;
+  const latestVersionNo = versionRows.reduce((max, row) => (row.version_no > max ? row.version_no : max), 0);
 
   if (error || !record) {
     return (
@@ -764,22 +784,6 @@ const RecordDetail = () => {
                   ))}
                 </div>
                 )}
-
-                {/* <div className="flex gap-2">
-                  <Button variant="outline" size="sm" className="flex-1">
-                    <Download className="mr-2 h-4 w-4" />
-                    Download Image
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="flex-1"
-                    onClick={() => setSubmitImageOpen(true)}
-                  >
-                    <Upload className="mr-2 h-4 w-4" />
-                    Upload Image
-                  </Button>
-                </div> */}
                 </CardContent>
               </Card>
 
@@ -820,6 +824,134 @@ const RecordDetail = () => {
                       );
                     })()}
                   </CardHeader>
+                </Card>
+              ) : null}
+
+              {canViewChangelog ? (
+                <Card className="shadow-archival-md border-primary/15">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">Change History</CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      Approved versions only. Swipe entries and restore any previous approved state.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {changelogLoadError ? (
+                      <p className="text-sm italic text-muted-foreground">{changelogLoadError}</p>
+                    ) : versionRows.length === 0 ? (
+                      <p className="text-sm italic text-muted-foreground">
+                        No approved history entries yet for this record.
+                      </p>
+                    ) : (
+                      <>
+                        <Carousel setApi={setHistoryApi} className="w-full">
+                          <CarouselContent>
+                            {versionRows.map((version) => {
+                              const snapshot = version.snapshot ?? {};
+                              const details: { label: string; value: string }[] = [
+                                { label: "Town", value: displayField(snapshot.town) },
+                                { label: "State", value: displayField(snapshot.state) },
+                                { label: "Catalog text", value: displayField(snapshot.catalog_txt) },
+                                { label: "Catalog key", value: displayField(snapshot.code) },
+                                { label: "Inscription text", value: displayField(snapshot.inscription_txt) },
+                                {
+                                  label: "Manuscript",
+                                  value: snapshot.is_manuscript == null ? "—" : snapshot.is_manuscript ? "Yes" : "No",
+                                },
+                                { label: "Impression", value: displayField(snapshot.impression) },
+                                {
+                                  label: "Is irregular",
+                                  value: snapshot.is_irreg == null ? "—" : snapshot.is_irreg ? "Yes" : "No",
+                                },
+                                { label: "Shape ID", value: displayField(snapshot.shape_id) },
+                                { label: "Lettering ID", value: displayField(snapshot.lettering_id) },
+                                { label: "Color ID", value: displayField(snapshot.color_id) },
+                                { label: "Date type", value: displayField(snapshot.date_type) },
+                                { label: "Date format", value: displayField(snapshot.date_fmt) },
+                                {
+                                  label: "Dimensions",
+                                  value: formatSnapshotMm(snapshot.width, snapshot.height),
+                                },
+                                {
+                                  label: "Dates observed",
+                                  value:
+                                    Array.isArray(snapshot.dates_observed) && snapshot.dates_observed.length > 0
+                                      ? snapshot.dates_observed.join("\n")
+                                      : "—",
+                                },
+                              ];
+                              return (
+                                <CarouselItem key={version.version_no}>
+                                  <div className="rounded-md border border-border p-4">
+                                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                                      <Badge variant="secondary">Version {version.version_no}</Badge>
+                                      {version.action_label ? <Badge variant="outline">{version.action_label}</Badge> : null}
+                                      <span className="text-xs text-muted-foreground">
+                                        {formatTimestamp(version.created_at)} by {version.created_by || "system"}
+                                      </span>
+                                    </div>
+                                    <dl className="space-y-0 text-sm">
+                                      {details.map((row, idx) => (
+                                        <div
+                                          key={`${version.version_no}-${row.label}`}
+                                          className={`flex justify-between py-2 ${
+                                            idx < details.length - 1 ? "border-b border-border" : ""
+                                          }`}
+                                        >
+                                          <dt className="text-muted-foreground font-medium">{row.label}</dt>
+                                          <dd className="text-foreground whitespace-pre-line text-right">{row.value}</dd>
+                                        </div>
+                                      ))}
+                                    </dl>
+                                  </div>
+                                </CarouselItem>
+                              );
+                            })}
+                          </CarouselContent>
+                          {versionRows.length > 1 ? (
+                            <>
+                              <CarouselPrevious className="left-2" />
+                              <CarouselNext className="right-2" />
+                            </>
+                          ) : null}
+                        </Carousel>
+
+                        {historyCount > 1 ? (
+                          <div className="flex justify-center gap-2">
+                            {versionRows.map((v, index) => (
+                              <button
+                                key={`history-dot-${v.version_no}`}
+                                onClick={() => historyApi?.scrollTo(index)}
+                                className={`h-2 rounded-full transition-all ${
+                                  index === historyCurrent
+                                    ? "w-6 bg-primary"
+                                    : "w-2 bg-muted-foreground/30 hover:bg-muted-foreground/50"
+                                }`}
+                                aria-label={`Go to version ${v.version_no}`}
+                              />
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {selectedHistoryVersion && selectedHistoryVersion.version_no !== latestVersionNo ? (
+                          <div className="pt-1">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleRestoreVersion(selectedHistoryVersion.version_no)}
+                              disabled={restoringVersionNo === selectedHistoryVersion.version_no}
+                            >
+                              {restoringVersionNo === selectedHistoryVersion.version_no ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : null}
+                              Restore version {selectedHistoryVersion.version_no}
+                            </Button>
+                          </div>
+                        ) : null}
+                      </>
+                    )}
+                  </CardContent>
                 </Card>
               ) : null}
             </div>
@@ -904,76 +1036,6 @@ const RecordDetail = () => {
                     <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
                       {record.editorComment.trim()}
                     </p>
-                  </CardContent>
-                </Card>
-              ) : null}
-
-              {canViewChangelog ? (
-                <Card className="shadow-archival-md border-primary/15">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg">Change History</CardTitle>
-                    <p className="text-sm text-muted-foreground">
-                      Audit trail of submissions, moderation decisions, and version restores.
-                    </p>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {changelogLoadError ? (
-                      <p className="text-sm italic text-muted-foreground">{changelogLoadError}</p>
-                    ) : changelogEvents.length === 0 ? (
-                      <p className="text-sm italic text-muted-foreground">No changelog entries yet for this record.</p>
-                    ) : (
-                      <div className="space-y-4">
-                        {changelogEvents.map((event) => (
-                          <div key={event.event_id} className="rounded-md border border-border p-3">
-                            <div className="flex flex-wrap items-center gap-2 mb-2">
-                              <Badge variant="outline">{event.action_label || event.action}</Badge>
-                              {event.version_no != null ? (
-                                <Badge variant="secondary">Version {event.version_no}</Badge>
-                              ) : null}
-                              {event.contribution_id != null ? (
-                                <Badge variant="secondary">Contribution #{event.contribution_id}</Badge>
-                              ) : null}
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                              {formatEventTimestamp(event.timestamp)} by {event.actor || "system"}
-                            </p>
-                            {Array.isArray(event.diff) && event.diff.length > 0 ? (
-                              <dl className="mt-3 space-y-1 text-xs">
-                                {event.diff.slice(0, 8).map((d, idx) => (
-                                  <div key={`${event.event_id}-${d.field}-${idx}`} className="grid grid-cols-[120px_1fr] gap-2">
-                                    <dt className="text-muted-foreground">{d.field}</dt>
-                                    <dd className="text-foreground truncate">{String(d.after ?? "—")}</dd>
-                                  </div>
-                                ))}
-                              </dl>
-                            ) : null}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {versionRows.length > 0 ? (
-                      <div className="space-y-2">
-                        <p className="text-xs text-muted-foreground">Versions</p>
-                        <div className="flex flex-wrap gap-2">
-                          {versionRows.map((v) => (
-                            <Button
-                              key={v.version_no}
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-8"
-                              onClick={() => handleRestoreVersion(v.version_no)}
-                              disabled={restoringVersionNo === v.version_no}
-                            >
-                              {restoringVersionNo === v.version_no ? (
-                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                              ) : null}
-                              Restore v{v.version_no}
-                            </Button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
                   </CardContent>
                 </Card>
               ) : null}

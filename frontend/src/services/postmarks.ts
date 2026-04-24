@@ -174,12 +174,33 @@ export interface PostmarkVersionRow {
   created_at: string;
   created_by: string | null;
   transaction_id: number | null;
+  action?: string | null;
+  action_label?: string | null;
+  snapshot?: {
+    catalog_txt?: string;
+    code?: string;
+    town?: string;
+    state?: string;
+    inscription_txt?: string;
+    is_manuscript?: boolean;
+    impression?: string;
+    is_irreg?: boolean | null;
+    shape_id?: number | null;
+    lettering_id?: number | null;
+    color_id?: number | null;
+    date_type?: string;
+    date_fmt?: string;
+    width?: number | string | null;
+    height?: number | string | null;
+    dates_observed?: string[];
+  };
 }
 
 export interface PostmarkChangelogResponse {
   postmark_id: number;
   events: PostmarkChangelogEvent[];
   versions: PostmarkVersionRow[];
+  approved_versions?: PostmarkVersionRow[];
 }
 
   /** Normalize image URL to absolute using the API origin when needed. */

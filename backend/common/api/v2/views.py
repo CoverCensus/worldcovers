@@ -2649,6 +2649,36 @@ class PostmarkViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        def _snapshot_summary(snapshot):
+            snap = snapshot if isinstance(snapshot, dict) else {}
+            dates = snap.get("dates_observed")
+            if isinstance(dates, list):
+                dates_display = [
+                    str(row.get("date", "")).strip()
+                    for row in dates
+                    if isinstance(row, dict) and str(row.get("date", "")).strip()
+                ]
+            else:
+                dates_display = []
+            return {
+                "catalog_txt": snap.get("catalog_txt") or "",
+                "code": snap.get("code") or "",
+                "town": snap.get("town") or "",
+                "state": snap.get("state") or "",
+                "inscription_txt": snap.get("inscription_txt") or "",
+                "is_manuscript": bool(snap.get("is_manuscript")),
+                "impression": snap.get("impression") or "",
+                "is_irreg": snap.get("is_irreg"),
+                "shape_id": snap.get("shape_id"),
+                "lettering_id": snap.get("lettering_id"),
+                "color_id": snap.get("color_id"),
+                "date_type": snap.get("date_type") or "",
+                "date_fmt": snap.get("date_fmt") or "",
+                "width": snap.get("width"),
+                "height": snap.get("height"),
+                "dates_observed": dates_display,
+            }
+
         txns = list(
             SubmissionTransaction.objects.filter(
                 Q(postmark=postmark) | Q(contribution__postmark=postmark)
@@ -2667,6 +2697,7 @@ class PostmarkViewSet(viewsets.ModelViewSet):
             for v in versions
             if v.transaction_id is not None
         }
+        txn_by_id = {txn.id: txn for txn in txns}
         action_labels = dict(SubmissionTransaction.ACTION_CHOICES)
 
         events = []
@@ -2691,6 +2722,12 @@ class PostmarkViewSet(viewsets.ModelViewSet):
             )
 
         version_rows = []
+        approved_actions = {
+            SubmissionTransaction.ACTION_APPROVE,
+            SubmissionTransaction.ACTION_CATALOG_DIRECT_EDIT,
+            SubmissionTransaction.ACTION_RESTORE_VERSION,
+        }
+        approved_version_rows = []
         for version in versions:
             created_by_name = None
             if version.created_by:
@@ -2699,20 +2736,32 @@ class PostmarkViewSet(viewsets.ModelViewSet):
                     or getattr(version.created_by, "email", "")
                     or str(version.created_by.pk)
                 )
-            version_rows.append(
-                {
-                    "version_no": version.version_no,
-                    "created_at": version.created_at,
-                    "created_by": created_by_name,
-                    "transaction_id": version.transaction_id,
-                }
+            txn = txn_by_id.get(version.transaction_id) if version.transaction_id is not None else None
+            action = txn.action if txn else None
+            action_label = (
+                action_labels.get(action, str(action).replace("_", " ").title())
+                if action
+                else None
             )
+            row = {
+                "version_no": version.version_no,
+                "created_at": version.created_at,
+                "created_by": created_by_name,
+                "transaction_id": version.transaction_id,
+                "action": action,
+                "action_label": action_label,
+                "snapshot": _snapshot_summary(version.snapshot),
+            }
+            version_rows.append(row)
+            if action in approved_actions:
+                approved_version_rows.append(row)
 
         return Response(
             {
                 "postmark_id": postmark.pk,
                 "events": events,
                 "versions": version_rows,
+                "approved_versions": approved_version_rows,
             }
         )
 
