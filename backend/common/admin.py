@@ -80,7 +80,8 @@ from .models import (
     LegacyRawStateDataPendingUpdate,
     LegacyCover,
     AdminCsvUpload,
-    UserLocationAssignment,
+    Collection,
+    CollectionAssignment,
     Contribution,
     FAQEntry,
 )
@@ -90,10 +91,10 @@ from .utils import get_canonical_location_reference_codes
 User = get_user_model()
 
 
-def _user_location_table_available() -> bool:
-    """True if UserLocationAssignments table exists (for load/save of chosen locations)."""
+def _collection_assignment_table_available() -> bool:
+    """True if CollectionAssignments table exists (for load/save of editor↔collection links)."""
     try:
-        UserLocationAssignment.objects.only("pk").first()
+        CollectionAssignment.objects.only("pk").first()
         return True
     except Exception:
         return False
@@ -468,20 +469,32 @@ class CitationResource(TimestampedModelResource):
         import_id_fields = ['id']
 
 
-class UserLocationAssignmentResource(resources.ModelResource):
+class CollectionAssignmentResource(resources.ModelResource):
     user = fields.Field(
         column_name='user',
         attribute='user',
-        widget=ForeignKeyWidget(User, 'id')
+        widget=ForeignKeyWidget(User, 'id'),
     )
-    region = fields.Field(
-        column_name='region',
-        attribute='region',
-        widget=ForeignKeyWidget(Region, 'id')
+    collection = fields.Field(
+        column_name='collection',
+        attribute='collection',
+        widget=ForeignKeyWidget(Collection, 'id'),
     )
 
     class Meta:
-        model = UserLocationAssignment
+        model = CollectionAssignment
+        import_id_fields = ['id']
+
+
+class CollectionResource(resources.ModelResource):
+    region = fields.Field(
+        column_name='region',
+        attribute='region',
+        widget=ForeignKeyWidget(Region, 'id'),
+    )
+
+    class Meta:
+        model = Collection
         import_id_fields = ['id']
 
 
@@ -864,16 +877,17 @@ class AdminCsvUploadAdmin(admin.ModelAdmin):
 # ========== USER ADMIN CUSTOMIZATION ==========
 
 
-class UserLocationAssignmentInline(admin.TabularInline):
+class CollectionAssignmentInline(admin.TabularInline):
     """
-    Inline so staff can assign locations to a user directly on the user detail page.
-    (Kept for reference; primary UI uses a dual-column selector on the user form.)
+    Inline so an admin can assign Collections to an editor directly on the
+    user detail page. The primary UI is the dual-column selector on the user
+    form below; this inline is a fallback view of the same data.
     """
-    model = UserLocationAssignment
+    model = CollectionAssignment
     extra = 0
-    raw_id_fields = ['region']
-    verbose_name = 'Location'
-    verbose_name_plural = 'Locations'
+    raw_id_fields = ['collection']
+    verbose_name = 'Collection assignment'
+    verbose_name_plural = 'Collection assignments'
 
 
 class EmailAddressInline(admin.TabularInline):
@@ -883,159 +897,141 @@ class EmailAddressInline(admin.TabularInline):
 
 
 ROLE_CONTRIBUTOR = "contributor"
-ROLE_STATE_EDITOR = "state_editor"
+ROLE_EDITOR = "editor"
 
 ROLE_CHOICES = (
     (ROLE_CONTRIBUTOR, "Contributor"),
-    (ROLE_STATE_EDITOR, "State Editor"),
+    (ROLE_EDITOR, "Editor"),
 )
 
 
-class UserLocationUserChangeForm(DjangoUserAdmin.form):
+class CollectionUserChangeForm(DjangoUserAdmin.form):
     """
-    Extend the base User change form to manage locations via a two-column selector,
-    similar to the built-in user permissions widget.
+    Extend the base User change form to manage Collection assignments via a
+    two-column selector, similar to the built-in user permissions widget.
+
+    The legacy "Locations" multi-select picked Regions; this picks Collections
+    directly. Collections wrap a Region, so picking the Virginia collection is
+    equivalent to "responsible for Virginia" — but routing now goes through the
+    Collection's editor_assignments rather than UserLocationAssignment.
     """
 
-    locations = forms.ModelMultipleChoiceField(
-        label='Locations',
-        queryset=Region.objects.none(),
+    collections = forms.ModelMultipleChoiceField(
+        label='Assigned Collections',
+        queryset=Collection.objects.none(),
         required=False,
-        widget=FilteredSelectMultiple('Locations', is_stacked=False),
-        help_text='Select which locations (Regions) this user is associated with.',
+        widget=FilteredSelectMultiple('Collections', is_stacked=False),
+        help_text='Collections this Editor is responsible for. Editors automatically '
+                  'gain the review_contribution permission via the Editors group.',
     )
 
     role = forms.ChoiceField(
         label='Role',
         choices=ROLE_CHOICES,
         required=False,
-        help_text='High-level role used for UI and default permissions (Contributor or State Editor).',
+        help_text='Application role: Contributor or Editor. Administrator is the '
+                  'is_superuser flag below — there is no separate Administrator group.',
     )
 
     class Meta(DjangoUserAdmin.form.Meta):
         _parent_fields = DjangoUserAdmin.form.Meta.fields
         if _parent_fields == '__all__':
-            # Can't add to __all__; use concrete User field names + locations
-            fields = [f.name for f in User._meta.get_fields() if f.concrete] + ['locations', 'role']
+            fields = [f.name for f in User._meta.get_fields() if f.concrete] + ['collections', 'role']
         else:
-            fields = tuple(_parent_fields) + ('locations', 'role')
+            fields = tuple(_parent_fields) + ('collections', 'role')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Locations = state-tier Regions still in force.
-        location_qs = Region.objects.filter(
-            region_tier='STATE',
-            defunct_date__isnull=True,
-        ).order_by('name')
-        self.fields['locations'].queryset = location_qs
+        collection_qs = Collection.objects.filter(is_active=True).select_related('region').order_by('name')
+        self.fields['collections'].queryset = collection_qs
 
-        # Preselect Chosen Locations from UserLocationAssignment when editing a user
-        if self.instance.pk and _user_location_table_available():
-            self.fields['locations'].initial = location_qs.filter(
-                user_location_assignments__user=self.instance
+        if self.instance.pk and _collection_assignment_table_available():
+            self.fields['collections'].initial = collection_qs.filter(
+                editor_assignments__user=self.instance,
             )
 
-        # Initialise role from group membership or from location assignments, so that
-        # opening a state editor always shows "State Editor" with their assigned locations.
         role_initial = ROLE_CONTRIBUTOR
         if self.instance.pk:
-            if self.instance.groups.filter(name__iexact="State Editors").exists():
-                role_initial = ROLE_STATE_EDITOR
-            elif _user_location_table_available() and UserLocationAssignment.objects.filter(user=self.instance).exists():
-                role_initial = ROLE_STATE_EDITOR
+            if self.instance.groups.filter(name__iexact="Editors").exists():
+                role_initial = ROLE_EDITOR
+            elif (
+                _collection_assignment_table_available()
+                and CollectionAssignment.objects.filter(user=self.instance).exists()
+            ):
+                role_initial = ROLE_EDITOR
         self.fields['role'].initial = role_initial or ROLE_CONTRIBUTOR
 
-    def _save_locations(self):
-        """Save chosen locations to UserLocationAssignments for this user."""
+    def _save_collections(self, request_user=None):
+        """Sync the chosen Collections to CollectionAssignment rows for this user."""
         if not self.instance.pk:
             return
-        if not _user_location_table_available():
+        if not _collection_assignment_table_available():
             return
-        # locations is in Meta.fields so it is in cleaned_data after validation
-        selected_qs = self.cleaned_data.get('locations') or Region.objects.none()
 
+        selected_qs = self.cleaned_data.get('collections') or Collection.objects.none()
         user = self.instance
+        actor = request_user or user
         selected_ids = set(selected_qs.values_list('pk', flat=True))
 
-        # Remove assignments that are no longer selected
-        UserLocationAssignment.objects.filter(user=user).exclude(
-            region_id__in=selected_ids
+        CollectionAssignment.objects.filter(user=user).exclude(
+            collection_id__in=selected_ids,
         ).delete()
 
-        # Add new assignments for newly selected locations
         existing_ids = set(
-            UserLocationAssignment.objects.filter(user=user).values_list(
-                'region_id', flat=True
+            CollectionAssignment.objects.filter(user=user).values_list('collection_id', flat=True)
+        )
+        for pk in (selected_ids - existing_ids):
+            # Use .create (not bulk_create) so the model's save() hook runs and
+            # adds the user to the Editors group.
+            CollectionAssignment.objects.create(
+                user=user,
+                collection_id=pk,
+                created_by=actor,
+                modified_by=actor,
             )
-        )
-        to_create_ids = selected_ids - existing_ids
-
-        UserLocationAssignment.objects.bulk_create(
-            [
-                UserLocationAssignment(user=user, region_id=pk)
-                for pk in to_create_ids
-            ]
-        )
 
     def _save_role_groups(self):
-        """Map the selected role to Django auth groups."""
+        """Map the selected role to the Editors / Contributors Django groups."""
         if not self.instance.pk:
             return
-
         role = self.cleaned_data.get("role")
         if not role:
             return
 
-        # Ensure the role groups exist
-        contributor_group, _ = Group.objects.get_or_create(name="Contributors")
-        state_editor_group, _ = Group.objects.get_or_create(name="State Editors")
-
+        contributors_group, _ = Group.objects.get_or_create(name="Contributors")
+        editors_group, _ = Group.objects.get_or_create(name="Editors")
         user = self.instance
+        user.groups.remove(contributors_group, editors_group)
 
-        # Remove from both role groups first
-        user.groups.remove(contributor_group, state_editor_group)
-
-        # Then add the appropriate one
         if role == ROLE_CONTRIBUTOR:
-            user.groups.add(contributor_group)
-        elif role == ROLE_STATE_EDITOR:
-            user.groups.add(state_editor_group)
+            user.groups.add(contributors_group)
+        elif role == ROLE_EDITOR:
+            user.groups.add(editors_group)
 
     def clean(self):
-        """
-        Enforce relationship between role and locations:
-        - Contributors: locations are always cleared (no assignments).
-        - State Editors: must have at least one location selected.
-        """
         cleaned = super().clean()
         role = cleaned.get("role") or ROLE_CONTRIBUTOR
-        locations = cleaned.get("locations")
+        collections = cleaned.get("collections")
 
         from django.core.exceptions import ValidationError
 
         if role == ROLE_CONTRIBUTOR:
-            # Contributors should not carry any explicit location assignments
-            cleaned["locations"] = Region.objects.none()
-        elif role == ROLE_STATE_EDITOR:
-            # State Editors must have at least one location
-            if not locations or not list(locations):
+            cleaned["collections"] = Collection.objects.none()
+        elif role == ROLE_EDITOR:
+            if not collections or not list(collections):
                 self.add_error(
-                    "locations",
-                    ValidationError("State Editors must have at least one location assigned."),
+                    "collections",
+                    ValidationError("Editors must be assigned to at least one Collection."),
                 )
         return cleaned
 
     def save_m2m(self):
-        # Let the base form handle its M2M fields (groups, permissions, etc.)
         super().save_m2m()
-        # Then sync our custom locations selection to the through model
-        self._save_locations()
-        # And keep role/group mapping in sync with the selected role
+        self._save_collections()
         self._save_role_groups()
 
     class Media:
-        # Small bit of JavaScript to hide the Locations selector
-        # unless role="state_editor" is selected.
+        # Hide the Collections selector unless role="editor" is chosen.
         js = ("common/admin_user_role.js",)
 
 
@@ -1058,22 +1054,17 @@ class CustomUserAdmin(DjangoUserAdmin):
     similar to the built-in user permissions UI.
     """
 
-    form = UserLocationUserChangeForm
+    form = CollectionUserChangeForm
     inlines = [EmailAddressInline]
 
     def save_related(self, request, form, formsets, change):
-        """Ensure custom role/location mappings are persisted after related saves."""
+        """Ensure custom role/collection mappings are persisted after related saves."""
         super().save_related(request, form, formsets, change)
-        if hasattr(form, '_save_locations'):
-            form._save_locations()
-        # Explicitly sync role -> Django auth group mapping here as well.
-        # In Django admin, form.save(commit=False) can replace save_m2m on the
-        # form instance, so relying only on the form's save_m2m override is brittle.
+        if hasattr(form, '_save_collections'):
+            form._save_collections(request_user=request.user)
         if hasattr(form, '_save_role_groups'):
             form._save_role_groups()
 
-    # Add a dedicated fieldset for role + locations, positioned between the built-in
-    # "Permissions" and "Important dates" sections on the user detail page.
     _base_fieldsets = list(DjangoUserAdmin.fieldsets)
     try:
         _important_idx = next(
@@ -1082,11 +1073,9 @@ class CustomUserAdmin(DjangoUserAdmin):
             if name == 'Important dates'
         )
     except StopIteration:
-        # Fallback: if Django's UserAdmin ever renames/removes "Important dates",
-        # just append Locations at the end (better than breaking).
-        _base_fieldsets.append(('Role & Locations', {'fields': ('role', 'locations')}))
+        _base_fieldsets.append(('Role & Collections', {'fields': ('role', 'collections')}))
     else:
-        _base_fieldsets.insert(_important_idx, ('Role & Locations', {'fields': ('role', 'locations')}))
+        _base_fieldsets.insert(_important_idx, ('Role & Collections', {'fields': ('role', 'collections')}))
 
     fieldsets = tuple(_base_fieldsets)
 
@@ -1445,12 +1434,33 @@ class PostcoverImageAdmin(TimestampedModelAdmin):
     get_postcover_key.short_description = 'Postcover'
 
 
-@admin.register(UserLocationAssignment)
-class UserLocationAssignmentAdmin(ImportExportModelAdmin):
-    resource_class = UserLocationAssignmentResource
-    list_display = ['user', 'region']
-    search_fields = ['user__username', 'region__name', 'region__abbrev']
-    raw_id_fields = ['user', 'region']
+@admin.register(Collection)
+class CollectionAdmin(ImportExportModelAdmin):
+    resource_class = CollectionResource
+    list_display = ['name', 'region', 'is_active', 'created_date']
+    list_filter = ['is_active']
+    search_fields = ['name', 'description', 'region__name', 'region__abbrev']
+    raw_id_fields = ['region']
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.created_by = request.user
+        obj.modified_by = request.user
+        super().save_model(request, obj, form, change)
+
+
+@admin.register(CollectionAssignment)
+class CollectionAssignmentAdmin(ImportExportModelAdmin):
+    resource_class = CollectionAssignmentResource
+    list_display = ['user', 'collection', 'created_date']
+    search_fields = ['user__username', 'collection__name', 'collection__region__name']
+    raw_id_fields = ['user', 'collection']
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.created_by = request.user
+        obj.modified_by = request.user
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(FAQEntry)

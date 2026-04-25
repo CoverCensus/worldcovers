@@ -296,15 +296,16 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   // Disable filters while submissions or filter options are loading
   const filtersDisabled = loading || isLoadingFilters;
-  const isStateEditor = user?.role === "state_editor";
+  const isEditor =
+    user?.role === "editor" || user?.role === "administrator" || !!user?.is_superuser;
   const isSuperuser = !!user?.is_superuser;
 
   // Contributors should always see submissions directly (no tab switching).
   useEffect(() => {
-    if (!isStateEditor && activeTab !== "submissions") {
+    if (!isEditor && activeTab !== "submissions") {
       setActiveTab("submissions");
     }
-  }, [isStateEditor, activeTab]);
+  }, [isEditor, activeTab]);
 
   // Prevent duplicate fetches during rapid re-renders / user rehydration.
   const submissionsInFlightKey = useRef<string | null>(null);
@@ -571,7 +572,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   // Load assigned-state catalog (not used on editor tab — editor sees history of suggestions instead)
   useEffect(() => {
-    if (!isStateEditor || activeTab !== "editor") return;
+    if (!isEditor || activeTab !== "editor") return;
     // Editor tab shows history of user suggestions, not catalog; skip catalog fetch
     if (activeTab === "editor") return;
     let cancelled = false;
@@ -605,18 +606,18 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     return () => {
       cancelled = true;
     };
-  }, [isStateEditor, activeTab, assignedCatalogPage, stateFilter, townFilter, shapeFilter, colorFilter, searchQuery, assignedCatalogRefetchKey]);
+  }, [isEditor, activeTab, assignedCatalogPage, stateFilter, townFilter, shapeFilter, colorFilter, searchQuery, assignedCatalogRefetchKey]);
 
   // Reset User Submissions pagination when filters change
   useEffect(() => {
-    if (activeTab === "editor" && isStateEditor) {
+    if (activeTab === "editor" && isEditor) {
       setAssignedCatalogPage(1);
     }
-  }, [activeTab, isStateEditor, stateFilter, townFilter, shapeFilter, colorFilter, searchQuery]);
+  }, [activeTab, isEditor, stateFilter, townFilter, shapeFilter, colorFilter, searchQuery]);
 
   // Load pending contributions for editor review (approve/reject/request revision)
   useEffect(() => {
-    if (!isStateEditor || activeTab !== "editor") return;
+    if (!isEditor || activeTab !== "editor") return;
     const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
     if (!apiBase) {
       setPendingReviewError("VITE_API_URL is not set.");
@@ -677,11 +678,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         setPendingReviewTotal(null);
       })
       .finally(() => setPendingReviewLoading(false));
-  }, [isStateEditor, activeTab, pendingReviewPage, editorStateFilter]);
+  }, [isEditor, activeTab, pendingReviewPage, editorStateFilter]);
 
   // Load editor history (all user suggestions in assigned states) for the Editor tab
   useEffect(() => {
-    if (!isStateEditor || activeTab !== "editor") return;
+    if (!isEditor || activeTab !== "editor") return;
     const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
     if (!apiBase) {
       setEditorHistoryError("VITE_API_URL is not set.");
@@ -750,18 +751,18 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         setEditorHistoryTotal(null);
       })
       .finally(() => setEditorHistoryLoading(false));
-  }, [isStateEditor, activeTab, editorHistoryStatusFilter, editorHistoryPage, submissionsRefetchKey, editorStateFilter]);
+  }, [isEditor, activeTab, editorHistoryStatusFilter, editorHistoryPage, submissionsRefetchKey, editorStateFilter]);
 
   // Reset editor pagination when changing history status filter or tab
   useEffect(() => {
-    if (!isStateEditor || activeTab !== "editor") return;
+    if (!isEditor || activeTab !== "editor") return;
     setEditorHistoryPage(1);
-  }, [isStateEditor, activeTab, editorHistoryStatusFilter, editorStateFilter]);
+  }, [isEditor, activeTab, editorHistoryStatusFilter, editorStateFilter]);
 
   useEffect(() => {
-    if (!isStateEditor || activeTab !== "editor") return;
+    if (!isEditor || activeTab !== "editor") return;
     setPendingReviewPage(1);
-  }, [isStateEditor, activeTab, editorStateFilter]);
+  }, [isEditor, activeTab, editorStateFilter]);
 
   const submitStatusDecision = async () => {
     if (!statusDecisionTarget || !statusComment.trim()) return;
@@ -1075,21 +1076,21 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
               <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">
-                {isStateEditor && activeTab === "editor" ? "Editor Dashboard" : "Contributor Dashboard"}
+                {isEditor && activeTab === "editor" ? "Editor Dashboard" : "Contributor Dashboard"}
               </h1>
               <p className="text-muted-foreground">
-                {isStateEditor && activeTab === "editor"
+                {isEditor && activeTab === "editor"
                   ? "Review pending submissions and see history of user suggestions in your assigned states."
                   : "View and track your submissions and suggestions."}
               </p>
-              {isStateEditor && user?.assigned_locations && user.assigned_locations.length > 0 && (
+              {isEditor && user?.assigned_collections && user.assigned_collections.length > 0 && (
                 <p className="text-muted-foreground text-sm mt-1">
-                  Role: State Editor — Assigned: {user.assigned_locations.map((loc) => loc.name).join(", ")}
+                  Role: {user.is_superuser ? "Administrator" : "Editor"} — Assigned Collections: {user.assigned_collections.map((c) => c.name).join(", ")}
                 </p>
               )}
             </div>
 
-            {isStateEditor && (
+            {isEditor && (
               <div className="inline-flex rounded-md border border-border bg-card p-1">
                 <Button
                   type="button"
@@ -1481,7 +1482,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               >
                                 View details
                               </Button>
-                              {(isSuperuser || isStateEditor) && submission.postmark_id && (
+                              {(isSuperuser || isEditor) && submission.postmark_id && (
                                 <>
                                   <Button
                                     variant="outline"
@@ -1589,7 +1590,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           >
                             View details
                           </Button>
-                          {(isSuperuser || isStateEditor) && submission.postmark_id && (
+                          {(isSuperuser || isEditor) && submission.postmark_id && (
                             <>
                               <Button
                                 variant="outline"
@@ -1733,7 +1734,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           )}
           */}
 
-          {activeTab === "editor" && isStateEditor && (
+          {activeTab === "editor" && isEditor && (
             <div className="flex flex-col lg:flex-row gap-6">
               {/* Filters sidebar — Status filter for history of user suggestions */}
               <aside className={`lg:w-80 space-y-6 ${filtersOpen ? "block" : "hidden lg:block"}`}>

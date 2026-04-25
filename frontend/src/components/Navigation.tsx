@@ -25,9 +25,10 @@ export const Navigation = () => {
 
   const apiBase = (import.meta.env.VITE_API_URL ?? "").trim().replace(/\/+$/, "");
   const logoutUrl = apiBase ? `${apiBase}/logout/` : (import.meta.env.VITE_API_BASE_URL || '/api/v2') + "/logout/";
-  const isStateEditor = user?.role === "state_editor" || user?.is_superuser;
-  const dashboardLabel = isStateEditor ? "Dashboard" : "My Submissions";
-  const dashboardTabState = isStateEditor ? { tab: "editor" as const } : { tab: "submissions" as const };
+  const hasEditorAccess =
+    user?.role === "editor" || user?.role === "administrator" || user?.is_superuser;
+  const dashboardLabel = hasEditorAccess ? "Dashboard" : "My Submissions";
+  const dashboardTabState = hasEditorAccess ? { tab: "editor" as const } : { tab: "submissions" as const };
 
   const handleLogout = async () => {
     try {

@@ -1,5 +1,5 @@
-// Toggle visibility of the Locations selector on the Django User admin
-// based on the selected high-level role (Contributor vs State Editor).
+// Toggle visibility of the Collections selector on the Django User admin
+// based on the selected role (Contributor vs Editor).
 
 (function () {
   function onReady(fn) {
@@ -16,24 +16,22 @@
       return;
     }
 
-    // Find the form row / field container that holds the locations selector
-    var locationsWidget = document.querySelector('[name="locations"]');
-    if (!locationsWidget) {
+    var collectionsWidget = document.querySelector('[name="collections"]');
+    if (!collectionsWidget) {
       return;
     }
 
-    // Walk up to the closest row container used by Django admin
-    var locationsRow = locationsWidget.closest(".form-row") || locationsWidget.closest(".fieldBox");
-    if (!locationsRow) {
+    var collectionsRow = collectionsWidget.closest(".form-row") || collectionsWidget.closest(".fieldBox");
+    if (!collectionsRow) {
       return;
     }
 
     function syncVisibility() {
       var value = roleSelect.value || "contributor";
-      if (value === "state_editor") {
-        locationsRow.style.display = "";
+      if (value === "editor") {
+        collectionsRow.style.display = "";
       } else {
-        locationsRow.style.display = "none";
+        collectionsRow.style.display = "none";
       }
     }
 
@@ -41,4 +39,3 @@
     roleSelect.addEventListener("change", syncVisibility);
   });
 })();
-

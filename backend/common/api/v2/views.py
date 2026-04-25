@@ -298,7 +298,7 @@ from common.models import (
     Color,
     Postmark, PostmarkValuation,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
-    AdminCsvUpload, UserLocationAssignment, Contribution, FAQEntry,
+    AdminCsvUpload, Collection, CollectionAssignment, Contribution, FAQEntry,
     SubmissionTransaction, PostmarkVersion,
 )
 from common.audit import (
@@ -321,6 +321,13 @@ from .serializers import (
     LoginRequestSerializer,
     ContributionListSerializer, ContributionDetailSerializer, ContributionApproveRejectSerializer,
     FAQEntrySerializer,
+    CollectionSerializer, CollectionAssignmentSerializer,
+)
+from .permissions import (
+    CanReviewContribution,
+    CanManageReferenceWorks,
+    IsEditor,
+    user_assigned_collection_ids,
 )
 from common.filters import PostmarkListFilter
 from common.csv_import import IMPORTERS
@@ -330,35 +337,54 @@ from common.contribution_apply import _extract_mark_entries, _update_postmark_in
 _password_reset_token_generator = PasswordResetTokenGenerator()
 
 
-def _assigned_locations_payload(user):
-    """Return the list of regions assigned to a State Editor for the auth payload."""
-    from common.models import Region  # local import to avoid circular concerns
+def _assigned_collections_payload(user):
+    """
+    Return the list of Collections this user is assigned to as an Editor.
+
+    Used in the auth payload so the frontend can scope what the user sees.
+    Superusers are not auto-assigned to every Collection — they bypass the
+    routing checks at the permission layer instead.
+    """
     if not user or not user.is_authenticated:
         return []
-    # Inline the role check to avoid forward-reference issues.
-    if not user.groups.filter(name__iexact="State Editors").exists():
-        return []
     return [
-        {"name": r.name, "reference_code": r.abbrev}
-        for r in Region.objects.filter(
-            user_location_assignments__user=user
-        ).distinct().order_by('name')
+        {
+            "id": ca.collection.pk,
+            "name": ca.collection.name,
+            "region": {
+                "id": ca.collection.region.pk,
+                "name": ca.collection.region.name,
+                "abbrev": ca.collection.region.abbrev,
+            },
+        }
+        for ca in (
+            user.collection_assignments.select_related("collection", "collection__region").order_by(
+                "collection__name"
+            )
+        )
     ]
 
 
 def _get_user_role(user):
     """
-    Derive a simple role string for the frontend from Django auth state.
+    Derive a role string for the frontend from Django auth state.
 
-    Role is driven by group membership so that the admin "Role" dropdown
-    (which adds/removes the State Editors group) is the single source
-    of truth for UI behavior.
+    Role priority (highest first):
+      1. is_superuser           → "administrator"   (single Administrator per design)
+      2. in `Editors` group     → "editor"
+      3. authenticated          → "contributor"
+      4. anonymous              → "guest"
 
-    - Users in the "State Editors" group are state editors.
-    - Everyone else (including superusers without that group) is a contributor.
+    Group membership is the source of truth for editor vs contributor — adding
+    a user to the Editors group is what grants the `review_contribution`
+    permission (and the rest of the Editor perm set) automatically.
     """
-    if user.groups.filter(name__iexact="State Editors").exists():
-        return "state_editor"
+    if not user or not user.is_authenticated:
+        return "guest"
+    if getattr(user, "is_superuser", False):
+        return "administrator"
+    if user.groups.filter(name__iexact="Editors").exists():
+        return "editor"
     return "contributor"
 
 
@@ -414,7 +440,7 @@ class LoginView(APIView):
                 "email": getattr(user, "email", "") or "",
                 "is_staff": getattr(user, "is_staff", False),
                 "role": _get_user_role(user),
-                "assigned_locations": _assigned_locations_payload(user),
+                "assigned_collections": _assigned_collections_payload(user),
             },
         })
 
@@ -434,7 +460,7 @@ class CurrentUserView(APIView):
                 "email": getattr(user, "email", "") or "",
                 "is_staff": getattr(user, "is_staff", False),
                 "role": _get_user_role(user),
-                "assigned_locations": _assigned_locations_payload(user),
+                "assigned_collections": _assigned_collections_payload(user),
             },
         })
 
@@ -452,7 +478,7 @@ class AssignedStatesView(APIView):
         user = request.user
         role = _get_user_role(user)
 
-        if role == "state_editor":
+        if role == "editor":
             regions = _get_user_assigned_regions(user)
         else:
             # Contributors can submit to any current state-tier region
@@ -857,10 +883,17 @@ def _save_contribution_image(uploaded_file):
     }
 
 
+def _get_user_assigned_collections(user):
+    """Return queryset of Collections this user is assigned to as an Editor."""
+    return Collection.objects.filter(
+        editor_assignments__user=user,
+    ).distinct()
+
+
 def _get_user_assigned_regions(user):
-    """Return queryset of Regions explicitly assigned to this user."""
+    """Return queryset of Regions covered by Collections this user is assigned to."""
     return Region.objects.filter(
-        user_location_assignments__user=user
+        collection__editor_assignments__user=user,
     ).distinct()
 
 
@@ -881,12 +914,11 @@ def _get_allowed_state_strings(user):
 
 
 def _resolve_assigned_region(user, state_str):
-    """Match a state string to one of the user's assigned Regions."""
+    """Match a state string to one of the user's assigned Regions (via Collection)."""
     state_norm = (state_str or "").strip().lower()
     if not state_norm:
         return None
-    regions = _get_user_assigned_regions(user)
-    for region in regions:
+    for region in _get_user_assigned_regions(user):
         name = (region.name or "").strip().lower()
         abv = (region.abbrev or "").strip().lower()
         if state_norm == name or state_norm == abv:
@@ -908,34 +940,30 @@ def _resolve_region_from_state_value(state_str):
     )
 
 
-def _resolve_assigned_region_from_submitted_data(user, submitted_data):
-    """Resolve assigned Region from contribution submitted_data payload."""
-    sd = submitted_data or {}
-    assigned_regions = _get_user_assigned_regions(user)
-    if not assigned_regions.exists():
-        return None
-
-    state_region_id = sd.get("state_region_id")
+def _resolve_collection_for_state(state_str, state_region_id=None):
+    """Resolve a submitted state to a Collection. Returns Collection or None."""
     try:
-        state_region_id_int = int(state_region_id)
+        srid = int(state_region_id) if state_region_id is not None else None
     except (TypeError, ValueError):
-        state_region_id_int = None
+        srid = None
+    if srid is not None:
+        coll = Collection.objects.filter(region_id=srid).first()
+        if coll is not None:
+            return coll
+    region = _resolve_region_from_state_value(state_str)
+    if region is None:
+        return None
+    return Collection.objects.filter(region_id=region.pk).first()
 
-    if state_region_id_int is not None:
-        matched = assigned_regions.filter(pk=state_region_id_int).first()
-        if matched:
-            return matched
 
-    state_str = (sd.get("state") or "").strip()
-    return _resolve_assigned_region(user, state_str)
-
-
-def _create_contribution_only(payload, contributor):
+def _create_contribution_only(payload, contributor, collection):
     """
     Create a Contribution record only (no Postmark). Acts as a moderation ticket.
-    Postmark is created when a State Editor approves. Returns the Contribution or None.
+    Postmark is created when an Editor approves. Returns the Contribution or None.
+
+    `collection` must be a resolved Collection (NOT NULL on the model).
     """
-    if not contributor:
+    if not contributor or not collection:
         return None
     try:
         submitted_data = {
@@ -981,6 +1009,7 @@ def _create_contribution_only(payload, contributor):
         contrib = Contribution.objects.create(
             contributor=contributor,
             postmark=None,
+            collection=collection,
             status=Contribution.STATUS_PENDING,
             submitted_data=submitted_data,
         )
@@ -990,38 +1019,34 @@ def _create_contribution_only(payload, contributor):
 
 
 def _get_editor_contribution_queryset(user):
-    """Base queryset for editor contribution/history listing."""
-    base_qs = Contribution.objects.select_related("contributor", "reviewer", "postmark")
+    """
+    Base queryset for editor contribution/history listing.
+
+    Editors see contributions in their assigned Collections plus their own
+    submissions; superusers see everything.
+    """
+    base_qs = Contribution.objects.select_related(
+        "contributor", "reviewer", "postmark", "collection", "collection__region"
+    )
     if getattr(user, "is_superuser", False):
         return base_qs
-    assigned_regions = list(_get_user_assigned_regions(user))
-    state_match_q = Q()
-    for region in assigned_regions:
-        state_match_q |= Q(submitted_data__state_region_id=region.pk)
-        for candidate in ((region.name or "").strip(), (region.abbrev or "").strip()):
-            if candidate:
-                state_match_q |= Q(submitted_data__state__iexact=candidate)
-    if assigned_regions and state_match_q:
-        return base_qs.filter(Q(contributor=user) | state_match_q).distinct()
+    assigned_ids = user_assigned_collection_ids(user)
+    if assigned_ids:
+        return base_qs.filter(
+            Q(contributor=user) | Q(collection_id__in=assigned_ids)
+        ).distinct()
     return base_qs.filter(contributor=user).distinct()
 
 
 def _apply_state_filter_to_contributions(qs, state_value):
-    """Apply optional state filter against both state text and region id."""
+    """Apply optional state filter by resolving the state to its Collection."""
     state_norm = (state_value or "").strip()
     if not state_norm or state_norm.lower() == "all":
         return qs
-    state_region = _resolve_region_from_state_value(state_norm)
-    state_q = Q(submitted_data__state__iexact=state_norm)
-    if state_region is not None:
-        state_q |= Q(submitted_data__state_region_id=state_region.pk)
-        region_name = (state_region.name or "").strip()
-        region_abbrev = (state_region.abbrev or "").strip()
-        if region_name:
-            state_q |= Q(submitted_data__state__iexact=region_name)
-        if region_abbrev:
-            state_q |= Q(submitted_data__state__iexact=region_abbrev)
-    return qs.filter(state_q)
+    region = _resolve_region_from_state_value(state_norm)
+    if region is None:
+        return qs.none()
+    return qs.filter(collection__region_id=region.pk)
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -1118,14 +1143,27 @@ class ContributionView(APIView):
             return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
 
         # New submissions:
-        # - Contributors can submit to any state (no location restriction).
-        # - State Editors must be explicitly assigned to the chosen state.
+        # - Contributors can submit to any state with a Collection (no Editor-assignment restriction).
+        # - Editors must be explicitly assigned to the Collection covering the chosen state.
+        # - Administrators (superuser) bypass.
+        target_collection = None
         if edit_postmark_id is None and edit_contribution_id is None:
+            target_collection = _resolve_collection_for_state(state)
+            if target_collection is None:
+                return Response(
+                    {
+                        "detail": (
+                            f"No Collection exists for state \"{state}\". "
+                            "Ask an Administrator to create one before submitting."
+                        ),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             role = _get_user_role(user)
-            if role == "state_editor" and not getattr(user, "is_superuser", False):
-                if _resolve_assigned_region(user, state) is None:
+            if role == "editor" and not getattr(user, "is_superuser", False):
+                if target_collection.pk not in user_assigned_collection_ids(user):
                     return Response(
-                        {"detail": "You are not assigned to submit listings for this state."},
+                        {"detail": "You are not assigned to submit listings for this Collection."},
                         status=status.HTTP_403_FORBIDDEN,
                     )
         # Build a human-readable date_range string for submitted_data.
@@ -1282,7 +1320,23 @@ class ContributionView(APIView):
             submitted_data = {k: v for k, v in payload.items() if k != "admin_unit"}
             contrib.submitted_data = submitted_data
             contrib.status = Contribution.STATUS_PENDING
-            contrib.save(update_fields=["submitted_data", "status", "updated_at"])
+            # Re-route to a different Collection if the contributor changed the state.
+            updated_collection = _resolve_collection_for_state(submitted_data.get("state", ""))
+            update_fields = ["submitted_data", "status", "updated_at"]
+            if updated_collection is None:
+                return Response(
+                    {
+                        "detail": (
+                            f"No Collection exists for state \"{submitted_data.get('state', '')}\". "
+                            "Ask an Administrator to create one before resubmitting."
+                        ),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if contrib.collection_id != updated_collection.pk:
+                contrib.collection = updated_collection
+                update_fields.append("collection")
+            contrib.save(update_fields=update_fields)
             log_submission_transaction(
                 action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
                 actor=user,
@@ -1300,9 +1354,21 @@ class ContributionView(APIView):
         if edit_postmark_id is not None:
             # Suggested edits to an existing catalog entry (S6).
             # - Contributors: create a Contribution ticket for expert review.
-            # - State Editors / superusers: apply directly to the catalog.
+            # - Editors / Administrators (superuser): apply directly to the catalog.
             role = _get_user_role(user)
             if role == "contributor" and not getattr(user, "is_superuser", False):
+                # Resolve target Collection from the (possibly edited) state.
+                edit_collection = _resolve_collection_for_state(payload.get("state", ""))
+                if edit_collection is None:
+                    return Response(
+                        {
+                            "detail": (
+                                f"No Collection exists for state \"{payload.get('state', '')}\". "
+                                "Ask an Administrator to create one before submitting a correction."
+                            ),
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                 try:
                     existing_contrib = Contribution.objects.filter(postmark_id=edit_postmark_id).first()
                     submitted_data = {
@@ -1355,6 +1421,7 @@ class ContributionView(APIView):
                         postmark_id=edit_postmark_id,
                         defaults={
                             "contributor": user,
+                            "collection": edit_collection,
                             "status": Contribution.STATUS_PENDING,
                             "submitted_data": submitted_data,
                         },
@@ -1374,9 +1441,9 @@ class ContributionView(APIView):
                         extra_payload={"created": created, "mode": "suggested_catalog_edit"},
                     )
                     detail_msg = (
-                        "Correction submitted for review. A State Editor will review and apply it."
+                        "Correction submitted for review. An Editor will review and apply it."
                         if created
-                        else "Correction updated. A State Editor will review and apply it."
+                        else "Correction updated. An Editor will review and apply it."
                     )
                     return Response(
                         {
@@ -1391,7 +1458,7 @@ class ContributionView(APIView):
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     )
 
-            # State Editors and superusers: update catalog directly.
+            # Editors and Administrators (superuser): update catalog directly.
             pre_update_postmark = Postmark.objects.filter(pk=edit_postmark_id).first()
             before_snapshot = build_postmark_snapshot(pre_update_postmark)
             postmark = _update_postmark_in_catalog(edit_postmark_id, payload, submitter_name)
@@ -1418,7 +1485,7 @@ class ContributionView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        contrib = _create_contribution_only(payload, contributor=user)
+        contrib = _create_contribution_only(payload, contributor=user, collection=target_collection)
         if not contrib:
             return Response(
                 {"detail": "Could not save your submission. Please try again."},
@@ -1446,34 +1513,24 @@ class ContributionView(APIView):
 
 
 def _can_review_contribution(user, contrib):
-    """True if user can approve/reject this contribution (State Editor)."""
+    """True if user can approve/reject/edit this contribution."""
+    if not user or not user.is_authenticated:
+        return False
     if getattr(user, "is_superuser", False):
         return True
-    return _resolve_assigned_region_from_submitted_data(user, contrib.submitted_data) is not None
-
-
-class IsStateEditorOrContributor(BasePermission):
-    """Contributors can view their own; State Editors can list/review all in their region."""
-    def has_permission(self, request, view):
-        return request.user and request.user.is_authenticated
-
-    def has_object_permission(self, request, view, obj):
-        if request.method in ("GET", "HEAD", "OPTIONS"):
-            if obj.contributor_id == request.user.id:
-                return True
-            return _can_review_contribution(request.user, obj)
-        if request.method in ("POST", "PATCH"):  # approve/reject/editor-edit
-            return _can_review_contribution(request.user, obj)
+    if not user.has_perm("common.review_contribution"):
         return False
+    return contrib.collection_id in user_assigned_collection_ids(user)
 
 
 class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
     """
     Moderation queue for contributions.
     - Contributors: list/retrieve their own contributions.
-    - State Editors: list/retrieve all in their region, approve, reject.
+    - Editors: list/retrieve all in their assigned Collections, approve/reject/edit.
+    - Administrators (superuser): everything.
     """
-    permission_classes = [IsAuthenticated, IsStateEditorOrContributor]
+    permission_classes = [IsAuthenticated, CanReviewContribution]
     serializer_class = ContributionDetailSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["status"]
@@ -1482,11 +1539,12 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        base_qs = Contribution.objects.select_related(
+            "contributor", "reviewer", "postmark", "collection", "collection__region"
+        )
         if getattr(user, "is_superuser", False):
-            return Contribution.objects.all().select_related("contributor", "reviewer", "postmark")
-        role = _get_user_role(user)
-        base_qs = Contribution.objects.select_related("contributor", "reviewer", "postmark")
-        if role == "state_editor":
+            return base_qs
+        if user.has_perm("common.review_contribution"):
             return _get_editor_contribution_queryset(user)
         # Contributors: only their own contributions
         return base_qs.filter(contributor=user).distinct()
@@ -1733,6 +1791,101 @@ class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+# ========== COLLECTION ADMINISTRATION (F7) ==========
+
+
+class CollectionViewSet(viewsets.ModelViewSet):
+    """
+    Institutional Collections (F7).
+
+    - Reads: any authenticated user (Editors need this to know what they're assigned to).
+    - Create / update / delete: Administrators only (DRF IsAdminUser → is_superuser).
+    - assign_editor / unassign_editor: Administrators only.
+    """
+    queryset = Collection.objects.select_related("region").all()
+    serializer_class = CollectionSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["region", "is_active"]
+    search_fields = ["name", "description", "region__name", "region__abbrev"]
+    ordering_fields = ["name", "created_date"]
+    ordering = ["name"]
+
+    def get_permissions(self):
+        if self.action in ("list", "retrieve", "editors"):
+            return [IsAuthenticated()]
+        return [IsAdminUser()]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(modified_by=self.request.user)
+
+    @action(detail=True, methods=["get"], url_path="editors")
+    def editors(self, request, pk=None):
+        """List editors assigned to this Collection."""
+        collection = self.get_object()
+        rows = collection.editor_assignments.select_related("user").order_by("user__username")
+        return Response([
+            {
+                "id": ca.pk,
+                "user_id": ca.user_id,
+                "username": ca.user.username,
+                "email": getattr(ca.user, "email", "") or "",
+            }
+            for ca in rows
+        ])
+
+    @action(detail=True, methods=["post"], url_path="assign-editor")
+    def assign_editor(self, request, pk=None):
+        """Assign a user as Editor of this Collection. Body: {"user_id": <int>}."""
+        collection = self.get_object()
+        user_id = request.data.get("user_id")
+        try:
+            user_id = int(user_id) if user_id is not None else None
+        except (TypeError, ValueError):
+            user_id = None
+        if not user_id:
+            return Response({"detail": "user_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        User = get_user_model()
+        target = User.objects.filter(pk=user_id).first()
+        if not target:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        ca, created = CollectionAssignment.objects.get_or_create(
+            user=target,
+            collection=collection,
+            defaults={"created_by": request.user, "modified_by": request.user},
+        )
+        # CollectionAssignment.save() puts the user into the Editors group automatically.
+        return Response(
+            {
+                "id": ca.pk,
+                "user_id": target.pk,
+                "username": target.username,
+                "collection_id": collection.pk,
+                "created": created,
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["delete"], url_path="unassign-editor/(?P<user_id>[^/.]+)")
+    def unassign_editor(self, request, pk=None, user_id=None):
+        """Remove an editor's assignment to this Collection (does NOT remove from Editors group)."""
+        collection = self.get_object()
+        try:
+            uid = int(user_id) if user_id is not None else None
+        except (TypeError, ValueError):
+            uid = None
+        if not uid:
+            return Response({"detail": "user_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        deleted, _ = CollectionAssignment.objects.filter(
+            user_id=uid, collection=collection
+        ).delete()
+        if not deleted:
+            return Response({"detail": "Assignment not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 # ========== CUSTOM PERMISSIONS ==========
 
 
@@ -1923,7 +2076,7 @@ class DeleteMySubmissionView(APIView):
 
 class RegionViewSet(viewsets.ModelViewSet):
     """ViewSet for v2 regions. Supports ?assigned_only=true to restrict
-    State Editors to their assigned regions (used by Contribute, Dashboard)."""
+    Editors to the regions covered by their assigned Collections."""
     queryset = Region.objects.all().select_related("parent_region")
     serializer_class = RegionSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
@@ -1940,9 +2093,9 @@ class RegionViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not user or not user.is_authenticated:
             return qs.none()
-        if _get_user_role(user) == "state_editor":
-            return qs.filter(user_location_assignments__user=user).distinct()
-        # Contributors (and others) see all regions when assigned_only=true
+        if _get_user_role(user) == "editor":
+            return qs.filter(collection__editor_assignments__user=user).distinct()
+        # Contributors / Administrators see all regions when assigned_only=true
         return qs
 
     def list(self, request, *args, **kwargs):
@@ -2357,10 +2510,15 @@ class MarkFramingViewSet(viewsets.ModelViewSet):
 
 
 class ReferenceWorkViewSet(viewsets.ModelViewSet):
-    """ViewSet for v2 reference works."""
+    """
+    Reference works.
+    Reads: any authenticated user.
+    Add / edit: Editors and Administrators only (S19 spec).
+    Delete: not exposed via API (Administrator only via Django admin).
+    """
     queryset = ReferenceWork.objects.all()
     serializer_class = ReferenceWorkSerializer
-    permission_classes = [IsAuthenticatedOrReadOnly]
+    permission_classes = [CanManageReferenceWorks]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["publication_year"]
     search_fields = ["title", "authorship", "publisher", "edition", "volume", "isbn"]

@@ -79,7 +79,7 @@ class Contribution(models.Model):
     """
     Moderation ticket for catalog contributions.
     Submissions create a Contribution instead of directly updating the catalog.
-    State Editors approve/reject; on approval, submitted_data is applied to Postmark.
+    Editors approve/reject; on approval, submitted_data is applied to Postmark.
     """
     STATUS_PENDING = 'pending'
     STATUS_APPROVED = 'approved'
@@ -89,6 +89,10 @@ class Contribution(models.Model):
     id = models.AutoField(primary_key=True)
     contributor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='contributions')
     postmark = models.OneToOneField(Postmark, on_delete=models.CASCADE, related_name='contribution', null=True, blank=True, help_text='Set when approved; Postmark created from submitted_data for new entries')
+    # Routing target: which institutional Collection this contribution belongs to.
+    # Resolved at submit time from the contributor-supplied state. NOT NULL — every
+    # contribution must land in a Collection so the right Editors see it.
+    collection = models.ForeignKey('Collection', on_delete=models.PROTECT, related_name='contributions')
     submitted_data = models.JSONField(default=dict, blank=True, help_text='Proposed changes (state, town, type, color, description, etc.)')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
     reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_contributions')
@@ -101,6 +105,9 @@ class Contribution(models.Model):
         verbose_name = 'Contribution'
         verbose_name_plural = 'Contributions'
         ordering = ['-created_at']
+        permissions = [
+            ('review_contribution', 'Can review (approve / reject) contributions'),
+        ]
 
     def __str__(self):
         return f'Contribution #{self.id} ({self.status})'
@@ -270,6 +277,9 @@ class PostmarkImage(TimestampedModel):
         verbose_name_plural = 'Listing Images'
         ordering = ['postmark', 'display_order']
         indexes = [models.Index(fields=['postmark', 'display_order']), models.Index(fields=['file_checksum'])]
+        permissions = [
+            ('approve_postmarkimage', 'Can approve / reject postmark image submissions'),
+        ]
 
     def __str__(self):
         """
@@ -527,24 +537,75 @@ class AdminCsvUpload(models.Model):
             self.row_count = len(self.data.get('rows') or [])
         super().save(*args, **kwargs)
 
-class UserLocationAssignment(models.Model):
+class Collection(TimestampedModel):
     """
-    Links a Django user account to one or more Regions. Used in the admin user
-    detail page so staff can see and manage which regions a user is associated
-    with (e.g., State Editors are assigned to the states they curate).
+    An institutional collection — a curatorial unit that wraps exactly one Region
+    and has many Editor assignments. Contributions are routed to a Collection
+    based on the state submitted; only Editors assigned to that Collection
+    (or a superuser/Administrator) may review them.
     """
-    id = models.AutoField(primary_key=True)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='location_assignments')
-    region = models.ForeignKey('Region', on_delete=models.CASCADE, related_name='user_location_assignments', help_text='Region this user is associated with')
+    name = models.CharField(max_length=200, help_text='Display name for this Collection (e.g. "Virginia").')
+    description = models.TextField(blank=True)
+    region = models.OneToOneField(
+        'Region',
+        on_delete=models.PROTECT,
+        related_name='collection',
+        help_text='The Region this Collection covers. One Collection per Region.',
+    )
+    is_active = models.BooleanField(default=True)
 
     class Meta:
-        db_table = 'UserLocationAssignments'
-        verbose_name = 'User location assignment'
-        verbose_name_plural = 'User location assignments'
-        unique_together = [['user', 'region']]
+        db_table = 'Collections'
+        verbose_name = 'Collection'
+        verbose_name_plural = 'Collections'
+        ordering = ['name']
 
     def __str__(self):
-        return f'{self.user} → {self.region}'
+        return self.name
+
+
+class CollectionAssignment(TimestampedModel):
+    """
+    Links an Editor to a Collection they are responsible for curating.
+    Replaces the legacy UserLocationAssignment.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='collection_assignments',
+    )
+    collection = models.ForeignKey(
+        Collection,
+        on_delete=models.CASCADE,
+        related_name='editor_assignments',
+    )
+
+    class Meta:
+        db_table = 'CollectionAssignments'
+        verbose_name = 'Collection assignment'
+        verbose_name_plural = 'Collection assignments'
+        unique_together = [['user', 'collection']]
+        ordering = ['collection', 'user']
+
+    def __str__(self):
+        return f'{self.user} → {self.collection}'
+
+    def save(self, *args, **kwargs):
+        """
+        On assignment, ensure the user is in the Editors group so that group-level
+        permissions (review_contribution, change_postmark, etc.) are granted
+        immediately. Removal is intentionally NOT auto-demoted — admins explicitly
+        remove from Editors group via the user admin if they want to revoke perms.
+        """
+        creating = self._state.adding
+        super().save(*args, **kwargs)
+        if creating:
+            from django.contrib.auth.models import Group
+            try:
+                editors_group = Group.objects.get(name='Editors')
+            except Group.DoesNotExist:
+                return
+            self.user.groups.add(editors_group)
 
 class FAQEntry(TimestampedModel):
     """

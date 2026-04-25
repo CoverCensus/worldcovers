@@ -263,3 +263,4 @@ tools/wip/**/*.jpeg
 .DS_Store
 /backend/imports
 docs/data/
+docs/.project

@@ -290,7 +290,8 @@ const ContributionDetail = () => {
   });
   const [additionalDatePairs, setAdditionalDatePairs] = useState<YearPair[]>([]);
   const fromDashboard = location.state?.fromDashboard === true;
-  const isStateEditor = user?.role === "state_editor" || user?.is_superuser;
+  const isStateEditor =
+    user?.role === "editor" || user?.role === "administrator" || user?.is_superuser;
   /** True if the logged-in user is the person who submitted this contribution (edit/review UI is for other editors only). */
   const isContributor =
     !!user &&

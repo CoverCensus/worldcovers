@@ -5,10 +5,19 @@
 
 const AUTH_STORAGE_KEY = "worldcovers_user";
 
-export interface AssignedLocation {
+export interface AssignedCollectionRegion {
+  id: number;
   name: string;
-  reference_code?: string;
+  abbrev?: string;
 }
+
+export interface AssignedCollection {
+  id: number;
+  name: string;
+  region: AssignedCollectionRegion;
+}
+
+export type UserRole = "guest" | "contributor" | "editor" | "administrator";
 
 export interface AuthUser {
   id: number;
@@ -16,10 +25,10 @@ export interface AuthUser {
   email: string;
   is_staff: boolean;
   is_superuser?: boolean;
-  // Backend-derived high-level role: "contributor" or "state_editor"
-  role?: string;
-  // For state_editor: locations assigned in admin (only present when role is state_editor)
-  assigned_locations?: AssignedLocation[];
+  // Backend-derived role string. Administrator === is_superuser (single person, by design).
+  role?: UserRole | string;
+  // For editors: the Collections they curate. Empty for non-editors.
+  assigned_collections?: AssignedCollection[];
 }
 
 export function getStoredUser(): AuthUser | null {
@@ -57,8 +66,8 @@ let currentUserCache: CachedCurrentUser | null = null;
 const CURRENT_USER_CACHE_TTL_MS = 30_000;
 
 /**
- * Fetch current user from the server (session). Use to sync role and assigned_locations
- * so the UI shows State Editor with correct locations instead of defaulting to Contributor.
+ * Fetch current user from the server (session). Use to sync role and assigned_collections
+ * so the UI shows Editor with correct Collections instead of defaulting to Contributor.
  */
 export async function fetchCurrentUser(): Promise<AuthUser | null> {
   const now = Date.now();

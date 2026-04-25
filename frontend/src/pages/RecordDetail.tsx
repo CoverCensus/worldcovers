@@ -80,7 +80,11 @@ function shouldShowEditorCommentOnRecord(params: {
   const text = params.editorComment.trim();
   if (!text) return false;
   const isUserContribution = /user\s*contribution/i.test((params.sourceCatalog || "").trim());
-  const isEditor = !!params.user && (params.user.role === "state_editor" || params.user.is_superuser);
+  const isEditor =
+    !!params.user &&
+    (params.user.role === "editor" ||
+      params.user.role === "administrator" ||
+      params.user.is_superuser);
   if (isEditor) return true;
   if (!params.user) return false;
   if (isUserContribution) return true;
@@ -393,7 +397,9 @@ const RecordDetail = () => {
   const [versionRows, setVersionRows] = useState<PostmarkVersionRow[]>([]);
   const [restoringVersionNo, setRestoringVersionNo] = useState<number | null>(null);
   const [changelogLoadError, setChangelogLoadError] = useState<string | null>(null);
-  const canViewChangelog = !!user && (user.role === "state_editor" || user.is_superuser);
+  const canViewChangelog =
+    !!user &&
+    (user.role === "editor" || user.role === "administrator" || user.is_superuser);
 
   // Parse id from URL: "api-1" -> 1 (from Search when using API)
   const postmarkId = id ? parseInt(String(id).replace(/^api-/, ""), 10) : null;

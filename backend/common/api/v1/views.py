@@ -170,7 +170,8 @@ from common.models import (
     PostcoverPostmark,
     PostcoverImage,
     AdminCsvUpload,
-    UserLocationAssignment,
+    Collection,
+    CollectionAssignment,
     Contribution,
     FAQEntry,
     Lettering,
@@ -203,22 +204,12 @@ _password_reset_token_generator = PasswordResetTokenGenerator()
 
 def _get_user_role(user):
     """
-    Derive a simple role string for the frontend from Django auth state.
-
-    Primary signal is the "State Editors" group, but we also treat users
-    with explicit location assignments as state editors so that the admin
-    Role & Locations UI remains the single source of truth even if group
-    membership is temporarily out of sync.
+    v1 legacy role mapping. The new RBAC scheme uses the `Editors` group
+    plus `is_superuser` for Administrator. v1 still emits the historical
+    `state_editor` string so legacy clients don't break.
     """
-    # State Editors group → editor role
-    if user.groups.filter(name__iexact="State Editors").exists():
+    if user.groups.filter(name__iexact="Editors").exists():
         return "state_editor"
-
-    # Fallback: any explicit UserLocationAssignment implies state editor responsibilities
-    if UserLocationAssignment.objects.filter(user=user).exists():
-        return "state_editor"
-
-    # Default: contributor
     return "contributor"
 
 
@@ -848,9 +839,9 @@ def _save_contribution_image(uploaded_file):
 
 
 def _get_user_assigned_regions(user):
-    """Return queryset of Regions explicitly assigned to this user."""
+    """Return queryset of Regions covered by Collections this user is assigned to."""
     from common.models import Region
-    return Region.objects.filter(user_location_assignments__user=user).distinct()
+    return Region.objects.filter(collection__editor_assignments__user=user).distinct()
 
 
 def _resolve_assigned_region(user, state_str):

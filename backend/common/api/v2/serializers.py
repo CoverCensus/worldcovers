@@ -12,7 +12,7 @@ from common.models import (
     Color,
     Postmark, PostmarkValuation,
     PostmarkImage, Postcover, PostcoverPostmark, PostcoverImage,
-    AdminCsvUpload, Contribution, FAQEntry,
+    AdminCsvUpload, Collection, CollectionAssignment, Contribution, FAQEntry,
 )
 
 User = get_user_model()
@@ -816,6 +816,55 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
 class ContributionApproveRejectSerializer(serializers.Serializer):
     """Payload for approve/reject actions."""
     review_notes = serializers.CharField(required=False, allow_blank=True)
+
+
+# ========== COLLECTION (F7) ==========
+
+
+class _NestedRegionSerializer(serializers.ModelSerializer):
+    """Compact Region representation embedded inside Collection responses."""
+    class Meta:
+        model = Region
+        fields = ["id", "name", "abbrev", "region_tier"]
+
+
+class CollectionSerializer(serializers.ModelSerializer):
+    """Collection (institutional unit) serializer."""
+    region = _NestedRegionSerializer(read_only=True)
+    region_id = serializers.PrimaryKeyRelatedField(
+        queryset=Region.objects.all(), source="region", write_only=True,
+    )
+    editor_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Collection
+        fields = [
+            "id",
+            "name",
+            "description",
+            "region",
+            "region_id",
+            "is_active",
+            "editor_count",
+            "created_date",
+            "modified_date",
+        ]
+        read_only_fields = ["id", "created_date", "modified_date", "editor_count"]
+
+    def get_editor_count(self, obj):
+        # Cheap count; for hot lists, annotate at the queryset level instead.
+        return obj.editor_assignments.count()
+
+
+class CollectionAssignmentSerializer(serializers.ModelSerializer):
+    """Editor↔Collection assignment serializer."""
+    username = serializers.CharField(source="user.username", read_only=True)
+    collection_name = serializers.CharField(source="collection.name", read_only=True)
+
+    class Meta:
+        model = CollectionAssignment
+        fields = ["id", "user", "username", "collection", "collection_name", "created_date"]
+        read_only_fields = ["id", "username", "collection_name", "created_date"]
 
 
 ###################################################################################################

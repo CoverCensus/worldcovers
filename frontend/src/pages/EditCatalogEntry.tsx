@@ -407,7 +407,7 @@ const EditCatalogEntry = () => {
     setStateOptionsError(null);
     const loadStates = async () => {
       try {
-        const isStateEditor = user?.role === "state_editor";
+        const isStateEditor = user?.role === "editor" || user?.role === "administrator" || !!user?.is_superuser;
         if (isStateEditor) {
           const assignedStates = await getAssignedRegions().catch(() => []);
           if (assignedStates.length > 0) {
@@ -1248,7 +1248,7 @@ const EditCatalogEntry = () => {
   }
 
   const role = user?.role;
-  const isStateEditor = role === "state_editor";
+  const isStateEditor = role === "editor" || role === "administrator" || !!user?.is_superuser;
   const isContributor = role === "contributor";
 
   return (

@@ -123,6 +123,11 @@ router.register(
     views.ContributionViewSet,
     basename="contribution",
 )
+router.register(
+    r"collections",
+    views.CollectionViewSet,
+    basename="collection",
+)
 
 # FAQ entries (public site)
 router.register(

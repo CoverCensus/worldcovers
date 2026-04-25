@@ -4,7 +4,7 @@ import { getStoredUser, setStoredUser, clearStoredUser, fetchCurrentUser, type A
 export function useAuth(): AuthUser | null {
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser());
 
-  // Sync with server on load so role and assigned_locations are correct (e.g. State Editor with locations)
+  // Sync with server on load so role and assigned_collections are correct (e.g. Editor with Collections)
   useEffect(() => {
     const stored = getStoredUser();
     if (!stored) return;

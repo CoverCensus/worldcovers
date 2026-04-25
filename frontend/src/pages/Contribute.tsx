@@ -397,7 +397,7 @@ const Contribute = () => {
   const [referenceWorksError, setReferenceWorksError] = useState<string | null>(null);
   const [referenceWorksFetched, setReferenceWorksFetched] = useState(false);
 
-  const isStateEditor = user?.role === "state_editor";
+  const isStateEditor = user?.role === "editor";
 
   /** Town/City: letters, spaces, hyphens, apostrophes only */
   const sanitizeTown = (v: string) => v.replace(/[^a-zA-Z\s\-']/g, "");
@@ -426,7 +426,7 @@ const Contribute = () => {
 
     const loadStates = async () => {
       try {
-        const isStateEditor = user?.role === "state_editor";
+        const isStateEditor = user?.role === "editor";
         if (isStateEditor) {
           // Prefer dedicated endpoint first; then fallback to assigned_only query.
           const assignedStates = await getAssignedRegions().catch(() => []);
@@ -705,7 +705,7 @@ const Contribute = () => {
 
   const noAssignedStates =
     !!user &&
-    user.role === "state_editor" &&
+    user.role === "editor" &&
     confirmedNoAssignedStates &&
     !loadingStates &&
     !stateOptionsError &&
