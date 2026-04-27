@@ -16,6 +16,22 @@ function postmarkTextFromRecord(record: PostmarkRecord): string {
   return cat || ins || "";
 }
 
+/**
+ * Format a partial-or-full ISO date for catalog display.
+ * `YYYY-MM-DD` -> `MM/DD/YYYY`, `YYYY-MM` -> `MM/YYYY`, `YYYY` -> `YYYY`.
+ * Anything else (already-formatted ranges, etc.) is returned unchanged.
+ */
+export function formatCatalogDate(value: string | null | undefined): string {
+  const s = value != null ? String(value).trim() : "";
+  if (!s) return "";
+  const dayMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (dayMatch) return `${dayMatch[2]}/${dayMatch[3]}/${dayMatch[1]}`;
+  const monthMatch = /^(\d{4})-(\d{2})$/.exec(s);
+  if (monthMatch) return `${monthMatch[2]}/${monthMatch[1]}`;
+  if (/^\d{4}$/.test(s)) return s;
+  return s;
+}
+
 function parseDateRangeParts(dateRange: string | null | undefined): { earliest: string; latest: string } {
   const dr = (dateRange ?? "").trim();
   if (!dr) return { earliest: "", latest: "" };
@@ -101,9 +117,11 @@ export function buildCatalogFieldValues(record: PostmarkRecord): CatalogFieldVal
       record.datesSeenDisplay?.trim() || record.dateRange?.trim() || ""
     ),
     earliestUse: displayCatalogField(
-      record.earliestUse?.trim() || dateParts.earliest
+      formatCatalogDate(record.earliestUse?.trim() || dateParts.earliest)
     ),
-    latestUse: displayCatalogField(record.latestUse?.trim() || dateParts.latest),
+    latestUse: displayCatalogField(
+      formatCatalogDate(record.latestUse?.trim() || dateParts.latest)
+    ),
   };
 }
 

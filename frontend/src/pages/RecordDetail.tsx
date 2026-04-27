@@ -16,14 +16,11 @@ import {
   restorePostmarkVersion,
   normalizeImageUrl,
   formatPostmarkDimensionsDisplay,
-  getPostmarkRatemarks,
-  getPostmarkAuxmarks,
   getPostmarkCovers,
-  type AssociatedRatemark,
-  type AssociatedAuxmark,
   type AssociatedCover,
   type PostmarkVersionRow,
 } from "@/services/postmarks";
+import { formatCatalogDate } from "@/lib/catalogRecordDisplay";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
 
@@ -155,127 +152,6 @@ function formatSnapshotMm(width: unknown, height: unknown): string {
   return "—";
 }
 
-function AssociatedRatemarksCard({ items }: { items: AssociatedRatemark[] }) {
-  const entries: (AssociatedRatemark | null)[] = items.length === 0 ? [null] : items;
-  const [open, setOpen] = useState(items.length > 0);
-  return (
-    <Card className="shadow-archival-md">
-      <Collapsible open={open} onOpenChange={setOpen}>
-        <CardHeader>
-          <CardTitle className="font-heading text-lg">
-            <CollapsibleTrigger className="flex w-full items-baseline justify-between gap-3 cursor-pointer">
-              <span>Associated Ratemarks</span>
-              <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span>{items.length}</span>
-                <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
-              </span>
-            </CollapsibleTrigger>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {items.length === 0 && (
-            <p className="text-sm italic text-muted-foreground">No ratemarks recorded.</p>
-          )}
-          <CollapsibleContent>
-            <div className="space-y-0">
-              {entries.map((item, idx) => {
-            const rm = item?.ratemarkDetails ?? null;
-            const rows: { label: string; value: string }[] = [
-              { label: "Catalog key", value: displayField(rm?.code) },
-              { label: "Inscription", value: displayField(rm?.inscriptionTxt) },
-              { label: "Rate value", value: displayField(rm?.rateVal) },
-              { label: "Placement", value: displayField(item?.placementType) },
-              { label: "Shape", value: displayField(rm?.shapeName) },
-              { label: "Lettering", value: displayField(rm?.letteringName) },
-              { label: "Impression", value: displayField(rm?.impression) },
-              { label: "Color", value: displayField(rm?.colorName) },
-              { label: "Dimensions", value: displayDimensions(rm?.width, rm?.height) },
-              { label: "Manuscript", value: rm?.isManuscript != null ? displayBool(rm.isManuscript) : "—" },
-            ];
-            return (
-              <div
-                key={item?.id ?? `empty-${idx}`}
-                className={idx > 0 ? "border-t-2 border-primary/40 pt-6 mt-6" : ""}
-              >
-                <dl className="text-sm">
-                  {rows.map((r, i) => (
-                    <DetailRow key={r.label} label={r.label} value={r.value} last={i === rows.length - 1} />
-                  ))}
-                </dl>
-                {item != null && (
-                  <div className="flex justify-between py-2 text-sm border-t border-border">
-                    <span className="text-muted-foreground font-medium">Associated auxmarks</span>
-                    <span className="text-primary cursor-pointer underline-offset-2 hover:underline">
-                      {item.auxmarkCount ?? 0}
-                    </span>
-                  </div>
-                )}
-                  </div>
-                );
-              })}
-            </div>
-          </CollapsibleContent>
-        </CardContent>
-      </Collapsible>
-    </Card>
-  );
-}
-
-function AssociatedAuxmarksCard({ items }: { items: AssociatedAuxmark[] }) {
-  const entries: (AssociatedAuxmark | null)[] = items.length === 0 ? [null] : items;
-  const [open, setOpen] = useState(items.length > 0);
-  return (
-    <Card className="shadow-archival-md">
-      <Collapsible open={open} onOpenChange={setOpen}>
-        <CardHeader>
-          <CardTitle className="font-heading text-lg">
-            <CollapsibleTrigger className="flex w-full items-baseline justify-between gap-3 cursor-pointer">
-              <span>Associated Auxmarks</span>
-              <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span>{items.length}</span>
-                <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
-              </span>
-            </CollapsibleTrigger>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {items.length === 0 && (
-            <p className="text-sm italic text-muted-foreground">No auxmarks recorded.</p>
-          )}
-          <CollapsibleContent>
-            <div className="space-y-0">
-              {entries.map((item, idx) => {
-                const rows: { label: string; value: string }[] = [
-                  { label: "Catalog key", value: displayField(item?.code) },
-                  { label: "Inscription", value: displayField(item?.inscriptionTxt) },
-                  { label: "Shape", value: displayField(item?.shapeName) },
-                  { label: "Lettering", value: displayField(item?.letteringName) },
-                  { label: "Impression", value: displayField(item?.impression) },
-                  { label: "Color", value: displayField(item?.colorName) },
-                  { label: "Dimensions", value: displayDimensions(item?.width, item?.height) },
-                  { label: "Manuscript", value: item?.isManuscript != null ? displayBool(item.isManuscript) : "—" },
-                ];
-                return (
-                  <div
-                    key={item?.id ?? `empty-${idx}`}
-                    className={idx > 0 ? "border-t-2 border-primary/40 pt-6 mt-6" : ""}
-                  >
-                    <dl className="text-sm">
-                      {rows.map((r, i) => (
-                        <DetailRow key={r.label} label={r.label} value={r.value} last={i === rows.length - 1} />
-                      ))}
-                    </dl>
-                  </div>
-                );
-              })}
-            </div>
-          </CollapsibleContent>
-        </CardContent>
-      </Collapsible>
-    </Card>
-  );
-}
-
 function AssociatedCoversCard({ items }: { items: AssociatedCover[] }) {
   const entries: (AssociatedCover | null)[] = items.length === 0 ? [null] : items;
   const [open, setOpen] = useState(items.length > 0);
@@ -391,8 +267,6 @@ const RecordDetail = () => {
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [associatedRatemarks, setAssociatedRatemarks] = useState<AssociatedRatemark[]>([]);
-  const [associatedAuxmarks, setAssociatedAuxmarks] = useState<AssociatedAuxmark[]>([]);
   const [associatedCovers, setAssociatedCovers] = useState<AssociatedCover[]>([]);
   const [versionRows, setVersionRows] = useState<PostmarkVersionRow[]>([]);
   const [restoringVersionNo, setRestoringVersionNo] = useState<number | null>(null);
@@ -428,6 +302,12 @@ const RecordDetail = () => {
           const postmarkKey = data.postmark_key ?? data.postmarkKey ?? data.code ?? "";
           const town = data.town ?? "";
           const state = data.state ?? "";
+          const regionAbbrev = String(
+            data.region_abbrev ?? data.regionAbbrev ?? "",
+          ).trim();
+          const inscriptionForTitle = String(
+            data.inscription_txt ?? data.inscriptionTxt ?? "",
+          ).trim();
           const earliestUse = data.earliest_use ?? data.earliestUse ?? "";
           const latestUse = data.latest_use ?? data.latestUse ?? "";
           const shapeNameForTitle =
@@ -435,13 +315,22 @@ const RecordDetail = () => {
             fromNested(data, ["postmark_shape", "shape_name"]) ||
             fromNested(data, ["postmarkShape", "shapeName"]) ||
             fromNested(data, ["shape", "name"]);
-          const townState = [town, state].filter(Boolean).join(", ");
-          const catalogTxt = (data.catalog_txt ?? data.catalogTxt ?? "").trim();
-          const displayName =
-            catalogTxt ||
-            townState ||
-            postmarkKey ||
-            "—";
+          const townTrimmed = String(town).trim();
+          let titleLocation = "";
+          if (townTrimmed && regionAbbrev) titleLocation = `${townTrimmed}, ${regionAbbrev}`;
+          else if (townTrimmed) titleLocation = townTrimmed;
+          else if (regionAbbrev) titleLocation = regionAbbrev;
+          const inscriptionPart = inscriptionForTitle ? `"${inscriptionForTitle}"` : "";
+          let displayName: string;
+          if (titleLocation && inscriptionPart) {
+            displayName = `${titleLocation} - ${inscriptionPart}`;
+          } else if (titleLocation) {
+            displayName = titleLocation;
+          } else if (inscriptionPart) {
+            displayName = inscriptionPart;
+          } else {
+            displayName = String(postmarkKey).trim() || "-";
+          }
           const baseImageUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
           const imageRoot = baseImageUrl || "/media";
           const classifyImage = (description: string): GalleryImage["category"] => {
@@ -503,9 +392,13 @@ const RecordDetail = () => {
                   const iso = String(row?.date ?? "");
                   if (!iso) return "";
                   const granularity = String(row?.granularity ?? "").toUpperCase();
-                  if (granularity === "YEAR") return iso.slice(0, 4);
-                  if (granularity === "MONTH") return iso.slice(0, 7);
-                  return iso.slice(0, 10);
+                  const sliced =
+                    granularity === "YEAR"
+                      ? iso.slice(0, 4)
+                      : granularity === "MONTH"
+                        ? iso.slice(0, 7)
+                        : iso.slice(0, 10);
+                  return formatCatalogDate(sliced);
                 })
                 .filter(Boolean)
             : [];
@@ -565,22 +458,12 @@ const RecordDetail = () => {
     };
   }, [postmarkId]);
 
-  // Associated items (ratemarks / auxmarks / covers) are fetched in parallel and
-  // swallow errors per-section so they never block the main record render.
   useEffect(() => {
     if (postmarkId == null || isNaN(postmarkId)) return;
     let cancelled = false;
-    setAssociatedRatemarks([]);
-    setAssociatedAuxmarks([]);
     setAssociatedCovers([]);
-    Promise.all([
-      getPostmarkRatemarks(postmarkId),
-      getPostmarkAuxmarks(postmarkId),
-      getPostmarkCovers(postmarkId),
-    ]).then(([ratemarks, auxmarks, covers]) => {
+    getPostmarkCovers(postmarkId).then((covers) => {
       if (cancelled) return;
-      setAssociatedRatemarks(ratemarks);
-      setAssociatedAuxmarks(auxmarks);
       setAssociatedCovers(covers);
     });
     return () => {
@@ -979,34 +862,38 @@ const RecordDetail = () => {
                 <CardContent>
                   <dl className="space-y-0 text-sm">
                     {(() => {
-                      const displayValue = (v: unknown) => {
+                      const normalize = (v: unknown) => {
                         const s = v != null ? String(v).trim() : "";
-                        return s !== "" && s.toLowerCase() !== "unknown" ? s : "-";
+                        if (s === "" || s.toLowerCase() === "unknown") return "";
+                        return s;
                       };
                       const details = [
                         { label: "Town", value: record.town },
                         { label: "State", value: record.state },
+                        { label: "Type", value: "Townmark" },
                         { label: "Manuscript", value: record.manuscript },
                         { label: "Impression", value: record.impression },
-                        { label: "Date Type", value: record.dateType },
                         { label: "Date Format", value: record.dateFmt },
                         { label: "Shape", value: record.shape },
                         { label: "Is Irregular", value: record.isIrregular },
                         { label: "Lettering style", value: record.letteringStyle },
-                        { label: "Framing", value: record.framing },
                         { label: "Dimensions", value: record.dimensions },
                         { label: "Color", value: record.color },
+                        { label: "Rate Value", value: "5" },
+                        { label: "Rate Text", value: "PAID/V." },
                         { label: "Dates observed", value: (record.datesObserved ?? []).join("\n") },
-                        { label: "Inscription text", value: record.inscriptionText },
+                        { label: "Townmark Text", value: record.inscriptionText },
                         { label: "Catalog key", value: record.postmarkKey },
-                      ];
+                      ]
+                        .map(({ label, value }) => ({ label, value: normalize(value) }))
+                        .filter(({ value }) => value !== "");
                       return details.map(({ label, value }, index) => (
                         <div
                           key={label}
                           className={`flex justify-between py-2 ${index < details.length - 1 ? "border-b border-border" : ""}`}
                         >
                           <dt className="text-muted-foreground font-medium">{label}</dt>
-                          <dd className="text-foreground whitespace-pre-line text-right">{displayValue(value)}</dd>
+                          <dd className="text-foreground whitespace-pre-line text-right">{value}</dd>
                         </div>
                       ));
                     })()}
@@ -1046,8 +933,6 @@ const RecordDetail = () => {
                 </Card>
               ) : null}
 
-              <AssociatedRatemarksCard items={associatedRatemarks} />
-              <AssociatedAuxmarksCard items={associatedAuxmarks} />
               <AssociatedCoversCard items={associatedCovers} />
 
             </div>
