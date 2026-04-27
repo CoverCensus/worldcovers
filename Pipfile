@@ -7,6 +7,9 @@ name = "pypi"
 
 [dev-packages]
 ipykernel = "*"
+anthropic = "*"
+python-dotenv = "*"
+jinja2 = "*"
 
 [scripts]
 manage = "python backend/manage.py"

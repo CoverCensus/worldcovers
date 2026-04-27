@@ -304,6 +304,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
     facility_name = serializers.SerializerMethodField()
     shape_name = serializers.SerializerMethodField()
     main_image = serializers.SerializerMethodField()
+    second_image = serializers.SerializerMethodField()
     state = serializers.SerializerMethodField()
     state_abbrev = serializers.SerializerMethodField()
     town = serializers.SerializerMethodField()
@@ -334,6 +335,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
             'date_type',
             'date_fmt',
             'main_image',
+            'second_image',
             'state',
             'state_abbrev',
             'town',
@@ -412,6 +414,12 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         if main_img:
             return PostmarkImageSerializer(main_img, context=self.context).data
         return None
+
+    def get_second_image(self, obj):
+        imgs = list(obj.images.order_by('display_order')[:2])
+        if len(imgs) < 2:
+            return None
+        return PostmarkImageSerializer(imgs[1], context=self.context).data
 
     def get_valuation_display(self, obj):
         val = obj.valuations.order_by('-appraisal_date').first()

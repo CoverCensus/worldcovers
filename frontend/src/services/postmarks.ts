@@ -32,6 +32,8 @@ export interface PostmarkApiResponse {
     isManuscript: boolean;
     /** List/detail: string URL or image object from API (`image_url`, etc.) */
     mainImage: string | Record<string, unknown> | null;
+    /** List: optional 2nd image (by display_order) used for gallery view; null when only one image. */
+    secondImage?: string | Record<string, unknown> | null;
     responsibleGroups: unknown[];
     catalogTxt?: string;
     inscriptionTxt?: string;
@@ -410,6 +412,7 @@ export interface PostmarkChangelogResponse {
       ).trim();
 
     const mainImage = deriveMainImageFromApiItem(item);
+    const secondImageRaw = item.second_image ?? item.secondImage ?? null;
     const dateRange = item.date_range ?? item.dateRange;
     const sizeDisplayApi = item.size_display ?? item.sizeDisplay ?? item.sizeNotes;
     // Derive a human-readable size string from various possible fields
@@ -451,6 +454,7 @@ export interface PostmarkChangelogResponse {
       rateValue: item.rate_value ?? item.rateValue,
       isManuscript: item.is_manuscript ?? item.isManuscript,
       mainImage: (mainImage ?? null) as PostmarkRecord["mainImage"],
+      secondImage: (secondImageRaw ?? null) as PostmarkRecord["secondImage"],
       state: item.state ?? "",
       regionAbbrev: (item.state_abbrev ?? item.stateAbbrev ?? item.region_abbrev ?? item.regionAbbrev ?? "").trim(),
       dateRange: dateRange ?? "",

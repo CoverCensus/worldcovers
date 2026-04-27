@@ -6,7 +6,6 @@ import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
 import { Grid3x3, List, Search as SearchIcon, SlidersHorizontal, Loader2 } from "lucide-react";
@@ -649,14 +648,6 @@ const Search = () => {
                                 <h3 className="font-heading text-xl font-semibold text-foreground">
                                   {row.title}
                                 </h3>
-                                <div className="flex flex-shrink-0 gap-1.5">
-                                  <Badge variant="secondary" className="text-xs" title="Associated ratemarks">
-                                    Rates {row.ratemarkCount}
-                                  </Badge>
-                                  <Badge variant="secondary" className="text-xs" title="Associated auxmarks">
-                                    Aux {row.auxmarkCount}
-                                  </Badge>
-                                </div>
                               </div>
                               <CatalogRecordFields row={row} />
                             </div>
@@ -678,24 +669,31 @@ const Search = () => {
                           navigate(`/record/${row.cardId}`, { state: { fromSearch: true } })
                         }
                       >
-                        <ImageOrPlaceholder
-                          src={row.image}
-                          alt={row.title}
-                          className="w-full h-48 object-cover"
-                        />
+                        {row.image2 ? (
+                          <div className="grid grid-cols-2 gap-1">
+                            <ImageOrPlaceholder
+                              src={row.image}
+                              alt={row.title}
+                              className="w-full h-48 object-cover"
+                            />
+                            <ImageOrPlaceholder
+                              src={row.image2}
+                              alt={`${row.title} (2)`}
+                              className="w-full h-48 object-cover"
+                            />
+                          </div>
+                        ) : (
+                          <ImageOrPlaceholder
+                            src={row.image}
+                            alt={row.title}
+                            className="w-full h-48 object-cover"
+                          />
+                        )}
                         <CardContent className="p-4">
                           <div className="flex items-start justify-between gap-2 mb-2">
                             <h3 className="font-heading text-lg font-semibold text-foreground">
                               {row.title}
                             </h3>
-                            <div className="flex flex-shrink-0 gap-1.5">
-                              <Badge variant="secondary" className="text-xs" title="Associated ratemarks">
-                                Rates {row.ratemarkCount}
-                              </Badge>
-                              <Badge variant="secondary" className="text-xs" title="Associated auxmarks">
-                                Aux {row.auxmarkCount}
-                              </Badge>
-                            </div>
                           </div>
                           <CatalogRecordFields row={row} />
                         </CardContent>

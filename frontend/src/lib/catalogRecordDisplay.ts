@@ -112,23 +112,46 @@ export type CatalogSearchRowDisplay = CatalogFieldValues & {
   cardId: string;
   title: string;
   image: string | null;
+  /** Optional 2nd image (gallery view shows two side-by-side); null when only one image exists. */
+  image2: string | null;
   ratemarkCount: number;
   auxmarkCount: number;
 };
 
+/**
+ * Build the search-listing title.
+ * Format: `<post office>, <region abbrev> - "<inscription>"`.
+ * Example: `Williamsburg, VA - "Wmsburg/VA"`.
+ * Each segment is dropped if its source is empty; falls back to postmark_key
+ * or CATALOG_FIELD_EMPTY when nothing is available.
+ */
+function buildSearchTitle(record: PostmarkRecord): string {
+  const town = record.town?.trim() ?? "";
+  const region = record.regionAbbrev?.trim() ?? "";
+  const inscription = record.inscriptionTxt?.trim() ?? "";
+
+  let location = "";
+  if (town && region) location = `${town}, ${region}`;
+  else if (town) location = town;
+  else if (region) location = region;
+
+  const inscriptionPart = inscription ? `"${inscription}"` : "";
+
+  if (location && inscriptionPart) return `${location} - ${inscriptionPart}`;
+  if (location) return location;
+  if (inscriptionPart) return inscriptionPart;
+  return record.postmarkKey?.trim() || CATALOG_FIELD_EMPTY;
+}
+
 export function buildCatalogSearchRow(record: PostmarkRecord): CatalogSearchRowDisplay {
   const fields = buildCatalogFieldValues(record);
-  const displayName =
-    record.catalogTxt?.trim() ||
-    record.postmarkKey?.trim() ||
-    record.inscriptionTxt?.trim() ||
-    CATALOG_FIELD_EMPTY;
 
   return {
     ...fields,
     cardId: `api-${record.id}`,
-    title: displayName,
+    title: buildSearchTitle(record),
     image: normalizeImageUrl(getPostmarkListImageUrl(record.mainImage)),
+    image2: normalizeImageUrl(getPostmarkListImageUrl(record.secondImage ?? null)),
     ratemarkCount: typeof record.ratemarkCount === "number" ? record.ratemarkCount : 0,
     auxmarkCount: typeof record.auxmarkCount === "number" ? record.auxmarkCount : 0,
   };

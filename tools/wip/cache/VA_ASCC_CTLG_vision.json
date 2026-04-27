@@ -1,0 +1,108 @@
+{
+  "model": "claude-sonnet-4-6",
+  "prompt_version": "v1",
+  "responses": {
+    "page-0419-L": {
+      "first_entry_text": "Alexa.(Alexandria)(E)(May 21,1772;Ms;Black) ......... 1500.00"
+    },
+    "page-0419-R": {
+      "last_entry_text": "(L)(July 9,1777) ................................ 500.00"
+    },
+    "page-0420-L": {
+      "first_entry_text": "ALEX(E)(Jan.14,1788;SL-14x3,MDD;Black) . . . . . . . . . . 400.00"
+    },
+    "page-0420-R": {
+      "last_entry_text": "Same(July 16,1778;Ms;Magenta) . . . . . . . . . . . . . . . . . . . . 600.00"
+    },
+    "page-0421-L": {
+      "first_entry_text": "WILLIAMS'B.G.(E)(July 2,1788;SL-34x2.5,MDD;PAID;Black) ......... 750.00"
+    },
+    "page-0421-R": {
+      "last_entry_text": "BATTLETOWN/VA.(1830;28;Black) . . . . . . . . . . . . . . . . 50.00"
+    },
+    "page-0422-L": {
+      "first_entry_text": "BELMONT/Va.(1839;--;Black) . . . . . . . . . . . . . . . . . . . . . . . 50.00"
+    },
+    "page-0422-R": {
+      "last_entry_text": "Same(1833;29,NOR;Red,Black) ..................... 40.00"
+    },
+    "page-0423-L": {
+      "first_entry_text": "(1)CLARKSBURG/Va.(\"a\"high)(1835-47;30;PAID;Black) . . . 30.00"
+    },
+    "page-0423-R": {
+      "last_entry_text": "FREDG.VA.(\"G\"&\"A\"high)(1800-25;26;FREE;Red,Black) ... 60.00"
+    },
+    "page-0424-L": {
+      "first_entry_text": "FREDG VA(\"G\"&\"A\"high,small curved fleuron)(1818-28;30;FREE;Red,Black) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 50.00"
+    },
+    "page-0424-R": {
+      "last_entry_text": "KEMPSVILLE/Va.(1850's;30;Black) . . . . . . . . . . . . . . . . . . . . 40.00"
+    },
+    "page-0425-L": {
+      "first_entry_text": "KEYSVILLE/VA.(1855;30;PAID,3,PAID/3[C];Black) ........ 30.00"
+    },
+    "page-0425-R": {
+      "last_entry_text": "MARYSVILLE/Va.(1853;--;Green) ........... 40.00"
+    },
+    "page-0426-L": {
+      "first_entry_text": "MIDDLH.VA.(\"H\"&\"A\"high)(1835-39;31;PAID;Black) ...... 35.00"
+    },
+    "page-0426-R": {
+      "last_entry_text": "Norfolk(1789-90;SL-31x4.5,MDD;Black) ........... 200.00"
+    },
+    "page-0427-L": {
+      "first_entry_text": "NORFOLK(1789-99;SL-31x4.5;MD;Black) . . . . . . . . . . . . 150.00"
+    },
+    "page-0427-R": {
+      "last_entry_text": "PORT ROYAL VA.(1833;SL-33x3.5;Black) ........... 200.00"
+    },
+    "page-0428-L": {
+      "first_entry_text": "PORT ROYAL/Va.(1838-54;30;PAID,FREE;Red,Black) ... 20.00"
+    },
+    "page-0428-R": {
+      "last_entry_text": "Same(1833;32;STEAMBOAT;Black) See Inland Waterways Listing . . . . . . . . . . . . . . . . . . . ---"
+    },
+    "page-0429-L": {
+      "first_entry_text": "RICHMOND/Va.(\"a\"high)(1833-38;30;Red) . . . . . . . . . . . . 15.00"
+    },
+    "page-0429-R": {
+      "last_entry_text": "Red,Blue,Black) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25.00"
+    },
+    "page-0430-L": {
+      "first_entry_text": "UNIVERSITY OF/VIRGN.(1846;O-31x21;5;Red) . . . . . . . . 100.00"
+    },
+    "page-0430-R": {
+      "last_entry_text": "Same(1860's;31;DUE 3;Blue) Soldiers mail ........... 45.00"
+    },
+    "page-0431-L": {
+      "first_entry_text": "WOODSTOCK/Va.(1840-50's;31;PAID,5,10,3;Red,Black) . 20.00"
+    },
+    "page-0431-R": {
+      "last_entry_text": "Cabin Point . . . . . . . . . . . . 1856 . . . . . . . . . . . . . . . . . . 20.00"
+    },
+    "page-0432-L": {
+      "first_entry_text": "(1)Cacapon Depot . . . . . . . 1852 . . . . . . . . . . . . . . . 35.00"
+    },
+    "page-0432-R": {
+      "last_entry_text": ")Green Bank . . . . . . . . . . . . 1842 . . . . . . . . . . . . . . . . 40.00"
+    },
+    "page-0433-L": {
+      "first_entry_text": "(1)Green Bottom . . . . . . . . . . 1829-31 . . . . . . . . . . . . . . . . 60.0"
+    },
+    "page-0433-R": {
+      "last_entry_text": "*Milton . . . . . . . . . . . . . . . . . . 1811-22 . . . . . . . . . . . . . . . ---"
+    },
+    "page-0434-L": {
+      "first_entry_text": "Mint Spring . . . . . . . . . . . . 1850 . . . . . . . . . . . . . . . . . 20.00"
+    },
+    "page-0434-R": {
+      "last_entry_text": ")Saint Mary's . . . . . . . . . . 1853-54 . . . . . . . . . . . . . . . 40.00"
+    },
+    "page-0435-L": {
+      "first_entry_text": "or Salem . . . . . . . . . . . . . 1819-44 . . . . . . . . . . . . . . 40.00"
+    },
+    "page-0435-R": {
+      "last_entry_text": "*York Town . . . . . . . . . . . . . 1810,1831 . . . . . . . . . . . . . . . ---"
+    }
+  }
+}
