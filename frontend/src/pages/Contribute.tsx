@@ -49,19 +49,16 @@ const MAX_IMAGE_SIZE_MB = 100;
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/tiff"];
 
 
-const MANUSCRIPT_OPTIONS = [
-  { value: "Yes", label: "Yes" },
-  { value: "No", label: "No" },
-];
 const IMPRESSION_OPTIONS = [
   { value: "Normal", label: "Normal" },
   { value: "Stencil", label: "Stencil" },
   { value: "Negative", label: "Negative" },
 ];
-const DATE_TYPE_OPTIONS = [
-  { value: "BISHOP MARK", label: "Bishop Mark" },
-  { value: "FRANKLIN MARK", label: "Franklin Mark" },
-  { value: "QUAKER DATE", label: "Quaker Date" },
+
+const MARKING_TYPE_OPTIONS = [
+  { value: "Town mark", label: "Town mark" },
+  { value: "Rate mark", label: "Rate mark" },
+  { value: "Auxiliary/Instructional Mark", label: "Auxiliary/Instructional Mark" },
 ];
 
 const MIN_YEAR = 1661;
@@ -91,33 +88,58 @@ function parseDateRange(dateRange: string): [string, string] {
   return [s, ""];
 }
 
-const MONTH_OPTIONS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"] as const;
-const MONTH_TO_NUM: Record<string, string> = {
-  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
-  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+const PAGE_NUMBER_RE = /^[A-Za-z0-9][A-Za-z0-9\s\-.,:;()/#]*$/;
+
+type ObservedDate = {
+  month: string;
+  day: string;
+  year: string;
 };
-const NUM_TO_MONTH: Record<string, string> = {
-  "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "May", "06": "Jun",
-  "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec",
-};
-const PAGE_NUMBER_RE = /^[A-Za-z0-9][A-Za-z0-9\s\-–—.,:;()/#]*$/;
+
+function observedDateToIso(d: ObservedDate): string {
+  const yy = d.year.trim();
+  if (!yy) return "";
+  const mRaw = d.month.trim();
+  const dRaw = d.day.trim();
+  const mm = mRaw.padStart(2, "0");
+  const dd = dRaw.padStart(2, "0");
+  const mNum = Number(mm);
+  if (
+    mm.length === 2 &&
+    dd.length === 2 &&
+    !Number.isNaN(mNum) &&
+    mNum >= 1 &&
+    mNum <= 12
+  ) {
+    return `${yy}-${mm}-${dd}`;
+  }
+  return yy;
+}
+
+function isoToObservedDate(raw: unknown): ObservedDate | null {
+  const s = String(raw ?? "").slice(0, 10);
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, d] = s.split("-");
+    return { year: y, month: m, day: d };
+  }
+  const y = s.match(/^(\d{4})/);
+  return y ? { year: y[1], month: "", day: "" } : null;
+}
 
 /** Field-error key → element id, in DOM order (drives scroll-to-first-error). */
 const FIELD_ERROR_SCROLL_TARGETS: Array<[string, string]> = [
   ["state", "state"],
   ["town", "town"],
-  ["manuscript", "manuscript"],
-  ["earliestDate", "earliest-year"],
-  ["datePairs", "earliest-year"],
+  ["inscriptionText", "inscription-text"],
   ["shape", "shape"],
   ["color", "color"],
-  ["lettering", "lettering"],
-  ["framing", "framing"],
+  ["observedDates", "observed-date-0-year"],
   ["dateFormat", "date-format"],
   ["diameterMm", "diameter-mm"],
   ["widthMm", "width-mm"],
   ["heightMm", "height-mm"],
-  ["inscriptionText", "inscription-text"],
+  ["lettering", "lettering"],
   ["images", "postmark-images-input"],
 ];
 
@@ -134,15 +156,6 @@ function scrollToFirstError(errors: Record<string, string | undefined>) {
     return;
   }
 }
-
-type DatePair = {
-  earliestDay: string;
-  earliestMonth: string;
-  earliestYear: string;
-  latestDay: string;
-  latestMonth: string;
-  latestYear: string;
-};
 
 type ReferenceDetailInput = {
   pageNumber: string;
@@ -242,39 +255,6 @@ function parseReferenceWorkDetails(raw: unknown): Record<number, ReferenceDetail
   return out;
 }
 
-function parseDateTokenToParts(raw: string): { day: string; month: string; year: string } {
-  const s = String(raw || "").trim();
-  if (!s) return { day: "", month: "", year: "" };
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (iso) {
-    return {
-      day: iso[3],
-      month: NUM_TO_MONTH[iso[2]] ?? "",
-      year: iso[1],
-    };
-  }
-  const y = s.match(/^(\d{4})$/);
-  if (y) return { day: "", month: "", year: y[1] };
-  return { day: "", month: "", year: "" };
-}
-
-function parseDateRangeToken(raw: string): DatePair | null {
-  const s = String(raw || "").trim();
-  if (!s) return null;
-  const [first, last] = parseDateRange(s);
-  const a = parseDateTokenToParts(first);
-  const b = parseDateTokenToParts(last);
-  if (!a.year || !b.year) return null;
-  return {
-    earliestDay: a.day,
-    earliestMonth: a.month,
-    earliestYear: a.year,
-    latestDay: b.day,
-    latestMonth: b.month,
-    latestYear: b.year,
-  };
-}
-
 function formatReferenceWorkForReferences(
   work: ReferenceWorkRecord,
   detail?: ReferenceDetailInput,
@@ -331,26 +311,22 @@ const Contribute = () => {
   const [state, setState] = useState("");
 
   const [town, setTown] = useState("");
-  // Earliest/Latest Use (UI): day/month/year or Unknown.
-  // Backend accepts year-only or full ISO date (YYYY-MM-DD) via firstSeen/lastSeen.
-  const [earliestDay, setEarliestDay] = useState("");
-  const [earliestMonth, setEarliestMonth] = useState("");
-  const [earliestYear, setEarliestYear] = useState("");
-  const [earliestUnknown, setEarliestUnknown] = useState(false);
-  const [latestDay, setLatestDay] = useState("");
-  const [latestMonth, setLatestMonth] = useState("");
-  const [latestYear, setLatestYear] = useState("");
-  const [latestUnknown, setLatestUnknown] = useState(false);
-  const [additionalDatePairs, setAdditionalDatePairs] = useState<DatePair[]>([]);
+  const [markingType, setMarkingType] = useState("");
+  const [rateValue, setRateValue] = useState("");
+  const [rateText, setRateText] = useState("");
+  const [description, setDescription] = useState("");
+  // Dates Observed: list of single date entries (Month/Day/Year as numbers).
+  // Backend still receives firstSeen/lastSeen plus a dates_observed string.
+  const [observedDates, setObservedDates] = useState<ObservedDate[]>([
+    { month: "", day: "", year: "" },
+  ]);
   const [shape, setShape] = useState("");
   const [color, setColor] = useState("");
-  const [rarity, setRarity] = useState("");
   const [widthMm, setWidthMm] = useState("");
   const [heightMm, setHeightMm] = useState("");
-  const [manuscript, setManuscript] = useState("");
+  const [manuscript, setManuscript] = useState("No");
   const [isIrregular, setIsIrregular] = useState(false);
-  const [impression, setImpression] = useState("");
-  const [dateType, setDateType] = useState("");
+  const [impression, setImpression] = useState("Normal");
   const [inscriptionText, setInscriptionText] = useState("");
   const [selectedReferenceWorks, setSelectedReferenceWorks] = useState<ReferenceWorkRecord[]>([]);
   const [referenceDetailsById, setReferenceDetailsById] = useState<Record<number, ReferenceDetailInput>>({});
@@ -368,23 +344,17 @@ const Contribute = () => {
   const [fieldErrors, setFieldErrors] = useState<{
     state?: string;
     town?: string;
-    earliestDate?: string;
-    latestDate?: string;
-    datePairs?: string;
+    observedDates?: string;
     shape?: string;
     color?: string;
     widthMm?: string;
     heightMm?: string;
     diameterMm?: string;
-    manuscript?: string;
     images?: string;
     lettering?: string;
-    framing?: string;
     dateFormat?: string;
     inscriptionText?: string;
   }>({});
-  const [earliestYearError, setEarliestYearError] = useState<string | null>(null);
-  const [latestYearError, setLatestYearError] = useState<string | null>(null);
 
   // Contributor: lettering, framing, date format (loaded for all)
   const [letteringOptions, setLetteringOptions] = useState<LetteringOption[]>([]);
@@ -572,30 +542,41 @@ const Contribute = () => {
         const colorVal = getStr(sd.color);
         setState(stateVal);
         setTown(townVal);
-        // Existing submissions only store year ranges; map into the new Earliest/Latest UI.
-        setEarliestDay("");
-        setEarliestMonth("");
-        setEarliestYear(first || "");
-        setEarliestUnknown(false);
-        setLatestDay("");
-        setLatestMonth("");
-        setLatestYear(last || "");
-        setLatestUnknown(false);
+        const collected: ObservedDate[] = [];
+        const seenKeys = new Set<string>();
+        const pushIfNew = (raw: unknown) => {
+          const od = isoToObservedDate(raw);
+          if (!od) return;
+          const key = `${od.year}-${od.month}-${od.day}`;
+          if (seenKeys.has(key)) return;
+          seenKeys.add(key);
+          collected.push(od);
+        };
+        pushIfNew(first);
+        pushIfNew(last);
         const datesObservedRaw = getStr(sd.dates_observed ?? (sd as Record<string, unknown>).datesObserved);
-        const extraPairs = datesObservedRaw
-          .split(",")
-          .map((x) => parseDateRangeToken(x))
-          .filter((x): x is DatePair => x != null);
-        setAdditionalDatePairs(extraPairs);
+        if (datesObservedRaw) {
+          for (const token of datesObservedRaw.split(",")) {
+            const t = token.trim();
+            if (!t) continue;
+            const isoMatch = t.match(/^(\d{4}-\d{2}-\d{2})/);
+            const yearMatch = t.match(/^(\d{4})/);
+            if (isoMatch) pushIfNew(isoMatch[1]);
+            else if (yearMatch) pushIfNew(yearMatch[1]);
+          }
+        }
+        setObservedDates(
+          collected.length > 0 ? collected : [{ month: "", day: "", year: "" }],
+        );
         setShape(shapeVal || "");
         setColor(colorVal || "");
-        setRarity(getStr(sd.rarity));
         const wh = submittedDataToWidthHeightStrings(sd as Record<string, unknown>);
         setWidthMm(wh.width);
         setHeightMm(wh.height);
-        setManuscript(getStr(sd.manuscript));
-        setImpression(getStr(sd.impression));
-        setDateType(getStr(sd.date_type ?? (sd as Record<string, unknown>).dateType));
+        const loadedManuscript = getStr(sd.manuscript);
+        setManuscript(loadedManuscript === "Yes" ? "Yes" : "No");
+        const loadedImpression = getStr(sd.impression);
+        setImpression(loadedImpression || "Normal");
         setIsIrregular(Boolean(sd.is_irreg ?? (sd as Record<string, unknown>).isIrreg));
         setInscriptionText(getStr(sd.inscription_txt ?? (sd as Record<string, unknown>).inscriptionText));
         const referenceWorkIds = parseReferenceWorkIds(
@@ -856,42 +837,6 @@ const Contribute = () => {
     return `${town.trim()}, ${stateLabel} ${shape}`.trim();
   };
 
-  const buildDateRange = () => {
-    const y1 = earliestUnknown ? "" : earliestYear.trim();
-    const y2 = latestUnknown ? "" : latestYear.trim();
-    if (!y1) return "";
-
-    const mkIso = (d: string, m: string, y: string) => {
-      const yy = y.trim();
-      if (!yy) return "";
-      const dd = d.trim().padStart(2, "0");
-      const mmTxt = m.trim();
-      const mm = MONTH_TO_NUM[mmTxt];
-      if (!mm || !dd || dd.length !== 2) return "";
-      return `${yy}-${mm}-${dd}`;
-    };
-
-    const firstIso = earliestUnknown ? "" : mkIso(earliestDay, earliestMonth, earliestYear);
-    const lastIso = latestUnknown ? "" : mkIso(latestDay, latestMonth, latestYear);
-
-    // Prefer full dates when day+month are provided; otherwise fall back to year-only.
-    const first = firstIso || y1;
-    const last = lastIso || y2;
-    if (!last) return first;
-    // If we are sending ISO dates, use a delimiter with spaces to avoid ambiguity.
-    const isIso = first.length === 10 || last.length === 10;
-    return isIso ? `${first} - ${last}` : `${first}-${last}`;
-  };
-
-  const formatDateLabel = (d: string, m: string, y: string, unknown: boolean) => {
-    if (unknown) return "Unknown";
-    const yy = y.trim();
-    const mm = m.trim();
-    const dd = d.trim();
-    const parts = [dd, mm, yy].filter(Boolean);
-    return parts.length ? parts.join(" ") : "";
-  };
-
   const isCircularType = (raw: string) => {
     const s = (raw || "").toLowerCase();
     return (
@@ -928,14 +873,43 @@ const Contribute = () => {
     if (townVal && /[0-9]/.test(townVal)) {
       errors.town = "Town/City must contain only letters and spaces";
     }
-    if (!manuscript.trim()) {
-      errors.manuscript = "Manuscript is required";
-    }
     if (manuscript === "No" && !shapeVal) {
       errors.shape = "Shape is required when Manuscript is No";
     }
     if (!inscriptionText.trim()) {
-      errors.inscriptionText = "Inscription Text is required";
+      errors.inscriptionText = "Townmark Text is required";
+    }
+
+    // Dates Observed: at least the first entry must have a year, month, or day.
+    const firstDate = observedDates[0];
+    if (
+      !firstDate ||
+      (!firstDate.month.trim() && !firstDate.day.trim() && !firstDate.year.trim())
+    ) {
+      errors.observedDates = "Enter at least one date";
+    } else {
+      for (const od of observedDates) {
+        if (!od.month.trim() && !od.day.trim() && !od.year.trim()) continue;
+        const yErr = validateYearString(od.year);
+        if (yErr) {
+          errors.observedDates = yErr;
+          break;
+        }
+        if (od.month.trim()) {
+          const m = Number(od.month);
+          if (Number.isNaN(m) || m < 1 || m > 12) {
+            errors.observedDates = "Month must be between 1 and 12";
+            break;
+          }
+        }
+        if (od.day.trim()) {
+          const d = Number(od.day);
+          if (Number.isNaN(d) || d < 1 || d > 31) {
+            errors.observedDates = "Day must be between 1 and 31";
+            break;
+          }
+        }
+      }
     }
 
     // Dimensions: if circular, use diameter; otherwise width/height pair.
@@ -1006,82 +980,12 @@ const Contribute = () => {
       return;
     }
 
-    // Year format: validated only when a year is entered (no longer required).
-    const earliestYearRangeError = validateYearString(earliestYear.trim());
-    setEarliestYearError(earliestYearRangeError);
-    if (earliestYearRangeError) {
-      toast({
-        title: "Invalid year",
-        description: earliestYearRangeError,
-        variant: "destructive",
-      });
-      document.getElementById("earliest-year")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      return;
-    }
-    const latestYearRangeError = validateYearString(latestYear.trim());
-    setLatestYearError(latestYearRangeError);
-    if (latestYearRangeError) {
-      toast({
-        title: "Invalid year",
-        description: latestYearRangeError,
-        variant: "destructive",
-      });
-      document.getElementById("latest-year")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      return;
-    }
-
-    for (const pair of additionalDatePairs) {
-      const mkIsoOrYear = (d: string, m: string, y: string) => {
-        const yy = y.trim();
-        if (!yy) return "";
-        const dd = d.trim().padStart(2, "0");
-        const mm = MONTH_TO_NUM[m.trim()];
-        if (mm && dd && dd.length === 2) return `${yy}-${mm}-${dd}`;
-        return yy;
-      };
-      const first = mkIsoOrYear(pair.earliestDay, pair.earliestMonth, pair.earliestYear);
-      const last = mkIsoOrYear(pair.latestDay, pair.latestMonth, pair.latestYear);
-      if (!first || !last) {
-        const msg = "Each additional pair requires both Earliest Use and Latest Use.";
-        setFieldErrors((prev) => ({ ...prev, datePairs: msg }));
-        scrollToFirstError({ datePairs: msg });
-        return;
-      }
-      const firstErr = validateYearString(pair.earliestYear.trim());
-      const lastErr = validateYearString(pair.latestYear.trim());
-      if (firstErr || lastErr) {
-        const msg = firstErr || lastErr || "Invalid additional date pair.";
-        setFieldErrors((prev) => ({ ...prev, datePairs: msg }));
-        scrollToFirstError({ datePairs: msg });
-        return;
-      }
-      if (Number(first) > Number(last)) {
-        const msg = "Earliest Year must be less than or equal to Latest Year in each pair.";
-        setFieldErrors((prev) => ({ ...prev, datePairs: msg }));
-        scrollToFirstError({ datePairs: msg });
-        return;
-      }
-    }
-
-    const dateRange = buildDateRange(); // may be empty when Unknown
-    const datesObservedToSend = additionalDatePairs
-      .map((pair) => {
-        const mkIsoOrYear = (d: string, m: string, y: string) => {
-          const yy = y.trim();
-          if (!yy) return "";
-          const dd = d.trim().padStart(2, "0");
-          const mm = MONTH_TO_NUM[m.trim()];
-          if (mm && dd && dd.length === 2) return `${yy}-${mm}-${dd}`;
-          return yy;
-        };
-        const first = mkIsoOrYear(pair.earliestDay, pair.earliestMonth, pair.earliestYear);
-        const last = mkIsoOrYear(pair.latestDay, pair.latestMonth, pair.latestYear);
-        if (!first || !last) return "";
-        const isIso = first.length === 10 || last.length === 10;
-        return isIso ? `${first} - ${last}` : `${first}-${last}`;
-      })
-      .filter(Boolean)
-      .join(", ");
+    const validIsoDates = observedDates
+      .map(observedDateToIso)
+      .filter((s) => s.length > 0);
+    const datesObservedToSend = validIsoDates.length > 1
+      ? validIsoDates.slice(1).join(", ")
+      : "";
     const referencesToSend = selectedReferenceWorks
       .map((work) => formatReferenceWorkForReferences(work, referenceDetailsById[work.id]))
       .filter(Boolean)
@@ -1122,23 +1026,11 @@ const Contribute = () => {
 
       let body: string | FormData;
 
-      const mkIso = (d: string, m: string, y: string) => {
-        const yy = y.trim();
-        if (!yy) return "";
-        const dd = d.trim().padStart(2, "0");
-        const mm = MONTH_TO_NUM[m.trim()];
-        if (!mm || !dd || dd.length !== 2) return "";
-        return `${yy}-${mm}-${dd}`;
-      };
-
-      const firstSeenToSend = earliestUnknown
-        ? ""
-        : mkIso(earliestDay, earliestMonth, earliestYear) || earliestYear.trim();
-      const lastSeenToSend = latestUnknown
-        ? ""
-        : mkIso(latestDay, latestMonth, latestYear) || latestYear.trim();
-      const earliestLabel = formatDateLabel(earliestDay, earliestMonth, earliestYear, earliestUnknown);
-      const latestLabel = formatDateLabel(latestDay, latestMonth, latestYear, latestUnknown);
+      const firstSeenToSend = validIsoDates[0] ?? "";
+      const lastSeenToSend =
+        validIsoDates.length > 1
+          ? validIsoDates[validIsoDates.length - 1]
+          : firstSeenToSend;
       const derivedIsCircular = isCircularType(shapeVal);
       const derivedDimensions = (() => {
         const d = diameterMm.trim();
@@ -1161,12 +1053,11 @@ const Contribute = () => {
         form.append("shape", shapeVal);
         if (shapeVal) form.append("type", shapeVal);
         form.append("color", colorVal);
-        if (rarity.trim()) form.append("rarity", rarity.trim());
         if (derivedDimensions) form.append("dimensions", derivedDimensions);
         if (manuscript.trim()) form.append("manuscript", manuscript.trim());
         form.append("is_irreg", String(isIrregular));
         if (impression.trim()) form.append("impression", impression.trim());
-        if (dateType.trim()) form.append("date_type", dateType.trim());
+        if (description.trim()) form.append("description", description.trim());
         if (inscriptionToSend) form.append("inscription_txt", inscriptionToSend);
         if (referencesToSend) form.append("references", referencesToSend);
         referenceWorkIdsToSend.forEach((id) => form.append("reference_work_ids[]", String(id)));
@@ -1203,12 +1094,11 @@ const Contribute = () => {
           shape: shapeVal,
           type: shapeVal || undefined,
           color: colorVal,
-          rarity: rarity.trim() || undefined,
           dimensions: derivedDimensions || undefined,
           manuscript: manuscript.trim() || undefined,
           is_irreg: isIrregular,
           impression: impression.trim() || undefined,
-          date_type: dateType.trim() || undefined,
+          description: description.trim() || undefined,
           inscription_txt: inscriptionToSend || undefined,
           references: referencesToSend || undefined,
           reference_work_ids: referenceWorkIdsToSend.length > 0 ? referenceWorkIdsToSend : undefined,
@@ -1263,25 +1153,19 @@ const Contribute = () => {
 
       setState("");
       setTown("");
-      setEarliestDay("");
-      setEarliestMonth("");
-      setEarliestYear("");
-      setEarliestUnknown(false);
-      setLatestDay("");
-      setLatestMonth("");
-      setLatestYear("");
-      setLatestUnknown(false);
-      setAdditionalDatePairs([]);
+      setMarkingType("");
+      setRateValue("");
+      setRateText("");
+      setDescription("");
+      setObservedDates([{ month: "", day: "", year: "" }]);
       setShape("");
       setColor("");
-      setRarity("");
       setWidthMm("");
       setHeightMm("");
       setDiameterMm("");
-      setManuscript("");
+      setManuscript("No");
       setIsIrregular(false);
-      setImpression("");
-      setDateType("");
+      setImpression("Normal");
       setInscriptionText("");
       setPendingReferenceWorkIds([]);
       setSelectedReferenceWorks([]);
@@ -1296,7 +1180,6 @@ const Contribute = () => {
       setLetteringId("");
       setFramingIds([]);
       setDateFormatIds([]);
-      setDateType("");
       if (postmarkFileInputRef.current) postmarkFileInputRef.current.value = "";
       if (ratemarkFileInputRef.current) ratemarkFileInputRef.current.value = "";
       if (auxmarkFileInputRef.current) auxmarkFileInputRef.current.value = "";
@@ -1460,24 +1343,69 @@ const Contribute = () => {
 
                   <form onSubmit={handleSubmit} className="space-y-6" noValidate>
                     <div className="space-y-2">
-                      <Label htmlFor="inscription-text">
-                        Inscription Text <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
-                      <Textarea
-                        id="inscription-text"
-                        placeholder="Exact text inscribed on the marking device (abbreviations/annotations)."
-                        value={inscriptionText}
+                      <Label htmlFor="marking-type">Marking Type</Label>
+                      <Select value={markingType} onValueChange={setMarkingType}>
+                        <SelectTrigger id="marking-type">
+                          <SelectValue placeholder="Select marking type..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {MARKING_TYPE_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="manuscript"
+                        type="checkbox"
+                        className="h-4 w-4 accent-primary"
+                        checked={manuscript === "Yes"}
                         onChange={(e) => {
-                          setInscriptionText(e.target.value);
-                          if (fieldErrors.inscriptionText) {
-                            setFieldErrors((prev) => ({ ...prev, inscriptionText: undefined }));
+                          const next = e.target.checked ? "Yes" : "No";
+                          setManuscript(next);
+                          if (next === "Yes") {
+                            setShape("");
+                            setFieldErrors((p) => ({ ...p, shape: undefined }));
                           }
                         }}
-                        rows={3}
-                        className={fieldErrors.inscriptionText ? "border-destructive" : ""}
                       />
-                      {fieldErrors.inscriptionText && (
-                        <p className="text-sm text-destructive">{fieldErrors.inscriptionText}</p>
+                      <Label htmlFor="manuscript">Manuscript</Label>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="town">Town/City</Label>
+                      <Input
+                        id="town"
+                        type="text"
+                        value={town}
+                        onChange={(e) => {
+                          setTown(sanitizeTown(e.target.value));
+                          if (fieldErrors.town) {
+                            setFieldErrors((prev) => ({ ...prev, town: undefined }));
+                          }
+                        }}
+                        placeholder="Enter town/city..."
+                        list="town-options"
+                        aria-label="Town or city"
+                        className={fieldErrors.town ? "border-destructive" : ""}
+                      />
+                      {/* <datalist id="town-options">
+                        {townOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value} />
+                        ))}
+                      </datalist> */}
+                      {loadingTowns && state ? (
+                        <p className="text-xs text-muted-foreground">Loading town suggestions...</p>
+                      ) : null}
+                      {townOptionsError && state ? (
+                        <p className="text-xs text-destructive">{townOptionsError}</p>
+                      ) : null}
+                      {fieldErrors.town && (
+                        <p className="text-sm text-destructive">{fieldErrors.town}</p>
                       )}
                     </div>
 
@@ -1515,435 +1443,26 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="town">Town/City</Label>
-                      <Input
-                        id="town"
-                        type="text"
-                        value={town}
+                      <Label htmlFor="inscription-text">
+                        Townmark Text <span className="text-destructive" aria-hidden="true">*</span>
+                      </Label>
+                      <Textarea
+                        id="inscription-text"
+                        placeholder="Exact text inscribed on the marking device (abbreviations/annotations)."
+                        value={inscriptionText}
                         onChange={(e) => {
-                          setTown(sanitizeTown(e.target.value));
-                          if (fieldErrors.town) {
-                            setFieldErrors((prev) => ({ ...prev, town: undefined }));
+                          setInscriptionText(e.target.value);
+                          if (fieldErrors.inscriptionText) {
+                            setFieldErrors((prev) => ({ ...prev, inscriptionText: undefined }));
                           }
                         }}
-                        placeholder="Enter town/city..."
-                        list="town-options"
-                        aria-label="Town or city"
-                        className={fieldErrors.town ? "border-destructive" : ""}
+                        rows={3}
+                        className={fieldErrors.inscriptionText ? "border-destructive" : ""}
                       />
-                      {/* <datalist id="town-options">
-                        {townOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value} />
-                        ))}
-                      </datalist> */}
-                      {loadingTowns && state ? (
-                        <p className="text-xs text-muted-foreground">Loading town suggestions...</p>
-                      ) : null}
-                      {townOptionsError && state ? (
-                        <p className="text-xs text-destructive">{townOptionsError}</p>
-                      ) : null}
-                      {fieldErrors.town && (
-                        <p className="text-sm text-destructive">{fieldErrors.town}</p>
+                      {fieldErrors.inscriptionText && (
+                        <p className="text-sm text-destructive">{fieldErrors.inscriptionText}</p>
                       )}
                     </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="manuscript">
-                        Manuscript <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
-                      <Select
-                        value={manuscript}
-                        onValueChange={(v) => {
-                          setManuscript(v);
-                          if (fieldErrors.manuscript) {
-                            setFieldErrors((prev) => ({ ...prev, manuscript: undefined }));
-                          }
-                        }}
-                      >
-                        <SelectTrigger id="manuscript" className={fieldErrors.manuscript ? "border-destructive" : ""}>
-                          <SelectValue placeholder="Select Yes/No..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {MANUSCRIPT_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {fieldErrors.manuscript && <p className="text-sm text-destructive">{fieldErrors.manuscript}</p>}
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="impression">Impression</Label>
-                      <Select value={impression} onValueChange={setImpression}>
-                        <SelectTrigger id="impression">
-                          <SelectValue placeholder="Select impression..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {IMPRESSION_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-3">
-                      <div className="space-y-2">
-                        <Label>Earliest Use</Label>
-                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-                          <div className="space-y-1">
-                            <Label htmlFor="earliest-day" className="text-xs text-muted-foreground">
-                              Day
-                            </Label>
-                            <Input
-                              id="earliest-day"
-                              type="text"
-                              inputMode="numeric"
-                              placeholder="DD"
-                              value={earliestDay}
-                              onChange={(e) => {
-                                const v = e.target.value.replace(/\D/g, "").slice(0, 2);
-                                setEarliestDay(v);
-                                if (fieldErrors.earliestDate) setFieldErrors((p) => ({ ...p, earliestDate: undefined }));
-                              }}
-                              disabled={earliestUnknown}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs text-muted-foreground">Month</Label>
-                            <Select
-                              value={earliestMonth}
-                              onValueChange={(v) => {
-                                setEarliestMonth(v);
-                                if (fieldErrors.earliestDate) setFieldErrors((p) => ({ ...p, earliestDate: undefined }));
-                              }}
-                              disabled={earliestUnknown}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Month" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {MONTH_OPTIONS.map((m) => (
-                                  <SelectItem key={m} value={m}>
-                                    {m}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-1">
-                            <Label htmlFor="earliest-year" className="text-xs text-muted-foreground">
-                              Year
-                            </Label>
-                            <Input
-                              id="earliest-year"
-                              type="text"
-                              inputMode="numeric"
-                              placeholder="YYYY"
-                              value={earliestYear}
-                              onChange={(e) => {
-                                const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                                setEarliestYear(v);
-                                if (fieldErrors.earliestDate) setFieldErrors((p) => ({ ...p, earliestDate: undefined }));
-                                setEarliestYearError(validateYearString(v));
-                              }}
-                              disabled={earliestUnknown}
-                              className={earliestYearError ? "border-destructive" : ""}
-                            />
-                          </div>
-                          <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 accent-primary"
-                              checked={earliestUnknown}
-                              onChange={(e) => {
-                                const checked = e.target.checked;
-                                setEarliestUnknown(checked);
-                                if (checked) {
-                                  setEarliestDay("");
-                                  setEarliestMonth("");
-                                  setEarliestYear("");
-                                  setEarliestYearError(null);
-                                }
-                                if (fieldErrors.earliestDate) setFieldErrors((p) => ({ ...p, earliestDate: undefined }));
-                              }}
-                            />
-                            Unknown
-                          </label>
-                        </div>
-                        {fieldErrors.earliestDate && <p className="text-sm text-destructive">{fieldErrors.earliestDate}</p>}
-                        {earliestYearError && !fieldErrors.earliestDate && <p className="text-sm text-destructive">{earliestYearError}</p>}
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label>Latest Use</Label>
-                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
-                          <div className="space-y-1">
-                            <Label htmlFor="latest-day" className="text-xs text-muted-foreground">
-                              Day
-                            </Label>
-                            <Input
-                              id="latest-day"
-                              type="text"
-                              inputMode="numeric"
-                              placeholder="DD"
-                              value={latestDay}
-                              onChange={(e) => {
-                                const v = e.target.value.replace(/\D/g, "").slice(0, 2);
-                                setLatestDay(v);
-                                if (fieldErrors.latestDate) setFieldErrors((p) => ({ ...p, latestDate: undefined }));
-                              }}
-                              disabled={latestUnknown}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs text-muted-foreground">Month</Label>
-                            <Select
-                              value={latestMonth}
-                              onValueChange={(v) => {
-                                setLatestMonth(v);
-                                if (fieldErrors.latestDate) setFieldErrors((p) => ({ ...p, latestDate: undefined }));
-                              }}
-                              disabled={latestUnknown}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Month" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {MONTH_OPTIONS.map((m) => (
-                                  <SelectItem key={m} value={m}>
-                                    {m}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-1">
-                            <Label htmlFor="latest-year" className="text-xs text-muted-foreground">
-                              Year
-                            </Label>
-                            <Input
-                              id="latest-year"
-                              type="text"
-                              inputMode="numeric"
-                              placeholder="YYYY"
-                              value={latestYear}
-                              onChange={(e) => {
-                                const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                                setLatestYear(v);
-                                if (fieldErrors.latestDate) setFieldErrors((p) => ({ ...p, latestDate: undefined }));
-                                setLatestYearError(validateYearString(v));
-                              }}
-                              disabled={latestUnknown}
-                              className={latestYearError ? "border-destructive" : ""}
-                            />
-                          </div>
-                          <label className="flex items-center gap-2 text-sm text-muted-foreground select-none">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 accent-primary"
-                              checked={latestUnknown}
-                              onChange={(e) => {
-                                const checked = e.target.checked;
-                                setLatestUnknown(checked);
-                                if (checked) {
-                                  setLatestDay("");
-                                  setLatestMonth("");
-                                  setLatestYear("");
-                                  setLatestYearError(null);
-                                }
-                                if (fieldErrors.latestDate) setFieldErrors((p) => ({ ...p, latestDate: undefined }));
-                              }}
-                            />
-                            Unknown
-                          </label>
-                        </div>
-                        {fieldErrors.latestDate && <p className="text-sm text-destructive">{fieldErrors.latestDate}</p>}
-                        {latestYearError && !fieldErrors.latestDate && <p className="text-sm text-destructive">{latestYearError}</p>}
-                        <p className="text-xs text-muted-foreground">
-                          Optional. Leave blank if unknown, or enter Day/Month/Year, or choose Unknown.
-                        </p>
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <Label>Additional Earliest/Latest pairs</Label>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              setAdditionalDatePairs((prev) => [
-                                ...prev,
-                                {
-                                  earliestDay: "",
-                                  earliestMonth: "",
-                                  earliestYear: "",
-                                  latestDay: "",
-                                  latestMonth: "",
-                                  latestYear: "",
-                                },
-                              ])
-                            }
-                          >
-                            Add date
-                          </Button>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Add extra date ranges with the same date inputs. Saved in submitted data as comma-separated values.
-                        </p>
-                        <div className="space-y-2">
-                          {additionalDatePairs.map((pair, idx) => (
-                            <div key={idx} className="space-y-2 rounded-md border border-border p-3">
-                              <div className="flex items-center justify-between">
-                                <p className="text-xs font-medium text-muted-foreground">Pair {idx + 1}</p>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() =>
-                                    setAdditionalDatePairs((prev) => prev.filter((_, i) => i !== idx))
-                                  }
-                                >
-                                  Remove
-                                </Button>
-                              </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
-                                <div className="space-y-1">
-                                  <Label className="text-xs text-muted-foreground">Earliest Day</Label>
-                                  <Input
-                                    type="text"
-                                    inputMode="numeric"
-                                    placeholder="DD"
-                                    value={pair.earliestDay}
-                                    onChange={(e) => {
-                                      const v = e.target.value.replace(/\D/g, "").slice(0, 2);
-                                      setAdditionalDatePairs((prev) =>
-                                        prev.map((p, i) => (i === idx ? { ...p, earliestDay: v } : p))
-                                      );
-                                      if (fieldErrors.datePairs) {
-                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
-                                      }
-                                    }}
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <Label className="text-xs text-muted-foreground">Earliest Month</Label>
-                                  <Select
-                                    value={pair.earliestMonth}
-                                    onValueChange={(v) => {
-                                      setAdditionalDatePairs((prev) =>
-                                        prev.map((p, i) => (i === idx ? { ...p, earliestMonth: v } : p))
-                                      );
-                                      if (fieldErrors.datePairs) {
-                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
-                                      }
-                                    }}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Month" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {MONTH_OPTIONS.map((m) => (
-                                        <SelectItem key={m} value={m}>
-                                          {m}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <div className="space-y-1">
-                                  <Label className="text-xs text-muted-foreground">Earliest Year</Label>
-                                  <Input
-                                    type="text"
-                                    inputMode="numeric"
-                                    placeholder="YYYY"
-                                    value={pair.earliestYear}
-                                    onChange={(e) => {
-                                      const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                                      setAdditionalDatePairs((prev) =>
-                                        prev.map((p, i) => (i === idx ? { ...p, earliestYear: v } : p))
-                                      );
-                                      if (fieldErrors.datePairs) {
-                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
-                                      }
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
-                                <div className="space-y-1">
-                                  <Label className="text-xs text-muted-foreground">Latest Day</Label>
-                                  <Input
-                                    type="text"
-                                    inputMode="numeric"
-                                    placeholder="DD"
-                                    value={pair.latestDay}
-                                    onChange={(e) => {
-                                      const v = e.target.value.replace(/\D/g, "").slice(0, 2);
-                                      setAdditionalDatePairs((prev) =>
-                                        prev.map((p, i) => (i === idx ? { ...p, latestDay: v } : p))
-                                      );
-                                      if (fieldErrors.datePairs) {
-                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
-                                      }
-                                    }}
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <Label className="text-xs text-muted-foreground">Latest Month</Label>
-                                  <Select
-                                    value={pair.latestMonth}
-                                    onValueChange={(v) => {
-                                      setAdditionalDatePairs((prev) =>
-                                        prev.map((p, i) => (i === idx ? { ...p, latestMonth: v } : p))
-                                      );
-                                      if (fieldErrors.datePairs) {
-                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
-                                      }
-                                    }}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Month" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {MONTH_OPTIONS.map((m) => (
-                                        <SelectItem key={m} value={m}>
-                                          {m}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <div className="space-y-1">
-                                  <Label className="text-xs text-muted-foreground">Latest Year</Label>
-                                  <Input
-                                    type="text"
-                                    inputMode="numeric"
-                                    placeholder="YYYY"
-                                    value={pair.latestYear}
-                                    onChange={(e) => {
-                                      const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                                      setAdditionalDatePairs((prev) =>
-                                        prev.map((p, i) => (i === idx ? { ...p, latestYear: v } : p))
-                                      );
-                                      if (fieldErrors.datePairs) {
-                                        setFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
-                                      }
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        {fieldErrors.datePairs && (
-                          <p className="text-sm text-destructive">{fieldErrors.datePairs}</p>
-                        )}
-                      </div>
-                    </div>
-
                     <div className="space-y-2">
                       <Label htmlFor="shape">
                         Shape
@@ -2016,31 +1535,127 @@ const Contribute = () => {
                       )}
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="rarity">Rarity</Label>
-                      <Input
-                        id="rarity"
-                        type="text"
-                        value={rarity}
-                        onChange={(e) => setRarity(e.target.value)}
-                        placeholder="e.g., Common, Scarce, Rare"
-                      />
+                      <div className="flex items-center justify-between gap-2">
+                        <Label>Dates Observed</Label>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setObservedDates((prev) => [
+                              ...prev,
+                              { month: "", day: "", year: "" },
+                            ])
+                          }
+                        >
+                          Add Date
+                        </Button>
+                      </div>
+                      <div className="space-y-2">
+                        {observedDates.map((entry, idx) => (
+                          <div
+                            key={idx}
+                            className="space-y-2 rounded-md border border-border p-3"
+                          >
+                            <div className="flex items-center justify-between">
+                              <p className="text-xs font-medium text-muted-foreground">
+                                Date {idx + 1}
+                              </p>
+                              {observedDates.length > 1 && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    setObservedDates((prev) =>
+                                      prev.filter((_, i) => i !== idx),
+                                    )
+                                  }
+                                >
+                                  Remove
+                                </Button>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                              <div className="space-y-1">
+                                <Label className="text-xs text-muted-foreground">Month</Label>
+                                <Input
+                                  type="text"
+                                  inputMode="numeric"
+                                  placeholder="MM"
+                                  value={entry.month}
+                                  onChange={(e) => {
+                                    const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+                                    setObservedDates((prev) =>
+                                      prev.map((p, i) =>
+                                        i === idx ? { ...p, month: v } : p,
+                                      ),
+                                    );
+                                    if (fieldErrors.observedDates) {
+                                      setFieldErrors((prev) => ({
+                                        ...prev,
+                                        observedDates: undefined,
+                                      }));
+                                    }
+                                  }}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs text-muted-foreground">Day</Label>
+                                <Input
+                                  type="text"
+                                  inputMode="numeric"
+                                  placeholder="DD"
+                                  value={entry.day}
+                                  onChange={(e) => {
+                                    const v = e.target.value.replace(/\D/g, "").slice(0, 2);
+                                    setObservedDates((prev) =>
+                                      prev.map((p, i) =>
+                                        i === idx ? { ...p, day: v } : p,
+                                      ),
+                                    );
+                                    if (fieldErrors.observedDates) {
+                                      setFieldErrors((prev) => ({
+                                        ...prev,
+                                        observedDates: undefined,
+                                      }));
+                                    }
+                                  }}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs text-muted-foreground" htmlFor={`observed-date-${idx}-year`}>Year</Label>
+                                <Input
+                                  id={`observed-date-${idx}-year`}
+                                  type="text"
+                                  inputMode="numeric"
+                                  placeholder="YYYY"
+                                  value={entry.year}
+                                  onChange={(e) => {
+                                    const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                    setObservedDates((prev) =>
+                                      prev.map((p, i) =>
+                                        i === idx ? { ...p, year: v } : p,
+                                      ),
+                                    );
+                                    if (fieldErrors.observedDates) {
+                                      setFieldErrors((prev) => ({
+                                        ...prev,
+                                        observedDates: undefined,
+                                      }));
+                                    }
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {fieldErrors.observedDates && (
+                        <p className="text-sm text-destructive">{fieldErrors.observedDates}</p>
+                      )}
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="date-type">Date type</Label>
-                      <Select value={dateType} onValueChange={setDateType}>
-                        <SelectTrigger id="date-type">
-                          <SelectValue placeholder="Select date type (optional)" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {DATE_TYPE_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
                     <div className="space-y-2">
                       <Label>
                         <span
@@ -2086,68 +1701,36 @@ const Contribute = () => {
                       {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
                     </div>
                     <div className="space-y-2">
-                      <Label>
-                        <span
-                          className="cursor-help border-b border-dotted border-muted-foreground/40"
-                          title="Lettering style describes the shape/appearance of the letters used in the postmark text."
-                        >
-                          Lettering style
-                        </span>
-                      </Label>
-                      <Select value={letteringId} onValueChange={(v) => { setLetteringId(v); setFieldErrors((prev) => ({ ...prev, lettering: undefined })); }} disabled={catalogOptionsLoading}>
-                        <SelectTrigger className={fieldErrors.lettering ? "border-destructive" : ""}>
-                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select lettering style"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {letteringOptions.map((opt) => (
-                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {fieldErrors.lettering && <p className="text-sm text-destructive">{fieldErrors.lettering}</p>}
+                      <Label htmlFor="description">Description</Label>
+                      <Textarea
+                        id="description"
+                        placeholder="Details about the postmark..."
+                        rows={4}
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                      />
                     </div>
+
                     <div className="space-y-2">
-                      <Label>
-                        <span
-                          className="cursor-help border-b border-dotted border-muted-foreground/40"
-                          title="Framing style describes lines/boxes/circles surrounding the postmark text."
-                        >
-                          Framing style
-                        </span>
-                      </Label>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild disabled={catalogOptionsLoading}>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className={`w-full justify-start text-left font-normal ${fieldErrors.framing ? "border-destructive" : ""}`}
-                          >
-                            {catalogOptionsLoading ? "Loading..." : selectedFramingSummary}
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64 overflow-auto">
-                          {framingOptions.map((opt) => {
-                            const value = String(opt.id);
-                            const checked = framingIds.includes(value);
-                            return (
-                              <DropdownMenuCheckboxItem
-                                key={opt.id}
-                                checked={checked}
-                                onCheckedChange={(next) => {
-                                  setFramingIds((prev) => {
-                                    if (next) return prev.includes(value) ? prev : [...prev, value];
-                                    return prev.filter((id) => id !== value);
-                                  });
-                                  setFieldErrors((prev) => ({ ...prev, framing: undefined }));
-                                }}
-                              >
-                                {opt.name}
-                              </DropdownMenuCheckboxItem>
-                            );
-                          })}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      {fieldErrors.framing && <p className="text-sm text-destructive">{fieldErrors.framing}</p>}
+                      <Label htmlFor="rate-value">Rate Value</Label>
+                      <Input
+                        id="rate-value"
+                        type="text"
+                        placeholder="e.g. 5"
+                        value={rateValue}
+                        onChange={(e) => setRateValue(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="rate-text">Rate Text</Label>
+                      <Input
+                        id="rate-text"
+                        type="text"
+                        placeholder="Text appearing on the rate mark"
+                        value={rateText}
+                        onChange={(e) => setRateText(e.target.value)}
+                      />
                     </div>
 
                     {showDiameter ? (
@@ -2434,20 +2017,48 @@ const Contribute = () => {
                       </p>
                     </div>
 
+                    <div className="space-y-2">
+                      <Label>
+                        <span
+                          className="cursor-help border-b border-dotted border-muted-foreground/40"
+                          title="Lettering style describes the shape/appearance of the letters used in the postmark text."
+                        >
+                          Lettering style
+                        </span>
+                      </Label>
+                      <Select value={letteringId} onValueChange={(v) => { setLetteringId(v); setFieldErrors((prev) => ({ ...prev, lettering: undefined })); }} disabled={catalogOptionsLoading}>
+                        <SelectTrigger className={fieldErrors.lettering ? "border-destructive" : ""}>
+                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select lettering style"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {letteringOptions.map((opt) => (
+                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {fieldErrors.lettering && <p className="text-sm text-destructive">{fieldErrors.lettering}</p>}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="impression">Impression</Label>
+                      <Select value={impression} onValueChange={setImpression}>
+                        <SelectTrigger id="impression">
+                          <SelectValue placeholder="Select impression..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {IMPRESSION_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
                     {renderImageUploader(
                       "postmark",
                       "Postmark Images",
                       `PNG, JPG, or TIFF up to ${MAX_IMAGE_SIZE_MB}MB each`,
-                    )}
-                    {renderImageUploader(
-                      "ratemark",
-                      "Ratemark Images (Optional)",
-                      `Upload separate ratemark scans/photos (PNG, JPG, TIFF up to ${MAX_IMAGE_SIZE_MB}MB each).`,
-                    )}
-                    {renderImageUploader(
-                      "auxmark",
-                      "Auxmark Images (Optional)",
-                      `Upload separate auxiliary mark scans/photos (PNG, JPG, TIFF up to ${MAX_IMAGE_SIZE_MB}MB each).`,
                     )}
 
                     <Button
