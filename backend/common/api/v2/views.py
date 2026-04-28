@@ -142,13 +142,21 @@ def _coerce_optional_int(raw_value):
         return None
 
 
-def _extract_int_list(data, list_key: str, singular_key: str, camel_singular_key: str = "") -> list[int]:
+def _extract_int_list(
+    data,
+    list_key: str,
+    singular_key: str,
+    camel_singular_key: str = "",
+    camel_list_key: str = "",
+) -> list[int]:
     values = []
     if hasattr(data, "getlist"):
         values.extend(data.getlist(list_key))
         values.extend(data.getlist(singular_key))
         if camel_singular_key:
             values.extend(data.getlist(camel_singular_key))
+        if camel_list_key:
+            values.extend(data.getlist(camel_list_key))
     elif isinstance(data, dict):
         if list_key in data:
             values.append(data.get(list_key))
@@ -156,6 +164,8 @@ def _extract_int_list(data, list_key: str, singular_key: str, camel_singular_key
             values.append(data.get(singular_key))
         if camel_singular_key and camel_singular_key in data:
             values.append(data.get(camel_singular_key))
+        if camel_list_key and camel_list_key in data:
+            values.append(data.get(camel_list_key))
     return _coerce_reference_work_ids(values)
 
 
@@ -1353,137 +1363,107 @@ class ContributionView(APIView):
 
         if edit_postmark_id is not None:
             # Suggested edits to an existing catalog entry (S6).
-            # - Contributors: create a Contribution ticket for expert review.
-            # - Editors / Administrators (superuser): apply directly to the catalog.
-            role = _get_user_role(user)
-            if role == "contributor" and not getattr(user, "is_superuser", False):
-                # Resolve target Collection from the (possibly edited) state.
-                edit_collection = _resolve_collection_for_state(payload.get("state", ""))
-                if edit_collection is None:
-                    return Response(
-                        {
-                            "detail": (
-                                f"No Collection exists for state \"{payload.get('state', '')}\". "
-                                "Ask an Administrator to create one before submitting a correction."
-                            ),
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                try:
-                    existing_contrib = Contribution.objects.filter(postmark_id=edit_postmark_id).first()
-                    submitted_data = {
-                        "state": payload.get("state", ""),
-                        "state_region_id": payload.get("state_region_id"),
-                        "town": payload.get("town", ""),
-                        "date_range": payload.get("date_range", ""),
-                        "shape": payload.get("shape") or payload.get("type", ""),
-                        "type": payload.get("type") or payload.get("shape", ""),
-                        "color": payload.get("color", ""),
-                        "manuscript": payload.get("manuscript", ""),
-                        "is_irreg": payload.get("is_irreg"),
-                        "impression": payload.get("impression", ""),
-                        "date_type": payload.get("date_type", ""),
-                        "dimensions": payload.get("dimensions", ""),
-                        "inscription_txt": payload.get("inscription_txt", ""),
-                        "references": payload.get("references", ""),
-                        "reference_work_ids": payload.get("reference_work_ids", []),
-                        "reference_work_details": payload.get("reference_work_details", {}),
-                        "lettering_style_id": payload.get("lettering_style_id"),
-                        "framing_style_id": payload.get("framing_style_id"),
-                        "framing_style_ids": payload.get("framing_style_ids", []),
-                        "date_format_id": payload.get("date_format_id"),
-                        "date_format_ids": payload.get("date_format_ids", []),
-                        "ratemarks": payload.get("ratemarks", []),
-                        "auxmarks": payload.get("auxmarks", []),
-                        "rarity": payload.get("rarity", ""),
-                        "submitter_name": submitter_name,
-                        "original_postmark_id": str(edit_postmark_id),
-                    }
-                    if payload.get("contributor_comment"):
-                        submitted_data["contributor_comment"] = (payload.get("contributor_comment") or "").strip()
-                    if payload.get("postmark_image_metas"):
-                        submitted_data["postmark_image_metas"] = payload["postmark_image_metas"]
-                    if payload.get("ratemark_image_metas"):
-                        submitted_data["ratemark_image_metas"] = payload["ratemark_image_metas"]
-                    if payload.get("auxmark_image_metas"):
-                        submitted_data["auxmark_image_metas"] = payload["auxmark_image_metas"]
-                    if payload.get("image_metas"):
-                        submitted_data["image_metas"] = payload["image_metas"]
-                    if payload.get("image_meta"):
-                        submitted_data["image_meta"] = payload["image_meta"]
-
-                    # Contribution.postmark is OneToOne, so only one row can
-                    # exist per catalog postmark. Update existing suggestion
-                    # instead of creating a duplicate that would violate the
-                    # unique constraint.
-                    target_postmark = Postmark.objects.filter(pk=edit_postmark_id).first()
-                    contrib, created = Contribution.objects.update_or_create(
-                        postmark_id=edit_postmark_id,
-                        defaults={
-                            "contributor": user,
-                            "collection": edit_collection,
-                            "status": Contribution.STATUS_PENDING,
-                            "submitted_data": submitted_data,
-                        },
-                    )
-                    log_submission_transaction(
-                        action=(
-                            SubmissionTransaction.ACTION_SUBMIT
-                            if created
-                            else SubmissionTransaction.ACTION_EDIT_SUBMISSION
-                        ),
-                        actor=user,
-                        contribution=contrib,
-                        postmark=target_postmark or contrib.postmark,
-                        source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
-                        before_payload={} if created else (existing_contrib.submitted_data if existing_contrib else {}),
-                        after_payload=submitted_data,
-                        extra_payload={"created": created, "mode": "suggested_catalog_edit"},
-                    )
-                    detail_msg = (
-                        "Correction submitted for review. An Editor will review and apply it."
-                        if created
-                        else "Correction updated. An Editor will review and apply it."
-                    )
-                    return Response(
-                        {
-                            "detail": detail_msg,
-                            "contributionId": contrib.id,
-                        },
-                        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
-                    )
-                except Exception:
-                    return Response(
-                        {"detail": "Could not save your correction. Please try again."},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    )
-
-            # Editors and Administrators (superuser): update catalog directly.
-            pre_update_postmark = Postmark.objects.filter(pk=edit_postmark_id).first()
-            before_snapshot = build_postmark_snapshot(pre_update_postmark)
-            postmark = _update_postmark_in_catalog(edit_postmark_id, payload, submitter_name)
-            if not postmark:
+            # Always create/update a Contribution ticket for review.
+            # Master listing updates happen only after explicit approval.
+            edit_collection = _resolve_collection_for_state(payload.get("state", ""))
+            if edit_collection is None:
                 return Response(
-                    {"detail": "Could not apply catalog edit. Ensure the target listing exists and try again."},
+                    {
+                        "detail": (
+                            f"No Collection exists for state \"{payload.get('state', '')}\". "
+                            "Ask an Administrator to create one before submitting a correction."
+                        ),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                existing_contrib = Contribution.objects.filter(postmark_id=edit_postmark_id).first()
+                submitted_data = {
+                    "state": payload.get("state", ""),
+                    "state_region_id": payload.get("state_region_id"),
+                    "town": payload.get("town", ""),
+                    "date_range": payload.get("date_range", ""),
+                    "shape": payload.get("shape") or payload.get("type", ""),
+                    "type": payload.get("type") or payload.get("shape", ""),
+                    "color": payload.get("color", ""),
+                    "manuscript": payload.get("manuscript", ""),
+                    "is_irreg": payload.get("is_irreg"),
+                    "impression": payload.get("impression", ""),
+                    "date_type": payload.get("date_type", ""),
+                    "dimensions": payload.get("dimensions", ""),
+                    "inscription_txt": payload.get("inscription_txt", ""),
+                    "references": payload.get("references", ""),
+                    "reference_work_ids": payload.get("reference_work_ids", []),
+                    "reference_work_details": payload.get("reference_work_details", {}),
+                    "lettering_style_id": payload.get("lettering_style_id"),
+                    "framing_style_id": payload.get("framing_style_id"),
+                    "framing_style_ids": payload.get("framing_style_ids", []),
+                    "date_format_id": payload.get("date_format_id"),
+                    "date_format_ids": payload.get("date_format_ids", []),
+                    "ratemarks": payload.get("ratemarks", []),
+                    "auxmarks": payload.get("auxmarks", []),
+                    "rarity": payload.get("rarity", ""),
+                    "submitter_name": submitter_name,
+                    "original_postmark_id": str(edit_postmark_id),
+                }
+                if payload.get("contributor_comment"):
+                    submitted_data["contributor_comment"] = (payload.get("contributor_comment") or "").strip()
+                if payload.get("postmark_image_metas"):
+                    submitted_data["postmark_image_metas"] = payload["postmark_image_metas"]
+                if payload.get("ratemark_image_metas"):
+                    submitted_data["ratemark_image_metas"] = payload["ratemark_image_metas"]
+                if payload.get("auxmark_image_metas"):
+                    submitted_data["auxmark_image_metas"] = payload["auxmark_image_metas"]
+                if payload.get("image_metas"):
+                    submitted_data["image_metas"] = payload["image_metas"]
+                if payload.get("image_meta"):
+                    submitted_data["image_meta"] = payload["image_meta"]
+
+                # Contribution.postmark is OneToOne, so only one row can
+                # exist per catalog postmark. Update existing suggestion
+                # instead of creating a duplicate that would violate the
+                # unique constraint.
+                target_postmark = Postmark.objects.filter(pk=edit_postmark_id).first()
+                contrib, created = Contribution.objects.update_or_create(
+                    postmark_id=edit_postmark_id,
+                    defaults={
+                        "contributor": user,
+                        "collection": edit_collection,
+                        "status": Contribution.STATUS_PENDING,
+                        "submitted_data": submitted_data,
+                    },
+                )
+                log_submission_transaction(
+                    action=(
+                        SubmissionTransaction.ACTION_SUBMIT
+                        if created
+                        else SubmissionTransaction.ACTION_EDIT_SUBMISSION
+                    ),
+                    actor=user,
+                    contribution=contrib,
+                    postmark=target_postmark or contrib.postmark,
+                    source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
+                    before_payload={} if created else (existing_contrib.submitted_data if existing_contrib else {}),
+                    after_payload=submitted_data,
+                    extra_payload={"created": created, "mode": "suggested_catalog_edit"},
+                )
+                detail_msg = (
+                    "Correction submitted for review. An Editor will review and apply it."
+                    if created
+                    else "Correction updated. An Editor will review and apply it."
+                )
+                return Response(
+                    {
+                        "detail": detail_msg,
+                        "contributionId": contrib.id,
+                    },
+                    status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+                )
+            except Exception:
+                return Response(
+                    {"detail": "Could not save your correction. Please try again."},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
-            _sync_postmark_citations_from_payload(postmark, payload, request.user)
-            postmark.refresh_from_db()
-            after_snapshot = build_postmark_snapshot(postmark)
-            txn = log_submission_transaction(
-                action=SubmissionTransaction.ACTION_CATALOG_DIRECT_EDIT,
-                actor=request.user,
-                postmark=postmark,
-                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-                before_payload=before_snapshot,
-                after_payload=after_snapshot,
-                extra_payload={"edit_postmark_id": edit_postmark_id},
-            )
-            create_postmark_version(postmark, txn, request.user)
-            return Response(
-                {"detail": "Catalog entry updated successfully.", "postmarkId": postmark.postmark_id},
-                status=status.HTTP_200_OK,
-            )
 
         contrib = _create_contribution_only(payload, contributor=user, collection=target_collection)
         if not contrib:
@@ -2613,20 +2593,6 @@ def _postmark_list_queryset():
     ).annotate(
         earliest_date_observed=Min('dates_observed__date'),
         latest_date_observed=Max('dates_observed__date'),
-        ratemark_count=Count('postmark_ratemarks', distinct=True),
-        auxmark_count=Coalesce(
-            Subquery(
-                Auxmark.objects.filter(
-                    parent_mark_type='POSTMARK',
-                    parent_mark_id=OuterRef('postmark_id'),
-                )
-                .values('parent_mark_id')
-                .annotate(c=Count('*'))
-                .values('c')[:1],
-                output_field=IntegerField(),
-            ),
-            0,
-        ),
     )
 
 
@@ -2687,7 +2653,13 @@ class PostmarkViewSet(viewsets.ModelViewSet):
         'lettering__name',
         'color__name',
     ]
-    ordering_fields = ['code', 'created_date', 'earliest_date_observed', 'latest_date_observed']
+    ordering_fields = [
+        'post_office__region__name',
+        'post_office__name',
+        'type',
+        'earliest_date_observed',
+        'latest_date_observed',
+    ]
     ordering = ['post_office__region__name', 'post_office__name', 'earliest_date_observed', 'postmark_id']
     
     def get_serializer_class(self):

@@ -12,6 +12,10 @@ export function CatalogRecordFields({ row }: { row: CatalogFieldValues }) {
   return (
     <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
       <div className="min-w-0">
+        <span className="text-muted-foreground">Type:</span>{" "}
+        <span className="text-foreground break-words">{row.type}</span>
+      </div>
+      <div className="min-w-0">
         <span className="text-muted-foreground">Shape:</span>{" "}
         <span className="text-foreground break-words">{row.shape}</span>
       </div>

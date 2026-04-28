@@ -49,8 +49,8 @@ export interface PostmarkApiResponse {
     earliestUse?: string;
     latestUse?: string;
     color?: PostmarkIdNameRef | null;
-    ratemarkCount?: number;
-    auxmarkCount?: number;
+    type?: string;
+    markingId?: number;
   }
 
   /** v2 postmark-ratemarks/?postmark=<id> row (enriched with nested ratemark + auxmark count). */
@@ -492,18 +492,15 @@ export interface PostmarkChangelogResponse {
             ? String(item.latestUse)
             : "",
       color: normalizedColor,
-      ratemarkCount:
-        typeof item.ratemark_count === "number"
-          ? item.ratemark_count
-          : typeof item.ratemarkCount === "number"
-            ? item.ratemarkCount
-            : undefined,
-      auxmarkCount:
-        typeof item.auxmark_count === "number"
-          ? item.auxmark_count
-          : typeof item.auxmarkCount === "number"
-            ? item.auxmarkCount
-            : undefined,
+      type: String(item.type ?? "").trim() || "Townmark",
+      markingId:
+        typeof item.marking_id === "number"
+          ? item.marking_id
+          : typeof item.markingId === "number"
+            ? item.markingId
+            : typeof item.id === "number"
+              ? item.id
+              : undefined,
     };
   }
 
@@ -566,6 +563,24 @@ export async function getPostmarkChangelog(postmarkId: number): Promise<Postmark
       withCredentials: true,
       headers: { Accept: "application/json" },
     });
+    return res.data;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRatemarkById(ratemarkId: number): Promise<any | null> {
+  try {
+    const res = await apiClient.get(`/ratemarks/${ratemarkId}/`);
+    return res.data;
+  } catch {
+    return null;
+  }
+}
+
+export async function getAuxmarkById(auxmarkId: number): Promise<any | null> {
+  try {
+    const res = await apiClient.get(`/auxmarks/${auxmarkId}/`);
     return res.data;
   } catch {
     return null;

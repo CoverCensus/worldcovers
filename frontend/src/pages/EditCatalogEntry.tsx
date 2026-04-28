@@ -109,6 +109,7 @@ type ReferenceDetailFieldErrors = {
 };
 
 type ImageCategory = "postmark" | "ratemark" | "auxmark";
+type UploadedImageTag = "mark" | "cover" | "tracing" | "";
 const PAGE_NUMBER_RE = /^[A-Za-z0-9][A-Za-z0-9\s\-–—.,:;()/#]*$/;
 
 function getYearError(value: string, opts: { required: boolean; label: string }): string | null {
@@ -315,10 +316,13 @@ const EditCatalogEntry = () => {
   const [existingImageUrls, setExistingImageUrls] = useState<string[]>([]);
   const [postmarkImageFiles, setPostmarkImageFiles] = useState<File[]>([]);
   const [postmarkImagePreviews, setPostmarkImagePreviews] = useState<string[]>([]);
+  const [postmarkImageTags, setPostmarkImageTags] = useState<UploadedImageTag[]>([]);
   const [ratemarkImageFiles, setRatemarkImageFiles] = useState<File[]>([]);
   const [ratemarkImagePreviews, setRatemarkImagePreviews] = useState<string[]>([]);
+  const [ratemarkImageTags, setRatemarkImageTags] = useState<UploadedImageTag[]>([]);
   const [auxmarkImageFiles, setAuxmarkImageFiles] = useState<File[]>([]);
   const [auxmarkImagePreviews, setAuxmarkImagePreviews] = useState<string[]>([]);
+  const [auxmarkImageTags, setAuxmarkImageTags] = useState<UploadedImageTag[]>([]);
   const [letteringId, setLetteringId] = useState("");
   const [framingIds, setFramingIds] = useState<string[]>([]);
   const [dateFormatIds, setDateFormatIds] = useState<string[]>([]);
@@ -340,11 +344,13 @@ const EditCatalogEntry = () => {
     observedDates?: string;
     shape?: string;
     color?: string;
+    inscriptionText?: string;
     widthMm?: string;
     heightMm?: string;
     diameterMm?: string;
     lettering?: string;
     dateFormat?: string;
+    imageTags?: string;
   }>({});
 
   /** Town/City: letters, spaces, hyphens, apostrophes only */
@@ -354,6 +360,12 @@ const EditCatalogEntry = () => {
       .then(setColorOptions)
       .catch(() => setColorOptions([{ id: 0, name: "Black", value: "" }]));
   }, []);
+
+  useEffect(() => {
+    if (color.trim()) return;
+    const black = colorOptions.find((c) => c.name.trim().toLowerCase() === "black");
+    if (black) setColor(black.name);
+  }, [colorOptions, color]);
 
   useEffect(() => {
     setLoadingTowns(true);
@@ -464,6 +476,8 @@ const EditCatalogEntry = () => {
           if (!data) setRecordError("Record not found");
           return;
         }
+        const datesObservedRaw = data.datesObserved ?? data.dates_observed ?? [];
+        const datesObservedArr: Record<string, unknown>[] = Array.isArray(datesObservedRaw) ? datesObservedRaw : [];
         const datesSeenRaw = data.datesSeen ?? data.dates_seen ?? [];
         const datesSeenArr: Record<string, unknown>[] = Array.isArray(datesSeenRaw) ? datesSeenRaw : [];
         const sortedDatesSeen = [...datesSeenArr].sort((a, b) => {
@@ -497,6 +511,15 @@ const EditCatalogEntry = () => {
           : [];
 
         setExistingImageUrls(existingUrls);
+        const typeRaw = String(data.type ?? "").trim().toLowerCase();
+        if (typeRaw.includes("rate")) {
+          setMarkingType("Rate mark");
+        } else if (typeRaw.includes("aux")) {
+          setMarkingType("Auxiliary/Instructional Mark");
+        } else {
+          setMarkingType("Town mark");
+        }
+
         setState(data.state || "");
         setTown(sanitizeTown(data.town || ""));
 
@@ -510,6 +533,9 @@ const EditCatalogEntry = () => {
           seenKeys.add(key);
           collected.push(od);
         };
+        for (const row of datesObservedArr) {
+          pushIfNew((row as any)?.date);
+        }
         for (const row of sortedDatesSeen) {
           pushIfNew((row as any)?.earliestDateSeen ?? (row as any)?.earliest_date_seen);
           pushIfNew((row as any)?.latestDateSeen ?? (row as any)?.latest_date_seen);
@@ -517,17 +543,38 @@ const EditCatalogEntry = () => {
         setObservedDates(
           collected.length > 0 ? collected : [{ month: "", day: "", year: "" }],
         );
-        setShape(data?.postmarkShape?.shapeName || "");
-        setColor(data.color?.color_name || data.color?.colorName || data.color?.name || "");
-        setWidthMm(wh.width);
-        setHeightMm(wh.height);
-        setManuscript(data.isManuscript ? "Yes" : "No");
-        setIsIrregular(Boolean(data.is_irreg ?? data.isIrreg));
-        setImpression(String(data.impression ?? ""));
+        const shapeRaw = String(
+          data?.postmarkShape?.shapeName ??
+          data?.shapeName ??
+          data?.shape_name ??
+          "",
+        ).trim();
+        if (shapeRaw) {
+          setShape(shapeRaw);
+        } else {
+          const shapeIdRaw = data?.shape;
+          const shapeById = shapeOptions.find((opt) => String(opt.id) === String(shapeIdRaw ?? ""));
+          setShape(shapeById?.name ?? "");
+        }
+        setColor(
+          String(
+            data.colorsDisplay ??
+            data.colors_display ??
+            data.color?.color_name ??
+            data.color?.colorName ??
+            data.color?.name ??
+            "",
+          ),
+        );
+        setWidthMm(String(data.width ?? wh.width ?? "").replace(/[^0-9.]/g, ""));
+        setHeightMm(String(data.height ?? wh.height ?? "").replace(/[^0-9.]/g, ""));
+        setManuscript(Boolean(data.isManuscript ?? data.is_manuscript) ? "Yes" : "No");
+        setIsIrregular(Boolean(data.is_irreg ?? data.isIrreg ?? data.isIrregular));
+        setImpression(String(data.impression ?? "Normal"));
         setInscriptionText(String(data.inscription_txt ?? data.inscriptionTxt ?? ""));
         // Only prefill the textarea with an actual description, not raw otherCharacteristics
         // so users don't have to clear default "Submitted by: ..." lines.
-        setDescription(parsed.description || "");
+        setDescription(String(data.desc ?? data.catalogTxt ?? parsed.description ?? ""));
         const referenceWorkIds = parseReferenceWorkIds(
           data.reference_work_ids ??
           data.referenceWorkIds ??
@@ -543,7 +590,8 @@ const EditCatalogEntry = () => {
         const letteringIdRaw =
           data.lettering_style_id ?? data.letteringStyleId
           ?? data.lettering_style?.lettering_style_id ?? data.lettering_style?.letteringStyleId
-          ?? (data as any).letteringStyle?.lettering_style_id ?? (data as any).letteringStyle?.letteringStyleId;
+          ?? (data as any).letteringStyle?.lettering_style_id ?? (data as any).letteringStyle?.letteringStyleId
+          ?? data.lettering;
         const framingIdRaw =
           data.framing_style_id ?? data.framingStyleId
           ?? data.framing_style?.framing_style_id ?? data.framing_style?.framingStyleId
@@ -551,8 +599,25 @@ const EditCatalogEntry = () => {
         const dateFormatIdRaw =
           data.date_format_id ?? data.dateFormatId
           ?? data.date_format?.date_format_id ?? data.date_format?.dateFormatId
-          ?? (data as any).dateFormat?.date_format_id ?? (data as any).dateFormat?.dateFormatId;
-        setLetteringId(letteringIdRaw != null ? String(letteringIdRaw) : "");
+          ?? (data as any).dateFormat?.date_format_id ?? (data as any).dateFormat?.dateFormatId
+          ?? data.dateFmt;
+        const letteringStyleNameRaw = String(
+          data.letteringStyleName ??
+          data.lettering_style_name ??
+          data.lettering_style?.name ??
+          (data as any).letteringStyle?.name ??
+          "",
+        ).trim();
+        if (letteringIdRaw != null && /^\d+$/.test(String(letteringIdRaw).trim())) {
+          setLetteringId(String(letteringIdRaw));
+        } else if (letteringStyleNameRaw) {
+          const letteringByName = letteringOptions.find(
+            (opt) => String(opt.name).trim().toLowerCase() === letteringStyleNameRaw.toLowerCase(),
+          );
+          setLetteringId(letteringByName ? String(letteringByName.id) : "");
+        } else {
+          setLetteringId("");
+        }
         const framingIdsRaw = data.framing_style_ids ?? data.framingStyleIds;
         if (Array.isArray(framingIdsRaw) && framingIdsRaw.length > 0) {
           setFramingIds(framingIdsRaw.map((x: unknown) => String(x)).filter(Boolean));
@@ -561,9 +626,41 @@ const EditCatalogEntry = () => {
         }
         const dateFormatIdsRaw = data.date_format_ids ?? data.dateFormatIds;
         if (Array.isArray(dateFormatIdsRaw) && dateFormatIdsRaw.length > 0) {
-          setDateFormatIds(dateFormatIdsRaw.map((x: unknown) => String(x)).filter(Boolean));
+          const resolvedIds = dateFormatIdsRaw
+            .map((x: unknown) => String(x ?? "").trim())
+            .map((raw) => {
+              if (/^\d+$/.test(raw)) return raw;
+              const byNameOrCode = dateFormatOptions.find((opt) => {
+                const name = String(opt.name).trim().toLowerCase();
+                const code = String(opt.description ?? "").trim().toLowerCase();
+                const val = raw.toLowerCase();
+                return name === val || code === val;
+              });
+              return byNameOrCode ? String(byNameOrCode.id) : "";
+            })
+            .filter(Boolean);
+          setDateFormatIds(resolvedIds);
         } else {
-          setDateFormatIds(dateFormatIdRaw != null ? [String(dateFormatIdRaw)] : []);
+          const maybeId = String(dateFormatIdRaw ?? "").trim();
+          const hasNumericId = /^\d+$/.test(maybeId);
+          if (hasNumericId) {
+            setDateFormatIds([maybeId]);
+          } else {
+            const byName = dateFormatOptions.find((opt) => {
+              const val = maybeId.toLowerCase();
+              return String(opt.name).trim().toLowerCase() === val
+                || String(opt.description ?? "").trim().toLowerCase() === val;
+            });
+            setDateFormatIds(byName ? [String(byName.id)] : []);
+          }
+        }
+
+        const impressionRaw = String(data.impression ?? "").trim();
+        if (impressionRaw) {
+          const normalizedImpression = IMPRESSION_OPTIONS.find(
+            (opt) => opt.value.toLowerCase() === impressionRaw.toLowerCase(),
+            );
+          setImpression(normalizedImpression?.value ?? "Normal");
         }
       })
       .catch(() => {
@@ -575,7 +672,7 @@ const EditCatalogEntry = () => {
     return () => {
       cancelled = true;
     };
-  }, [postmarkId]);
+  }, [postmarkId, dateFormatOptions, letteringOptions, shapeOptions]);
 
   const townOptions = useMemo(() => {
     const normalizedState = state.trim().toLowerCase();
@@ -595,10 +692,51 @@ const EditCatalogEntry = () => {
     return towns;
   }, [postOffices, state]);
 
+  const selectedPostOfficeId = useMemo(() => {
+    const normalizedState = state.trim().toLowerCase();
+    const normalizedTown = town.trim().toLowerCase();
+    if (!normalizedState || !normalizedTown) return null;
+    const matched = postOffices.find((facility) => {
+      const facilityState = (facility.state || "").trim().toLowerCase();
+      const facilityTown = (facility.town || "").trim().toLowerCase();
+      return facilityState === normalizedState && facilityTown === normalizedTown;
+    });
+    return matched?.id ?? null;
+  }, [postOffices, state, town]);
+
+  const inscriptionLabel = useMemo(() => {
+    const t = markingType.trim().toLowerCase();
+    if (t === "rate mark") return "Ratemark Text";
+    if (t === "auxiliary/instructional mark") return "Auxmark Text";
+    if (t === "town mark") return "Townmark Text";
+    return "Inscription Text";
+  }, [markingType]);
+
+  const normalizedMarkingType = useMemo(() => markingType.trim().toLowerCase(), [markingType]);
+  const isTownmark = normalizedMarkingType === "town mark";
+  const isRatemark = normalizedMarkingType === "rate mark";
+  const isAuxmark = normalizedMarkingType === "auxiliary/instructional mark";
+  const isHandstamped = manuscript !== "Yes";
+  const showShapeField = isHandstamped;
+  const showDateFormatField = isHandstamped && isTownmark;
+  const showRateValueField = isRatemark;
+  const showAnythingElseSection = isHandstamped && (isTownmark || isRatemark || isAuxmark);
+  const isCircularShape = isCircularType(shape.trim());
+
   const appendCategoryFiles = (category: ImageCategory, files: File[]) => {
-    if (category === "postmark") setPostmarkImageFiles((prev) => [...prev, ...files]);
-    if (category === "ratemark") setRatemarkImageFiles((prev) => [...prev, ...files]);
-    if (category === "auxmark") setAuxmarkImageFiles((prev) => [...prev, ...files]);
+    if (files.length === 0) return;
+    if (category === "postmark") {
+      setPostmarkImageFiles((prev) => [...prev, ...files]);
+      setPostmarkImageTags((prev) => [...prev, ...files.map(() => "" as UploadedImageTag)]);
+    }
+    if (category === "ratemark") {
+      setRatemarkImageFiles((prev) => [...prev, ...files]);
+      setRatemarkImageTags((prev) => [...prev, ...files.map(() => "" as UploadedImageTag)]);
+    }
+    if (category === "auxmark") {
+      setAuxmarkImageFiles((prev) => [...prev, ...files]);
+      setAuxmarkImageTags((prev) => [...prev, ...files.map(() => "" as UploadedImageTag)]);
+    }
   };
 
   const appendCategoryPreviews = (category: ImageCategory, previews: string[]) => {
@@ -663,16 +801,19 @@ const EditCatalogEntry = () => {
     if (category === "postmark") {
       setPostmarkImageFiles((prev) => prev.filter((_, i) => i !== index));
       setPostmarkImagePreviews((prev) => prev.filter((_, i) => i !== index));
+      setPostmarkImageTags((prev) => prev.filter((_, i) => i !== index));
       if (postmarkFileInputRef.current) postmarkFileInputRef.current.value = "";
     }
     if (category === "ratemark") {
       setRatemarkImageFiles((prev) => prev.filter((_, i) => i !== index));
       setRatemarkImagePreviews((prev) => prev.filter((_, i) => i !== index));
+      setRatemarkImageTags((prev) => prev.filter((_, i) => i !== index));
       if (ratemarkFileInputRef.current) ratemarkFileInputRef.current.value = "";
     }
     if (category === "auxmark") {
       setAuxmarkImageFiles((prev) => prev.filter((_, i) => i !== index));
       setAuxmarkImagePreviews((prev) => prev.filter((_, i) => i !== index));
+      setAuxmarkImageTags((prev) => prev.filter((_, i) => i !== index));
       if (auxmarkFileInputRef.current) auxmarkFileInputRef.current.value = "";
     }
   };
@@ -695,13 +836,40 @@ const EditCatalogEntry = () => {
     return auxmarkImagePreviews;
   };
 
+  const getCategoryTags = (category: ImageCategory) => {
+    if (category === "postmark") return postmarkImageTags;
+    if (category === "ratemark") return ratemarkImageTags;
+    return auxmarkImageTags;
+  };
+
+  const setCategoryTagAt = (category: ImageCategory, index: number, value: UploadedImageTag) => {
+    if (category === "postmark") {
+      setPostmarkImageTags((prev) => prev.map((t, i) => (i === index ? value : t)));
+    } else if (category === "ratemark") {
+      setRatemarkImageTags((prev) => prev.map((t, i) => (i === index ? value : t)));
+    } else {
+      setAuxmarkImageTags((prev) => prev.map((t, i) => (i === index ? value : t)));
+    }
+    if (fieldErrors.imageTags) {
+      setFieldErrors((prev) => ({ ...prev, imageTags: undefined }));
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     const stateVal = state === STATE_OTHER_VALUE ? stateOther.trim() : state.trim();
     const townVal = town.trim();
-    const shapeVal = shape.trim();
+    const isManuscriptSelected = manuscript === "Yes";
+    const shapeVal = isManuscriptSelected ? "" : shape.trim();
+    const typeVal = markingType.trim();
+    const shapeIdVal = shapeOptions.find(
+      (opt) => String(opt.name).trim().toLowerCase() === shapeVal.toLowerCase()
+    )?.id;
     const colorVal = color === COLOR_OTHER_VALUE ? colorOther.trim() : color.trim();
+    const colorIdVal = colorOptions.find(
+      (c) => c.name.trim().toLowerCase() === colorVal.toLowerCase()
+    )?.id;
     const isCircular = isCircularType(shapeVal);
 
     const errors: typeof fieldErrors = {};
@@ -711,8 +879,11 @@ const EditCatalogEntry = () => {
     if (!townVal) {
       errors.town = "Town/City is required";
     }
-    if (manuscript === "No" && !shapeVal) {
+    if (!isManuscriptSelected && !shapeVal) {
       errors.shape = "Shape is required when Manuscript is No";
+    }
+    if (!inscriptionText.trim()) {
+      errors.inscriptionText = `${inscriptionLabel} is required`;
     }
 
     // Dates Observed: at least the first entry must have a year, month, or day.
@@ -790,23 +961,10 @@ const EditCatalogEntry = () => {
       return;
     }
 
-    // Dimensions: if circular, use diameter; otherwise width/height pair.
-    if (isCircular) {
-      const d = diameterMm.trim();
-      if (d) {
-        const wErr = validateMmPair(d, d);
-        if (wErr.width) errors.diameterMm = wErr.width;
-        if (wErr.height) errors.diameterMm = wErr.height;
-      } else {
-        const mmErr = validateMmPair(widthMm, heightMm);
-        if (mmErr.width) errors.widthMm = mmErr.width;
-        if (mmErr.height) errors.heightMm = mmErr.height;
-      }
-    } else {
-    const mmErr = validateMmPair(widthMm, heightMm);
+    const effectiveHeight = isCircular ? widthMm : heightMm;
+    const mmErr = validateMmPair(widthMm, effectiveHeight);
     if (mmErr.width) errors.widthMm = mmErr.width;
-    if (mmErr.height) errors.heightMm = mmErr.height;
-    }
+    if (mmErr.height && !isCircular) errors.heightMm = mmErr.height;
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       return;
@@ -843,6 +1001,16 @@ const EditCatalogEntry = () => {
     }
 
     const allImageFiles = [...postmarkImageFiles, ...ratemarkImageFiles, ...auxmarkImageFiles];
+    const allImageTags = [...postmarkImageTags, ...ratemarkImageTags, ...auxmarkImageTags];
+    if (allImageFiles.length > 0 && allImageTags.some((tag) => !String(tag).trim())) {
+      setFieldErrors((prev) => ({ ...prev, imageTags: "Select a tag for each uploaded image." }));
+      toast({
+        title: "Image tag required",
+        description: "Tag every uploaded image as mark, cover, or tracing.",
+        variant: "destructive",
+      });
+      return;
+    }
     const oversized = allImageFiles.filter((f) => f.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
     if (oversized.length) {
       toast({
@@ -866,10 +1034,8 @@ const EditCatalogEntry = () => {
           ? validIsoDates[validIsoDates.length - 1]
           : firstSeenToSend;
       const derivedDimensions = (() => {
-        const d = diameterMm.trim();
         const w = widthMm.trim();
-        const h = heightMm.trim();
-        if (isCircular && d) return `${d} mm diameter`;
+        const h = isCircular ? w : heightMm.trim();
         if (w && h) return `${w}×${h} mm`;
         return "";
       })();
@@ -879,76 +1045,117 @@ const EditCatalogEntry = () => {
       if (allImageFiles.length > 0) {
         const form = new FormData();
         form.append("editPostmarkId", String(postmarkId!));
+        if (selectedPostOfficeId != null) form.append("post_office_id", String(selectedPostOfficeId));
         form.append("state", stateVal);
         form.append("town", townVal);
+        if (typeVal) form.append("type", typeVal);
         form.append("firstSeen", firstSeenToSend);
         form.append("lastSeen", lastSeenToSend);
+        if (firstSeenToSend) form.append("date_seen", firstSeenToSend);
         if (datesObservedToSend) form.append("dates_observed", datesObservedToSend);
-        form.append("shape", shapeVal);
+        if (!isManuscriptSelected) form.append("shape", shapeVal);
+        if (!isManuscriptSelected && shapeIdVal != null) form.append("shape_id", String(shapeIdVal));
+        if (colorIdVal != null) form.append("color_id", String(colorIdVal));
         form.append("color", colorVal);
-        form.append("lettering_style_id", letteringId);
+        if (!isManuscriptSelected && letteringId) form.append("lettering_style_id", letteringId);
+        if (!isManuscriptSelected && letteringId) form.append("lettering_id", letteringId);
         if (framingIds.length > 0) {
           form.append("framing_style_id", framingIds[0]);
           framingIds.forEach((id) => form.append("framing_style_ids[]", id));
         }
         if (dateFormatIds.length > 0) {
           form.append("date_format_id", dateFormatIds[0]);
+          if (showDateFormatField) form.append("date_fmt", dateFormatIds[0]);
           dateFormatIds.forEach((id) => form.append("date_format_ids[]", id));
         }
         if (derivedDimensions) form.append("dimensions", derivedDimensions);
         if (manuscript.trim()) form.append("manuscript", manuscript.trim());
-        form.append("is_irreg", String(isIrregular));
-        if (impression.trim()) form.append("impression", impression.trim());
+        form.append("is_manuscript", String(isManuscriptSelected));
+        if (!isManuscriptSelected) {
+          form.append("is_irreg", String(isIrregular));
+          if (impression.trim()) form.append("impression", impression.trim());
+        }
         if (inscriptionToSend) form.append("inscription_txt", inscriptionToSend);
-        if (descriptionToSend) form.append("description", descriptionToSend);
+        if (showRateValueField && rateValue.trim()) form.append("rate_val", rateValue.trim());
+        if (descriptionToSend) {
+          form.append("description", descriptionToSend);
+          form.append("desc", descriptionToSend);
+        }
         if (referencesToSend) form.append("references", referencesToSend);
         referenceWorkIdsToSend.forEach((id) => form.append("reference_work_ids[]", String(id)));
         if (referenceWorkDetailsToSend.length > 0) {
           form.append("reference_work_details", JSON.stringify(referenceWorkDetailsToSend));
         }
-        if (!isStateEditor && contributorComment.trim()) {
+        if (contributorComment.trim()) {
           form.append("contributorComment", contributorComment.trim());
           form.append("contributor_comment", contributorComment.trim());
           form.append("commentForEditor", contributorComment.trim());
           form.append("comment_for_editor", contributorComment.trim());
         }
         if (submitterName) form.append("submitterName", submitterName);
-        for (const file of postmarkImageFiles) form.append("postmark_image", file, file.name);
+        for (const file of postmarkImageFiles) {
+          form.append("postmark_image", file, file.name);
+          form.append("image", file, file.name);
+        }
         for (const file of ratemarkImageFiles) form.append("ratemark_image", file, file.name);
         for (const file of auxmarkImageFiles) form.append("auxmark_image", file, file.name);
+        form.append("postmark_image_tags", JSON.stringify(postmarkImageTags));
+        form.append("ratemark_image_tags", JSON.stringify(ratemarkImageTags));
+        form.append("auxmark_image_tags", JSON.stringify(auxmarkImageTags));
+        form.append(
+          "image_tags",
+          JSON.stringify([
+            ...postmarkImageTags.map((tag, index) => ({ category: "postmark", index, tag })),
+            ...ratemarkImageTags.map((tag, index) => ({ category: "ratemark", index, tag })),
+            ...auxmarkImageTags.map((tag, index) => ({ category: "auxmark", index, tag })),
+          ])
+        );
         body = form;
       } else {
         body = JSON.stringify({
           editPostmarkId: postmarkId!,
+          post_office_id: selectedPostOfficeId ?? undefined,
           state: stateVal,
           town: townVal,
+          type: typeVal || undefined,
           firstSeen: firstSeenToSend,
           lastSeen: lastSeenToSend,
+          date_seen: firstSeenToSend || undefined,
           dates_observed: datesObservedToSend || undefined,
-          shape: shapeVal,
+          shape: isManuscriptSelected ? null : shapeVal,
+          shape_id: isManuscriptSelected ? null : shapeIdVal ?? null,
           color: colorVal,
-          lettering_style_id: letteringId ? Number(letteringId) : undefined,
+          color_id: colorIdVal ?? undefined,
+          lettering_style_id: isManuscriptSelected ? null : letteringId ? Number(letteringId) : undefined,
+          lettering_id: isManuscriptSelected ? null : letteringId ? Number(letteringId) : undefined,
           framing_style_id: framingIds[0] ? Number(framingIds[0]) : undefined,
           framing_style_ids: framingIds.length > 0 ? framingIds.map((id) => Number(id)) : undefined,
           date_format_id: dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
+          date_fmt: showDateFormatField && dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
           date_format_ids: dateFormatIds.length > 0 ? dateFormatIds.map((id) => Number(id)) : undefined,
           dimensions: derivedDimensions || undefined,
           manuscript: manuscript.trim() || undefined,
-          is_irreg: isIrregular,
-          impression: impression.trim() || undefined,
+          is_manuscript: isManuscriptSelected,
+          is_irreg: isManuscriptSelected ? null : isIrregular,
+          impression: isManuscriptSelected ? null : impression.trim() || undefined,
+          rate_val: showRateValueField ? rateValue.trim() || undefined : undefined,
           inscription_txt: inscriptionToSend || undefined,
           description: descriptionToSend || undefined,
+          desc: descriptionToSend || undefined,
           references: referencesToSend || undefined,
           reference_work_ids: referenceWorkIdsToSend.length > 0 ? referenceWorkIdsToSend : undefined,
           reference_work_details: referenceWorkDetailsToSend.length > 0 ? referenceWorkDetailsToSend : undefined,
-          ...(isStateEditor || !contributorComment.trim()
-            ? {}
-            : {
+          postmark_image_tags: postmarkImageTags,
+          ratemark_image_tags: ratemarkImageTags,
+          auxmark_image_tags: auxmarkImageTags,
+          ...(contributorComment.trim()
+            ? {
                 contributorComment: contributorComment.trim(),
                 contributor_comment: contributorComment.trim(),
                 commentForEditor: contributorComment.trim(),
                 comment_for_editor: contributorComment.trim(),
-              }),
+              }
+            : {}),
           submitterName: submitterName || undefined,
         });
         headers["Content-Type"] = "application/json";
@@ -976,42 +1183,21 @@ const EditCatalogEntry = () => {
       }
 
       const result = await res.json().catch(() => ({} as any));
-      const updatedId = (result as any)?.postmarkId as number | undefined;
       const contributionId = (result as any)?.contributionId as number | undefined;
-
-      if (updatedId) {
-        toast({
-          title: "Entry updated",
-          description: "Your catalog entry has been updated.",
-        });
-      } else if (contributionId) {
-        toast({
-          title: "Correction submitted",
-          description: "Your suggested edit has been sent for review by a State Editor.",
-        });
-      } else {
-        toast({
-          title: "Submitted",
-          description: "Your changes have been submitted.",
-        });
-      }
+      toast({
+        title: "Submitted for review",
+        description:
+          "Changes to master listing fields are submitted for editor approval and do not update the catalog directly.",
+      });
 
       const fromDashboard = location.state?.fromDashboard;
       const fromDashboardDirect = location.state?.fromDashboardDirect;
       const fromDashboardViaDetail = location.state?.fromDashboardViaDetail;
       const fromSearch = location.state?.fromSearch;
 
-      if (fromDashboardDirect) {
-        navigate("/dashboard");
-      } else if (fromDashboardViaDetail && updatedId) {
-        navigate(`/record/api-${updatedId}`, {
-          state: { fromDashboard: true },
-        });
-      } else if (updatedId) {
-        navigate(`/record/api-${updatedId}`, {
-          state: fromSearch ? { fromSearch: true } : undefined,
-        });
-      } else if (fromDashboard) {
+      if (contributionId) {
+        navigate(`/contribution/${contributionId}`, { state: { fromDashboard: true } });
+      } else if (fromDashboardDirect || fromDashboard || fromDashboardViaDetail) {
         navigate("/dashboard");
       } else if (fromSearch) {
         navigate("/search");
@@ -1038,11 +1224,13 @@ const EditCatalogEntry = () => {
     const inputRef = getCategoryInputRef(category);
     const files = getCategoryFiles(category);
     const previews = getCategoryPreviews(category);
+    const tags = getCategoryTags(category);
     const hasExisting = includeExisting && existingImageUrls.length > 0;
 
     return (
       <div className="space-y-2">
         <Label>{label}</Label>
+        {fieldErrors.imageTags && <p className="text-sm text-destructive">{fieldErrors.imageTags}</p>}
         {hasExisting && (
           <div className="space-y-2">
             <p className="text-sm text-muted-foreground">
@@ -1098,6 +1286,21 @@ const EditCatalogEntry = () => {
                   <div key={i} className="relative rounded border bg-muted/30 overflow-hidden">
                     <img src={preview} alt={`New image ${i + 1}`} className="w-full aspect-square object-contain max-h-32" />
                     <p className="text-xs text-muted-foreground truncate px-2 py-1">{files[i]?.name}</p>
+                    <div className="px-2 pb-2">
+                      <Select
+                        value={tags[i] ?? ""}
+                        onValueChange={(value) => setCategoryTagAt(category, i, value as UploadedImageTag)}
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Tag: mark/cover/tracing" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="mark">mark</SelectItem>
+                          <SelectItem value="cover">cover</SelectItem>
+                          <SelectItem value="tracing">tracing</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <Button
                       type="button"
                       variant="destructive"
@@ -1183,10 +1386,6 @@ const EditCatalogEntry = () => {
     );
   }
 
-  const role = user?.role;
-  const isStateEditor = role === "editor" || role === "administrator" || !!user?.is_superuser;
-  const isContributor = role === "contributor";
-
   return (
     <div className="min-h-screen flex flex-col">
       <Navigation />
@@ -1203,9 +1402,7 @@ const EditCatalogEntry = () => {
               Edit Catalog Entry
             </h1>
             <p className="text-muted-foreground">
-              {isStateEditor
-                ? "Update the catalog entry directly. All fields are prefilled where data exists."
-                : "Suggest corrections to this catalog entry. Your suggestion will be reviewed by a State Editor before it appears in the catalog."}
+              Edit requests are prefilled from the selected record and always go through the approval workflow before master listing data is updated.
             </p>
           </div>
 
@@ -1257,6 +1454,9 @@ const EditCatalogEntry = () => {
                           setManuscript(next);
                           if (next === "Yes") {
                             setShape("");
+                            setLetteringId("");
+                            setImpression("Normal");
+                            setIsIrregular(false);
                             setFieldErrors((p) => ({ ...p, shape: undefined }));
                           }
                         }}
@@ -1342,17 +1542,26 @@ const EditCatalogEntry = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="edit-inscription-text">Townmark Text</Label>
+                      <Label htmlFor="edit-inscription-text">{inscriptionLabel}</Label>
                       <Textarea
                         id="edit-inscription-text"
                         placeholder="Exact text inscribed on the marking device (abbreviations/annotations)."
                         value={inscriptionText}
-                        onChange={(e) => setInscriptionText(e.target.value)}
+                        onChange={(e) => {
+                          setInscriptionText(e.target.value);
+                          if (fieldErrors.inscriptionText) {
+                            setFieldErrors((prev) => ({ ...prev, inscriptionText: undefined }));
+                          }
+                        }}
                         rows={3}
+                        className={fieldErrors.inscriptionText ? "border-destructive" : ""}
                       />
+                      {fieldErrors.inscriptionText && (
+                        <p className="text-sm text-destructive">{fieldErrors.inscriptionText}</p>
+                      )}
                     </div>
 
-                    {manuscript !== "Yes" && (
+                    {showShapeField && (
                     <div className="space-y-2">
                       <Label htmlFor="edit-shape">
                         Shape <span className="text-destructive" aria-hidden="true">*</span>
@@ -1382,7 +1591,7 @@ const EditCatalogEntry = () => {
                     </div>
                     )}
 
-                    <div className="flex items-center gap-2">
+                    {showAnythingElseSection && <div className="flex items-center gap-2">
                       <input
                         id="edit-is-irregular"
                         type="checkbox"
@@ -1391,7 +1600,7 @@ const EditCatalogEntry = () => {
                         onChange={(e) => setIsIrregular(e.target.checked)}
                       />
                       <Label htmlFor="edit-is-irregular">Is Irregular</Label>
-                    </div>
+                    </div>}
 
                     <div className="space-y-2">
                       <Label htmlFor="edit-color">Color</Label>
@@ -1555,7 +1764,7 @@ const EditCatalogEntry = () => {
                       )}
                     </div>
 
-                    <div className="space-y-2">
+                    {showDateFormatField && <div className="space-y-2">
                       <Label>
                         <span
                           className="cursor-help border-b border-dotted border-muted-foreground/40"
@@ -1583,7 +1792,7 @@ const EditCatalogEntry = () => {
                         aria-label="Date format"
                       />
                       {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
-                    </div>
+                    </div>}
                     <div className="space-y-2">
                       <Label htmlFor="edit-description">Description</Label>
                       <Textarea
@@ -1595,7 +1804,7 @@ const EditCatalogEntry = () => {
                       />
                     </div>
 
-                    <div className="space-y-2">
+                    {showRateValueField && <div className="space-y-2">
                       <Label htmlFor="edit-rate-value">Rate Value</Label>
                       <Input
                         id="edit-rate-value"
@@ -1604,9 +1813,9 @@ const EditCatalogEntry = () => {
                         value={rateValue}
                         onChange={(e) => setRateValue(e.target.value)}
                       />
-                    </div>
+                    </div>}
 
-                    <div className="space-y-2">
+                    {showRateValueField && <div className="space-y-2">
                       <Label htmlFor="edit-rate-text">Rate Text</Label>
                       <Input
                         id="edit-rate-text"
@@ -1615,35 +1824,8 @@ const EditCatalogEntry = () => {
                         value={rateText}
                         onChange={(e) => setRateText(e.target.value)}
                       />
-                    </div>
+                    </div>}
 
-                    {isCircularType(shape.trim()) ? (
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-diameter-mm">Diameter (mm)</Label>
-                        <Input
-                          id="edit-diameter-mm"
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="e.g. 34"
-                          value={diameterMm}
-                          onChange={(e) => {
-                            setDiameterMm(sanitizeMmInput(e.target.value));
-                            if (fieldErrors.diameterMm) {
-                              setFieldErrors((prev) => ({ ...prev, diameterMm: undefined }));
-                            }
-                          }}
-                          className={fieldErrors.diameterMm ? "border-destructive" : ""}
-                          aria-label="Diameter in millimetres"
-                        />
-                        {fieldErrors.diameterMm && (
-                          <p className="text-sm text-destructive">{fieldErrors.diameterMm}</p>
-                        )}
-                        <p className="text-xs text-muted-foreground -mt-1">
-                          Optional. For circular postmarks, enter the diameter.
-                        </p>
-                      </div>
-                    ) : (
-                      <>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="edit-width-mm">Width (mm)</Label>
@@ -1670,7 +1852,7 @@ const EditCatalogEntry = () => {
                           <p className="text-sm text-destructive">{fieldErrors.widthMm}</p>
                         )}
                       </div>
-                      <div className="space-y-2">
+                      {!isCircularShape && <div className="space-y-2">
                         <Label htmlFor="edit-height-mm">Height (mm)</Label>
                         <Input
                           id="edit-height-mm"
@@ -1694,13 +1876,11 @@ const EditCatalogEntry = () => {
                         {fieldErrors.heightMm && (
                           <p className="text-sm text-destructive">{fieldErrors.heightMm}</p>
                         )}
-                      </div>
+                      </div>}
                     </div>
                     <p className="text-xs text-muted-foreground -mt-2">
-                      Optional. If you enter one, enter both. Stored as width × height (mm) on the catalog.
+                      Optional. If circular shape is selected, height is auto-saved as width.
                     </p>
-                      </>
-                    )}
 
                     <div className="space-y-3">
                       <div className="space-y-2">
@@ -1862,20 +2042,18 @@ const EditCatalogEntry = () => {
                       </p>
                     </div>
 
-                    {!isStateEditor && (
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-contributor-comment">Comment for editor</Label>
-                        <Textarea
-                          id="edit-contributor-comment"
-                          placeholder="Explain what you’re changing and why (helps the editor review your suggestion)..."
-                          rows={3}
-                          value={contributorComment}
-                          onChange={(e) => setContributorComment(e.target.value)}
-                        />
-                      </div>
-                    )}
-
                     <div className="space-y-2">
+                      <Label htmlFor="edit-contributor-comment">Comment for editor</Label>
+                      <Textarea
+                        id="edit-contributor-comment"
+                        placeholder="Explain what you’re changing and why (helps the editor review your suggestion)..."
+                        rows={3}
+                        value={contributorComment}
+                        onChange={(e) => setContributorComment(e.target.value)}
+                      />
+                    </div>
+
+                    {showAnythingElseSection && <div className="space-y-2">
                       <Label>
                         <span
                           className="cursor-help border-b border-dotted border-muted-foreground/40"
@@ -1895,9 +2073,9 @@ const EditCatalogEntry = () => {
                         </SelectContent>
                       </Select>
                       {fieldErrors.lettering && <p className="text-sm text-destructive">{fieldErrors.lettering}</p>}
-                    </div>
+                    </div>}
 
-                    <div className="space-y-2">
+                    {showAnythingElseSection && <div className="space-y-2">
                       <Label htmlFor="edit-impression">Impression</Label>
                       <Select value={impression} onValueChange={setImpression}>
                         <SelectTrigger id="edit-impression">
@@ -1911,7 +2089,7 @@ const EditCatalogEntry = () => {
                           ))}
                         </SelectContent>
                       </Select>
-                    </div>
+                    </div>}
 
                     {renderImageUploader(
                       "postmark",
@@ -1925,11 +2103,7 @@ const EditCatalogEntry = () => {
                       className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
                       disabled={submitting}
                     >
-                      {submitting
-                        ? "Submitting..."
-                        : isStateEditor
-                          ? "Save Changes"
-                          : "Submit Suggestion"}
+                      {submitting ? "Submitting..." : "Submit for Approval"}
                     </Button>
                   </form>
 
@@ -1946,17 +2120,10 @@ const EditCatalogEntry = () => {
                   <CardTitle className="font-heading text-lg">About editing</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm text-muted-foreground">
-                  {isStateEditor ? (
-                    <p className="leading-relaxed">
-                      As a State Editor, your changes are applied directly to the catalog entry. Please review
-                      carefully before saving.
-                    </p>
-                  ) : (
-                    <p className="leading-relaxed">
-                      Submitting this form sends your suggested corrections to a State Editor. The original
-                      record remains unchanged until your suggestion is reviewed and approved.
-                    </p>
-                  )}
+                  <p className="leading-relaxed">
+                    Changes to master listing fields never apply directly from this screen. Every edit is submitted as
+                    a contribution and updates the catalog only after approval.
+                  </p>
                 </CardContent>
               </Card>
             </div>

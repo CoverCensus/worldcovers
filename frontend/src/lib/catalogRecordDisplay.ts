@@ -60,6 +60,7 @@ function framingField(record: PostmarkRecord): string {
 
 /** Values for the fixed catalog field block (search cards + record detail). */
 export type CatalogFieldValues = {
+  type: string;
   town: string;
   state: string;
   regionAbbrev: string;
@@ -100,6 +101,7 @@ export function buildCatalogFieldValues(record: PostmarkRecord): CatalogFieldVal
   const colorStr = record.color?.name?.trim() || "";
 
   return {
+    type: displayCatalogField(record.type?.trim() || "Townmark"),
     town: displayCatalogField(record.town),
     state: displayCatalogField(record.state),
     regionAbbrev: displayCatalogField(record.regionAbbrev),
@@ -132,8 +134,6 @@ export type CatalogSearchRowDisplay = CatalogFieldValues & {
   image: string | null;
   /** Optional 2nd image (gallery view shows two side-by-side); null when only one image exists. */
   image2: string | null;
-  ratemarkCount: number;
-  auxmarkCount: number;
 };
 
 /**
@@ -170,7 +170,5 @@ export function buildCatalogSearchRow(record: PostmarkRecord): CatalogSearchRowD
     title: buildSearchTitle(record),
     image: normalizeImageUrl(getPostmarkListImageUrl(record.mainImage)),
     image2: normalizeImageUrl(getPostmarkListImageUrl(record.secondImage ?? null)),
-    ratemarkCount: typeof record.ratemarkCount === "number" ? record.ratemarkCount : 0,
-    auxmarkCount: typeof record.auxmarkCount === "number" ? record.auxmarkCount : 0,
   };
 }

@@ -56,6 +56,14 @@ const MARKING_TYPE_OPTIONS = [
   { value: "Auxiliary/Instructional Mark", label: "Auxiliary/Instructional Mark" },
 ];
 
+function normalizeMarkingTypeValue(raw: string): "Townmark" | "Ratemark" | "Auxmark" | "" {
+  const v = String(raw || "").trim().toLowerCase().replace(/[\s/_-]+/g, "");
+  if (v === "townmark") return "Townmark";
+  if (v === "ratemark") return "Ratemark";
+  if (v.includes("aux")) return "Auxmark";
+  return "";
+}
+
 const MIN_YEAR = 1661;
 const CURRENT_YEAR = new Date().getFullYear();
 
@@ -895,7 +903,7 @@ const Contribute = () => {
     const townVal = town.trim();
     const isManuscriptSelected = manuscript === "Yes";
     const shapeVal = isManuscriptSelected ? "" : shape.trim();
-    const typeVal = markingType.trim();
+    const typeVal = normalizeMarkingTypeValue(markingType.trim()) || markingType.trim();
     const shapeIdVal = shapeOptions.find(
       (opt) => String(opt.name).trim().toLowerCase() === shapeVal.toLowerCase()
     )?.id;

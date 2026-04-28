@@ -14,7 +14,8 @@ import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { normalizeImageUrl } from "@/services/postmarks";
+import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
+import apiClient from "@/lib/api";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getFramings, type FramingOption } from "@/services/framings";
@@ -30,16 +31,43 @@ const COLOR_OTHER_VALUE = "__other__";
 const MIN_YEAR = 1661;
 const CURRENT_YEAR = new Date().getFullYear();
 
-const MANUSCRIPT_OPTIONS = [
-  { value: "Yes", label: "Yes" },
-  { value: "No", label: "No" },
-];
-
 const IMPRESSION_OPTIONS = [
   { value: "Normal", label: "Normal" },
   { value: "Stencil", label: "Stencil" },
   { value: "Negative", label: "Negative" },
 ];
+
+const MARKING_TYPE_OPTIONS = [
+  { value: "Townmark", label: "Townmark" },
+  { value: "Ratemark", label: "Ratemark" },
+  { value: "Auxmark", label: "Auxmark" },
+];
+
+function isCircularType(raw: string) {
+  const s = (raw || "").toLowerCase();
+  return (
+    s.includes("circle") ||
+    s.includes("circular") ||
+    s.includes("cds") ||
+    s.includes("double circle") ||
+    s.includes("single circle")
+  );
+}
+
+function normalizeMasterImageType(raw: unknown): "mark" | "cover" | "tracing" {
+  const val = String(raw ?? "").trim().toLowerCase();
+  if (val === "cover") return "cover";
+  if (val === "tracing") return "tracing";
+  return "mark";
+}
+
+function normalizeMarkingTypeValue(raw: string): "Townmark" | "Ratemark" | "Auxmark" | "" {
+  const v = String(raw || "").trim().toLowerCase().replace(/[\s/_-]+/g, "");
+  if (v === "townmark") return "Townmark";
+  if (v === "ratemark") return "Ratemark";
+  if (v.includes("aux")) return "Auxmark";
+  return "";
+}
 
 function getYearError(value: string, opts: { required: boolean; label: string }): string | null {
   const v = value.trim();
@@ -179,27 +207,6 @@ interface Contribution {
   postmark?: number | null;
 }
 
-/** True if this ticket targets an existing catalog listing (suggestion/correction), not a brand-new postmark. */
-function contributionIsCatalogSuggestion(c: Contribution): boolean {
-  const rawSubmitted =
-    c.submitted_data ?? (c as unknown as Record<string, unknown>).submittedData ?? {};
-  const sd =
-    typeof rawSubmitted === "object" && rawSubmitted !== null
-      ? (rawSubmitted as Record<string, unknown>)
-      : {};
-  const postmarkIdRaw =
-    c.postmark_id ?? c.postmark ?? (c as unknown as Record<string, unknown>).postmarkId ?? null;
-  const pid =
-    typeof postmarkIdRaw === "number"
-      ? postmarkIdRaw
-      : postmarkIdRaw != null && String(postmarkIdRaw).trim() !== ""
-        ? parseInt(String(postmarkIdRaw), 10)
-        : NaN;
-  const hasLinkedPostmark = pid != null && !Number.isNaN(pid);
-  const origStr = String(sd.original_postmark_id ?? sd.originalPostmarkId ?? "").trim();
-  return hasLinkedPostmark || origStr !== "";
-}
-
 const ContributionDetail = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -222,6 +229,14 @@ const ContributionDetail = () => {
   const [carouselApi, setCarouselApi] = useState<CarouselApi>();
   const [carouselCurrent, setCarouselCurrent] = useState(0);
   const [carouselCount, setCarouselCount] = useState(0);
+  const [masterListingImages, setMasterListingImages] = useState<Array<{
+    id: number;
+    imageUrl: string;
+    imageType: "mark" | "cover" | "tracing";
+    displayOrder: number;
+  }>>([]);
+  const [updatingDefaultImageId, setUpdatingDefaultImageId] = useState<number | null>(null);
+  const [deletingMasterListing, setDeletingMasterListing] = useState(false);
   const [stateOptions, setStateOptions] = useState<{ value: string; label: string }[]>([]);
   const [loadingStates, setLoadingStates] = useState(false);
   const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
@@ -246,10 +261,12 @@ const ContributionDetail = () => {
     lettering?: string;
     framing?: string;
     dateFormat?: string;
+    inscription?: string;
   }>({});
 
   // Editor direct-edit: same field model as Edit Catalog Entry
   const [editorEdits, setEditorEdits] = useState<{
+    type: string;
     state: string;
     stateOther: string;
     town: string;
@@ -261,6 +278,8 @@ const ContributionDetail = () => {
     width_mm: string;
     height_mm: string;
     manuscript: string;
+    inscription_txt: string;
+    rate_val: string;
     description: string;
     references: string;
     impression: string;
@@ -269,6 +288,7 @@ const ContributionDetail = () => {
     framing_style_id: string;
     date_format_id: string;
   }>({
+    type: "",
     state: "",
     stateOther: "",
     town: "",
@@ -280,6 +300,8 @@ const ContributionDetail = () => {
     width_mm: "",
     height_mm: "",
     manuscript: "",
+    inscription_txt: "",
+    rate_val: "",
     description: "",
     references: "",
     impression: "",
@@ -484,13 +506,20 @@ const ContributionDetail = () => {
     const firstSeen = /^\d{4}/.test(firstSeenRaw) ? firstSeenRaw.slice(0, 4) : "";
     const lastSeen = /^\d{4}/.test(lastSeenRaw) ? lastSeenRaw.slice(0, 4) : "";
     const wh = submittedDataToWidthHeightStrings(sd);
-    const rawShape = String(sd.shape ?? sd.type ?? "").trim();
+    const rawType = String(sd.type ?? "").trim();
+    const rawShape = String(sd.shape ?? "").trim();
     const rawColor = String(sd.color ?? "").trim();
-    let colorSel = rawColor;
+    const shapeIdRaw = sd.shape_id ?? sd.shapeId;
+    const colorIdRaw = sd.color_id ?? sd.colorId;
+    const shapeFromId = shapeOptions.find((opt) => String(opt.id) === String(shapeIdRaw ?? rawShape));
+    const colorFromId = colorOptions.find((opt) => String(opt.id) === String(colorIdRaw ?? rawColor));
+    const resolvedShape = shapeFromId?.name ?? rawShape;
+    const resolvedColor = colorFromId?.name ?? rawColor;
+    let colorSel = resolvedColor;
     let colorOth = "";
-    if (colorOptions.length > 0 && rawColor && !colorOptions.some((c) => c.name === rawColor)) {
+    if (colorOptions.length > 0 && resolvedColor && !colorOptions.some((c) => c.name === resolvedColor)) {
       colorSel = COLOR_OTHER_VALUE;
-      colorOth = rawColor;
+      colorOth = resolvedColor;
     }
     const letteringStyleIdRaw =
       sd.lettering_style_id ??
@@ -516,6 +545,12 @@ const ContributionDetail = () => {
         ?.framing_style_id ??
       (sd.framingStyle as { framing_style_id?: number; framingStyleId?: number } | undefined)
         ?.framingStyleId;
+    const framingNameRaw = String(
+      sd.framing_name ??
+      sd.framingName ??
+      sd.framing ??
+      "",
+    ).trim();
     const dateFormatIdRaw =
       sd.date_format_id ??
       sd.dateFormatId ??
@@ -528,30 +563,76 @@ const ContributionDetail = () => {
       (sd.dateFormat as { date_format_id?: number; dateFormatId?: number } | undefined)
         ?.date_format_id ??
       (sd.dateFormat as { date_format_id?: number; dateFormatId?: number } | undefined)
-        ?.dateFormatId;
+        ?.dateFormatId ??
+      sd.date_fmt ??
+      sd.dateFmt;
+    const letteringNameRaw = String(
+      sd.lettering_style_name ??
+      sd.letteringStyleName ??
+      "",
+    ).trim();
+    const resolvedLetteringId =
+      letteringStyleIdRaw != null
+        ? String(letteringStyleIdRaw)
+        : letteringNameRaw
+          ? String(
+              letteringOptions.find((opt) => opt.name.trim().toLowerCase() === letteringNameRaw.toLowerCase())?.id ?? ""
+            )
+          : "";
+    const dateFmtRaw = String(sd.date_fmt ?? sd.dateFmt ?? "").trim();
+    const resolvedDateFormatId = dateFormatIdRaw != null
+      ? String(dateFormatIdRaw)
+      : dateFmtRaw
+        ? String(
+            dateFormatOptions.find((opt) => {
+              const byName = String(opt.name ?? "").trim().toLowerCase() === dateFmtRaw.toLowerCase();
+              const byCode = String(opt.description ?? "").trim().toLowerCase() === dateFmtRaw.toLowerCase();
+              return byName || byCode;
+            })?.id ?? ""
+          )
+        : "";
+    const normalizedType = normalizeMarkingTypeValue(rawType);
+    const fallbackType =
+      normalizeMarkingTypeValue(String(sd.marking_type ?? sd.markingType ?? "")) ||
+      (String(sd.rate_val ?? sd.rateVal ?? "").trim() ? "Ratemark" : "") ||
+      (String(sd.type ?? "").toLowerCase().includes("aux") ? "Auxmark" : "");
+    const resolvedType = normalizedType || fallbackType || "Townmark";
+    const resolvedFramingId =
+      framingStyleIdRaw != null
+        ? String(framingStyleIdRaw)
+        : framingNameRaw
+          ? String(
+              framingOptions.find((opt) => opt.name.trim().toLowerCase() === framingNameRaw.toLowerCase())?.id ?? ""
+            )
+          : "";
     setEditorEdits({
+      type: resolvedType,
       state: String(sd.state ?? "").trim(),
       stateOther: "",
       town: String(sd.town ?? "").trim(),
       firstSeen: firstSeen || "",
       lastSeen: lastSeen || "",
-      shape: rawShape,
+      shape: resolvedShape,
       color: colorSel,
       colorOther: colorOth,
       width_mm: wh.width,
       height_mm: wh.height,
-      manuscript: String(sd.manuscript ?? "").trim(),
+      manuscript: Boolean(sd.is_manuscript ?? sd.isManuscript)
+        ? "Yes"
+        : (String(sd.manuscript ?? "No").trim() || "No"),
+      inscription_txt: String(sd.inscription_txt ?? sd.inscriptionTxt ?? "").trim(),
+      rate_val: String(sd.rate_val ?? sd.rateVal ?? "").trim(),
       description: String(sd.description ?? "").trim(),
       references: String(sd.references ?? "").trim(),
-      impression: String(sd.impression ?? "").trim(),
-      is_irreg: Boolean(sd.is_irreg ?? sd.isIrreg),
-      lettering_style_id: letteringStyleIdRaw != null ? String(letteringStyleIdRaw) : "",
-      framing_style_id: framingStyleIdRaw != null ? String(framingStyleIdRaw) : "",
-      date_format_id: dateFormatIdRaw != null ? String(dateFormatIdRaw) : "",
+      impression: String(sd.impression ?? "Normal").trim() || "Normal",
+      is_irreg: Boolean(sd.is_irreg ?? sd.isIrreg ?? sd.isIrregular),
+      lettering_style_id: resolvedLetteringId,
+      framing_style_id: resolvedFramingId,
+      date_format_id: resolvedDateFormatId,
     });
     setAdditionalDatePairs(parseDatesObservedToYearPairs(sd.dates_observed ?? sd.datesObserved));
     setEditorFieldErrors({});
-  }, [contribution?.id, contribution?.submitted_data, shapeOptions, colorOptions]);
+  }, [contribution?.id, contribution?.submitted_data, shapeOptions, colorOptions, letteringOptions, dateFormatOptions]);
 
   const effectiveStateKey = useMemo(() => {
     return editorEdits.state === STATE_OTHER_VALUE
@@ -603,6 +684,18 @@ const ContributionDetail = () => {
     return base;
   }, [shapeOptions, editorEdits.shape]);
 
+  const normalizedMarkingType = normalizeMarkingTypeValue(editorEdits.type);
+  const isTownmark = normalizedMarkingType === "Townmark";
+  const isRatemark = normalizedMarkingType === "Ratemark";
+  const isAuxmark = normalizedMarkingType === "Auxmark";
+  const isHandstamped = editorEdits.manuscript !== "Yes";
+  const showShapeField = isHandstamped;
+  const showDateFormatField = isHandstamped && isTownmark;
+  const showRateValueField = isRatemark;
+  const showAnythingElseSection = isHandstamped && (isTownmark || isRatemark || isAuxmark);
+  const isCircularShape = isCircularType(editorEdits.shape);
+  const inscriptionLabel = isRatemark ? "Ratemark Text" : isAuxmark ? "Auxmark Text" : "Townmark Text";
+
   /** Validate editor fields (same rules as Edit Catalog Entry) and build PATCH body; returns null if invalid. */
   const buildValidatedEditorPatch = (): Record<string, unknown> | null => {
     const stateVal =
@@ -611,11 +704,20 @@ const ContributionDetail = () => {
     const shapeVal = editorEdits.shape.trim();
     const colorVal =
       editorEdits.color === COLOR_OTHER_VALUE ? editorEdits.colorOther.trim() : editorEdits.color.trim();
+    const shapeIdVal = shapeOptions.find(
+      (opt) => String(opt.name).trim().toLowerCase() === shapeVal.toLowerCase()
+    )?.id;
+    const colorIdVal = colorOptions.find(
+      (opt) => String(opt.name).trim().toLowerCase() === colorVal.toLowerCase()
+    )?.id;
     const manuscriptVal = editorEdits.manuscript.trim();
 
     const errors: typeof editorFieldErrors = {};
     if (!stateVal) errors.state = "State is required";
     if (!townVal) errors.town = "Town/City is required";
+    if (!editorEdits.inscription_txt.trim()) {
+      errors.inscription = `${inscriptionLabel} is required`;
+    }
     const fe = getYearError(editorEdits.firstSeen, { required: true, label: "First Seen Year" });
     if (fe) errors.firstSeen = fe;
     const le = getYearError(editorEdits.lastSeen, { required: false, label: "Last Seen Year" });
@@ -624,12 +726,13 @@ const ContributionDetail = () => {
       errors.shape = "Shape is required when Manuscript is No";
     }
     if (!colorVal) errors.color = "Color is required";
-    if (!editorEdits.lettering_style_id) errors.lettering = "Lettering style is required";
-    if (!editorEdits.framing_style_id) errors.framing = "Framing style is required";
-    if (!editorEdits.date_format_id) errors.dateFormat = "Date format is required";
-    const mmErr = validateMmPair(editorEdits.width_mm, editorEdits.height_mm);
+    if (showAnythingElseSection && !editorEdits.lettering_style_id) errors.lettering = "Lettering style is required";
+    if (showAnythingElseSection && !editorEdits.framing_style_id) errors.framing = "Framing style is required";
+    if (showDateFormatField && !editorEdits.date_format_id) errors.dateFormat = "Date format is required";
+    const effectiveHeight = isCircularShape ? editorEdits.width_mm : editorEdits.height_mm;
+    const mmErr = validateMmPair(editorEdits.width_mm, effectiveHeight);
     if (mmErr.width) errors.width_mm = mmErr.width;
-    if (mmErr.height) errors.height_mm = mmErr.height;
+    if (mmErr.height && !isCircularShape) errors.height_mm = mmErr.height;
 
     for (const pair of additionalDatePairs) {
       const a = pair.earliestYear.trim();
@@ -667,16 +770,23 @@ const ContributionDetail = () => {
       firstSeen: first,
       lastSeen: last,
       dates_observed: datesObservedStr || undefined,
-      shape: shapeVal,
+      type: normalizedMarkingType || undefined,
+      shape: manuscriptVal === "Yes" ? null : shapeVal,
+      shape_id: manuscriptVal === "Yes" ? null : shapeIdVal ?? undefined,
       color: colorVal,
+      color_id: colorIdVal ?? undefined,
       width_mm: editorEdits.width_mm.trim() || undefined,
-      height_mm: editorEdits.height_mm.trim() || undefined,
+      height_mm: (isCircularShape ? editorEdits.width_mm : editorEdits.height_mm).trim() || undefined,
       manuscript: editorEdits.manuscript.trim() || undefined,
+      inscription_txt: editorEdits.inscription_txt.trim() || undefined,
+      rate_val: showRateValueField ? editorEdits.rate_val.trim() || undefined : undefined,
       description: editorEdits.description.trim() || undefined,
       references: editorEdits.references.trim() || undefined,
-      impression: editorEdits.impression.trim() || undefined,
-      is_irreg: editorEdits.is_irreg,
-      lettering_style_id: editorEdits.lettering_style_id
+      impression: manuscriptVal === "Yes" ? null : editorEdits.impression.trim() || undefined,
+      is_irreg: manuscriptVal === "Yes" ? null : editorEdits.is_irreg,
+      lettering_style_id: manuscriptVal === "Yes"
+        ? null
+        : editorEdits.lettering_style_id
         ? parseInt(editorEdits.lettering_style_id, 10)
         : undefined,
       framing_style_id: editorEdits.framing_style_id
@@ -764,8 +874,8 @@ const ContributionDetail = () => {
     // lettering_style_id, framing_style_id, date_format_id come from contribution's submitted_data (required on form)
 
     setSubmitting(true);
-    // New postmark submissions: submitted_data is authoritative; editors do not PATCH catalog fields.
-    if (kind === "approve" && contributionIsCatalogSuggestion(contribution)) {
+    // Persist any editor changes onto the pending contribution before approval.
+    if (kind === "approve") {
       const persisted = await persistEditorEdits(apiBase);
       if (!persisted) {
         setSubmitting(false);
@@ -810,10 +920,139 @@ const ContributionDetail = () => {
     }
   };
 
+  const handleSetDefaultMasterImage = async (
+    postmarkId: number,
+    imageId: number,
+    imageType: "mark" | "cover" | "tracing"
+  ) => {
+    try {
+      setUpdatingDefaultImageId(imageId);
+      const csrfToken = getCsrfTokenFromCookie();
+      const headers = csrfToken ? { "X-CSRFToken": csrfToken } : undefined;
+      const sameType = masterListingImages.filter((img) => img.imageType === imageType);
+      await Promise.all(
+        sameType.map((img) =>
+          apiClient.patch(
+            `/postmark-images/${img.id}/`,
+            { display_order: img.id === imageId ? 0 : 1 },
+            headers ? { headers } : undefined
+          )
+        )
+      );
+      const refreshed = await getPostmarkById(postmarkId);
+      const rows = Array.isArray(refreshed?.images) ? refreshed.images : [];
+      const parsed = rows
+        .map((img: any) => {
+          const imageUrl = normalizeImageUrl(img?.imageUrl ?? img?.image_url ?? img?.url ?? null);
+          const idRaw = img?.postmarkImageId ?? img?.postmark_image_id ?? img?.id;
+          const id = Number(idRaw);
+          if (!imageUrl || Number.isNaN(id)) return null;
+          return {
+            id,
+            imageUrl,
+            imageType: normalizeMasterImageType(
+              img?.image_tag ?? img?.imageTag ?? img?.image_type ?? img?.imageType ?? img?.imageView ?? "mark"
+            ),
+            displayOrder: Number(img?.displayOrder ?? img?.display_order ?? 999),
+          };
+        })
+        .filter((row): row is { id: number; imageUrl: string; imageType: "mark" | "cover" | "tracing"; displayOrder: number } => !!row);
+      setMasterListingImages(parsed);
+      toast({
+        title: "Default image updated",
+        description: `Default ${imageType} image has been set.`,
+      });
+    } catch (err) {
+      toast({
+        title: "Could not set default image",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setUpdatingDefaultImageId(null);
+    }
+  };
+
+  const handleDeleteMasterListing = async (postmarkId: number) => {
+    const confirmed = window.confirm(
+      "Delete this master listing? This action is audit-tracked and intended for cleanup cases."
+    );
+    if (!confirmed) return;
+    try {
+      setDeletingMasterListing(true);
+      const csrfToken = getCsrfTokenFromCookie();
+      const headers = csrfToken ? { "X-CSRFToken": csrfToken } : undefined;
+      await apiClient.delete(`/postmarks/${postmarkId}/`, headers ? { headers } : undefined);
+      toast({
+        title: "Master listing deleted",
+        description: "Deletion was recorded in audit history.",
+      });
+      navigate("/dashboard", { state: { tab: "editor" } });
+    } catch (err) {
+      toast({
+        title: "Could not delete master listing",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingMasterListing(false);
+    }
+  };
+
   const handleBack = () => {
     if (fromDashboard) navigate("/dashboard", { state: { tab: "editor" } });
     else navigate("/dashboard");
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    const isPendingReview = contribution?.status === "pending";
+    const canReviewCurrent = isStateEditor && isPendingReview && !!user;
+    const postmarkIdRaw =
+      contribution?.postmark_id ??
+      contribution?.postmark ??
+      (contribution as unknown as Record<string, unknown> | null)?.postmarkId ??
+      null;
+    const resolvedPostmarkId =
+      typeof postmarkIdRaw === "number"
+        ? postmarkIdRaw
+        : postmarkIdRaw != null && String(postmarkIdRaw).trim() !== ""
+          ? parseInt(String(postmarkIdRaw), 10)
+          : null;
+
+    if (!canReviewCurrent || resolvedPostmarkId == null || Number.isNaN(resolvedPostmarkId)) {
+      setMasterListingImages([]);
+      return;
+    }
+    getPostmarkById(resolvedPostmarkId)
+      .then((data) => {
+        if (cancelled || !data) return;
+        const rows = Array.isArray(data.images) ? data.images : [];
+        const parsed = rows
+          .map((img: any) => {
+            const imageUrl = normalizeImageUrl(img?.imageUrl ?? img?.image_url ?? img?.url ?? null);
+            const imageIdRaw = img?.postmarkImageId ?? img?.postmark_image_id ?? img?.id;
+            const imageId = Number(imageIdRaw);
+            if (!imageUrl || Number.isNaN(imageId)) return null;
+            return {
+              id: imageId,
+              imageUrl,
+              imageType: normalizeMasterImageType(
+                img?.image_tag ?? img?.imageTag ?? img?.image_type ?? img?.imageType ?? img?.imageView ?? "mark"
+              ),
+              displayOrder: Number(img?.displayOrder ?? img?.display_order ?? 999),
+            };
+          })
+          .filter((row): row is { id: number; imageUrl: string; imageType: "mark" | "cover" | "tracing"; displayOrder: number } => !!row);
+        setMasterListingImages(parsed);
+      })
+      .catch(() => {
+        if (!cancelled) setMasterListingImages([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [contribution, isStateEditor, user]);
 
   if (loading) {
     return (
@@ -950,8 +1189,7 @@ const ContributionDetail = () => {
           ? "rounded-full border border-orange-600 bg-orange-500 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-orange-500"
           : "rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500";
   const canReview = isStateEditor && isPending && !!user;
-  const isCatalogSuggestion = contributionIsCatalogSuggestion(contribution);
-  const showSubmittedData = !canReview || !isCatalogSuggestion;
+  const showSubmittedData = !canReview;
   const showPeerReviewNotice = false;
   const showEditorFeedbackCard =
     contribution.status !== "pending" || !!(contribution.review_notes && contribution.review_notes.trim());
@@ -1349,18 +1587,114 @@ const ContributionDetail = () => {
               )}
 
               {/* Editor: catalog suggestions only — new postmark submissions stay read-only above */}
-              {canReview && isCatalogSuggestion && (
+              {canReview && (
                 <Card className="shadow-archival-md border-primary/15">
                   <CardHeader>
                     <CardTitle className="font-heading text-lg flex items-center gap-2">
                       <Pencil className="h-5 w-5" />
-                      Edit Catalog Entry
+                      Review Submission
                     </CardTitle>
                     <p className="text-sm text-muted-foreground">
-                      Same fields as <strong>Edit Catalog Entry</strong>. Changes are saved automatically when you approve (after validation).
+                      Single submission form with prefilled values. Any change goes through approval workflow; master listing updates only after approval.
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-6">
+                    {postmarkId != null && (
+                      <div className="space-y-2">
+                        <Label>Existing master listing images (context)</Label>
+                        {masterListingImages.length > 0 ? (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                            {masterListingImages.map((img, idx) => (
+                              <div key={`${img.id}-${idx}`} className="rounded border border-border overflow-hidden bg-muted p-1">
+                                <img src={img.imageUrl} alt={`Master listing ${idx + 1}`} className="h-24 w-full object-cover rounded" />
+                                <div className="mt-1 flex items-center justify-between gap-2">
+                                  <span className="text-[10px] uppercase text-muted-foreground">{img.imageType}</span>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={img.displayOrder === 0 ? "secondary" : "outline"}
+                                    className="h-6 px-2 text-[10px]"
+                                    disabled={updatingDefaultImageId != null}
+                                    onClick={() => handleSetDefaultMasterImage(postmarkId, img.id, img.imageType)}
+                                  >
+                                    {updatingDefaultImageId === img.id
+                                      ? "Saving..."
+                                      : img.displayOrder === 0
+                                        ? "Default"
+                                        : "Set default"}
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">No existing master listing images found.</p>
+                        )}
+                        <p className="text-xs text-muted-foreground">
+                          Editors can directly set one default image per type: mark, cover, tracing.
+                        </p>
+                      </div>
+                    )}
+                    {postmarkId != null && (
+                      <div className="rounded-md border border-destructive/30 p-3 bg-destructive/5 space-y-2">
+                        <p className="text-xs text-muted-foreground">
+                          Direct editor action allowed: delete master listing (audit-tracked), mainly for cleanup tasks such as multi-color corrections.
+                        </p>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          disabled={deletingMasterListing}
+                          onClick={() => handleDeleteMasterListing(postmarkId)}
+                        >
+                          {deletingMasterListing ? "Deleting..." : "Delete master listing"}
+                        </Button>
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      <Label htmlFor="contrib-edit-type">Marking Type</Label>
+                      <Select
+                        value={editorEdits.type}
+                        onValueChange={(v) => setEditorEdits((p) => ({ ...p, type: v }))}
+                        disabled={submitting}
+                      >
+                        <SelectTrigger id="contrib-edit-type">
+                          <SelectValue placeholder="Select marking type..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {MARKING_TYPE_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="contrib-edit-manuscript"
+                        type="checkbox"
+                        className="h-4 w-4 accent-primary"
+                        checked={editorEdits.manuscript === "Yes"}
+                        disabled={submitting}
+                        onChange={(e) => {
+                          const next = e.target.checked ? "Yes" : "No";
+                          setEditorEdits((p) => ({
+                            ...p,
+                            manuscript: next,
+                            ...(next === "Yes"
+                              ? { shape: "", lettering_style_id: "", impression: "Normal", is_irreg: false }
+                              : {}),
+                          }));
+                          if (next === "Yes") {
+                            setEditorFieldErrors((prev) => ({ ...prev, shape: undefined }));
+                          }
+                        }}
+                      />
+                      <Label htmlFor="contrib-edit-manuscript">Manuscript</Label>
+                    </div>
+
                     <div className="space-y-2">
                       <Label htmlFor="contrib-edit-state">
                         State <span className="text-destructive">*</span>
@@ -1431,6 +1765,26 @@ const ContributionDetail = () => {
                       ) : null}
                       {editorFieldErrors.town && (
                         <p className="text-sm text-destructive">{editorFieldErrors.town}</p>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="contrib-edit-inscription">{inscriptionLabel}</Label>
+                      <Textarea
+                        id="contrib-edit-inscription"
+                        value={editorEdits.inscription_txt}
+                        onChange={(e) => {
+                          setEditorEdits((p) => ({ ...p, inscription_txt: e.target.value }));
+                          if (editorFieldErrors.inscription) {
+                            setEditorFieldErrors((prev) => ({ ...prev, inscription: undefined }));
+                          }
+                        }}
+                        placeholder="Exact text inscribed on the marking device."
+                        rows={3}
+                        disabled={submitting}
+                      />
+                      {editorFieldErrors.inscription && (
+                        <p className="text-sm text-destructive">{editorFieldErrors.inscription}</p>
                       )}
                     </div>
 
@@ -1571,7 +1925,7 @@ const ContributionDetail = () => {
                       )}
                     </div>
 
-                    {editorEdits.manuscript !== "Yes" && (
+                    {showShapeField && (
                     <div className="space-y-2">
                       <Label htmlFor="contrib-edit-shape">
                         Shape <span className="text-destructive">*</span>
@@ -1600,7 +1954,19 @@ const ContributionDetail = () => {
                     </div>
                     )}
 
-                    <div className="space-y-2">
+                    {showRateValueField && <div className="space-y-2">
+                      <Label htmlFor="contrib-edit-rate-value">Rate Value</Label>
+                      <Input
+                        id="contrib-edit-rate-value"
+                        type="text"
+                        value={editorEdits.rate_val}
+                        onChange={(e) => setEditorEdits((p) => ({ ...p, rate_val: e.target.value }))}
+                        placeholder="e.g. 5"
+                        disabled={submitting}
+                      />
+                    </div>}
+
+                    {showAnythingElseSection && <div className="space-y-2">
                       <Label htmlFor="contrib-edit-impression">Impression</Label>
                       <Select
                         value={editorEdits.impression}
@@ -1618,9 +1984,9 @@ const ContributionDetail = () => {
                           ))}
                         </SelectContent>
                       </Select>
-                    </div>
+                    </div>}
 
-                    <div className="space-y-2">
+                    {showAnythingElseSection && <div className="space-y-2">
                       <Label htmlFor="contrib-edit-is-irregular">Is Irregular</Label>
                       <Select
                         value={editorEdits.is_irreg ? "yes" : "no"}
@@ -1635,7 +2001,7 @@ const ContributionDetail = () => {
                           <SelectItem value="no">No</SelectItem>
                         </SelectContent>
                       </Select>
-                    </div>
+                    </div>}
 
                     <div className="space-y-2">
                       <Label htmlFor="contrib-edit-color">
@@ -1680,7 +2046,7 @@ const ContributionDetail = () => {
                       )}
                     </div>
 
-                    <div className="space-y-2">
+                    {showAnythingElseSection && <div className="space-y-2">
                       <Label>
                         Lettering style <span className="text-destructive">*</span>
                       </Label>
@@ -1706,8 +2072,8 @@ const ContributionDetail = () => {
                       {editorFieldErrors.lettering && (
                         <p className="text-sm text-destructive">{editorFieldErrors.lettering}</p>
                       )}
-                    </div>
-                    <div className="space-y-2">
+                    </div>}
+                    {showAnythingElseSection && <div className="space-y-2">
                       <Label>
                         Framing style <span className="text-destructive">*</span>
                       </Label>
@@ -1733,8 +2099,8 @@ const ContributionDetail = () => {
                       {editorFieldErrors.framing && (
                         <p className="text-sm text-destructive">{editorFieldErrors.framing}</p>
                       )}
-                    </div>
-                    <div className="space-y-2">
+                    </div>}
+                    {showDateFormatField && <div className="space-y-2">
                       <Label>
                         Date format <span className="text-destructive">*</span>
                       </Label>
@@ -1760,7 +2126,7 @@ const ContributionDetail = () => {
                       {editorFieldErrors.dateFormat && (
                         <p className="text-sm text-destructive">{editorFieldErrors.dateFormat}</p>
                       )}
-                    </div>
+                    </div>}
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
@@ -1786,7 +2152,7 @@ const ContributionDetail = () => {
                           <p className="text-sm text-destructive">{editorFieldErrors.width_mm}</p>
                         )}
                       </div>
-                      <div className="space-y-2">
+                      {!isCircularShape && <div className="space-y-2">
                         <Label htmlFor="contrib-edit-height-mm">Height (mm)</Label>
                         <Input
                           id="contrib-edit-height-mm"
@@ -1808,42 +2174,11 @@ const ContributionDetail = () => {
                         {editorFieldErrors.height_mm && (
                           <p className="text-sm text-destructive">{editorFieldErrors.height_mm}</p>
                         )}
-                      </div>
+                      </div>}
                     </div>
                     <p className="text-xs text-muted-foreground -mt-2">
-                      Optional. If you enter one, enter both (mm). Same as catalog edit.
+                      Optional. If circular shape is selected, height is auto-saved as width.
                     </p>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-manuscript">
-                        Manuscript <span className="text-destructive">*</span>
-                      </Label>
-                      <Select
-                        value={editorEdits.manuscript}
-                        onValueChange={(v) => {
-                          setEditorEdits((p) => ({
-                            ...p,
-                            manuscript: v,
-                            ...(v === "Yes" ? { shape: "" } : {}),
-                          }));
-                          if (v === "Yes") {
-                            setEditorFieldErrors((prev) => ({ ...prev, shape: undefined }));
-                          }
-                        }}
-                        disabled={submitting}
-                      >
-                        <SelectTrigger id="contrib-edit-manuscript">
-                          <SelectValue placeholder="Select..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {MANUSCRIPT_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
 
                     <div className="space-y-2">
                       <Label htmlFor="contrib-edit-description">Description</Label>

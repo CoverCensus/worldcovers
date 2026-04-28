@@ -315,8 +315,7 @@ class PostmarkListSerializer(serializers.ModelSerializer):
     framing = serializers.SerializerMethodField()
     earliest_use = serializers.SerializerMethodField()
     latest_use = serializers.SerializerMethodField()
-    ratemark_count = serializers.IntegerField(read_only=True)
-    auxmark_count = serializers.IntegerField(read_only=True)
+    type = serializers.SerializerMethodField()
 
     class Meta:
         model = Postmark
@@ -347,9 +346,11 @@ class PostmarkListSerializer(serializers.ModelSerializer):
             'framing',
             'earliest_use',
             'latest_use',
-            'ratemark_count',
-            'auxmark_count',
+            'type',
         ]
+
+    def get_type(self, obj):
+        return 'Townmark'
 
     def get_facility_name(self, obj):
         return self.get_town(obj)
@@ -410,16 +411,92 @@ class PostmarkListSerializer(serializers.ModelSerializer):
         return _format_date_by_granularity(d, _granularity_for_date(obj, d))
 
     def get_main_image(self, obj):
-        main_img = obj.images.order_by('display_order').first()
+        ordered = self._ordered_images(obj)
+        main_img = ordered[0] if ordered else None
         if main_img:
             return PostmarkImageSerializer(main_img, context=self.context).data
         return None
 
     def get_second_image(self, obj):
-        imgs = list(obj.images.order_by('display_order')[:2])
-        if len(imgs) < 2:
+        gallery = self._gallery_images(obj)
+        if len(gallery) < 2:
             return None
-        return PostmarkImageSerializer(imgs[1], context=self.context).data
+        return PostmarkImageSerializer(gallery[1], context=self.context).data
+
+    def _ordered_images(self, obj):
+        """
+        List image policy:
+        - If an editor-selected default exists, show it first.
+        - Otherwise show most recently uploaded image first.
+        """
+        images = list(obj.images.all())
+        if not images:
+            return []
+
+        defaults = [img for img in images if getattr(img, 'display_order', None) == 0]
+        if defaults:
+            default = sorted(
+                defaults,
+                key=lambda im: getattr(im, 'created_date', None) or 0,
+                reverse=True,
+            )[0]
+            rest = [img for img in images if img.postmark_image_id != default.postmark_image_id]
+            rest.sort(key=lambda im: getattr(im, 'created_date', None) or 0, reverse=True)
+            return [default, *rest]
+
+        images.sort(key=lambda im: getattr(im, 'created_date', None) or 0, reverse=True)
+        return images
+
+    def _tag_of(self, image):
+        desc = str(getattr(image, 'image_description', '') or '').strip().lower()
+        if 'mark' in desc:
+            return 'mark'
+        if 'cover' in desc:
+            return 'cover'
+        if 'tracing' in desc:
+            return 'tracing'
+        return None
+
+    def _pick_for_tag(self, images, tag):
+        tagged = [img for img in images if self._tag_of(img) == tag]
+        if not tagged:
+            return None
+        tagged_sorted = sorted(
+            tagged,
+            key=lambda im: (0 if getattr(im, 'display_order', None) == 0 else 1, -(getattr(im, 'created_date', None) or 0).timestamp() if getattr(im, 'created_date', None) else 0),
+        )
+        return tagged_sorted[0]
+
+    def _gallery_images(self, obj):
+        """
+        Gallery policy:
+        - Build candidates for mark/cover/tracing (default first, else newest per tag).
+        - Show at most two images.
+        - If fewer than two tag candidates exist, fill with newest remaining images.
+        """
+        images = list(obj.images.all())
+        if not images:
+            return []
+
+        selected = []
+        selected_ids = set()
+        for tag in ('mark', 'cover', 'tracing'):
+            pick = self._pick_for_tag(images, tag)
+            if pick and pick.postmark_image_id not in selected_ids:
+                selected.append(pick)
+                selected_ids.add(pick.postmark_image_id)
+            if len(selected) == 2:
+                return selected
+
+        ordered = self._ordered_images(obj)
+        for image in ordered:
+            if image.postmark_image_id in selected_ids:
+                continue
+            selected.append(image)
+            selected_ids.add(image.postmark_image_id)
+            if len(selected) == 2:
+                break
+        return selected
 
     def get_valuation_display(self, obj):
         val = obj.valuations.order_by('-appraisal_date').first()

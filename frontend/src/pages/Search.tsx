@@ -15,6 +15,8 @@ import { useQuery } from "@tanstack/react-query";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import {
   getPostmarksPage,
+  getPostmarkRatemarks,
+  getPostmarkAuxmarks,
   type PostmarkRecord,
 } from "@/services/postmarks";
 import { buildCatalogSearchRow } from "@/lib/catalogRecordDisplay";
@@ -118,6 +120,7 @@ const Search = () => {
   const [shapeFilter, setShapeFilter] = useState(() =>
     getSearchParam(searchParams, "shape", "") || getSearchParam(searchParams, "type", "all"),
   );
+  const [typeFilter, setTypeFilter] = useState(() => getSearchParam(searchParams, "markType", "all"));
   const [colorFilter, setColorFilter] = useState(() => getSearchParam(searchParams, "color", "all"));
   const [valuationFilter, setValuationFilter] = useState("all");
   const [manuscriptFilter, setManuscriptFilter] = useState<"both" | "only" | "none">(() => {
@@ -152,6 +155,7 @@ const Search = () => {
   const prevEndYearRef = useRef(debouncedEndYear.trim().length === 4 ? debouncedEndYear.trim() : "");
   const prevImagesOnlyRef = useRef(imagesOnly);
   const prevManuscriptFilterRef = useRef(manuscriptFilter);
+  const prevTypeFilterRef = useRef(typeFilter);
 
   const beginYearError = useMemo(
     () => validateYearString(beginYear, minYear, maxYear),
@@ -192,6 +196,7 @@ const Search = () => {
     const endYearJustChanged = prevEndYearRef.current !== currentNormalizedEnd;
     const imagesOnlyJustChanged = prevImagesOnlyRef.current !== imagesOnly;
     const manuscriptFilterJustChanged = prevManuscriptFilterRef.current !== manuscriptFilter;
+    const typeFilterJustChanged = prevTypeFilterRef.current !== typeFilter;
     if (searchJustChanged) prevKeywordRef.current = debouncedKeywordSearch;
     if (shapeFilterJustChanged) prevShapeFilterRef.current = shapeFilter;
     if (colorFilterJustChanged) prevColorFilterRef.current = colorFilter;
@@ -201,6 +206,7 @@ const Search = () => {
     if (endYearJustChanged) prevEndYearRef.current = currentNormalizedEnd;
     if (imagesOnlyJustChanged) prevImagesOnlyRef.current = imagesOnly;
     if (manuscriptFilterJustChanged) prevManuscriptFilterRef.current = manuscriptFilter;
+    if (typeFilterJustChanged) prevTypeFilterRef.current = typeFilter;
 
     const anyFilterChanged =
       searchJustChanged ||
@@ -211,11 +217,12 @@ const Search = () => {
       beginYearJustChanged ||
       endYearJustChanged ||
       imagesOnlyJustChanged ||
-      manuscriptFilterJustChanged;
+      manuscriptFilterJustChanged ||
+      typeFilterJustChanged;
     if (anyFilterChanged) {
       setCurrentPage(1);
     }
-  }, [debouncedKeywordSearch, shapeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, manuscriptFilter]);
+  }, [debouncedKeywordSearch, shapeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, manuscriptFilter, typeFilter]);
 
   // Treat years as active filters only when they are valid and 4 digits.
   const normalizedBeginYear = useMemo(() => {
@@ -269,7 +276,65 @@ const Search = () => {
         normalizedTo,
         imagesOnly
       );
-      return { records: results, count, count_capped };
+      const expanded = await Promise.all(
+        results.map(async (base) => {
+          const [ratemarks, auxmarks] = await Promise.all([
+            getPostmarkRatemarks(base.id),
+            getPostmarkAuxmarks(base.id),
+          ]);
+
+          const rateRows: PostmarkRecord[] = ratemarks.map((rel) => {
+            const d = (rel.ratemarkDetails ?? {}) as Record<string, unknown>;
+            return {
+              ...base,
+              type: "Ratemark",
+              markingId: rel.ratemark,
+              id: rel.ratemark,
+              town: "",
+              state: "",
+              regionAbbrev: "",
+              earliestUse: "",
+              latestUse: "",
+              listingShape: String(d.shapeName ?? "").trim(),
+              shapeName: String(d.shapeName ?? "").trim(),
+              inscriptionTxt: String(d.inscriptionTxt ?? "").trim(),
+              rateValue: d.rateVal != null ? String(d.rateVal) : "",
+              letteringStyleName: String(d.letteringName ?? "").trim(),
+              dimensionsDisplay:
+                d.width != null && d.height != null
+                  ? `${d.width}×${d.height}`
+                  : "",
+              isManuscript: Boolean(d.isManuscript),
+            };
+          });
+
+          const auxRows: PostmarkRecord[] = auxmarks.map((aux) => ({
+            ...base,
+            type: "Auxmark",
+            markingId: aux.id,
+            id: aux.id,
+            town: "",
+            state: "",
+            regionAbbrev: "",
+            earliestUse: "",
+            latestUse: "",
+            listingShape: String(aux.shapeName ?? "").trim(),
+            shapeName: String(aux.shapeName ?? "").trim(),
+            inscriptionTxt: String(aux.inscriptionTxt ?? "").trim(),
+            rateValue: "",
+            letteringStyleName: String(aux.letteringName ?? "").trim(),
+            dimensionsDisplay:
+              aux.width != null && aux.height != null
+                ? `${aux.width}×${aux.height}`
+                : "",
+            isManuscript: Boolean(aux.isManuscript),
+          }));
+
+          return [{ ...base, type: "Townmark", markingId: base.id }, ...rateRows, ...auxRows];
+        })
+      );
+
+      return { records: expanded.flat(), count, count_capped };
     },
     staleTime: 5 * 60 * 1000, // 5 min - use cache when navigating back, no loading
   });
@@ -302,6 +367,7 @@ const Search = () => {
     if (normalizedBeginYear) params.set("from", normalizedBeginYear);
     if (normalizedEndYear) params.set("to", normalizedEndYear);
     if (shapeFilter !== "all") params.set("shape", shapeFilter);
+    if (typeFilter !== "all") params.set("markType", typeFilter);
     if (colorFilter !== "all") params.set("color", colorFilter);
     if (manuscriptFilter !== "both") params.set("manuscripts", manuscriptFilter);
     if (imagesOnly) params.set("images", "true");
@@ -311,11 +377,21 @@ const Search = () => {
     if (next !== current) {
       setSearchParams(next ? params : {}, { replace: true });
     }
-  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, shapeFilter, colorFilter, manuscriptFilter, imagesOnly, searchParams, setSearchParams]);
+  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, shapeFilter, typeFilter, colorFilter, manuscriptFilter, imagesOnly, searchParams, setSearchParams]);
 
-  // Enforce exactly itemsPerPage (10) per page — slice in case API returns more
-  const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
-  const paginatedResults = catalogRecords.slice(0, itemsPerPage);
+  const filteredByType =
+    typeFilter === "all"
+      ? catalogRecords
+      : catalogRecords.filter((record) => {
+          const t = String(record.type ?? "Townmark").trim().toLowerCase();
+          return t === typeFilter.toLowerCase();
+        });
+
+  const effectiveTotalCount = typeFilter === "all" ? totalCount : filteredByType.length;
+  // Enforce exactly itemsPerPage (10) per page with correct page window.
+  const totalPages = Math.ceil(effectiveTotalCount / itemsPerPage) || 1;
+  const pageStart = (currentPage - 1) * itemsPerPage;
+  const paginatedResults = filteredByType.slice(pageStart, pageStart + itemsPerPage);
 
   // Clear all filters and URL params
   const handleClearAllFilters = () => {
@@ -325,6 +401,7 @@ const Search = () => {
     setBeginYear("");
     setEndYear("");
     setShapeFilter("all");
+    setTypeFilter("all");
     setColorFilter("all");
     setValuationFilter("all");
     setManuscriptFilter("both");
@@ -482,6 +559,21 @@ const Search = () => {
                   )}
 
                   <div className="space-y-2">
+                    <Label htmlFor="mark-type">Type</Label>
+                    <Select value={typeFilter} onValueChange={setTypeFilter} disabled={filtersDisabled}>
+                      <SelectTrigger id="mark-type">
+                        <SelectValue placeholder="All Types" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Types</SelectItem>
+                        <SelectItem value="townmark">Townmark</SelectItem>
+                        <SelectItem value="ratemark">Ratemark</SelectItem>
+                        <SelectItem value="auxmark">Auxmark</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
                     <Label htmlFor="color">Color</Label>
                     <SearchableSelect
                       id="color"
@@ -569,11 +661,11 @@ const Search = () => {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
                 <div>
                   <p className="text-sm text-muted-foreground">
-                    {totalCount === 0 ? (
+                    {effectiveTotalCount === 0 ? (
                       "0 results"
                     ) : (
                       <>
-                        Showing <span className="font-semibold text-foreground">{((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, totalCount)}</span> of <span className="font-semibold text-foreground">{countCapped ? `${totalCount.toLocaleString()}+` : totalCount.toLocaleString()}</span> results
+                        Showing <span className="font-semibold text-foreground">{pageStart + 1}-{Math.min(pageStart + itemsPerPage, effectiveTotalCount)}</span> of <span className="font-semibold text-foreground">{countCapped && typeFilter === "all" ? `${effectiveTotalCount.toLocaleString()}+` : effectiveTotalCount.toLocaleString()}</span> results
                       </>
                     )}
                   </p>
@@ -620,7 +712,7 @@ const Search = () => {
                   <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
                   <p className="text-muted-foreground">Loading catalog records...</p>
                 </div>
-              ) : catalogRecords.length === 0 ? (
+              ) : filteredByType.length === 0 ? (
                 <div className="flex justify-center items-center py-12">
                   <p className="text-muted-foreground">No catalog records found.</p>
                 </div>
@@ -633,7 +725,18 @@ const Search = () => {
                         key={row.cardId}
                         className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
                         onClick={() =>
-                          navigate(`/record/${row.cardId}`, { state: { fromSearch: true } })
+                          navigate(
+                            `/record/${row.cardId}?type=${encodeURIComponent(String(record.type ?? "Townmark"))}&markingId=${encodeURIComponent(String(record.markingId ?? record.id))}`,
+                            {
+                              state: {
+                                fromSearch: true,
+                                markingRow: {
+                                  type: record.type ?? "Townmark",
+                                  markingId: record.markingId ?? record.id,
+                                },
+                              },
+                            }
+                          )
                         }
                       >
                         <CardContent className="p-4">
@@ -666,7 +769,18 @@ const Search = () => {
                         key={row.cardId}
                         className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden"
                         onClick={() =>
-                          navigate(`/record/${row.cardId}`, { state: { fromSearch: true } })
+                          navigate(
+                            `/record/${row.cardId}?type=${encodeURIComponent(String(record.type ?? "Townmark"))}&markingId=${encodeURIComponent(String(record.markingId ?? record.id))}`,
+                            {
+                              state: {
+                                fromSearch: true,
+                                markingRow: {
+                                  type: record.type ?? "Townmark",
+                                  markingId: record.markingId ?? record.id,
+                                },
+                              },
+                            }
+                          )
                         }
                       >
                         {row.image2 ? (
