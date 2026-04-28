@@ -18,11 +18,6 @@ import { Upload, CheckCircle, XCircle, Clock, Loader2, ChevronDown } from "lucid
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
-import {
-  getRegions,
-  getAssignedRegions,
-  type StateOption,
-} from "@/services/regions";
 import { getShapes, type ShapeOption } from "@/services/shapes";
 import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
@@ -136,7 +131,6 @@ const FIELD_ERROR_SCROLL_TARGETS: Array<[string, string]> = [
   ["color", "color"],
   ["observedDates", "observed-date-0-year"],
   ["dateFormat", "date-format"],
-  ["diameterMm", "diameter-mm"],
   ["widthMm", "width-mm"],
   ["heightMm", "height-mm"],
   ["lettering", "lettering"],
@@ -174,6 +168,7 @@ type ReferenceDetailFieldErrors = {
 };
 
 type ImageCategory = "postmark" | "ratemark" | "auxmark";
+type UploadedImageTag = "mark" | "cover" | "tracing";
 
 function parseReferenceWorkIds(raw: unknown): number[] {
   const values: unknown[] = [];
@@ -295,12 +290,9 @@ const Contribute = () => {
   const [editLoadDone, setEditLoadDone] = useState(!editContributionId);
   const [editLoadError, setEditLoadError] = useState<string | null>(null);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
-  const [stateOptions, setStateOptions] = useState<StateOption[]>([]);
+  const [stateOptions, setStateOptions] = useState<Array<{ value: string; label: string }>>([]);
   const [shapeOptions, setShapeOptions] = useState<ShapeOption[]>([]);
   const [postOffices, setPostOffices] = useState<PostOfficeOption[]>([]);
-  const [loadingStates, setLoadingStates] = useState(true);
-  const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
-  const [confirmedNoAssignedStates, setConfirmedNoAssignedStates] = useState(false);
   const [loadingShapes, setLoadingShapes] = useState(true);
   const [shapeOptionsError, setShapeOptionsError] = useState<string | null>(null);
   const [loadingTowns, setLoadingTowns] = useState(false);
@@ -333,11 +325,13 @@ const Contribute = () => {
   const [referenceDetailErrorsById, setReferenceDetailErrorsById] = useState<Record<number, ReferenceDetailFieldErrors>>({});
   const [postmarkImageFiles, setPostmarkImageFiles] = useState<File[]>([]);
   const [postmarkImagePreviews, setPostmarkImagePreviews] = useState<string[]>([]);
+  const [postmarkImageTags, setPostmarkImageTags] = useState<string[]>([]);
   const [ratemarkImageFiles, setRatemarkImageFiles] = useState<File[]>([]);
   const [ratemarkImagePreviews, setRatemarkImagePreviews] = useState<string[]>([]);
+  const [ratemarkImageTags, setRatemarkImageTags] = useState<string[]>([]);
   const [auxmarkImageFiles, setAuxmarkImageFiles] = useState<File[]>([]);
   const [auxmarkImagePreviews, setAuxmarkImagePreviews] = useState<string[]>([]);
-  const [diameterMm, setDiameterMm] = useState("");
+  const [auxmarkImageTags, setAuxmarkImageTags] = useState<string[]>([]);
   const [letteringId, setLetteringId] = useState("");
   const [framingIds, setFramingIds] = useState<string[]>([]);
   const [dateFormatIds, setDateFormatIds] = useState<string[]>([]);
@@ -349,8 +343,8 @@ const Contribute = () => {
     color?: string;
     widthMm?: string;
     heightMm?: string;
-    diameterMm?: string;
     images?: string;
+    imageTags?: string;
     lettering?: string;
     dateFormat?: string;
     inscriptionText?: string;
@@ -378,6 +372,12 @@ const Contribute = () => {
   }, []);
 
   useEffect(() => {
+    if (color.trim()) return;
+    const black = colorOptions.find((c) => c.name.trim().toLowerCase() === "black");
+    if (black) setColor(black.name);
+  }, [colorOptions, color]);
+
+  useEffect(() => {
     setLoadingTowns(true);
     setTownOptionsError(null);
     getPostOffices()
@@ -390,44 +390,20 @@ const Contribute = () => {
   }, []);
 
   useEffect(() => {
-    setLoadingStates(true);
-    setStateOptionsError(null);
-    setConfirmedNoAssignedStates(false);
-
-    const loadStates = async () => {
-      try {
-        const isStateEditor = user?.role === "editor";
-        if (isStateEditor) {
-          // Prefer dedicated endpoint first; then fallback to assigned_only query.
-          const assignedStates = await getAssignedRegions().catch(() => []);
-          if (assignedStates.length > 0) {
-            setStateOptions(assignedStates);
-            setConfirmedNoAssignedStates(false);
-            return;
-          }
-          const assignedOnlyStates = await getRegions(true);
-          setStateOptions(assignedOnlyStates);
-          setConfirmedNoAssignedStates(assignedOnlyStates.length === 0);
-          return;
-        }
-
-        // Contributors can submit to any state: load full list.
-        const options = await getRegions(false);
-        setStateOptions(options);
-        setConfirmedNoAssignedStates(false);
-      } catch (err) {
-        setStateOptionsError(
-          err instanceof Error ? err.message : "Failed to load states"
-        );
-        setStateOptions([]);
-        setConfirmedNoAssignedStates(false);
-      } finally {
-        setLoadingStates(false);
-      }
-    };
-
-    loadStates();
-  }, [user]);
+    const seen = new Set<string>();
+    const options = postOffices
+      .map((facility) => (facility.state || "").trim())
+      .filter((name) => {
+        if (!name) return false;
+        const key = name.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+      .map((name) => ({ value: name, label: name }));
+    setStateOptions(options);
+  }, [postOffices]);
 
   useEffect(() => {
     setLoadingShapes(true);
@@ -684,13 +660,7 @@ const Contribute = () => {
     };
   }, [editContributionId]); // shapeOptions/colorOptions may not be loaded yet; we set shape/color as strings
 
-  const noAssignedStates =
-    !!user &&
-    user.role === "editor" &&
-    confirmedNoAssignedStates &&
-    !loadingStates &&
-    !stateOptionsError &&
-    stateOptions.length === 0;
+  const noAssignedStates = false;
 
   const townOptions = useMemo(() => {
     const normalizedState = state.trim().toLowerCase();
@@ -709,6 +679,36 @@ const Contribute = () => {
     towns.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
     return towns;
   }, [postOffices, state]);
+
+  const selectedPostOfficeId = useMemo(() => {
+    const normalizedState = state.trim().toLowerCase();
+    const normalizedTown = town.trim().toLowerCase();
+    if (!normalizedState || !normalizedTown) return null;
+    const matched = postOffices.find((facility) => {
+      const facilityState = (facility.state || "").trim().toLowerCase();
+      const facilityTown = (facility.town || "").trim().toLowerCase();
+      return facilityState === normalizedState && facilityTown === normalizedTown;
+    });
+    return matched?.id ?? null;
+  }, [postOffices, state, town]);
+
+  const inscriptionLabel = useMemo(() => {
+    const t = markingType.trim().toLowerCase();
+    if (t === "rate mark") return "Ratemark Text";
+    if (t === "auxiliary/instructional mark") return "Auxmark Text";
+    if (t === "town mark") return "Townmark Text";
+    return "Inscription Text";
+  }, [markingType]);
+
+  const normalizedMarkingType = useMemo(() => markingType.trim().toLowerCase(), [markingType]);
+  const isTownmark = normalizedMarkingType === "town mark";
+  const isRatemark = normalizedMarkingType === "rate mark";
+  const isAuxmark = normalizedMarkingType === "auxiliary/instructional mark";
+  const isHandstamped = manuscript !== "Yes";
+  const showShapeField = isHandstamped;
+  const showDateFormatField = isHandstamped && isTownmark;
+  const showRateValueField = isRatemark;
+  const showAnythingElseSection = isHandstamped && (isTownmark || isRatemark || isAuxmark);
 
   const selectedFramingSummary = useMemo(() => {
     if (framingIds.length === 0) return "Select one or more framing styles";
@@ -729,9 +729,18 @@ const Contribute = () => {
 
   const appendCategoryFiles = (category: ImageCategory, files: File[]) => {
     if (files.length === 0) return;
-    if (category === "postmark") setPostmarkImageFiles((prev) => [...prev, ...files]);
-    if (category === "ratemark") setRatemarkImageFiles((prev) => [...prev, ...files]);
-    if (category === "auxmark") setAuxmarkImageFiles((prev) => [...prev, ...files]);
+    if (category === "postmark") {
+      setPostmarkImageFiles((prev) => [...prev, ...files]);
+      setPostmarkImageTags((prev) => [...prev, ...files.map(() => "")]);
+    }
+    if (category === "ratemark") {
+      setRatemarkImageFiles((prev) => [...prev, ...files]);
+      setRatemarkImageTags((prev) => [...prev, ...files.map(() => "")]);
+    }
+    if (category === "auxmark") {
+      setAuxmarkImageFiles((prev) => [...prev, ...files]);
+      setAuxmarkImageTags((prev) => [...prev, ...files.map(() => "")]);
+    }
   };
 
   const appendCategoryPreviews = (category: ImageCategory, previews: string[]) => {
@@ -800,16 +809,19 @@ const Contribute = () => {
     if (category === "postmark") {
       setPostmarkImageFiles((prev) => prev.filter((_, i) => i !== index));
       setPostmarkImagePreviews((prev) => prev.filter((_, i) => i !== index));
+      setPostmarkImageTags((prev) => prev.filter((_, i) => i !== index));
       if (postmarkFileInputRef.current) postmarkFileInputRef.current.value = "";
     }
     if (category === "ratemark") {
       setRatemarkImageFiles((prev) => prev.filter((_, i) => i !== index));
       setRatemarkImagePreviews((prev) => prev.filter((_, i) => i !== index));
+      setRatemarkImageTags((prev) => prev.filter((_, i) => i !== index));
       if (ratemarkFileInputRef.current) ratemarkFileInputRef.current.value = "";
     }
     if (category === "auxmark") {
       setAuxmarkImageFiles((prev) => prev.filter((_, i) => i !== index));
       setAuxmarkImagePreviews((prev) => prev.filter((_, i) => i !== index));
+      setAuxmarkImageTags((prev) => prev.filter((_, i) => i !== index));
       if (auxmarkFileInputRef.current) auxmarkFileInputRef.current.value = "";
     }
   };
@@ -830,6 +842,25 @@ const Contribute = () => {
     if (category === "postmark") return postmarkImagePreviews;
     if (category === "ratemark") return ratemarkImagePreviews;
     return auxmarkImagePreviews;
+  };
+
+  const getCategoryTags = (category: ImageCategory) => {
+    if (category === "postmark") return postmarkImageTags;
+    if (category === "ratemark") return ratemarkImageTags;
+    return auxmarkImageTags;
+  };
+
+  const setCategoryTagAt = (category: ImageCategory, index: number, value: UploadedImageTag) => {
+    if (category === "postmark") {
+      setPostmarkImageTags((prev) => prev.map((t, i) => (i === index ? value : t)));
+    } else if (category === "ratemark") {
+      setRatemarkImageTags((prev) => prev.map((t, i) => (i === index ? value : t)));
+    } else {
+      setAuxmarkImageTags((prev) => prev.map((t, i) => (i === index ? value : t)));
+    }
+    if (fieldErrors.imageTags) {
+      setFieldErrors((prev) => ({ ...prev, imageTags: undefined }));
+    }
   };
 
   const buildName = () => {
@@ -862,8 +893,16 @@ const Contribute = () => {
 
     const stateVal = state.trim();
     const townVal = town.trim();
-    const shapeVal = shape.trim();
+    const isManuscriptSelected = manuscript === "Yes";
+    const shapeVal = isManuscriptSelected ? "" : shape.trim();
+    const typeVal = markingType.trim();
+    const shapeIdVal = shapeOptions.find(
+      (opt) => String(opt.name).trim().toLowerCase() === shapeVal.toLowerCase()
+    )?.id;
     const colorVal = color.trim();
+    const colorIdVal = colorOptions.find(
+      (c) => c.name.trim().toLowerCase() === colorVal.toLowerCase()
+    )?.id;
     const isCircular = isCircularType(shapeVal);
 
     const errors: typeof fieldErrors = {};
@@ -873,11 +912,11 @@ const Contribute = () => {
     if (townVal && /[0-9]/.test(townVal)) {
       errors.town = "Town/City must contain only letters and spaces";
     }
-    if (manuscript === "No" && !shapeVal) {
+    if (!isManuscriptSelected && !shapeVal) {
       errors.shape = "Shape is required when Manuscript is No";
     }
     if (!inscriptionText.trim()) {
-      errors.inscriptionText = "Townmark Text is required";
+      errors.inscriptionText = `${inscriptionLabel} is required`;
     }
 
     // Dates Observed: at least the first entry must have a year, month, or day.
@@ -912,23 +951,11 @@ const Contribute = () => {
       }
     }
 
-    // Dimensions: if circular, use diameter; otherwise width/height pair.
-    if (isCircular) {
-      const d = diameterMm.trim();
-      if (d) {
-        const wErr = validateMmPair(d, d);
-        if (wErr.width) errors.diameterMm = wErr.width;
-        if (wErr.height) errors.diameterMm = wErr.height;
-      } else {
-        const mmErr = validateMmPair(widthMm, heightMm);
-        if (mmErr.width) errors.widthMm = mmErr.width;
-        if (mmErr.height) errors.heightMm = mmErr.height;
-      }
-    } else {
-      const mmErr = validateMmPair(widthMm, heightMm);
-      if (mmErr.width) errors.widthMm = mmErr.width;
-      if (mmErr.height) errors.heightMm = mmErr.height;
-    }
+    // Dimensions: width is always visible; for circle-family shapes, height is saved as width.
+    const effectiveHeight = isCircular ? widthMm : heightMm;
+    const mmErr = validateMmPair(widthMm, effectiveHeight);
+    if (mmErr.width) errors.widthMm = mmErr.width;
+    if (mmErr.height && !isCircular) errors.heightMm = mmErr.height;
 
     const referenceDetailErrors: Record<number, ReferenceDetailFieldErrors> = {};
     for (const work of selectedReferenceWorks) {
@@ -1010,6 +1037,16 @@ const Contribute = () => {
     }
 
     const allImageFiles = [...postmarkImageFiles, ...ratemarkImageFiles, ...auxmarkImageFiles];
+    const allImageTags = [...postmarkImageTags, ...ratemarkImageTags, ...auxmarkImageTags];
+    if (allImageFiles.length > 0 && allImageTags.some((tag) => !String(tag).trim())) {
+      setFieldErrors((prev) => ({ ...prev, imageTags: "Select a tag for each uploaded image." }));
+      toast({
+        title: "Image tag required",
+        description: "Tag every uploaded image as mark, cover, or tracing.",
+        variant: "destructive",
+      });
+      return;
+    }
     const oversized = allImageFiles.filter((f) => f.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
     if (oversized.length) {
       toast({
@@ -1033,10 +1070,8 @@ const Contribute = () => {
           : firstSeenToSend;
       const derivedIsCircular = isCircularType(shapeVal);
       const derivedDimensions = (() => {
-        const d = diameterMm.trim();
         const w = widthMm.trim();
-        const h = heightMm.trim();
-        if (derivedIsCircular && d) return `${d} mm diameter`;
+        const h = derivedIsCircular ? w : heightMm.trim();
         if (w && h) return `${w}×${h} mm`;
         return "";
       })();
@@ -1045,19 +1080,30 @@ const Contribute = () => {
       if (allImageFiles.length > 0) {
         const form = new FormData();
         if (editContributionId != null) form.append("edit_contribution_id", String(editContributionId));
+        if (selectedPostOfficeId != null) form.append("post_office_id", String(selectedPostOfficeId));
         form.append("state", stateVal);
         form.append("town", townVal);
+        if (typeVal) form.append("type", typeVal);
         form.append("firstSeen", firstSeenToSend);
         form.append("lastSeen", lastSeenToSend);
+        if (firstSeenToSend) form.append("date_seen", firstSeenToSend);
         if (datesObservedToSend) form.append("dates_observed", datesObservedToSend);
-        form.append("shape", shapeVal);
-        if (shapeVal) form.append("type", shapeVal);
+        if (!isManuscriptSelected) form.append("shape", shapeVal);
+        if (!isManuscriptSelected && shapeIdVal != null) form.append("shape_id", String(shapeIdVal));
+        if (colorIdVal != null) form.append("color_id", String(colorIdVal));
         form.append("color", colorVal);
         if (derivedDimensions) form.append("dimensions", derivedDimensions);
         if (manuscript.trim()) form.append("manuscript", manuscript.trim());
-        form.append("is_irreg", String(isIrregular));
-        if (impression.trim()) form.append("impression", impression.trim());
-        if (description.trim()) form.append("description", description.trim());
+        form.append("is_manuscript", String(isManuscriptSelected));
+        if (!isManuscriptSelected) {
+          form.append("is_irreg", String(isIrregular));
+          if (impression.trim()) form.append("impression", impression.trim());
+        }
+        if (showRateValueField && rateValue.trim()) form.append("rate_val", rateValue.trim());
+        if (description.trim()) {
+          form.append("description", description.trim());
+          form.append("desc", description.trim());
+        }
         if (inscriptionToSend) form.append("inscription_txt", inscriptionToSend);
         if (referencesToSend) form.append("references", referencesToSend);
         referenceWorkIdsToSend.forEach((id) => form.append("reference_work_ids[]", String(id)));
@@ -1065,13 +1111,15 @@ const Contribute = () => {
           form.append("reference_work_details", JSON.stringify(referenceWorkDetailsToSend));
         }
         if (submitterName) form.append("submitterName", submitterName);
-        form.append("lettering_style_id", letteringId);
+        if (!isManuscriptSelected && letteringId) form.append("lettering_style_id", letteringId);
+        if (!isManuscriptSelected && letteringId) form.append("lettering_id", letteringId);
         if (framingIds.length > 0) {
           form.append("framing_style_id", framingIds[0]);
           framingIds.forEach((id) => form.append("framing_style_ids[]", id));
         }
         if (dateFormatIds.length > 0) {
           form.append("date_format_id", dateFormatIds[0]);
+          if (showDateFormatField) form.append("date_fmt", dateFormatIds[0]);
           dateFormatIds.forEach((id) => form.append("date_format_ids[]", id));
         }
         for (const file of postmarkImageFiles) {
@@ -1081,34 +1129,57 @@ const Contribute = () => {
         }
         for (const file of ratemarkImageFiles) form.append("ratemark_image", file, file.name);
         for (const file of auxmarkImageFiles) form.append("auxmark_image", file, file.name);
+        form.append("postmark_image_tags", JSON.stringify(postmarkImageTags));
+        form.append("ratemark_image_tags", JSON.stringify(ratemarkImageTags));
+        form.append("auxmark_image_tags", JSON.stringify(auxmarkImageTags));
+        form.append(
+          "image_tags",
+          JSON.stringify([
+            ...postmarkImageTags.map((tag, index) => ({ category: "postmark", index, tag })),
+            ...ratemarkImageTags.map((tag, index) => ({ category: "ratemark", index, tag })),
+            ...auxmarkImageTags.map((tag, index) => ({ category: "auxmark", index, tag })),
+          ])
+        );
         body = form;
         // Do not set Content-Type so browser sets multipart/form-data with boundary
       } else {
         body = JSON.stringify({
           ...(editContributionId != null ? { edit_contribution_id: editContributionId } : {}),
+          post_office_id: selectedPostOfficeId ?? undefined,
           state: stateVal,
           town: townVal,
+          type: typeVal || undefined,
           firstSeen: firstSeenToSend,
           lastSeen: lastSeenToSend,
+          date_seen: firstSeenToSend || undefined,
           dates_observed: datesObservedToSend || undefined,
-          shape: shapeVal,
-          type: shapeVal || undefined,
+          shape: isManuscriptSelected ? null : shapeVal,
+          shape_id: isManuscriptSelected ? null : shapeIdVal ?? null,
+          color_id: colorIdVal ?? undefined,
           color: colorVal,
           dimensions: derivedDimensions || undefined,
           manuscript: manuscript.trim() || undefined,
-          is_irreg: isIrregular,
-          impression: impression.trim() || undefined,
+          is_manuscript: isManuscriptSelected,
+          is_irreg: isManuscriptSelected ? null : isIrregular,
+          impression: isManuscriptSelected ? null : impression.trim() || undefined,
+          rate_val: showRateValueField ? rateValue.trim() || undefined : undefined,
           description: description.trim() || undefined,
+          desc: description.trim() || undefined,
           inscription_txt: inscriptionToSend || undefined,
           references: referencesToSend || undefined,
           reference_work_ids: referenceWorkIdsToSend.length > 0 ? referenceWorkIdsToSend : undefined,
           reference_work_details: referenceWorkDetailsToSend.length > 0 ? referenceWorkDetailsToSend : undefined,
           submitterName: submitterName || undefined,
-          lettering_style_id: letteringId ? Number(letteringId) : undefined,
+          lettering_style_id: isManuscriptSelected ? null : letteringId ? Number(letteringId) : undefined,
+          lettering_id: isManuscriptSelected ? null : letteringId ? Number(letteringId) : undefined,
           framing_style_id: framingIds[0] ? Number(framingIds[0]) : undefined,
           framing_style_ids: framingIds.length > 0 ? framingIds.map((id) => Number(id)) : undefined,
           date_format_id: dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
+          date_fmt: showDateFormatField && dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
           date_format_ids: dateFormatIds.length > 0 ? dateFormatIds.map((id) => Number(id)) : undefined,
+          postmark_image_tags: postmarkImageTags,
+          ratemark_image_tags: ratemarkImageTags,
+          auxmark_image_tags: auxmarkImageTags,
         });
       }
 
@@ -1162,7 +1233,6 @@ const Contribute = () => {
       setColor("");
       setWidthMm("");
       setHeightMm("");
-      setDiameterMm("");
       setManuscript("No");
       setIsIrregular(false);
       setImpression("Normal");
@@ -1173,10 +1243,13 @@ const Contribute = () => {
       setReferenceDetailErrorsById({});
       setPostmarkImageFiles([]);
       setPostmarkImagePreviews([]);
+      setPostmarkImageTags([]);
       setRatemarkImageFiles([]);
       setRatemarkImagePreviews([]);
+      setRatemarkImageTags([]);
       setAuxmarkImageFiles([]);
       setAuxmarkImagePreviews([]);
+      setAuxmarkImageTags([]);
       setLetteringId("");
       setFramingIds([]);
       setDateFormatIds([]);
@@ -1196,7 +1269,7 @@ const Contribute = () => {
 
   const isEditMode = editContributionId != null;
   const effectiveShapeLabel = String(shape ?? "").trim();
-  const showDiameter = isCircularType(effectiveShapeLabel);
+  const isCircularShape = isCircularType(effectiveShapeLabel);
 
   const renderImageUploader = (
     category: ImageCategory,
@@ -1207,10 +1280,12 @@ const Contribute = () => {
     const inputRef = getCategoryInputRef(category);
     const previews = getCategoryPreviews(category);
     const files = getCategoryFiles(category);
+    const tags = getCategoryTags(category);
     return (
       <div className="space-y-2">
         <Label>{label}</Label>
         {required && fieldErrors.images && <p className="text-sm text-destructive">{fieldErrors.images}</p>}
+        {fieldErrors.imageTags && <p className="text-sm text-destructive">{fieldErrors.imageTags}</p>}
         <input
           ref={inputRef}
           type="file"
@@ -1239,6 +1314,21 @@ const Contribute = () => {
                   <div key={i} className="relative rounded border bg-muted/30 overflow-hidden">
                     <img src={preview} alt={`${label} preview ${i + 1}`} className="w-full aspect-square object-contain max-h-32" />
                     <p className="text-xs text-muted-foreground truncate px-2 py-1">{files[i]?.name || "Existing image"}</p>
+                    <div className="px-2 pb-2">
+                      <Select
+                        value={tags[i] ?? ""}
+                        onValueChange={(value) => setCategoryTagAt(category, i, value as UploadedImageTag)}
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Tag: mark/cover/tracing" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="mark">mark</SelectItem>
+                          <SelectItem value="cover">cover</SelectItem>
+                          <SelectItem value="tracing">tracing</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <Button
                       type="button"
                       variant="destructive"
@@ -1369,6 +1459,9 @@ const Contribute = () => {
                           setManuscript(next);
                           if (next === "Yes") {
                             setShape("");
+                            setLetteringId("");
+                            setImpression("");
+                            setIsIrregular(false);
                             setFieldErrors((p) => ({ ...p, shape: undefined }));
                           }
                         }}
@@ -1378,26 +1471,25 @@ const Contribute = () => {
 
                     <div className="space-y-2">
                       <Label htmlFor="town">Town/City</Label>
-                      <Input
+                      <SearchableSelect
                         id="town"
-                        type="text"
                         value={town}
-                        onChange={(e) => {
-                          setTown(sanitizeTown(e.target.value));
+                        onValueChange={(value) => {
+                          setTown(sanitizeTown(value));
                           if (fieldErrors.town) {
                             setFieldErrors((prev) => ({ ...prev, town: undefined }));
                           }
                         }}
-                        placeholder="Enter town/city..."
-                        list="town-options"
+                        placeholder="Select town/city..."
+                        options={townOptions}
+                        loading={loadingTowns}
+                        error={!!townOptionsError && !!state}
+                        errorMessage={townOptionsError ?? "Failed to load town options"}
+                        searchPlaceholder="Search towns..."
+                        emptyMessage={state ? "No town found for selected state." : "Select state first."}
                         aria-label="Town or city"
-                        className={fieldErrors.town ? "border-destructive" : ""}
+                        triggerClassName={fieldErrors.town ? "border-destructive" : ""}
                       />
-                      {/* <datalist id="town-options">
-                        {townOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value} />
-                        ))}
-                      </datalist> */}
                       {loadingTowns && state ? (
                         <p className="text-xs text-muted-foreground">Loading town suggestions...</p>
                       ) : null}
@@ -1429,9 +1521,9 @@ const Contribute = () => {
                         }}
                         placeholder="Select state..."
                         options={stateOptions}
-                        loading={loadingStates}
-                        error={!!stateOptionsError}
-                        errorMessage={stateOptionsError ?? "Failed to load states"}
+                        loading={loadingTowns}
+                        error={!!townOptionsError}
+                        errorMessage={townOptionsError ?? "Failed to load states"}
                         searchPlaceholder="Search states..."
                         emptyMessage="No state found."
                         aria-label="State"
@@ -1444,7 +1536,7 @@ const Contribute = () => {
 
                     <div className="space-y-2">
                       <Label htmlFor="inscription-text">
-                        Townmark Text <span className="text-destructive" aria-hidden="true">*</span>
+                        {inscriptionLabel} <span className="text-destructive" aria-hidden="true">*</span>
                       </Label>
                       <Textarea
                         id="inscription-text"
@@ -1463,7 +1555,7 @@ const Contribute = () => {
                         <p className="text-sm text-destructive">{fieldErrors.inscriptionText}</p>
                       )}
                     </div>
-                    <div className="space-y-2">
+                    {showShapeField && <div className="space-y-2">
                       <Label htmlFor="shape">
                         Shape
                         {manuscript === "No" ? (
@@ -1492,18 +1584,7 @@ const Contribute = () => {
                       {fieldErrors.shape && (
                         <p className="text-sm text-destructive">{fieldErrors.shape}</p>
                       )}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <input
-                        id="is-irregular"
-                        type="checkbox"
-                        className="h-4 w-4 accent-primary"
-                        checked={isIrregular}
-                        onChange={(e) => setIsIrregular(e.target.checked)}
-                      />
-                      <Label htmlFor="is-irregular">Is Irregular</Label>
-                    </div>
+                    </div>}
 
                     <div className="space-y-2">
                       <Label htmlFor="color">Color</Label>
@@ -1656,7 +1737,7 @@ const Contribute = () => {
                       )}
                     </div>
 
-                    <div className="space-y-2">
+                    {showDateFormatField && <div className="space-y-2">
                       <Label>
                         <span
                           className="cursor-help border-b border-dotted border-muted-foreground/40"
@@ -1699,7 +1780,7 @@ const Contribute = () => {
                         </DropdownMenuContent>
                       </DropdownMenu>
                       {fieldErrors.dateFormat && <p className="text-sm text-destructive">{fieldErrors.dateFormat}</p>}
-                    </div>
+                    </div>}
                     <div className="space-y-2">
                       <Label htmlFor="description">Description</Label>
                       <Textarea
@@ -1711,7 +1792,7 @@ const Contribute = () => {
                       />
                     </div>
 
-                    <div className="space-y-2">
+                    {showRateValueField && <div className="space-y-2">
                       <Label htmlFor="rate-value">Rate Value</Label>
                       <Input
                         id="rate-value"
@@ -1720,103 +1801,67 @@ const Contribute = () => {
                         value={rateValue}
                         onChange={(e) => setRateValue(e.target.value)}
                       />
-                    </div>
+                    </div>}
 
-                    <div className="space-y-2">
-                      <Label htmlFor="rate-text">Rate Text</Label>
-                      <Input
-                        id="rate-text"
-                        type="text"
-                        placeholder="Text appearing on the rate mark"
-                        value={rateText}
-                        onChange={(e) => setRateText(e.target.value)}
-                      />
-                    </div>
-
-                    {showDiameter ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="diameter-mm">Diameter (mm)</Label>
+                        <Label htmlFor="width-mm">Width (mm)</Label>
                         <Input
-                          id="diameter-mm"
+                          id="width-mm"
                           type="text"
                           inputMode="decimal"
                           placeholder="e.g. 34"
-                          value={diameterMm}
+                          value={widthMm}
                           onChange={(e) => {
-                            setDiameterMm(sanitizeMmInput(e.target.value));
-                            if (fieldErrors.diameterMm) {
-                              setFieldErrors((prev) => ({ ...prev, diameterMm: undefined }));
+                            setWidthMm(sanitizeMmInput(e.target.value));
+                            if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                              setFieldErrors((prev) => ({
+                                ...prev,
+                                widthMm: undefined,
+                                heightMm: undefined,
+                              }));
                             }
                           }}
-                          className={fieldErrors.diameterMm ? "border-destructive" : ""}
-                          aria-label="Diameter in millimetres"
+                          className={fieldErrors.widthMm ? "border-destructive" : ""}
+                          aria-label="Width in millimetres"
                         />
-                        {fieldErrors.diameterMm && (
-                          <p className="text-sm text-destructive">{fieldErrors.diameterMm}</p>
+                        {fieldErrors.widthMm && (
+                          <p className="text-sm text-destructive">{fieldErrors.widthMm}</p>
                         )}
-                        <p className="text-xs text-muted-foreground -mt-1">
-                          Optional. For circular postmarks, enter the diameter.
-                        </p>
                       </div>
-                    ) : (
-                      <>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="width-mm">Width (mm)</Label>
-                            <Input
-                              id="width-mm"
-                              type="text"
-                              inputMode="decimal"
-                              placeholder="e.g. 34"
-                              value={widthMm}
-                              onChange={(e) => {
-                                setWidthMm(sanitizeMmInput(e.target.value));
-                                if (fieldErrors.widthMm || fieldErrors.heightMm) {
-                                  setFieldErrors((prev) => ({
-                                    ...prev,
-                                    widthMm: undefined,
-                                    heightMm: undefined,
-                                  }));
-                                }
-                              }}
-                              className={fieldErrors.widthMm ? "border-destructive" : ""}
-                              aria-label="Width in millimetres"
-                            />
-                            {fieldErrors.widthMm && (
-                              <p className="text-sm text-destructive">{fieldErrors.widthMm}</p>
-                            )}
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="height-mm">Height (mm)</Label>
-                            <Input
-                              id="height-mm"
-                              type="text"
-                              inputMode="decimal"
-                              placeholder="e.g. 28"
-                              value={heightMm}
-                              onChange={(e) => {
-                                setHeightMm(sanitizeMmInput(e.target.value));
-                                if (fieldErrors.widthMm || fieldErrors.heightMm) {
-                                  setFieldErrors((prev) => ({
-                                    ...prev,
-                                    widthMm: undefined,
-                                    heightMm: undefined,
-                                  }));
-                                }
-                              }}
-                              className={fieldErrors.heightMm ? "border-destructive" : ""}
-                              aria-label="Height in millimetres"
-                            />
-                            {fieldErrors.heightMm && (
-                              <p className="text-sm text-destructive">{fieldErrors.heightMm}</p>
-                            )}
-                          </div>
+                      {!isCircularShape && (
+                        <div className="space-y-2">
+                          <Label htmlFor="height-mm">Height (mm)</Label>
+                          <Input
+                            id="height-mm"
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="e.g. 28"
+                            value={heightMm}
+                            onChange={(e) => {
+                              setHeightMm(sanitizeMmInput(e.target.value));
+                              if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                                setFieldErrors((prev) => ({
+                                  ...prev,
+                                  widthMm: undefined,
+                                  heightMm: undefined,
+                                }));
+                              }
+                            }}
+                            className={fieldErrors.heightMm ? "border-destructive" : ""}
+                            aria-label="Height in millimetres"
+                          />
+                          {fieldErrors.heightMm && (
+                            <p className="text-sm text-destructive">{fieldErrors.heightMm}</p>
+                          )}
                         </div>
-                        <p className="text-xs text-muted-foreground -mt-2">
-                          Optional. If you enter one, enter both. Stored on the catalog as width × height (mm).
-                        </p>
-                      </>
-                    )}
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground -mt-2">
+                      {isCircularShape
+                        ? "For circle-family shapes, height is auto-saved as width."
+                        : "Optional. If you enter one, enter both. Stored on the catalog as width × height (mm)."}
+                    </p>
 
                     <div className="space-y-3">
                       <div className="space-y-2">
@@ -2017,43 +2062,57 @@ const Contribute = () => {
                       </p>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label>
-                        <span
-                          className="cursor-help border-b border-dotted border-muted-foreground/40"
-                          title="Lettering style describes the shape/appearance of the letters used in the postmark text."
-                        >
-                          Lettering style
-                        </span>
-                      </Label>
-                      <Select value={letteringId} onValueChange={(v) => { setLetteringId(v); setFieldErrors((prev) => ({ ...prev, lettering: undefined })); }} disabled={catalogOptionsLoading}>
-                        <SelectTrigger className={fieldErrors.lettering ? "border-destructive" : ""}>
-                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select lettering style"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {letteringOptions.map((opt) => (
-                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {fieldErrors.lettering && <p className="text-sm text-destructive">{fieldErrors.lettering}</p>}
-                    </div>
+                    {showAnythingElseSection && <div className="space-y-3">
+                      {/* <Label>Anything else?</Label> */}
+                      <div className="space-y-2">
+                        <Label>
+                          <span
+                            className="cursor-help border-b border-dotted border-muted-foreground/40"
+                            title="Lettering style describes the shape/appearance of the letters used in the postmark text."
+                          >
+                            Lettering style
+                          </span>
+                        </Label>
+                        <Select value={letteringId} onValueChange={(v) => { setLetteringId(v); setFieldErrors((prev) => ({ ...prev, lettering: undefined })); }} disabled={catalogOptionsLoading}>
+                          <SelectTrigger className={fieldErrors.lettering ? "border-destructive" : ""}>
+                            <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select lettering style"} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {letteringOptions.map((opt) => (
+                              <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {fieldErrors.lettering && <p className="text-sm text-destructive">{fieldErrors.lettering}</p>}
+                      </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="impression">Impression</Label>
-                      <Select value={impression} onValueChange={setImpression}>
-                        <SelectTrigger id="impression">
-                          <SelectValue placeholder="Select impression..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {IMPRESSION_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="impression">Impression</Label>
+                        <Select value={impression} onValueChange={setImpression}>
+                          <SelectTrigger id="impression">
+                            <SelectValue placeholder="Select impression..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {IMPRESSION_OPTIONS.map((opt) => (
+                              <SelectItem key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          id="is-irregular"
+                          type="checkbox"
+                          className="h-4 w-4 accent-primary"
+                          checked={isIrregular}
+                          onChange={(e) => setIsIrregular(e.target.checked)}
+                        />
+                        <Label htmlFor="is-irregular">Is Irregular</Label>
+                      </div>
+                    </div>}
 
                     {renderImageUploader(
                       "postmark",
