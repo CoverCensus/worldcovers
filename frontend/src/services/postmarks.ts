@@ -471,7 +471,7 @@ export interface PostmarkChangelogResponse {
         : Array.isArray(item.postmarkTextVariations)
           ? item.postmarkTextVariations.map((x: unknown) => String(x ?? "").trim()).filter(Boolean)
           : undefined,
-      listingShape: item.shape ?? item.type ?? item.listingShape ?? item.listingType ?? shapeName,
+      listingShape: shapeName || item.listingShape || "",
       shapeLetteringDisplay: item.shape_lettering ?? item.shapeLettering ?? "",
       dimensionsDisplay: item.dimensions ?? item.dimensionsDisplay ?? "",
       datesSeenDisplay:

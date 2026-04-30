@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
-import { Grid3x3, List, Search as SearchIcon, SlidersHorizontal, Loader2 } from "lucide-react";
+import { Search as SearchIcon, SlidersHorizontal, Loader2 } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -99,7 +99,6 @@ function getPaginationPages(currentPage: number, totalPages: number): (number | 
 
 const Search = () => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [viewMode, setViewMode] = useState<"gallery" | "list">("list");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -387,11 +386,13 @@ const Search = () => {
           return t === typeFilter.toLowerCase();
         });
 
-  const effectiveTotalCount = typeFilter === "all" ? totalCount : filteredByType.length;
-  // Enforce exactly itemsPerPage (10) per page with correct page window.
-  const totalPages = Math.ceil(effectiveTotalCount / itemsPerPage) || 1;
+  // Backend paginates by postmark (itemsPerPage per page, sorted by region/town/earliest date).
+  // The expanded ratemark/auxmark sub-rows for those postmarks come back already in the
+  // correct sort order; slicing them in the frontend would drop later postmarks on the page.
+  const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
   const pageStart = (currentPage - 1) * itemsPerPage;
-  const paginatedResults = filteredByType.slice(pageStart, pageStart + itemsPerPage);
+  const pageEnd = Math.min(currentPage * itemsPerPage, totalCount);
+  const paginatedResults = filteredByType;
 
   // Clear all filters and URL params
   const handleClearAllFilters = () => {
@@ -661,11 +662,11 @@ const Search = () => {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
                 <div>
                   <p className="text-sm text-muted-foreground">
-                    {effectiveTotalCount === 0 ? (
-                      "0 results"
+                    {totalCount === 0 ? (
+                      "0 postmarks"
                     ) : (
                       <>
-                        Showing <span className="font-semibold text-foreground">{pageStart + 1}-{Math.min(pageStart + itemsPerPage, effectiveTotalCount)}</span> of <span className="font-semibold text-foreground">{countCapped && typeFilter === "all" ? `${effectiveTotalCount.toLocaleString()}+` : effectiveTotalCount.toLocaleString()}</span> results
+                        Showing <span className="font-semibold text-foreground">{pageStart + 1}-{pageEnd}</span> of <span className="font-semibold text-foreground">{countCapped ? `${totalCount.toLocaleString()}+` : totalCount.toLocaleString()}</span> postmarks
                       </>
                     )}
                   </p>
@@ -680,24 +681,6 @@ const Search = () => {
                     <SlidersHorizontal className="h-4 w-4 mr-2" />
                     Filters
                   </Button>
-                  <div className="flex border border-border rounded-md">
-                    <Button
-                      variant={viewMode === "list" ? "secondary" : "ghost"}
-                      size="sm"
-                      onClick={() => setViewMode("list")}
-                      className="rounded-r-none"
-                    >
-                      <List className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant={viewMode === "gallery" ? "secondary" : "ghost"}
-                      size="sm"
-                      onClick={() => setViewMode("gallery")}
-                      className="rounded-l-none"
-                    >
-                      <Grid3x3 className="h-4 w-4" />
-                    </Button>
-                  </div>
                   {refreshing && (
                     <div className="flex items-center gap-1 text-xs text-muted-foreground ml-2">
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
@@ -716,7 +699,7 @@ const Search = () => {
                 <div className="flex justify-center items-center py-12">
                   <p className="text-muted-foreground">No catalog records found.</p>
                 </div>
-              ) : viewMode === "list" ? (
+              ) : (
                 <div className="space-y-4">
                   {paginatedResults.map((record) => {
                     const row = buildCatalogSearchRow(record);
@@ -755,61 +738,6 @@ const Search = () => {
                               <CatalogRecordFields row={row} />
                             </div>
                           </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {paginatedResults.map((record) => {
-                    const row = buildCatalogSearchRow(record);
-                    return (
-                      <Card
-                        key={row.cardId}
-                        className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden"
-                        onClick={() =>
-                          navigate(
-                            `/record/${row.cardId}?type=${encodeURIComponent(String(record.type ?? "Townmark"))}&markingId=${encodeURIComponent(String(record.markingId ?? record.id))}`,
-                            {
-                              state: {
-                                fromSearch: true,
-                                markingRow: {
-                                  type: record.type ?? "Townmark",
-                                  markingId: record.markingId ?? record.id,
-                                },
-                              },
-                            }
-                          )
-                        }
-                      >
-                        {row.image2 ? (
-                          <div className="grid grid-cols-2 gap-1">
-                            <ImageOrPlaceholder
-                              src={row.image}
-                              alt={row.title}
-                              className="w-full h-48 object-cover"
-                            />
-                            <ImageOrPlaceholder
-                              src={row.image2}
-                              alt={`${row.title} (2)`}
-                              className="w-full h-48 object-cover"
-                            />
-                          </div>
-                        ) : (
-                          <ImageOrPlaceholder
-                            src={row.image}
-                            alt={row.title}
-                            className="w-full h-48 object-cover"
-                          />
-                        )}
-                        <CardContent className="p-4">
-                          <div className="flex items-start justify-between gap-2 mb-2">
-                            <h3 className="font-heading text-lg font-semibold text-foreground">
-                              {row.title}
-                            </h3>
-                          </div>
-                          <CatalogRecordFields row={row} />
                         </CardContent>
                       </Card>
                     );
