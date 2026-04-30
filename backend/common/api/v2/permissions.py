@@ -18,7 +18,7 @@ from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 
 REVIEW_CONTRIBUTION_PERM = "common.review_contribution"
-APPROVE_POSTMARK_IMAGE_PERM = "common.approve_postmarkimage"
+APPROVE_IMAGE_PERM = "common.approve_image"
 
 
 def user_assigned_collection_ids(user) -> set[int]:

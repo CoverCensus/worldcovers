@@ -1,26 +1,24 @@
 from django.test import TestCase
 
-from .models import Auxmark, Postmark, Ratemark
+from .models import Marking, MarkingType
 
 
 class MarkingModelStrTest(TestCase):
-    """Guard __str__ on every marking model — ensures field-name typos surface immediately."""
+    """Guard __str__ on the unified Marking model. Field-name typos should
+    surface immediately on instantiation."""
 
-    def test_ratemark_str(self):
-        r = Ratemark(inscription_txt='TEST INSCRIPTION LONGER THAN FORTY CHARACTERS FOR TRUNCATION CHECK')
-        result = str(r)
-        self.assertIn('Ratemark', result)
-        self.assertIn('TEST INSCRIPTION', result)
-
-    def test_auxmark_str(self):
-        a = Auxmark(parent_mark_type='POSTMARK', parent_mark_id=42)
-        result = str(a)
-        self.assertIn('Auxmark', result)
-        self.assertIn('POSTMARK', result)
-        self.assertIn('42', result)
-
-    def test_postmark_str(self):
-        p = Postmark(code='IA-001')
-        result = str(p)
-        self.assertIn('Postmark', result)
+    def test_townmark_str_with_code(self):
+        m = Marking(type=MarkingType.TOWNMARK, code='IA-001', inscription_txt='IOWA CITY', is_manuscript=False)
+        result = str(m)
+        self.assertIn('TOWNMARK', result)
         self.assertIn('IA-001', result)
+
+    def test_ratemark_str_without_code(self):
+        m = Marking(type=MarkingType.RATEMARK, inscription_txt='5', is_manuscript=False)
+        result = str(m)
+        self.assertIn('RATEMARK', result)
+
+    def test_auxmark_str_without_code(self):
+        m = Marking(type=MarkingType.AUXMARK, inscription_txt='PAID', is_manuscript=False)
+        result = str(m)
+        self.assertIn('AUXMARK', result)

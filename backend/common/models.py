@@ -1,7 +1,8 @@
 import hashlib
 import uuid
 from django.db import models
-from django.db.models import Q
+from django.db.models import Q, Min, Max
+from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
 from colorfield.fields import ColorField
@@ -17,7 +18,7 @@ class TimestampedModel(models.Model):
         abstract = True
 
 class Color(TimestampedModel):
-    """Colors used in postmarks"""
+    """Colors used in markings"""
     color_id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=50, unique=True)
     hex_val = ColorField(default='#FFFFFF')
@@ -33,53 +34,123 @@ class Color(TimestampedModel):
         return self.name
 
 
-class Postmark(TimestampedModel):
-    """
-    A town marking device (or manuscript marking) as observed on one or more Covers.
+class MarkingType(models.TextChoices):
+    TOWNMARK = 'TOWNMARK', 'Townmark'
+    RATEMARK = 'RATEMARK', 'Ratemark'
+    AUXMARK = 'AUXMARK', 'Auxmark'
 
-    model.md domain type: Postmark
+
+class MarkingQuerySet(models.QuerySet):
+    def with_date_range(self):
+        """
+        Annotate each Marking with the min/max cover_date.date values aggregated
+        across the covers it appears on (via cover_marking).
+        Exposed to serializers as `earliest_seen` / `latest_seen`.
+        """
+        return self.annotate(
+            earliest_seen=Min('cover_markings__cover__cover_dates__date'),
+            latest_seen=Max('cover_markings__cover__cover_dates__date'),
+        )
+
+
+MARKING_DATE_FMT_CHOICES = [('MD', 'MD'), ('MDD', 'MDD'), ('YD', 'YD'), ('YMD', 'YMD'), ('YMDD', 'YMDD')]
+MARKING_IMPRESSION_CHOICES = [('Normal', 'Normal'), ('Stencil', 'Stencil'), ('Negative', 'Negative')]
+
+
+class Marking(TimestampedModel):
     """
-    DATE_TYPE_CHOICES = [('BISHOP MARK', 'Bishop Mark'), ('FRANKLIN MARK', 'Franklin Mark'), ('QUAKER DATE', 'Quaker Date')]
-    DATE_FMT_CHOICES = [('MD', 'MD'), ('MDD', 'MDD'), ('YD', 'YD'), ('YMD', 'YMD'), ('YMDD', 'YMDD')]
-    IMPRESSION_CHOICES = [('Normal', 'Normal'), ('Stencil', 'Stencil'), ('Negative', 'Negative')]
-    postmark_id = models.AutoField(primary_key=True)
+    A unified postal marking row -- TOWNMARK, RATEMARK, or AUXMARK -- as
+    observed on one or more Covers. Replaces the prior split Postmark /
+    Ratemark / Auxmark tables.
+
+    model.md domain type: markings
+    """
+    DATE_FMT_CHOICES = MARKING_DATE_FMT_CHOICES
+    IMPRESSION_CHOICES = MARKING_IMPRESSION_CHOICES
+
+    marking_id = models.AutoField(primary_key=True)
     code = models.CharField(max_length=30, unique=True, null=True, blank=True, help_text='Editor-assigned reference identifier')
-    catalog_txt = models.TextField(blank=True, help_text='Authoritative catalog entry text for this listing')
-    inscription_txt = models.TextField(blank=True, help_text='Text as physically inscribed on the town marking device')
-    post_office = models.ForeignKey('PostOffice', on_delete=models.PROTECT, null=True, blank=True, related_name='postmarks')
-    shape = models.ForeignKey('Shape', on_delete=models.PROTECT, null=True, blank=True, related_name='postmarks')
-    lettering = models.ForeignKey('Lettering', on_delete=models.PROTECT, null=True, blank=True, related_name='postmarks')
-    color = models.ForeignKey(Color, on_delete=models.PROTECT, null=True, blank=True, related_name='postmarks')
-    is_manuscript = models.BooleanField(default=False)
-    impression = models.CharField(max_length=10, choices=IMPRESSION_CHOICES, null=True, blank=True)
+    type = models.CharField(max_length=8, choices=MarkingType.choices, help_text='Functional classification of this marking')
+    catalog_txt = models.TextField(null=True, blank=True, help_text='Authoritative ASCC catalog entry text for this listing')
+    inscription_txt = models.TextField(help_text='Text as physically inscribed on the marking')
+    desc = models.TextField(null=True, blank=True, help_text='Free-text contributor annotation')
+    is_manuscript = models.BooleanField()
+    shape = models.ForeignKey('Shape', on_delete=models.PROTECT, null=True, blank=True, related_name='markings')
+    lettering = models.ForeignKey('Lettering', on_delete=models.PROTECT, null=True, blank=True, related_name='markings')
+    color = models.ForeignKey(Color, on_delete=models.PROTECT, default=1, related_name='markings')
     is_irreg = models.BooleanField(null=True, blank=True)
-    width = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
-    height = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
-    date_type = models.CharField(max_length=20, choices=DATE_TYPE_CHOICES, null=True, blank=True)
-    date_fmt = models.CharField(max_length=10, choices=DATE_FMT_CHOICES, null=True, blank=True)
+    width = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True, help_text='Horizontal dimension in millimeters')
+    height = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True, help_text='Vertical dimension in millimeters')
+    date_fmt = models.CharField(max_length=10, choices=MARKING_DATE_FMT_CHOICES, null=True, blank=True)
+    impression = models.CharField(max_length=10, choices=MARKING_IMPRESSION_CHOICES, null=True, blank=True)
+    rate_val = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Non-negative rate amount; most common on RATEMARK and integrated-rate TOWNMARK rows')
+    post_office = models.ForeignKey('PostOffice', on_delete=models.PROTECT, related_name='markings')
+
+    objects = MarkingQuerySet.as_manager()
 
     class Meta:
-        db_table = 'Postmarks'
-        verbose_name = 'Postmark'
-        verbose_name_plural = 'Postmarks'
-        ordering = ['postmark_id']
+        db_table = 'Markings'
+        verbose_name = 'Marking'
+        verbose_name_plural = 'Markings'
+        ordering = ['marking_id']
+        constraints = [
+            models.CheckConstraint(
+                check=Q(type__in=[c[0] for c in MarkingType.choices]),
+                name='marking_type_valid',
+            ),
+            models.CheckConstraint(
+                check=Q(date_fmt__isnull=True) | Q(date_fmt__in=[c[0] for c in MARKING_DATE_FMT_CHOICES]),
+                name='marking_date_fmt_valid',
+            ),
+            models.CheckConstraint(
+                check=Q(impression__isnull=True) | Q(impression__in=[c[0] for c in MARKING_IMPRESSION_CHOICES]),
+                name='marking_impression_valid',
+            ),
+            models.CheckConstraint(
+                check=(
+                    Q(is_manuscript=True, lettering__isnull=True, shape__isnull=True, is_irreg__isnull=True)
+                    | Q(is_manuscript=False, shape__isnull=False, is_irreg__isnull=False)
+                ),
+                name='marking_manuscript_consistency',
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.is_manuscript:
+            if self.lettering_id is not None:
+                raise ValidationError({'lettering': 'Must be null when is_manuscript is true.'})
+            if self.shape_id is not None:
+                raise ValidationError({'shape': 'Must be null when is_manuscript is true.'})
+            if self.is_irreg is not None:
+                raise ValidationError({'is_irreg': 'Must be null when is_manuscript is true.'})
+        else:
+            if self.shape_id is None:
+                raise ValidationError({'shape': 'Required when is_manuscript is false.'})
+            if self.is_irreg is None:
+                self.is_irreg = False
+
+    def save(self, *args, **kwargs):
+        if self.is_manuscript:
+            self.lettering = None
+            self.shape = None
+            self.is_irreg = None
+        else:
+            if self.is_irreg is None:
+                self.is_irreg = False
+        super().save(*args, **kwargs)
 
     def __str__(self):
         if self.code:
-            return f'Postmark {self.code}'
-        if self.post_office_id:
-            try:
-                return f'Postmark #{self.pk} ({self.post_office})'
-            except Exception:
-                pass
-        return f'Postmark #{self.pk}'
+            return f'{self.type} {self.code}'
+        return f'{self.type} #{self.pk}'
 
 
 class Contribution(models.Model):
     """
     Moderation ticket for catalog contributions.
     Submissions create a Contribution instead of directly updating the catalog.
-    Editors approve/reject; on approval, submitted_data is applied to Postmark.
+    Editors approve/reject; on approval, submitted_data is applied to Marking.
     """
     STATUS_PENDING = 'pending'
     STATUS_APPROVED = 'approved'
@@ -88,7 +159,7 @@ class Contribution(models.Model):
     STATUS_CHOICES = [(STATUS_PENDING, 'Pending'), (STATUS_APPROVED, 'Approved'), (STATUS_REJECTED, 'Rejected'), (STATUS_NEEDS_REVISION, 'Needs revision')]
     id = models.AutoField(primary_key=True)
     contributor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='contributions')
-    postmark = models.OneToOneField(Postmark, on_delete=models.CASCADE, related_name='contribution', null=True, blank=True, help_text='Set when approved; Postmark created from submitted_data for new entries')
+    marking = models.OneToOneField(Marking, on_delete=models.CASCADE, related_name='contribution', null=True, blank=True, help_text='Set when approved; Marking created from submitted_data for new entries')
     # Routing target: which institutional Collection this contribution belongs to.
     # Resolved at submit time from the contributor-supplied state. NOT NULL — every
     # contribution must land in a Collection so the right Editors see it.
@@ -168,8 +239,8 @@ class SubmissionTransaction(models.Model):
         blank=True,
         related_name="transactions",
     )
-    postmark = models.ForeignKey(
-        Postmark,
+    marking = models.ForeignKey(
+        Marking,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -188,7 +259,7 @@ class SubmissionTransaction(models.Model):
         verbose_name_plural = "Submission Transactions"
         ordering = ["-created_at", "-id"]
         indexes = [
-            models.Index(fields=["postmark", "created_at"]),
+            models.Index(fields=["marking", "created_at"]),
             models.Index(fields=["contribution", "created_at"]),
             models.Index(fields=["actor", "created_at"]),
             models.Index(fields=["action", "created_at"]),
@@ -198,10 +269,10 @@ class SubmissionTransaction(models.Model):
         return f"Transaction #{self.id} ({self.action})"
 
 
-class PostmarkVersion(models.Model):
-    """Snapshot history for recoverable postmark states."""
+class MarkingVersion(models.Model):
+    """Snapshot history for recoverable marking states."""
     id = models.AutoField(primary_key=True)
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name="versions")
+    marking = models.ForeignKey(Marking, on_delete=models.CASCADE, related_name="versions")
     version_no = models.PositiveIntegerField()
     snapshot = models.JSONField(default=dict, blank=True)
     transaction = models.ForeignKey(
@@ -216,96 +287,105 @@ class PostmarkVersion(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="postmark_versions_created",
+        related_name="marking_versions_created",
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = "PostmarkVersions"
-        verbose_name = "Postmark Version"
-        verbose_name_plural = "Postmark Versions"
+        db_table = "MarkingVersions"
+        verbose_name = "Marking Version"
+        verbose_name_plural = "Marking Versions"
         ordering = ["-version_no", "-id"]
-        unique_together = [["postmark", "version_no"]]
+        unique_together = [["marking", "version_no"]]
         indexes = [
-            models.Index(fields=["postmark", "version_no"]),
+            models.Index(fields=["marking", "version_no"]),
             models.Index(fields=["created_at"]),
         ]
 
     def __str__(self):
-        return f"Postmark #{self.postmark_id} v{self.version_no}"
+        return f"Marking #{self.marking_id} v{self.version_no}"
 
 
-class PostmarkValuation(TimestampedModel):
-    """Valuations for postmarks"""
-    postmark_valuation_id = models.AutoField(primary_key=True)
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='valuations')
-    appraisal_pos = models.PositiveSmallIntegerField(default=0, help_text='Ordinal position within the postmark valuation sequence')
-    amt = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Non-negative USD; null = unpriced entry')
-    appraisal_date = models.DateField(null=True, blank=True)
-
-    class Meta:
-        db_table = 'PostmarkValuations'
-        verbose_name = 'Postmark Valuation'
-        verbose_name_plural = 'Postmark Valuations'
-        unique_together = [['postmark', 'appraisal_pos']]
-        ordering = ['-appraisal_date']
-
-    def __str__(self):
-        return f'{self.postmark} - ${self.amt} ({self.appraisal_date})'
+IMAGE_MARKING_VIEW_CHOICES = ['FULL', 'DETAIL', 'COMPARISON']
+IMAGE_COVER_VIEW_CHOICES = ['FRONT', 'BACK', 'INTERIOR', 'DETAIL']
+IMAGE_VIEW_CHOICES_TUPLES = [(v, v.title()) for v in sorted(set(IMAGE_MARKING_VIEW_CHOICES + IMAGE_COVER_VIEW_CHOICES))]
 
 
-class PostmarkImage(TimestampedModel):
-    """Images of postmarks with metadata"""
-    IMAGE_VIEW_CHOICES = [('FULL', 'Full'), ('DETAIL', 'Detail'), ('COMPARISON', 'Comparison')]
-    postmark_image_id = models.AutoField(primary_key=True)
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='images')
+class Image(TimestampedModel):
+    """
+    Polymorphic image attached to either a Cover or a Marking, keyed by
+    (subject_type, subject_id). Replaces the old per-subject image tables.
+    """
+    SUBJECT_COVER = 'COVER'
+    SUBJECT_MARKING = 'MARKING'
+    SUBJECT_TYPE_CHOICES = [(SUBJECT_COVER, 'Cover'), (SUBJECT_MARKING, 'Marking')]
+
+    MARKING_VIEW_CHOICES = IMAGE_MARKING_VIEW_CHOICES
+    COVER_VIEW_CHOICES = IMAGE_COVER_VIEW_CHOICES
+    IMAGE_VIEW_CHOICES = IMAGE_VIEW_CHOICES_TUPLES
+
+    image_id = models.AutoField(primary_key=True)
+    subject_type = models.CharField(max_length=8, choices=SUBJECT_TYPE_CHOICES)
+    subject_id = models.PositiveIntegerField()
     original_filename = models.CharField(max_length=255)
     storage_filename = models.CharField(max_length=255, unique=True)
     file_checksum = models.CharField(max_length=64)
-    mime_type = models.CharField(max_length=50)
+    mime_type = models.CharField(max_length=64)
     image_width = models.IntegerField()
     image_height = models.IntegerField()
     file_size_bytes = models.BigIntegerField()
-    image_view = models.CharField(max_length=20, choices=IMAGE_VIEW_CHOICES)
+    image_view = models.CharField(max_length=16, choices=IMAGE_VIEW_CHOICES_TUPLES)
     image_description = models.TextField(blank=True)
     display_order = models.IntegerField(default=0)
-    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='postmark_images_uploaded')
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='images_uploaded')
 
     class Meta:
-        db_table = 'PostmarkImages'
-        verbose_name = 'Listing Image'
-        verbose_name_plural = 'Listing Images'
-        ordering = ['postmark', 'display_order']
-        indexes = [models.Index(fields=['postmark', 'display_order']), models.Index(fields=['file_checksum'])]
+        db_table = 'images'
+        verbose_name = 'Image'
+        verbose_name_plural = 'Images'
+        ordering = ['subject_type', 'subject_id', 'display_order']
+        indexes = [
+            models.Index(fields=['subject_type', 'subject_id', 'display_order']),
+            models.Index(fields=['file_checksum']),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    Q(subject_type='MARKING', image_view__in=IMAGE_MARKING_VIEW_CHOICES)
+                    | Q(subject_type='COVER', image_view__in=IMAGE_COVER_VIEW_CHOICES)
+                ),
+                name='image_view_matches_subject_type',
+            ),
+        ]
         permissions = [
-            ('approve_postmarkimage', 'Can approve / reject postmark image submissions'),
+            ('approve_image', 'Can approve / reject image submissions'),
         ]
 
-    def __str__(self):
-        """
-        Robust string representation that tolerates missing or invalid
-        related Postmark records, so that admin views never crash.
-        """
-        try:
-            postmark_display = str(self.postmark) if self.postmark_id else 'Orphan'
-        except Exception:
-            postmark_display = 'Orphan'
-        return f'{postmark_display} - {self.original_filename}'
+    def clean(self):
+        super().clean()
+        if self.subject_type == self.SUBJECT_MARKING:
+            if self.image_view not in self.MARKING_VIEW_CHOICES:
+                raise ValidationError({'image_view': f'Must be one of {self.MARKING_VIEW_CHOICES} when subject_type=MARKING.'})
+        elif self.subject_type == self.SUBJECT_COVER:
+            if self.image_view not in self.COVER_VIEW_CHOICES:
+                raise ValidationError({'image_view': f'Must be one of {self.COVER_VIEW_CHOICES} when subject_type=COVER.'})
 
     def save(self, *args, **kwargs):
-        """Generate file checksum if not provided"""
         if not self.file_checksum and hasattr(self, 'file_object'):
             self.file_checksum = self.generate_checksum(self.file_object)
         super().save(*args, **kwargs)
 
     @staticmethod
     def generate_checksum(file_object):
-        """Generate SHA-256 checksum for file"""
         sha256_hash = hashlib.sha256()
         for byte_block in iter(lambda: file_object.read(4096), b''):
             sha256_hash.update(byte_block)
         file_object.seek(0)
         return sha256_hash.hexdigest()
+
+    def __str__(self):
+        return f'{self.subject_type} #{self.subject_id} - {self.original_filename}'
+
 
 class Postcover(TimestampedModel):
     """Physical postal covers/envelopes that collectors own"""
@@ -322,25 +402,6 @@ class Postcover(TimestampedModel):
 
     def __str__(self):
         return f'{self.postcover_key} (Owner: {self.owner_user})'
-
-class PostcoverPostmark(TimestampedModel):
-    """Many-to-many relationship: Postcovers contain Postmarks"""
-    POSTMARK_LOCATION_CHOICES = [('FRONT', 'Front'), ('BACK', 'Back'), ('FRONT_UPPER_RIGHT', 'Front Upper Right'), ('FRONT_UPPER_LEFT', 'Front Upper Left'), ('BACK_UPPER_RIGHT', 'Back Upper Right'), ('BACK_UPPER_LEFT', 'Back Upper Left'), ('BACK_LOWER_LEFT', 'Back Lower Left'), ('BACK_LOWER_RIGHT', 'Back Lower Right')]
-    postcover_postmark_id = models.AutoField(primary_key=True)
-    postcover = models.ForeignKey(Postcover, on_delete=models.CASCADE, related_name='postcover_postmarks')
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='postcover_postmarks')
-    position_order = models.IntegerField()
-    postmark_location = models.CharField(max_length=20, choices=POSTMARK_LOCATION_CHOICES)
-
-    class Meta:
-        db_table = 'PostcoverPostmarks'
-        verbose_name = 'Example Cover Marking'
-        verbose_name_plural = 'Example Cover Markings'
-        unique_together = [['postcover', 'postmark', 'position_order']]
-        ordering = ['postcover', 'position_order']
-
-    def __str__(self):
-        return f'{self.postcover} - {self.postmark} (Position {self.position_order})'
 
 class PostcoverImage(TimestampedModel):
     """Images of physical postal covers"""
@@ -372,7 +433,7 @@ class PostcoverImage(TimestampedModel):
     def save(self, *args, **kwargs):
         """Generate file checksum if not provided"""
         if not self.file_checksum and hasattr(self, 'file_object'):
-            self.file_checksum = PostmarkImage.generate_checksum(self.file_object)
+            self.file_checksum = Image.generate_checksum(self.file_object)
         super().save(*args, **kwargs)
 
 class LegacyAbbreviation(models.Model):
@@ -688,24 +749,6 @@ class Lettering(TimestampedModel):
     def __str__(self):
         return self.name
 
-class Framing(TimestampedModel):
-    """
-    Value table of border treatment descriptors.
-
-    model.md domain type: Framing
-    Seed values: NOR, Single Line, Double Line, Dotted, Dashed, Cogwheel, Fancy, Ornate, Other.
-    """
-    name = models.CharField(max_length=100, unique=True)
-    code = models.CharField(max_length=30, unique=True, null=True, blank=True, help_text='Editor-assigned reference identifier')
-
-    class Meta:
-        verbose_name = 'Framing'
-        verbose_name_plural = 'Framings'
-        ordering = ['name']
-
-    def __str__(self):
-        return self.name
-
 class Shape(TimestampedModel):
     """
     Editorial value table for the primary form assigned to a postal marking.
@@ -749,145 +792,70 @@ class Cover(TimestampedModel):
             return f'Cover {self.code}'
         return f'Cover #{self.pk}'
 
-class DateObserved(TimestampedModel):
+class CoverDate(TimestampedModel):
     """
-    A single date point observed for a Postmark.
+    A single date point observed for a Cover.
 
-    model.md domain type: DateObserved
+    model.md domain type: cover_dates
     """
     GRANULARITY_CHOICES = [('DAY', 'Day'), ('MONTH', 'Month'), ('YEAR', 'Year')]
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='dates_observed')
+    cover = models.ForeignKey(Cover, on_delete=models.CASCADE, related_name='cover_dates')
     date = models.DateField(help_text='Calendar date of the observed use')
     granularity = models.CharField(max_length=5, choices=GRANULARITY_CHOICES)
 
     class Meta:
-        db_table = 'date_observed'
-        verbose_name = 'Date Observed'
-        verbose_name_plural = 'Dates Observed'
-        ordering = ['postmark', 'date']
-        indexes = [models.Index(fields=['postmark', 'date'], name='date_obs_pm_date_idx')]
+        db_table = 'cover_date'
+        verbose_name = 'Cover Date'
+        verbose_name_plural = 'Cover Dates'
+        ordering = ['cover', 'date']
+        indexes = [models.Index(fields=['cover', 'date'], name='cover_date_cover_date_idx')]
 
     def __str__(self):
-        return f'{self.postmark} -- {self.date} ({self.granularity})'
+        return f'Cover #{self.cover_id} -- {self.date} ({self.granularity})'
 
-class Ratemark(TimestampedModel):
-    """
-    A postal rate marking device or manuscript rate marking.
-    Classified by the same Shape/Lettering/Framing/Impression/isIrregular categories as Postmark.
 
-    model.md domain type: Ratemark
+class CoverValuation(TimestampedModel):
     """
-    IMPRESSION_CHOICES = [('Normal', 'Normal'), ('Stencil', 'Stencil'), ('Negative', 'Negative')]
-    code = models.CharField(max_length=30, unique=True, null=True, blank=True, help_text='Editor-assigned reference identifier')
-    inscription_txt = models.TextField(help_text='Text as physically inscribed on the rate marking')
-    is_manuscript = models.BooleanField()
-    shape = models.ForeignKey(Shape, on_delete=models.PROTECT, null=True, blank=True, related_name='ratemarks', help_text='Required when isManuscript is false')
-    lettering = models.ForeignKey(Lettering, on_delete=models.PROTECT, null=True, blank=True, related_name='ratemarks', help_text='Must be null when isManuscript is true')
-    color = models.ForeignKey(Color, on_delete=models.PROTECT, null=True, blank=True, related_name='ratemarks', help_text='Ink color of this marking; defaults to BLACK (id=1)')
-    impression = models.CharField(max_length=10, choices=IMPRESSION_CHOICES, null=True, blank=True, help_text='Required when isManuscript is false; must be null when true')
-    is_irreg = models.BooleanField(null=True, blank=True, help_text='Required when isManuscript is false; must be null when true')
-    width = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, help_text='Horizontal dimension in millimeters')
-    height = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, help_text='Vertical dimension in millimeters')
-    rate_val = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Non-negative decimal representing rate amount in cents')
+    Estimated collector market value for a cover.
+
+    model.md domain type: cover_valuations
+    """
+    cover_valuation_id = models.AutoField(primary_key=True)
+    cover = models.ForeignKey(Cover, on_delete=models.CASCADE, related_name='valuations')
+    amt = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Non-negative USD; null = unpriced entry')
+    appraisal_date = models.DateField(null=True, blank=True)
 
     class Meta:
-        verbose_name = 'Ratemark'
-        verbose_name_plural = 'Ratemarks'
-        ordering = ['id']
+        db_table = 'cover_valuation'
+        verbose_name = 'Cover Valuation'
+        verbose_name_plural = 'Cover Valuations'
+        ordering = ['-appraisal_date']
 
     def __str__(self):
-        return f'Ratemark #{self.pk} ({self.inscription_txt[:40]})'
+        return f'Cover #{self.cover_id} - ${self.amt} ({self.appraisal_date})'
 
-class Auxmark(TimestampedModel):
+
+class CoverMarking(TimestampedModel):
     """
-    An auxiliary or instructional marking (e.g. PAID, FREE) associated with a Postmark or Ratemark.
-    Polymorphic via parentMarkType/parentMarkId.
+    Junction linking a Cover to a Marking, with positional context describing
+    how the marking appears on that cover.
 
-    model.md domain type: Auxmark
+    model.md domain type: cover_markings
     """
-    PARENT_MARK_TYPE_CHOICES = [('POSTMARK', 'Postmark'), ('RATEMARK', 'Ratemark')]
-    IMPRESSION_CHOICES = [('Normal', 'Normal'), ('Stencil', 'Stencil'), ('Negative', 'Negative')]
-    code = models.CharField(max_length=30, unique=True, null=True, blank=True, help_text='Editor-assigned reference identifier')
-    parent_mark_type = models.CharField(max_length=10, choices=PARENT_MARK_TYPE_CHOICES)
-    parent_mark_id = models.PositiveIntegerField(help_text='PK of the associated Postmark or Ratemark')
-    inscription_txt = models.TextField(help_text='Text as physically inscribed on the auxiliary marking')
-    is_manuscript = models.BooleanField()
-    shape = models.ForeignKey(Shape, on_delete=models.PROTECT, null=True, blank=True, related_name='auxmarks', help_text='Required when isManuscript is false; must be null when true')
-    lettering = models.ForeignKey(Lettering, on_delete=models.PROTECT, null=True, blank=True, related_name='auxmarks', help_text='Must be null when isManuscript is true')
-    color = models.ForeignKey(Color, on_delete=models.PROTECT, null=True, blank=True, related_name='auxmarks', help_text='Ink color of this marking; defaults to BLACK (id=1)')
-    impression = models.CharField(max_length=10, choices=IMPRESSION_CHOICES, null=True, blank=True, help_text='Required when isManuscript is false; must be null when true')
-    is_irreg = models.BooleanField(null=True, blank=True, help_text='Required when isManuscript is false; must be null when true')
-    width = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, help_text='Horizontal dimension in millimeters')
-    height = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, help_text='Vertical dimension in millimeters')
-
-    class Meta:
-        verbose_name = 'Auxmark'
-        verbose_name_plural = 'Auxmarks'
-        ordering = ['parent_mark_type', 'parent_mark_id']
-
-    def __str__(self):
-        return f'Auxmark #{self.pk} on {self.parent_mark_type} #{self.parent_mark_id}'
-
-class CoverPostmark(TimestampedModel):
-    """
-    Junction linking a Cover to a Postmark.
-
-    model.md domain type: CoverPostmark
-    """
-    cover = models.ForeignKey(Cover, on_delete=models.CASCADE, related_name='cover_postmarks')
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='cover_postmarks')
+    cover = models.ForeignKey(Cover, on_delete=models.CASCADE, related_name='cover_markings')
+    marking = models.ForeignKey(Marking, on_delete=models.CASCADE, related_name='cover_markings')
     is_backstamp = models.BooleanField(default=False, help_text='Whether this marking appears on the reverse of the cover')
+    placement = models.CharField(max_length=64, null=True, blank=True, help_text='Free-form placement qualifier; vocabulary not yet enumerated')
 
     class Meta:
-        db_table = 'cover_postmark'
-        verbose_name = 'Cover Postmark'
-        verbose_name_plural = 'Cover Postmarks'
-        unique_together = [['cover', 'postmark']]
+        db_table = 'cover_marking'
+        verbose_name = 'Cover Marking'
+        verbose_name_plural = 'Cover Markings'
+        unique_together = [['cover', 'marking']]
 
     def __str__(self):
-        return f'Cover #{self.cover_id} <-> Postmark #{self.postmark_id}'
+        return f'Cover #{self.cover_id} <-> Marking #{self.marking_id}'
 
-class PostmarkRatemark(TimestampedModel):
-    """
-    Junction linking a Postmark to a Ratemark.
-
-    model.md domain type: PostmarkRatemark
-    """
-    PLACEMENT_TYPE_CHOICES = [('ATTACHED', 'Rate marking integral to townmark frame'), ('WITHIN', 'Rate appears within townmark frame'), ('SEPARATE', 'Rate struck separately from townmark')]
-    postmark = models.ForeignKey(Postmark, on_delete=models.CASCADE, related_name='postmark_ratemarks')
-    ratemark = models.ForeignKey(Ratemark, on_delete=models.CASCADE, related_name='postmark_ratemarks')
-    placement_type = models.CharField(max_length=10, choices=PLACEMENT_TYPE_CHOICES, null=True, blank=True, help_text='Positional relationship of rate marking to townmark device')
-
-    class Meta:
-        db_table = 'postmark_ratemark'
-        verbose_name = 'Postmark Ratemark'
-        verbose_name_plural = 'Postmark Ratemarks'
-        unique_together = [['postmark', 'ratemark']]
-
-    def __str__(self):
-        return f'Postmark #{self.postmark_id} <-> Ratemark #{self.ratemark_id}'
-
-class MarkFraming(TimestampedModel):
-    """
-    Polymorphic junction linking a Postmark, Ratemark, or Auxmark to one or more Framings.
-
-    model.md domain type: MarkFraming
-    """
-    PARENT_MARK_TYPE_CHOICES = [('POSTMARK', 'Postmark'), ('RATEMARK', 'Ratemark'), ('AUXMARK', 'Auxmark')]
-    parent_mark_type = models.CharField(max_length=10, choices=PARENT_MARK_TYPE_CHOICES)
-    parent_mark_id = models.PositiveIntegerField(help_text='PK of the associated Postmark, Ratemark, or Auxmark')
-    framing = models.ForeignKey(Framing, on_delete=models.PROTECT, related_name='mark_framings')
-    framing_pos = models.PositiveSmallIntegerField(null=True, blank=True, help_text='Ordinal border position from outside inward; null = order unknown')
-
-    class Meta:
-        db_table = 'mark_framing'
-        verbose_name = 'Mark Framing'
-        verbose_name_plural = 'Mark Framings'
-        unique_together = [['parent_mark_type', 'parent_mark_id', 'framing']]
-
-    def __str__(self):
-        pos = f' pos={self.framing_pos}' if self.framing_pos is not None else ''
-        return f'{self.parent_mark_type} #{self.parent_mark_id} -- {self.framing}{pos}'
 
 class ReferenceWork(TimestampedModel):
     """
@@ -915,21 +883,27 @@ class ReferenceWork(TimestampedModel):
 
 class Citation(TimestampedModel):
     """
-    Links a ReferenceWork to a Cover or Postmark.
+    Links a ReferenceWork to a Cover or Marking.
     Polymorphic via subjectType/subjectId.
 
-    model.md domain type: Citation
+    model.md domain type: citations
     """
-    SUBJECT_TYPE_CHOICES = [('COVER', 'Cover'), ('POSTMARK', 'Postmark')]
+    SUBJECT_TYPE_CHOICES = [('COVER', 'Cover'), ('MARKING', 'Marking')]
     reference_work = models.ForeignKey(ReferenceWork, on_delete=models.PROTECT, related_name='citations')
     subject_type = models.CharField(max_length=20, choices=SUBJECT_TYPE_CHOICES)
-    subject_id = models.PositiveIntegerField(help_text='PK of the referenced Cover or Postmark')
+    subject_id = models.PositiveIntegerField(help_text='PK of the referenced Cover or Marking')
     citation_detail = models.CharField(max_length=500, help_text='Page, section, or URL within the reference work')
 
     class Meta:
         verbose_name = 'Citation'
         verbose_name_plural = 'Citations'
         ordering = ['reference_work', 'subject_type', 'subject_id']
+        constraints = [
+            models.CheckConstraint(
+                check=Q(subject_type__in=['COVER', 'MARKING']),
+                name='citation_subject_type_valid',
+            ),
+        ]
 
     def __str__(self):
         return f'{self.reference_work} -> {self.subject_type} #{self.subject_id}'

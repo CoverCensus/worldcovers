@@ -7,7 +7,6 @@ from django.contrib.auth import get_user_model
 
 from .models import (
     Lettering,
-    Framing,
     Color,
     LegacyAbbreviation,
     LegacyRateLocation,
@@ -68,31 +67,15 @@ def import_lettering(data, user):
 
 
 def import_framing(data, user):
-    """Import rows into Framing. Expects txtTownmarkFraming or framing column."""
-    headers = data.get("headers") or []
-    rows = data.get("rows") or []
-    name_idx = _col_index(headers, ["txtTownmarkFraming", "framing", "name", "framing_style_name"])
-    if name_idx < 0:
-        return {"created": 0, "skipped": 0, "errors": ["Missing column: framing name"]}
-
-    created = 0
-    skipped = 0
-    errors = []
-    for i, row in enumerate(rows):
-        name = _row_val(row, name_idx)
-        if not name or name.lower() in ("n/a", "na", ""):
-            skipped += 1
-            continue
-        _, was_created = Framing.objects.get_or_create(
-            name=name[:100],
-            defaults={"created_by": user, "modified_by": user},
-        )
-        if was_created:
-            created += 1
-        else:
-            skipped += 1
-
-    return {"created": created, "skipped": skipped, "errors": errors[:20]}
+    """
+    Phase 1: Framing was removed in the model.md realignment. Importer kept
+    only as a no-op so existing CSV upload UIs do not 500.
+    """
+    return {
+        "created": 0,
+        "skipped": len((data or {}).get("rows") or []),
+        "errors": ["Framing has been retired from the model; CSV ignored."],
+    }
 
 
 def import_colors(data, user):

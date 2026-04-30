@@ -64,7 +64,10 @@ INSTALLED_APPS = [
     "reversion_compare",
 
     "common.apps.CommonConfig",
-    "postmarks.apps.PostmarksConfig"
+    # Empty shell. The postmarks app no longer carries any models or admin
+    # registrations; this entry exists so Django can resolve historical
+    # migration dependencies in common/migrations/0012_state_fk_to_location_proxy.
+    "postmarks.apps.PostmarksConfig",
 ]
 if not TESTING:
     # django_debug_toolbar cannot be present in automated testing

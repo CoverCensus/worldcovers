@@ -1,4 +1,4 @@
-"""Helpers for computing PostmarkImage metadata from image bytes or files on disk."""
+"""Helpers for computing Image metadata from image bytes or files on disk."""
 import hashlib
 import io
 import mimetypes
@@ -10,7 +10,7 @@ ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/tiff"}
 
 def extract_image_metadata(content: bytes, mime_type: str) -> Optional[dict]:
     """
-    Compute PostmarkImage metadata (checksum, dimensions, size) from raw bytes.
+    Compute Image metadata (checksum, dimensions, size) from raw bytes.
     Returns dict with file_checksum, mime_type, image_width, image_height,
     file_size_bytes, or None if the bytes aren't a valid/allowed image.
     """
@@ -37,7 +37,7 @@ def extract_image_metadata(content: bytes, mime_type: str) -> Optional[dict]:
 
 
 def read_image_metadata_from_path(path: Path) -> Optional[dict]:
-    """Read an image from disk and return its PostmarkImage metadata, or None if missing/invalid."""
+    """Read an image from disk and return its Image metadata, or None if missing/invalid."""
     if not path.is_file():
         return None
     mime_type, _ = mimetypes.guess_type(path.name)

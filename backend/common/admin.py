@@ -1,6 +1,6 @@
 ###################################################################################################
 ## WoCo Commons - Admin Panel Configuration
-## MPC: 2025/10/24
+## Phase 1 model rewrite -- unified Marking, polymorphic Image, Cover* shape.
 ###################################################################################################
 import csv
 import io
@@ -14,12 +14,10 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.models import Group
 from django.urls import reverse
 from django.utils.html import format_html
-from django.utils import timezone
 from django.core.paginator import Paginator
 from django.utils.functional import cached_property
 from django import forms
 from django.contrib import messages
-from django.db import connection
 
 from import_export import resources, fields
 from import_export.admin import ImportExportModelAdmin
@@ -29,8 +27,7 @@ from django.utils.dateparse import parse_datetime
 
 class IsoDateTimeWidget(Widget):
     """Accepts ISO 8601 datetimes (with or without microseconds / tz offset) on import,
-    and renders ISO format on export. Tolerates the exact output produced by this resource's
-    CSV export (which was tripping up the default DateTimeWidget)."""
+    and renders ISO format on export."""
 
     def clean(self, value, row=None, *args, **kwargs):
         if value in (None, ""):
@@ -47,24 +44,20 @@ class IsoDateTimeWidget(Widget):
             return ""
         return value.isoformat()
 
-from reversion.admin import VersionAdmin
+
 from reversion_compare.admin import CompareVersionAdmin
 
 from .models import (
     Color,
-    Postmark,
-    PostmarkValuation,
-    PostmarkImage,
+    Marking,
+    MarkingType,
+    MarkingVersion,
+    Image,
     Postcover,
-    PostcoverPostmark,
     PostcoverImage,
-    Auxmark,
-    Framing,
-    MarkFraming,
-    Ratemark,
-    PostmarkRatemark,
-    CoverPostmark,
-    DateObserved,
+    CoverDate,
+    CoverValuation,
+    CoverMarking,
     Region,
     PostOffice,
     ReferenceWork,
@@ -86,13 +79,12 @@ from .models import (
     FAQEntry,
 )
 from .csv_import import IMPORTERS
-from .utils import get_canonical_location_reference_codes
 
 User = get_user_model()
 
 
 def _collection_assignment_table_available() -> bool:
-    """True if CollectionAssignments table exists (for load/save of editor↔collection links)."""
+    """True if the CollectionAssignments table exists."""
     try:
         CollectionAssignment.objects.only("pk").first()
         return True
@@ -123,38 +115,29 @@ class TimestampedModelAdmin(ImportExportModelAdmin):
 
 
 class InlineRevisionMixin:
-    """
-    Ensures created_by and modified_by fields are populated on inline objects.
-    We set the fields on the instances, then let Django's normal save logic run.
-    """
-    def save_formset(self, request, form, formset, change):
-        # Get instances but do NOT save yet
-        instances = formset.save(commit=False)
+    """Populate created_by / modified_by on inline objects."""
 
+    def save_formset(self, request, form, formset, change):
+        instances = formset.save(commit=False)
         for obj in instances:
-            # New objects: set created_by if it exists and isn't set yet
             if hasattr(obj, "created_by") and getattr(obj, "created_by_id", None) is None:
                 obj.created_by = request.user
-
-            # All objects: bump modified_by if field exists
             if hasattr(obj, "modified_by"):
                 obj.modified_by = request.user
-
-        # Save m2m relations
         formset.save_m2m()
-    
+
 
 class TimestampedModelResource(resources.ModelResource):
     """Base resource that handles user foreign keys properly"""
     created_by = fields.Field(
         column_name='created_by',
         attribute='created_by',
-        widget=ForeignKeyWidget(User, 'id')
+        widget=ForeignKeyWidget(User, 'id'),
     )
     modified_by = fields.Field(
         column_name='modified_by',
         attribute='modified_by',
-        widget=ForeignKeyWidget(User, 'id')
+        widget=ForeignKeyWidget(User, 'id'),
     )
     created_date = fields.Field(
         column_name='created_date',
@@ -171,21 +154,12 @@ class TimestampedModelResource(resources.ModelResource):
         abstract = True
 
 
-class ReversionAdminBase(CompareVersionAdmin, admin.ModelAdmin):
-    """
-    Base admin that enables django-reversion history + compare.
-    """
-    pass
-
-
 class ReversionImportExportAdmin(CompareVersionAdmin, ImportExportModelAdmin):
-    """
-    Base admin for models that already use ImportExportModelAdmin.
-    """
+    """Base admin for models that already use ImportExportModelAdmin and want reversion."""
     pass
 
 
-# ========== RESOURCES (for Import-Export) ==========
+# ========== RESOURCES ==========
 
 class ColorResource(TimestampedModelResource):
     class Meta(TimestampedModelResource.Meta):
@@ -193,31 +167,31 @@ class ColorResource(TimestampedModelResource):
         import_id_fields = ['color_id']
 
 
-class PostmarkResource(TimestampedModelResource):
+class MarkingResource(TimestampedModelResource):
     post_office = fields.Field(
         column_name='post_office',
         attribute='post_office',
-        widget=ForeignKeyWidget(PostOffice, 'id')
+        widget=ForeignKeyWidget(PostOffice, 'id'),
     )
     shape = fields.Field(
         column_name='shape',
         attribute='shape',
-        widget=ForeignKeyWidget(Shape, 'id')
+        widget=ForeignKeyWidget(Shape, 'id'),
     )
     lettering = fields.Field(
         column_name='lettering',
         attribute='lettering',
-        widget=ForeignKeyWidget(Lettering, 'id')
+        widget=ForeignKeyWidget(Lettering, 'id'),
     )
     color = fields.Field(
         column_name='color',
         attribute='color',
-        widget=ForeignKeyWidget(Color, 'color_id')
+        widget=ForeignKeyWidget(Color, 'color_id'),
     )
 
     class Meta(TimestampedModelResource.Meta):
-        model = Postmark
-        import_id_fields = ['postmark_id']
+        model = Marking
+        import_id_fields = ['marking_id']
 
 
 class ShapeResource(TimestampedModelResource):
@@ -232,17 +206,11 @@ class LetteringResource(TimestampedModelResource):
         import_id_fields = ['id']
 
 
-class FramingResource(TimestampedModelResource):
-    class Meta(TimestampedModelResource.Meta):
-        model = Framing
-        import_id_fields = ['id']
-
-
 class RegionResource(TimestampedModelResource):
     parent_region = fields.Field(
         column_name='parent_region',
         attribute='parent_region',
-        widget=ForeignKeyWidget(Region, 'id')
+        widget=ForeignKeyWidget(Region, 'id'),
     )
 
     class Meta(TimestampedModelResource.Meta):
@@ -254,7 +222,7 @@ class PostOfficeResource(TimestampedModelResource):
     region = fields.Field(
         column_name='region',
         attribute='region',
-        widget=ForeignKeyWidget(Region, 'id')
+        widget=ForeignKeyWidget(Region, 'id'),
     )
 
     class Meta(TimestampedModelResource.Meta):
@@ -266,7 +234,7 @@ class CoverResource(TimestampedModelResource):
     color = fields.Field(
         column_name='color',
         attribute='color',
-        widget=ForeignKeyWidget(Color, 'color_id')
+        widget=ForeignKeyWidget(Color, 'color_id'),
     )
 
     class Meta(TimestampedModelResource.Meta):
@@ -274,181 +242,57 @@ class CoverResource(TimestampedModelResource):
         import_id_fields = ['id']
 
 
-class RatemarkResource(TimestampedModelResource):
-    shape = fields.Field(
-        column_name='shape',
-        attribute='shape',
-        widget=ForeignKeyWidget(Shape, 'id')
-    )
-    lettering = fields.Field(
-        column_name='lettering',
-        attribute='lettering',
-        widget=ForeignKeyWidget(Lettering, 'id')
-    )
-    color = fields.Field(
-        column_name='color',
-        attribute='color',
-        widget=ForeignKeyWidget(Color, 'color_id')
-    )
-
-    class Meta(TimestampedModelResource.Meta):
-        model = Ratemark
-        import_id_fields = ['id']
-
-
-class AuxmarkResource(TimestampedModelResource):
-    shape = fields.Field(
-        column_name='shape',
-        attribute='shape',
-        widget=ForeignKeyWidget(Shape, 'id')
-    )
-    lettering = fields.Field(
-        column_name='lettering',
-        attribute='lettering',
-        widget=ForeignKeyWidget(Lettering, 'id')
-    )
-    color = fields.Field(
-        column_name='color',
-        attribute='color',
-        widget=ForeignKeyWidget(Color, 'color_id')
-    )
-
-    class Meta(TimestampedModelResource.Meta):
-        model = Auxmark
-        import_id_fields = ['id']
-
-
-class PostmarkValuationResource(TimestampedModelResource):
-    postmark = fields.Field(
-        column_name='postmark',
-        attribute='postmark',
-        widget=ForeignKeyWidget(Postmark, 'postmark_id')
-    )
-
-    class Meta(TimestampedModelResource.Meta):
-        model = PostmarkValuation
-        import_id_fields = ['postmark_valuation_id']
-
-
-class PostmarkImageResource(TimestampedModelResource):
-    postmark = fields.Field(
-        column_name='postmark',
-        attribute='postmark',
-        widget=ForeignKeyWidget(Postmark, 'postmark_id')
-    )
-    uploaded_by = fields.Field(
-        column_name='uploaded_by',
-        attribute='uploaded_by',
-        widget=ForeignKeyWidget(User, 'id')
-    )
-
-    class Meta(TimestampedModelResource.Meta):
-        model = PostmarkImage
-        import_id_fields = ['postmark_image_id']
-
-
-class DateObservedResource(TimestampedModelResource):
-    postmark = fields.Field(
-        column_name='postmark',
-        attribute='postmark',
-        widget=ForeignKeyWidget(Postmark, 'postmark_id')
-    )
-
-    class Meta(TimestampedModelResource.Meta):
-        model = DateObserved
-        import_id_fields = ['id']
-
-
-class PostcoverResource(TimestampedModelResource):
-    owner_user = fields.Field(
-        column_name='owner_user',
-        attribute='owner_user',
-        widget=ForeignKeyWidget(User, 'id')
-    )
-
-    class Meta(TimestampedModelResource.Meta):
-        model = Postcover
-        import_id_fields = ['postcover_id']
-
-
-class PostcoverPostmarkResource(TimestampedModelResource):
-    postcover = fields.Field(
-        column_name='postcover',
-        attribute='postcover',
-        widget=ForeignKeyWidget(Postcover, 'postcover_id')
-    )
-    postmark = fields.Field(
-        column_name='postmark',
-        attribute='postmark',
-        widget=ForeignKeyWidget(Postmark, 'postmark_id')
-    )
-
-    class Meta(TimestampedModelResource.Meta):
-        model = PostcoverPostmark
-        import_id_fields = ['postcover_postmark_id']
-
-
-class PostcoverImageResource(TimestampedModelResource):
-    postcover = fields.Field(
-        column_name='postcover',
-        attribute='postcover',
-        widget=ForeignKeyWidget(Postcover, 'postcover_id')
-    )
-    uploaded_by = fields.Field(
-        column_name='uploaded_by',
-        attribute='uploaded_by',
-        widget=ForeignKeyWidget(User, 'id')
-    )
-
-    class Meta(TimestampedModelResource.Meta):
-        model = PostcoverImage
-        import_id_fields = ['postcover_image_id']
-
-
-class CoverPostmarkResource(TimestampedModelResource):
+class CoverDateResource(TimestampedModelResource):
     cover = fields.Field(
         column_name='cover',
         attribute='cover',
-        widget=ForeignKeyWidget(Cover, 'id')
-    )
-    postmark = fields.Field(
-        column_name='postmark',
-        attribute='postmark',
-        widget=ForeignKeyWidget(Postmark, 'postmark_id')
+        widget=ForeignKeyWidget(Cover, 'id'),
     )
 
     class Meta(TimestampedModelResource.Meta):
-        model = CoverPostmark
+        model = CoverDate
         import_id_fields = ['id']
 
 
-class PostmarkRatemarkResource(TimestampedModelResource):
-    postmark = fields.Field(
-        column_name='postmark',
-        attribute='postmark',
-        widget=ForeignKeyWidget(Postmark, 'postmark_id')
-    )
-    ratemark = fields.Field(
-        column_name='ratemark',
-        attribute='ratemark',
-        widget=ForeignKeyWidget(Ratemark, 'id')
+class CoverValuationResource(TimestampedModelResource):
+    cover = fields.Field(
+        column_name='cover',
+        attribute='cover',
+        widget=ForeignKeyWidget(Cover, 'id'),
     )
 
     class Meta(TimestampedModelResource.Meta):
-        model = PostmarkRatemark
-        import_id_fields = ['id']
+        model = CoverValuation
+        import_id_fields = ['cover_valuation_id']
 
 
-class MarkFramingResource(TimestampedModelResource):
-    framing = fields.Field(
-        column_name='framing',
-        attribute='framing',
-        widget=ForeignKeyWidget(Framing, 'id')
+class CoverMarkingResource(TimestampedModelResource):
+    cover = fields.Field(
+        column_name='cover',
+        attribute='cover',
+        widget=ForeignKeyWidget(Cover, 'id'),
+    )
+    marking = fields.Field(
+        column_name='marking',
+        attribute='marking',
+        widget=ForeignKeyWidget(Marking, 'marking_id'),
     )
 
     class Meta(TimestampedModelResource.Meta):
-        model = MarkFraming
+        model = CoverMarking
         import_id_fields = ['id']
+
+
+class ImageResource(TimestampedModelResource):
+    uploaded_by = fields.Field(
+        column_name='uploaded_by',
+        attribute='uploaded_by',
+        widget=ForeignKeyWidget(User, 'id'),
+    )
+
+    class Meta(TimestampedModelResource.Meta):
+        model = Image
+        import_id_fields = ['image_id']
 
 
 class ReferenceWorkResource(TimestampedModelResource):
@@ -461,7 +305,7 @@ class CitationResource(TimestampedModelResource):
     reference_work = fields.Field(
         column_name='reference_work',
         attribute='reference_work',
-        widget=ForeignKeyWidget(ReferenceWork, 'id')
+        widget=ForeignKeyWidget(ReferenceWork, 'id'),
     )
 
     class Meta(TimestampedModelResource.Meta):
@@ -553,132 +397,236 @@ class ColorAdmin(TimestampedModelAdmin):
     resource_class = ColorResource
     list_display = ['name', 'hex_val']
     search_fields = ['name', 'hex_val']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
     actions = ['delete_colors_keep_listings']
 
-    @admin.action(description='Delete selected colors (keep listings)')
+    @admin.action(description='Delete selected colors (re-default markings to BLACK)')
     def delete_colors_keep_listings(self, request, queryset):
         """
-        Delete Color records while preserving Postmark listings. Postmarks whose
-        color FK points to a deleted color have their color nulled out first.
+        Delete Color records while preserving Marking listings. Markings whose
+        color FK points to a deleted color are re-pointed at color_id=1 (BLACK).
         """
         from django.db import transaction
 
         total_colors = queryset.count()
-        total_nulled = 0
-
+        total_repointed = 0
         with transaction.atomic():
             for color in queryset:
-                count = Postmark.objects.filter(color=color).update(color=None)
-                total_nulled += count
+                if color.pk == 1:
+                    continue
+                count = Marking.objects.filter(color=color).update(color_id=1)
+                total_repointed += count
                 color.delete()
 
         messages.success(
             request,
-            f"Deleted {total_colors} color(s); nulled color on {total_nulled} postmark(s). "
-            "All catalog listings were kept."
+            f"Deleted {total_colors} color(s); re-pointed color on "
+            f"{total_repointed} marking(s) to BLACK. All catalog listings were kept."
         )
 
     def get_actions(self, request):
-        """
-        Hide Django's default 'delete_selected' action so staff use the
-        safer custom delete_colors_keep_listings action instead, which
-        preserves Postmark listings.
-        """
         actions = super().get_actions(request)
         if 'delete_selected' in actions:
             del actions['delete_selected']
         return actions
 
 
-# ========== POSTMARK ADMIN ==========
+# ========== MARKING ADMIN ==========
 
-class PostmarkValuationInline(admin.TabularInline):
-    model = PostmarkValuation
+class CoverMarkingInline(admin.TabularInline):
+    """Covers attached to this Marking via CoverMarking."""
+    model = CoverMarking
     extra = 0
-    exclude = ["created_by", "modified_by", "created_date", "modified_date"]
+    raw_id_fields = ['cover']
+    fields = ['cover', 'is_backstamp', 'placement']
+    exclude = ['created_by', 'modified_by', 'created_date', 'modified_date']
 
 
-class PostmarkImageInline(admin.TabularInline):
-    model = PostmarkImage
-    extra = 1
-    readonly_fields = ['file_checksum']
-    fields = ['original_filename', 'storage_filename', 'image_view', 'display_order','uploaded_by']
-    exclude = ["created_by", "modified_by", "created_date", "modified_date"]
-
-
-class ExampleCoverInline(admin.TabularInline):
-    """Example Covers attached to this Listing via PostcoverPostmark"""
-    model = PostcoverPostmark
-    extra = 1
-    raw_id_fields = ['postcover']
-    fields = ['postcover', 'position_order', 'postmark_location']
-    exclude = ["created_by", "modified_by", "created_date", "modified_date"]
-
-
-@admin.register(Postmark)
-class PostmarkAdmin(InlineRevisionMixin, TimestampedModelAdmin):
-    resource_class = PostmarkResource
-    list_display = ['code', 'post_office', 'color', 'shape', 'is_manuscript']
-    list_filter = ['is_manuscript', 'color', 'shape']
-    search_fields = ['code', 'catalog_txt', 'inscription_txt', 'post_office__name']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
+@admin.register(Marking)
+class MarkingAdmin(InlineRevisionMixin, TimestampedModelAdmin):
+    resource_class = MarkingResource
+    list_display = ['marking_id', 'code', 'type', 'post_office', 'color', 'shape', 'is_manuscript']
+    list_filter = ['type', 'is_manuscript', 'color', 'shape']
+    search_fields = ['code', 'catalog_txt', 'inscription_txt', 'desc', 'post_office__name']
     raw_id_fields = ['post_office', 'shape', 'lettering', 'color']
-
-    inlines = [
-        PostmarkValuationInline,
-        PostmarkImageInline,
-        ExampleCoverInline,
-    ]
+    inlines = [CoverMarkingInline]
 
     fieldsets = (
         ('Identity', {
-            'fields': ('code', 'post_office')
+            'fields': ('code', 'type', 'post_office'),
         }),
         ('Physical Characteristics', {
-            'fields': ('shape', 'lettering', 'color', 'is_manuscript', 'impression',
-                       'is_irreg', 'width', 'height', 'date_type', 'date_fmt')
+            'fields': (
+                'shape', 'lettering', 'color', 'is_manuscript', 'impression',
+                'is_irreg', 'width', 'height', 'date_fmt', 'rate_val',
+            ),
         }),
         ('Text', {
-            'fields': ('catalog_txt', 'inscription_txt')
+            'fields': ('catalog_txt', 'inscription_txt', 'desc'),
         }),
         ('Metadata', {
             'fields': ('created_date', 'modified_date', 'created_by', 'modified_by'),
-            'classes': ('collapse',)
+            'classes': ('collapse',),
         }),
     )
 
-    def example_cover_count(self, obj):
-        return obj.postcover_postmarks.count()
-    example_cover_count.short_description = 'Example Covers'
 
-    def example_cover_link(self, obj):
-        url = (
-            reverse('admin:common_postcover_changelist')
-            + f"?postcover_postmarks__postmark__id__exact={obj.pk}"
-        )
-        return format_html('<a href="{}">View</a>', url)
-    example_cover_link.short_description = 'Example Covers Link'
+class CatalogRequestMarking(Marking):
+    """Proxy that scopes the Marking changelist to user-contributed entries
+    awaiting / under editorial review."""
+
+    class Meta:
+        proxy = True
+        verbose_name = 'Catalog request'
+        verbose_name_plural = 'Catalog requests'
 
 
-# ========== POSTCOVER ADMIN ==========
+@admin.register(CatalogRequestMarking)
+class CatalogRequestMarkingAdmin(MarkingAdmin):
+    """Admin view restricted to Markings linked to a Contribution row."""
 
-class PostcoverPostmarkInline(admin.TabularInline):
-    model = PostcoverPostmark
-    extra = 1
-    raw_id_fields = ['postmark']
-    exclude = ["created_by", "modified_by", "created_date", "modified_date"]
+    def get_queryset(self, request):
+        return super().get_queryset(request).filter(contribution__isnull=False)
 
+
+# ========== IMAGE ADMIN ==========
+
+@admin.register(Image)
+class ImageAdmin(TimestampedModelAdmin):
+    resource_class = ImageResource
+    list_display = ['image_id', 'subject_type', 'subject_id', 'original_filename', 'image_view', 'display_order', 'uploaded_by']
+    list_filter = ['subject_type', 'image_view']
+    search_fields = ['original_filename', 'storage_filename', 'subject_id']
+    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date', 'file_checksum']
+    paginator = NoCountPaginator
+
+    fieldsets = (
+        ('Subject', {
+            'fields': ('subject_type', 'subject_id'),
+        }),
+        ('File Information', {
+            'fields': (
+                'original_filename', 'storage_filename', 'file_checksum',
+                'mime_type', 'image_width', 'image_height', 'file_size_bytes',
+            ),
+        }),
+        ('Display Settings', {
+            'fields': ('image_view', 'image_description', 'display_order'),
+        }),
+        ('Submission Information', {
+            'fields': ('uploaded_by',),
+        }),
+        ('Metadata', {
+            'fields': ('created_date', 'modified_date', 'created_by', 'modified_by'),
+            'classes': ('collapse',),
+        }),
+    )
+
+
+# ========== COVER ADMIN ==========
+
+class CoverDateInline(admin.TabularInline):
+    model = CoverDate
+    extra = 0
+    fields = ['date', 'granularity']
+    exclude = ['created_by', 'modified_by', 'created_date', 'modified_date']
+
+
+class CoverValuationInline(admin.TabularInline):
+    model = CoverValuation
+    extra = 0
+    fields = ['amt', 'appraisal_date']
+    exclude = ['created_by', 'modified_by', 'created_date', 'modified_date']
+
+
+class CoverMarkingForCoverInline(admin.TabularInline):
+    model = CoverMarking
+    extra = 0
+    raw_id_fields = ['marking']
+    fields = ['marking', 'is_backstamp', 'placement']
+    exclude = ['created_by', 'modified_by', 'created_date', 'modified_date']
+
+
+@admin.register(Cover)
+class CoverAdmin(TimestampedModelAdmin):
+    resource_class = CoverResource
+    list_display = ['code', 'type', 'color', 'has_adhesive', 'height', 'width', 'is_institutional']
+    list_filter = ['type', 'has_adhesive', 'is_institutional']
+    search_fields = ['code', 'type']
+    raw_id_fields = ['color']
+    inlines = [CoverMarkingForCoverInline, CoverDateInline, CoverValuationInline]
+
+
+@admin.register(CoverDate)
+class CoverDateAdmin(TimestampedModelAdmin):
+    resource_class = CoverDateResource
+    list_display = ['cover', 'date', 'granularity']
+    list_filter = ['granularity']
+    search_fields = ['cover__code']
+    raw_id_fields = ['cover']
+    ordering = ['cover', 'date']
+
+
+@admin.register(CoverValuation)
+class CoverValuationAdmin(TimestampedModelAdmin):
+    resource_class = CoverValuationResource
+    list_display = ['cover_valuation_id', 'cover', 'amt', 'appraisal_date']
+    list_filter = ['appraisal_date']
+    search_fields = ['cover__code']
+    raw_id_fields = ['cover']
+    ordering = ['-appraisal_date']
+
+
+@admin.register(CoverMarking)
+class CoverMarkingAdmin(TimestampedModelAdmin):
+    resource_class = CoverMarkingResource
+    list_display = ['cover', 'marking', 'is_backstamp', 'placement']
+    list_filter = ['is_backstamp']
+    search_fields = ['cover__code', 'marking__code', 'placement']
+    raw_id_fields = ['cover', 'marking']
+
+
+@admin.register(MarkingVersion)
+class MarkingVersionAdmin(admin.ModelAdmin):
+    list_display = ['id', 'marking', 'version_no', 'created_at', 'created_by']
+    list_filter = ['created_at']
+    search_fields = ['marking__code']
+    raw_id_fields = ['marking', 'transaction']
+    readonly_fields = ['snapshot', 'created_at']
+    ordering = ['-created_at']
+
+
+# ========== POSTCOVER (DEPRECATED) ADMIN ==========
 
 class PostcoverImageInline(admin.TabularInline):
     model = PostcoverImage
     extra = 1
     readonly_fields = ['file_checksum']
     fields = ['original_filename', 'storage_filename', 'image_view', 'display_order']
-    exclude = ["created_by", "modified_by", "created_date", "modified_date"]
+    exclude = ['created_by', 'modified_by', 'created_date', 'modified_date']
 
 
+@admin.register(Postcover)
+class PostcoverAdmin(InlineRevisionMixin, TimestampedModelAdmin):
+    list_display = ['postcover_key', 'owner_user']
+    search_fields = ['postcover_key', 'owner_user__username', 'description']
+    raw_id_fields = ['owner_user']
+    inlines = [PostcoverImageInline]
 
+
+@admin.register(PostcoverImage)
+class PostcoverImageAdmin(TimestampedModelAdmin):
+    list_display = ['get_postcover_key', 'original_filename', 'image_view', 'display_order', 'uploaded_by']
+    list_filter = ['image_view']
+    search_fields = ['postcover__postcover_key', 'original_filename']
+    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date', 'file_checksum']
+    raw_id_fields = ['postcover']
+
+    def get_postcover_key(self, obj):
+        return obj.postcover.postcover_key
+    get_postcover_key.short_description = 'Postcover'
+
+
+# ========== CSV UPLOADS ==========
 
 def _parse_csv_file(uploaded_file) -> dict:
     """Parse CSV file. Returns { headers: [...], rows: [[...], ...] }."""
@@ -693,16 +641,15 @@ def _parse_csv_file(uploaded_file) -> dict:
 
 
 class AdminCsvUploadForm(forms.ModelForm):
-    """Form with optional CSV file upload. File is required when adding a new upload."""
     csv_file = forms.FileField(
         label='CSV file',
         required=False,
-        help_text='Upload a CSV (e.g. tblStates.csv, tblTownmarkLettering.csv). Required when adding new.',
+        help_text='Upload a CSV. Required when adding new.',
     )
 
     class Meta:
         model = AdminCsvUpload
-        fields = ['name']  # csv_file is form-only, not a model field
+        fields = ['name']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -718,8 +665,7 @@ class AdminCsvUploadForm(forms.ModelForm):
         return data
 
 
-# ========== LEGACY ERD TABLES (read-only friendly) ==========
-
+# ========== LEGACY ERD TABLES ==========
 
 @admin.register(LegacyAbbreviation)
 class LegacyAbbreviationAdmin(ImportExportModelAdmin):
@@ -790,13 +736,12 @@ class AdminCsvUploadAdmin(admin.ModelAdmin):
     readonly_fields = ['uploaded_at', 'uploaded_by', 'data', 'row_count_display']
     ordering = ['-uploaded_at']
     list_per_page = 25
-    actions = ['import_to_date_formats', 'import_to_lettering', 'import_to_framing', 'import_to_colors', 'import_to_states']
+    actions = ['import_to_lettering', 'import_to_colors']
 
     def has_add_permission(self, request):
         return request.user.is_staff
 
     def get_queryset(self, request):
-        # Select only small columns so MySQL never reads the huge Data JSON (avoids "Out of sort memory")
         return super().get_queryset(request).only(
             'id', 'name', 'file_name', 'uploaded_at', 'uploaded_by_id'
         )
@@ -853,36 +798,18 @@ class AdminCsvUploadAdmin(admin.ModelAdmin):
         else:
             self.message_user(request, 'No rows imported (duplicates skipped or no data).', level=messages.INFO)
 
-    @admin.action(description='Import selected into Date Formats')
-    def import_to_date_formats(self, request, queryset):
-        self._run_import(request, queryset, 'date_format')
-
     @admin.action(description='Import selected into Lettering Styles')
     def import_to_lettering(self, request, queryset):
         self._run_import(request, queryset, 'lettering')
-
-    @admin.action(description='Import selected into Framing Styles')
-    def import_to_framing(self, request, queryset):
-        self._run_import(request, queryset, 'framing')
 
     @admin.action(description='Import selected into Colors')
     def import_to_colors(self, request, queryset):
         self._run_import(request, queryset, 'colors')
 
-    @admin.action(description='Import selected into States (Admin Units)')
-    def import_to_states(self, request, queryset):
-        self._run_import(request, queryset, 'states')
 
-
-# ========== USER ADMIN CUSTOMIZATION ==========
-
+# ========== USER ADMIN ==========
 
 class CollectionAssignmentInline(admin.TabularInline):
-    """
-    Inline so an admin can assign Collections to an editor directly on the
-    user detail page. The primary UI is the dual-column selector on the user
-    form below; this inline is a fallback view of the same data.
-    """
     model = CollectionAssignment
     extra = 0
     raw_id_fields = ['collection']
@@ -906,15 +833,7 @@ ROLE_CHOICES = (
 
 
 class CollectionUserChangeForm(DjangoUserAdmin.form):
-    """
-    Extend the base User change form to manage Collection assignments via a
-    two-column selector, similar to the built-in user permissions widget.
-
-    The legacy "Locations" multi-select picked Regions; this picks Collections
-    directly. Collections wrap a Region, so picking the Virginia collection is
-    equivalent to "responsible for Virginia" — but routing now goes through the
-    Collection's editor_assignments rather than UserLocationAssignment.
-    """
+    """Manage Collection assignments via a two-column selector on the user form."""
 
     collections = forms.ModelMultipleChoiceField(
         label='Assigned Collections',
@@ -930,7 +849,7 @@ class CollectionUserChangeForm(DjangoUserAdmin.form):
         choices=ROLE_CHOICES,
         required=False,
         help_text='Application role: Contributor or Editor. Administrator is the '
-                  'is_superuser flag below — there is no separate Administrator group.',
+                  'is_superuser flag below -- there is no separate Administrator group.',
     )
 
     class Meta(DjangoUserAdmin.form.Meta):
@@ -962,7 +881,6 @@ class CollectionUserChangeForm(DjangoUserAdmin.form):
         self.fields['role'].initial = role_initial or ROLE_CONTRIBUTOR
 
     def _save_collections(self, request_user=None):
-        """Sync the chosen Collections to CollectionAssignment rows for this user."""
         if not self.instance.pk:
             return
         if not _collection_assignment_table_available():
@@ -981,8 +899,6 @@ class CollectionUserChangeForm(DjangoUserAdmin.form):
             CollectionAssignment.objects.filter(user=user).values_list('collection_id', flat=True)
         )
         for pk in (selected_ids - existing_ids):
-            # Use .create (not bulk_create) so the model's save() hook runs and
-            # adds the user to the Editors group.
             CollectionAssignment.objects.create(
                 user=user,
                 collection_id=pk,
@@ -991,7 +907,6 @@ class CollectionUserChangeForm(DjangoUserAdmin.form):
             )
 
     def _save_role_groups(self):
-        """Map the selected role to the Editors / Contributors Django groups."""
         if not self.instance.pk:
             return
         role = self.cleaned_data.get("role")
@@ -1031,14 +946,12 @@ class CollectionUserChangeForm(DjangoUserAdmin.form):
         self._save_role_groups()
 
     class Media:
-        # Hide the Collections selector unless role="editor" is chosen.
         js = ("common/admin_user_role.js",)
 
 
 try:
     admin.site.unregister(User)
 except NotRegistered:
-    # Default User admin may not be registered in some configurations.
     pass
 
 try:
@@ -1049,16 +962,10 @@ except NotRegistered:
 
 @admin.register(User)
 class CustomUserAdmin(DjangoUserAdmin):
-    """
-    Extend the default Django User admin to show a dual-column Locations selector,
-    similar to the built-in user permissions UI.
-    """
-
     form = CollectionUserChangeForm
     inlines = [EmailAddressInline]
 
     def save_related(self, request, form, formsets, change):
-        """Ensure custom role/collection mappings are persisted after related saves."""
         super().save_related(request, form, formsets, change)
         if hasattr(form, '_save_collections'):
             form._save_collections(request_user=request.user)
@@ -1082,14 +989,13 @@ class CustomUserAdmin(DjangoUserAdmin):
 
 # ========== CONTRIBUTION ADMIN ==========
 
-
 @admin.register(Contribution)
 class ContributionAdmin(admin.ModelAdmin):
     list_display = ["id", "contributor", "status", "get_state", "get_town", "reviewer", "created_at"]
     list_filter = ["status"]
     search_fields = ["contributor__username", "submitted_data"]
-    readonly_fields = ["created_at", "updated_at", "postmark"]
-    actions = ["approve_contributions", "reject_contributions"]
+    readonly_fields = ["created_at", "updated_at", "marking"]
+    actions = ["reject_contributions"]
 
     def get_state(self, obj):
         return (obj.submitted_data or {}).get("state", "-")
@@ -1099,96 +1005,8 @@ class ContributionAdmin(admin.ModelAdmin):
         return (obj.submitted_data or {}).get("town", "-")
     get_town.short_description = "Town"
 
-    def save_model(self, request, obj, form, change):
-        """
-        When a staff member edits a single Contribution in the admin and
-        changes its status from pending → approved, automatically apply the
-        submitted data to the catalog (create/update Postmark) so that the
-        listing appears in the main catalog/search.
-        """
-        previous_status = None
-        if change and obj.pk:
-            try:
-                previous = Contribution.objects.only("status").get(pk=obj.pk)
-                previous_status = previous.status
-            except Contribution.DoesNotExist:
-                previous_status = None
-
-        super().save_model(request, obj, form, change)
-
-        # Only act on a fresh transition from pending -> approved
-        if previous_status == Contribution.STATUS_PENDING and obj.status == Contribution.STATUS_APPROVED:
-            try:
-                postmark = obj.apply_to_catalog()
-                if not postmark:
-                    self.message_user(
-                        request,
-                        "Could not apply contribution to catalog. Check submitted data.",
-                        level=messages.ERROR,
-                    )
-                    return
-
-                # Ensure the Contribution is linked to the Postmark (for new entries)
-                if obj.postmark_id != postmark.pk:
-                    obj.postmark = postmark
-                    obj.save(update_fields=["postmark", "updated_at"])
-            except Exception:
-                self.message_user(
-                    request,
-                    "An error occurred while applying this contribution to the catalog.",
-                    level=messages.ERROR,
-                )
-
-
-    @admin.action(description="Approve selected contributions and create/update catalog listings")
-    def approve_contributions(self, request, queryset):
-        """
-        Admin bulk action to approve pending contributions.
-        Mirrors the API behaviour:
-        - Applies submitted_data to the catalog via contribution.apply_to_catalog()
-          (creates a Postmark for new entries or updates the existing one).
-        - Marks the Contribution as approved and links it to the Postmark.
-        - Marks the Contribution as approved so it appears in the public catalog/search listing.
-        """
-        approved = 0
-        failed = 0
-
-        for contrib in queryset.select_related("postmark"):
-            if contrib.status != Contribution.STATUS_PENDING:
-                continue
-            try:
-                postmark = contrib.apply_to_catalog()
-                if not postmark:
-                    failed += 1
-                    continue
-                contrib.status = Contribution.STATUS_APPROVED
-                contrib.reviewer = request.user
-                contrib.postmark = postmark
-                contrib.save(update_fields=["status", "reviewer", "postmark", "updated_at"])
-                approved += 1
-            except Exception:
-                failed += 1
-
-        if approved:
-            self.message_user(
-                request,
-                f"Approved {approved} contribution(s) and applied them to the catalog.",
-                level=messages.SUCCESS,
-            )
-        if failed:
-            self.message_user(
-                request,
-                f"{failed} contribution(s) could not be applied to the catalog. "
-                "Check submitted data and try again.",
-                level=messages.WARNING,
-            )
-
     @admin.action(description="Reject selected contributions (no catalog change)")
     def reject_contributions(self, request, queryset):
-        """
-        Admin bulk action to reject pending contributions.
-        Does not change the catalog; only updates Contribution.status.
-        """
         rejected = 0
         for contrib in queryset:
             if contrib.status != Contribution.STATUS_PENDING:
@@ -1197,7 +1015,6 @@ class ContributionAdmin(admin.ModelAdmin):
             contrib.reviewer = request.user
             contrib.save(update_fields=["status", "reviewer", "updated_at"])
             rejected += 1
-
         if rejected:
             self.message_user(
                 request,
@@ -1205,6 +1022,8 @@ class ContributionAdmin(admin.ModelAdmin):
                 level=messages.SUCCESS,
             )
 
+
+# ========== LOOKUPS ==========
 
 @admin.register(Lettering)
 class LetteringAdmin(TimestampedModelAdmin):
@@ -1214,51 +1033,12 @@ class LetteringAdmin(TimestampedModelAdmin):
     ordering = ["name"]
 
 
-@admin.register(Framing)
-class FramingAdmin(TimestampedModelAdmin):
-    resource_class = FramingResource
-    list_display = ["name", "code"]
-    search_fields = ["name", "code"]
-    ordering = ["name"]
-
-
 @admin.register(Shape)
 class ShapeAdmin(TimestampedModelAdmin):
     resource_class = ShapeResource
     list_display = ["name", "code"]
     search_fields = ["name", "code"]
     ordering = ["name"]
-
-
-@admin.register(Cover)
-class CoverAdmin(TimestampedModelAdmin):
-    resource_class = CoverResource
-    list_display = ["code", "type", "color", "has_adhesive", "height", "width", "is_institutional"]
-    list_filter = ["type", "has_adhesive", "is_institutional"]
-    search_fields = ["code", "type"]
-    raw_id_fields = ["color"]
-
-
-@admin.register(Auxmark)
-class AuxmarkAdmin(TimestampedModelAdmin):
-    resource_class = AuxmarkResource
-    list_display = [
-        "parent_mark_type",
-        "parent_mark_id",
-        "inscription_txt",
-        "is_manuscript",
-        "shape",
-        "lettering",
-        "color",
-        "impression",
-        "is_irreg",
-        "width",
-        "height",
-    ]
-    list_filter = ["parent_mark_type", "is_manuscript", "impression", "is_irreg"]
-    search_fields = ["inscription_txt", "parent_mark_type"]
-    raw_id_fields = ["shape", "lettering", "color"]
-    ordering = ["parent_mark_type", "parent_mark_id"]
 
 
 @admin.register(Citation)
@@ -1290,148 +1070,12 @@ class PostOfficeAdmin(TimestampedModelAdmin):
     ordering = ["name"]
 
 
-@admin.register(DateObserved)
-class DateObservedAdmin(TimestampedModelAdmin):
-    resource_class = DateObservedResource
-    list_display = ["postmark", "date", "granularity"]
-    list_filter = ["granularity"]
-    search_fields = ["postmark__code"]
-    raw_id_fields = ["postmark"]
-    ordering = ["postmark", "date"]
-
-
-@admin.register(Ratemark)
-class RatemarkAdmin(TimestampedModelAdmin):
-    resource_class = RatemarkResource
-    list_display = ["id", "inscription_txt", "is_manuscript", "shape", "lettering", "color", "rate_val"]
-    list_filter = ["is_manuscript", "impression", "is_irreg"]
-    search_fields = ["inscription_txt"]
-    raw_id_fields = ["shape", "lettering", "color"]
-
-
-@admin.register(CoverPostmark)
-class CoverPostmarkAdmin(TimestampedModelAdmin):
-    resource_class = CoverPostmarkResource
-    list_display = ["cover", "postmark", "is_backstamp"]
-    search_fields = ["cover__code", "postmark__code"]
-    raw_id_fields = ["cover", "postmark"]
-
-
-@admin.register(PostmarkRatemark)
-class PostmarkRatemarkAdmin(TimestampedModelAdmin):
-    resource_class = PostmarkRatemarkResource
-    list_display = ["postmark", "ratemark", "placement_type"]
-    list_filter = ["placement_type"]
-    search_fields = ["postmark__code", "ratemark__inscription_txt"]
-    raw_id_fields = ["postmark", "ratemark"]
-
-
-@admin.register(MarkFraming)
-class MarkFramingAdmin(TimestampedModelAdmin):
-    resource_class = MarkFramingResource
-    list_display = ["parent_mark_type", "parent_mark_id", "framing", "framing_pos"]
-    list_filter = ["parent_mark_type"]
-    search_fields = ["parent_mark_type", "parent_mark_id", "framing__name"]
-    raw_id_fields = ["framing"]
-
-
 @admin.register(ReferenceWork)
 class ReferenceWorkAdmin(TimestampedModelAdmin):
     resource_class = ReferenceWorkResource
     list_display = ["title", "authorship", "publication_year", "publisher"]
     search_fields = ["title", "authorship", "publisher", "isbn"]
     ordering = ["title"]
-
-
-@admin.register(PostmarkValuation)
-class PostmarkValuationAdmin(TimestampedModelAdmin):
-    resource_class = PostmarkValuationResource
-    list_display = ["postmark_valuation_id", "postmark", "appraisal_pos", "amt", "appraisal_date"]
-    list_filter = ["appraisal_date"]
-    search_fields = ["postmark__code"]
-    raw_id_fields = ["postmark"]
-    ordering = ["postmark", "appraisal_pos"]
-
-
-@admin.register(PostmarkImage)
-class PostmarkImageAdmin(TimestampedModelAdmin):
-    resource_class = PostmarkImageResource
-    list_display = ['get_postmark_key', 'original_filename', 'image_view', 'display_order', 'uploaded_by']
-    list_filter = ['image_view']
-    search_fields = ['postmark__code', 'original_filename', 'uploaded_by']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date', 'file_checksum']
-    raw_id_fields = ['postmark']
-    paginator = NoCountPaginator
-
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        return qs.select_related('postmark', 'uploaded_by').order_by('-id')
-
-    fieldsets = (
-        ('Postmark', {
-            'fields': ('postmark',)
-        }),
-        ('File Information', {
-            'fields': ('original_filename', 'storage_filename', 'file_checksum',
-                      'mime_type', 'image_width', 'image_height', 'file_size_bytes')
-        }),
-        ('Display Settings', {
-            'fields': ('image_view', 'image_description', 'display_order')
-        }),
-        ('Submission Information', {
-            'fields': ('uploaded_by',)
-        }),
-        ('Metadata', {
-            'fields': ('created_date', 'modified_date', 'created_by', 'modified_by'),
-            'classes': ('collapse',)
-        }),
-    )
-
-    def get_postmark_key(self, obj):
-        try:
-            return str(obj.postmark) if obj.postmark_id else '-'
-        except Exception:
-            return '-'
-    get_postmark_key.short_description = 'Postmark'
-
-
-@admin.register(Postcover)
-class PostcoverAdmin(InlineRevisionMixin, TimestampedModelAdmin):
-    resource_class = PostcoverResource
-    list_display = ['postcover_key', 'owner_user']
-    search_fields = ['postcover_key', 'owner_user__username', 'description']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date']
-    raw_id_fields = ['owner_user']
-
-    inlines = [
-        PostcoverPostmarkInline,
-        PostcoverImageInline,
-    ]
-
-
-@admin.register(PostcoverPostmark)
-class PostcoverPostmarkAdmin(TimestampedModelAdmin):
-    resource_class = PostcoverPostmarkResource
-    list_display = ['postcover', 'postmark', 'position_order', 'postmark_location']
-    list_filter = ['postmark_location']
-    search_fields = ['postcover__postcover_key', 'postmark__code']
-    raw_id_fields = ['postcover', 'postmark']
-    ordering = ['postcover', 'position_order']
-
-
-@admin.register(PostcoverImage)
-class PostcoverImageAdmin(TimestampedModelAdmin):
-    resource_class = PostcoverImageResource
-    list_display = ['get_postcover_key', 'original_filename', 'image_view',
-                    'display_order', 'uploaded_by']
-    list_filter = ['image_view']
-    search_fields = ['postcover__postcover_key', 'original_filename']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date', 'file_checksum']
-    raw_id_fields = ['postcover']
-
-    def get_postcover_key(self, obj):
-        return obj.postcover.postcover_key
-    get_postcover_key.short_description = 'Postcover'
 
 
 @admin.register(Collection)

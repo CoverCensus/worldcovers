@@ -14,11 +14,12 @@ class PageSizePagination(PageNumberPagination):
     max_page_size = 100
 
 
-class PostmarkListPagination(PageSizePagination):
+class MarkingListPagination(PageSizePagination):
     """
-    Pagination for postmarks list. Supports ?include_count=false to skip the slow
-    COUNT query on 50k+ rows for faster first paint. When count is skipped,
-    we manually slice the queryset (Django Paginator breaks with count=0).
+    Pagination for the markings list. Supports ?include_count=false to skip
+    the slow COUNT query on 50k+ rows for faster first paint. When count is
+    skipped, we manually slice the queryset (Django Paginator breaks with
+    count=0).
     """
     def paginate_queryset(self, queryset, request, view=None):
         self.request = request

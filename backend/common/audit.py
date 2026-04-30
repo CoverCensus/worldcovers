@@ -8,10 +8,9 @@ from django.utils import timezone
 
 from common.models import (
     Citation,
-    DateObserved,
-    Postmark,
-    PostmarkImage,
-    PostmarkVersion,
+    Image,
+    Marking,
+    MarkingVersion,
     SubmissionTransaction,
 )
 
@@ -33,19 +32,16 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
-def build_postmark_snapshot(postmark: Postmark | None) -> dict[str, Any]:
-    if not postmark:
+def build_marking_snapshot(marking: Marking | None) -> dict[str, Any]:
+    if not marking:
         return {}
 
-    post_office = getattr(postmark, "post_office", None)
+    post_office = getattr(marking, "post_office", None)
     region = getattr(post_office, "region", None) if post_office else None
-    dates = (
-        postmark.dates_observed.order_by("date").values("date", "granularity")
-        if hasattr(postmark, "dates_observed")
-        else []
-    )
     images = (
-        postmark.images.order_by("display_order").values(
+        Image.objects.filter(subject_type=Image.SUBJECT_MARKING, subject_id=marking.pk)
+        .order_by("display_order")
+        .values(
             "original_filename",
             "storage_filename",
             "file_checksum",
@@ -57,12 +53,10 @@ def build_postmark_snapshot(postmark: Postmark | None) -> dict[str, Any]:
             "image_description",
             "display_order",
         )
-        if hasattr(postmark, "images")
-        else []
     )
     citations = Citation.objects.filter(
-        subject_type="POSTMARK",
-        subject_id=postmark.pk,
+        subject_type="MARKING",
+        subject_id=marking.pk,
     ).order_by("reference_work_id", "citation_detail").values(
         "reference_work_id",
         "citation_detail",
@@ -70,25 +64,26 @@ def build_postmark_snapshot(postmark: Postmark | None) -> dict[str, Any]:
 
     return _json_safe(
         {
-            "postmark_id": postmark.pk,
-            "code": postmark.code,
-            "catalog_txt": postmark.catalog_txt,
-            "inscription_txt": postmark.inscription_txt,
-            "post_office_id": postmark.post_office_id,
+            "marking_id": marking.pk,
+            "code": marking.code,
+            "type": marking.type,
+            "catalog_txt": marking.catalog_txt,
+            "inscription_txt": marking.inscription_txt,
+            "desc": marking.desc,
+            "post_office_id": marking.post_office_id,
             "town": post_office.name if post_office else "",
             "region_id": post_office.region_id if post_office else None,
             "state": region.name if region else "",
-            "shape_id": postmark.shape_id,
-            "lettering_id": postmark.lettering_id,
-            "color_id": postmark.color_id,
-            "is_manuscript": postmark.is_manuscript,
-            "impression": postmark.impression,
-            "is_irreg": postmark.is_irreg,
-            "width": postmark.width,
-            "height": postmark.height,
-            "date_type": postmark.date_type,
-            "date_fmt": postmark.date_fmt,
-            "dates_observed": list(dates),
+            "shape_id": marking.shape_id,
+            "lettering_id": marking.lettering_id,
+            "color_id": marking.color_id,
+            "is_manuscript": marking.is_manuscript,
+            "impression": marking.impression,
+            "is_irreg": marking.is_irreg,
+            "width": marking.width,
+            "height": marking.height,
+            "date_fmt": marking.date_fmt,
+            "rate_val": marking.rate_val,
             "images": list(images),
             "citations": list(citations),
             "captured_at": timezone.now(),
@@ -122,7 +117,7 @@ def log_submission_transaction(
     action: str,
     actor=None,
     contribution=None,
-    postmark=None,
+    marking=None,
     source: str = SubmissionTransaction.SOURCE_SYSTEM,
     before_payload: Any = None,
     after_payload: Any = None,
@@ -136,7 +131,7 @@ def log_submission_transaction(
         actor=actor if getattr(actor, "is_authenticated", False) else None,
         action=action,
         contribution=contribution,
-        postmark=postmark,
+        marking=marking,
         source=source,
         before_payload=before_safe,
         after_payload=after_safe,
@@ -145,88 +140,61 @@ def log_submission_transaction(
     )
 
 
-def create_postmark_version(postmark: Postmark, transaction: SubmissionTransaction | None, actor=None) -> PostmarkVersion:
-    latest = PostmarkVersion.objects.filter(postmark=postmark).aggregate(max_no=Max("version_no"))["max_no"] or 0
-    return PostmarkVersion.objects.create(
-        postmark=postmark,
+def create_marking_version(marking: Marking, transaction: SubmissionTransaction | None, actor=None) -> MarkingVersion:
+    latest = MarkingVersion.objects.filter(marking=marking).aggregate(max_no=Max("version_no"))["max_no"] or 0
+    return MarkingVersion.objects.create(
+        marking=marking,
         version_no=latest + 1,
-        snapshot=build_postmark_snapshot(postmark),
+        snapshot=build_marking_snapshot(marking),
         transaction=transaction,
         created_by=actor if getattr(actor, "is_authenticated", False) else None,
     )
 
 
-def restore_postmark_from_snapshot(postmark: Postmark, snapshot: dict[str, Any], actor) -> Postmark:
+def restore_marking_from_snapshot(marking: Marking, snapshot: dict[str, Any], actor) -> Marking:
+    """
+    Restore a Marking from a snapshot dict. Phase 1 stub: scalar-field restore
+    only. Image reattachment is deferred to the Phase 2 contribution rewrite,
+    which owns Image lifecycle for both COVER and MARKING subjects. cover_dates
+    are no longer marking-scoped and are intentionally not handled here.
+    """
     if not isinstance(snapshot, dict):
-        return postmark
+        return marking
 
-    postmark.code = snapshot.get("code")
-    postmark.catalog_txt = snapshot.get("catalog_txt") or ""
-    postmark.inscription_txt = snapshot.get("inscription_txt") or ""
-    postmark.post_office_id = snapshot.get("post_office_id")
-    postmark.shape_id = snapshot.get("shape_id")
-    postmark.lettering_id = snapshot.get("lettering_id")
-    postmark.color_id = snapshot.get("color_id")
-    postmark.is_manuscript = bool(snapshot.get("is_manuscript"))
-    postmark.impression = snapshot.get("impression")
-    postmark.is_irreg = snapshot.get("is_irreg")
-    postmark.width = snapshot.get("width")
-    postmark.height = snapshot.get("height")
-    postmark.date_type = snapshot.get("date_type")
-    postmark.date_fmt = snapshot.get("date_fmt")
+    marking.code = snapshot.get("code")
+    marking.type = snapshot.get("type") or marking.type
+    marking.catalog_txt = snapshot.get("catalog_txt")
+    marking.inscription_txt = snapshot.get("inscription_txt") or ""
+    marking.desc = snapshot.get("desc")
+    marking.post_office_id = snapshot.get("post_office_id")
+    marking.shape_id = snapshot.get("shape_id")
+    marking.lettering_id = snapshot.get("lettering_id")
+    marking.color_id = snapshot.get("color_id") or 1
+    marking.is_manuscript = bool(snapshot.get("is_manuscript"))
+    marking.impression = snapshot.get("impression")
+    marking.is_irreg = snapshot.get("is_irreg")
+    marking.width = snapshot.get("width")
+    marking.height = snapshot.get("height")
+    marking.date_fmt = snapshot.get("date_fmt")
+    marking.rate_val = snapshot.get("rate_val")
     if actor and getattr(actor, "is_authenticated", False):
-        postmark.modified_by = actor
-    postmark.save()
+        marking.modified_by = actor
+    marking.save()
 
-    user_for_related = actor if actor and getattr(actor, "is_authenticated", False) else postmark.modified_by
+    user_for_related = actor if actor and getattr(actor, "is_authenticated", False) else marking.modified_by
 
-    postmark.dates_observed.all().delete()
-    for row in snapshot.get("dates_observed", []) or []:
-        raw_date = row.get("date")
-        if not raw_date:
-            continue
-        DateObserved.objects.create(
-            postmark=postmark,
-            date=raw_date,
-            granularity=(row.get("granularity") or "DAY")[:5],
-            created_by=user_for_related,
-            modified_by=user_for_related,
-        )
-
-    PostmarkImage.objects.filter(postmark=postmark).delete()
-    for idx, row in enumerate(snapshot.get("images", []) or []):
-        storage_filename = row.get("storage_filename")
-        if not storage_filename:
-            continue
-        PostmarkImage.objects.create(
-            postmark=postmark,
-            original_filename=(row.get("original_filename") or "image")[:255],
-            storage_filename=storage_filename[:255],
-            file_checksum=(row.get("file_checksum") or "")[:64],
-            mime_type=(row.get("mime_type") or "image/jpeg")[:50],
-            image_width=row.get("image_width") or 0,
-            image_height=row.get("image_height") or 0,
-            file_size_bytes=row.get("file_size_bytes") or 0,
-            image_view=(row.get("image_view") or "FULL")[:20],
-            image_description=(row.get("image_description") or "").strip(),
-            display_order=row.get("display_order") if row.get("display_order") is not None else idx,
-            uploaded_by=user_for_related,
-            created_by=user_for_related,
-            modified_by=user_for_related,
-        )
-
-    Citation.objects.filter(subject_type="POSTMARK", subject_id=postmark.pk).delete()
+    Citation.objects.filter(subject_type="MARKING", subject_id=marking.pk).delete()
     for row in snapshot.get("citations", []) or []:
         ref_id = row.get("reference_work_id")
         if not ref_id:
             continue
         Citation.objects.create(
             reference_work_id=ref_id,
-            subject_type="POSTMARK",
-            subject_id=postmark.pk,
+            subject_type="MARKING",
+            subject_id=marking.pk,
             citation_detail=(row.get("citation_detail") or "").strip(),
             created_by=user_for_related,
             modified_by=user_for_related,
         )
 
-    return postmark
+    return marking
