@@ -11,7 +11,6 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from common.models import (
-    AdminCsvUpload,
     Citation,
     Collection,
     CollectionAssignment,
@@ -590,44 +589,6 @@ class CollectionAssignmentSerializer(serializers.ModelSerializer):
             "created_date",
         ]
         read_only_fields = ["id", "created_date"]
-
-
-###################################################################################################
-## Admin CSV upload (staff only)
-###################################################################################################
-class AdminCsvUploadListSerializer(serializers.ModelSerializer):
-    uploaded_by_username = serializers.CharField(source="uploaded_by.username", read_only=True, allow_null=True)
-
-    class Meta:
-        model = AdminCsvUpload
-        fields = [
-            "id",
-            "name",
-            "file_name",
-            "uploaded_at",
-            "uploaded_by",
-            "uploaded_by_username",
-            "row_count",
-        ]
-        read_only_fields = fields
-
-
-class AdminCsvUploadSerializer(serializers.ModelSerializer):
-    uploaded_by_username = serializers.CharField(source="uploaded_by.username", read_only=True, allow_null=True)
-
-    class Meta:
-        model = AdminCsvUpload
-        fields = [
-            "id",
-            "name",
-            "file_name",
-            "uploaded_at",
-            "uploaded_by",
-            "uploaded_by_username",
-            "data",
-            "row_count",
-        ]
-        read_only_fields = ["id", "uploaded_at", "row_count"]
 
 
 ###################################################################################################

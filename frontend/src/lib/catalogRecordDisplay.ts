@@ -43,6 +43,14 @@ export function formatCatalogDate(value: string | null | undefined): string {
   return s;
 }
 
+/** Extract the leading 4-digit year from a partial-or-full ISO date. */
+export function yearFromCatalogDate(value: string | null | undefined): string {
+  const s = value != null ? String(value).trim() : "";
+  if (!s) return "";
+  const m = /^(\d{4})/.exec(s);
+  return m ? m[1] : s;
+}
+
 function dimensionsField(record: MarkingRecord): string {
   if (record.sizeDisplay && record.sizeDisplay.trim()) {
     return record.sizeDisplay.trim().includes("mm")
@@ -96,8 +104,8 @@ export function buildCatalogFieldValues(record: MarkingRecord): CatalogFieldValu
     lettering: displayCatalogField(record.letteringName),
     dimensions: displayCatalogField(dimensionsField(record)),
     color: displayCatalogField(record.colorName),
-    earliestSeen: displayCatalogField(formatCatalogDate(record.earliestSeen)),
-    latestSeen: displayCatalogField(formatCatalogDate(record.latestSeen)),
+    earliestSeen: displayCatalogField(yearFromCatalogDate(record.earliestSeen)),
+    latestSeen: displayCatalogField(yearFromCatalogDate(record.latestSeen)),
   };
 }
 

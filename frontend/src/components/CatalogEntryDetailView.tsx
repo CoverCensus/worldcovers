@@ -18,7 +18,6 @@ export type CatalogEntry = {
   /** Optional; when missing, detail row shows "—" */
   dimensions?: string | null;
   manuscript?: string | null;
-  rarity?: string | null;
   /** Catalog record only */
   valuation?: string | null;
   /** Submission only */
@@ -105,7 +104,7 @@ export const CatalogEntryDetailView = ({
           </CardContent>
         </Card>
 
-        {/* Metadata - matches Record Detail: title, then badges (shape, color, rarity/status) */}
+        {/* Metadata - matches Record Detail: title, then badges (shape, color, valuation/status) */}
         <div className="space-y-6">
           <div>
             <h1 className="font-heading text-3xl font-bold text-foreground mb-2">
@@ -115,13 +114,13 @@ export const CatalogEntryDetailView = ({
               {entry.status != null && getStatusBadge(entry.status)}
               <Badge variant="secondary">{entry.shape}</Badge>
               <Badge variant="secondary">{entry.color}</Badge>
-              {(entry.rarity ?? entry.valuation) != null && (entry.rarity ?? entry.valuation) !== "" && (
-                <Badge variant="outline">{entry.rarity ?? entry.valuation}</Badge>
+              {entry.valuation != null && entry.valuation !== "" && (
+                <Badge variant="outline">{entry.valuation}</Badge>
               )}
             </div>
           </div>
 
-          {/* Same rows as Record Detail: State, Town, First Seen, Last Seen, Dimensions, Manuscript, Rarity */}
+          {/* Field order mirrors the Contribute form: Manuscript, State/Territory, Town, dates, Dimensions. */}
           <Card className="shadow-archival-md">
             <CardHeader>
               <CardTitle className="font-heading text-lg">{detailsCardTitle}</CardTitle>
@@ -129,7 +128,11 @@ export const CatalogEntryDetailView = ({
             <CardContent>
               <dl className="space-y-3 text-sm">
                 <div className="flex justify-between py-2 border-b border-border">
-                  <dt className="text-muted-foreground font-medium">State</dt>
+                  <dt className="text-muted-foreground font-medium">Manuscript</dt>
+                  <dd className="text-foreground">{entry.manuscript?.trim() || "-"}</dd>
+                </div>
+                <div className="flex justify-between py-2 border-b border-border">
+                  <dt className="text-muted-foreground font-medium">State/Territory</dt>
                   <dd className="text-foreground">{entry.state}</dd>
                 </div>
                 <div className="flex justify-between py-2 border-b border-border">
@@ -144,17 +147,9 @@ export const CatalogEntryDetailView = ({
                   <dt className="text-muted-foreground font-medium">Last Seen</dt>
                   <dd className="text-foreground">{lastSeen}</dd>
                 </div>
-                <div className="flex justify-between py-2 border-b border-border">
-                  <dt className="text-muted-foreground font-medium">Dimensions</dt>
-                  <dd className="text-foreground">{entry.dimensions?.trim() || "—"}</dd>
-                </div>
-                <div className="flex justify-between py-2 border-b border-border">
-                  <dt className="text-muted-foreground font-medium">Manuscript</dt>
-                  <dd className="text-foreground">{entry.manuscript?.trim() || "—"}</dd>
-                </div>
                 <div className="flex justify-between py-2">
-                  <dt className="text-muted-foreground font-medium">Rarity</dt>
-                  <dd className="text-foreground">{entry.rarity?.trim() || entry.valuation?.trim() || "—"}</dd>
+                  <dt className="text-muted-foreground font-medium">Dimensions</dt>
+                  <dd className="text-foreground">{entry.dimensions?.trim() || "-"}</dd>
                 </div>
               </dl>
             </CardContent>

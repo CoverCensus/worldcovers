@@ -2,9 +2,6 @@
 ## WoCo Commons - Admin Panel Configuration
 ## Phase 1 model rewrite -- unified Marking, polymorphic Image, Cover* shape.
 ###################################################################################################
-import csv
-import io
-
 from django.contrib import admin
 from django.contrib.admin.sites import NotRegistered
 from allauth.account.models import EmailAddress
@@ -21,7 +18,8 @@ from django.contrib import messages
 
 from import_export import resources, fields
 from import_export.admin import ImportExportModelAdmin
-from import_export.widgets import ForeignKeyWidget, Widget
+from import_export.widgets import CharWidget, ForeignKeyWidget, Widget
+from django.db.models import CharField as DjangoCharField, TextField as DjangoTextField
 from django.utils.dateparse import parse_datetime
 
 
@@ -43,6 +41,31 @@ class IsoDateTimeWidget(Widget):
         if value is None:
             return ""
         return value.isoformat()
+
+
+class NullableCharWidget(CharWidget):
+    """CharWidget that maps empty/whitespace input to None instead of ''.
+
+    Used automatically by TimestampedModelResource for every nullable
+    CharField/TextField in the model (see widget_from_django_field
+    override). Reasons we want this everywhere by default:
+
+      - unique=True columns: MySQL UNIQUE allows multiple NULLs but
+        rejects multiple ''. A blank CSV cell on row 2 would otherwise
+        collide with row 1.
+      - choices columns with CHECK constraints (e.g. Marking.date_fmt,
+        Marking.impression): '' is not a valid choice; NULL is allowed.
+      - data hygiene: null/blank fields stay null rather than carrying
+        a sentinel '' that downstream code has to special-case.
+    """
+
+    def clean(self, value, row=None, **kwargs):
+        if value is None:
+            return None
+        s = str(value).strip()
+        if s == "":
+            return None
+        return s
 
 
 from reversion_compare.admin import CompareVersionAdmin
@@ -72,13 +95,11 @@ from .models import (
     LegacyUserState,
     LegacyRawStateDataPendingUpdate,
     LegacyCover,
-    AdminCsvUpload,
     Collection,
     CollectionAssignment,
     Contribution,
     FAQEntry,
 )
-from .csv_import import IMPORTERS
 
 User = get_user_model()
 
@@ -128,7 +149,14 @@ class InlineRevisionMixin:
 
 
 class TimestampedModelResource(resources.ModelResource):
-    """Base resource that handles user foreign keys properly"""
+    """Base resource that handles user foreign keys properly.
+
+    Also installs NullableCharWidget for every nullable CharField/TextField
+    on the model, so blank CSV cells write SQL NULL instead of ''. This is
+    important for unique=True columns and CharField(choices=...) columns
+    with CHECK constraints, where '' is treated as a duplicate or invalid
+    value.
+    """
     created_by = fields.Field(
         column_name='created_by',
         attribute='created_by',
@@ -152,6 +180,17 @@ class TimestampedModelResource(resources.ModelResource):
 
     class Meta:
         abstract = True
+
+    @classmethod
+    def widget_from_django_field(cls, f, default=Widget):
+        # For every nullable CharField / TextField on the model, swap the
+        # default CharWidget for NullableCharWidget so blank CSV cells map
+        # to None (and on save -> NULL) rather than ''. Subclasses that
+        # declare an explicit fields.Field(...) override are unaffected
+        # (this hook only runs for model-derived fields).
+        if isinstance(f, (DjangoCharField, DjangoTextField)) and getattr(f, 'null', False):
+            return NullableCharWidget
+        return super().widget_from_django_field(f, default=default)
 
 
 class ReversionImportExportAdmin(CompareVersionAdmin, ImportExportModelAdmin):
@@ -570,45 +609,6 @@ class PostcoverImageAdmin(TimestampedModelAdmin):
     get_postcover_key.short_description = 'Postcover'
 
 
-# ========== CSV UPLOADS ==========
-
-def _parse_csv_file(uploaded_file) -> dict:
-    """Parse CSV file. Returns { headers: [...], rows: [[...], ...] }."""
-    content = uploaded_file.read()
-    if isinstance(content, bytes):
-        content = content.decode('utf-8', errors='replace')
-    reader = csv.reader(io.StringIO(content), quoting=csv.QUOTE_MINIMAL)
-    rows = list(reader)
-    if not rows:
-        return {'headers': [], 'rows': []}
-    return {'headers': rows[0], 'rows': rows[1:]}
-
-
-class AdminCsvUploadForm(forms.ModelForm):
-    csv_file = forms.FileField(
-        label='CSV file',
-        required=False,
-        help_text='Upload a CSV. Required when adding new.',
-    )
-
-    class Meta:
-        model = AdminCsvUpload
-        fields = ['name']
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.fields['name'].required = False
-        self.fields['name'].help_text = 'Display name (optional; defaults to filename).'
-        if self.instance and self.instance.pk:
-            self.fields['csv_file'].help_text = 'Leave empty to keep existing data. Upload a new file to replace.'
-
-    def clean(self):
-        data = super().clean()
-        if not self.instance.pk and not self.files.get('csv_file'):
-            raise forms.ValidationError('Please upload a CSV file when adding a new upload.')
-        return data
-
-
 # ========== LEGACY ERD TABLES ==========
 
 @admin.register(LegacyAbbreviation)
@@ -669,144 +669,6 @@ class LegacyCoverAdmin(ImportExportModelAdmin):
     list_filter = ['txt_state_abv']
     search_fields = ['txt_town', 'txt_cover_key_id', 'mem_notes']
     ordering = ['n_user_id', 'id']
-
-
-@admin.register(AdminCsvUpload)
-class AdminCsvUploadAdmin(admin.ModelAdmin):
-    form = AdminCsvUploadForm
-    list_display = ['id', 'name', 'file_name', 'uploaded_at', 'uploaded_by']
-    list_filter = ['uploaded_at']
-    search_fields = ['name', 'file_name']
-    readonly_fields = ['uploaded_at', 'uploaded_by', 'data', 'row_count_display']
-    ordering = ['-uploaded_at']
-    list_per_page = 25
-    actions = [
-        'import_to_lettering',
-        'import_to_colors',
-        # v2 catalog imports (model.md). Each runs a single CSV through its
-        # matching importer. For a full bundle, use the import_apmc_bundle
-        # management command which loads all ten in dependency order.
-        'import_to_v2_colors',
-        'import_to_v2_letterings',
-        'import_to_v2_shapes',
-        'import_to_v2_regions',
-        'import_to_v2_post_offices',
-        'import_to_v2_markings',
-        'import_to_v2_covers',
-        'import_to_v2_cover_markings',
-        'import_to_v2_cover_dates',
-        'import_to_v2_cover_valuations',
-    ]
-
-    def has_add_permission(self, request):
-        return request.user.is_staff
-
-    def get_queryset(self, request):
-        return super().get_queryset(request).only(
-            'id', 'name', 'file_name', 'uploaded_at', 'uploaded_by_id'
-        )
-
-    def get_fieldsets(self, request, obj=None):
-        if obj is None:
-            return [(None, {'fields': ['name', 'csv_file']})]
-        return [
-            (None, {'fields': ['name', 'file_name', 'uploaded_at', 'uploaded_by', 'row_count_display']}),
-            ('Parsed data', {'fields': ['data'], 'classes': ['collapse']}),
-        ]
-
-    def row_count_display(self, obj):
-        return len((obj.data or {}).get('rows') or [])
-    row_count_display.short_description = 'Rows'
-
-    def save_model(self, request, obj, form, change):
-        csv_file = request.FILES.get('csv_file') or (form.files.get('csv_file') if form else None)
-        if csv_file:
-            try:
-                obj.data = _parse_csv_file(csv_file)
-                obj.file_name = csv_file.name or obj.file_name or 'upload.csv'
-                if not (change and obj.name):
-                    obj.name = request.POST.get('name') or csv_file.name or obj.file_name or 'Unnamed upload'
-            except Exception as e:
-                self.message_user(request, f'CSV parse error: {e}', level=messages.ERROR)
-                return
-        if not change:
-            obj.uploaded_by = request.user
-        super().save_model(request, obj, form, change)
-
-    def _run_import(self, request, queryset, import_type):
-        created_total = 0
-        errors_all = []
-        for obj in queryset:
-            data = obj.data or {}
-            if not data.get('rows'):
-                self.message_user(request, f'Upload "{obj.name}" has no rows.', level=messages.WARNING)
-                continue
-            importer = IMPORTERS.get(import_type)
-            if not importer:
-                continue
-            try:
-                result = importer(data, request.user)
-                created_total += result.get('created', 0)
-                errors_all.extend(result.get('errors') or [])
-            except Exception as e:
-                self.message_user(request, f'Import failed for "{obj.name}": {e}', level=messages.ERROR)
-        if created_total or errors_all:
-            msg = f'Created {created_total} record(s).'
-            if errors_all:
-                msg += f' {len(errors_all)} error(s) (e.g. {errors_all[0][:80]}).'
-            self.message_user(request, msg, level=messages.SUCCESS if created_total else messages.WARNING)
-        else:
-            self.message_user(request, 'No rows imported (duplicates skipped or no data).', level=messages.INFO)
-
-    @admin.action(description='Import selected into Lettering Styles')
-    def import_to_lettering(self, request, queryset):
-        self._run_import(request, queryset, 'lettering')
-
-    @admin.action(description='Import selected into Colors')
-    def import_to_colors(self, request, queryset):
-        self._run_import(request, queryset, 'colors')
-
-    # v2 catalog imports. Each action wraps a single IMPORTERS key; the table
-    # below is the dependency order. Run in order when loading a fresh state.
-    @admin.action(description='v2: Import selected into Colors (catalog)')
-    def import_to_v2_colors(self, request, queryset):
-        self._run_import(request, queryset, 'colors')
-
-    @admin.action(description='v2: Import selected into Letterings (catalog)')
-    def import_to_v2_letterings(self, request, queryset):
-        self._run_import(request, queryset, 'letterings')
-
-    @admin.action(description='v2: Import selected into Shapes')
-    def import_to_v2_shapes(self, request, queryset):
-        self._run_import(request, queryset, 'shapes')
-
-    @admin.action(description='v2: Import selected into Regions')
-    def import_to_v2_regions(self, request, queryset):
-        self._run_import(request, queryset, 'regions')
-
-    @admin.action(description='v2: Import selected into Post Offices')
-    def import_to_v2_post_offices(self, request, queryset):
-        self._run_import(request, queryset, 'post_offices')
-
-    @admin.action(description='v2: Import selected into Markings')
-    def import_to_v2_markings(self, request, queryset):
-        self._run_import(request, queryset, 'markings')
-
-    @admin.action(description='v2: Import selected into Covers')
-    def import_to_v2_covers(self, request, queryset):
-        self._run_import(request, queryset, 'covers')
-
-    @admin.action(description='v2: Import selected into Cover Markings (junction)')
-    def import_to_v2_cover_markings(self, request, queryset):
-        self._run_import(request, queryset, 'cover_markings')
-
-    @admin.action(description='v2: Import selected into Cover Dates')
-    def import_to_v2_cover_dates(self, request, queryset):
-        self._run_import(request, queryset, 'cover_dates')
-
-    @admin.action(description='v2: Import selected into Cover Valuations')
-    def import_to_v2_cover_valuations(self, request, queryset):
-        self._run_import(request, queryset, 'cover_valuations')
 
 
 # ========== USER ADMIN ==========

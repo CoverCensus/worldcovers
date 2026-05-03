@@ -68,7 +68,7 @@ To support v2's expanded archival relationships, the following independent table
 ### Restored / Unaffected Tables
 The following `v1` models remained completely intact despite `backend-apmc` attempting to erase or overwrite them:
 - `Contribution` (Retained legacy structure)
-- `AdminCsvUpload` (Retained for Dashboard use)
+- `AdminCsvUpload` (Retired in the ASCC Phase 2 refactor: dropped along with `common/csv_import.py` and the `/api/v2/admin-csv-uploads/` endpoints once the notebook + `import_apmc_bundle` pipeline became the sole ingest route. See migration `0060_delete_admincsvupload`.)
 - `FAQEntry` (Retained without issues)
 
 ---

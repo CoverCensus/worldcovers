@@ -72,8 +72,17 @@ function coverTypeLabel(t: string | null): string {
 }
 
 function formatCoverDate(d: AssociatedCoverDate): string {
-  const iso = (d.date || "").slice(0, 10);
-  return formatCatalogDate(iso) || iso;
+  // Honor the cover-date granularity: YEAR -> "1980", MONTH -> "01/1980",
+  // DAY -> "01/01/1980". Truncating the ISO string before formatting lets
+  // formatCatalogDate pick the matching display shape.
+  const raw = d.date || "";
+  const truncated =
+    d.granularity === "YEAR"
+      ? raw.slice(0, 4)
+      : d.granularity === "MONTH"
+        ? raw.slice(0, 7)
+        : raw.slice(0, 10);
+  return formatCatalogDate(truncated) || truncated;
 }
 
 function yearOnly(value: string | null | undefined): string {
@@ -162,7 +171,7 @@ function AssociatedCoverEntry({
     {
       label: "Dimensions",
       value: coverDimensionsDisplay(c?.width ?? null, c?.height ?? null),
-      show: true,
+      show: coverDimensionsDisplay(c?.width ?? null, c?.height ?? null) !== EMPTY,
     },
     { label: "Dates", value: datesText, show: true },
     { label: "Has adhesive", value: "Yes", show: c?.hasAdhesive === true },
@@ -319,40 +328,35 @@ const RecordDetail = () => {
       user.role === "administrator" ||
       user.is_superuser === true);
 
-  const common = [
+  // Field order mirrors the contribute/edit form. Town and State/Territory show
+  // for every mark type (Townmark, Ratemark, Auxmark), not just Townmarks.
+  const details = [
     { label: "Type", value: typeLabel, alwaysShow: false },
     { label: "Manuscript", value: record.isManuscript ? "Yes" : "No", alwaysShow: false },
-    { label: "Dimensions", value: dimensionsValue, alwaysShow: true },
-    { label: "Color", value: record.colorName, alwaysShow: false },
-    { label: "Date Format", value: record.dateFmt, alwaysShow: false },
+    { label: "State/Territory", value: record.state, alwaysShow: false },
+    { label: "Town", value: record.town, alwaysShow: false },
     { label: inscriptionLabel(record.type), value: record.inscriptionTxt, alwaysShow: false },
+    { label: "Earliest Seen", value: earliestValue, alwaysShow: true },
+    { label: "Latest Seen", value: latestValue, alwaysShow: true },
+    { label: "Shape", value: record.shapeName, alwaysShow: false },
+    // Rate Value: always shown for Ratemarks (even when blank), shown for
+    // Auxmarks only when populated, never shown for Townmarks.
+    ...(record.type === "RATEMARK"
+      ? [{ label: "Rate Value", value: formatRateValue(record.rateVal), alwaysShow: true }]
+      : record.type === "AUXMARK"
+        ? [{ label: "Rate Value", value: formatRateValue(record.rateVal), alwaysShow: false }]
+        : []),
+    { label: "Date Format", value: record.dateFmt, alwaysShow: false },
+    { label: "Impression", value: impressionValue, alwaysShow: false },
+    { label: "Is Irregular", value: isIrregValue, alwaysShow: false },
+    { label: "Color", value: record.colorName, alwaysShow: false },
+    { label: "Lettering", value: record.letteringName, alwaysShow: false },
+    { label: "Dimensions", value: dimensionsValue, alwaysShow: true },
     ...(isStaff
       ? [{ label: "Catalog text", value: record.catalogTxt, alwaysShow: false }]
       : []),
     { label: "Catalog code", value: record.code, alwaysShow: false },
-    { label: "Earliest Seen", value: earliestValue, alwaysShow: false },
-    { label: "Latest Seen", value: latestValue, alwaysShow: false },
   ];
-  const townmark = [
-    { label: "Town", value: record.town, alwaysShow: false },
-    { label: "State", value: record.state, alwaysShow: false },
-    { label: "Shape", value: record.shapeName, alwaysShow: false },
-    { label: "Lettering", value: record.letteringName, alwaysShow: false },
-    { label: "Impression", value: impressionValue, alwaysShow: false },
-    { label: "Is Irregular", value: isIrregValue, alwaysShow: false },
-  ];
-  const rateAux = [
-    { label: "Shape", value: record.shapeName, alwaysShow: false },
-    { label: "Lettering", value: record.letteringName, alwaysShow: false },
-    { label: "Impression", value: impressionValue, alwaysShow: false },
-    { label: "Is Irregular", value: isIrregValue, alwaysShow: false },
-  ];
-  const details =
-    record.type === "TOWNMARK"
-      ? [...common, ...townmark]
-      : record.type === "RATEMARK"
-        ? [...common, { label: "Rate Value", value: formatRateValue(record.rateVal), alwaysShow: false }, ...rateAux]
-        : [...common, ...rateAux];
   const visibleDetails = details.filter(
     (row) => row.alwaysShow || hasDisplayValue(row.value),
   );

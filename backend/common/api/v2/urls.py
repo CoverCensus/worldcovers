@@ -46,7 +46,6 @@ router.register(r"cover-valuations", views.CoverValuationViewSet, basename="cove
 # Moderation, governance, admin
 router.register(r"contributions", views.ContributionViewSet, basename="contribution")
 router.register(r"collections", views.CollectionViewSet, basename="collection")
-router.register(r"admin-csv-uploads", views.AdminCsvUploadViewSet, basename="admin-csv-upload")
 
 urlpatterns = [
     # Auth

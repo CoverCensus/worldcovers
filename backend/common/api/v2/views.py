@@ -8,8 +8,6 @@
 ###################################################################################################
 from __future__ import annotations
 
-import csv
-import io
 import os
 import uuid
 
@@ -43,10 +41,8 @@ from common.audit import (
     log_submission_transaction,
     restore_marking_from_snapshot,
 )
-from common.csv_import import IMPORTERS
 from common.filters import MarkingListFilter
 from common.models import (
-    AdminCsvUpload,
     Citation,
     Collection,
     CollectionAssignment,
@@ -69,8 +65,6 @@ from common.models import (
 )
 from woco.pagination import MarkingListPagination
 
-from common.api.auth import SessionAuthenticationNoCSRF
-
 from .permissions import (
     REVIEW_CONTRIBUTION_PERM,
     CanManageReferenceWorks,
@@ -78,8 +72,6 @@ from .permissions import (
     user_assigned_collection_ids,
 )
 from .serializers import (
-    AdminCsvUploadListSerializer,
-    AdminCsvUploadSerializer,
     CitationSerializer,
     CollectionSerializer,
     ColorSerializer,
@@ -1199,94 +1191,6 @@ class CollectionViewSet(viewsets.ModelViewSet):
         if not deleted:
             return Response({"detail": "Assignment not found."}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-###################################################################################################
-## Admin CSV upload (staff only)
-###################################################################################################
-def _parse_csv_file(file) -> dict:
-    """Parse uploaded CSV into {headers: [...], rows: [[...], ...]}."""
-    content = file.read()
-    if isinstance(content, bytes):
-        content = content.decode("utf-8", errors="replace")
-    reader = csv.reader(io.StringIO(content), quoting=csv.QUOTE_MINIMAL)
-    rows = list(reader)
-    if not rows:
-        return {"headers": [], "rows": []}
-    return {"headers": rows[0], "rows": rows[1:]}
-
-
-class AdminCsvUploadViewSet(viewsets.ModelViewSet):
-    """
-    Staff-only CSV upload + import. POST multipart/form-data with key 'file'.
-    CSRF exempt so the SPA can POST without a token (still gated by IsAdminUser).
-    """
-    authentication_classes = [SessionAuthenticationNoCSRF]
-    permission_classes = [IsAuthenticated, IsAdminUser]
-    queryset = AdminCsvUpload.objects.all().select_related("uploaded_by").order_by("-uploaded_at")
-    parser_classes = [MultiPartParser, FormParser, JSONParser]
-    http_method_names = ["get", "post", "head", "options", "delete"]
-
-    @classmethod
-    def as_view(cls, *args, **kwargs):
-        view = super().as_view(*args, **kwargs)
-        return csrf_exempt(view)
-
-    def get_queryset(self):
-        qs = super().get_queryset()
-        if self.action == "list":
-            qs = qs.only("id", "name", "file_name", "uploaded_at", "uploaded_by_id", "row_count")
-        return qs
-
-    def get_serializer_class(self):
-        if self.action == "list":
-            return AdminCsvUploadListSerializer
-        return AdminCsvUploadSerializer
-
-    def create(self, request, *args, **kwargs):
-        csv_file = request.FILES.get("file")
-        if not csv_file:
-            return Response(
-                {"detail": "No file provided. Send multipart/form-data with key 'file'."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        name = request.data.get("name") or csv_file.name or "Unnamed upload"
-        try:
-            data = _parse_csv_file(csv_file)
-        except Exception as exc:
-            return Response(
-                {"detail": f"Failed to parse CSV: {exc!s}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        obj = AdminCsvUpload.objects.create(
-            name=name,
-            file_name=csv_file.name or "upload.csv",
-            uploaded_by=request.user if request.user.is_authenticated else None,
-            data=data,
-        )
-        return Response(AdminCsvUploadSerializer(obj).data, status=status.HTTP_201_CREATED)
-
-    @action(detail=True, methods=["post"], url_path="import-to-catalog")
-    def import_to_catalog(self, request, pk=None):
-        obj = self.get_object()
-        import_type = (request.data.get("import_type") or "").strip().lower()
-        if not import_type:
-            return Response(
-                {"detail": f"Missing import_type. Use one of: {', '.join(IMPORTERS)}."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if import_type not in IMPORTERS:
-            return Response(
-                {"detail": f"Unknown import_type: {import_type}. Use one of: {', '.join(IMPORTERS)}."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not request.user.is_authenticated:
-            return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
-        try:
-            result = IMPORTERS[import_type](obj.data or {}, request.user)
-        except Exception as exc:
-            return Response({"detail": f"Import failed: {exc!s}"}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(result, status=status.HTTP_200_OK)
 
 
 ###################################################################################################

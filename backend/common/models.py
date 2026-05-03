@@ -571,33 +571,6 @@ class LegacyCover(models.Model):
     def __str__(self):
         return f'Cover {self.id} ({self.txt_town or self.txt_cover_key_id})'
 
-class AdminCsvUpload(models.Model):
-    """
-    Stores a CSV file uploaded by a staff user for admin reference.
-    Data is parsed and stored as JSON (headers + rows) for display in the dashboard.
-    """
-    id = models.AutoField(primary_key=True)
-    name = models.CharField(max_length=255, help_text='Display name for this upload (e.g. from filename or user input)')
-    file_name = models.CharField(max_length=255, help_text='Original filename of the CSV')
-    uploaded_at = models.DateTimeField(auto_now_add=True)
-    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='admin_csv_uploads')
-    data = models.JSONField(default=dict, help_text='Parsed CSV: headers and rows')
-    row_count = models.PositiveIntegerField(default=0, help_text='Number of data rows (denormalized for list views without loading Data).')
-
-    class Meta:
-        db_table = 'AdminCsvUploads'
-        verbose_name = 'Admin CSV Upload'
-        verbose_name_plural = 'Admin CSV Uploads'
-        ordering = ['-uploaded_at']
-
-    def __str__(self):
-        return f'{self.name} ({self.file_name})'
-
-    def save(self, *args, **kwargs):
-        if self.data:
-            self.row_count = len(self.data.get('rows') or [])
-        super().save(*args, **kwargs)
-
 class Collection(TimestampedModel):
     """
     An institutional collection — a curatorial unit that wraps exactly one Region

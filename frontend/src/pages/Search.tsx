@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
-import { Search as SearchIcon, SlidersHorizontal, Loader2, Pencil } from "lucide-react";
+import { Search as SearchIcon, SlidersHorizontal, Loader2, Plus } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -619,9 +619,9 @@ const Search = () => {
                   <Button
                     size="sm"
                     onClick={() => navigate("/contribute")}
-                    className="shrink-0"
+                    className="shrink-0 bg-green-800 hover:bg-green-900 text-white"
                   >
-                    <Pencil className="mr-2 h-4 w-4" />
+                    <Plus className="mr-2 h-4 w-4" />
                     Submit New Marking
                   </Button>
                 </div>

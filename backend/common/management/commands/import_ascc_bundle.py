@@ -1,6 +1,8 @@
 """
-Load an APMC bundle (a directory of CSVs produced by tools/apmc_data_munger.ipynb)
-into the catalog tables in dependency order.
+Load an ASCC bundle (a directory of Django-shape CSVs produced by
+tools/apmc_data_munger.ipynb) into the catalog tables in dependency
+order using the django-import-export Resource classes registered in
+common.admin.
 
 Expected layout:
     <directory>/
@@ -8,63 +10,123 @@ Expected layout:
         letterings.csv
         shapes.csv
         regions.csv
+        reference_works.csv
         post_offices.csv
         markings.csv
         covers.csv
-        cover_markings.csv
         cover_dates.csv
         cover_valuations.csv
+        cover_markings.csv
+        citations.csv
 
-Each CSV has a header row matching the column names defined by the v2
-importers in common.csv_import (see manifest in docs/model.md / plan).
-
-Audit attribution: created_by / modified_by are filled from --user (by
-username) when supplied, otherwise from the lowest-pk superuser (and then
-the lowest-pk staff user as a second fallback). The command does not
-create users.
+Each CSV is in "Django shape": every row carries an explicit `id`,
+audit columns (created_date, modified_date, created_by, modified_by),
+and integer FK columns referencing the parent table's `id`. There is
+no per-row transformation in this command -- the Resource classes
+handle parsing, FK resolution, and persistence.
 
 Usage:
-    python manage.py import_apmc_bundle ./tools/wip/out/
-    python manage.py import_apmc_bundle ./out/ --user alice --only markings,covers
+    python manage.py import_ascc_bundle ./tools/wip/out/
+    python manage.py import_ascc_bundle ./out/ --only markings,covers
+    python manage.py import_ascc_bundle ./out/ --dry-run
 """
-import csv
-import io
 import os
 import sys
 
+import tablib
 from django.core.management.base import BaseCommand, CommandError
-from django.contrib.auth import get_user_model
+from django.db import connection, transaction
 
-from common.csv_import import IMPORTERS, V2_IMPORT_ORDER
+from common.admin import (
+    CitationResource,
+    ColorResource,
+    CoverDateResource,
+    CoverMarkingResource,
+    CoverResource,
+    CoverValuationResource,
+    LetteringResource,
+    MarkingResource,
+    PostOfficeResource,
+    ReferenceWorkResource,
+    RegionResource,
+    ShapeResource,
+)
 
-User = get_user_model()
+
+# Stem -> Resource class. The stem is the CSV basename without extension.
+RESOURCES = {
+    "colors": ColorResource,
+    "letterings": LetteringResource,
+    "shapes": ShapeResource,
+    "regions": RegionResource,
+    "reference_works": ReferenceWorkResource,
+    "post_offices": PostOfficeResource,
+    "markings": MarkingResource,
+    "covers": CoverResource,
+    "cover_dates": CoverDateResource,
+    "cover_valuations": CoverValuationResource,
+    "cover_markings": CoverMarkingResource,
+    "citations": CitationResource,
+}
+
+# Dependency-safe load order. Parents before children:
+#   colors, letterings, shapes, regions     -- pure leaf lookups
+#   reference_works                         -- leaf lookup (citation parent)
+#   post_offices                            -- depends on regions
+#   markings                                -- depends on shape, lettering, color, post_office
+#   covers                                  -- depends on color
+#   cover_dates, cover_valuations           -- depend on cover
+#   cover_markings                          -- depends on cover + marking
+#   citations                               -- depends on reference_work + marking (via subject_id)
+ASCC_LOAD_ORDER = (
+    "colors",
+    "letterings",
+    "shapes",
+    "regions",
+    "reference_works",
+    "post_offices",
+    "markings",
+    "covers",
+    "cover_dates",
+    "cover_valuations",
+    "cover_markings",
+    "citations",
+)
 
 
-def _parse_csv_path(path):
-    """Read a CSV file from disk into the {headers, rows} shape the importers expect."""
+def _load_dataset(path):
+    """Read a CSV from disk into a tablib.Dataset with headers."""
     with open(path, "r", encoding="utf-8", newline="") as fh:
-        reader = csv.reader(fh)
-        rows = list(reader)
-    if not rows:
-        return {"headers": [], "rows": []}
-    return {"headers": rows[0], "rows": rows[1:]}
+        csv_text = fh.read()
+    dataset = tablib.Dataset()
+    dataset.load(csv_text, format="csv")
+    return dataset
+
+
+def _summarize_errors(result, max_errors=5):
+    """Return a list of human-readable strings for the first N row/validation errors."""
+    out = []
+    # Row-level exceptions (e.g. FK lookup failed, type cast failed)
+    for row_num, errs in result.row_errors():
+        for e in errs:
+            out.append(f"row {row_num}: {e.error!s}")
+            if len(out) >= max_errors:
+                return out
+    # Validation errors (raised by Resource.before_import_row, model.full_clean, etc.)
+    for inv in result.invalid_rows:
+        out.append(f"row {inv.number}: invalid -- {inv.error_dict or inv.error}")
+        if len(out) >= max_errors:
+            return out
+    return out
 
 
 class Command(BaseCommand):
-    help = "Load an APMC CSV bundle into the catalog in dependency order."
+    help = "Load an ASCC CSV bundle into the catalog in dependency order via Resource classes."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "directory",
             help="Path to the directory containing the bundle CSVs.",
-        )
-        parser.add_argument(
-            "--user",
-            default=None,
-            help=(
-                "Username to attribute the import to. Defaults to the "
-                "lowest-pk superuser, then the lowest-pk staff user."
-            ),
         )
         parser.add_argument(
             "--only",
@@ -83,74 +145,164 @@ class Command(BaseCommand):
                 "Useful for partial bundles."
             ),
         )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help=(
+                "Run the importer in dry-run mode: parse + validate every CSV, "
+                "but roll back all transactions instead of committing."
+            ),
+        )
+        parser.add_argument(
+            "--truncate",
+            action="store_true",
+            help=(
+                "Before importing, delete every row from all 12 ASCC catalog "
+                "tables in reverse dependency order. Incompatible with --only "
+                "(a partial truncate would hit FK constraints). Under --dry-run "
+                "the truncate is rolled back too."
+            ),
+        )
 
     def handle(self, *args, **options):
         directory = options["directory"]
         if not os.path.isdir(directory):
             raise CommandError(f"Not a directory: {directory}")
 
-        if options["user"]:
-            try:
-                user = User.objects.get(username=options["user"])
-            except User.DoesNotExist as exc:
-                raise CommandError(f"User {options['user']!r} not found.") from exc
-        else:
-            user = (
-                User.objects.filter(is_superuser=True).order_by("pk").first()
-                or User.objects.filter(is_staff=True).order_by("pk").first()
+        truncate = bool(options["truncate"])
+        if truncate and options["only"]:
+            raise CommandError(
+                "--truncate is incompatible with --only: a partial truncate "
+                "would leave dangling FKs. Drop --only or drop --truncate."
             )
-            if user is None:
-                raise CommandError(
-                    "No --user given and no superuser/staff user exists. Run "
-                    "'python manage.py createsuperuser' first, or pass --user."
-                )
 
         if options["only"]:
             requested = {s.strip() for s in options["only"].split(",") if s.strip()}
-            unknown = requested - set(V2_IMPORT_ORDER)
+            unknown = requested - set(ASCC_LOAD_ORDER)
             if unknown:
                 raise CommandError(f"Unknown stem(s): {sorted(unknown)}")
-            order = [s for s in V2_IMPORT_ORDER if s in requested]
+            order = [s for s in ASCC_LOAD_ORDER if s in requested]
         else:
-            order = list(V2_IMPORT_ORDER)
+            order = list(ASCC_LOAD_ORDER)
 
-        self.stdout.write(self.style.NOTICE(
-            f"Importing as user={user.username!r} (pk={user.pk})"
-        ))
+        dry_run = bool(options["dry_run"])
+        if dry_run:
+            self.stdout.write(self.style.NOTICE("DRY RUN: no rows will be committed."))
 
-        totals = {"created": 0, "updated": 0, "skipped": 0, "errors": 0}
+        # Pre-validate that every requested stem has a CSV before opening the
+        # outer transaction. Catches typos in --only and missing-file errors
+        # without rolling back any work.
         for stem in order:
             path = os.path.join(directory, f"{stem}.csv")
-            if not os.path.isfile(path):
-                if options["allow_missing"]:
-                    self.stdout.write(f"  {stem:<18s} (missing, skipped)")
-                    continue
+            if not os.path.isfile(path) and not options["allow_missing"]:
                 raise CommandError(f"Missing CSV: {path}")
-            data = _parse_csv_path(path)
-            importer = IMPORTERS[stem]
-            try:
-                result = importer(data, user)
-            except Exception as exc:
-                raise CommandError(f"{stem}: {exc!s}") from exc
-            for k in ("created", "updated", "skipped"):
-                totals[k] += int(result.get(k, 0) or 0)
-            errs = result.get("errors") or []
-            totals["errors"] += len(errs)
-            self.stdout.write(
-                f"  {stem:<18s}  created={result.get('created', 0):>5d}  "
-                f"updated={result.get('updated', 0):>5d}  "
-                f"skipped={result.get('skipped', 0):>5d}  "
-                f"errors={len(errs):>3d}"
-            )
-            for e in errs[:5]:
-                self.stdout.write(self.style.WARNING(f"    ! {e}"))
-            if len(errs) > 5:
-                self.stdout.write(self.style.WARNING(f"    ... ({len(errs) - 5} more)"))
+
+        totals = {"new": 0, "update": 0, "skip": 0, "invalid": 0, "error": 0}
+        is_mysql = connection.vendor == "mysql"
+
+        # Single outer transaction covers truncate + every per-stem import.
+        # Any uncaught exception escaping this block (CommandError or
+        # otherwise) triggers an automatic rollback of EVERYTHING done so
+        # far, so the DB is restored to its pre-command state. --dry-run
+        # uses set_rollback(True) at the end of a successful pass for the
+        # same effect.
+        try:
+            with transaction.atomic():
+                if truncate:
+                    self.stdout.write(self.style.NOTICE(
+                        "Truncating 12 ASCC catalog tables in reverse dependency order..."
+                    ))
+                    # Raw DELETE FROM with FOREIGN_KEY_CHECKS off (MySQL) so
+                    # the wipe bypasses on_delete=PROTECT FKs from outside-
+                    # catalog tables (e.g. Collection.region). DELETE (not
+                    # TRUNCATE) is used because TRUNCATE is implicitly
+                    # committed in MySQL and would defeat the outer rollback
+                    # contract.
+                    with connection.cursor() as cursor:
+                        if is_mysql:
+                            cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
+                        try:
+                            for stem in reversed(ASCC_LOAD_ORDER):
+                                model = RESOURCES[stem]._meta.model
+                                table = model._meta.db_table
+                                cursor.execute(f"DELETE FROM `{table}`")
+                                self.stdout.write(
+                                    f"  truncate {stem:<18s} deleted={cursor.rowcount}"
+                                )
+                        finally:
+                            if is_mysql:
+                                cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
+
+                for stem in order:
+                    path = os.path.join(directory, f"{stem}.csv")
+                    if not os.path.isfile(path):
+                        # allow_missing = True (already validated above for
+                        # the !allow_missing case).
+                        self.stdout.write(f"  {stem:<18s} (missing, skipped)")
+                        continue
+
+                    dataset = _load_dataset(path)
+                    resource = RESOURCES[stem]()
+
+                    try:
+                        result = resource.import_data(
+                            dataset,
+                            dry_run=dry_run,
+                            raise_errors=False,
+                            use_transactions=False,
+                            collect_failed_rows=True,
+                        )
+                    except Exception as exc:
+                        raise CommandError(f"{stem}: {exc!s}") from exc
+
+                    stem_totals = dict(result.totals or {})
+                    new = int(stem_totals.get("new", 0) or 0)
+                    update = int(stem_totals.get("update", 0) or 0)
+                    skip = int(stem_totals.get("skip", 0) or 0)
+                    invalid = int(stem_totals.get("invalid", 0) or 0)
+                    error = int(stem_totals.get("error", 0) or 0)
+
+                    totals["new"] += new
+                    totals["update"] += update
+                    totals["skip"] += skip
+                    totals["invalid"] += invalid
+                    totals["error"] += error
+
+                    self.stdout.write(
+                        f"  {stem:<18s}  new={new:>5d}  update={update:>5d}  "
+                        f"skip={skip:>5d}  invalid={invalid:>4d}  error={error:>4d}"
+                    )
+
+                    if result.has_errors() or result.has_validation_errors():
+                        msgs = _summarize_errors(result, max_errors=5)
+                        for m in msgs:
+                            self.stdout.write(self.style.WARNING(f"    ! {m}"))
+                        remaining = (error + invalid) - len(msgs)
+                        if remaining > 0:
+                            self.stdout.write(self.style.WARNING(f"    ... ({remaining} more)"))
+                        # Raising inside the atomic block triggers automatic
+                        # rollback of every prior stem AND the truncate.
+                        raise CommandError(
+                            f"{stem}: import failed with errors; bundle rolled back."
+                        )
+
+                # Successful pass through every stem. Under --dry-run, mark
+                # the outer transaction for rollback so the bundle never
+                # commits.
+                if dry_run:
+                    transaction.set_rollback(True)
+        except CommandError:
+            self.stdout.write(self.style.ERROR(
+                "Bundle aborted; all changes rolled back (no partial state left in DB)."
+            ))
+            raise
 
         self.stdout.write("")
-        self.stdout.write(self.style.SUCCESS(
-            f"Done. created={totals['created']}  updated={totals['updated']}  "
-            f"skipped={totals['skipped']}  errors={totals['errors']}"
-        ))
-        if totals["errors"]:
-            sys.exit(1)
+        summary = (
+            f"Done. new={totals['new']}  update={totals['update']}  "
+            f"skip={totals['skip']}  invalid={totals['invalid']}  "
+            f"error={totals['error']}"
+        )
+        if dry_run:
+            summary = "[DRY RUN] " + summary
+        self.stdout.write(self.style.SUCCESS(summary))
