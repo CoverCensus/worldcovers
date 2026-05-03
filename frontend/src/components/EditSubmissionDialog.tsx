@@ -63,8 +63,8 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
       const body = {
         state: state.trim(),
         town: town.trim(),
-        firstSeen: firstSeen.trim(),
-        lastSeen: lastSeen.trim(),
+        first_seen: firstSeen.trim(),
+        last_seen: lastSeen.trim(),
         shape: shape.trim(),
         color: color.trim(),
         description: description.trim() || undefined,

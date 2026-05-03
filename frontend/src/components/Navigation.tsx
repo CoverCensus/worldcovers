@@ -112,15 +112,6 @@ export const Navigation = () => {
             >
               Help
             </NavLink>
-            {user && (
-              <NavLink
-                to="/contribute"
-                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-                activeClassName="text-primary font-semibold"
-              >
-                Contribute
-              </NavLink>
-            )}
             {!user && (
               <NavLink
                 to="/auth"
@@ -204,16 +195,6 @@ export const Navigation = () => {
             >
               Help
             </NavLink>
-            {user && (
-              <NavLink
-                to="/contribute"
-                className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
-                activeClassName="text-primary bg-secondary font-semibold"
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                Contribute
-              </NavLink>
-            )}
             {!user && (
               <NavLink
                 to="/auth"

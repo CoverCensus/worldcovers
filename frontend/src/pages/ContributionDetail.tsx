@@ -767,8 +767,8 @@ const ContributionDetail = () => {
     return {
       state: stateVal,
       town: townVal,
-      firstSeen: first,
-      lastSeen: last,
+      first_seen: first,
+      last_seen: last,
       dates_observed: datesObservedStr || undefined,
       type: normalizedMarkingType || undefined,
       shape: manuscriptVal === "Yes" ? null : shapeVal,

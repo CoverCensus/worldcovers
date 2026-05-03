@@ -915,13 +915,13 @@ const EditCatalogEntry = () => {
 
       if (allImageFiles.length > 0) {
         const form = new FormData();
-        form.append("editPostmarkId", String(postmarkId!));
+        form.append("edit_postmark_id", String(postmarkId!));
         if (selectedPostOfficeId != null) form.append("post_office_id", String(selectedPostOfficeId));
         form.append("state", stateVal);
         form.append("town", townVal);
         if (typeVal) form.append("type", typeVal);
-        form.append("firstSeen", firstSeenToSend);
-        form.append("lastSeen", lastSeenToSend);
+        form.append("first_seen", firstSeenToSend);
+        form.append("last_seen", lastSeenToSend);
         if (firstSeenToSend) form.append("date_seen", firstSeenToSend);
         if (datesObservedToSend) form.append("dates_observed", datesObservedToSend);
         if (!isManuscriptSelected) form.append("shape", shapeVal);
@@ -957,12 +957,10 @@ const EditCatalogEntry = () => {
           form.append("reference_work_details", JSON.stringify(referenceWorkDetailsToSend));
         }
         if (contributorComment.trim()) {
-          form.append("contributorComment", contributorComment.trim());
           form.append("contributor_comment", contributorComment.trim());
-          form.append("commentForEditor", contributorComment.trim());
           form.append("comment_for_editor", contributorComment.trim());
         }
-        if (submitterName) form.append("submitterName", submitterName);
+        if (submitterName) form.append("submitter_name", submitterName);
         for (const file of postmarkImageFiles) form.append("marking_image", file, file.name);
         for (const file of ratemarkImageFiles) form.append("marking_image", file, file.name);
         for (const file of auxmarkImageFiles) form.append("marking_image", file, file.name);
@@ -973,13 +971,13 @@ const EditCatalogEntry = () => {
         body = form;
       } else {
         body = JSON.stringify({
-          editPostmarkId: postmarkId!,
+          edit_postmark_id: postmarkId!,
           post_office_id: selectedPostOfficeId ?? undefined,
           state: stateVal,
           town: townVal,
           type: typeVal || undefined,
-          firstSeen: firstSeenToSend,
-          lastSeen: lastSeenToSend,
+          first_seen: firstSeenToSend,
+          last_seen: lastSeenToSend,
           date_seen: firstSeenToSend || undefined,
           dates_observed: datesObservedToSend || undefined,
           shape: isManuscriptSelected ? null : shapeVal,
@@ -1011,13 +1009,11 @@ const EditCatalogEntry = () => {
           ],
           ...(contributorComment.trim()
             ? {
-                contributorComment: contributorComment.trim(),
                 contributor_comment: contributorComment.trim(),
-                commentForEditor: contributorComment.trim(),
                 comment_for_editor: contributorComment.trim(),
               }
             : {}),
-          submitterName: submitterName || undefined,
+          submitter_name: submitterName || undefined,
         });
         headers["Content-Type"] = "application/json";
       }

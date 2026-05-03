@@ -2,14 +2,14 @@ import apiClient from "@/lib/api";
 
 /** One item from the external /api/post-offices/ response */
 export interface PostOfficeApiResultItem {
-  postOfficeId: number;
-  referenceCode: string;
-  currentName: string;
-  currentType: string;
+  post_office_id: number;
+  reference_code: string;
+  current_name: string;
+  current_type: string;
   latitude: number | null;
   longitude: number | null;
   /** State/region name (for town dropdown filtering) */
-  stateName?: string | null;
+  state_name?: string | null;
 }
 
 /** Paginated response from GET /post-offices/ */
@@ -34,14 +34,14 @@ export interface PostOfficeOption {
 
 function mapApiResultToOption(item: PostOfficeApiResultItem): PostOfficeOption {
   return {
-    id: item.postOfficeId,
-    referenceCode: item.referenceCode,
-    name: item.currentName ?? "",
-    type: item.currentType ?? "",
+    id: item.post_office_id,
+    referenceCode: item.reference_code,
+    name: item.current_name ?? "",
+    type: item.current_type ?? "",
     latitude: item.latitude,
     longitude: item.longitude,
-    town: (item.currentName ?? "").trim() || undefined,
-    state: (item.stateName ?? "").trim() || undefined,
+    town: (item.current_name ?? "").trim() || undefined,
+    state: (item.state_name ?? "").trim() || undefined,
   };
 }
 

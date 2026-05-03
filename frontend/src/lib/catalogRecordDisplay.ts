@@ -114,7 +114,7 @@ export type CatalogSearchRowDisplay = CatalogFieldValues & {
  * Example: `Williamsburg, VA - "Wmsburg/VA"`.
  */
 function buildSearchTitle(record: MarkingRecord): string {
-  const town = record.town?.trim() ?? "";
+  const town = record.postOfficeName?.trim() ?? "";
   const region = record.stateAbbrev?.trim() ?? "";
   const inscription = record.inscriptionTxt?.trim() ?? "";
 

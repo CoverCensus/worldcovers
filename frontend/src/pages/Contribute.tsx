@@ -958,8 +958,8 @@ const Contribute = () => {
         form.append("state", stateVal);
         form.append("town", townVal);
         if (typeVal) form.append("type", typeVal);
-        form.append("firstSeen", firstSeenToSend);
-        form.append("lastSeen", lastSeenToSend);
+        form.append("first_seen", firstSeenToSend);
+        form.append("last_seen", lastSeenToSend);
         if (firstSeenToSend) form.append("date_seen", firstSeenToSend);
         if (datesObservedToSend) form.append("dates_observed", datesObservedToSend);
         if (!isManuscriptSelected) form.append("shape", shapeVal);
@@ -983,7 +983,7 @@ const Contribute = () => {
         if (referenceWorkDetailsToSend.length > 0) {
           form.append("reference_work_details", JSON.stringify(referenceWorkDetailsToSend));
         }
-        if (submitterName) form.append("submitterName", submitterName);
+        if (submitterName) form.append("submitter_name", submitterName);
         if (!isManuscriptSelected && letteringId) form.append("lettering_style_id", letteringId);
         if (!isManuscriptSelected && letteringId) form.append("lettering_id", letteringId);
         if (framingIds.length > 0) {
@@ -1008,8 +1008,8 @@ const Contribute = () => {
           state: stateVal,
           town: townVal,
           type: typeVal || undefined,
-          firstSeen: firstSeenToSend,
-          lastSeen: lastSeenToSend,
+          first_seen: firstSeenToSend,
+          last_seen: lastSeenToSend,
           date_seen: firstSeenToSend || undefined,
           dates_observed: datesObservedToSend || undefined,
           shape: isManuscriptSelected ? null : shapeVal,
@@ -1027,7 +1027,7 @@ const Contribute = () => {
           references: referencesToSend || undefined,
           reference_work_ids: referenceWorkIdsToSend.length > 0 ? referenceWorkIdsToSend : undefined,
           reference_work_details: referenceWorkDetailsToSend.length > 0 ? referenceWorkDetailsToSend : undefined,
-          submitterName: submitterName || undefined,
+          submitter_name: submitterName || undefined,
           lettering_style_id: isManuscriptSelected ? null : letteringId ? Number(letteringId) : undefined,
           lettering_id: isManuscriptSelected ? null : letteringId ? Number(letteringId) : undefined,
           framing_style_id: framingIds[0] ? Number(framingIds[0]) : undefined,
