@@ -97,7 +97,7 @@ function resolveSubmissionImageUrl(
     const obj = meta as Record<string, unknown>;
     const sf = obj.storage_filename ?? obj.storageFilename;
     if (typeof sf !== "string" || !sf || !baseImageUrl) return null;
-    return normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/postmarks/${sf}`);
+    return normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/markings/${sf}`);
   };
   const metas = submittedData.image_metas ?? submittedData.imageMetas;
   if (Array.isArray(metas)) {

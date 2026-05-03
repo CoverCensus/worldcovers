@@ -982,7 +982,7 @@ const ContributionDetail = () => {
       setDeletingMasterListing(true);
       const csrfToken = getCsrfTokenFromCookie();
       const headers = csrfToken ? { "X-CSRFToken": csrfToken } : undefined;
-      await apiClient.delete(`/postmarks/${postmarkId}/`, headers ? { headers } : undefined);
+      await apiClient.delete(`/markings/${postmarkId}/delete-mine/`, headers ? { headers } : undefined);
       toast({
         title: "Master listing deleted",
         description: "Deletion was recorded in audit history.",
@@ -1111,7 +1111,7 @@ const ContributionDetail = () => {
   const baseImageUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
   const imageRoot = baseImageUrl || "/media";
   const resolveStorageImageUrl = (storageFilename: string) =>
-    normalizeImageUrl(`${imageRoot}/postmarks/${storageFilename.replace(/^\/+/, "")}`);
+    normalizeImageUrl(`${imageRoot}/markings/${storageFilename.replace(/^\/+/, "")}`);
   const imageMetasRaw = (sd.image_metas ?? sd.imageMetas) as SubmittedData["image_metas"] | undefined;
   const imageMetaSingle = sd.image_meta as SubmittedData["image_meta"] | undefined;
   const imageMetaList: Array<{ imageUrl: string; originalFilename?: string }> = [];

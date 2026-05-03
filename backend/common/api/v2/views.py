@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import csv
 import io
+import os
+import uuid
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import ProgrammingError, transaction
 from django.db.models import Min, Max, Q
@@ -974,14 +977,43 @@ class ContributionSubmitView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Strip multi-value form keys to plain values for the JSONField payload
+        # Save uploaded marking image files under MEDIA_ROOT/markings/<region_abbrev>/.
+        # Frontend posts FormData with one or more `marking_image` fields; we
+        # stash the resulting metadata on Contribution.submitted_data so the
+        # editor portal can display previews. Approval-time materialization
+        # into Image rows happens in the contribution-apply pipeline.
+        region_abbrev = (region.abbrev or "").strip().lower() or "unknown"
+        uploaded_files = []
+        try:
+            uploaded_files = request.FILES.getlist("marking_image")
+        except AttributeError:
+            uploaded_files = []
+        image_metas = []
+        for uploaded in uploaded_files:
+            meta = _save_contribution_image(uploaded, region_abbrev)
+            if meta:
+                image_metas.append(meta)
+
+        # Strip multi-value form keys to plain values for the JSONField payload.
+        # Skip raw file objects: they are not JSON-serializable and we have already
+        # captured them in image_metas above.
         submitted_data = {}
         for key in data:
+            if key == "marking_image":
+                continue
             value = data.get(key)
+            if hasattr(value, "read") and hasattr(value, "name"):
+                continue
             try:
                 submitted_data[key] = value
             except Exception:
                 submitted_data[key] = str(value)
+
+        if image_metas:
+            submitted_data["marking_image_metas"] = image_metas
+            # Legacy keys still consumed by Dashboard.tsx and ContributionDetail.tsx.
+            submitted_data["image_metas"] = image_metas
+            submitted_data["image_meta"] = image_metas[0]
 
         contrib = Contribution.objects.create(
             contributor=request.user,
@@ -1002,6 +1034,58 @@ class ContributionSubmitView(APIView):
             ContributionDetailSerializer(contrib, context={"request": request}).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+def _save_contribution_image(uploaded_file, region_abbrev):
+    """
+    Save an uploaded marking image under MEDIA_ROOT/markings/<region_abbrev>/
+    and return a metadata dict suitable for Contribution.submitted_data.
+
+    Returns dict with storage_filename, original_filename, file_checksum,
+    mime_type, image_width, image_height, file_size_bytes; or None if the
+    file is missing, oversize, or not a recognized image format.
+
+    storage_filename is returned as '<region_abbrev>/<uuid>.<ext>'. Public
+    URLs are built by ImageSerializer.get_image_url, which prepends 'markings/'.
+    """
+    from common.images import extract_image_metadata
+
+    if not uploaded_file or not getattr(uploaded_file, "read", None):
+        return None
+    content_type = getattr(uploaded_file, "content_type", "") or ""
+    max_size_bytes = 100 * 1024 * 1024  # 100 MB
+    try:
+        uploaded_file.seek(0)
+    except Exception:
+        pass
+    content = uploaded_file.read()
+    if not content or len(content) > max_size_bytes:
+        return None
+    try:
+        uploaded_file.seek(0)
+    except Exception:
+        pass
+    metadata = extract_image_metadata(content, content_type)
+    if metadata is None:
+        return None
+    if "png" in content_type:
+        ext = "png"
+    elif "tiff" in content_type:
+        ext = "tiff"
+    else:
+        ext = "jpg"
+    abbrev = (region_abbrev or "").strip().lower() or "unknown"
+    storage_name = f"{abbrev}/{uuid.uuid4().hex}.{ext}"
+    sub_dir = os.path.join(settings.MEDIA_ROOT, "markings", abbrev)
+    os.makedirs(sub_dir, exist_ok=True)
+    file_path = os.path.join(settings.MEDIA_ROOT, "markings", storage_name)
+    with open(file_path, "wb") as f:
+        f.write(content)
+    return {
+        "storage_filename": storage_name,
+        "original_filename": (getattr(uploaded_file, "name", "image") or "image")[:255],
+        **metadata,
+    }
 
 
 ###################################################################################################
