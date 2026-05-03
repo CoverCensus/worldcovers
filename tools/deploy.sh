@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # Run this on the server after "git pull" (or in CI). From project root: ./tools/deploy.sh
 # Note: privileged operations (unit file install, daemon-reload, service restart) are handled
-# by the caller — either the CI workflow or a sysadmin with sudo — not by this script.
+# by the caller; either the CI workflow or a sysadmin with sudo, not by this script.
 set -e
 cd "$(dirname "$0")/.."
 
 echo "[1/4] Installing Python dependencies..."
+# Pipfile only declares dev/notebook tooling. Runtime deps (Django, DRF,
+# drf-spectacular, ...) live in backend/requirements.txt so CI and the
+# server install from a single canonical list. We sync Pipfile first, then
+# install the runtime requirements into the same pipenv venv.
+# --no-deps is intentional: requirements.txt is already a fully-resolved
+# pin set, so we skip pip's transitive resolution to avoid version drift.
 pipenv install
+pipenv run pip install --no-deps -r backend/requirements.txt
 
 echo "[2/4] Running migrations..."
 pipenv run manage migrate --noinput

@@ -14,17 +14,16 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import {
-  getPostmarksPage,
-  getPostmarkRatemarks,
-  getPostmarkAuxmarks,
-  type PostmarkRecord,
-} from "@/services/postmarks";
+  getMarkingsPage,
+  type MarkingRecord,
+  type MarkingTypeValue,
+} from "@/services/markings";
 import { buildCatalogSearchRow } from "@/lib/catalogRecordDisplay";
 import { CatalogRecordFields } from "@/components/CatalogRecordFields";
 import { useToast } from "@/hooks/use-toast";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
 import { useDebounce } from "@/hooks/useDebounce";
-import { usePostmarkYearRange } from "@/hooks/usePostmarkYearRange";
+import { useMarkingYearRange } from "@/hooks/useMarkingYearRange";
 import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 400;
@@ -108,7 +107,7 @@ const Search = () => {
     useFilterOptions();
 
   // Catalog's earliest/latest observed year — used for input placeholders and validation bounds.
-  const { earliestYear: minYear, latestYear: maxYear } = usePostmarkYearRange();
+  const { earliestYear: minYear, latestYear: maxYear } = useMarkingYearRange();
 
   // Filter states - initialize from URL so filters persist when navigating back from detail
   const [keywordSearch, setKeywordSearch] = useState(() => getSearchParam(searchParams, "q", ""));
@@ -235,7 +234,19 @@ const Search = () => {
       : (debouncedEndYear.trim().length === 4 ? debouncedEndYear.trim() : "");
   }, [debouncedEndYear, minYear, maxYear]);
 
-  // Fetch postmarks with React Query - cached so Back shows previous results immediately
+  // Map UI typeFilter ("all" | "townmark" | "ratemark" | "auxmark") to API value.
+  const typeFilterApi: MarkingTypeValue | "all" =
+    typeFilter === "townmark"
+      ? "TOWNMARK"
+      : typeFilter === "ratemark"
+        ? "RATEMARK"
+        : typeFilter === "auxmark"
+          ? "AUXMARK"
+          : "all";
+
+  // Fetch markings with React Query - cached so Back shows previous results immediately.
+  // The unified /markings/ endpoint already returns one row per marking with its
+  // own type discriminator, so no client-side fan-out is needed.
   const {
     data: queryData,
     isLoading: queryLoading,
@@ -243,7 +254,7 @@ const Search = () => {
     error: queryError,
   } = useQuery({
     queryKey: [
-      "postmarks",
+      "markings",
       currentPage,
       debouncedKeywordSearch,
       shapeFilter,
@@ -254,6 +265,7 @@ const Search = () => {
       imagesOnly,
       colorFilter,
       manuscriptFilter,
+      typeFilterApi,
       itemsPerPage,
     ],
     queryFn: async () => {
@@ -262,83 +274,28 @@ const Search = () => {
       const normalizedTo =
         debouncedEndYear.trim().length === 4 ? debouncedEndYear.trim() : undefined;
 
-      const { results, count, count_capped } = await getPostmarksPage(
+      const { results, count, count_capped } = await getMarkingsPage(
         currentPage,
         itemsPerPage,
-        debouncedKeywordSearch.trim() || undefined,
-        shapeFilter !== "all" ? shapeFilter : undefined,
-        manuscriptFilter,
-        colorFilter !== "all" ? colorFilter : null,
-        stateFilter !== "all" ? stateFilter : undefined,
-        debouncedTownFilter.trim() || undefined,
-        normalizedFrom,
-        normalizedTo,
-        imagesOnly
+        {
+          search: debouncedKeywordSearch.trim() || undefined,
+          shapeId: shapeFilter !== "all" ? shapeFilter : undefined,
+          type: typeFilterApi,
+          manuscripts: manuscriptFilter,
+          color: colorFilter !== "all" ? colorFilter : undefined,
+          state: stateFilter !== "all" ? stateFilter : undefined,
+          town: debouncedTownFilter.trim() || undefined,
+          beginYear: normalizedFrom,
+          endYear: normalizedTo,
+          hasImages: imagesOnly,
+        }
       );
-      const expanded = await Promise.all(
-        results.map(async (base) => {
-          const [ratemarks, auxmarks] = await Promise.all([
-            getPostmarkRatemarks(base.id),
-            getPostmarkAuxmarks(base.id),
-          ]);
-
-          const rateRows: PostmarkRecord[] = ratemarks.map((rel) => {
-            const d = (rel.ratemarkDetails ?? {}) as Record<string, unknown>;
-            return {
-              ...base,
-              type: "Ratemark",
-              markingId: rel.ratemark,
-              id: rel.ratemark,
-              town: "",
-              state: "",
-              regionAbbrev: "",
-              earliestUse: "",
-              latestUse: "",
-              listingShape: String(d.shapeName ?? "").trim(),
-              shapeName: String(d.shapeName ?? "").trim(),
-              inscriptionTxt: String(d.inscriptionTxt ?? "").trim(),
-              rateValue: d.rateVal != null ? String(d.rateVal) : "",
-              letteringStyleName: String(d.letteringName ?? "").trim(),
-              dimensionsDisplay:
-                d.width != null && d.height != null
-                  ? `${d.width}×${d.height}`
-                  : "",
-              isManuscript: Boolean(d.isManuscript),
-            };
-          });
-
-          const auxRows: PostmarkRecord[] = auxmarks.map((aux) => ({
-            ...base,
-            type: "Auxmark",
-            markingId: aux.id,
-            id: aux.id,
-            town: "",
-            state: "",
-            regionAbbrev: "",
-            earliestUse: "",
-            latestUse: "",
-            listingShape: String(aux.shapeName ?? "").trim(),
-            shapeName: String(aux.shapeName ?? "").trim(),
-            inscriptionTxt: String(aux.inscriptionTxt ?? "").trim(),
-            rateValue: "",
-            letteringStyleName: String(aux.letteringName ?? "").trim(),
-            dimensionsDisplay:
-              aux.width != null && aux.height != null
-                ? `${aux.width}×${aux.height}`
-                : "",
-            isManuscript: Boolean(aux.isManuscript),
-          }));
-
-          return [{ ...base, type: "Townmark", markingId: base.id }, ...rateRows, ...auxRows];
-        })
-      );
-
-      return { records: expanded.flat(), count, count_capped };
+      return { records: results, count, count_capped };
     },
-    staleTime: 5 * 60 * 1000, // 5 min - use cache when navigating back, no loading
+    staleTime: 5 * 60 * 1000,
   });
 
-  const catalogRecords: PostmarkRecord[] = queryData?.records ?? [];
+  const catalogRecords: MarkingRecord[] = queryData?.records ?? [];
   const totalCount = queryData?.count ?? 0;
   const countCapped = queryData?.count_capped ?? false;
   // Show loading only when we have no data; when we have cached data, show it (no spinner)
@@ -378,21 +335,10 @@ const Search = () => {
     }
   }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, shapeFilter, typeFilter, colorFilter, manuscriptFilter, imagesOnly, searchParams, setSearchParams]);
 
-  const filteredByType =
-    typeFilter === "all"
-      ? catalogRecords
-      : catalogRecords.filter((record) => {
-          const t = String(record.type ?? "Townmark").trim().toLowerCase();
-          return t === typeFilter.toLowerCase();
-        });
-
-  // Backend paginates by postmark (itemsPerPage per page, sorted by region/town/earliest date).
-  // The expanded ratemark/auxmark sub-rows for those postmarks come back already in the
-  // correct sort order; slicing them in the frontend would drop later postmarks on the page.
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
   const pageStart = (currentPage - 1) * itemsPerPage;
   const pageEnd = Math.min(currentPage * itemsPerPage, totalCount);
-  const paginatedResults = filteredByType;
+  const paginatedResults = catalogRecords;
 
   // Clear all filters and URL params
   const handleClearAllFilters = () => {
@@ -593,22 +539,6 @@ const Search = () => {
                     />
                   </div>
 
-                  {/* <div className="space-y-2">
-                    <Label htmlFor="valuation">Postmark Valuation</Label>
-                    <Select value={valuationFilter} onValueChange={setValuationFilter}>
-                      <SelectTrigger id="valuation">
-                        <SelectValue placeholder="All Valuations" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Valuations</SelectItem>
-                        <SelectItem value="Common">Common</SelectItem>
-                        <SelectItem value="Scarce">Scarce</SelectItem>
-                        <SelectItem value="Rare">Rare</SelectItem>
-                        <SelectItem value="Very Rare">Very Rare</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div> */}
-
                   <div className="space-y-2">
                     <Label htmlFor="manuscripts">Show Manuscripts</Label>
                     <Select
@@ -663,10 +593,10 @@ const Search = () => {
                 <div>
                   <p className="text-sm text-muted-foreground">
                     {totalCount === 0 ? (
-                      "0 postmarks"
+                      "0 markings"
                     ) : (
                       <>
-                        Showing <span className="font-semibold text-foreground">{pageStart + 1}-{pageEnd}</span> of <span className="font-semibold text-foreground">{countCapped ? `${totalCount.toLocaleString()}+` : totalCount.toLocaleString()}</span> postmarks
+                        Showing <span className="font-semibold text-foreground">{pageStart + 1}-{pageEnd}</span> of <span className="font-semibold text-foreground">{countCapped ? `${totalCount.toLocaleString()}+` : totalCount.toLocaleString()}</span> markings
                       </>
                     )}
                   </p>
@@ -695,7 +625,7 @@ const Search = () => {
                   <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
                   <p className="text-muted-foreground">Loading catalog records...</p>
                 </div>
-              ) : filteredByType.length === 0 ? (
+              ) : catalogRecords.length === 0 ? (
                 <div className="flex justify-center items-center py-12">
                   <p className="text-muted-foreground">No catalog records found.</p>
                 </div>
@@ -708,18 +638,9 @@ const Search = () => {
                         key={row.cardId}
                         className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
                         onClick={() =>
-                          navigate(
-                            `/record/${row.cardId}?type=${encodeURIComponent(String(record.type ?? "Townmark"))}&markingId=${encodeURIComponent(String(record.markingId ?? record.id))}`,
-                            {
-                              state: {
-                                fromSearch: true,
-                                markingRow: {
-                                  type: record.type ?? "Townmark",
-                                  markingId: record.markingId ?? record.id,
-                                },
-                              },
-                            }
-                          )
+                          navigate(`/record/${record.id}`, {
+                            state: { fromSearch: true },
+                          })
                         }
                       >
                         <CardContent className="p-4">

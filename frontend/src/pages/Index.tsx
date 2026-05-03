@@ -15,8 +15,8 @@ import { useAuth } from "@/hooks/useAuth";
 import heroImage from "@/assets/hero-cover.jpg";
 import { getRegions } from "@/services/regions";
 import { getPostOfficeCount } from "@/services/postOffices";
-import { getPostmarkCount } from "@/services/postmarks";
-import { usePostmarkYearRange } from "@/hooks/usePostmarkYearRange";
+import { getMarkingCount } from "@/services/markings";
+import { useMarkingYearRange } from "@/hooks/useMarkingYearRange";
 
 type FAQItem = {
   id: string;
@@ -114,7 +114,7 @@ const Index = () => {
     states: null,
   });
 
-  const { earliestYear, latestYear } = usePostmarkYearRange();
+  const { earliestYear, latestYear } = useMarkingYearRange();
 
   useEffect(() => {
     let cancelled = false;
@@ -122,7 +122,7 @@ const Index = () => {
     const loadStats = async () => {
       const [postmarksResult, officesResult, regionsResult] =
         await Promise.allSettled([
-          getPostmarkCount(),
+          getMarkingCount(),
           getPostOfficeCount(),
           getRegions(false),
         ]);

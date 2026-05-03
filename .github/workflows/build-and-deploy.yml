@@ -29,8 +29,18 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r backend/requirements.txt
 
-      - name: Run migrations (check)
-        run: python backend/manage.py migrate --check --noinput || true
+      # `migrate --check` was the original step here, but it needs a live
+      # MySQL to inspect django_migrations and CI doesn't provide one, so it
+      # was wrapped in `|| true` and silently masked every failure (model
+      # import errors, broken migrations, missing dependencies all slipped
+      # through). `manage.py check` is the right CI smoke test: it loads
+      # settings, validates models / URL conf / app registry, and runs
+      # without a DB connection. Failures here now break the build.
+      # If you want a real `migrate --check` against a live DB in CI, add a
+      # MySQL service block + DATABASE config; see the `services:` pattern
+      # in https://docs.github.com/en/actions/using-containerized-services.
+      - name: Django system checks
+        run: python backend/manage.py check
 
       - name: Build frontend
         run: |

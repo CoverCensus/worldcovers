@@ -15,82 +15,61 @@ import {
   type CarouselApi,
 } from "@/components/ui/carousel";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
-import { formatCatalogDate } from "@/lib/catalogRecordDisplay";
+import { formatCatalogDate, markingTypeLabel } from "@/lib/catalogRecordDisplay";
 import {
-  formatPostmarkDimensionsDisplay,
-  getAuxmarkById,
-  getPostmarkById,
-  getRatemarkById,
+  getMarkingById,
   normalizeImageUrl,
-} from "@/services/postmarks";
+  type MarkingImage,
+  type MarkingRecord,
+} from "@/services/markings";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
 
 type GalleryImage = {
   imageUrl: string | null;
   originalFilename?: string;
-  category: "Postmark" | "Ratemark" | "Auxmark";
+  category: string;
 };
 
-type RecordState = {
-  id: number;
-  name: string;
-  postmarkKey: string;
-  state: string;
-  town: string;
-  earliestUse: string;
-  latestUse: string;
-  datesObserved: string[];
-  color: string;
-  shape: string;
-  dimensions: string;
-  manuscript: string;
-  isIrregular: string;
-  impression: string;
-  dateType: string;
-  dateFmt: string;
-  rateValue: string;
-  inscriptionText: string;
-  description: string;
-  sourceCatalog: string;
-  editorComment: string;
-  images: GalleryImage[];
-};
-
-function parseOtherCharacteristics(raw: string | null | undefined) {
-  const out = { description: "", editorComment: "" };
-  if (!raw) return out;
-  const lines = String(raw).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-  const descriptionLines: string[] = [];
-  for (const line of lines) {
-    if (line.startsWith("Description:")) descriptionLines.push(line.slice("Description:".length).trim());
-    else if (line.startsWith("Comment:")) {
-      const c = line.slice("Comment:".length).trim();
-      if (c) out.editorComment = out.editorComment ? `${out.editorComment}\n${c}` : c;
-    } else if (!line.startsWith("Submitted by:") && !line.startsWith("Citation references:")) {
-      descriptionLines.push(line);
-    }
+function dimensionsDisplay(record: MarkingRecord): string {
+  if (record.sizeDisplay && record.sizeDisplay.trim()) {
+    return record.sizeDisplay.trim().includes("mm")
+      ? record.sizeDisplay.trim()
+      : `${record.sizeDisplay.trim()} mm`;
   }
-  out.description = descriptionLines.join("\n").trim();
-  return out;
+  const w = record.width?.trim() ?? "";
+  const h = record.height?.trim() ?? "";
+  if (w && h) return `${w}x${h} mm`;
+  if (w) return `${w} mm`;
+  if (h) return `${h} mm`;
+  return "";
 }
 
-function shouldShowEditorCommentOnRecord(params: {
+function shouldShowEditorComment(params: {
   user: AuthUser | null;
   editorComment: string;
-  sourceCatalog: string;
 }): boolean {
   if (!params.editorComment.trim()) return false;
   if (!params.user) return false;
-  const isEditor =
-    params.user.role === "editor" || params.user.role === "administrator" || params.user.is_superuser;
-  if (isEditor) return true;
-  return /user\s*contribution/i.test(params.sourceCatalog || "");
+  return (
+    params.user.role === "editor" ||
+    params.user.role === "administrator" ||
+    params.user.is_superuser === true
+  );
 }
 
 function hasDisplayValue(v: unknown): boolean {
   const s = String(v ?? "").trim();
-  return s !== "" && s !== "—" && s.toLowerCase() !== "unknown";
+  return s !== "" && s !== "-" && s.toLowerCase() !== "unknown";
+}
+
+function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
+  const typeLabel = markingTypeLabel(record.type) || "Marking";
+  return record.images.map((img: MarkingImage) => ({
+    imageUrl: normalizeImageUrl(img.imageUrl),
+    originalFilename: img.originalFilename || undefined,
+    category: typeLabel,
+  }));
 }
 
 const RecordDetail = () => {
@@ -102,105 +81,28 @@ const RecordDetail = () => {
   const [current, setCurrent] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [record, setRecord] = useState<RecordState | null>(null);
+  const [record, setRecord] = useState<MarkingRecord | null>(null);
 
-  const selectedType = String(location.state?.markingRow?.type ?? "Townmark").trim();
-  console.log(selectedType)
-  const searchParams = new URLSearchParams(location.search);
-  const queryMarkingId = Number(searchParams.get("markingId") ?? NaN);
-  const selectedMarkingId =
-    typeof location.state?.markingRow?.markingId === "number"
-      ? location.state?.markingRow?.markingId
-      : Number.isFinite(queryMarkingId)
-      ? queryMarkingId
-      : undefined;
-  const postmarkId = id ? parseInt(String(id).replace(/^api-/, ""), 10) : null;
+  // Accept either bare numeric ids or the legacy "api-<id>" cardId prefix.
+  const markingId = id ? parseInt(String(id).replace(/^api-/, ""), 10) : null;
 
   useEffect(() => {
-    if (postmarkId == null || Number.isNaN(postmarkId)) {
+    if (markingId == null || Number.isNaN(markingId)) {
       setError("Invalid record ID");
       setLoading(false);
       return;
     }
     let cancelled = false;
-    const typeNormalized = selectedType.trim().toLowerCase();
-    const fetcher =
-      typeNormalized === "ratemark" && selectedMarkingId != null
-        ? () => getRatemarkById(selectedMarkingId)
-        : typeNormalized === "auxmark" && selectedMarkingId != null
-        ? () => getAuxmarkById(selectedMarkingId)
-        : () => getPostmarkById(postmarkId);
-
-    fetcher()
+    setLoading(true);
+    getMarkingById(markingId)
       .then((data) => {
         if (cancelled) return;
         if (!data) {
           setError("Record not found");
           return;
         }
-        const parseDate = (row: any) => {
-          const iso = String(row?.date ?? "");
-          if (!iso) return "";
-          const granularity = String(row?.granularity ?? "").toUpperCase();
-          const sliced =
-            granularity === "YEAR" ? iso.slice(0, 4) : granularity === "MONTH" ? iso.slice(0, 7) : iso.slice(0, 10);
-          return formatCatalogDate(sliced);
-        };
-
-        const parsed = parseOtherCharacteristics(data.otherCharacteristics ?? data.other_characteristics);
-        const images: GalleryImage[] = Array.isArray(data.images)
-          ? data.images.map((img: any) => ({
-              imageUrl: normalizeImageUrl(img.image_url ?? img.imageUrl ?? null),
-              originalFilename: img.original_filename ?? img.originalFilename,
-              category:
-                typeNormalized === "ratemark"
-                  ? "Ratemark"
-                  : typeNormalized === "auxmark"
-                  ? "Auxmark"
-                  : "Postmark",
-            }))
-          : [];
-
-        setRecord({
-          id: data.postmark_id ?? data.postmarkId ?? data.id ?? selectedMarkingId ?? postmarkId,
-          name: String(data.postmark_key ?? data.postmarkKey ?? data.code ?? "Record"),
-          postmarkKey: String(data.postmark_key ?? data.postmarkKey ?? data.code ?? "").trim(),
-          state: String(data.state ?? "").trim(),
-          town: String(data.town ?? "").trim(),
-          earliestUse: String(data.earliest_use ?? data.earliestUse ?? "").trim(),
-          latestUse: String(data.latest_use ?? data.latestUse ?? "").trim(),
-          datesObserved: Array.isArray(data.dates_observed ?? data.datesObserved)
-            ? (data.dates_observed ?? data.datesObserved).map(parseDate).filter(Boolean)
-            : [],
-          color: String(
-            data.colors_display ??
-              data.colorsDisplay ??
-              data.colorName ??
-              data?.color?.name ??
-              data?.color?.color_name ??
-              ""
-          ).trim(),
-          shape: String(data.shape_name ?? data.shapeName ?? data?.shape?.name ?? data?.shapeName ?? "").trim(),
-          dimensions:
-            String(data.size_display ?? data.sizeDisplay ?? "").trim() ||
-            formatPostmarkDimensionsDisplay(data.sizes),
-          manuscript: (data.is_manuscript ?? data.isManuscript) ? "Yes" : "No",
-          isIrregular:
-            (data.is_irreg ?? data.isIrreg) === true
-              ? "Yes"
-              : (data.is_irreg ?? data.isIrreg) === false
-              ? "No"
-              : "",
-          impression: String(data.impression ?? "").trim(),
-          dateType: String(data.date_type ?? data.dateType ?? "").trim(),
-          dateFmt: String(data.date_fmt ?? data.dateFmt ?? "").trim(),
-          rateValue: String(data.rate_value ?? data.rateValue ?? data.rateVal ?? "").trim(),
-          inscriptionText: String(data.inscription_txt ?? data.inscriptionTxt ?? "").trim(),
-          description: parsed.description,
-          sourceCatalog: String(data.source_catalog ?? data.sourceCatalog ?? "").trim(),
-          editorComment: parsed.editorComment,
-          images,
-        });
+        setRecord(data);
+        setError(null);
       })
       .catch(() => {
         if (!cancelled) setError("Failed to load record");
@@ -211,7 +113,7 @@ const RecordDetail = () => {
     return () => {
       cancelled = true;
     };
-  }, [postmarkId, selectedType, selectedMarkingId]);
+  }, [markingId]);
 
   useEffect(() => {
     if (!api) return;
@@ -257,43 +159,49 @@ const RecordDetail = () => {
     );
   }
 
-  const showEditorComment = shouldShowEditorCommentOnRecord({
-    user,
-    editorComment: record.editorComment,
-    sourceCatalog: record.sourceCatalog,
-  });
+  const editorComment = record.desc?.trim() ?? "";
+  const showEditorComment = shouldShowEditorComment({ user, editorComment });
+  const galleryImages = buildGalleryImages(record);
+  const typeLabel = markingTypeLabel(record.type) || "Townmark";
 
   const common = [
-    { label: "Type", value: selectedType || "Townmark" },
-    { label: "Manuscript", value: record.manuscript },
-    { label: "Dimensions", value: record.dimensions },
-    { label: "Color", value: record.color },
-    { label: "Date Type", value: record.dateType },
+    { label: "Type", value: typeLabel },
+    { label: "Manuscript", value: record.isManuscript ? "Yes" : "No" },
+    { label: "Dimensions", value: dimensionsDisplay(record) },
+    { label: "Color", value: record.colorName },
     { label: "Date Format", value: record.dateFmt },
-    { label: "Dates observed", value: record.datesObserved.join("\n") },
-    { label: "Inscription", value: record.inscriptionText },
-    { label: "Catalog key", value: record.postmarkKey },
+    { label: "Inscription", value: record.inscriptionTxt },
+    { label: "Catalog text", value: record.catalogTxt },
+    { label: "Catalog code", value: record.code },
   ];
   const townmark = [
     { label: "Town", value: record.town },
     { label: "State", value: record.state },
-    { label: "Shape", value: record.shape },
+    { label: "Shape", value: record.shapeName },
+    { label: "Lettering", value: record.letteringName },
     { label: "Impression", value: record.impression },
-    { label: "Is Irregular", value: record.isIrregular },
-    { label: "Earliest Seen", value: record.earliestUse },
-    { label: "Latest Seen", value: record.latestUse },
+    {
+      label: "Is Irregular",
+      value: record.isIrreg === true ? "Yes" : record.isIrreg === false ? "No" : "",
+    },
+    { label: "Earliest Seen", value: formatCatalogDate(record.earliestSeen) },
+    { label: "Latest Seen", value: formatCatalogDate(record.latestSeen) },
   ];
   const rateAux = [
-    { label: "Shape", value: record.shape },
+    { label: "Shape", value: record.shapeName },
+    { label: "Lettering", value: record.letteringName },
     { label: "Impression", value: record.impression },
-    { label: "Is Irregular", value: record.isIrregular },
+    {
+      label: "Is Irregular",
+      value: record.isIrreg === true ? "Yes" : record.isIrreg === false ? "No" : "",
+    },
   ];
   const details =
-    selectedType.toLowerCase() === "townmark"
+    record.type === "TOWNMARK"
       ? [...common, ...townmark]
-      : selectedType.toLowerCase() === "ratemark"
-      ? [...common, { label: "Rate Value", value: record.rateValue }, ...rateAux]
-      : [...common, ...rateAux];
+      : record.type === "RATEMARK"
+        ? [...common, { label: "Rate Value", value: record.rateVal ?? "" }, ...rateAux]
+        : [...common, ...rateAux];
   const visibleDetails = details.filter((row) => hasDisplayValue(row.value));
 
   return (
@@ -332,7 +240,7 @@ const RecordDetail = () => {
               <CardContent className="p-6">
                 <Carousel setApi={setApi} className="w-full">
                   <CarouselContent>
-                    {(record.images.length ? record.images : [{ imageUrl: imageNotAvailable, category: "Postmark" as const }]).map((img, index) => (
+                    {(galleryImages.length ? galleryImages : [{ imageUrl: imageNotAvailable, category: typeLabel }]).map((img, index) => (
                       <CarouselItem key={index}>
                         <div className="relative flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
                           <img src={img.imageUrl || imageNotAvailable} alt={img.originalFilename || `Image ${index + 1}`} className="w-full h-full object-contain" />
@@ -341,11 +249,11 @@ const RecordDetail = () => {
                       </CarouselItem>
                     ))}
                   </CarouselContent>
-                  {record.images.length > 1 && (<><CarouselPrevious className="left-2" /><CarouselNext className="right-2" /></>)}
+                  {galleryImages.length > 1 && (<><CarouselPrevious className="left-2" /><CarouselNext className="right-2" /></>)}
                 </Carousel>
-                {record.images.length > 1 && (
+                {galleryImages.length > 1 && (
                   <div className="flex justify-center gap-2 mt-4">
-                    {record.images.map((_, index) => (
+                    {galleryImages.map((_, index) => (
                       <button
                         key={index}
                         onClick={() => api?.scrollTo(index)}
@@ -366,7 +274,7 @@ const RecordDetail = () => {
                     {visibleDetails.map((row, idx) => (
                       <div key={row.label} className={`flex justify-between py-2 ${idx < visibleDetails.length - 1 ? "border-b border-border" : ""}`}>
                         <dt className="text-muted-foreground font-medium">{row.label}</dt>
-                        <dd className="text-foreground whitespace-pre-line text-right">{row.value}</dd>
+                        <dd className="text-foreground whitespace-pre-line text-right">{String(row.value)}</dd>
                       </div>
                     ))}
                   </dl>
@@ -376,11 +284,11 @@ const RecordDetail = () => {
               <Card className="shadow-archival-md">
                 <CardHeader><CardTitle className="font-heading text-lg">Associated Thumbnails</CardTitle></CardHeader>
                 <CardContent>
-                  {record.images.length === 0 ? (
+                  {galleryImages.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No approved images linked to this marking.</p>
                   ) : (
                     <div className="flex gap-2 overflow-x-auto pb-1">
-                      {record.images.map((img, idx) => (
+                      {galleryImages.map((img, idx) => (
                         <img
                           key={`${img.originalFilename ?? "img"}-${idx}`}
                           src={img.imageUrl || imageNotAvailable}
@@ -393,11 +301,11 @@ const RecordDetail = () => {
                 </CardContent>
               </Card>
 
-              {record.description.trim() && (
+              {record.desc.trim() && (
                 <Card className="shadow-archival-md">
                   <CardHeader><CardTitle className="font-heading text-lg">Description</CardTitle></CardHeader>
                   <CardContent>
-                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">{record.description}</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">{record.desc}</p>
                   </CardContent>
                 </Card>
               )}
@@ -411,7 +319,7 @@ const RecordDetail = () => {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">{record.editorComment}</p>
+                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">{editorComment}</p>
                   </CardContent>
                 </Card>
               )}

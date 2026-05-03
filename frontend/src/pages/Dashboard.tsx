@@ -34,16 +34,16 @@ import { formatSizeFromSubmittedData } from "@/lib/dimensionsMm";
 import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { cn } from "@/lib/utils";
-import { normalizeImageUrl, getAssignedCatalogPage, type PostmarkRecord } from "@/services/postmarks";
+import { normalizeImageUrl, getAssignedCatalogPage, type MarkingRecord } from "@/services/markings";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
 
-function getPostmarksApiUrl(): string | null {
+function getMarkingsApiUrl(): string | null {
   const env = import.meta.env.VITE_API_URL;
   if (!env || typeof env !== "string" || env.trim() === "") return null;
   const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith((import.meta.env.VITE_API_BASE_URL || '/api/v2') + "/postmarks")) return base;
-  return `${base}/postmarks`;
+  if (base.endsWith((import.meta.env.VITE_API_BASE_URL || '/api/v2') + "/markings")) return base;
+  return `${base}/markings`;
 }
 
 function getCsrfTokenFromCookie(): string | null {
@@ -85,11 +85,7 @@ function resolveSubmissionImageUrl(
       })
       .filter((url) => url.length > 0);
   };
-  const categorized = [
-    ...asUrlArray(submittedData.postmark_images ?? submittedData.postmarkImages ?? submittedData.PostmarkImages),
-    ...asUrlArray(submittedData.ratemark_images ?? submittedData.ratemarkImages ?? submittedData.RatemarkImages),
-    ...asUrlArray(submittedData.auxmark_images ?? submittedData.auxmarkImages ?? submittedData.AuxmarkImages),
-  ];
+  const categorized = asUrlArray(submittedData.marking_images ?? submittedData.markingImages);
   for (const url of categorized) {
     const normalized = normalizeImageUrl(url);
     if (normalized) return normalized;
@@ -128,13 +124,13 @@ interface DashboardItem {
   created_at: string;
   description?: string;
   image_url: string | null;
-  postmark_id?: number | null;
+  marking_id?: number | null;
   /** True when this is a suggested edit to an existing catalog entry (not a new submission). */
   isSuggestion?: boolean;
 }
 
 /** Catalog entry for User Submissions (state editor): postmarks in assigned states. */
-type AssignedCatalogEntry = PostmarkRecord;
+type AssignedCatalogEntry = MarkingRecord;
 
 /** Pending contribution for editor review (approve / reject / request revision). */
 interface PendingReviewItem {
@@ -144,7 +140,7 @@ interface PendingReviewItem {
   state_display: string;
   town_display: string;
   shape_display: string;
-  postmark_id: number | null;
+  marking_id: number | null;
   status: string;
   created_at: string;
   review_notes: string | null;
@@ -390,19 +386,17 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 : String(submittedData.firstSeen)
               : "");
 
-          const postmarkId =
-            typeof c.postmarkId === "number"
-              ? c.postmarkId
-              : typeof c.postmark_id === "number"
-                ? c.postmark_id
-                : typeof c.catalogPostmarkId === "number"
-                  ? c.catalogPostmarkId
-                  : typeof c.postmark?.id === "number"
-                    ? c.postmark.id
-                    : null;
+          const markingId =
+            typeof c.marking_id === "number"
+              ? c.marking_id
+              : typeof c.markingId === "number"
+                ? c.markingId
+                : typeof c.marking?.id === "number"
+                  ? c.marking.id
+                  : null;
           const isSuggestion =
             c.is_suggestion === true ||
-            !!(postmarkId || submittedData.original_postmark_id || submittedData.originalPostmarkId || c.original_postmark_id);
+            !!(markingId || submittedData.original_marking_id || submittedData.originalMarkingId || c.original_marking_id);
 
           return {
             id: c.id,
@@ -422,7 +416,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             created_at: String(c.createdAt || c.created_at || ""),
             description: c.description || submittedData.description || "",
             image_url: imageUrl,
-            postmark_id: postmarkId ?? null,
+            marking_id: markingId ?? null,
             isSuggestion,
           } as DashboardItem;
         });
@@ -539,16 +533,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             created_at: String(c.createdAt || c.created_at || ""),
             description: c.description || submittedData.description || "",
             image_url: imageUrl,
-            postmark_id:
-              typeof c.postmarkId === "number"
-                ? c.postmarkId
-                : typeof c.postmark_id === "number"
-                  ? c.postmark_id
-                  : typeof c.catalogPostmarkId === "number"
-                    ? c.catalogPostmarkId
-                    : typeof c.postmark?.id === "number"
-                      ? c.postmark.id
-                      : null,
+            marking_id:
+              typeof c.marking_id === "number"
+                ? c.marking_id
+                : typeof c.markingId === "number"
+                  ? c.markingId
+                  : typeof c.marking?.id === "number"
+                    ? c.marking.id
+                    : null,
           } as DashboardItem;
         });
         setSuggestions(mapped);
@@ -665,7 +657,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               c.type_display ??
               (c as { typeDisplay?: string }).typeDisplay ??
               "",
-            postmark_id: c.postmark_id ?? (c as { postmarkId?: number | null }).postmarkId ?? null,
+            marking_id: c.marking_id ?? (c as { markingId?: number | null }).markingId ?? null,
             status: String(c.status ?? "pending"),
             created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
             review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
@@ -734,7 +726,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             c.type_display ??
             (c as { typeDisplay?: string }).typeDisplay ??
             "",
-          postmark_id: c.postmark_id ?? (c as { postmarkId?: number | null }).postmarkId ?? null,
+          marking_id: c.marking_id ?? (c as { markingId?: number | null }).markingId ?? null,
           status: String(c.status ?? "pending"),
           created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
           review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
@@ -821,10 +813,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   const handleDeleteSubmission = async () => {
     if (!deleteTarget) return;
-    const postmarkId = (deleteTarget as { postmark_id?: number }).postmark_id ?? (deleteTarget as { id?: number }).id;
-    if (postmarkId == null) return;
+    const markingId = (deleteTarget as { marking_id?: number }).marking_id ?? (deleteTarget as { id?: number }).id;
+    if (markingId == null) return;
 
-    const apiUrl = getPostmarksApiUrl();
+    const apiUrl = getMarkingsApiUrl();
     if (!apiUrl) {
       toast({
         title: "Configuration error",
@@ -834,14 +826,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       return;
     }
     const base = apiUrl.replace(/\/+$/, "");
-    const url = `${base}/${postmarkId}/delete-mine/`;
+    const url = `${base}/${markingId}/delete-mine/`;
     const csrfToken = getCsrfTokenFromCookie();
     const headers: HeadersInit = {};
     if (csrfToken) {
       headers["X-CSRFToken"] = csrfToken;
     }
     try {
-      setDeletingId(postmarkId);
+      setDeletingId(markingId);
       const res = await fetch(url, {
         method: "DELETE",
         credentials: "include",
@@ -851,9 +843,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         throw new Error(`Delete failed: ${res.status} ${res.statusText}`);
       }
       // Remove from the visible list (submissions or assigned catalog)
-      const targetId = (deleteTarget as { id?: number }).id ?? (deleteTarget as { postmark_id?: number }).postmark_id;
-      setSubmissions(prev => prev.filter((s) => s.id !== targetId && s.postmark_id !== postmarkId));
-      setAssignedCatalogItems(prev => prev.filter((e) => e.id !== postmarkId));
+      const targetId = (deleteTarget as { id?: number }).id ?? (deleteTarget as { marking_id?: number }).marking_id;
+      setSubmissions(prev => prev.filter((s) => s.id !== targetId && s.marking_id !== markingId));
+      setAssignedCatalogItems(prev => prev.filter((e) => e.id !== markingId));
       setAssignedCatalogTotal((prev) => (prev != null && prev > 0 ? prev - 1 : null));
       setDeleteTarget(null);
       // Refetch catalog so total and list stay in sync with server
@@ -1482,13 +1474,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               >
                                 View details
                               </Button>
-                              {(isSuperuser || isEditor) && submission.postmark_id && (
+                              {(isSuperuser || isEditor) && submission.marking_id && (
                                 <>
                                   <Button
                                     variant="outline"
                                     size="sm"
                                     onClick={() =>
-                                      navigate(`/edit/${submission.postmark_id}`, {
+                                      navigate(`/edit/${submission.marking_id}`, {
                                         state: { fromDashboard: true, fromDashboardDirect: true },
                                       })
                                     }
@@ -1590,13 +1582,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           >
                             View details
                           </Button>
-                          {(isSuperuser || isEditor) && submission.postmark_id && (
+                          {(isSuperuser || isEditor) && submission.marking_id && (
                             <>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 onClick={() =>
-                                  navigate(`/edit/${submission.postmark_id}`, {
+                                  navigate(`/edit/${submission.marking_id}`, {
                                     state: { fromDashboard: true, fromDashboardDirect: true },
                                   })
                                 }

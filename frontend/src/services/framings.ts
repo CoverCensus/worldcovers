@@ -1,61 +1,23 @@
 /**
- * Framings (v2 Framing entity): GET /framings/.
+ * Framings stub. Framing was dropped in the model.md realignment;
+ * the corresponding API endpoint no longer exists. This module is
+ * retained only so callers continue to type-check while the framing
+ * selector is removed from the contribute/edit forms.
  */
-import apiClient from "@/lib/api";
 
-/** One item from GET /framings/ */
-export interface FramingApiResultItem {
-  id?: number;
-  framing_id?: number;
-  framingId?: number;
-  createdDate?: string;
-  modifiedDate?: string;
-  name?: string;
-  code?: string | null;
-  notes?: string | null;
-}
-
-/** Paginated response from GET /framings/ */
-export interface FramingApiResponse {
-  count: number;
-  next: string | null;
-  previous: string | null;
-  results: FramingApiResultItem[];
-}
-
-/** Normalized option for dropdowns / filters */
+/** Normalized option for dropdowns / filters (retained for type compat). */
 export interface FramingOption {
   id: number;
   name: string;
   description: string;
 }
 
-function mapApiResultToOption(item: FramingApiResultItem): FramingOption {
-  return {
-    id: item.framing_id ?? item.framingId ?? item.id ?? 0,
-    name: item.name ?? "",
-    description: item.notes ?? "",
-  };
-}
-
 /**
- * Fetches framings from GET /framings/.
+ * Framings have been removed from the model.md realignment. This stub
+ * returns an empty list so contribute/edit forms that still render a
+ * framing selector see no options. The selector itself should be
+ * removed in a follow-up; the model and API no longer track framing.
  */
 export async function getFramings(): Promise<FramingOption[]> {
-  const allResults: FramingOption[] = [];
-  let nextUrl: string | null = "/framings/";
-  let safetyCounter = 0;
-
-  while (nextUrl && safetyCounter < 50) {
-    const res = await apiClient.get<FramingApiResponse>(nextUrl);
-    const data = res.data;
-    if (!Array.isArray(data.results)) {
-      throw new Error("Framings API: invalid response (missing results array)");
-    }
-    allResults.push(...data.results.map(mapApiResultToOption));
-    nextUrl = typeof data.next === "string" && data.next.trim() !== "" ? data.next : null;
-    safetyCounter += 1;
-  }
-
-  return allResults.filter((x) => x.id > 0 && x.name.trim() !== "");
+  return [];
 }

@@ -1,21 +1,21 @@
 import { useEffect, useState } from "react";
-import { getPostmarkYearRange } from "@/services/postmarks";
+import { getMarkingYearRange } from "@/services/markings";
 
 const FALLBACK_EARLIEST = 1700;
 const FALLBACK_LATEST = 1880;
 
-export interface UsePostmarkYearRangeReturn {
+export interface UseMarkingYearRangeReturn {
   earliestYear: number;
   latestYear: number;
   isLoading: boolean;
 }
 
 /**
- * Fetches the catalog's earliest/latest observed year from GET /postmarks-range/.
- * Falls back to {@link FALLBACK_EARLIEST}-{@link FALLBACK_LATEST} during loading or on error
+ * Fetches the catalog's earliest/latest observed year from GET /markings-range/.
+ * Falls back to FALLBACK_EARLIEST..FALLBACK_LATEST during loading or on error
  * so UI bounds remain usable.
  */
-export function usePostmarkYearRange(): UsePostmarkYearRangeReturn {
+export function useMarkingYearRange(): UseMarkingYearRangeReturn {
   const [earliestYear, setEarliestYear] = useState<number>(FALLBACK_EARLIEST);
   const [latestYear, setLatestYear] = useState<number>(FALLBACK_LATEST);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -24,7 +24,7 @@ export function usePostmarkYearRange(): UsePostmarkYearRangeReturn {
     let cancelled = false;
     (async () => {
       try {
-        const range = await getPostmarkYearRange();
+        const range = await getMarkingYearRange();
         if (cancelled) return;
         if (range.earliestYear != null) setEarliestYear(range.earliestYear);
         if (range.latestYear != null) setLatestYear(range.latestYear);
@@ -42,4 +42,4 @@ export function usePostmarkYearRange(): UsePostmarkYearRangeReturn {
   return { earliestYear, latestYear, isLoading };
 }
 
-export default usePostmarkYearRange;
+export default useMarkingYearRange;

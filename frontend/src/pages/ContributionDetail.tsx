@@ -14,7 +14,7 @@ import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
+import { getMarkingByIdRaw, normalizeImageUrl } from "@/services/markings";
 import apiClient from "@/lib/api";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
@@ -933,18 +933,18 @@ const ContributionDetail = () => {
       await Promise.all(
         sameType.map((img) =>
           apiClient.patch(
-            `/postmark-images/${img.id}/`,
+            `/images/${img.id}/`,
             { display_order: img.id === imageId ? 0 : 1 },
             headers ? { headers } : undefined
           )
         )
       );
-      const refreshed = await getPostmarkById(postmarkId);
-      const rows = Array.isArray(refreshed?.images) ? refreshed.images : [];
+      const refreshed = await getMarkingByIdRaw(postmarkId);
+      const rows = Array.isArray(refreshed?.images) ? (refreshed.images as unknown[]) : [];
       const parsed = rows
         .map((img: any) => {
-          const imageUrl = normalizeImageUrl(img?.imageUrl ?? img?.image_url ?? img?.url ?? null);
-          const idRaw = img?.postmarkImageId ?? img?.postmark_image_id ?? img?.id;
+          const imageUrl = normalizeImageUrl(img?.image_url ?? img?.url ?? null);
+          const idRaw = img?.image_id ?? img?.id;
           const id = Number(idRaw);
           if (!imageUrl || Number.isNaN(id)) return null;
           return {
@@ -1024,10 +1024,10 @@ const ContributionDetail = () => {
       setMasterListingImages([]);
       return;
     }
-    getPostmarkById(resolvedPostmarkId)
+    getMarkingByIdRaw(resolvedPostmarkId)
       .then((data) => {
         if (cancelled || !data) return;
-        const rows = Array.isArray(data.images) ? data.images : [];
+        const rows = Array.isArray(data.images) ? (data.images as unknown[]) : [];
         const parsed = rows
           .map((img: any) => {
             const imageUrl = normalizeImageUrl(img?.imageUrl ?? img?.image_url ?? img?.url ?? null);

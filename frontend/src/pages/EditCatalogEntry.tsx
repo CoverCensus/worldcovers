@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { SearchableMultiSelect } from "@/components/ui/searchable-multi-select";
 import { ArrowLeft, Loader2, Upload } from "lucide-react";
-import { getPostmarkById, normalizeImageUrl } from "@/services/postmarks";
+import { getMarkingByIdRaw, normalizeImageUrl } from "@/services/markings";
 import { getColors, type ColorOption } from "@/services/colors";
 import { getRegions, getAssignedRegions, type StateOption } from "@/services/regions";
 import { getShapes, type ShapeOption } from "@/services/shapes";
@@ -47,9 +47,9 @@ const IMPRESSION_OPTIONS = [
 ];
 
 const MARKING_TYPE_OPTIONS = [
-  { value: "Town mark", label: "Town mark" },
-  { value: "Rate mark", label: "Rate mark" },
-  { value: "Auxiliary/Instructional Mark", label: "Auxiliary/Instructional Mark" },
+  { value: "TOWNMARK", label: "Town mark" },
+  { value: "RATEMARK", label: "Rate mark" },
+  { value: "AUXMARK", label: "Auxiliary/Instructional Mark" },
 ];
 
 const MIN_YEAR = 1661;
@@ -470,197 +470,68 @@ const EditCatalogEntry = () => {
     let cancelled = false;
     setLoadingRecord(true);
     setRecordError(null);
-    getPostmarkById(postmarkId)
+    getMarkingByIdRaw(postmarkId)
       .then((data) => {
         if (cancelled || !data) {
           if (!data) setRecordError("Record not found");
           return;
         }
-        const datesObservedRaw = data.datesObserved ?? data.dates_observed ?? [];
-        const datesObservedArr: Record<string, unknown>[] = Array.isArray(datesObservedRaw) ? datesObservedRaw : [];
-        const datesSeenRaw = data.datesSeen ?? data.dates_seen ?? [];
-        const datesSeenArr: Record<string, unknown>[] = Array.isArray(datesSeenRaw) ? datesSeenRaw : [];
-        const sortedDatesSeen = [...datesSeenArr].sort((a, b) => {
-          const ea = String((a as any)?.earliest_date_seen ?? (a as any)?.earliestDateSeen ?? "");
-          const eb = String((b as any)?.earliest_date_seen ?? (b as any)?.earliestDateSeen ?? "");
-          return ea.localeCompare(eb);
-        });
-        const sizes = Array.isArray(data.sizes) ? [...data.sizes] : [];
-        sizes.sort((a: any, b: any) => {
-          const da = a?.created_date ?? a?.createdDate ?? "";
-          const db = b?.created_date ?? b?.createdDate ?? "";
-          return String(db).localeCompare(String(da));
-        });
-        const firstSize = sizes[0];
-        const parsed = parseOtherCharacteristics(data.otherCharacteristics);
-        const wh = catalogSizeToWidthHeightStrings(firstSize as Record<string, unknown> | undefined);
-
-        const baseImageUrl = import.meta.env.VITE_IMAGE_URL ?? "";
         const existingUrls = Array.isArray(data.images)
-          ? data.images
-              .map((img: any) => {
-                const rawUrl =
-                  img?.imageUrl ??
-                  img?.image_url ??
-                  (baseImageUrl && (img?.storageFilename ?? img?.storage_filename)
-                    ? `${baseImageUrl.replace(/\/+$/, "")}/postmarks/${img.storageFilename ?? img.storage_filename}`
-                    : null);
-                return normalizeImageUrl(rawUrl);
+          ? (data.images as unknown[])
+              .map((img) => {
+                const o = img as Record<string, unknown>;
+                const url = typeof o.image_url === "string" ? o.image_url : null;
+                return normalizeImageUrl(url);
               })
               .filter((u: string | null): u is string => !!u)
           : [];
 
         setExistingImageUrls(existingUrls);
-        const typeRaw = String(data.type ?? "").trim().toLowerCase();
-        if (typeRaw.includes("rate")) {
-          setMarkingType("Rate mark");
-        } else if (typeRaw.includes("aux")) {
-          setMarkingType("Auxiliary/Instructional Mark");
-        } else {
-          setMarkingType("Town mark");
-        }
 
-        setState(data.state || "");
-        setTown(sanitizeTown(data.town || ""));
+        const typeRaw = String(data.type ?? "").trim().toUpperCase();
+        if (typeRaw === "RATEMARK") setMarkingType("RATEMARK");
+        else if (typeRaw === "AUXMARK") setMarkingType("AUXMARK");
+        else setMarkingType("TOWNMARK");
 
-        const collected: ObservedDate[] = [];
-        const seenKeys = new Set<string>();
-        const pushIfNew = (raw: unknown) => {
-          const od = isoToObservedDate(raw);
-          if (!od) return;
-          const key = `${od.year}-${od.month}-${od.day}`;
-          if (seenKeys.has(key)) return;
-          seenKeys.add(key);
-          collected.push(od);
-        };
-        for (const row of datesObservedArr) {
-          pushIfNew((row as any)?.date);
-        }
-        for (const row of sortedDatesSeen) {
-          pushIfNew((row as any)?.earliestDateSeen ?? (row as any)?.earliest_date_seen);
-          pushIfNew((row as any)?.latestDateSeen ?? (row as any)?.latest_date_seen);
-        }
-        setObservedDates(
-          collected.length > 0 ? collected : [{ month: "", day: "", year: "" }],
-        );
-        const shapeRaw = String(
-          data?.postmarkShape?.shapeName ??
-          data?.shapeName ??
-          data?.shape_name ??
-          "",
-        ).trim();
-        if (shapeRaw) {
-          setShape(shapeRaw);
-        } else {
-          const shapeIdRaw = data?.shape;
-          const shapeById = shapeOptions.find((opt) => String(opt.id) === String(shapeIdRaw ?? ""));
+        setState(typeof data.state === "string" ? data.state : "");
+        setTown(sanitizeTown(typeof data.town === "string" ? data.town : ""));
+        setObservedDates([{ month: "", day: "", year: "" }]);
+
+        const shapeName = typeof data.shape_name === "string" ? data.shape_name : "";
+        if (shapeName) {
+          setShape(shapeName);
+        } else if (data.shape != null) {
+          const shapeById = shapeOptions.find((opt) => String(opt.id) === String(data.shape));
           setShape(shapeById?.name ?? "");
-        }
-        setColor(
-          String(
-            data.colorsDisplay ??
-            data.colors_display ??
-            data.color?.color_name ??
-            data.color?.colorName ??
-            data.color?.name ??
-            "",
-          ),
-        );
-        setWidthMm(String(data.width ?? wh.width ?? "").replace(/[^0-9.]/g, ""));
-        setHeightMm(String(data.height ?? wh.height ?? "").replace(/[^0-9.]/g, ""));
-        setManuscript(Boolean(data.isManuscript ?? data.is_manuscript) ? "Yes" : "No");
-        setIsIrregular(Boolean(data.is_irreg ?? data.isIrreg ?? data.isIrregular));
-        setImpression(String(data.impression ?? "Normal"));
-        setInscriptionText(String(data.inscription_txt ?? data.inscriptionTxt ?? ""));
-        // Only prefill the textarea with an actual description, not raw otherCharacteristics
-        // so users don't have to clear default "Submitted by: ..." lines.
-        setDescription(String(data.desc ?? data.catalogTxt ?? parsed.description ?? ""));
-        const referenceWorkIds = parseReferenceWorkIds(
-          data.reference_work_ids ??
-          data.referenceWorkIds ??
-          (data as Record<string, unknown>)["reference_work_ids[]"],
-        );
-        const referenceDetails = parseReferenceWorkDetails(
-          data.reference_work_details ??
-          data.referenceWorkDetails,
-        );
-        setPendingReferenceWorkIds(referenceWorkIds);
-        setReferenceDetailsById(referenceDetails);
-        // API may return snake_case or camelCase (CamelCaseJSONRenderer); support both
-        const letteringIdRaw =
-          data.lettering_style_id ?? data.letteringStyleId
-          ?? data.lettering_style?.lettering_style_id ?? data.lettering_style?.letteringStyleId
-          ?? (data as any).letteringStyle?.lettering_style_id ?? (data as any).letteringStyle?.letteringStyleId
-          ?? data.lettering;
-        const framingIdRaw =
-          data.framing_style_id ?? data.framingStyleId
-          ?? data.framing_style?.framing_style_id ?? data.framing_style?.framingStyleId
-          ?? (data as any).framingStyle?.framing_style_id ?? (data as any).framingStyle?.framingStyleId;
-        const dateFormatIdRaw =
-          data.date_format_id ?? data.dateFormatId
-          ?? data.date_format?.date_format_id ?? data.date_format?.dateFormatId
-          ?? (data as any).dateFormat?.date_format_id ?? (data as any).dateFormat?.dateFormatId
-          ?? data.dateFmt;
-        const letteringStyleNameRaw = String(
-          data.letteringStyleName ??
-          data.lettering_style_name ??
-          data.lettering_style?.name ??
-          (data as any).letteringStyle?.name ??
-          "",
-        ).trim();
-        if (letteringIdRaw != null && /^\d+$/.test(String(letteringIdRaw).trim())) {
-          setLetteringId(String(letteringIdRaw));
-        } else if (letteringStyleNameRaw) {
-          const letteringByName = letteringOptions.find(
-            (opt) => String(opt.name).trim().toLowerCase() === letteringStyleNameRaw.toLowerCase(),
-          );
-          setLetteringId(letteringByName ? String(letteringByName.id) : "");
         } else {
-          setLetteringId("");
+          setShape("");
         }
-        const framingIdsRaw = data.framing_style_ids ?? data.framingStyleIds;
-        if (Array.isArray(framingIdsRaw) && framingIdsRaw.length > 0) {
-          setFramingIds(framingIdsRaw.map((x: unknown) => String(x)).filter(Boolean));
-        } else {
-          setFramingIds(framingIdRaw != null ? [String(framingIdRaw)] : []);
-        }
-        const dateFormatIdsRaw = data.date_format_ids ?? data.dateFormatIds;
-        if (Array.isArray(dateFormatIdsRaw) && dateFormatIdsRaw.length > 0) {
-          const resolvedIds = dateFormatIdsRaw
-            .map((x: unknown) => String(x ?? "").trim())
-            .map((raw) => {
-              if (/^\d+$/.test(raw)) return raw;
-              const byNameOrCode = dateFormatOptions.find((opt) => {
-                const name = String(opt.name).trim().toLowerCase();
-                const code = String(opt.description ?? "").trim().toLowerCase();
-                const val = raw.toLowerCase();
-                return name === val || code === val;
-              });
-              return byNameOrCode ? String(byNameOrCode.id) : "";
-            })
-            .filter(Boolean);
-          setDateFormatIds(resolvedIds);
-        } else {
-          const maybeId = String(dateFormatIdRaw ?? "").trim();
-          const hasNumericId = /^\d+$/.test(maybeId);
-          if (hasNumericId) {
-            setDateFormatIds([maybeId]);
-          } else {
-            const byName = dateFormatOptions.find((opt) => {
-              const val = maybeId.toLowerCase();
-              return String(opt.name).trim().toLowerCase() === val
-                || String(opt.description ?? "").trim().toLowerCase() === val;
-            });
-            setDateFormatIds(byName ? [String(byName.id)] : []);
-          }
-        }
-
+        setColor(typeof data.color_name === "string" ? data.color_name : "");
+        setWidthMm(String(data.width ?? "").replace(/[^0-9.]/g, ""));
+        setHeightMm(String(data.height ?? "").replace(/[^0-9.]/g, ""));
+        setManuscript(Boolean(data.is_manuscript) ? "Yes" : "No");
+        setIsIrregular(Boolean(data.is_irreg));
         const impressionRaw = String(data.impression ?? "").trim();
-        if (impressionRaw) {
-          const normalizedImpression = IMPRESSION_OPTIONS.find(
-            (opt) => opt.value.toLowerCase() === impressionRaw.toLowerCase(),
-            );
-          setImpression(normalizedImpression?.value ?? "Normal");
+        const normalizedImpression = impressionRaw
+          ? IMPRESSION_OPTIONS.find((opt) => opt.value.toLowerCase() === impressionRaw.toLowerCase())?.value
+          : undefined;
+        setImpression(normalizedImpression ?? "Normal");
+        setInscriptionText(typeof data.inscription_txt === "string" ? data.inscription_txt : "");
+        setDescription(typeof data.desc === "string" ? data.desc : "");
+        setPendingReferenceWorkIds([]);
+        setReferenceDetailsById({});
+
+        setLetteringId(data.lettering != null ? String(data.lettering) : "");
+        setFramingIds([]);
+        const dateFmt = String(data.date_fmt ?? "").trim();
+        if (dateFmt) {
+          const byCode = dateFormatOptions.find(
+            (opt) => String(opt.description ?? "").trim().toLowerCase() === dateFmt.toLowerCase()
+              || String(opt.name).trim().toLowerCase() === dateFmt.toLowerCase()
+          );
+          setDateFormatIds(byCode ? [String(byCode.id)] : []);
+        } else {
+          setDateFormatIds([]);
         }
       })
       .catch(() => {
@@ -1078,7 +949,6 @@ const EditCatalogEntry = () => {
         if (inscriptionToSend) form.append("inscription_txt", inscriptionToSend);
         if (showRateValueField && rateValue.trim()) form.append("rate_val", rateValue.trim());
         if (descriptionToSend) {
-          form.append("description", descriptionToSend);
           form.append("desc", descriptionToSend);
         }
         if (referencesToSend) form.append("references", referencesToSend);
@@ -1093,22 +963,12 @@ const EditCatalogEntry = () => {
           form.append("comment_for_editor", contributorComment.trim());
         }
         if (submitterName) form.append("submitterName", submitterName);
-        for (const file of postmarkImageFiles) {
-          form.append("postmark_image", file, file.name);
-          form.append("image", file, file.name);
-        }
-        for (const file of ratemarkImageFiles) form.append("ratemark_image", file, file.name);
-        for (const file of auxmarkImageFiles) form.append("auxmark_image", file, file.name);
-        form.append("postmark_image_tags", JSON.stringify(postmarkImageTags));
-        form.append("ratemark_image_tags", JSON.stringify(ratemarkImageTags));
-        form.append("auxmark_image_tags", JSON.stringify(auxmarkImageTags));
+        for (const file of postmarkImageFiles) form.append("marking_image", file, file.name);
+        for (const file of ratemarkImageFiles) form.append("marking_image", file, file.name);
+        for (const file of auxmarkImageFiles) form.append("marking_image", file, file.name);
         form.append(
-          "image_tags",
-          JSON.stringify([
-            ...postmarkImageTags.map((tag, index) => ({ category: "postmark", index, tag })),
-            ...ratemarkImageTags.map((tag, index) => ({ category: "ratemark", index, tag })),
-            ...auxmarkImageTags.map((tag, index) => ({ category: "auxmark", index, tag })),
-          ])
+          "marking_image_tags",
+          JSON.stringify([...postmarkImageTags, ...ratemarkImageTags, ...auxmarkImageTags])
         );
         body = form;
       } else {
@@ -1140,14 +1000,15 @@ const EditCatalogEntry = () => {
           impression: isManuscriptSelected ? null : impression.trim() || undefined,
           rate_val: showRateValueField ? rateValue.trim() || undefined : undefined,
           inscription_txt: inscriptionToSend || undefined,
-          description: descriptionToSend || undefined,
           desc: descriptionToSend || undefined,
           references: referencesToSend || undefined,
           reference_work_ids: referenceWorkIdsToSend.length > 0 ? referenceWorkIdsToSend : undefined,
           reference_work_details: referenceWorkDetailsToSend.length > 0 ? referenceWorkDetailsToSend : undefined,
-          postmark_image_tags: postmarkImageTags,
-          ratemark_image_tags: ratemarkImageTags,
-          auxmark_image_tags: auxmarkImageTags,
+          marking_image_tags: [
+            ...postmarkImageTags,
+            ...ratemarkImageTags,
+            ...auxmarkImageTags,
+          ],
           ...(contributorComment.trim()
             ? {
                 contributorComment: contributorComment.trim(),

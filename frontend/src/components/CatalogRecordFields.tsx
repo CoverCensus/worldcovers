@@ -34,11 +34,11 @@ export function CatalogRecordFields({ row }: { row: CatalogFieldValues }) {
       <div className="flex justify-between items-baseline gap-4 text-sm">
         <div className="min-w-0">
           <span className="text-muted-foreground">Earliest Seen:</span>{" "}
-          <span className="text-foreground">{row.earliestUse}</span>
+          <span className="text-foreground">{row.earliestSeen}</span>
         </div>
         <div className="min-w-0 text-right">
           <span className="text-muted-foreground">Latest Seen:</span>{" "}
-          <span className="text-foreground">{row.latestUse}</span>
+          <span className="text-foreground">{row.latestSeen}</span>
         </div>
       </div>
     </div>

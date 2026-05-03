@@ -51,16 +51,18 @@ const IMPRESSION_OPTIONS = [
 ];
 
 const MARKING_TYPE_OPTIONS = [
-  { value: "Town mark", label: "Town mark" },
-  { value: "Rate mark", label: "Rate mark" },
-  { value: "Auxiliary/Instructional Mark", label: "Auxiliary/Instructional Mark" },
+  { value: "TOWNMARK", label: "Town mark" },
+  { value: "RATEMARK", label: "Rate mark" },
+  { value: "AUXMARK", label: "Auxiliary/Instructional Mark" },
 ];
 
-function normalizeMarkingTypeValue(raw: string): "Townmark" | "Ratemark" | "Auxmark" | "" {
-  const v = String(raw || "").trim().toLowerCase().replace(/[\s/_-]+/g, "");
-  if (v === "townmark") return "Townmark";
-  if (v === "ratemark") return "Ratemark";
-  if (v.includes("aux")) return "Auxmark";
+type MarkingTypeValue = "TOWNMARK" | "RATEMARK" | "AUXMARK";
+
+function normalizeMarkingTypeValue(raw: string): MarkingTypeValue | "" {
+  const v = String(raw || "").trim().toUpperCase().replace(/[\s/_-]+/g, "");
+  if (v === "TOWNMARK") return "TOWNMARK";
+  if (v === "RATEMARK") return "RATEMARK";
+  if (v === "AUXMARK" || v.includes("AUX")) return "AUXMARK";
   return "";
 }
 
@@ -78,19 +80,6 @@ function validateYearString(raw: string): string | null {
   }
   return null;
 }
-/** Parse date_range "YYYY-YYYY" or "YYYY" into [firstSeen, lastSeen] */
-function parseDateRange(dateRange: string): [string, string] {
-  const s = (dateRange || "").trim();
-  if (!s) return ["", ""];
-  // Prefer an explicit range delimiter with spaces: "YYYY-MM-DD - YYYY-MM-DD"
-  const spaced = s.split(/\s+[-–—]\s+/);
-  if (spaced.length >= 2) return [spaced[0].trim(), spaced[1].trim()];
-  // Fallback: legacy year range "YYYY-YYYY"
-  const m = s.match(/^\s*(\d{4})\s*[-–—]\s*(\d{4})\s*$/);
-  if (m) return [m[1], m[2]];
-  return [s, ""];
-}
-
 const PAGE_NUMBER_RE = /^[A-Za-z0-9][A-Za-z0-9\s\-.,:;()/#]*$/;
 
 type ObservedDate = {
@@ -175,7 +164,6 @@ type ReferenceDetailFieldErrors = {
   citationUrl?: string;
 };
 
-type ImageCategory = "postmark" | "ratemark" | "auxmark";
 type UploadedImageTag = "mark" | "cover" | "tracing";
 
 function parseReferenceWorkIds(raw: unknown): number[] {
@@ -281,9 +269,7 @@ const Contribute = () => {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
-  const postmarkFileInputRef = useRef<HTMLInputElement>(null);
-  const ratemarkFileInputRef = useRef<HTMLInputElement>(null);
-  const auxmarkFileInputRef = useRef<HTMLInputElement>(null);
+  const markingFileInputRef = useRef<HTMLInputElement>(null);
 
   const user = useAuth();
   const editContributionIdRaw =
@@ -331,15 +317,9 @@ const Contribute = () => {
   const [selectedReferenceWorks, setSelectedReferenceWorks] = useState<ReferenceWorkRecord[]>([]);
   const [referenceDetailsById, setReferenceDetailsById] = useState<Record<number, ReferenceDetailInput>>({});
   const [referenceDetailErrorsById, setReferenceDetailErrorsById] = useState<Record<number, ReferenceDetailFieldErrors>>({});
-  const [postmarkImageFiles, setPostmarkImageFiles] = useState<File[]>([]);
-  const [postmarkImagePreviews, setPostmarkImagePreviews] = useState<string[]>([]);
-  const [postmarkImageTags, setPostmarkImageTags] = useState<string[]>([]);
-  const [ratemarkImageFiles, setRatemarkImageFiles] = useState<File[]>([]);
-  const [ratemarkImagePreviews, setRatemarkImagePreviews] = useState<string[]>([]);
-  const [ratemarkImageTags, setRatemarkImageTags] = useState<string[]>([]);
-  const [auxmarkImageFiles, setAuxmarkImageFiles] = useState<File[]>([]);
-  const [auxmarkImagePreviews, setAuxmarkImagePreviews] = useState<string[]>([]);
-  const [auxmarkImageTags, setAuxmarkImageTags] = useState<string[]>([]);
+  const [markingImageFiles, setMarkingImageFiles] = useState<File[]>([]);
+  const [markingImagePreviews, setMarkingImagePreviews] = useState<string[]>([]);
+  const [markingImageTags, setMarkingImageTags] = useState<string[]>([]);
   const [letteringId, setLetteringId] = useState("");
   const [framingIds, setFramingIds] = useState<string[]>([]);
   const [dateFormatIds, setDateFormatIds] = useState<string[]>([]);
@@ -520,12 +500,12 @@ const Contribute = () => {
         const getStr = (v: unknown) => (v != null && v !== "" ? String(v).trim() : "");
         const stateVal = getStr(sd.state);
         const townVal = getStr(sd.town);
-        const dateRange = getStr(sd.date_range ?? (sd as Record<string, unknown>).dateRange);
-        const [first, last] = parseDateRange(dateRange);
-        const shapeVal = getStr(sd.shape ?? sd.type);
+        const shapeVal = getStr(sd.shape);
         const colorVal = getStr(sd.color);
+        const typeVal = getStr(sd.type);
         setState(stateVal);
         setTown(townVal);
+        if (typeVal) setMarkingType(typeVal);
         const collected: ObservedDate[] = [];
         const seenKeys = new Set<string>();
         const pushIfNew = (raw: unknown) => {
@@ -536,9 +516,7 @@ const Contribute = () => {
           seenKeys.add(key);
           collected.push(od);
         };
-        pushIfNew(first);
-        pushIfNew(last);
-        const datesObservedRaw = getStr(sd.dates_observed ?? (sd as Record<string, unknown>).datesObserved);
+        const datesObservedRaw = getStr(sd.dates_observed);
         if (datesObservedRaw) {
           for (const token of datesObservedRaw.split(",")) {
             const t = token.trim();
@@ -561,97 +539,51 @@ const Contribute = () => {
         setManuscript(loadedManuscript === "Yes" ? "Yes" : "No");
         const loadedImpression = getStr(sd.impression);
         setImpression(loadedImpression || "Normal");
-        setIsIrregular(Boolean(sd.is_irreg ?? (sd as Record<string, unknown>).isIrreg));
-        setInscriptionText(getStr(sd.inscription_txt ?? (sd as Record<string, unknown>).inscriptionText));
+        setIsIrregular(Boolean(sd.is_irreg));
+        setInscriptionText(getStr(sd.inscription_txt));
+        setDescription(getStr(sd.desc));
         const referenceWorkIds = parseReferenceWorkIds(
-          (sd as Record<string, unknown>).reference_work_ids ??
-          (sd as Record<string, unknown>).referenceWorkIds ??
-          (sd as Record<string, unknown>)["reference_work_ids[]"],
+          (sd as Record<string, unknown>).reference_work_ids
         );
         const referenceDetails = parseReferenceWorkDetails(
-          (sd as Record<string, unknown>).reference_work_details ??
-          (sd as Record<string, unknown>).referenceWorkDetails,
+          (sd as Record<string, unknown>).reference_work_details
         );
         setPendingReferenceWorkIds(referenceWorkIds);
         setReferenceDetailsById(referenceDetails);
         if (referenceWorkIds.length === 0) {
           setSelectedReferenceWorks([]);
         }
-        const lid = sd.lettering_style_id ?? (sd as Record<string, unknown>).letteringStyleId;
+        const lid = sd.lettering_id ?? sd.lettering_style_id;
         setLetteringId(lid != null ? String(lid) : "");
-        const fids = (sd.framing_style_ids ?? (sd as Record<string, unknown>).framingStyleIds) as unknown;
+        const fids = sd.framing_style_ids as unknown;
         const normalizedFramingIds = Array.isArray(fids)
           ? fids.map((x) => String(x)).filter(Boolean)
           : [];
-        if (normalizedFramingIds.length > 0) {
-          setFramingIds(normalizedFramingIds);
-        } else {
-          const fid = sd.framing_style_id ?? (sd as Record<string, unknown>).framingStyleId;
-          setFramingIds(fid != null ? [String(fid)] : []);
-        }
-        const dids = (sd.date_format_ids ?? (sd as Record<string, unknown>).dateFormatIds) as unknown;
+        setFramingIds(normalizedFramingIds);
+        const dids = sd.date_format_ids as unknown;
         const normalizedDateFormatIds = Array.isArray(dids)
           ? dids.map((x) => String(x)).filter(Boolean)
           : [];
-        if (normalizedDateFormatIds.length > 0) {
-          setDateFormatIds(normalizedDateFormatIds);
+        setDateFormatIds(normalizedDateFormatIds);
+        const submittedMarkingImages = Array.isArray(sd.marking_images)
+          ? (sd.marking_images as unknown[])
+              .map((v) => (typeof v === "string" ? v.trim() : ""))
+              .filter((v) => v.length > 0)
+          : [];
+        if (submittedMarkingImages.length > 0) {
+          setMarkingImagePreviews(submittedMarkingImages);
         } else {
-          const did = sd.date_format_id ?? (sd as Record<string, unknown>).dateFormatId;
-          setDateFormatIds(did != null ? [String(did)] : []);
-        }
-        const asMetaArray = (raw: unknown): Array<{ storage_filename?: string; storageFilename?: string }> => {
-          if (!Array.isArray(raw)) return [];
-          return raw as Array<{ storage_filename?: string; storageFilename?: string }>;
-        };
-        const asStringArray = (raw: unknown): string[] => {
-          if (!Array.isArray(raw)) return [];
-          return raw
-            .map((v) => (typeof v === "string" ? v.trim() : ""))
-            .filter((v) => v.length > 0);
-        };
-        const postmarkMetas = asMetaArray(sd.postmark_image_metas ?? (sd as Record<string, unknown>).postmarkImageMetas);
-        const ratemarkMetas = asMetaArray(sd.ratemark_image_metas ?? (sd as Record<string, unknown>).ratemarkImageMetas);
-        const auxmarkMetas = asMetaArray(sd.auxmark_image_metas ?? (sd as Record<string, unknown>).auxmarkImageMetas);
-        const metas = asMetaArray(sd.image_metas ?? (sd as Record<string, unknown>).imageMetas);
-        const metaOne = sd.image_meta as { storage_filename?: string; storageFilename?: string } | undefined;
-        const submittedPostmarkImages = asStringArray(
-          sd.postmark_images ?? (sd as Record<string, unknown>).postmarkImages
-        );
-        const submittedRatemarkImages = asStringArray(
-          sd.ratemark_images ?? (sd as Record<string, unknown>).ratemarkImages
-        );
-        const submittedAuxmarkImages = asStringArray(
-          sd.auxmark_images ?? (sd as Record<string, unknown>).auxmarkImages
-        );
-        const baseUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
-        const toPreviewUrls = (items: Array<{ storage_filename?: string; storageFilename?: string }>) => {
-          const urls: string[] = [];
-          if (!baseUrl) return urls;
-          items.forEach((m) => {
-            const sf = m?.storage_filename ?? (m as { storageFilename?: string })?.storageFilename;
-            if (sf) urls.push(`${baseUrl}/postmarks/${sf}`);
-          });
-          return urls;
-        };
-        const hasSubmittedImageUrls =
-          submittedPostmarkImages.length > 0 ||
-          submittedRatemarkImages.length > 0 ||
-          submittedAuxmarkImages.length > 0;
-        if (hasSubmittedImageUrls) {
-          setPostmarkImagePreviews(submittedPostmarkImages);
-          setRatemarkImagePreviews(submittedRatemarkImages);
-          setAuxmarkImagePreviews(submittedAuxmarkImages);
-        } else {
-          const hasCategorized = postmarkMetas.length > 0 || ratemarkMetas.length > 0 || auxmarkMetas.length > 0;
-          if (hasCategorized) {
-            setPostmarkImagePreviews(toPreviewUrls(postmarkMetas));
-            setRatemarkImagePreviews(toPreviewUrls(ratemarkMetas));
-            setAuxmarkImagePreviews(toPreviewUrls(auxmarkMetas));
-          } else {
-            const legacyItems = [...metas];
-            if (metaOne) legacyItems.push(metaOne);
-            const postmarkPreviews = toPreviewUrls(legacyItems);
-            if (postmarkPreviews.length > 0) setPostmarkImagePreviews(postmarkPreviews);
+          const metas = Array.isArray(sd.marking_image_metas)
+            ? (sd.marking_image_metas as Array<{ storage_filename?: string }>)
+            : [];
+          const baseUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
+          if (baseUrl && metas.length > 0) {
+            const urls: string[] = [];
+            metas.forEach((m) => {
+              const sf = m?.storage_filename;
+              if (sf) urls.push(`${baseUrl}/markings/${sf}`);
+            });
+            if (urls.length > 0) setMarkingImagePreviews(urls);
           }
         }
         setEditLoadError(null);
@@ -701,17 +633,17 @@ const Contribute = () => {
   }, [postOffices, state, town]);
 
   const inscriptionLabel = useMemo(() => {
-    const t = markingType.trim().toLowerCase();
-    if (t === "rate mark") return "Ratemark Text";
-    if (t === "auxiliary/instructional mark") return "Auxmark Text";
-    if (t === "town mark") return "Townmark Text";
+    const t = normalizeMarkingTypeValue(markingType);
+    if (t === "RATEMARK") return "Ratemark Text";
+    if (t === "AUXMARK") return "Auxmark Text";
+    if (t === "TOWNMARK") return "Townmark Text";
     return "Inscription Text";
   }, [markingType]);
 
-  const normalizedMarkingType = useMemo(() => markingType.trim().toLowerCase(), [markingType]);
-  const isTownmark = normalizedMarkingType === "town mark";
-  const isRatemark = normalizedMarkingType === "rate mark";
-  const isAuxmark = normalizedMarkingType === "auxiliary/instructional mark";
+  const normalizedMarkingType = useMemo(() => normalizeMarkingTypeValue(markingType), [markingType]);
+  const isTownmark = normalizedMarkingType === "TOWNMARK";
+  const isRatemark = normalizedMarkingType === "RATEMARK";
+  const isAuxmark = normalizedMarkingType === "AUXMARK";
   const isHandstamped = manuscript !== "Yes";
   const showShapeField = isHandstamped;
   const showDateFormatField = isHandstamped && isTownmark;
@@ -735,30 +667,7 @@ const Contribute = () => {
     return `${selectedNames.slice(0, 2).join(", ")} +${selectedNames.length - 2} more`;
   }, [dateFormatIds, dateFormatOptions]);
 
-  const appendCategoryFiles = (category: ImageCategory, files: File[]) => {
-    if (files.length === 0) return;
-    if (category === "postmark") {
-      setPostmarkImageFiles((prev) => [...prev, ...files]);
-      setPostmarkImageTags((prev) => [...prev, ...files.map(() => "")]);
-    }
-    if (category === "ratemark") {
-      setRatemarkImageFiles((prev) => [...prev, ...files]);
-      setRatemarkImageTags((prev) => [...prev, ...files.map(() => "")]);
-    }
-    if (category === "auxmark") {
-      setAuxmarkImageFiles((prev) => [...prev, ...files]);
-      setAuxmarkImageTags((prev) => [...prev, ...files.map(() => "")]);
-    }
-  };
-
-  const appendCategoryPreviews = (category: ImageCategory, previews: string[]) => {
-    if (previews.length === 0) return;
-    if (category === "postmark") setPostmarkImagePreviews((prev) => [...prev, ...previews]);
-    if (category === "ratemark") setRatemarkImagePreviews((prev) => [...prev, ...previews]);
-    if (category === "auxmark") setAuxmarkImagePreviews((prev) => [...prev, ...previews]);
-  };
-
-  const processImageFiles = (category: ImageCategory, files: File[]) => {
+  const processImageFiles = (files: File[]) => {
     const toAdd: File[] = [];
     const rejectedType: string[] = [];
     const rejectedSize: string[] = [];
@@ -788,10 +697,11 @@ const Contribute = () => {
       });
     }
     if (toAdd.length === 0) return;
-    if (category === "postmark" && fieldErrors.images) {
+    if (fieldErrors.images) {
       setFieldErrors((prev) => ({ ...prev, images: undefined }));
     }
-    appendCategoryFiles(category, toAdd);
+    setMarkingImageFiles((prev) => [...prev, ...toAdd]);
+    setMarkingImageTags((prev) => [...prev, ...toAdd.map(() => "")]);
     Promise.all(
       toAdd.map(
         (file) =>
@@ -802,70 +712,26 @@ const Contribute = () => {
           })
       )
     ).then((newPreviews) => {
-      appendCategoryPreviews(category, newPreviews);
+      setMarkingImagePreviews((prev) => [...prev, ...newPreviews]);
     });
   };
 
-  const handleImageChange = (category: ImageCategory, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files?.length) return;
-    processImageFiles(category, Array.from(files));
+    processImageFiles(Array.from(files));
     e.target.value = "";
   };
 
-  const removeImageAt = (category: ImageCategory, index: number) => {
-    if (category === "postmark") {
-      setPostmarkImageFiles((prev) => prev.filter((_, i) => i !== index));
-      setPostmarkImagePreviews((prev) => prev.filter((_, i) => i !== index));
-      setPostmarkImageTags((prev) => prev.filter((_, i) => i !== index));
-      if (postmarkFileInputRef.current) postmarkFileInputRef.current.value = "";
-    }
-    if (category === "ratemark") {
-      setRatemarkImageFiles((prev) => prev.filter((_, i) => i !== index));
-      setRatemarkImagePreviews((prev) => prev.filter((_, i) => i !== index));
-      setRatemarkImageTags((prev) => prev.filter((_, i) => i !== index));
-      if (ratemarkFileInputRef.current) ratemarkFileInputRef.current.value = "";
-    }
-    if (category === "auxmark") {
-      setAuxmarkImageFiles((prev) => prev.filter((_, i) => i !== index));
-      setAuxmarkImagePreviews((prev) => prev.filter((_, i) => i !== index));
-      setAuxmarkImageTags((prev) => prev.filter((_, i) => i !== index));
-      if (auxmarkFileInputRef.current) auxmarkFileInputRef.current.value = "";
-    }
+  const removeImageAt = (index: number) => {
+    setMarkingImageFiles((prev) => prev.filter((_, i) => i !== index));
+    setMarkingImagePreviews((prev) => prev.filter((_, i) => i !== index));
+    setMarkingImageTags((prev) => prev.filter((_, i) => i !== index));
+    if (markingFileInputRef.current) markingFileInputRef.current.value = "";
   };
 
-  const getCategoryInputRef = (category: ImageCategory) => {
-    if (category === "postmark") return postmarkFileInputRef;
-    if (category === "ratemark") return ratemarkFileInputRef;
-    return auxmarkFileInputRef;
-  };
-
-  const getCategoryFiles = (category: ImageCategory) => {
-    if (category === "postmark") return postmarkImageFiles;
-    if (category === "ratemark") return ratemarkImageFiles;
-    return auxmarkImageFiles;
-  };
-
-  const getCategoryPreviews = (category: ImageCategory) => {
-    if (category === "postmark") return postmarkImagePreviews;
-    if (category === "ratemark") return ratemarkImagePreviews;
-    return auxmarkImagePreviews;
-  };
-
-  const getCategoryTags = (category: ImageCategory) => {
-    if (category === "postmark") return postmarkImageTags;
-    if (category === "ratemark") return ratemarkImageTags;
-    return auxmarkImageTags;
-  };
-
-  const setCategoryTagAt = (category: ImageCategory, index: number, value: UploadedImageTag) => {
-    if (category === "postmark") {
-      setPostmarkImageTags((prev) => prev.map((t, i) => (i === index ? value : t)));
-    } else if (category === "ratemark") {
-      setRatemarkImageTags((prev) => prev.map((t, i) => (i === index ? value : t)));
-    } else {
-      setAuxmarkImageTags((prev) => prev.map((t, i) => (i === index ? value : t)));
-    }
+  const setMarkingImageTagAt = (index: number, value: UploadedImageTag) => {
+    setMarkingImageTags((prev) => prev.map((t, i) => (i === index ? value : t)));
     if (fieldErrors.imageTags) {
       setFieldErrors((prev) => ({ ...prev, imageTags: undefined }));
     }
@@ -1044,8 +910,8 @@ const Contribute = () => {
       return;
     }
 
-    const allImageFiles = [...postmarkImageFiles, ...ratemarkImageFiles, ...auxmarkImageFiles];
-    const allImageTags = [...postmarkImageTags, ...ratemarkImageTags, ...auxmarkImageTags];
+    const allImageFiles = markingImageFiles;
+    const allImageTags = markingImageTags;
     if (allImageFiles.length > 0 && allImageTags.some((tag) => !String(tag).trim())) {
       setFieldErrors((prev) => ({ ...prev, imageTags: "Select a tag for each uploaded image." }));
       toast({
@@ -1109,7 +975,6 @@ const Contribute = () => {
         }
         if (showRateValueField && rateValue.trim()) form.append("rate_val", rateValue.trim());
         if (description.trim()) {
-          form.append("description", description.trim());
           form.append("desc", description.trim());
         }
         if (inscriptionToSend) form.append("inscription_txt", inscriptionToSend);
@@ -1130,24 +995,10 @@ const Contribute = () => {
           if (showDateFormatField) form.append("date_fmt", dateFormatIds[0]);
           dateFormatIds.forEach((id) => form.append("date_format_ids[]", id));
         }
-        for (const file of postmarkImageFiles) {
-          form.append("postmark_image", file, file.name);
-          // Backward compatibility for v1 contribution endpoint, which expects "image".
-          form.append("image", file, file.name);
+        for (const file of markingImageFiles) {
+          form.append("marking_image", file, file.name);
         }
-        for (const file of ratemarkImageFiles) form.append("ratemark_image", file, file.name);
-        for (const file of auxmarkImageFiles) form.append("auxmark_image", file, file.name);
-        form.append("postmark_image_tags", JSON.stringify(postmarkImageTags));
-        form.append("ratemark_image_tags", JSON.stringify(ratemarkImageTags));
-        form.append("auxmark_image_tags", JSON.stringify(auxmarkImageTags));
-        form.append(
-          "image_tags",
-          JSON.stringify([
-            ...postmarkImageTags.map((tag, index) => ({ category: "postmark", index, tag })),
-            ...ratemarkImageTags.map((tag, index) => ({ category: "ratemark", index, tag })),
-            ...auxmarkImageTags.map((tag, index) => ({ category: "auxmark", index, tag })),
-          ])
-        );
+        form.append("marking_image_tags", JSON.stringify(markingImageTags));
         body = form;
         // Do not set Content-Type so browser sets multipart/form-data with boundary
       } else {
@@ -1171,7 +1022,6 @@ const Contribute = () => {
           is_irreg: isManuscriptSelected ? null : isIrregular,
           impression: isManuscriptSelected ? null : impression.trim() || undefined,
           rate_val: showRateValueField ? rateValue.trim() || undefined : undefined,
-          description: description.trim() || undefined,
           desc: description.trim() || undefined,
           inscription_txt: inscriptionToSend || undefined,
           references: referencesToSend || undefined,
@@ -1185,9 +1035,7 @@ const Contribute = () => {
           date_format_id: dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
           date_fmt: showDateFormatField && dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
           date_format_ids: dateFormatIds.length > 0 ? dateFormatIds.map((id) => Number(id)) : undefined,
-          postmark_image_tags: postmarkImageTags,
-          ratemark_image_tags: ratemarkImageTags,
-          auxmark_image_tags: auxmarkImageTags,
+          marking_image_tags: markingImageTags,
         });
       }
 
@@ -1249,21 +1097,13 @@ const Contribute = () => {
       setSelectedReferenceWorks([]);
       setReferenceDetailsById({});
       setReferenceDetailErrorsById({});
-      setPostmarkImageFiles([]);
-      setPostmarkImagePreviews([]);
-      setPostmarkImageTags([]);
-      setRatemarkImageFiles([]);
-      setRatemarkImagePreviews([]);
-      setRatemarkImageTags([]);
-      setAuxmarkImageFiles([]);
-      setAuxmarkImagePreviews([]);
-      setAuxmarkImageTags([]);
+      setMarkingImageFiles([]);
+      setMarkingImagePreviews([]);
+      setMarkingImageTags([]);
       setLetteringId("");
       setFramingIds([]);
       setDateFormatIds([]);
-      if (postmarkFileInputRef.current) postmarkFileInputRef.current.value = "";
-      if (ratemarkFileInputRef.current) ratemarkFileInputRef.current.value = "";
-      if (auxmarkFileInputRef.current) auxmarkFileInputRef.current.value = "";
+      if (markingFileInputRef.current) markingFileInputRef.current.value = "";
     } catch (err: unknown) {
       toast({
         title: "Submission failed",
@@ -1279,16 +1119,11 @@ const Contribute = () => {
   const effectiveShapeLabel = String(shape ?? "").trim();
   const isCircularShape = isCircularType(effectiveShapeLabel);
 
-  const renderImageUploader = (
-    category: ImageCategory,
-    label: string,
-    helperText: string,
-    required = false,
-  ) => {
-    const inputRef = getCategoryInputRef(category);
-    const previews = getCategoryPreviews(category);
-    const files = getCategoryFiles(category);
-    const tags = getCategoryTags(category);
+  const renderImageUploader = (label: string, helperText: string, required = false) => {
+    const inputRef = markingFileInputRef;
+    const previews = markingImagePreviews;
+    const files = markingImageFiles;
+    const tags = markingImageTags;
     return (
       <div className="space-y-2">
         <Label>{label}</Label>
@@ -1300,7 +1135,7 @@ const Contribute = () => {
           accept={ALLOWED_IMAGE_TYPES.join(",")}
           multiple
           className="hidden"
-          onChange={(e) => handleImageChange(category, e)}
+          onChange={handleImageChange}
         />
         <div
           role="button"
@@ -1310,8 +1145,8 @@ const Contribute = () => {
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
-            const files = Array.from(e.dataTransfer.files);
-            if (files.length) processImageFiles(category, files);
+            const dropped = Array.from(e.dataTransfer.files);
+            if (dropped.length) processImageFiles(dropped);
           }}
           className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer"
         >
@@ -1325,7 +1160,7 @@ const Contribute = () => {
                     <div className="px-2 pb-2">
                       <Select
                         value={tags[i] ?? ""}
-                        onValueChange={(value) => setCategoryTagAt(category, i, value as UploadedImageTag)}
+                        onValueChange={(value) => setMarkingImageTagAt(i, value as UploadedImageTag)}
                       >
                         <SelectTrigger className="h-8 text-xs">
                           <SelectValue placeholder="Tag: mark/cover/tracing" />
@@ -1344,10 +1179,10 @@ const Contribute = () => {
                       className="absolute top-1 right-1 h-7 w-7 p-0"
                       onClick={(e) => {
                         e.stopPropagation();
-                        removeImageAt(category, i);
+                        removeImageAt(i);
                       }}
                     >
-                      ×
+                      x
                     </Button>
                   </div>
                 ))}
@@ -2123,8 +1958,7 @@ const Contribute = () => {
                     </div>}
 
                     {renderImageUploader(
-                      "postmark",
-                      "Postmark Images",
+                      "Marking Images",
                       `PNG, JPG, or TIFF up to ${MAX_IMAGE_SIZE_MB}MB each`,
                     )}
 
