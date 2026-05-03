@@ -736,7 +736,23 @@ class AdminCsvUploadAdmin(admin.ModelAdmin):
     readonly_fields = ['uploaded_at', 'uploaded_by', 'data', 'row_count_display']
     ordering = ['-uploaded_at']
     list_per_page = 25
-    actions = ['import_to_lettering', 'import_to_colors']
+    actions = [
+        'import_to_lettering',
+        'import_to_colors',
+        # v2 catalog imports (model.md). Each runs a single CSV through its
+        # matching importer. For a full bundle, use the import_apmc_bundle
+        # management command which loads all ten in dependency order.
+        'import_to_v2_colors',
+        'import_to_v2_letterings',
+        'import_to_v2_shapes',
+        'import_to_v2_regions',
+        'import_to_v2_post_offices',
+        'import_to_v2_markings',
+        'import_to_v2_covers',
+        'import_to_v2_cover_markings',
+        'import_to_v2_cover_dates',
+        'import_to_v2_cover_valuations',
+    ]
 
     def has_add_permission(self, request):
         return request.user.is_staff
@@ -805,6 +821,48 @@ class AdminCsvUploadAdmin(admin.ModelAdmin):
     @admin.action(description='Import selected into Colors')
     def import_to_colors(self, request, queryset):
         self._run_import(request, queryset, 'colors')
+
+    # v2 catalog imports. Each action wraps a single IMPORTERS key; the table
+    # below is the dependency order. Run in order when loading a fresh state.
+    @admin.action(description='v2: Import selected into Colors (catalog)')
+    def import_to_v2_colors(self, request, queryset):
+        self._run_import(request, queryset, 'colors')
+
+    @admin.action(description='v2: Import selected into Letterings (catalog)')
+    def import_to_v2_letterings(self, request, queryset):
+        self._run_import(request, queryset, 'letterings')
+
+    @admin.action(description='v2: Import selected into Shapes')
+    def import_to_v2_shapes(self, request, queryset):
+        self._run_import(request, queryset, 'shapes')
+
+    @admin.action(description='v2: Import selected into Regions')
+    def import_to_v2_regions(self, request, queryset):
+        self._run_import(request, queryset, 'regions')
+
+    @admin.action(description='v2: Import selected into Post Offices')
+    def import_to_v2_post_offices(self, request, queryset):
+        self._run_import(request, queryset, 'post_offices')
+
+    @admin.action(description='v2: Import selected into Markings')
+    def import_to_v2_markings(self, request, queryset):
+        self._run_import(request, queryset, 'markings')
+
+    @admin.action(description='v2: Import selected into Covers')
+    def import_to_v2_covers(self, request, queryset):
+        self._run_import(request, queryset, 'covers')
+
+    @admin.action(description='v2: Import selected into Cover Markings (junction)')
+    def import_to_v2_cover_markings(self, request, queryset):
+        self._run_import(request, queryset, 'cover_markings')
+
+    @admin.action(description='v2: Import selected into Cover Dates')
+    def import_to_v2_cover_dates(self, request, queryset):
+        self._run_import(request, queryset, 'cover_dates')
+
+    @admin.action(description='v2: Import selected into Cover Valuations')
+    def import_to_v2_cover_valuations(self, request, queryset):
+        self._run_import(request, queryset, 'cover_valuations')
 
 
 # ========== USER ADMIN ==========

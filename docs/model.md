@@ -234,12 +234,12 @@ A postal marking — town marking, rate marking, or auxiliary marking — as obs
 * inscription\_txt is the text as it appears on the physical marking.  
 * post\_office\_id references exactly one row in post\_offices.  
 * impression, if set, is one of: Normal, Stencil, Negative.  
-* Must be referenced by at least one row in cover\_markings.  
-* A marking's earliest and latest use dates are derived by aggregating the cover\_dates of all covers associated with that marking (via cover\_markings), rather than stored on the marking itself.
+* A marking may exist without any cover\_markings rows; covers are only created when a valuation is recorded, so catalog entries without recorded valuations have no associated cover.  
+* A marking's earliest and latest use dates are derived by aggregating the cover\_dates of all covers associated with that marking (via cover\_markings), rather than stored on the marking itself. A marking with no associated covers therefore has no derivable date range.
 
 *Relationships:*
 
-* Associated with one or more covers (via cover\_markings).  
+* Associated with zero or more covers (via cover\_markings).  
 * References zero or one shape.  
 * References zero or one lettering.  
 * References zero or one color.  
