@@ -122,6 +122,16 @@ All colors MUST be HSL.
     display: none;
   }
 
+  /* Hide the browser's "mm/dd/yyyy" placeholder text on empty date inputs.
+     Apply .date-input-no-placeholder when the value is empty; remove it once
+     the user has chosen a date so their selection stays visible. */
+  .date-input-no-placeholder::-webkit-datetime-edit {
+    color: transparent;
+  }
+  .date-input-no-placeholder:focus::-webkit-datetime-edit {
+    color: inherit;
+  }
+
   /* Keep browser autofill from changing input background color */
   input:-webkit-autofill,
   input:-webkit-autofill:hover,

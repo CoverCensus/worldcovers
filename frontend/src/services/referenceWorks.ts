@@ -19,6 +19,7 @@ export interface ReferenceWorkApiResultItem {
   modified_by?: ReferenceWorkUser;
   created_date: string;
   modified_date: string;
+  code: string | null;
   title: string;
   authorship: string;
   publisher: string;
@@ -40,6 +41,7 @@ export interface ReferenceWorkApiResponse {
 /** Normalized reference work for list/detail / dropdowns */
 export interface ReferenceWorkRecord {
   id: number;
+  code: string | null;
   title: string;
   authorship: string;
   publisher: string;
@@ -55,6 +57,7 @@ export interface ReferenceWorkRecord {
 function mapApiResultToRecord(item: ReferenceWorkApiResultItem): ReferenceWorkRecord {
   return {
     id: item.reference_work_id,
+    code: item.code ?? null,
     title: item.title,
     authorship: item.authorship,
     publisher: item.publisher,

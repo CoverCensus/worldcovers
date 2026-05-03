@@ -590,7 +590,16 @@ const Search = () => {
             <main className="flex-1 space-y-4">
               {/* Results Header */}
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
-                <div>
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="lg:hidden"
+                    onClick={() => setFiltersOpen((open) => !open)}
+                  >
+                    <SlidersHorizontal className="h-4 w-4 mr-2" />
+                    Filters
+                  </Button>
                   <p className="text-sm text-muted-foreground">
                     {totalCount === 0 ? (
                       "0 markings"
@@ -602,17 +611,8 @@ const Search = () => {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="lg:hidden"
-                    onClick={() => setFiltersOpen((open) => !open)}
-                  >
-                    <SlidersHorizontal className="h-4 w-4 mr-2" />
-                    Filters
-                  </Button>
                   {refreshing && (
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground ml-2">
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
                     </div>
                   )}

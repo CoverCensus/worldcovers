@@ -16,10 +16,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Upload, CheckCircle, XCircle, Clock, Loader2, ChevronDown } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
+import { useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
 import { getShapes, type ShapeOption } from "@/services/shapes";
 import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
+import { getMarkingByIdRaw, normalizeImageUrl } from "@/services/markings";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getFramings, type FramingOption } from "@/services/framings";
 import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
@@ -56,6 +57,55 @@ const MARKING_TYPE_OPTIONS = [
   { value: "AUXMARK", label: "Auxiliary/Instructional Mark" },
 ];
 
+/** docs/model.md lettering seed values; the dropdown is restricted to these. */
+const LETTERING_SEED_NAMES = new Set([
+  "Italic",
+  "Serif",
+  "Sans-serif",
+  "Small",
+  "Large",
+  "Outline",
+  "Bold",
+  "Block",
+  "Gothic",
+]);
+
+type ContributeMode = "new" | "edit-contribution" | "edit-marking";
+
+const MODE_COPY: Record<ContributeMode, {
+  h1: string;
+  intro: string;
+  card: string;
+  button: string;
+  toastTitle: string;
+  toastBody: string;
+}> = {
+  "new": {
+    h1: "Contributor Dashboard",
+    intro: "Submit new postmark records or corrections. All fields match what reviewers see on the Submission Detail page.",
+    card: "Submit New Entry",
+    button: "Submit Postmark",
+    toastTitle: "Submission sent",
+    toastBody: "Your catalog entry has been submitted for approval. It will appear in Search after an editor approves it.",
+  },
+  "edit-contribution": {
+    h1: "Edit and resubmit",
+    intro: "Update your submission using the editor feedback, then submit to send it back for review.",
+    card: "Edit submission",
+    button: "Resubmit Postmark",
+    toastTitle: "Changes submitted",
+    toastBody: "Your updated submission has been sent for review again.",
+  },
+  "edit-marking": {
+    h1: "Edit Catalog Entry",
+    intro: "Edit requests are prefilled from the selected record and always go through the approval workflow before master listing data is updated.",
+    card: "Edit and Submit",
+    button: "Submit for Approval",
+    toastTitle: "Submitted for review",
+    toastBody: "Changes to master listing fields are submitted for editor approval and do not update the catalog directly.",
+  },
+};
+
 type MarkingTypeValue = "TOWNMARK" | "RATEMARK" | "AUXMARK";
 
 function normalizeMarkingTypeValue(raw: string): MarkingTypeValue | "" {
@@ -66,67 +116,16 @@ function normalizeMarkingTypeValue(raw: string): MarkingTypeValue | "" {
   return "";
 }
 
-const MIN_YEAR = 1661;
-const CURRENT_YEAR = new Date().getFullYear();
-
-function validateYearString(raw: string): string | null {
-  const v = raw.trim();
-  if (!v) return null;
-  if (v.length !== 4) return null; // wait until user types 4 digits
-  const n = Number(v);
-  if (Number.isNaN(n)) return "Year must be a number";
-  if (n < MIN_YEAR || n > CURRENT_YEAR) {
-    return `Year must be between ${MIN_YEAR} and ${CURRENT_YEAR}`;
-  }
-  return null;
-}
 const PAGE_NUMBER_RE = /^[A-Za-z0-9][A-Za-z0-9\s\-.,:;()/#]*$/;
 
-type ObservedDate = {
-  month: string;
-  day: string;
-  year: string;
-};
-
-function observedDateToIso(d: ObservedDate): string {
-  const yy = d.year.trim();
-  if (!yy) return "";
-  const mRaw = d.month.trim();
-  const dRaw = d.day.trim();
-  const mm = mRaw.padStart(2, "0");
-  const dd = dRaw.padStart(2, "0");
-  const mNum = Number(mm);
-  if (
-    mm.length === 2 &&
-    dd.length === 2 &&
-    !Number.isNaN(mNum) &&
-    mNum >= 1 &&
-    mNum <= 12
-  ) {
-    return `${yy}-${mm}-${dd}`;
-  }
-  return yy;
-}
-
-function isoToObservedDate(raw: unknown): ObservedDate | null {
-  const s = String(raw ?? "").slice(0, 10);
-  if (!s) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-    const [y, m, d] = s.split("-");
-    return { year: y, month: m, day: d };
-  }
-  const y = s.match(/^(\d{4})/);
-  return y ? { year: y[1], month: "", day: "" } : null;
-}
-
-/** Field-error key → element id, in DOM order (drives scroll-to-first-error). */
+/** Field-error key -> element id, in DOM order (drives scroll-to-first-error). */
 const FIELD_ERROR_SCROLL_TARGETS: Array<[string, string]> = [
+  ["markingType", "marking-type"],
   ["state", "state"],
   ["town", "town"],
   ["inscriptionText", "inscription-text"],
   ["shape", "shape"],
   ["color", "color"],
-  ["observedDates", "observed-date-0-year"],
   ["dateFormat", "date-format"],
   ["widthMm", "width-mm"],
   ["heightMm", "height-mm"],
@@ -272,6 +271,12 @@ const Contribute = () => {
   const markingFileInputRef = useRef<HTMLInputElement>(null);
 
   const user = useAuth();
+  const { id: editMarkingIdParam } = useParams();
+  const editMarkingIdRaw = editMarkingIdParam
+    ? parseInt(String(editMarkingIdParam).replace(/^api-/, ""), 10)
+    : NaN;
+  const editMarkingId =
+    Number.isFinite(editMarkingIdRaw) && editMarkingIdRaw > 0 ? editMarkingIdRaw : null;
   const editContributionIdRaw =
     location.state?.editContributionId ??
     (() => {
@@ -281,8 +286,20 @@ const Contribute = () => {
       return Number.isNaN(n) ? null : n;
     })();
   const editContributionId = editContributionIdRaw ?? null;
+  const mode: ContributeMode =
+    editMarkingId != null
+      ? "edit-marking"
+      : editContributionId != null
+        ? "edit-contribution"
+        : "new";
+  const isEditContribution = mode === "edit-contribution";
+  const isEditMarking = mode === "edit-marking";
+  const isEditMode = isEditContribution || isEditMarking;
+  const copy = MODE_COPY[mode];
   const [editLoadDone, setEditLoadDone] = useState(!editContributionId);
   const [editLoadError, setEditLoadError] = useState<string | null>(null);
+  const [loadingRecord, setLoadingRecord] = useState(isEditMarking);
+  const [recordError, setRecordError] = useState<string | null>(null);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [stateOptions, setStateOptions] = useState<Array<{ value: string; label: string }>>([]);
   const [shapeOptions, setShapeOptions] = useState<ShapeOption[]>([]);
@@ -291,6 +308,7 @@ const Contribute = () => {
   const [shapeOptionsError, setShapeOptionsError] = useState<string | null>(null);
   const [loadingTowns, setLoadingTowns] = useState(false);
   const [townOptionsError, setTownOptionsError] = useState<string | null>(null);
+  const [townFocused, setTownFocused] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Form state – all fields shown on Submission Detail
@@ -301,11 +319,12 @@ const Contribute = () => {
   const [rateValue, setRateValue] = useState("");
   const [rateText, setRateText] = useState("");
   const [description, setDescription] = useState("");
-  // Dates Observed: list of single date entries (Month/Day/Year as numbers).
-  // Backend still receives firstSeen/lastSeen plus a dates_observed string.
-  const [observedDates, setObservedDates] = useState<ObservedDate[]>([
-    { month: "", day: "", year: "" },
-  ]);
+  const [contributorComment, setContributorComment] = useState("");
+  // Existing images on the loaded Marking (edit-marking mode). Each entry is
+  // an editable thumbnail: the user can change its tag or remove it. Removed
+  // urls move into removedExistingImageKeys so the apply step can drop them.
+  const [existingImages, setExistingImages] = useState<Array<{ url: string; tag: UploadedImageTag | "" }>>([]);
+  const [removedExistingImageKeys, setRemovedExistingImageKeys] = useState<string[]>([]);
   const [shape, setShape] = useState("");
   const [color, setColor] = useState("");
   const [widthMm, setWidthMm] = useState("");
@@ -324,9 +343,9 @@ const Contribute = () => {
   const [framingIds, setFramingIds] = useState<string[]>([]);
   const [dateFormatIds, setDateFormatIds] = useState<string[]>([]);
   const [fieldErrors, setFieldErrors] = useState<{
+    markingType?: string;
     state?: string;
     town?: string;
-    observedDates?: string;
     shape?: string;
     color?: string;
     widthMm?: string;
@@ -506,30 +525,7 @@ const Contribute = () => {
         setState(stateVal);
         setTown(townVal);
         if (typeVal) setMarkingType(typeVal);
-        const collected: ObservedDate[] = [];
-        const seenKeys = new Set<string>();
-        const pushIfNew = (raw: unknown) => {
-          const od = isoToObservedDate(raw);
-          if (!od) return;
-          const key = `${od.year}-${od.month}-${od.day}`;
-          if (seenKeys.has(key)) return;
-          seenKeys.add(key);
-          collected.push(od);
-        };
-        const datesObservedRaw = getStr(sd.dates_observed);
-        if (datesObservedRaw) {
-          for (const token of datesObservedRaw.split(",")) {
-            const t = token.trim();
-            if (!t) continue;
-            const isoMatch = t.match(/^(\d{4}-\d{2}-\d{2})/);
-            const yearMatch = t.match(/^(\d{4})/);
-            if (isoMatch) pushIfNew(isoMatch[1]);
-            else if (yearMatch) pushIfNew(yearMatch[1]);
-          }
-        }
-        setObservedDates(
-          collected.length > 0 ? collected : [{ month: "", day: "", year: "" }],
-        );
+        setContributorComment(getStr((sd as Record<string, unknown>).contributor_comment));
         setShape(shapeVal || "");
         setColor(colorVal || "");
         const wh = submittedDataToWidthHeightStrings(sd as Record<string, unknown>);
@@ -600,6 +596,86 @@ const Contribute = () => {
     };
   }, [editContributionId]); // shapeOptions/colorOptions may not be loaded yet; we set shape/color as strings
 
+  // Load Marking record for edit-marking mode (from /edit/:id).
+  useEffect(() => {
+    if (!isEditMarking || editMarkingId == null) return;
+    let cancelled = false;
+    setLoadingRecord(true);
+    setRecordError(null);
+    getMarkingByIdRaw(editMarkingId)
+      .then((data) => {
+        if (cancelled) return;
+        if (!data) {
+          setRecordError("Record not found");
+          return;
+        }
+
+        const existingUrls = Array.isArray(data.images)
+          ? (data.images as unknown[])
+              .map((img) => {
+                const o = img as Record<string, unknown>;
+                const url = typeof o.image_url === "string" ? o.image_url : null;
+                return normalizeImageUrl(url);
+              })
+              .filter((u: string | null): u is string => !!u)
+          : [];
+        setExistingImages(existingUrls.map((url) => ({ url, tag: "" as UploadedImageTag | "" })));
+        setRemovedExistingImageKeys([]);
+
+        const typeRaw = String(data.type ?? "").trim().toUpperCase();
+        if (typeRaw === "RATEMARK") setMarkingType("RATEMARK");
+        else if (typeRaw === "AUXMARK") setMarkingType("AUXMARK");
+        else if (typeRaw === "TOWNMARK") setMarkingType("TOWNMARK");
+
+        setState(typeof data.state === "string" ? data.state : "");
+        setTown(sanitizeTown(typeof data.town === "string" ? data.town : ""));
+
+        const shapeName = typeof data.shape_name === "string" ? data.shape_name : "";
+        if (shapeName) {
+          setShape(shapeName);
+        } else if (data.shape != null) {
+          const shapeById = shapeOptions.find((opt) => String(opt.id) === String(data.shape));
+          setShape(shapeById?.name ?? "");
+        } else {
+          setShape("");
+        }
+        setColor(typeof data.color_name === "string" ? data.color_name : "");
+        setWidthMm(String(data.width ?? "").replace(/[^0-9.]/g, ""));
+        setHeightMm(String(data.height ?? "").replace(/[^0-9.]/g, ""));
+        setManuscript(data.is_manuscript ? "Yes" : "No");
+        setIsIrregular(Boolean(data.is_irreg));
+        const impressionRaw = String(data.impression ?? "").trim();
+        const normalizedImpression = impressionRaw
+          ? IMPRESSION_OPTIONS.find((opt) => opt.value.toLowerCase() === impressionRaw.toLowerCase())?.value
+          : undefined;
+        setImpression(normalizedImpression ?? "Normal");
+        setInscriptionText(typeof data.inscription_txt === "string" ? data.inscription_txt : "");
+        setDescription(typeof data.desc === "string" ? data.desc : "");
+
+        setLetteringId(data.lettering != null ? String(data.lettering) : "");
+        const dateFmt = String(data.date_fmt ?? "").trim();
+        if (dateFmt) {
+          const byCode = dateFormatOptions.find(
+            (opt) =>
+              String(opt.description ?? "").trim().toLowerCase() === dateFmt.toLowerCase() ||
+              String(opt.name).trim().toLowerCase() === dateFmt.toLowerCase(),
+          );
+          setDateFormatIds(byCode ? [String(byCode.id)] : []);
+        } else {
+          setDateFormatIds([]);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setRecordError("Failed to load record");
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingRecord(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditMarking, editMarkingId, dateFormatOptions, shapeOptions]);
+
   const noAssignedStates = false;
 
   const townOptions = useMemo(() => {
@@ -660,11 +736,11 @@ const Contribute = () => {
   }, [framingIds, framingOptions]);
   const selectedDateFormatSummary = useMemo(() => {
     if (dateFormatIds.length === 0) return "Select one or more date formats";
-    const selectedNames = dateFormatOptions
+    const selectedCodes = dateFormatOptions
       .filter((opt) => dateFormatIds.includes(String(opt.id)))
-      .map((opt) => opt.name);
-    if (selectedNames.length <= 2) return selectedNames.join(", ");
-    return `${selectedNames.slice(0, 2).join(", ")} +${selectedNames.length - 2} more`;
+      .map((opt) => opt.description || opt.name);
+    if (selectedCodes.length <= 2) return selectedCodes.join(", ");
+    return `${selectedCodes.slice(0, 2).join(", ")} +${selectedCodes.length - 2} more`;
   }, [dateFormatIds, dateFormatOptions]);
 
   const processImageFiles = (files: File[]) => {
@@ -780,10 +856,15 @@ const Contribute = () => {
     const isCircular = isCircularType(shapeVal);
 
     const errors: typeof fieldErrors = {};
+    if (!typeVal) {
+      errors.markingType = "Marking type is required";
+    }
     if (!stateVal) {
       errors.state = "State is required";
     }
-    if (townVal && /[0-9]/.test(townVal)) {
+    if (!townVal) {
+      errors.town = "Town/City is required";
+    } else if (/[0-9]/.test(townVal)) {
       errors.town = "Town/City must contain only letters and spaces";
     }
     if (!isManuscriptSelected && !shapeVal) {
@@ -793,43 +874,29 @@ const Contribute = () => {
       errors.inscriptionText = `${inscriptionLabel} is required`;
     }
 
-    // Dates Observed: at least the first entry must have a year, month, or day.
-    const firstDate = observedDates[0];
-    if (
-      !firstDate ||
-      (!firstDate.month.trim() && !firstDate.day.trim() && !firstDate.year.trim())
+    // At least one image must accompany every entry.
+    // - "new":               at least one freshly-uploaded file.
+    // - "edit-marking":      keep at least one existing image, or upload a new one.
+    // - "edit-contribution": images carry over from the prior submission, so no
+    //                        new upload is required.
+    if (mode === "new" && markingImageFiles.length === 0) {
+      errors.images = "At least one image is required";
+    } else if (
+      mode === "edit-marking" &&
+      existingImages.length === 0 &&
+      markingImageFiles.length === 0
     ) {
-      errors.observedDates = "Enter at least one date";
-    } else {
-      for (const od of observedDates) {
-        if (!od.month.trim() && !od.day.trim() && !od.year.trim()) continue;
-        const yErr = validateYearString(od.year);
-        if (yErr) {
-          errors.observedDates = yErr;
-          break;
-        }
-        if (od.month.trim()) {
-          const m = Number(od.month);
-          if (Number.isNaN(m) || m < 1 || m > 12) {
-            errors.observedDates = "Month must be between 1 and 12";
-            break;
-          }
-        }
-        if (od.day.trim()) {
-          const d = Number(od.day);
-          if (Number.isNaN(d) || d < 1 || d > 31) {
-            errors.observedDates = "Day must be between 1 and 31";
-            break;
-          }
-        }
-      }
+      errors.images = "At least one image is required";
     }
 
-    // Dimensions: width is always visible; for circle-family shapes, height is saved as width.
-    const effectiveHeight = isCircular ? widthMm : heightMm;
-    const mmErr = validateMmPair(widthMm, effectiveHeight);
-    if (mmErr.width) errors.widthMm = mmErr.width;
-    if (mmErr.height && !isCircular) errors.heightMm = mmErr.height;
+    // Dimensions: only validated for handstamped markings. Manuscript markings
+    // have no measurable shape, so we skip the check (and the fields are hidden).
+    if (!isManuscriptSelected) {
+      const effectiveHeight = isCircular ? widthMm : heightMm;
+      const mmErr = validateMmPair(widthMm, effectiveHeight);
+      if (mmErr.width) errors.widthMm = mmErr.width;
+      if (mmErr.height && !isCircular) errors.heightMm = mmErr.height;
+    }
 
     const referenceDetailErrors: Record<number, ReferenceDetailFieldErrors> = {};
     for (const work of selectedReferenceWorks) {
@@ -881,12 +948,6 @@ const Contribute = () => {
       return;
     }
 
-    const validIsoDates = observedDates
-      .map(observedDateToIso)
-      .filter((s) => s.length > 0);
-    const datesObservedToSend = validIsoDates.length > 1
-      ? validIsoDates.slice(1).join(", ")
-      : "";
     const referencesToSend = selectedReferenceWorks
       .map((work) => formatReferenceWorkForReferences(work, referenceDetailsById[work.id]))
       .filter(Boolean)
@@ -937,11 +998,6 @@ const Contribute = () => {
 
       let body: string | FormData;
 
-      const firstSeenToSend = validIsoDates[0] ?? "";
-      const lastSeenToSend =
-        validIsoDates.length > 1
-          ? validIsoDates[validIsoDates.length - 1]
-          : firstSeenToSend;
       const derivedIsCircular = isCircularType(shapeVal);
       const derivedDimensions = (() => {
         const w = widthMm.trim();
@@ -951,17 +1007,18 @@ const Contribute = () => {
       })();
       const inscriptionToSend = inscriptionText.trim();
 
-      if (allImageFiles.length > 0) {
+      if (allImageFiles.length > 0 || isEditMarking) {
         const form = new FormData();
-        if (editContributionId != null) form.append("edit_contribution_id", String(editContributionId));
+        if (isEditContribution && editContributionId != null) {
+          form.append("edit_contribution_id", String(editContributionId));
+        }
+        if (isEditMarking && editMarkingId != null) {
+          form.append("edit_postmark_id", String(editMarkingId));
+        }
         if (selectedPostOfficeId != null) form.append("post_office_id", String(selectedPostOfficeId));
         form.append("state", stateVal);
         form.append("town", townVal);
         if (typeVal) form.append("type", typeVal);
-        form.append("first_seen", firstSeenToSend);
-        form.append("last_seen", lastSeenToSend);
-        if (firstSeenToSend) form.append("date_seen", firstSeenToSend);
-        if (datesObservedToSend) form.append("dates_observed", datesObservedToSend);
         if (!isManuscriptSelected) form.append("shape", shapeVal);
         if (!isManuscriptSelected && shapeIdVal != null) form.append("shape_id", String(shapeIdVal));
         if (colorIdVal != null) form.append("color_id", String(colorIdVal));
@@ -999,19 +1056,42 @@ const Contribute = () => {
           form.append("marking_image", file, file.name);
         }
         form.append("marking_image_tags", JSON.stringify(markingImageTags));
+        const trimmedComment = contributorComment.trim();
+        if (trimmedComment) {
+          form.append("contributor_comment", trimmedComment);
+          form.append("comment_for_editor", trimmedComment);
+        }
+        if (isEditMarking) {
+          if (removedExistingImageKeys.length > 0) {
+            form.append("removed_existing_image_keys", JSON.stringify(removedExistingImageKeys));
+          }
+          const existingTagMap: Record<string, string> = {};
+          for (const img of existingImages) {
+            if (img.tag) existingTagMap[img.url] = img.tag;
+          }
+          if (Object.keys(existingTagMap).length > 0) {
+            form.append("existing_image_tags", JSON.stringify(existingTagMap));
+          }
+        }
         body = form;
         // Do not set Content-Type so browser sets multipart/form-data with boundary
       } else {
+        const trimmedComment = contributorComment.trim();
+        const existingTagMap: Record<string, string> = {};
+        for (const img of existingImages) {
+          if (img.tag) existingTagMap[img.url] = img.tag;
+        }
         body = JSON.stringify({
-          ...(editContributionId != null ? { edit_contribution_id: editContributionId } : {}),
+          ...(isEditContribution && editContributionId != null
+            ? { edit_contribution_id: editContributionId }
+            : {}),
+          ...(isEditMarking && editMarkingId != null
+            ? { edit_postmark_id: editMarkingId }
+            : {}),
           post_office_id: selectedPostOfficeId ?? undefined,
           state: stateVal,
           town: townVal,
           type: typeVal || undefined,
-          first_seen: firstSeenToSend,
-          last_seen: lastSeenToSend,
-          date_seen: firstSeenToSend || undefined,
-          dates_observed: datesObservedToSend || undefined,
           shape: isManuscriptSelected ? null : shapeVal,
           shape_id: isManuscriptSelected ? null : shapeIdVal ?? null,
           color_id: colorIdVal ?? undefined,
@@ -1036,6 +1116,15 @@ const Contribute = () => {
           date_fmt: showDateFormatField && dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
           date_format_ids: dateFormatIds.length > 0 ? dateFormatIds.map((id) => Number(id)) : undefined,
           marking_image_tags: markingImageTags,
+          ...(trimmedComment
+            ? { contributor_comment: trimmedComment, comment_for_editor: trimmedComment }
+            : {}),
+          ...(isEditMarking && removedExistingImageKeys.length > 0
+            ? { removed_existing_image_keys: removedExistingImageKeys }
+            : {}),
+          ...(isEditMarking && Object.keys(existingTagMap).length > 0
+            ? { existing_image_tags: existingTagMap }
+            : {}),
         });
       }
 
@@ -1064,17 +1153,31 @@ const Contribute = () => {
       }
 
       const resData = (await res.json().catch(() => ({}))) as { contributionId?: number; detail?: string };
-      const wasEdit = editContributionId != null;
 
       toast({
-        title: wasEdit ? "Changes submitted" : "Submission sent",
-        description: wasEdit
-          ? "Your updated submission has been sent for review again."
-          : "Your catalog entry has been submitted for approval. It will appear in Search after an editor approves it.",
+        title: copy.toastTitle,
+        description: copy.toastBody,
       });
 
-      if (wasEdit && resData?.contributionId != null) {
+      if (isEditContribution && resData?.contributionId != null) {
         navigate(`/contribution/${resData.contributionId}`, { state: { fromDashboard: true } });
+        return;
+      }
+
+      if (isEditMarking) {
+        const fromDashboard = (location.state as Record<string, unknown> | null)?.fromDashboard;
+        const fromDashboardDirect = (location.state as Record<string, unknown> | null)?.fromDashboardDirect;
+        const fromDashboardViaDetail = (location.state as Record<string, unknown> | null)?.fromDashboardViaDetail;
+        const fromSearch = (location.state as Record<string, unknown> | null)?.fromSearch;
+        if (resData?.contributionId != null) {
+          navigate(`/contribution/${resData.contributionId}`, { state: { fromDashboard: true } });
+        } else if (fromDashboardDirect || fromDashboard || fromDashboardViaDetail) {
+          navigate("/dashboard");
+        } else if (fromSearch) {
+          navigate("/search");
+        } else {
+          navigate("/dashboard");
+        }
         return;
       }
 
@@ -1084,7 +1187,6 @@ const Contribute = () => {
       setRateValue("");
       setRateText("");
       setDescription("");
-      setObservedDates([{ month: "", day: "", year: "" }]);
       setShape("");
       setColor("");
       setWidthMm("");
@@ -1093,6 +1195,7 @@ const Contribute = () => {
       setIsIrregular(false);
       setImpression("Normal");
       setInscriptionText("");
+      setContributorComment("");
       setPendingReferenceWorkIds([]);
       setSelectedReferenceWorks([]);
       setReferenceDetailsById({});
@@ -1115,22 +1218,45 @@ const Contribute = () => {
     }
   };
 
-  const isEditMode = editContributionId != null;
   const effectiveShapeLabel = String(shape ?? "").trim();
   const isCircularShape = isCircularType(effectiveShapeLabel);
+
+  const removeExistingImageAt = (index: number) => {
+    setExistingImages((prev) => {
+      const target = prev[index];
+      if (target) {
+        setRemovedExistingImageKeys((keys) =>
+          keys.includes(target.url) ? keys : [...keys, target.url],
+        );
+      }
+      return prev.filter((_, i) => i !== index);
+    });
+    if (fieldErrors.images) {
+      setFieldErrors((prev) => ({ ...prev, images: undefined }));
+    }
+  };
+
+  const setExistingImageTagAt = (index: number, value: UploadedImageTag | "") => {
+    setExistingImages((prev) => prev.map((img, i) => (i === index ? { ...img, tag: value } : img)));
+  };
 
   const renderImageUploader = (label: string, helperText: string, required = false) => {
     const inputRef = markingFileInputRef;
     const previews = markingImagePreviews;
     const files = markingImageFiles;
     const tags = markingImageTags;
+    const hasAnyImage = previews.length > 0 || existingImages.length > 0;
     return (
       <div className="space-y-2">
-        <Label>{label}</Label>
+        <Label>
+          {label}
+          {required ? <span className="text-destructive" aria-hidden="true"> *</span> : null}
+        </Label>
         {required && fieldErrors.images && <p className="text-sm text-destructive">{fieldErrors.images}</p>}
         {fieldErrors.imageTags && <p className="text-sm text-destructive">{fieldErrors.imageTags}</p>}
         <input
           ref={inputRef}
+          id="postmark-images-input"
           type="file"
           accept={ALLOWED_IMAGE_TYPES.join(",")}
           multiple
@@ -1150,13 +1276,46 @@ const Contribute = () => {
           }}
           className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer"
         >
-          {previews.length > 0 ? (
+          {hasAnyImage ? (
             <div className="space-y-4">
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                {existingImages.map((img, i) => (
+                  <div key={`existing-${img.url}-${i}`} className="relative rounded border bg-muted/30 overflow-hidden">
+                    <img src={img.url} alt={`Current image ${i + 1}`} className="w-full aspect-square object-contain max-h-32" />
+                    <p className="text-xs text-muted-foreground truncate px-2 py-1">Current image</p>
+                    <div className="px-2 pb-2">
+                      <Select
+                        value={img.tag || ""}
+                        onValueChange={(value) => setExistingImageTagAt(i, value as UploadedImageTag)}
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Tag: mark/cover/tracing" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="mark">mark</SelectItem>
+                          <SelectItem value="cover">cover</SelectItem>
+                          <SelectItem value="tracing">tracing</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      className="absolute top-1 right-1 h-7 w-7 p-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeExistingImageAt(i);
+                      }}
+                    >
+                      x
+                    </Button>
+                  </div>
+                ))}
                 {previews.map((preview, i) => (
-                  <div key={i} className="relative rounded border bg-muted/30 overflow-hidden">
+                  <div key={`new-${i}`} className="relative rounded border bg-muted/30 overflow-hidden">
                     <img src={preview} alt={`${label} preview ${i + 1}`} className="w-full aspect-square object-contain max-h-32" />
-                    <p className="text-xs text-muted-foreground truncate px-2 py-1">{files[i]?.name || "Existing image"}</p>
+                    <p className="text-xs text-muted-foreground truncate px-2 py-1">{files[i]?.name || "New image"}</p>
                     <div className="px-2 pb-2">
                       <Select
                         value={tags[i] ?? ""}
@@ -1222,41 +1381,38 @@ const Contribute = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="mb-8">
             <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">
-              {isEditMode ? "Edit and resubmit" : "Contributor Dashboard"}
+              {copy.h1}
             </h1>
-            <p className="text-muted-foreground">
-              {isEditMode
-                ? "Update your submission using the editor feedback, then submit to send it back for review."
-                : "Submit new postmark records or corrections. All fields match what reviewers see on the Submission Detail page."}
-            </p>
+            <p className="text-muted-foreground">{copy.intro}</p>
           </div>
 
-          {isEditMode && !editLoadDone && (
+          {((isEditContribution && !editLoadDone) || (isEditMarking && loadingRecord)) && (
             <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground">
               <Loader2 className="h-6 w-6 animate-spin" />
-              <span>Loading your submission…</span>
+              <span>Loading record...</span>
             </div>
           )}
 
-          {isEditMode && editLoadDone && editLoadError && (
+          {((isEditContribution && editLoadDone && editLoadError) ||
+            (isEditMarking && !loadingRecord && recordError)) && (
             <Card className="border-destructive/50">
               <CardContent className="pt-6">
-                <p className="text-destructive mb-4">{editLoadError}</p>
-                <Button variant="outline" onClick={() => navigate("/dashboard")}>
-                  Back to Dashboard
+                <p className="text-destructive mb-4">{editLoadError ?? recordError}</p>
+                <Button variant="outline" onClick={() => navigate(-1)}>
+                  Go back
                 </Button>
               </CardContent>
             </Card>
           )}
 
-          {(!isEditMode || (editLoadDone && !editLoadError)) && (
+          {(mode === "new" ||
+            (isEditContribution && editLoadDone && !editLoadError) ||
+            (isEditMarking && !loadingRecord && !recordError)) && (
           <div className="grid lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2">
               <Card className="shadow-archival-lg">
                 <CardHeader>
-                  <CardTitle className="font-heading text-xl">
-                    {isEditMode ? "Edit submission" : "Submit New Entry"}
-                  </CardTitle>
+                  <CardTitle className="font-heading text-xl">{copy.card}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   {noAssignedStates && (
@@ -1276,9 +1432,22 @@ const Contribute = () => {
 
                   <form onSubmit={handleSubmit} className="space-y-6" noValidate>
                     <div className="space-y-2">
-                      <Label htmlFor="marking-type">Marking Type</Label>
-                      <Select value={markingType} onValueChange={setMarkingType}>
-                        <SelectTrigger id="marking-type">
+                      <Label htmlFor="marking-type">
+                        Marking Type <span className="text-destructive" aria-hidden="true">*</span>
+                      </Label>
+                      <Select
+                        value={markingType}
+                        onValueChange={(value) => {
+                          setMarkingType(value);
+                          if (fieldErrors.markingType) {
+                            setFieldErrors((prev) => ({ ...prev, markingType: undefined }));
+                          }
+                        }}
+                      >
+                        <SelectTrigger
+                          id="marking-type"
+                          className={fieldErrors.markingType ? "border-destructive" : ""}
+                        >
                           <SelectValue placeholder="Select marking type..." />
                         </SelectTrigger>
                         <SelectContent>
@@ -1289,6 +1458,9 @@ const Contribute = () => {
                           ))}
                         </SelectContent>
                       </Select>
+                      {fieldErrors.markingType && (
+                        <p className="text-sm text-destructive">{fieldErrors.markingType}</p>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -1305,43 +1477,18 @@ const Contribute = () => {
                             setLetteringId("");
                             setImpression("");
                             setIsIrregular(false);
-                            setFieldErrors((p) => ({ ...p, shape: undefined }));
+                            setWidthMm("");
+                            setHeightMm("");
+                            setFieldErrors((p) => ({
+                              ...p,
+                              shape: undefined,
+                              widthMm: undefined,
+                              heightMm: undefined,
+                            }));
                           }
                         }}
                       />
                       <Label htmlFor="manuscript">Manuscript</Label>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="town">Town/City</Label>
-                      <SearchableSelect
-                        id="town"
-                        value={town}
-                        onValueChange={(value) => {
-                          setTown(sanitizeTown(value));
-                          if (fieldErrors.town) {
-                            setFieldErrors((prev) => ({ ...prev, town: undefined }));
-                          }
-                        }}
-                        placeholder="Select town/city..."
-                        options={townOptions}
-                        loading={loadingTowns}
-                        error={!!townOptionsError && !!state}
-                        errorMessage={townOptionsError ?? "Failed to load town options"}
-                        searchPlaceholder="Search towns..."
-                        emptyMessage={state ? "No town found for selected state." : "Select state first."}
-                        aria-label="Town or city"
-                        triggerClassName={fieldErrors.town ? "border-destructive" : ""}
-                      />
-                      {loadingTowns && state ? (
-                        <p className="text-xs text-muted-foreground">Loading town suggestions...</p>
-                      ) : null}
-                      {townOptionsError && state ? (
-                        <p className="text-xs text-destructive">{townOptionsError}</p>
-                      ) : null}
-                      {fieldErrors.town && (
-                        <p className="text-sm text-destructive">{fieldErrors.town}</p>
-                      )}
                     </div>
 
                     <div className="space-y-2">
@@ -1353,11 +1500,6 @@ const Contribute = () => {
                         value={state}
                         onValueChange={(value) => {
                           setState(value);
-                          // Clear town if it's no longer valid for the new state
-                          const hasTown = townOptions.some((opt) => opt.value === town);
-                          if (!hasTown) {
-                            setTown("");
-                          }
                           if (fieldErrors.state) {
                             setFieldErrors((prev) => ({ ...prev, state: undefined }));
                           }
@@ -1374,6 +1516,86 @@ const Contribute = () => {
                       />
                       {fieldErrors.state && (
                         <p className="text-sm text-destructive">{fieldErrors.state}</p>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="town">
+                        Town/City <span className="text-destructive" aria-hidden="true">*</span>
+                      </Label>
+                      <div className="relative">
+                        <Input
+                          id="town"
+                          type="text"
+                          autoComplete="off"
+                          value={town}
+                          onChange={(e) => {
+                            setTown(sanitizeTown(e.target.value));
+                            if (fieldErrors.town) {
+                              setFieldErrors((prev) => ({ ...prev, town: undefined }));
+                            }
+                          }}
+                          onFocus={() => setTownFocused(true)}
+                          onBlur={() => {
+                            // Delay so click on a suggestion can register first.
+                            window.setTimeout(() => setTownFocused(false), 120);
+                          }}
+                          placeholder={state ? "Type a town or pick a suggestion" : "Select state first"}
+                          aria-label="Town or city"
+                          aria-autocomplete="list"
+                          aria-expanded={townFocused && !!state}
+                          disabled={!state}
+                          className={fieldErrors.town ? "border-destructive" : ""}
+                        />
+                        {townFocused && state && (() => {
+                          const needle = town.trim().toLowerCase();
+                          const matches = needle
+                            ? townOptions.filter((opt) =>
+                                opt.label.toLowerCase().includes(needle),
+                              )
+                            : townOptions;
+                          const limited = matches.slice(0, 25);
+                          if (limited.length === 0) return null;
+                          return (
+                            <ul
+                              role="listbox"
+                              className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-md border border-border bg-popover py-1 shadow-md"
+                            >
+                              {limited.map((opt) => (
+                                <li
+                                  key={opt.value}
+                                  role="option"
+                                  aria-selected={opt.value === town}
+                                  className="cursor-pointer px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                                  onMouseDown={(e) => {
+                                    // Use mousedown so it fires before the input blur.
+                                    e.preventDefault();
+                                    setTown(sanitizeTown(opt.value));
+                                    setTownFocused(false);
+                                    if (fieldErrors.town) {
+                                      setFieldErrors((prev) => ({ ...prev, town: undefined }));
+                                    }
+                                  }}
+                                >
+                                  {opt.label}
+                                </li>
+                              ))}
+                            </ul>
+                          );
+                        })()}
+                      </div>
+                      {loadingTowns && state ? (
+                        <p className="text-xs text-muted-foreground">Loading town suggestions...</p>
+                      ) : null}
+                      {townOptionsError && state ? (
+                        <p className="text-xs text-destructive">{townOptionsError}</p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Start typing to see suggestions for the selected state. Unrecognized names are accepted as new towns.
+                        </p>
+                      )}
+                      {fieldErrors.town && (
+                        <p className="text-sm text-destructive">{fieldErrors.town}</p>
                       )}
                     </div>
 
@@ -1458,128 +1680,6 @@ const Contribute = () => {
                         <p className="text-sm text-destructive">{fieldErrors.color}</p>
                       )}
                     </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <Label>Dates Observed</Label>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            setObservedDates((prev) => [
-                              ...prev,
-                              { month: "", day: "", year: "" },
-                            ])
-                          }
-                        >
-                          Add Date
-                        </Button>
-                      </div>
-                      <div className="space-y-2">
-                        {observedDates.map((entry, idx) => (
-                          <div
-                            key={idx}
-                            className="space-y-2 rounded-md border border-border p-3"
-                          >
-                            <div className="flex items-center justify-between">
-                              <p className="text-xs font-medium text-muted-foreground">
-                                Date {idx + 1}
-                              </p>
-                              {observedDates.length > 1 && (
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() =>
-                                    setObservedDates((prev) =>
-                                      prev.filter((_, i) => i !== idx),
-                                    )
-                                  }
-                                >
-                                  Remove
-                                </Button>
-                              )}
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
-                              <div className="space-y-1">
-                                <Label className="text-xs text-muted-foreground">Month</Label>
-                                <Input
-                                  type="text"
-                                  inputMode="numeric"
-                                  placeholder="MM"
-                                  value={entry.month}
-                                  onChange={(e) => {
-                                    const v = e.target.value.replace(/\D/g, "").slice(0, 2);
-                                    setObservedDates((prev) =>
-                                      prev.map((p, i) =>
-                                        i === idx ? { ...p, month: v } : p,
-                                      ),
-                                    );
-                                    if (fieldErrors.observedDates) {
-                                      setFieldErrors((prev) => ({
-                                        ...prev,
-                                        observedDates: undefined,
-                                      }));
-                                    }
-                                  }}
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <Label className="text-xs text-muted-foreground">Day</Label>
-                                <Input
-                                  type="text"
-                                  inputMode="numeric"
-                                  placeholder="DD"
-                                  value={entry.day}
-                                  onChange={(e) => {
-                                    const v = e.target.value.replace(/\D/g, "").slice(0, 2);
-                                    setObservedDates((prev) =>
-                                      prev.map((p, i) =>
-                                        i === idx ? { ...p, day: v } : p,
-                                      ),
-                                    );
-                                    if (fieldErrors.observedDates) {
-                                      setFieldErrors((prev) => ({
-                                        ...prev,
-                                        observedDates: undefined,
-                                      }));
-                                    }
-                                  }}
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <Label className="text-xs text-muted-foreground" htmlFor={`observed-date-${idx}-year`}>Year</Label>
-                                <Input
-                                  id={`observed-date-${idx}-year`}
-                                  type="text"
-                                  inputMode="numeric"
-                                  placeholder="YYYY"
-                                  value={entry.year}
-                                  onChange={(e) => {
-                                    const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                                    setObservedDates((prev) =>
-                                      prev.map((p, i) =>
-                                        i === idx ? { ...p, year: v } : p,
-                                      ),
-                                    );
-                                    if (fieldErrors.observedDates) {
-                                      setFieldErrors((prev) => ({
-                                        ...prev,
-                                        observedDates: undefined,
-                                      }));
-                                    }
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      {fieldErrors.observedDates && (
-                        <p className="text-sm text-destructive">{fieldErrors.observedDates}</p>
-                      )}
-                    </div>
-
                     {showDateFormatField && <div className="space-y-2">
                       <Label>
                         <span
@@ -1616,7 +1716,7 @@ const Contribute = () => {
                                   setFieldErrors((prev) => ({ ...prev, dateFormat: undefined }));
                                 }}
                               >
-                                {opt.name}
+                                {opt.description || opt.name}
                               </DropdownMenuCheckboxItem>
                             );
                           })}
@@ -1646,65 +1746,71 @@ const Contribute = () => {
                       />
                     </div>}
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="width-mm">Width (mm)</Label>
-                        <Input
-                          id="width-mm"
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="e.g. 34"
-                          value={widthMm}
-                          onChange={(e) => {
-                            setWidthMm(sanitizeMmInput(e.target.value));
-                            if (fieldErrors.widthMm || fieldErrors.heightMm) {
-                              setFieldErrors((prev) => ({
-                                ...prev,
-                                widthMm: undefined,
-                                heightMm: undefined,
-                              }));
-                            }
-                          }}
-                          className={fieldErrors.widthMm ? "border-destructive" : ""}
-                          aria-label="Width in millimetres"
-                        />
-                        {fieldErrors.widthMm && (
-                          <p className="text-sm text-destructive">{fieldErrors.widthMm}</p>
-                        )}
-                      </div>
-                      {!isCircularShape && (
-                        <div className="space-y-2">
-                          <Label htmlFor="height-mm">Height (mm)</Label>
-                          <Input
-                            id="height-mm"
-                            type="text"
-                            inputMode="decimal"
-                            placeholder="e.g. 28"
-                            value={heightMm}
-                            onChange={(e) => {
-                              setHeightMm(sanitizeMmInput(e.target.value));
-                              if (fieldErrors.widthMm || fieldErrors.heightMm) {
-                                setFieldErrors((prev) => ({
-                                  ...prev,
-                                  widthMm: undefined,
-                                  heightMm: undefined,
-                                }));
-                              }
-                            }}
-                            className={fieldErrors.heightMm ? "border-destructive" : ""}
-                            aria-label="Height in millimetres"
-                          />
-                          {fieldErrors.heightMm && (
-                            <p className="text-sm text-destructive">{fieldErrors.heightMm}</p>
+                    {isHandstamped && (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="width-mm">
+                              {isCircularShape ? "Diameter (mm)" : "Width (mm)"}
+                            </Label>
+                            <Input
+                              id="width-mm"
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="e.g. 34"
+                              value={widthMm}
+                              onChange={(e) => {
+                                setWidthMm(sanitizeMmInput(e.target.value));
+                                if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                                  setFieldErrors((prev) => ({
+                                    ...prev,
+                                    widthMm: undefined,
+                                    heightMm: undefined,
+                                  }));
+                                }
+                              }}
+                              className={fieldErrors.widthMm ? "border-destructive" : ""}
+                              aria-label={isCircularShape ? "Diameter in millimetres" : "Width in millimetres"}
+                            />
+                            {fieldErrors.widthMm && (
+                              <p className="text-sm text-destructive">{fieldErrors.widthMm}</p>
+                            )}
+                          </div>
+                          {!isCircularShape && (
+                            <div className="space-y-2">
+                              <Label htmlFor="height-mm">Height (mm)</Label>
+                              <Input
+                                id="height-mm"
+                                type="text"
+                                inputMode="decimal"
+                                placeholder="e.g. 28"
+                                value={heightMm}
+                                onChange={(e) => {
+                                  setHeightMm(sanitizeMmInput(e.target.value));
+                                  if (fieldErrors.widthMm || fieldErrors.heightMm) {
+                                    setFieldErrors((prev) => ({
+                                      ...prev,
+                                      widthMm: undefined,
+                                      heightMm: undefined,
+                                    }));
+                                  }
+                                }}
+                                className={fieldErrors.heightMm ? "border-destructive" : ""}
+                                aria-label="Height in millimetres"
+                              />
+                              {fieldErrors.heightMm && (
+                                <p className="text-sm text-destructive">{fieldErrors.heightMm}</p>
+                              )}
+                            </div>
                           )}
                         </div>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground -mt-2">
-                      {isCircularShape
-                        ? "For circle-family shapes, height is auto-saved as width."
-                        : "Optional. If you enter one, enter both. Stored on the catalog as width × height (mm)."}
-                    </p>
+                        {!isCircularShape && (
+                          <p className="text-xs text-muted-foreground -mt-2">
+                            Optional. If you enter one, enter both. Stored on the catalog as width x height (mm).
+                          </p>
+                        )}
+                      </>
+                    )}
 
                     <div className="space-y-3">
                       <div className="space-y-2">
@@ -1921,9 +2027,20 @@ const Contribute = () => {
                             <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select lettering style"} />
                           </SelectTrigger>
                           <SelectContent>
-                            {letteringOptions.map((opt) => (
-                              <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
-                            ))}
+                            {letteringOptions
+                              .filter((opt) => LETTERING_SEED_NAMES.has(opt.name))
+                              .map((opt) => (
+                                <SelectItem key={opt.id} value={String(opt.id)}>{opt.name}</SelectItem>
+                              ))}
+                            {(() => {
+                              const selected = letteringOptions.find((opt) => String(opt.id) === letteringId);
+                              if (!selected || LETTERING_SEED_NAMES.has(selected.name)) return null;
+                              return (
+                                <SelectItem key={`legacy-${selected.id}`} value={String(selected.id)}>
+                                  {selected.name} (legacy)
+                                </SelectItem>
+                              );
+                            })()}
                           </SelectContent>
                         </Select>
                         {fieldErrors.lettering && <p className="text-sm text-destructive">{fieldErrors.lettering}</p>}
@@ -1960,19 +2077,31 @@ const Contribute = () => {
                     {renderImageUploader(
                       "Marking Images",
                       `PNG, JPG, or TIFF up to ${MAX_IMAGE_SIZE_MB}MB each`,
+                      true,
                     )}
+
+                    <div className="space-y-2">
+                      <Label htmlFor="contributor-comment">Comment for editor</Label>
+                      <Textarea
+                        id="contributor-comment"
+                        placeholder="Optional. Anything else you want the reviewing editor to know."
+                        rows={3}
+                        value={contributorComment}
+                        onChange={(e) => setContributorComment(e.target.value)}
+                      />
+                    </div>
 
                     <Button
                       type="submit"
                       className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
                       disabled={submitting || noAssignedStates}
                     >
-                      {submitting ? "Submitting..." : "Submit Postmark"}
+                      {submitting ? "Submitting..." : copy.button}
                     </Button>
                   </form>
 
                   <p className="text-xs text-muted-foreground">
-                    Required: State, Manuscript (Yes/No), and Inscription Text.
+                    Required: Marking Type, Manuscript, State, Town/City, Inscription Text, Shape (when not Manuscript), and at least one image.
                   </p>
                 </CardContent>
               </Card>

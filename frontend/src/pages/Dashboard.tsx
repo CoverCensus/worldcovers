@@ -26,7 +26,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Calendar, Grid3x3, List, Loader2, Search as SearchIcon, SlidersHorizontal } from "lucide-react";
+import { Calendar, Loader2, Pencil, Search as SearchIcon, SlidersHorizontal } from "lucide-react";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
@@ -224,7 +224,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [loading, setLoading] = useState(true);
   const [submissionsRefetchKey, setSubmissionsRefetchKey] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<"gallery" | "list">("list");
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -1244,7 +1243,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           type="date"
                           value={dateFrom}
                           onChange={(e) => setDateFrom(e.target.value)}
-                          className="bg-background pr-10 date-input-hide-native-icon"
+                          className={`bg-background pr-10 date-input-hide-native-icon ${dateFrom ? "" : "date-input-no-placeholder"}`}
                           disabled={filtersDisabled}
                         />
                         <Button
@@ -1268,7 +1267,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           type="date"
                           value={dateTo}
                           onChange={(e) => setDateTo(e.target.value)}
-                          className="bg-background pr-10 date-input-hide-native-icon"
+                          className={`bg-background pr-10 date-input-hide-native-icon ${dateTo ? "" : "date-input-no-placeholder"}`}
                           disabled={filtersDisabled}
                         />
                         <Button
@@ -1310,8 +1309,17 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               <main className="flex-1 space-y-4">
               {/* Results Header */}
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
-                <div>
-                    <p className="text-sm text-muted-foreground">
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="lg:hidden"
+                    onClick={() => setFiltersOpen((open) => !open)}
+                  >
+                    <SlidersHorizontal className="h-4 w-4 mr-2" />
+                    Filters
+                  </Button>
+                  <p className="text-sm text-muted-foreground">
                     {effectiveTotalCount === 0 ? (
                       "0 results"
                     ) : (
@@ -1331,37 +1339,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 </div>
                 <div className="flex items-center gap-2">
                   <Button
-                    variant="ghost"
                     size="sm"
-                    className="lg:hidden"
-                    onClick={() => setFiltersOpen((open) => !open)}
+                    onClick={() => navigate("/contribute")}
+                    className="shrink-0"
                   >
-                    <SlidersHorizontal className="h-4 w-4 mr-2" />
-                    Filters
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Submit New Marking
                   </Button>
-                  <div className="flex border border-border rounded-md">
-                    <Button
-                      variant={viewMode === "list" ? "secondary" : "ghost"}
-                      size="sm"
-                      onClick={() => setViewMode("list")}
-                      className="rounded-r-none"
-                    >
-                      <List className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant={viewMode === "gallery" ? "secondary" : "ghost"}
-                      size="sm"
-                      onClick={() => setViewMode("gallery")}
-                      className="rounded-l-none"
-                    >
-                      <Grid3x3 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  {/* {loading && (
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground ml-2">
-                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                    </div>
-                  )} */}
                 </div>
               </div>
 
@@ -1374,19 +1358,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               ) : filteredSubmissions.length === 0 ? (
                 <Card className="flex-1 flex items-center justify-center min-h-[200px]">
                   <CardContent className="text-center">
-                    <p className="text-muted-foreground mb-4">
+                    <p className="text-muted-foreground">
                       {submissions.length === 0
                         ? "You haven't submitted anything yet."
                         : "No submissions found matching your filters."}
                     </p>
-                    {submissions.length === 0 && (
-                      <Button variant="outline" onClick={() => navigate("/contribute")}>
-                        Go to Contribute
-                      </Button>
-                    )}
                   </CardContent>
                 </Card>
-              ) : viewMode === "list" ? (
+              ) : (
                 <div className="space-y-4">
                   {paginatedSubmissions.map((submission) => (
                     <Card
@@ -1500,112 +1479,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               )}
                             </div>
                           </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              ) : (
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {paginatedSubmissions.map((submission) => (
-                    <Card
-                      key={submission.id}
-                      className="shadow-archival-md hover:shadow-archival-lg transition-shadow overflow-hidden"
-                    >
-                      <ImageOrPlaceholder
-                        src={submission.image_url}
-                        alt={submission.name}
-                        className="w-full h-48 object-cover"
-                      />
-                      <CardContent className="p-4 flex flex-col gap-3">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-2 flex-wrap min-w-0">
-                            <h3 className="font-heading text-lg font-semibold text-foreground">
-                              {submission.name}
-                            </h3>
-                            {submission.isSuggestion && (
-                              <Badge variant="outline" className="shrink-0 text-xs">
-                                Suggestion
-                              </Badge>
-                            )}
-                          </div>
-                          {getStatusBadge(submission.status)}
-                        </div>
-
-                        <div className="space-y-1 text-sm flex-1">
-                        {submission.town && (
-                            <div>
-                              <span className="text-muted-foreground">Town:</span>{" "}
-                              <span className="text-foreground">{submission.town}</span>
-                            </div>
-                          )}
-                             {submission.state && (
-                            <div>
-                              <span className="text-muted-foreground">State:</span>{" "}
-                              <span className="text-foreground">{submission.state}</span>
-                            </div>
-                          )}
-                          {submission.dateRange && (
-                            <div>
-                              <span className="text-muted-foreground">Date Seen:</span>{" "}
-                              <span className="text-foreground">{submission.dateRange}</span>
-                            </div>
-                          )}
-                          {submission.size && (
-                            <div>
-                              <span className="text-muted-foreground">Size:</span>{" "}
-                              <span className="text-foreground">{submission.size}</span>
-                            </div>
-                          )}
-                          {submission.color && (
-                            <div>
-                              <span className="text-muted-foreground">Color:</span>{" "}
-                              <span className="text-foreground">{submission.color}</span>
-                            </div>
-                          )}
-                          <div>
-                            <span className="text-muted-foreground">Submitted:</span>{" "}
-                            <span className="text-foreground">
-                              {new Date(submission.created_at).toLocaleDateString()}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="mt-2 flex flex-wrap gap-2 justify-center">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            className="font-medium"
-                            onClick={() =>
-                              navigate(`/contribution/${submission.id}`, { state: { fromDashboard: true } })
-                            }
-                          >
-                            View details
-                          </Button>
-                          {(isSuperuser || isEditor) && submission.marking_id && (
-                            <>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() =>
-                                  navigate(`/edit/${submission.marking_id}`, {
-                                    state: { fromDashboard: true, fromDashboardDirect: true },
-                                  })
-                                }
-                              >
-                                Edit
-                              </Button>
-                              {isSuperuser && (
-                                <Button
-                                  variant="destructive"
-                                  size="sm"
-                                  onClick={() => setDeleteTarget(submission)}
-                                >
-                                  Delete
-                                </Button>
-                              )}
-                            </>
-                          )}
                         </div>
                       </CardContent>
                     </Card>

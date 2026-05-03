@@ -10,7 +10,6 @@ import Search from "./pages/Search";
 import RecordDetail from "./pages/RecordDetail";
 import ContributionDetail from "./pages/ContributionDetail";
 import Contribute from "./pages/Contribute";
-import EditCatalogEntry from "./pages/EditCatalogEntry";
 import Dashboard from "./pages/Dashboard";
 import MySuggestions from "./pages/MySuggestions";
 import Auth from "./pages/Auth";
@@ -81,7 +80,7 @@ const App = () => (
               path="/edit/:id"
               element={(
                 <RequireAuth>
-                  <EditCatalogEntry />
+                  <Contribute />
                 </RequireAuth>
               )}
             />

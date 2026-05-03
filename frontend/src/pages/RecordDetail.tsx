@@ -455,12 +455,10 @@ const RecordDetail = () => {
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
                     <CardTitle className="font-heading text-lg">Record Details</CardTitle>
-                    {user ? (
-                      <Button variant="outline" size="sm" onClick={goEdit}>
-                        <Pencil className="mr-2 h-4 w-4" />
-                        Submit Edit
-                      </Button>
-                    ) : null}
+                    <Button variant="outline" size="sm" onClick={goEdit}>
+                      <Pencil className="mr-2 h-4 w-4" />
+                      Submit Edit
+                    </Button>
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -484,12 +482,10 @@ const RecordDetail = () => {
                       <CardTitle className="font-heading text-lg">
                         Associated Covers (0)
                       </CardTitle>
-                      {user ? (
-                        <Button variant="outline" size="sm" onClick={goEdit}>
-                          <Pencil className="mr-2 h-4 w-4" />
-                          Submit Edit
-                        </Button>
-                      ) : null}
+                      <Button variant="outline" size="sm" onClick={goEdit}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        Submit Edit
+                      </Button>
                     </div>
                   </CardHeader>
                 ) : (
@@ -504,12 +500,10 @@ const RecordDetail = () => {
                             className={`h-4 w-4 text-muted-foreground transition-transform ${coversOpen ? "rotate-180" : ""}`}
                           />
                         </CollapsibleTrigger>
-                        {user ? (
-                          <Button variant="outline" size="sm" onClick={goEdit}>
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Submit Edit
-                          </Button>
-                        ) : null}
+                        <Button variant="outline" size="sm" onClick={goEdit}>
+                          <Pencil className="mr-2 h-4 w-4" />
+                          Submit Edit
+                        </Button>
                       </div>
                     </CardHeader>
                     <CollapsibleContent>

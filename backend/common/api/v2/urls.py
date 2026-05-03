@@ -61,11 +61,6 @@ urlpatterns = [
 
     # Custom non-router endpoints
     path(
-        "contributions/",
-        csrf_exempt(views.ContributionSubmitView.as_view()),
-        name="contribution-submit",
-    ),
-    path(
         "markings/<int:pk>/delete-mine/",
         views.DeleteMyMarkingView.as_view(),
         name="marking-delete-mine",

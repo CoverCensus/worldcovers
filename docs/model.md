@@ -298,6 +298,7 @@ A citable publication or source.
 
 *Fields:*
 
+* code (nullable) \- An editor-assigned reference identifier.  
 * authorship \- Author(s) or editor(s) of the publication.  
 * isbn (nullable) \- International Standard Book Number.  
 * publication\_year \- Year of publication.  
@@ -445,6 +446,7 @@ colors {
 
 reference\_works {  
  int id PK  
+ string code  
  string title  
  string authorship  
  string edition  

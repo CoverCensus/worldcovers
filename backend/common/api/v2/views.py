@@ -21,7 +21,7 @@ from django.db.models.functions import ExtractYear
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
-from rest_framework import filters, status, viewsets
+from rest_framework import filters, mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import (
@@ -281,7 +281,7 @@ class ReferenceWorkViewSet(viewsets.ModelViewSet):
     permission_classes = [CanManageReferenceWorks]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["publication_year"]
-    search_fields = ["title", "authorship", "publisher", "edition", "volume", "isbn"]
+    search_fields = ["code", "title", "authorship", "publisher", "edition", "volume", "isbn"]
     ordering_fields = ["title", "publication_year", "created_date"]
     ordering = ["title"]
 
@@ -808,16 +808,38 @@ def _get_editor_contribution_queryset(user):
     return base.filter(collection_id__in=assigned_ids).distinct()
 
 
-class ContributionViewSet(viewsets.ReadOnlyModelViewSet):
+@method_decorator(csrf_exempt, name="dispatch")
+class ContributionViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet):
     """
-    Moderation queue. Approve / reject actions are exposed here.
-    POST creation is handled by ContributionSubmitView (see urls.py).
+    GET list / detail at /contributions/ and /contributions/<pk>/.
+    POST /contributions/ delegates to ContributionSubmitView so authenticated
+    contributors can submit new entries here. Approve / reject actions live on
+    detail routes.
     """
     permission_classes = [IsAuthenticated, CanReviewContribution]
     serializer_class = ContributionDetailSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["status"]
     ordering = ["-created_at"]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_permissions(self):
+        # POST /contributions/ is the public submission endpoint and only
+        # requires authentication; the editor review permission is enforced on
+        # GET (list/detail) and on the approve/reject detail actions.
+        if self.action == "create":
+            return [IsAuthenticated()]
+        return super().get_permissions()
+
+    def create(self, request, *args, **kwargs):
+        # Delegate to ContributionSubmitView.post so the submission logic stays
+        # in one place. The DRF Request from this viewset already exposes data,
+        # FILES, and user as ContributionSubmitView expects.
+        submit_view = ContributionSubmitView()
+        submit_view.request = request
+        submit_view.kwargs = getattr(self, "kwargs", {})
+        submit_view.format_kwarg = getattr(self, "format_kwarg", None)
+        return submit_view.post(request)
 
     def get_queryset(self):
         user = self.request.user

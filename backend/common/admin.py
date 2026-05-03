@@ -39,7 +39,7 @@ class IsoDateTimeWidget(Widget):
             raise ValueError(f"Could not parse datetime: {value!r}")
         return parsed
 
-    def render(self, value, obj=None):
+    def render(self, value, obj=None, **kwargs):
         if value is None:
             return ""
         return value.isoformat()
@@ -1131,8 +1131,8 @@ class PostOfficeAdmin(TimestampedModelAdmin):
 @admin.register(ReferenceWork)
 class ReferenceWorkAdmin(TimestampedModelAdmin):
     resource_class = ReferenceWorkResource
-    list_display = ["title", "authorship", "publication_year", "publisher"]
-    search_fields = ["title", "authorship", "publisher", "isbn"]
+    list_display = ["code", "title", "authorship", "publication_year", "publisher"]
+    search_fields = ["code", "title", "authorship", "publisher", "isbn"]
     ordering = ["title"]
 
 

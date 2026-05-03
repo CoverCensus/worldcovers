@@ -736,8 +736,8 @@ class Lettering(TimestampedModel):
     Editorial value table for textual styling assigned to a postal marking.
 
     model.md domain type: Lettering
-    Seed values: Italic, Sans-serif, Script, Printed, Serif, Hollow, Thin, Block,
-    Roman, Seriffed, Bold, Thick, Gothic, Other.
+    Seed values: Italic, Serif, Sans-serif, Small, Large, Outline, Bold, Block,
+    Gothic.
     """
     name = models.CharField(max_length=100, unique=True)
 
@@ -863,6 +863,7 @@ class ReferenceWork(TimestampedModel):
 
     model.md domain type: ReferenceWork
     """
+    code = models.CharField(max_length=30, unique=True, null=True, blank=True, help_text='Editor-assigned reference identifier')
     title = models.CharField(max_length=500)
     authorship = models.CharField(max_length=500, help_text='Author(s) or Editor(s) of the publication')
     publisher = models.CharField(max_length=255)
@@ -879,7 +880,8 @@ class ReferenceWork(TimestampedModel):
         ordering = ['title']
 
     def __str__(self):
-        return f'{self.title} ({self.publication_year})'
+        label = self.code or self.title
+        return f'{label} ({self.publication_year})'
 
 class Citation(TimestampedModel):
     """
