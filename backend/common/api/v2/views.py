@@ -400,7 +400,11 @@ class CoverValuationViewSet(viewsets.ModelViewSet):
 
 
 class CoverMarkingViewSet(viewsets.ModelViewSet):
-    queryset = CoverMarking.objects.all().select_related("cover", "marking")
+    queryset = (
+        CoverMarking.objects.all()
+        .select_related("cover", "cover__color", "marking")
+        .prefetch_related("cover__cover_dates")
+    )
     serializer_class = CoverMarkingSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]

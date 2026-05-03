@@ -410,6 +410,130 @@ export async function restoreMarkingVersion(
   }
 }
 
+/** A single CoverDate row attached to an associated cover. */
+export interface AssociatedCoverDate {
+  id: number;
+  date: string;
+  granularity: "DAY" | "MONTH" | "YEAR";
+}
+
+/** Cover attributes shown inside an Associated Cover row. */
+export interface AssociatedCoverDetails {
+  id: number;
+  code: string | null;
+  colorName: string;
+  type: string | null;
+  width: string | null;
+  height: string | null;
+  hasAdhesive: boolean | null;
+  isInstitutional: boolean | null;
+  coverDates: AssociatedCoverDate[];
+}
+
+/** One CoverMarking row (a marking-on-cover association). */
+export interface AssociatedCover {
+  id: number;
+  isBackstamp: boolean;
+  placement: string | null;
+  coverDetails: AssociatedCoverDetails | null;
+}
+
+interface CoverMarkingApiResponse {
+  count?: number;
+  next?: string | null;
+  previous?: string | null;
+  results: unknown[];
+}
+
+function mapAssociatedCoverDate(raw: unknown): AssociatedCoverDate | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = toIdOrNull(o.id);
+  const date = typeof o.date === "string" ? o.date : "";
+  if (id == null || !date) return null;
+  const gRaw = String(o.granularity ?? "").toUpperCase();
+  const granularity: AssociatedCoverDate["granularity"] =
+    gRaw === "MONTH" ? "MONTH" : gRaw === "YEAR" ? "YEAR" : "DAY";
+  return { id, date, granularity };
+}
+
+function mapAssociatedCoverDetails(raw: unknown): AssociatedCoverDetails | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = toIdOrNull(o.id);
+  if (id == null) return null;
+  const datesRaw = Array.isArray(o.cover_dates) ? o.cover_dates : [];
+  const coverDates = datesRaw
+    .map(mapAssociatedCoverDate)
+    .filter((x): x is AssociatedCoverDate => x !== null);
+  return {
+    id,
+    code: typeof o.code === "string" && o.code ? o.code : null,
+    colorName: toStr(o.color_name),
+    type: typeof o.type === "string" && o.type ? o.type : null,
+    width: decimalToString(o.width),
+    height: decimalToString(o.height),
+    hasAdhesive: o.has_adhesive == null ? null : Boolean(o.has_adhesive),
+    isInstitutional: o.is_institutional == null ? null : Boolean(o.is_institutional),
+    coverDates,
+  };
+}
+
+function mapAssociatedCover(raw: unknown): AssociatedCover | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = toIdOrNull(o.id);
+  if (id == null) return null;
+  return {
+    id,
+    isBackstamp: Boolean(o.is_backstamp),
+    placement:
+      typeof o.placement === "string" && o.placement ? o.placement : null,
+    coverDetails: mapAssociatedCoverDetails(o.cover_details),
+  };
+}
+
+/**
+ * GET /cover-markings/?marking={id} - covers associated with a marking.
+ * Returns [] on error or empty.
+ *
+ * Example response item shape (snake_case in, camelCase out):
+ *   {
+ *     "id": 7,
+ *     "is_backstamp": false,
+ *     "placement": null,
+ *     "cover_details": {
+ *       "id": 12,
+ *       "code": "C-1234",
+ *       "color_name": "Black",
+ *       "type": "FC",
+ *       "width": "20.00",
+ *       "height": "10.50",
+ *       "has_adhesive": false,
+ *       "is_institutional": null,
+ *       "cover_dates": [
+ *         { "id": 99, "date": "1851-04-12", "granularity": "DAY" }
+ *       ]
+ *     }
+ *   }
+ */
+export async function getMarkingCovers(
+  markingId: number
+): Promise<AssociatedCover[]> {
+  try {
+    const res = await apiClient.get<CoverMarkingApiResponse>(
+      "/cover-markings/",
+      { params: { marking: String(markingId) } }
+    );
+    const results = Array.isArray(res.data?.results) ? res.data.results : [];
+    return results
+      .map(mapAssociatedCover)
+      .filter((x): x is AssociatedCover => x !== null);
+  } catch {
+    return [];
+  }
+}
+
 /** GET /markings/?page_size=1 - returns total marking count. */
 export async function getMarkingCount(): Promise<number> {
   const res = await apiClient.get<MarkingApiResponse>("/markings/", {

@@ -199,8 +199,16 @@ class CitationSerializer(serializers.ModelSerializer):
 ###################################################################################################
 ## Cover, CoverDate, CoverValuation, CoverMarking
 ###################################################################################################
+class CoverDateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CoverDate
+        fields = "__all__"
+        read_only_fields = ["id", "created_date", "modified_date"]
+
+
 class CoverSerializer(serializers.ModelSerializer):
     color_name = serializers.CharField(source="color.name", read_only=True)
+    cover_dates = CoverDateSerializer(many=True, read_only=True)
 
     class Meta:
         model = Cover
@@ -214,16 +222,10 @@ class CoverSerializer(serializers.ModelSerializer):
             "height",
             "is_institutional",
             "width",
+            "cover_dates",
             "created_date",
             "modified_date",
         ]
-        read_only_fields = ["id", "created_date", "modified_date"]
-
-
-class CoverDateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = CoverDate
-        fields = "__all__"
         read_only_fields = ["id", "created_date", "modified_date"]
 
 

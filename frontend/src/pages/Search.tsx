@@ -364,19 +364,13 @@ const Search = () => {
       <div className="flex-1 bg-background">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Header */}
-          <div className="mb-8 flex items-start justify-between gap-4">
-            <div>
-              <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">
-                Catalog Search
-              </h1>
-              <p className="text-muted-foreground">
-                Search and filter through our comprehensive collection of American stampless postal markings.
-              </p>
-            </div>
-            <Button onClick={() => navigate("/contribute")} className="shrink-0">
-              <Pencil className="mr-2 h-4 w-4" />
-              Submit New Marking
-            </Button>
+          <div className="mb-8">
+            <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">
+              Catalog Search
+            </h1>
+            <p className="text-muted-foreground">
+              Search and filter through our comprehensive collection of American stampless postal markings.
+            </p>
           </div>
 
           <div className="flex flex-col lg:flex-row gap-6">
@@ -622,6 +616,14 @@ const Search = () => {
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
                     </div>
                   )}
+                  <Button
+                    size="sm"
+                    onClick={() => navigate("/contribute")}
+                    className="shrink-0"
+                  >
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Submit New Marking
+                  </Button>
                 </div>
               </div>
 
