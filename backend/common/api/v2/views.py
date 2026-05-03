@@ -450,9 +450,9 @@ class MarkingViewSet(viewsets.ModelViewSet):
         "type",
         "earliest_seen",
         "latest_seen",
-        "marking_id",
+        "id",
     ]
-    ordering = ["post_office__region__name", "post_office__name", "marking_id"]
+    ordering = ["post_office__region__name", "post_office__name", "id"]
 
     def get_queryset(self):
         return _marking_list_queryset()

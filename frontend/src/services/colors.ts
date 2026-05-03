@@ -3,21 +3,13 @@
  */
 import apiClient from "@/lib/api";
 
-/** One item from the /colors/ response (supports legacy + v2 field names) */
+/** One item from the /colors/ response */
 export interface ColorsApiResultItem {
-  colorId?: number;
-  createdDate?: string;
-  modifiedDate?: string;
-  colorName?: string;
-  colorValue?: string;
-  createdBy?: number;
-  modifiedBy?: number;
-  color_id?: number;
-  color_name?: string;
-  color_value?: string;
-  id?: number;
-  name?: string;
+  id: number;
+  name: string;
   value?: string | null;
+  created_date?: string;
+  modified_date?: string;
 }
 
 /** Paginated response from GET /colors/ */
@@ -37,9 +29,9 @@ export interface ColorOption {
 
 function mapApiResultToOption(item: ColorsApiResultItem): ColorOption {
   return {
-    id: item.colorId ?? item.color_id ?? item.id ?? 0,
-    name: item.colorName ?? item.color_name ?? item.name ?? "",
-    value: item.colorValue ?? item.color_value ?? item.value ?? "",
+    id: item.id ?? 0,
+    name: item.name ?? "",
+    value: item.value ?? "",
   };
 }
 

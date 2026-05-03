@@ -65,7 +65,7 @@ class ColorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Color
         fields = "__all__"
-        read_only_fields = ["color_id", "created_date", "modified_date"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class RegionSerializer(serializers.ModelSerializer):
@@ -233,14 +233,14 @@ class CoverValuationSerializer(serializers.ModelSerializer):
     class Meta:
         model = CoverValuation
         fields = [
-            "cover_valuation_id",
+            "id",
             "cover",
             "amt",
             "appraisal_date",
             "created_date",
             "modified_date",
         ]
-        read_only_fields = ["cover_valuation_id", "created_date", "modified_date"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
 
 class CoverMarkingSerializer(serializers.ModelSerializer):
@@ -281,7 +281,6 @@ class MarkingListSerializer(serializers.ModelSerializer):
     (state, town, shape_name, color_name, ...), plus the unified `type`
     discriminator and aggregated earliest_seen / latest_seen.
     """
-    id = serializers.IntegerField(source="marking_id", read_only=True)
     state = serializers.CharField(source="post_office.region.name", read_only=True, default="")
     state_abbrev = serializers.CharField(source="post_office.region.abbrev", read_only=True, default="")
     town = serializers.CharField(source="post_office.name", read_only=True, default="")
@@ -300,7 +299,6 @@ class MarkingListSerializer(serializers.ModelSerializer):
         model = Marking
         fields = [
             "id",
-            "marking_id",
             "code",
             "type",
             "catalog_txt",
@@ -374,7 +372,6 @@ class MarkingSerializer(serializers.ModelSerializer):
     Includes images and citations attached to this marking, plus aggregated
     earliest_seen / latest_seen across covers it appears on.
     """
-    id = serializers.IntegerField(source="marking_id", read_only=True)
     state = serializers.CharField(source="post_office.region.name", read_only=True, default="")
     state_abbrev = serializers.CharField(source="post_office.region.abbrev", read_only=True, default="")
     town = serializers.CharField(source="post_office.name", read_only=True, default="")
@@ -395,7 +392,6 @@ class MarkingSerializer(serializers.ModelSerializer):
         model = Marking
         fields = [
             "id",
-            "marking_id",
             "code",
             "type",
             "catalog_txt",
@@ -430,7 +426,7 @@ class MarkingSerializer(serializers.ModelSerializer):
             "created_by",
             "modified_by",
         ]
-        read_only_fields = ["marking_id", "created_date", "modified_date"]
+        read_only_fields = ["id", "created_date", "modified_date"]
 
     def get_images(self, obj):
         rows = Image.objects.filter(

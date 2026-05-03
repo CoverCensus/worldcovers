@@ -164,34 +164,11 @@ class ReversionImportExportAdmin(CompareVersionAdmin, ImportExportModelAdmin):
 class ColorResource(TimestampedModelResource):
     class Meta(TimestampedModelResource.Meta):
         model = Color
-        import_id_fields = ['color_id']
 
 
 class MarkingResource(TimestampedModelResource):
-    post_office = fields.Field(
-        column_name='post_office',
-        attribute='post_office',
-        widget=ForeignKeyWidget(PostOffice, 'id'),
-    )
-    shape = fields.Field(
-        column_name='shape',
-        attribute='shape',
-        widget=ForeignKeyWidget(Shape, 'id'),
-    )
-    lettering = fields.Field(
-        column_name='lettering',
-        attribute='lettering',
-        widget=ForeignKeyWidget(Lettering, 'id'),
-    )
-    color = fields.Field(
-        column_name='color',
-        attribute='color',
-        widget=ForeignKeyWidget(Color, 'color_id'),
-    )
-
     class Meta(TimestampedModelResource.Meta):
         model = Marking
-        import_id_fields = ['marking_id']
 
 
 class ShapeResource(TimestampedModelResource):
@@ -231,56 +208,23 @@ class PostOfficeResource(TimestampedModelResource):
 
 
 class CoverResource(TimestampedModelResource):
-    color = fields.Field(
-        column_name='color',
-        attribute='color',
-        widget=ForeignKeyWidget(Color, 'color_id'),
-    )
-
     class Meta(TimestampedModelResource.Meta):
         model = Cover
-        import_id_fields = ['id']
 
 
 class CoverDateResource(TimestampedModelResource):
-    cover = fields.Field(
-        column_name='cover',
-        attribute='cover',
-        widget=ForeignKeyWidget(Cover, 'id'),
-    )
-
     class Meta(TimestampedModelResource.Meta):
         model = CoverDate
-        import_id_fields = ['id']
 
 
 class CoverValuationResource(TimestampedModelResource):
-    cover = fields.Field(
-        column_name='cover',
-        attribute='cover',
-        widget=ForeignKeyWidget(Cover, 'id'),
-    )
-
     class Meta(TimestampedModelResource.Meta):
         model = CoverValuation
-        import_id_fields = ['cover_valuation_id']
 
 
 class CoverMarkingResource(TimestampedModelResource):
-    cover = fields.Field(
-        column_name='cover',
-        attribute='cover',
-        widget=ForeignKeyWidget(Cover, 'id'),
-    )
-    marking = fields.Field(
-        column_name='marking',
-        attribute='marking',
-        widget=ForeignKeyWidget(Marking, 'marking_id'),
-    )
-
     class Meta(TimestampedModelResource.Meta):
         model = CoverMarking
-        import_id_fields = ['id']
 
 
 class ImageResource(TimestampedModelResource):
@@ -444,7 +388,7 @@ class CoverMarkingInline(admin.TabularInline):
 @admin.register(Marking)
 class MarkingAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     resource_class = MarkingResource
-    list_display = ['marking_id', 'code', 'type', 'post_office', 'color', 'shape', 'is_manuscript']
+    list_display = ['id', 'code', 'type', 'post_office', 'color', 'shape', 'is_manuscript']
     list_filter = ['type', 'is_manuscript', 'color', 'shape']
     search_fields = ['code', 'catalog_txt', 'inscription_txt', 'desc', 'post_office__name']
     raw_id_fields = ['post_office', 'shape', 'lettering', 'color']
@@ -569,7 +513,7 @@ class CoverDateAdmin(TimestampedModelAdmin):
 @admin.register(CoverValuation)
 class CoverValuationAdmin(TimestampedModelAdmin):
     resource_class = CoverValuationResource
-    list_display = ['cover_valuation_id', 'cover', 'amt', 'appraisal_date']
+    list_display = ['id', 'cover', 'amt', 'appraisal_date']
     list_filter = ['appraisal_date']
     search_fields = ['cover__code']
     raw_id_fields = ['cover']

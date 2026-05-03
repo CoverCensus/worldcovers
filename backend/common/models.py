@@ -19,7 +19,7 @@ class TimestampedModel(models.Model):
 
 class Color(TimestampedModel):
     """Colors used in markings"""
-    color_id = models.AutoField(primary_key=True)
+    id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=50, unique=True)
     hex_val = ColorField(default='#FFFFFF')
     pantone_code = models.CharField(max_length=50, null=True, blank=True)
@@ -68,7 +68,7 @@ class Marking(TimestampedModel):
     DATE_FMT_CHOICES = MARKING_DATE_FMT_CHOICES
     IMPRESSION_CHOICES = MARKING_IMPRESSION_CHOICES
 
-    marking_id = models.AutoField(primary_key=True)
+    id = models.AutoField(primary_key=True)
     code = models.CharField(max_length=30, unique=True, null=True, blank=True, help_text='Editor-assigned reference identifier')
     type = models.CharField(max_length=8, choices=MarkingType.choices, help_text='Functional classification of this marking')
     catalog_txt = models.TextField(null=True, blank=True, help_text='Authoritative ASCC catalog entry text for this listing')
@@ -92,7 +92,7 @@ class Marking(TimestampedModel):
         db_table = 'Markings'
         verbose_name = 'Marking'
         verbose_name_plural = 'Markings'
-        ordering = ['marking_id']
+        ordering = ['id']
         constraints = [
             models.CheckConstraint(
                 check=Q(type__in=[c[0] for c in MarkingType.choices]),
@@ -820,7 +820,7 @@ class CoverValuation(TimestampedModel):
 
     model.md domain type: cover_valuations
     """
-    cover_valuation_id = models.AutoField(primary_key=True)
+    id = models.AutoField(primary_key=True)
     cover = models.ForeignKey(Cover, on_delete=models.CASCADE, related_name='valuations')
     amt = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Non-negative USD; null = unpriced entry')
     appraisal_date = models.DateField(null=True, blank=True)

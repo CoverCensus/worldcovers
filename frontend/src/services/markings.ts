@@ -123,7 +123,7 @@ export interface MarkingVersionRow {
 }
 
 export interface MarkingChangelogResponse {
-  marking_id: number;
+  id: number;
   events: MarkingChangelogEvent[];
   versions: MarkingVersionRow[];
   approved_versions?: MarkingVersionRow[];
@@ -226,12 +226,7 @@ function mapImageList(raw: unknown): MarkingImage[] {
  */
 export function mapApiMarkingToRecord(raw: unknown): MarkingRecord {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  const idVal =
-    typeof o.id === "number"
-      ? o.id
-      : typeof o.marking_id === "number"
-        ? o.marking_id
-        : toIdOrNull(o.id) ?? toIdOrNull(o.marking_id) ?? 0;
+  const idVal = toIdOrNull(o.id) ?? 0;
   const images = mapImageList(o.images);
   const mainImage = mapImage(o.main_image) ?? images[0] ?? null;
   const secondImage = mapImage(o.second_image) ?? images[1] ?? null;
