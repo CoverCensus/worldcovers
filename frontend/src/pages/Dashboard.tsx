@@ -26,7 +26,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Calendar, Loader2, Pencil, Search as SearchIcon, SlidersHorizontal } from "lucide-react";
+import { Calendar, Loader2, Plus, Search as SearchIcon, SlidersHorizontal } from "lucide-react";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
@@ -1341,9 +1341,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   <Button
                     size="sm"
                     onClick={() => navigate("/contribute")}
-                    className="shrink-0"
+                    className="shrink-0 bg-green-800 hover:bg-green-900 text-white"
                   >
-                    <Pencil className="mr-2 h-4 w-4" />
+                    <Plus className="mr-2 h-4 w-4" />
                     Submit New Marking
                   </Button>
                 </div>

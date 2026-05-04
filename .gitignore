@@ -256,6 +256,7 @@ tools/wip/in/*
 !tools/wip/in/_DELETE.ME
 tools/wip/out/*
 !tools/wip/out/_DELETE.ME
+tools/wip/cache/*
 tools/wip/**/*.pdf
 tools/wip/**/*.png
 tools/wip/**/*.jpg

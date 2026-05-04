@@ -51,6 +51,7 @@ from common.admin import (
     RegionResource,
     ShapeResource,
 )
+from common.models import Collection, Region
 
 
 # Stem -> Resource class. The stem is the CSV basename without extension.
@@ -101,6 +102,53 @@ def _load_dataset(path):
     dataset = tablib.Dataset()
     dataset.load(csv_text, format="csv")
     return dataset
+
+
+def _ensure_collections_for_regions(stdout):
+    """
+    Auto-create a Collection for every Region that does not already have one.
+
+    Collection has a OneToOneField to Region (on_delete=PROTECT), and the
+    admin Editor-assignment form filters Collection.objects.filter(is_active=True)
+    in common.admin.CollectionUserChangeForm. The munger bundle does NOT emit
+    a collections.csv, so without this step a freshly imported Region has no
+    Collection wrapper and Editors cannot be assigned to it.
+
+    Idempotent: skips Regions that already have a Collection. Names the new
+    Collection after the Region. Attribution falls back to the first superuser,
+    then the first user.
+
+    Returns the number of Collections created.
+    """
+    User = Collection._meta.get_field("created_by").related_model
+    creator = (
+        User.objects.filter(is_superuser=True).order_by("pk").first()
+        or User.objects.order_by("pk").first()
+    )
+    if creator is None:
+        # No users -- cannot satisfy TimestampedModel created_by/modified_by.
+        # In a real environment this never happens; bail clearly.
+        raise CommandError(
+            "Cannot auto-create Collections: no User exists to attribute creation to."
+        )
+
+    missing = Region.objects.filter(collection__isnull=True).order_by("pk")
+    created = 0
+    for region in missing:
+        Collection.objects.create(
+            name=region.name,
+            description="",
+            region_id=region.pk,
+            is_active=True,
+            created_by_id=creator.pk,
+            modified_by_id=creator.pk,
+        )
+        created += 1
+    if created:
+        stdout.write(f"  collections      auto-created={created:>5d}")
+    else:
+        stdout.write("  collections      auto-created=    0  (all Regions already have one)")
+    return created
 
 
 def _summarize_errors(result, max_errors=5):
@@ -285,6 +333,15 @@ class Command(BaseCommand):
                         raise CommandError(
                             f"{stem}: import failed with errors; bundle rolled back."
                         )
+
+                # Post-import: ensure every Region has a Collection wrapper.
+                # The munger bundle does not emit collections.csv, so we
+                # backfill here. Only runs when regions were part of this
+                # import (otherwise --only markings, etc. would do unrelated
+                # work). Inside the outer atomic block, so --dry-run rolls
+                # this back too.
+                if "regions" in order:
+                    _ensure_collections_for_regions(self.stdout)
 
                 # Successful pass through every stem. Under --dry-run, mark
                 # the outer transaction for rollback so the bundle never
