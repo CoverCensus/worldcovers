@@ -2125,7 +2125,7 @@ const Contribute = () => {
                         <Button
                           type="button"
                           variant="outline"
-                          className="w-full sm:w-auto"
+                          className="w-full sm:flex-1"
                           disabled={submitting || noAssignedStates}
                           onClick={(e) => {
                             handleSubmit(e, true);

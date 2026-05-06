@@ -346,12 +346,17 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         if (!res.ok) {
           throw new Error(`API error: ${res.status} ${res.statusText}`);
         }
-        const data: any[] = await res.json();
-        if (!Array.isArray(data)) {
+        const data: any = await res.json();
+        const list: any[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.results)
+            ? data.results
+            : [];
+        if (!list.length) {
           setSubmissions([]);
           return;
         }
-        const mapped: DashboardItem[] = data.map((c) => {
+        const mapped: DashboardItem[] = list.map((c) => {
           const submittedData =
             c.submittedData && typeof c.submittedData === "object"
               ? c.submittedData
@@ -477,12 +482,17 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         if (!res.ok) {
           throw new Error(`API error: ${res.status} ${res.statusText}`);
         }
-        const data: any[] = await res.json();
-        if (!Array.isArray(data)) {
+        const data: any = await res.json();
+        const list: any[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.results)
+            ? data.results
+            : [];
+        if (!list.length) {
           setSuggestions([]);
           return;
         }
-        const mapped: DashboardItem[] = data.map((c) => {
+        const mapped: DashboardItem[] = list.map((c) => {
           const submittedData =
             c.submittedData && typeof c.submittedData === "object"
               ? c.submittedData
