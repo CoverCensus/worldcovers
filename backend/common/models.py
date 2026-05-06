@@ -152,11 +152,18 @@ class Contribution(models.Model):
     Submissions create a Contribution instead of directly updating the catalog.
     Editors approve/reject; on approval, submitted_data is applied to Marking.
     """
-    STATUS_PENDING = 'pending'
-    STATUS_APPROVED = 'approved'
-    STATUS_REJECTED = 'rejected'
-    STATUS_NEEDS_REVISION = 'needs_revision'
-    STATUS_CHOICES = [(STATUS_PENDING, 'Pending'), (STATUS_APPROVED, 'Approved'), (STATUS_REJECTED, 'Rejected'), (STATUS_NEEDS_REVISION, 'Needs revision')]
+    STATUS_DRAFT = "draft"
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+    STATUS_NEEDS_REVISION = "needs_revision"
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, "Draft"),
+        (STATUS_PENDING, "Pending"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_NEEDS_REVISION, "Needs revision"),
+    ]
     id = models.AutoField(primary_key=True)
     contributor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='contributions')
     marking = models.OneToOneField(Marking, on_delete=models.CASCADE, related_name='contribution', null=True, blank=True, help_text='Set when approved; Marking created from submitted_data for new entries')

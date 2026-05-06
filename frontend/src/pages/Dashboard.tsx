@@ -730,6 +730,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
           review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
         }));
+        // Filter out drafts from the editor history lists; drafts are only
+        // shown on the contributor-facing My Submissions tab.
+        mapped = mapped.filter((i) => i.status !== "draft");
         // Backward compatibility / defensive filtering (in case an older backend ignores status=needs_revision)
         if (editorHistoryStatusFilter === "needs_revision") {
           mapped = mapped.filter((i) => i.status === "needs_revision");
@@ -936,6 +939,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   const getStatusBadge = (status: string) => {
     switch (String(status || "").toLowerCase()) {
+      case "draft":
+        return (
+          <Badge className="rounded-full border border-muted-foreground/40 bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground shadow-sm">
+            Draft
+          </Badge>
+        );
       case "approved":
         return (
           <Badge className="rounded-full border border-green-700 bg-green-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-green-600">
@@ -1157,6 +1166,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All Statuses</SelectItem>
+                        <SelectItem value="draft">Draft</SelectItem>
                         <SelectItem value="pending">Pending</SelectItem>
                         <SelectItem value="approved">Approved</SelectItem>
                         <SelectItem value="rejected">Rejected</SelectItem>
@@ -1447,11 +1457,20 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                 variant="secondary"
                                 size="sm"
                                 className="font-medium"
-                                onClick={() =>
-                                  navigate(`/contribution/${submission.id}`, { state: { fromDashboard: true } })
-                                }
+                                onClick={() => {
+                                  const statusNorm = String(submission.status || "").toLowerCase();
+                                  if (statusNorm === "draft") {
+                                    navigate(`/contribute?edit=${submission.id}`);
+                                  } else {
+                                    navigate(`/contribution/${submission.id}`, {
+                                      state: { fromDashboard: true },
+                                    });
+                                  }
+                                }}
                               >
-                                View details
+                                {String(submission.status || "").toLowerCase() === "draft"
+                                  ? "Edit draft"
+                                  : "View details"}
                               </Button>
                               {(isSuperuser || isEditor) && submission.marking_id && (
                                 <>

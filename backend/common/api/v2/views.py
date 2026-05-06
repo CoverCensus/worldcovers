@@ -988,6 +988,16 @@ class ContributionSubmitView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Optional draft mode: when save_as_draft is truthy, contributions are
+        # created with status=DRAFT instead of PENDING so they are visible only
+        # to the contributor in "My Submissions" until they choose to submit.
+        save_as_draft_raw = str(
+            data.get("save_as_draft")
+            or data.get("saveAsDraft")
+            or data.get("status")
+        ).strip().lower()
+        is_draft = save_as_draft_raw in {"draft", "true", "1", "yes", "on"}
+
         type_value = (data.get("type") or "").strip().upper()
         if type_value and type_value not in {"TOWNMARK", "RATEMARK", "AUXMARK"}:
             return Response(
@@ -1037,7 +1047,7 @@ class ContributionSubmitView(APIView):
             contributor=request.user,
             collection=collection,
             submitted_data=submitted_data,
-            status=Contribution.STATUS_PENDING,
+            status=Contribution.STATUS_DRAFT if is_draft else Contribution.STATUS_PENDING,
         )
         log_submission_transaction(
             action=SubmissionTransaction.ACTION_SUBMIT,

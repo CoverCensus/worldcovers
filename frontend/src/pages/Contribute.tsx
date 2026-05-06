@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Upload, CheckCircle, XCircle, Clock, Loader2, ChevronDown } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
+import type { FormEvent, MouseEvent } from "react";
 import { useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
 import { getShapes, type ShapeOption } from "@/services/shapes";
@@ -829,7 +830,10 @@ const Contribute = () => {
     );
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (
+    e: FormEvent<HTMLFormElement> | MouseEvent<HTMLButtonElement>,
+    saveAsDraft: boolean,
+  ) => {
     e.preventDefault();
 
     if (!user) {
@@ -856,46 +860,54 @@ const Contribute = () => {
     const isCircular = isCircularType(shapeVal);
 
     const errors: typeof fieldErrors = {};
-    if (!typeVal) {
-      errors.markingType = "Marking type is required";
-    }
-    if (!stateVal) {
-      errors.state = "State is required";
-    }
-    if (!townVal) {
-      errors.town = "Town/City is required";
-    } else if (/[0-9]/.test(townVal)) {
-      errors.town = "Town/City must contain only letters and spaces";
-    }
-    if (!isManuscriptSelected && !shapeVal) {
-      errors.shape = "Shape is required when Manuscript is No";
-    }
-    if (!inscriptionText.trim()) {
-      errors.inscriptionText = `${inscriptionLabel} is required`;
-    }
+    if (!saveAsDraft) {
+      if (!typeVal) {
+        errors.markingType = "Marking type is required";
+      }
+      if (!stateVal) {
+        errors.state = "State is required";
+      }
+      if (!townVal) {
+        errors.town = "Town/City is required";
+      } else if (/[0-9]/.test(townVal)) {
+        errors.town = "Town/City must contain only letters and spaces";
+      }
+      if (!isManuscriptSelected && !shapeVal) {
+        errors.shape = "Shape is required when Manuscript is No";
+      }
+      if (!inscriptionText.trim()) {
+        errors.inscriptionText = `${inscriptionLabel} is required`;
+      }
 
-    // At least one image must accompany every entry.
-    // - "new":               at least one freshly-uploaded file.
-    // - "edit-marking":      keep at least one existing image, or upload a new one.
-    // - "edit-contribution": images carry over from the prior submission, so no
-    //                        new upload is required.
-    if (mode === "new" && markingImageFiles.length === 0) {
-      errors.images = "At least one image is required";
-    } else if (
-      mode === "edit-marking" &&
-      existingImages.length === 0 &&
-      markingImageFiles.length === 0
-    ) {
-      errors.images = "At least one image is required";
-    }
+      // At least one image must accompany every entry.
+      // - "new":               at least one freshly-uploaded file.
+      // - "edit-marking":      keep at least one existing image, or upload a new one.
+      // - "edit-contribution": images carry over from the prior submission, so no
+      //                        new upload is required.
+      if (mode === "new" && markingImageFiles.length === 0) {
+        errors.images = "At least one image is required";
+      } else if (
+        mode === "edit-marking" &&
+        existingImages.length === 0 &&
+        markingImageFiles.length === 0
+      ) {
+        errors.images = "At least one image is required";
+      }
 
-    // Dimensions: only validated for handstamped markings. Manuscript markings
-    // have no measurable shape, so we skip the check (and the fields are hidden).
-    if (!isManuscriptSelected) {
-      const effectiveHeight = isCircular ? widthMm : heightMm;
-      const mmErr = validateMmPair(widthMm, effectiveHeight);
-      if (mmErr.width) errors.widthMm = mmErr.width;
-      if (mmErr.height && !isCircular) errors.heightMm = mmErr.height;
+      // Dimensions: only validated for handstamped markings. Manuscript markings
+      // have no measurable shape, so we skip the check (and the fields are hidden).
+      if (!isManuscriptSelected) {
+        const effectiveHeight = isCircular ? widthMm : heightMm;
+        const mmErr = validateMmPair(widthMm, effectiveHeight);
+        if (mmErr.width) errors.widthMm = mmErr.width;
+        if (mmErr.height && !isCircular) errors.heightMm = mmErr.height;
+      }
+    } else {
+      // Drafts still require a state so the backend can map them to a
+      // Collection, but other fields may be incomplete.
+      if (!stateVal) {
+        errors.state = "State is required to save a draft";
+      }
     }
 
     const referenceDetailErrors: Record<number, ReferenceDetailFieldErrors> = {};
@@ -933,7 +945,7 @@ const Contribute = () => {
       }
     }
     setReferenceDetailErrorsById(referenceDetailErrors);
-    if (Object.keys(referenceDetailErrors).length > 0) {
+    if (!saveAsDraft && Object.keys(referenceDetailErrors).length > 0) {
       toast({
         title: "Fix reference details",
         description: "Check page number and citation URL fields for selected references.",
@@ -973,7 +985,7 @@ const Contribute = () => {
 
     const allImageFiles = markingImageFiles;
     const allImageTags = markingImageTags;
-    if (allImageFiles.length > 0 && allImageTags.some((tag) => !String(tag).trim())) {
+    if (!saveAsDraft && allImageFiles.length > 0 && allImageTags.some((tag) => !String(tag).trim())) {
       setFieldErrors((prev) => ({ ...prev, imageTags: "Select a tag for each uploaded image." }));
       toast({
         title: "Image tag required",
@@ -982,7 +994,7 @@ const Contribute = () => {
       });
       return;
     }
-    const oversized = allImageFiles.filter((f) => f.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
+      const oversized = allImageFiles.filter((f) => f.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
     if (oversized.length) {
       toast({
         title: "Image too large",
@@ -1014,6 +1026,9 @@ const Contribute = () => {
         }
         if (isEditMarking && editMarkingId != null) {
           form.append("edit_postmark_id", String(editMarkingId));
+        }
+        if (saveAsDraft) {
+          form.append("save_as_draft", "true");
         }
         if (selectedPostOfficeId != null) form.append("post_office_id", String(selectedPostOfficeId));
         form.append("state", stateVal);
@@ -1125,6 +1140,7 @@ const Contribute = () => {
           ...(isEditMarking && Object.keys(existingTagMap).length > 0
             ? { existing_image_tags: existingTagMap }
             : {}),
+          ...(saveAsDraft ? { save_as_draft: true } : {}),
         });
       }
 
@@ -1155,9 +1171,16 @@ const Contribute = () => {
       const resData = (await res.json().catch(() => ({}))) as { contributionId?: number; detail?: string };
 
       toast({
-        title: copy.toastTitle,
-        description: copy.toastBody,
+        title: saveAsDraft ? "Draft saved" : copy.toastTitle,
+        description: saveAsDraft
+          ? "Your draft has been saved. You can find it under My Submissions on your dashboard."
+          : copy.toastBody,
       });
+
+      if (saveAsDraft) {
+        navigate("/dashboard", { state: { tab: "submissions" } });
+        return;
+      }
 
       if (isEditContribution && resData?.contributionId != null) {
         navigate(`/contribution/${resData.contributionId}`, { state: { fromDashboard: true } });
@@ -1430,7 +1453,13 @@ const Contribute = () => {
                     </div>
                   )}
 
-                  <form onSubmit={handleSubmit} className="space-y-6" noValidate>
+                    <form
+                      onSubmit={(e) => {
+                        handleSubmit(e, false);
+                      }}
+                      className="space-y-6"
+                      noValidate
+                    >
                     <div className="space-y-2">
                       <Label htmlFor="marking-type">
                         Marking Type <span className="text-destructive" aria-hidden="true">*</span>
@@ -2091,13 +2120,28 @@ const Contribute = () => {
                       />
                     </div>
 
-                    <Button
-                      type="submit"
-                      className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
-                      disabled={submitting || noAssignedStates}
-                    >
-                      {submitting ? "Submitting..." : copy.button}
-                    </Button>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      {!isEditMarking && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full sm:w-auto"
+                          disabled={submitting || noAssignedStates}
+                          onClick={(e) => {
+                            handleSubmit(e, true);
+                          }}
+                        >
+                          Save as Draft
+                        </Button>
+                      )}
+                      <Button
+                        type="submit"
+                        className="w-full sm:flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+                        disabled={submitting || noAssignedStates}
+                      >
+                        {submitting ? "Submitting..." : copy.button}
+                      </Button>
+                    </div>
                   </form>
 
                   <p className="text-xs text-muted-foreground">
