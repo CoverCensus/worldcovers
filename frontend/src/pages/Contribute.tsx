@@ -41,6 +41,24 @@ function getApiBaseUrl(): string | null {
   return env.trim().replace(/\/+$/, "");
 }
 
+function getCsrfTokenFromCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(/(^|;\s*)csrftoken=([^;]+)/);
+  return match ? decodeURIComponent(match[2]) : null;
+}
+
+async function ensureCsrfToken(apiBase: string): Promise<string | null> {
+  const existing = getCsrfTokenFromCookie();
+  if (existing) return existing;
+  // Trigger Django CSRF middleware to set csrftoken cookie for session-auth writes.
+  await fetch(`${apiBase}/me/`, {
+    method: "GET",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  }).catch(() => undefined);
+  return getCsrfTokenFromCookie();
+}
+
 const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 100;
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/tiff"];
@@ -1144,8 +1162,9 @@ const Contribute = () => {
         });
       }
 
-      const headers: Record<string, string> =
-        typeof body === "string" ? { "Content-Type": "application/json" } : {};
+      const csrfToken = await ensureCsrfToken(apiBase);
+      const headers: Record<string, string> = typeof body === "string" ? { "Content-Type": "application/json" } : {};
+      if (csrfToken) headers["X-CSRFToken"] = csrfToken;
 
       const res = await fetch(`${apiBase}/contributions/`, {
         method: "POST",

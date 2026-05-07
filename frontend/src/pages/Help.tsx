@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { marked } from "marked";
+import { Search } from "lucide-react";
+import { useNavigate, useParams } from "react-router-dom";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 
@@ -9,6 +11,8 @@ type HelpDoc = {
   sourceFile: string;
   markdown: string;
 };
+
+type DocCategory = "glossary" | "faq" | "other";
 
 const getDocNavLabel = (doc: HelpDoc): string => {
   if (doc.sourceFile) {
@@ -21,10 +25,30 @@ const getDocNavLabel = (doc: HelpDoc): string => {
   return doc.slug.replace(/[-_]+/g, " ").trim();
 };
 
+const getDocCategory = (doc: HelpDoc): DocCategory => {
+  const source = `${doc.sourceFile}`.toLowerCase();
+  const slug = `${doc.slug}`.toLowerCase();
+  const title = `${doc.title}`.toLowerCase();
+  const text = `${source} ${slug} ${title}`;
+
+  if (text.includes("glossary")) return "glossary";
+  if (text.includes("faq") || text.includes("frequently asked")) return "faq";
+  return "other";
+};
+
+const categoryLabel: Record<DocCategory, string> = {
+  glossary: "Glossary",
+  faq: "FAQ",
+  other: "More Docs",
+};
+
 const Help = () => {
+  const navigate = useNavigate();
+  const { docSlug } = useParams<{ docSlug?: string }>();
   const [docs, setDocs] = useState<HelpDoc[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     const fetchDocs = async () => {
@@ -57,25 +81,53 @@ const Help = () => {
     void fetchDocs();
   }, []);
 
+  const renderedDocs = useMemo(
+    () =>
+      docs.map((doc) => ({
+        ...doc,
+        category: getDocCategory(doc),
+        html: marked.parse(doc.markdown) as string,
+      })),
+    [docs],
+  );
+
+  const filteredDocs = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return renderedDocs;
+    return renderedDocs.filter((doc) =>
+      `${doc.title} ${doc.sourceFile} ${doc.markdown}`.toLowerCase().includes(normalized),
+    );
+  }, [query, renderedDocs]);
+
+  const orderedDocs = useMemo(() => {
+    const priority: Record<DocCategory, number> = { glossary: 0, faq: 1, other: 2 };
+    return [...filteredDocs].sort((a, b) => {
+      const categoryDiff = priority[a.category] - priority[b.category];
+      if (categoryDiff !== 0) return categoryDiff;
+      return a.title.localeCompare(b.title);
+    });
+  }, [filteredDocs]);
+
   useEffect(() => {
-    if (docs.length === 0) {
+    if (orderedDocs.length === 0) {
       setSelectedSlug(null);
       return;
     }
 
-    setSelectedSlug((current) => {
-      if (current && docs.some((doc) => doc.slug === current)) return current;
-      return docs[0].slug;
-    });
-  }, [docs]);
+    if (docSlug && orderedDocs.some((doc) => doc.slug === docSlug)) {
+      setSelectedSlug(docSlug);
+      return;
+    }
 
-  const renderedDocs = useMemo(
-    () => docs.map((doc) => ({ ...doc, html: marked.parse(doc.markdown) as string })),
-    [docs],
-  );
+    setSelectedSlug((current) => {
+      if (current && orderedDocs.some((doc) => doc.slug === current)) return current;
+      return orderedDocs[0].slug;
+    });
+  }, [docSlug, orderedDocs]);
+
   const selectedDoc = useMemo(
-    () => renderedDocs.find((doc) => doc.slug === selectedSlug) ?? null,
-    [renderedDocs, selectedSlug],
+    () => orderedDocs.find((doc) => doc.slug === selectedSlug) ?? null,
+    [orderedDocs, selectedSlug],
   );
 
   return (
@@ -89,7 +141,7 @@ const Help = () => {
               Help
             </h1>
             <p className="text-muted-foreground">
-              This page is built from all markdown files in <code>docs/</code>.
+              Read public documentation, including the system glossary and frequently asked questions.
             </p>
           </header>
 
@@ -105,17 +157,53 @@ const Help = () => {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
               <aside className="lg:col-span-4 xl:col-span-3">
                 <div className="rounded-lg border border-border bg-card p-3 md:p-4">
+                  <div className="relative mb-4">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="Search docs"
+                      className="w-full rounded-md border border-border bg-background pl-9 pr-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  </div>
                   <h2 className="font-heading text-lg font-semibold text-foreground mb-3">
                     Documents
                   </h2>
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {(["glossary", "faq"] as DocCategory[]).map((category) => {
+                      const doc = orderedDocs.find((item) => item.category === category);
+                      if (!doc) return null;
+                      const active = selectedSlug === doc.slug;
+                      return (
+                        <button
+                          key={category}
+                          type="button"
+                          onClick={() => {
+                            setSelectedSlug(doc.slug);
+                            navigate(`/help/${doc.slug}`);
+                          }}
+                          className={`rounded-full px-3 py-1 text-xs border transition-colors ${
+                            active
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "border-border text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          {categoryLabel[category]}
+                        </button>
+                      );
+                    })}
+                  </div>
                   <div className="space-y-1">
-                    {renderedDocs.map((doc) => {
+                    {orderedDocs.map((doc) => {
                       const isActive = doc.slug === selectedSlug;
                       return (
                         <button
                           key={doc.slug}
                           type="button"
-                          onClick={() => setSelectedSlug(doc.slug)}
+                          onClick={() => {
+                            setSelectedSlug(doc.slug);
+                            navigate(`/help/${doc.slug}`);
+                          }}
                           className={`w-full text-left rounded-md px-3 py-2 transition-colors break-words ${
                             isActive
                               ? "bg-primary/10 text-primary font-medium"
@@ -123,9 +211,17 @@ const Help = () => {
                           }`}
                         >
                           <span className="block text-sm">{getDocNavLabel(doc)}</span>
+                          <span className="block text-[11px] uppercase tracking-wide opacity-70 mt-0.5">
+                            {categoryLabel[doc.category]}
+                          </span>
                         </button>
                       );
                     })}
+                    {orderedDocs.length === 0 && (
+                      <p className="text-sm text-muted-foreground px-3 py-2">
+                        No documents match your search.
+                      </p>
+                    )}
                   </div>
                 </div>
               </aside>

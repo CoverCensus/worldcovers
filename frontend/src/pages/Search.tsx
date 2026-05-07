@@ -27,6 +27,7 @@ import { useMarkingYearRange } from "@/hooks/useMarkingYearRange";
 import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 400;
+type SubmissionQueueSortOption = "newest" | "oldest";
 
 function validateYearString(raw: string, minYear: number, maxYear: number): string | null {
   const v = raw.trim();
@@ -128,6 +129,9 @@ const Search = () => {
     return "both";
   });
   const [imagesOnly, setImagesOnly] = useState(() => getSearchParam(searchParams, "images", "") === "true");
+  const [submissionQueueSort, setSubmissionQueueSort] = useState<SubmissionQueueSortOption>(
+    () => (getSearchParam(searchParams, "sort", "newest") === "oldest" ? "oldest" : "newest"),
+  );
 
   // Debounced values for text inputs - API called only after user stops typing
   const debouncedKeywordSearch = useDebounce(keywordSearch, DEBOUNCE_MS);
@@ -154,6 +158,7 @@ const Search = () => {
   const prevImagesOnlyRef = useRef(imagesOnly);
   const prevManuscriptFilterRef = useRef(manuscriptFilter);
   const prevTypeFilterRef = useRef(typeFilter);
+  const prevSortRef = useRef(submissionQueueSort);
 
   const beginYearError = useMemo(
     () => validateYearString(beginYear, minYear, maxYear),
@@ -195,6 +200,7 @@ const Search = () => {
     const imagesOnlyJustChanged = prevImagesOnlyRef.current !== imagesOnly;
     const manuscriptFilterJustChanged = prevManuscriptFilterRef.current !== manuscriptFilter;
     const typeFilterJustChanged = prevTypeFilterRef.current !== typeFilter;
+    const sortJustChanged = prevSortRef.current !== submissionQueueSort;
     if (searchJustChanged) prevKeywordRef.current = debouncedKeywordSearch;
     if (shapeFilterJustChanged) prevShapeFilterRef.current = shapeFilter;
     if (colorFilterJustChanged) prevColorFilterRef.current = colorFilter;
@@ -205,6 +211,7 @@ const Search = () => {
     if (imagesOnlyJustChanged) prevImagesOnlyRef.current = imagesOnly;
     if (manuscriptFilterJustChanged) prevManuscriptFilterRef.current = manuscriptFilter;
     if (typeFilterJustChanged) prevTypeFilterRef.current = typeFilter;
+    if (sortJustChanged) prevSortRef.current = submissionQueueSort;
 
     const anyFilterChanged =
       searchJustChanged ||
@@ -216,11 +223,12 @@ const Search = () => {
       endYearJustChanged ||
       imagesOnlyJustChanged ||
       manuscriptFilterJustChanged ||
-      typeFilterJustChanged;
+      typeFilterJustChanged ||
+      sortJustChanged;
     if (anyFilterChanged) {
       setCurrentPage(1);
     }
-  }, [debouncedKeywordSearch, shapeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, manuscriptFilter, typeFilter]);
+  }, [debouncedKeywordSearch, shapeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, manuscriptFilter, typeFilter, submissionQueueSort]);
 
   // Treat years as active filters only when they are valid and 4 digits.
   const normalizedBeginYear = useMemo(() => {
@@ -327,18 +335,26 @@ const Search = () => {
     if (colorFilter !== "all") params.set("color", colorFilter);
     if (manuscriptFilter !== "both") params.set("manuscripts", manuscriptFilter);
     if (imagesOnly) params.set("images", "true");
+    if (submissionQueueSort !== "newest") params.set("sort", submissionQueueSort);
     if (currentPage > 1) params.set("page", String(currentPage));
     const next = params.toString();
     const current = searchParams.toString();
     if (next !== current) {
       setSearchParams(next ? params : {}, { replace: true });
     }
-  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, shapeFilter, typeFilter, colorFilter, manuscriptFilter, imagesOnly, searchParams, setSearchParams]);
+  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, shapeFilter, typeFilter, colorFilter, manuscriptFilter, imagesOnly, submissionQueueSort, searchParams, setSearchParams]);
 
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
   const pageStart = (currentPage - 1) * itemsPerPage;
   const pageEnd = Math.min(currentPage * itemsPerPage, totalCount);
-  const paginatedResults = catalogRecords;
+  const paginatedResults = useMemo(() => {
+    const sorted = [...catalogRecords];
+    sorted.sort((a, b) => {
+      if (submissionQueueSort === "oldest") return a.id - b.id;
+      return b.id - a.id;
+    });
+    return sorted;
+  }, [catalogRecords, submissionQueueSort]);
 
   // Clear all filters and URL params
   const handleClearAllFilters = () => {
@@ -353,6 +369,7 @@ const Search = () => {
     setValuationFilter("all");
     setManuscriptFilter("both");
     setImagesOnly(false);
+    setSubmissionQueueSort("newest");
     setCurrentPage(1);
     setSearchParams("", { replace: true });
   };
@@ -388,6 +405,23 @@ const Search = () => {
                     >
                       Close
                     </Button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="catalog-sort">Sort Submission Queue</Label>
+                    <Select
+                      value={submissionQueueSort}
+                      onValueChange={(value) => setSubmissionQueueSort(value as SubmissionQueueSortOption)}
+                      disabled={filtersDisabled}
+                    >
+                      <SelectTrigger id="catalog-sort">
+                        <SelectValue placeholder="Newest first" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="newest">Newest first</SelectItem>
+                        <SelectItem value="oldest">Oldest first</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div className="space-y-2">

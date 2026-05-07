@@ -288,6 +288,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [townFilter, setTownFilter] = useState("");
   const [shapeFilter, setShapeFilter] = useState("all");
   const [colorFilter, setColorFilter] = useState("all");
+  const [mySubmissionsSort, setMySubmissionsSort] = useState<SubmissionQueueSortOption>("newest");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const dateFromInputRef = useRef<HTMLInputElement>(null);
@@ -948,7 +949,18 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     dateTo,
   ]);
 
-  const effectiveTotalCount = filteredSubmissions.length;
+  const filteredAndSortedSubmissions = useMemo(() => {
+    const sorted = [...filteredSubmissions];
+    sorted.sort((a, b) => {
+      if (mySubmissionsSort === "oldest") {
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      }
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+    return sorted;
+  }, [filteredSubmissions, mySubmissionsSort]);
+
+  const effectiveTotalCount = filteredAndSortedSubmissions.length;
 
   const totalPages = Math.max(1, Math.ceil(effectiveTotalCount / itemsPerPage));
 
@@ -962,8 +974,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     pageEnd = 0;
   } else {
     const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = Math.min(startIndex + itemsPerPage, filteredSubmissions.length);
-    paginatedSubmissions = filteredSubmissions.slice(startIndex, endIndex);
+    const endIndex = Math.min(startIndex + itemsPerPage, filteredAndSortedSubmissions.length);
+    paginatedSubmissions = filteredAndSortedSubmissions.slice(startIndex, endIndex);
     pageStart = startIndex + 1;
     pageEnd = endIndex;
   }
@@ -1007,7 +1019,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Reset submissions pagination when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, statusFilter, stateFilter, townFilter, shapeFilter, colorFilter, dateFrom, dateTo]);
+  }, [searchQuery, statusFilter, stateFilter, townFilter, shapeFilter, colorFilter, mySubmissionsSort, dateFrom, dateTo]);
 
   // Suggestions derived state – reuse same filter semantics as submissions
   const filteredSuggestions = useMemo(() => {
@@ -1226,6 +1238,23 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   </div>
 
                   <div className="space-y-2">
+                    <Label htmlFor="my-submissions-sort">Sort Submission Queue</Label>
+                    <Select
+                      value={mySubmissionsSort}
+                      onValueChange={(value) => setMySubmissionsSort(value as SubmissionQueueSortOption)}
+                      disabled={filtersDisabled}
+                    >
+                      <SelectTrigger id="my-submissions-sort" className="bg-background">
+                        <SelectValue placeholder="Newest first" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="newest">Newest first</SelectItem>
+                        <SelectItem value="oldest">Oldest first</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
                     <Label>Search</Label>
                     <div className="relative">
                       <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -1388,6 +1417,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       setTownFilter("");
                       setShapeFilter("all");
                       setColorFilter("all");
+                      setMySubmissionsSort("newest");
                       setDateFrom("");
                       setDateTo("");
                     }}
@@ -1448,7 +1478,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                  <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
                  <p className="text-muted-foreground">Loading submissions...</p>
                </div>
-              ) : filteredSubmissions.length === 0 ? (
+              ) : filteredAndSortedSubmissions.length === 0 ? (
                 <Card className="flex-1 flex items-center justify-center min-h-[200px]">
                   <CardContent className="text-center">
                     <p className="text-muted-foreground">
@@ -1588,7 +1618,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 </div>
               )}
 
-              {totalPages > 1 && !loading && user && filteredSubmissions.length > 0 && (
+              {totalPages > 1 && !loading && user && filteredAndSortedSubmissions.length > 0 && (
                 <div className="mt-8 flex flex-col items-center gap-4">
                   <Pagination>
                     <PaginationContent>
