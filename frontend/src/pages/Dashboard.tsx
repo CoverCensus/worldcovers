@@ -146,6 +146,8 @@ interface PendingReviewItem {
   review_notes: string | null;
 }
 
+type SubmissionQueueSortOption = "newest" | "oldest";
+
 type PaginatedResponse<T> = {
   count: number;
   page: number;
@@ -268,6 +270,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [editorHistoryError, setEditorHistoryError] = useState<string | null>(null);
   const [editorHistoryStatusFilter, setEditorHistoryStatusFilter] = useState("all");
   const [editorStateFilter, setEditorStateFilter] = useState("all");
+  const [editorSearchQuery, setEditorSearchQuery] = useState("");
+  const [editorTownFilter, setEditorTownFilter] = useState("");
+  const [editorShapeFilter, setEditorShapeFilter] = useState("all");
+  const [editorDateFrom, setEditorDateFrom] = useState("");
+  const [editorDateTo, setEditorDateTo] = useState("");
+  const [submissionQueueSort, setSubmissionQueueSort] = useState<SubmissionQueueSortOption>("newest");
   const [editorHistoryPage, setEditorHistoryPage] = useState(1);
   const [editorHistoryTotal, setEditorHistoryTotal] = useState<number | null>(null);
   const [editorHistoryGoToInput, setEditorHistoryGoToInput] = useState("");
@@ -284,6 +292,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [dateTo, setDateTo] = useState("");
   const dateFromInputRef = useRef<HTMLInputElement>(null);
   const dateToInputRef = useRef<HTMLInputElement>(null);
+  const editorDateFromInputRef = useRef<HTMLInputElement>(null);
+  const editorDateToInputRef = useRef<HTMLInputElement>(null);
 
   // Shared filter options (states, types, colors) - only states assigned to user
   const { colorOptions, shapeOptions, stateOptions, isLoading: isLoadingFilters, error: filterError } =
@@ -761,7 +771,18 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   useEffect(() => {
     if (!isEditor || activeTab !== "editor") return;
     setEditorHistoryPage(1);
-  }, [isEditor, activeTab, editorHistoryStatusFilter, editorStateFilter]);
+  }, [
+    isEditor,
+    activeTab,
+    editorHistoryStatusFilter,
+    editorStateFilter,
+    editorSearchQuery,
+    editorTownFilter,
+    editorShapeFilter,
+    editorDateFrom,
+    editorDateTo,
+    submissionQueueSort,
+  ]);
 
   useEffect(() => {
     if (!isEditor || activeTab !== "editor") return;
@@ -1077,6 +1098,58 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       ? 0
       : Math.min((editorHistoryPage - 1) * editorHistoryPageSize + editorHistoryItems.length, editorHistoryTotalCount);
 
+  const filteredAndSortedEditorHistoryItems = useMemo(() => {
+    const filtered = editorHistoryItems.filter((item) => {
+      if (editorSearchQuery.trim()) {
+        const q = editorSearchQuery.trim().toLowerCase();
+        const haystack = [
+          item.display_name,
+          item.town_display,
+          item.state_display,
+          item.shape_display,
+          item.contributor_username,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+
+      if (editorTownFilter.trim()) {
+        const tq = editorTownFilter.trim().toLowerCase();
+        if (!item.town_display || !item.town_display.toLowerCase().includes(tq)) return false;
+      }
+
+      if (editorShapeFilter !== "all") {
+        const shape = String(item.shape_display || "").trim().toLowerCase();
+        if (shape !== editorShapeFilter.toLowerCase()) return false;
+      }
+
+      const createdAt = new Date(item.created_at);
+      if (editorDateFrom && createdAt < new Date(editorDateFrom)) return false;
+      if (editorDateTo && createdAt > new Date(editorDateTo)) return false;
+
+      return true;
+    });
+
+    const sorted = [...filtered];
+    sorted.sort((a, b) => {
+      if (submissionQueueSort === "oldest") {
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      }
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+    return sorted;
+  }, [
+    editorHistoryItems,
+    editorSearchQuery,
+    editorTownFilter,
+    editorShapeFilter,
+    editorDateFrom,
+    editorDateTo,
+    submissionQueueSort,
+  ]);
+
   return (
     <div className="min-h-screen flex flex-col">
       <Navigation />
@@ -1263,7 +1336,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           type="date"
                           value={dateFrom}
                           onChange={(e) => setDateFrom(e.target.value)}
-                          className={`bg-background pr-10 date-input-hide-native-icon ${dateFrom ? "" : "date-input-no-placeholder"}`}
+                          className="bg-background pr-10 date-input-hide-native-icon"
                           disabled={filtersDisabled}
                         />
                         <Button
@@ -1287,7 +1360,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           type="date"
                           value={dateTo}
                           onChange={(e) => setDateTo(e.target.value)}
-                          className={`bg-background pr-10 date-input-hide-native-icon ${dateTo ? "" : "date-input-no-placeholder"}`}
+                          className="bg-background pr-10 date-input-hide-native-icon"
                           disabled={filtersDisabled}
                         />
                         <Button
@@ -1647,6 +1720,39 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     </div>
 
                     <div className="space-y-2">
+                      <Label htmlFor="submission-queue-sort">Sort Submission Queue</Label>
+                      <Select
+                        value={submissionQueueSort}
+                        onValueChange={(value) => setSubmissionQueueSort(value as SubmissionQueueSortOption)}
+                        disabled={editorHistoryLoading}
+                      >
+                        <SelectTrigger id="submission-queue-sort" className="bg-background">
+                          <SelectValue placeholder="Newest first" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="newest">Newest first</SelectItem>
+                          <SelectItem value="oldest">Oldest first</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Search</Label>
+                      <div className="relative">
+                        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          type="search"
+                          placeholder="Name, town, state, shape..."
+                          value={editorSearchQuery}
+                          onChange={(e) => setEditorSearchQuery(e.target.value)}
+                          className="pl-9 bg-background"
+                          aria-label="Search user submissions by name, town, state, shape, or contributor"
+                          disabled={editorHistoryLoading}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
                       <Label htmlFor="editor-history-status">Status</Label>
                       <Select
                         value={editorHistoryStatusFilter}
@@ -1683,6 +1789,103 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         disabled={editorHistoryLoading || pendingReviewLoading || isLoadingFilters}
                       />
                     </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="editor-town-filter">Town</Label>
+                      <Input
+                        id="editor-town-filter"
+                        placeholder="Enter town name..."
+                        value={editorTownFilter}
+                        onChange={(e) => setEditorTownFilter(e.target.value)}
+                        className="bg-background"
+                        disabled={editorHistoryLoading}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="editor-shape-filter">Shape</Label>
+                      <SearchableSelect
+                        id="editor-shape-filter"
+                        value={editorShapeFilter}
+                        onValueChange={setEditorShapeFilter}
+                        placeholder="All Shapes"
+                        allOption={{ value: "all", label: "All Shapes" }}
+                        options={Array.isArray(shapeOptions) ? shapeOptions : []}
+                        loading={isLoadingFilters}
+                        error={!!filterError}
+                        errorMessage="Failed to load types"
+                        searchPlaceholder="Search types..."
+                        emptyMessage="No type found."
+                        aria-label="Filter editor history by shape"
+                        disabled={editorHistoryLoading || isLoadingFilters}
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 gap-4">
+                      <div className="space-y-2">
+                        <Label>Submission Date From</Label>
+                        <div className="relative">
+                          <Input
+                            ref={editorDateFromInputRef}
+                            type="date"
+                            value={editorDateFrom}
+                            onChange={(e) => setEditorDateFrom(e.target.value)}
+                            className="bg-background pr-10 date-input-hide-native-icon"
+                            disabled={editorHistoryLoading}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                            onClick={() => editorDateFromInputRef.current?.showPicker?.()}
+                            disabled={editorHistoryLoading}
+                            aria-label="Open date picker"
+                          >
+                            <Calendar className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Submission Date To</Label>
+                        <div className="relative">
+                          <Input
+                            ref={editorDateToInputRef}
+                            type="date"
+                            value={editorDateTo}
+                            onChange={(e) => setEditorDateTo(e.target.value)}
+                            className="bg-background pr-10 date-input-hide-native-icon"
+                            disabled={editorHistoryLoading}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                            onClick={() => editorDateToInputRef.current?.showPicker?.()}
+                            disabled={editorHistoryLoading}
+                            aria-label="Open date picker"
+                          >
+                            <Calendar className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => {
+                        setSubmissionQueueSort("newest");
+                        setEditorSearchQuery("");
+                        setEditorHistoryStatusFilter("all");
+                        setEditorStateFilter("all");
+                        setEditorTownFilter("");
+                        setEditorShapeFilter("all");
+                        setEditorDateFrom("");
+                        setEditorDateTo("");
+                      }}
+                      disabled={editorHistoryLoading}
+                    >
+                      Clear Filters
+                    </Button>
                   </CardContent>
                 </Card>
               </aside>
@@ -1913,7 +2116,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
                     <p>Loading history...</p>
                   </div>
-                ) : editorHistoryItems.length === 0 ? (
+                ) : filteredAndSortedEditorHistoryItems.length === 0 ? (
                   <Card className="flex-1 flex items-center justify-center min-h-[200px]">
                     <CardContent className="text-center">
                       <p className="text-muted-foreground mb-1">
@@ -1926,7 +2129,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   </Card>
                 ) : (
                   <ul className="space-y-3">
-                    {editorHistoryItems.map((item) => {
+                    {filteredAndSortedEditorHistoryItems.map((item) => {
                       const title = [item.town_display, item.state_display].filter(Boolean).join(", ");
                       const shapeStr = (item.shape_display || "").trim();
                       const fallbackName =
