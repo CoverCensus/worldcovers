@@ -31,20 +31,39 @@ export interface AuthUser {
   assigned_collections?: AssignedCollection[];
 }
 
+/**
+ * Normalize the auth payload coming from the backend before we hand it to the
+ * rest of the SPA. The Django auth view returns role="state_editor" for users
+ * in the Editors group, but every UI gate in the SPA (RecordDetail.tsx,
+ * Navigation.tsx, Dashboard.tsx, ContributionDetail.tsx, ...) checks
+ * `role === "editor"`. We do the rename in one place here so individual
+ * components don't need to know about the legacy string.
+ */
+function normalizeAuthUser<T extends AuthUser | null | undefined>(user: T): T {
+  if (!user || typeof user !== "object") return user;
+  const role = (user as AuthUser).role;
+  if (role === "state_editor") {
+    return { ...(user as AuthUser), role: "editor" } as T;
+  }
+  return user;
+}
+
 export function getStoredUser(): AuthUser | null {
   try {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as AuthUser;
-    return parsed && typeof parsed.id === "number" ? parsed : null;
+    if (!parsed || typeof parsed.id !== "number") return null;
+    return normalizeAuthUser(parsed);
   } catch {
     return null;
   }
 }
 
 export function setStoredUser(user: AuthUser): void {
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
-  window.dispatchEvent(new CustomEvent("auth-change", { detail: user }));
+  const normalized = normalizeAuthUser(user) ?? user;
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(normalized));
+  window.dispatchEvent(new CustomEvent("auth-change", { detail: normalized }));
 }
 
 export function clearStoredUser(): void {
@@ -85,7 +104,7 @@ export async function fetchCurrentUser(): Promise<AuthUser | null> {
       const data = (await res.json()) as { user?: AuthUser };
       const user = data?.user;
       if (!user || typeof user.id !== "number") return null;
-      return user;
+      return normalizeAuthUser(user);
     } finally {
       // Clear inflight no matter what.
       currentUserInFlight = null;

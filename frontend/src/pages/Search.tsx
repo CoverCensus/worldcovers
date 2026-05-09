@@ -11,7 +11,7 @@ import { Pagination, PaginationContent, PaginationItem, PaginationLink, Paginati
 import { Search as SearchIcon, SlidersHorizontal, Loader2, Plus } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import {
   getMarkingsPage,
@@ -28,6 +28,68 @@ import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 400;
 type SubmissionQueueSortOption = "newest" | "oldest";
+type CatalogSortOption =
+  | "newest"
+  | "oldest"
+  | "state_asc"
+  | "state_desc"
+  | "town_asc"
+  | "town_desc"
+  | "type_asc"
+  | "type_desc"
+  | "shape_asc"
+  | "shape_desc"
+  | "lettering_asc"
+  | "lettering_desc"
+  | "color_asc"
+  | "color_desc"
+  | "earliest_asc"
+  | "earliest_desc"
+  | "latest_asc"
+  | "latest_desc";
+
+function orderingParamForSort(sort: CatalogSortOption): string | undefined {
+  switch (sort) {
+    case "state_asc":
+      return "post_office__region__name,post_office__name,id";
+    case "state_desc":
+      return "-post_office__region__name,post_office__name,id";
+    case "town_asc":
+      return "post_office__name,post_office__region__name,id";
+    case "town_desc":
+      return "-post_office__name,post_office__region__name,id";
+    case "type_asc":
+      return "type,post_office__region__name,post_office__name,id";
+    case "type_desc":
+      return "-type,post_office__region__name,post_office__name,id";
+    case "shape_asc":
+      return "shape__name,post_office__region__name,post_office__name,id";
+    case "shape_desc":
+      return "-shape__name,post_office__region__name,post_office__name,id";
+    case "lettering_asc":
+      return "lettering__name,post_office__region__name,post_office__name,id";
+    case "lettering_desc":
+      return "-lettering__name,post_office__region__name,post_office__name,id";
+    case "color_asc":
+      return "color__name,post_office__region__name,post_office__name,id";
+    case "color_desc":
+      return "-color__name,post_office__region__name,post_office__name,id";
+    case "earliest_asc":
+      return "earliest_seen,post_office__region__name,post_office__name,id";
+    case "earliest_desc":
+      return "-earliest_seen,post_office__region__name,post_office__name,id";
+    case "latest_asc":
+      return "latest_seen,post_office__region__name,post_office__name,id";
+    case "latest_desc":
+      return "-latest_seen,post_office__region__name,post_office__name,id";
+    case "oldest":
+      return "id";
+    case "newest":
+      return "-id";
+    default:
+      return undefined;
+  }
+}
 
 function validateYearString(raw: string, minYear: number, maxYear: number): string | null {
   const v = raw.trim();
@@ -132,6 +194,10 @@ const Search = () => {
   const [submissionQueueSort, setSubmissionQueueSort] = useState<SubmissionQueueSortOption>(
     () => (getSearchParam(searchParams, "sort", "newest") === "oldest" ? "oldest" : "newest"),
   );
+  const [catalogSort, setCatalogSort] = useState<CatalogSortOption>(() => {
+    const raw = getSearchParam(searchParams, "order", "newest") as CatalogSortOption;
+    return raw || "newest";
+  });
 
   // Debounced values for text inputs - API called only after user stops typing
   const debouncedKeywordSearch = useDebounce(keywordSearch, DEBOUNCE_MS);
@@ -146,7 +212,12 @@ const Search = () => {
     return Number.isNaN(n) || n < 1 ? 1 : n;
   });
   const [goToPageInput, setGoToPageInput] = useState("");
-  const itemsPerPage = 10;
+  const [itemsPerPage, setItemsPerPage] = useState(() => {
+    const raw = searchParams.get("pageSize") || searchParams.get("page_size") || "";
+    const n = raw ? parseInt(raw, 10) : 10;
+    if (n === 25 || n === 50 || n === 100) return n;
+    return 10;
+  });
 
   const prevKeywordRef = useRef(debouncedKeywordSearch);
   const prevShapeFilterRef = useRef(shapeFilter);
@@ -159,6 +230,7 @@ const Search = () => {
   const prevManuscriptFilterRef = useRef(manuscriptFilter);
   const prevTypeFilterRef = useRef(typeFilter);
   const prevSortRef = useRef(submissionQueueSort);
+  const prevCatalogSortRef = useRef(catalogSort);
 
   const beginYearError = useMemo(
     () => validateYearString(beginYear, minYear, maxYear),
@@ -201,6 +273,7 @@ const Search = () => {
     const manuscriptFilterJustChanged = prevManuscriptFilterRef.current !== manuscriptFilter;
     const typeFilterJustChanged = prevTypeFilterRef.current !== typeFilter;
     const sortJustChanged = prevSortRef.current !== submissionQueueSort;
+    const catalogSortJustChanged = prevCatalogSortRef.current !== catalogSort;
     if (searchJustChanged) prevKeywordRef.current = debouncedKeywordSearch;
     if (shapeFilterJustChanged) prevShapeFilterRef.current = shapeFilter;
     if (colorFilterJustChanged) prevColorFilterRef.current = colorFilter;
@@ -212,6 +285,7 @@ const Search = () => {
     if (manuscriptFilterJustChanged) prevManuscriptFilterRef.current = manuscriptFilter;
     if (typeFilterJustChanged) prevTypeFilterRef.current = typeFilter;
     if (sortJustChanged) prevSortRef.current = submissionQueueSort;
+    if (catalogSortJustChanged) prevCatalogSortRef.current = catalogSort;
 
     const anyFilterChanged =
       searchJustChanged ||
@@ -224,11 +298,12 @@ const Search = () => {
       imagesOnlyJustChanged ||
       manuscriptFilterJustChanged ||
       typeFilterJustChanged ||
-      sortJustChanged;
+      sortJustChanged ||
+      catalogSortJustChanged;
     if (anyFilterChanged) {
       setCurrentPage(1);
     }
-  }, [debouncedKeywordSearch, shapeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, manuscriptFilter, typeFilter, submissionQueueSort]);
+  }, [debouncedKeywordSearch, shapeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, manuscriptFilter, typeFilter, submissionQueueSort, catalogSort]);
 
   // Treat years as active filters only when they are valid and 4 digits.
   const normalizedBeginYear = useMemo(() => {
@@ -275,6 +350,7 @@ const Search = () => {
       manuscriptFilter,
       typeFilterApi,
       itemsPerPage,
+      catalogSort,
     ],
     queryFn: async () => {
       const normalizedFrom =
@@ -296,11 +372,20 @@ const Search = () => {
           beginYear: normalizedFrom,
           endYear: normalizedTo,
           hasImages: imagesOnly,
+          ordering: orderingParamForSort(catalogSort),
         }
       );
       return { records: results, count, count_capped };
     },
-    staleTime: 5 * 60 * 1000,
+    // Always refetch when the user navigates to a different page (or changes
+    // any other filter / sort). Without this, going back to a previously
+    // visited page returned the cached result and skipped the API call,
+    // which made it look like pagination "stopped working" when navigating
+    // to lower page numbers.
+    staleTime: 0,
+    // Keep the previous page's records on screen during the refetch instead
+    // of flashing the empty/loading state when paginating.
+    placeholderData: keepPreviousData,
   });
 
   const catalogRecords: MarkingRecord[] = queryData?.records ?? [];
@@ -336,25 +421,24 @@ const Search = () => {
     if (manuscriptFilter !== "both") params.set("manuscripts", manuscriptFilter);
     if (imagesOnly) params.set("images", "true");
     if (submissionQueueSort !== "newest") params.set("sort", submissionQueueSort);
+    if (catalogSort !== "newest") params.set("order", catalogSort);
+    if (itemsPerPage !== 10) params.set("pageSize", String(itemsPerPage));
     if (currentPage > 1) params.set("page", String(currentPage));
     const next = params.toString();
     const current = searchParams.toString();
     if (next !== current) {
       setSearchParams(next ? params : {}, { replace: true });
     }
-  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, shapeFilter, typeFilter, colorFilter, manuscriptFilter, imagesOnly, submissionQueueSort, searchParams, setSearchParams]);
+  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, shapeFilter, typeFilter, colorFilter, manuscriptFilter, imagesOnly, submissionQueueSort, catalogSort, itemsPerPage, searchParams, setSearchParams]);
 
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
   const pageStart = (currentPage - 1) * itemsPerPage;
   const pageEnd = Math.min(currentPage * itemsPerPage, totalCount);
-  const paginatedResults = useMemo(() => {
-    const sorted = [...catalogRecords];
-    sorted.sort((a, b) => {
-      if (submissionQueueSort === "oldest") return a.id - b.id;
-      return b.id - a.id;
-    });
-    return sorted;
-  }, [catalogRecords, submissionQueueSort]);
+  // Render exactly what the server returned. Sorting is fully server-side via
+  // the `?ordering=` param built in orderingParamForSort(catalogSort); a prior
+  // client-side re-sort by id was silently overriding the user's chosen
+  // "Sort Results" column.
+  const paginatedResults = catalogRecords;
 
   // Clear all filters and URL params
   const handleClearAllFilters = () => {
@@ -370,7 +454,9 @@ const Search = () => {
     setManuscriptFilter("both");
     setImagesOnly(false);
     setSubmissionQueueSort("newest");
+    setCatalogSort("newest");
     setCurrentPage(1);
+    setItemsPerPage(10);
     setSearchParams("", { replace: true });
   };
 
@@ -420,6 +506,39 @@ const Search = () => {
                       <SelectContent>
                         <SelectItem value="newest">Newest first</SelectItem>
                         <SelectItem value="oldest">Oldest first</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="catalog-order">Sort Results</Label>
+                    <Select
+                      value={catalogSort}
+                      onValueChange={(v) => setCatalogSort(v as CatalogSortOption)}
+                      disabled={filtersDisabled}
+                    >
+                      <SelectTrigger id="catalog-order">
+                        <SelectValue placeholder="Newest first" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="newest">Newest first (default)</SelectItem>
+                        <SelectItem value="oldest">Oldest first</SelectItem>
+                        <SelectItem value="state_asc">State (A→Z)</SelectItem>
+                        <SelectItem value="state_desc">State (Z→A)</SelectItem>
+                        <SelectItem value="town_asc">Town (A→Z)</SelectItem>
+                        <SelectItem value="town_desc">Town (Z→A)</SelectItem>
+                        <SelectItem value="type_asc">Type (A→Z)</SelectItem>
+                        <SelectItem value="type_desc">Type (Z→A)</SelectItem>
+                        <SelectItem value="shape_asc">Shape (A→Z)</SelectItem>
+                        <SelectItem value="shape_desc">Shape (Z→A)</SelectItem>
+                        <SelectItem value="lettering_asc">Lettering (A→Z)</SelectItem>
+                        <SelectItem value="lettering_desc">Lettering (Z→A)</SelectItem>
+                        <SelectItem value="color_asc">Color (A→Z)</SelectItem>
+                        <SelectItem value="color_desc">Color (Z→A)</SelectItem>
+                        <SelectItem value="earliest_asc">Earliest seen (old→new)</SelectItem>
+                        <SelectItem value="earliest_desc">Earliest seen (new→old)</SelectItem>
+                        <SelectItem value="latest_asc">Latest seen (old→new)</SelectItem>
+                        <SelectItem value="latest_desc">Latest seen (new→old)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -645,6 +764,26 @@ const Search = () => {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Select
+                    value={String(itemsPerPage)}
+                    onValueChange={(v) => {
+                      const n = parseInt(v, 10);
+                      if (n === 10 || n === 25 || n === 50 || n === 100) {
+                        setItemsPerPage(n);
+                      }
+                    }}
+                    disabled={filtersDisabled}
+                  >
+                    <SelectTrigger className="h-9 w-[120px]" aria-label="Records per page">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10 / page</SelectItem>
+                      <SelectItem value="25">25 / page</SelectItem>
+                      <SelectItem value="50">50 / page</SelectItem>
+                      <SelectItem value="100">100 / page</SelectItem>
+                    </SelectContent>
+                  </Select>
                   {refreshing && (
                     <div className="flex items-center gap-1 text-xs text-muted-foreground">
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
@@ -698,7 +837,7 @@ const Search = () => {
                                   {row.title}
                                 </h3>
                               </div>
-                              <CatalogRecordFields row={row} />
+                              <CatalogRecordFields row={row} record={record} variant="search" />
                             </div>
                           </div>
                         </CardContent>

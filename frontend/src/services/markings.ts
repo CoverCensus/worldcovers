@@ -87,6 +87,12 @@ export interface MarkingChangelogEvent {
   action: string;
   action_label: string;
   actor: string | null;
+  /**
+   * Email address of the user who performed the event. Surfaced separately
+   * from `actor` so the Record History panel can guarantee an email-based
+   * audit trail even when the username happens to differ.
+   */
+  actor_email: string | null;
   source: string;
   contribution_id: number | null;
   version_no: number | null;
@@ -284,6 +290,7 @@ export async function getMarkingsPage(
     endYear?: string;
     hasImages?: boolean;
     deferCount?: boolean;
+    ordering?: string;
   }
 ): Promise<GetMarkingsPageResult> {
   const params: Record<string, string> = { page: String(page), page_size: String(pageSize) };
@@ -302,6 +309,7 @@ export async function getMarkingsPage(
   if (opt.endYear?.trim()) params.latest_use_year_max = opt.endYear.trim();
   if (opt.hasImages === true) params.has_images = "true";
   if (opt.deferCount === true) params.include_count = "false";
+  if (opt.ordering?.trim()) params.ordering = opt.ordering.trim();
 
   const res = await apiClient.get<MarkingApiResponse>("/markings/", { params });
   const data = res.data;
@@ -369,6 +377,54 @@ export async function getMarkingByIdRaw(markingId: number): Promise<Record<strin
   } catch {
     return null;
   }
+}
+
+/**
+ * PATCH /api/v2/images/{image_id}/ — update display_order on a single image.
+ * Returns the updated MarkingImage on success, or null on failure.
+ *
+ * Used by the editor reorder controls on the Record Detail page. The
+ * server's ImageViewSet is a plain ModelViewSet so PATCHing display_order
+ * is the canonical lever for "which image is the Catalog Search thumbnail"
+ * (display_order=0) and "what order do thumbnails appear in the Associated
+ * Thumbnails strip".
+ */
+export async function updateImageDisplayOrder(
+  imageId: number,
+  displayOrder: number,
+): Promise<MarkingImage | null> {
+  try {
+    const res = await apiClient.patch(
+      `/images/${imageId}/`,
+      { display_order: displayOrder },
+      {
+        withCredentials: true,
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+      },
+    );
+    return mapImage(res.data);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reassign display_order across an ordered list of image IDs in one round
+ * of parallel PATCHes (index 0 -> display_order=0, index 1 -> 1, etc.).
+ * Returns true when every PATCH succeeded so callers know whether to
+ * refetch the marking or surface an error to the user.
+ */
+export async function reorderImages(
+  imageIdsInOrder: number[],
+): Promise<boolean> {
+  if (imageIdsInOrder.length === 0) return true;
+  const results = await Promise.all(
+    imageIdsInOrder.map((id, idx) => updateImageDisplayOrder(id, idx)),
+  );
+  return results.every((row) => row !== null);
 }
 
 export async function getMarkingChangelog(markingId: number): Promise<MarkingChangelogResponse | null> {
