@@ -437,11 +437,22 @@ class MarkingViewSet(viewsets.ModelViewSet):
         "color__name",
     ]
     ordering_fields = [
+        # Location / identity
         "post_office__region__name",
+        "post_office__region__abbrev",
         "post_office__name",
+        "code",
         "type",
+        # Physical/editorial fields
+        "shape__name",
+        "lettering__name",
+        "color__name",
+        "width",
+        "height",
+        # Date range annotations
         "earliest_seen",
         "latest_seen",
+        # Stable fallback
         "id",
     ]
     ordering = ["post_office__region__name", "post_office__name", "id"]
@@ -584,8 +595,14 @@ class MarkingViewSet(viewsets.ModelViewSet):
         events = []
         for txn in txns:
             actor_name = None
+            actor_email = None
             if txn.actor:
-                actor_name = txn.actor.get_username() or getattr(txn.actor, "email", "") or str(txn.actor.pk)
+                actor_email = (getattr(txn.actor, "email", "") or "").strip() or None
+                actor_name = (
+                    txn.actor.get_username()
+                    or actor_email
+                    or str(txn.actor.pk)
+                )
             events.append(
                 {
                     "event_id": txn.id,
@@ -594,11 +611,16 @@ class MarkingViewSet(viewsets.ModelViewSet):
                     "action": txn.action,
                     "action_label": action_labels.get(txn.action, txn.action.replace("_", " ").title()),
                     "actor": actor_name,
+                    # actor_email is what the editor-facing Record History panel
+                    # displays per row. We expose it explicitly (in addition to
+                    # the username-fallback "actor" string) because the audit
+                    # trail is contractually email-based on the UI side.
+                    "actor_email": actor_email,
                     "source": txn.source,
                     "contribution_id": txn.contribution_id,
                     "version_no": version_no_by_txn_id.get(txn.id),
                     "diff": txn.diff_payload or [],
-                    "summary": f"{action_labels.get(txn.action, txn.action)} by {actor_name or 'system'}",
+                    "summary": f"{action_labels.get(txn.action, txn.action)} by {actor_email or actor_name or 'system'}",
                 }
             )
 
@@ -848,6 +870,53 @@ class ContributionViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet
         if self.action == "list":
             return ContributionListSerializer
         return ContributionDetailSerializer
+
+    @action(detail=True, methods=["patch"], url_path="editor-edit")
+    def editor_edit(self, request, pk=None):
+        """
+        Editor-side merge of submitted_data prior to approve.
+
+        Frontend (ContributionDetail.tsx -> persistEditorEdits) PATCHes a JSON
+        object whose keys mirror the contribute payload (state, town, type,
+        width_mm, height_mm, lettering_style_id, ...). The values are merged
+        into `Contribution.submitted_data`; explicit `null` clears a field,
+        omitted keys leave existing values untouched. Approve later reads from
+        the merged submitted_data when applying to the catalog.
+        """
+        contrib = self.get_object()
+        if contrib.status != Contribution.STATUS_PENDING:
+            return Response(
+                {"detail": f"Contribution is not pending (status: {contrib.status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        payload = request.data
+        if not isinstance(payload, dict):
+            return Response(
+                {"detail": "Request body must be a JSON object of submission fields."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        before_submission = dict(contrib.submitted_data or {})
+        merged = dict(before_submission)
+        for key, value in payload.items():
+            merged[key] = value
+
+        with transaction.atomic():
+            contrib.submitted_data = merged
+            contrib.save(update_fields=["submitted_data", "updated_at"])
+            log_submission_transaction(
+                action=SubmissionTransaction.ACTION_EDITOR_EDIT,
+                actor=request.user,
+                contribution=contrib,
+                marking=contrib.marking,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload=before_submission,
+                after_payload=merged,
+                extra_payload={"changed_keys": sorted(payload.keys())},
+            )
+
+        serializer = ContributionDetailSerializer(contrib, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="approve")
     def approve(self, request, pk=None):

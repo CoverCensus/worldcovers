@@ -14,7 +14,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Upload, CheckCircle, XCircle, Clock, Loader2, ChevronDown } from "lucide-react";
+import { Upload, CheckCircle, XCircle, Clock, Loader2, ChevronDown, ArrowUp, ArrowDown, Star } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import type { FormEvent, MouseEvent } from "react";
 import { useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
@@ -182,7 +182,33 @@ type ReferenceDetailFieldErrors = {
   citationUrl?: string;
 };
 
-type UploadedImageTag = "mark" | "cover" | "tracing";
+/**
+ * Per-image tag persisted on Contribution.submitted_data. Marking-image
+ * uploads can only ever be one of two things from the contributor's POV:
+ *
+ *   - "photograph" (default) — a normal photo of the marking on a cover
+ *   - "tracing"              — a hand-traced or computer-traced diagram
+ *
+ * We retain the string form (rather than a bare boolean) for forward-compat
+ * with any cover-image plumbing that may grow back later, and so the editor
+ * portal can read the same key it always has (image_tag) and recognize a
+ * "tracing" image without a schema migration.
+ */
+type UploadedImageTag = "photograph" | "tracing";
+
+/**
+ * Translate a stored image-tag string (any of the legacy values: "mark",
+ * "cover", "tracing", or the new "photograph") into the new two-value form.
+ * Anything that isn't explicitly "tracing" is treated as a photograph so the
+ * Tracing checkbox correctly defaults to unchecked for older entries.
+ */
+function tagToTracing(tag: string | null | undefined): boolean {
+  return String(tag ?? "").trim().toLowerCase() === "tracing";
+}
+
+function tracingToTag(tracing: boolean): UploadedImageTag {
+  return tracing ? "tracing" : "photograph";
+}
 
 function parseReferenceWorkIds(raw: unknown): number[] {
   const values: unknown[] = [];
@@ -342,7 +368,13 @@ const Contribute = () => {
   // Existing images on the loaded Marking (edit-marking mode). Each entry is
   // an editable thumbnail: the user can change its tag or remove it. Removed
   // urls move into removedExistingImageKeys so the apply step can drop them.
-  const [existingImages, setExistingImages] = useState<Array<{ url: string; tag: UploadedImageTag | "" }>>([]);
+  // Existing images on the loaded Marking (edit-marking mode). Each entry is
+  // an editable thumbnail: the user can flip its Tracing flag or remove it.
+  // Reordering existing images on this form is intentionally not supported —
+  // the editor reorders the master gallery directly from the Catalog Detail
+  // screen so the change goes through one place (PATCH /api/v2/images/{id}/),
+  // not via a contribution round-trip.
+  const [existingImages, setExistingImages] = useState<Array<{ url: string; tracing: boolean }>>([]);
   const [removedExistingImageKeys, setRemovedExistingImageKeys] = useState<string[]>([]);
   const [shape, setShape] = useState("");
   const [color, setColor] = useState("");
@@ -442,6 +474,41 @@ const Contribute = () => {
       })
       .finally(() => setLoadingShapes(false));
   }, []);
+
+  /**
+   * Default Shape rule: when Ratemark or Auxmark is selected and Manuscript
+   * is False (non-handstamped), the catalog convention is that the marking is
+   * a straight-line strike unless the contributor specifies otherwise. We
+   * therefore prefill Shape with the SL ("Straight Line") option whenever:
+   *
+   *   - the type is RATEMARK or AUXMARK,
+   *   - manuscript is "No",
+   *   - the user hasn't already chosen a shape (we never override an explicit
+   *     selection),
+   *   - the shape options have finished loading (otherwise the SL row isn't
+   *     in the dropdown yet and the prefill silently no-ops).
+   *
+   * Townmark intentionally does NOT trigger this default — Townmarks have a
+   * far wider variety of shapes and forcing SL would be misleading.
+   */
+  useEffect(() => {
+    if (loadingShapes || shapeOptions.length === 0) return;
+    if (manuscript === "Yes") return;
+    if (shape.trim()) return;
+    const t = normalizeMarkingTypeValue(markingType);
+    if (t !== "RATEMARK" && t !== "AUXMARK") return;
+    const slOption =
+      shapeOptions.find(
+        (opt) => String(opt.name).trim().toUpperCase() === "SL",
+      ) ??
+      shapeOptions.find((opt) =>
+        String(opt.name).trim().toUpperCase().startsWith("SL"),
+      ) ??
+      shapeOptions.find((opt) =>
+        String(opt.name).trim().toLowerCase().includes("straight line"),
+      );
+    if (slOption) setShape(slOption.name);
+  }, [markingType, manuscript, shape, shapeOptions, loadingShapes]);
 
   useEffect(() => {
     setCatalogOptionsLoading(true);
@@ -629,16 +696,33 @@ const Contribute = () => {
           return;
         }
 
-        const existingUrls = Array.isArray(data.images)
+        const existingRows = Array.isArray(data.images)
           ? (data.images as unknown[])
               .map((img) => {
                 const o = img as Record<string, unknown>;
-                const url = typeof o.image_url === "string" ? o.image_url : null;
-                return normalizeImageUrl(url);
+                const url = normalizeImageUrl(
+                  typeof o.image_url === "string" ? o.image_url : null,
+                );
+                if (!url) return null;
+                // The Image schema doesn't have an explicit is_tracing
+                // column (see common/models.py Image). For a stored marking
+                // image, we treat image_view === "COMPARISON" as the
+                // canonical tracing/diagram view (FULL/DETAIL are the
+                // photographic options) and mirror the same fallbacks the
+                // RecordDetail gallery uses so older uploads tagged via
+                // image_description / filename still surface as tracings.
+                const view = String(o.image_view ?? "").trim().toUpperCase();
+                const desc = String(o.image_description ?? "").toLowerCase();
+                const fname = String(o.original_filename ?? "").toLowerCase();
+                const tracing =
+                  view === "COMPARISON" ||
+                  desc.includes("tracing") ||
+                  fname.includes("tracing");
+                return { url, tracing };
               })
-              .filter((u: string | null): u is string => !!u)
+              .filter((row): row is { url: string; tracing: boolean } => row !== null)
           : [];
-        setExistingImages(existingUrls.map((url) => ({ url, tag: "" as UploadedImageTag | "" })));
+        setExistingImages(existingRows);
         setRemovedExistingImageKeys([]);
 
         const typeRaw = String(data.type ?? "").trim().toUpperCase();
@@ -796,7 +880,9 @@ const Contribute = () => {
       setFieldErrors((prev) => ({ ...prev, images: undefined }));
     }
     setMarkingImageFiles((prev) => [...prev, ...toAdd]);
-    setMarkingImageTags((prev) => [...prev, ...toAdd.map(() => "")]);
+    // Each newly-uploaded image starts as a "photograph"; the contributor
+    // flips the per-image Tracing checkbox to mark it as a tracing diagram.
+    setMarkingImageTags((prev) => [...prev, ...toAdd.map(() => tracingToTag(false))]);
     Promise.all(
       toAdd.map(
         (file) =>
@@ -823,13 +909,6 @@ const Contribute = () => {
     setMarkingImagePreviews((prev) => prev.filter((_, i) => i !== index));
     setMarkingImageTags((prev) => prev.filter((_, i) => i !== index));
     if (markingFileInputRef.current) markingFileInputRef.current.value = "";
-  };
-
-  const setMarkingImageTagAt = (index: number, value: UploadedImageTag) => {
-    setMarkingImageTags((prev) => prev.map((t, i) => (i === index ? value : t)));
-    if (fieldErrors.imageTags) {
-      setFieldErrors((prev) => ({ ...prev, imageTags: undefined }));
-    }
   };
 
   const buildName = () => {
@@ -1002,17 +1081,11 @@ const Contribute = () => {
     }
 
     const allImageFiles = markingImageFiles;
-    const allImageTags = markingImageTags;
-    if (!saveAsDraft && allImageFiles.length > 0 && allImageTags.some((tag) => !String(tag).trim())) {
-      setFieldErrors((prev) => ({ ...prev, imageTags: "Select a tag for each uploaded image." }));
-      toast({
-        title: "Image tag required",
-        description: "Tag every uploaded image as mark, cover, or tracing.",
-        variant: "destructive",
-      });
-      return;
-    }
-      const oversized = allImageFiles.filter((f) => f.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
+    // The Tracing checkbox replaces the old mark/cover/tracing dropdown, so
+    // every entry in markingImageTags now defaults to "photograph"; there is
+    // no longer a "must select a tag" validation gate. Photographs upload
+    // exactly the way they used to — only Tracings need an explicit toggle.
+    const oversized = allImageFiles.filter((f) => f.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
     if (oversized.length) {
       toast({
         title: "Image too large",
@@ -1098,9 +1171,14 @@ const Contribute = () => {
           if (removedExistingImageKeys.length > 0) {
             form.append("removed_existing_image_keys", JSON.stringify(removedExistingImageKeys));
           }
-          const existingTagMap: Record<string, string> = {};
+          // existing_image_tags is a {url: "tracing"|"photograph"} map. We
+          // emit it for every image (not just tracings) so an editor who
+          // *unchecks* Tracing on a previously-tagged row can still flip
+          // the value back to photograph; an empty/missing entry would be
+          // ambiguous.
+          const existingTagMap: Record<string, UploadedImageTag> = {};
           for (const img of existingImages) {
-            if (img.tag) existingTagMap[img.url] = img.tag;
+            existingTagMap[img.url] = tracingToTag(img.tracing);
           }
           if (Object.keys(existingTagMap).length > 0) {
             form.append("existing_image_tags", JSON.stringify(existingTagMap));
@@ -1110,9 +1188,9 @@ const Contribute = () => {
         // Do not set Content-Type so browser sets multipart/form-data with boundary
       } else {
         const trimmedComment = contributorComment.trim();
-        const existingTagMap: Record<string, string> = {};
+        const existingTagMap: Record<string, UploadedImageTag> = {};
         for (const img of existingImages) {
-          if (img.tag) existingTagMap[img.url] = img.tag;
+          existingTagMap[img.url] = tracingToTag(img.tracing);
         }
         body = JSON.stringify({
           ...(isEditContribution && editContributionId != null
@@ -1278,8 +1356,79 @@ const Contribute = () => {
     }
   };
 
-  const setExistingImageTagAt = (index: number, value: UploadedImageTag | "") => {
-    setExistingImages((prev) => prev.map((img, i) => (i === index ? { ...img, tag: value } : img)));
+  const setExistingImageTracingAt = (index: number, tracing: boolean) => {
+    setExistingImages((prev) =>
+      prev.map((img, i) => (i === index ? { ...img, tracing } : img)),
+    );
+  };
+
+  /** Toggle Tracing on a newly-uploaded marking image. */
+  const setMarkingImageTracingAt = (index: number, tracing: boolean) => {
+    setMarkingImageTags((prev) =>
+      prev.map((t, i) => (i === index ? tracingToTag(tracing) : t)),
+    );
+    if (fieldErrors.imageTags) {
+      setFieldErrors((prev) => ({ ...prev, imageTags: undefined }));
+    }
+  };
+
+  /**
+   * Move a newly-uploaded marking image up (offset=-1) or down (offset=+1).
+   * Reordering files in the markingImageFiles array is what determines their
+   * eventual display_order on the master listing — index 0 becomes the
+   * Catalog Search thumbnail, index 1 the second slot, and so on.
+   */
+  const moveMarkingImageBy = (index: number, offset: -1 | 1) => {
+    const target = index + offset;
+    if (target < 0) return;
+    setMarkingImageFiles((prev) => {
+      if (target >= prev.length) return prev;
+      const next = prev.slice();
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+    setMarkingImagePreviews((prev) => {
+      if (target >= prev.length) return prev;
+      const next = prev.slice();
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+    setMarkingImageTags((prev) => {
+      if (target >= prev.length) return prev;
+      const next = prev.slice();
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  /**
+   * Promote a newly-uploaded image to the front of the list (display_order=0).
+   * This is the lever that controls "which image is the Catalog Search
+   * thumbnail" at submission time — anything else is just secondary order.
+   */
+  const setMarkingImageDefault = (index: number) => {
+    if (index <= 0) return;
+    setMarkingImageFiles((prev) => {
+      if (index >= prev.length) return prev;
+      const next = prev.slice();
+      const [picked] = next.splice(index, 1);
+      next.unshift(picked);
+      return next;
+    });
+    setMarkingImagePreviews((prev) => {
+      if (index >= prev.length) return prev;
+      const next = prev.slice();
+      const [picked] = next.splice(index, 1);
+      next.unshift(picked);
+      return next;
+    });
+    setMarkingImageTags((prev) => {
+      if (index >= prev.length) return prev;
+      const next = prev.slice();
+      const [picked] = next.splice(index, 1);
+      next.unshift(picked);
+      return next;
+    });
   };
 
   const renderImageUploader = (label: string, helperText: string, required = false) => {
@@ -1320,74 +1469,206 @@ const Contribute = () => {
         >
           {hasAnyImage ? (
             <div className="space-y-4">
+              {/*
+                Image cards. The combined display order is:
+                  1. Existing images (kept in their current display_order — the
+                     editor reorders the master gallery directly on the
+                     Catalog Detail screen, not via a contribution roundtrip).
+                  2. Newly-uploaded images, in the order the contributor
+                     arranged with the Up / Down / Star controls.
+
+                When BOTH lists are empty, the dropzone helper text shows
+                instead. When only NEW images exist, the first new image
+                becomes the catalog Default (display_order=0, surfaced as
+                the Catalog Search thumbnail and the leading slide on the
+                Record Detail gallery).
+              */}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {existingImages.map((img, i) => (
-                  <div key={`existing-${img.url}-${i}`} className="relative rounded border bg-muted/30 overflow-hidden">
-                    <img src={img.url} alt={`Current image ${i + 1}`} className="w-full aspect-square object-contain max-h-32" />
-                    <p className="text-xs text-muted-foreground truncate px-2 py-1">Current image</p>
-                    <div className="px-2 pb-2">
-                      <Select
-                        value={img.tag || ""}
-                        onValueChange={(value) => setExistingImageTagAt(i, value as UploadedImageTag)}
-                      >
-                        <SelectTrigger className="h-8 text-xs">
-                          <SelectValue placeholder="Tag: mark/cover/tracing" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="mark">mark</SelectItem>
-                          <SelectItem value="cover">cover</SelectItem>
-                          <SelectItem value="tracing">tracing</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      size="sm"
-                      className="absolute top-1 right-1 h-7 w-7 p-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeExistingImageAt(i);
-                      }}
+                {existingImages.map((img, i) => {
+                  const isCatalogDefault = i === 0 && existingImages.length > 0;
+                  return (
+                    <div
+                      key={`existing-${img.url}-${i}`}
+                      className="relative rounded border bg-muted/30 overflow-hidden"
                     >
-                      x
-                    </Button>
-                  </div>
-                ))}
-                {previews.map((preview, i) => (
-                  <div key={`new-${i}`} className="relative rounded border bg-muted/30 overflow-hidden">
-                    <img src={preview} alt={`${label} preview ${i + 1}`} className="w-full aspect-square object-contain max-h-32" />
-                    <p className="text-xs text-muted-foreground truncate px-2 py-1">{files[i]?.name || "New image"}</p>
-                    <div className="px-2 pb-2">
-                      <Select
-                        value={tags[i] ?? ""}
-                        onValueChange={(value) => setMarkingImageTagAt(i, value as UploadedImageTag)}
+                      <img
+                        src={img.url}
+                        alt={`Current image ${i + 1}`}
+                        className="w-full aspect-square object-contain max-h-32"
+                      />
+                      <div className="flex items-center justify-between gap-2 px-2 py-1">
+                        <span className="text-xs text-muted-foreground truncate">
+                          Current image
+                        </span>
+                        {isCatalogDefault && (
+                          <span className="text-[10px] uppercase font-semibold text-primary whitespace-nowrap">
+                            Default
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 px-2 pb-2">
+                        <input
+                          id={`existing-tracing-${i}`}
+                          type="checkbox"
+                          className="h-4 w-4 accent-primary cursor-pointer"
+                          checked={img.tracing}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) =>
+                            setExistingImageTracingAt(i, e.target.checked)
+                          }
+                        />
+                        <Label
+                          htmlFor={`existing-tracing-${i}`}
+                          className="text-xs cursor-pointer"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          Tracing
+                        </Label>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        className="absolute top-1 right-1 h-7 w-7 p-0"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeExistingImageAt(i);
+                        }}
                       >
-                        <SelectTrigger className="h-8 text-xs">
-                          <SelectValue placeholder="Tag: mark/cover/tracing" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="mark">mark</SelectItem>
-                          <SelectItem value="cover">cover</SelectItem>
-                          <SelectItem value="tracing">tracing</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        x
+                      </Button>
                     </div>
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      size="sm"
-                      className="absolute top-1 right-1 h-7 w-7 p-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeImageAt(i);
-                      }}
+                  );
+                })}
+                {previews.map((preview, i) => {
+                  const isCatalogDefault =
+                    existingImages.length === 0 && i === 0;
+                  const tracing = tagToTracing(tags[i]);
+                  return (
+                    <div
+                      key={`new-${i}`}
+                      className="relative rounded border bg-muted/30 overflow-hidden"
                     >
-                      x
-                    </Button>
-                  </div>
-                ))}
+                      <img
+                        src={preview}
+                        alt={`${label} preview ${i + 1}`}
+                        className="w-full aspect-square object-contain max-h-32"
+                      />
+                      <div className="flex items-center justify-between gap-2 px-2 py-1">
+                        <span className="text-xs text-muted-foreground truncate">
+                          {files[i]?.name || "New image"}
+                        </span>
+                        {isCatalogDefault && (
+                          <span className="text-[10px] uppercase font-semibold text-primary whitespace-nowrap">
+                            Default
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 px-2 pb-2">
+                        <input
+                          id={`new-tracing-${i}`}
+                          type="checkbox"
+                          className="h-4 w-4 accent-primary cursor-pointer"
+                          checked={tracing}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) =>
+                            setMarkingImageTracingAt(i, e.target.checked)
+                          }
+                        />
+                        <Label
+                          htmlFor={`new-tracing-${i}`}
+                          className="text-xs cursor-pointer"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          Tracing
+                        </Label>
+                      </div>
+                      {/*
+                        Reorder + Set-as-default controls. We only expose
+                        these on newly-uploaded images: the order of the
+                        markingImageFiles array IS the display_order at
+                        contribution-apply time, so this is the
+                        contributor's lever for "which image becomes the
+                        Catalog Search thumbnail". Existing images get
+                        reordered by editors on the Record Detail screen
+                        instead (single-source-of-truth via
+                        PATCH /api/v2/images/{id}/).
+                      */}
+                      <div className="flex items-center justify-between gap-1 px-2 pb-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          aria-label="Move image up"
+                          disabled={i === 0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveMarkingImageBy(i, -1);
+                          }}
+                        >
+                          <ArrowUp className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          aria-label="Move image down"
+                          disabled={i === previews.length - 1}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveMarkingImageBy(i, 1);
+                          }}
+                        >
+                          <ArrowDown className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={isCatalogDefault ? "secondary" : "ghost"}
+                          size="icon"
+                          className="h-7 w-7"
+                          aria-label="Set as default catalog thumbnail"
+                          title={
+                            isCatalogDefault
+                              ? "Default catalog thumbnail"
+                              : "Set as default catalog thumbnail"
+                          }
+                          disabled={
+                            existingImages.length > 0 || i === 0
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMarkingImageDefault(i);
+                          }}
+                        >
+                          <Star
+                            className={`h-3.5 w-3.5 ${isCatalogDefault ? "fill-current" : ""}`}
+                          />
+                        </Button>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        className="absolute top-1 right-1 h-7 w-7 p-0"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeImageAt(i);
+                        }}
+                      >
+                        x
+                      </Button>
+                    </div>
+                  );
+                })}
               </div>
+              <p className="text-xs text-muted-foreground">
+                The first image in this list becomes the Catalog Search
+                thumbnail. Use the up / down arrows or the star button to
+                change the order; check Tracing on hand-traced or computer-traced
+                diagrams (everything else is treated as a photograph).
+              </p>
               <Button
                 type="button"
                 variant="outline"

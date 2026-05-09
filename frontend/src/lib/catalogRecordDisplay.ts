@@ -51,20 +51,6 @@ export function yearFromCatalogDate(value: string | null | undefined): string {
   return m ? m[1] : s;
 }
 
-function dimensionsField(record: MarkingRecord): string {
-  if (record.sizeDisplay && record.sizeDisplay.trim()) {
-    return record.sizeDisplay.trim().includes("mm")
-      ? record.sizeDisplay.trim()
-      : `${record.sizeDisplay.trim()} mm`;
-  }
-  const w = record.width?.trim() ?? "";
-  const h = record.height?.trim() ?? "";
-  if (w && h) return `${w}x${h} mm`;
-  if (w) return `${w} mm`;
-  if (h) return `${h} mm`;
-  return "";
-}
-
 /** Values for the fixed catalog field block (search cards + record detail). */
 export type CatalogFieldValues = {
   type: string;
@@ -72,6 +58,7 @@ export type CatalogFieldValues = {
   state: string;
   regionAbbrev: string;
   manuscript: string;
+  desc: string;
   postmarkTextLines: string[];
   postmarkTextSingle: string;
   shape: string;
@@ -81,6 +68,36 @@ export type CatalogFieldValues = {
   earliestSeen: string;
   latestSeen: string;
 };
+
+function isCircleShapeName(shapeName: string | null | undefined): boolean {
+  const s = String(shapeName ?? "").trim().toLowerCase();
+  if (!s) return false;
+  if (s === "c - circle") return true;
+  // Defensive: allow "circle" variants if data differs.
+  return s.includes("circle");
+}
+
+function dimensionsField(record: MarkingRecord): string {
+  const w = record.width?.trim() ?? "";
+  const h = record.height?.trim() ?? "";
+
+  // Circle: display as diameter (Search + Record Detail requirement parity).
+  if (!record.isManuscript && isCircleShapeName(record.shapeName)) {
+    const d = w || h;
+    if (d) return `${d} mm diameter`;
+    return "";
+  }
+
+  if (record.sizeDisplay && record.sizeDisplay.trim()) {
+    return record.sizeDisplay.trim().includes("mm")
+      ? record.sizeDisplay.trim()
+      : `${record.sizeDisplay.trim()} mm`;
+  }
+  if (w && h) return `${w}x${h} mm`;
+  if (w) return `${w} mm`;
+  if (h) return `${h} mm`;
+  return "";
+}
 
 export function buildCatalogFieldValues(record: MarkingRecord): CatalogFieldValues {
   const combined = postmarkTextFromRecord(record);
@@ -98,6 +115,7 @@ export function buildCatalogFieldValues(record: MarkingRecord): CatalogFieldValu
     state: displayCatalogField(record.state),
     regionAbbrev: displayCatalogField(record.stateAbbrev),
     manuscript: displayCatalogField(record.isManuscript ? "Yes" : "No"),
+    desc: displayCatalogField(record.desc),
     postmarkTextLines: postmarkTextLines.length > 1 ? postmarkTextLines : [],
     postmarkTextSingle,
     shape: displayCatalogField(record.shapeName),

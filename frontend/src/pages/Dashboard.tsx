@@ -283,7 +283,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   // Filter states (mirror Catalog Search)
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("pending");
   const [stateFilter, setStateFilter] = useState("all");
   const [townFilter, setTownFilter] = useState("");
   const [shapeFilter, setShapeFilter] = useState("all");
@@ -902,11 +902,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Apply filters (mirror Catalog Search semantics on client side)
   const filteredSubmissions = useMemo(() => {
     return submissions.filter((submission) => {
-      // Text search (name, town, state, type, color)
+      // Text search (name + description, mirroring Catalog Search)
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
         const nameMatch = submission.name != null && String(submission.name).toLowerCase().includes(q);
-        if (!nameMatch) return false;
+        const descriptionMatch =
+          submission.description != null &&
+          String(submission.description).toLowerCase().includes(q);
+        if (!nameMatch && !descriptionMatch) return false;
       }
 
       // Status filter (API uses "needs_revision"; filter value matches)
@@ -1024,12 +1027,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Suggestions derived state – reuse same filter semantics as submissions
   const filteredSuggestions = useMemo(() => {
     return suggestions.filter((suggestion) => {
-      // Text search (name, town, state, type, color)
+      // Text search (name + description, mirroring Catalog Search)
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
         const nameMatch =
           suggestion.name != null && String(suggestion.name).toLowerCase().includes(q);
-        if (!nameMatch) return false;
+        const descriptionMatch =
+          suggestion.description != null &&
+          String(suggestion.description).toLowerCase().includes(q);
+        if (!nameMatch && !descriptionMatch) return false;
       }
 
       // Status filter (API uses "needs_revision"; filter value matches)
@@ -1260,11 +1266,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         type="search"
-                        placeholder="Name, town, state, type..."
+                        placeholder="Search across fields..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="pl-9 bg-background"
-                        aria-label="Search submissions by name, town, state, or type"
+                        aria-label="Search submissions by name or description"
                         disabled={filtersDisabled}
                       />
                     </div>
@@ -1412,7 +1418,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     className="w-full"
                     onClick={() => {
                       setSearchQuery("");
-                      setStatusFilter("all");
+                      setStatusFilter("pending");
                       setStateFilter("all");
                       setTownFilter("");
                       setShapeFilter("all");
