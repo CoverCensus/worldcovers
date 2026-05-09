@@ -8,6 +8,7 @@ name = "pypi"
 [dev-packages]
 ipykernel = "*"
 anthropic = "*"
+openai = "*"
 python-dotenv = "*"
 jinja2 = "*"
 
