@@ -201,7 +201,22 @@ class CitationSerializer(serializers.ModelSerializer):
 class CoverDateSerializer(serializers.ModelSerializer):
     class Meta:
         model = CoverDate
-        fields = "__all__"
+        # Explicit field list (mirrors CoverSerializer / CoverMarkingSerializer)
+        # so DRF doesn't auto-generate `created_by` / `modified_by` as
+        # required write fields. Those columns come from the
+        # TimestampedModel base and are populated by the viewset's
+        # perform_create / perform_update from request.user; if they're
+        # exposed on the serializer the SPA gets a 400 like
+        # `{created_by: ["This field is required."], modified_by: [...]}`
+        # because validation runs before perform_create.
+        fields = [
+            "id",
+            "cover",
+            "date",
+            "granularity",
+            "created_date",
+            "modified_date",
+        ]
         read_only_fields = ["id", "created_date", "modified_date"]
 
 

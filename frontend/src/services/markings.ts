@@ -472,6 +472,12 @@ export interface AssociatedCoverDate {
 export interface AssociatedCoverDetails {
   id: number;
   code: string | null;
+  /**
+   * FK id of the Color row (or null when no color is set). Carried alongside
+   * colorName so the cover edit dialog can prefill the colour <Select>
+   * (which is keyed by id) without a second round-trip.
+   */
+  colorId: number | null;
   colorName: string;
   type: string | null;
   width: string | null;
@@ -520,6 +526,7 @@ function mapAssociatedCoverDetails(raw: unknown): AssociatedCoverDetails | null 
   return {
     id,
     code: typeof o.code === "string" && o.code ? o.code : null,
+    colorId: toIdOrNull(o.color),
     colorName: toStr(o.color_name),
     type: typeof o.type === "string" && o.type ? o.type : null,
     width: decimalToString(o.width),
