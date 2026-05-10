@@ -4,10 +4,31 @@ import axios, { AxiosError } from 'axios';
 // Use same-origin fallback to avoid mixed-content issues on HTTPS pages.
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v2';
 
-// Create axios instance with default configuration
+// Create axios instance with default configuration.
+//
+// xsrfCookieName / xsrfHeaderName are aligned with Django's
+// CsrfViewMiddleware defaults (cookie 'csrftoken' -> header 'X-CSRFToken')
+// so that any unsafe (POST/PUT/PATCH/DELETE) request from this client
+// automatically includes the CSRF token. Without this, write endpoints
+// guarded by SessionAuthentication would 403 even though the user is
+// logged in.
+//
+// `withXSRFToken: true` is REQUIRED on axios 1.x for cross-origin
+// requests. The previous behavior — "attach the xsrf header whenever
+// withCredentials is true" — was changed in axios 1.x; now the xsrf
+// header only auto-attaches for same-origin requests unless
+// withXSRFToken is explicitly set. In dev the SPA usually goes through
+// the Vite proxy (same-origin) so this wouldn't matter, but in any
+// deployment where VITE_API_BASE_URL points at a different host (e.g.
+// http://localhost:8000/api/v2 from a Vite server on :5173/:8080)
+// axios would otherwise silently drop X-CSRFToken and Django would
+// reject the write. See axios v1 release notes / issue #6209.
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true,
+  withXSRFToken: true,
+  xsrfCookieName: 'csrftoken',
+  xsrfHeaderName: 'X-CSRFToken',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -70,6 +91,37 @@ export interface FilterOptions {
   states?: { value: string; label: string }[];
   types?: { value: string; label: string }[];
   valuations?: { value: string; label: string }[];
+}
+
+/**
+ * Returns the current Django csrftoken cookie value, or null if unset.
+ * Browsers strip the cookie from client-side reads when it is set with
+ * HttpOnly, but Django's default csrftoken cookie is readable so this is
+ * the SPA-friendly way to introspect it.
+ */
+export function getCsrfTokenFromCookie(): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(/(^|;\s*)csrftoken=([^;]+)/);
+  return match ? decodeURIComponent(match[2]) : null;
+}
+
+/**
+ * Best-effort: trigger Django to set the csrftoken cookie if it is missing.
+ * GET /me/ goes through CsrfViewMiddleware which sets the cookie on its
+ * response. Used by callers that are about to issue unsafe writes from a
+ * page that hasn't talked to the server yet.
+ */
+export async function ensureCsrfToken(): Promise<string | null> {
+  const existing = getCsrfTokenFromCookie();
+  if (existing) return existing;
+  try {
+    await apiClient.get('/me/');
+  } catch {
+    // /me/ may 401 for anonymous users — that's fine, the response still
+    // sets the csrftoken cookie. Swallow other errors so we don't block
+    // the caller's primary request flow.
+  }
+  return getCsrfTokenFromCookie();
 }
 
 // API functions

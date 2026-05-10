@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, History, Loader2, MessageSquare, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
@@ -37,6 +37,18 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
+import { CoverDialog } from "@/components/CoverDialog";
+import { deleteCover } from "@/services/covers";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type GalleryImage = {
   imageUrl: string | null;
@@ -244,9 +256,27 @@ function DetailRow({
 function AssociatedCoverEntry({
   cover,
   isFirst,
+  onEdit,
+  onDelete,
+  isDeleting,
 }: {
   cover: AssociatedCover;
   isFirst: boolean;
+  /**
+   * Optional per-row "Edit" hook. When provided, renders a pencil button
+   * in the top-right that delegates to the parent so it can open the
+   * shared CoverDialog in edit mode prefilled with `cover`.
+   */
+  onEdit?: (cover: AssociatedCover) => void;
+  /**
+   * Optional per-row "Delete" hook (editor-only). When provided, renders a
+   * red trash button next to Edit that asks the parent to confirm + delete
+   * this specific cover. The parent owns the confirmation modal so all
+   * covers share a single AlertDialog instead of mounting one per row.
+   */
+  onDelete?: (cover: AssociatedCover) => void;
+  /** True while a delete request is in flight against this cover. */
+  isDeleting?: boolean;
 }) {
   const c = cover.coverDetails;
   const datesText =
@@ -271,6 +301,38 @@ function AssociatedCoverEntry({
   const rows = allRows.filter((r) => r.show);
   return (
     <div className={isFirst ? "" : "border-t-2 border-primary/40 pt-6 mt-6"}>
+      {(onEdit || onDelete) && (
+        <div className="flex justify-end gap-2 mb-2">
+          {onEdit && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onEdit(cover)}
+              aria-label="Edit this cover"
+              disabled={isDeleting}
+            >
+              <Pencil className="mr-2 h-4 w-4" />
+              Edit Cover
+            </Button>
+          )}
+          {onDelete && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => onDelete(cover)}
+              aria-label="Delete this cover"
+              disabled={isDeleting}
+            >
+              {isDeleting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-2 h-4 w-4" />
+              )}
+              Delete Cover
+            </Button>
+          )}
+        </div>
+      )}
       <dl className="text-sm">
         {rows.map((r, i) => (
           <DetailRow
@@ -298,6 +360,21 @@ const RecordDetail = () => {
   const [record, setRecord] = useState<MarkingRecord | null>(null);
   const [associatedCovers, setAssociatedCovers] = useState<AssociatedCover[]>([]);
   const [coversOpen, setCoversOpen] = useState(true);
+  // CoverDialog state. mode + editingCover together pick "create new"
+  // vs. "edit this specific cover-marking link" without a second dialog.
+  const [coverDialogOpen, setCoverDialogOpen] = useState(false);
+  const [coverDialogMode, setCoverDialogMode] = useState<"create" | "edit">(
+    "create",
+  );
+  const [editingCover, setEditingCover] = useState<AssociatedCover | null>(null);
+  // Delete-cover confirmation: holds the cover the user has just clicked
+  // "Delete Cover" on. AlertDialog renders only when this is non-null.
+  // deletingCoverId tracks the in-flight DELETE so the row's button can
+  // show a spinner and other rows' delete buttons can be disabled while
+  // we're talking to the server.
+  const [pendingDeleteCover, setPendingDeleteCover] =
+    useState<AssociatedCover | null>(null);
+  const [deletingCoverId, setDeletingCoverId] = useState<number | null>(null);
   const [historyEvents, setHistoryEvents] = useState<MarkingChangelogEvent[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -351,6 +428,23 @@ const RecordDetail = () => {
       cancelled = true;
     };
   }, [markingId]);
+
+  // Fetcher extracted so both the initial mount and the post-save callback
+  // from CoverDialog can refresh the cover list without duplicating the
+  // request logic. setCoversOpen is intentionally only touched on the
+  // mount path so a save doesn't clobber the user's collapse choice.
+  const refreshAssociatedCovers = useCallback(
+    async (options?: { resetOpen?: boolean }) => {
+      if (markingId == null || Number.isNaN(markingId)) {
+        setAssociatedCovers([]);
+        return;
+      }
+      const rows = await getMarkingCovers(markingId);
+      setAssociatedCovers(rows);
+      if (options?.resetOpen) setCoversOpen(rows.length > 0);
+    },
+    [markingId],
+  );
 
   useEffect(() => {
     if (markingId == null || Number.isNaN(markingId)) {
@@ -608,7 +702,47 @@ const RecordDetail = () => {
   );
 
   const coverCount = associatedCovers.length;
-  const goNewCover = () => navigate(`/cover/new?marking=${record.id}`);
+  const openNewCoverDialog = () => {
+    setEditingCover(null);
+    setCoverDialogMode("create");
+    setCoverDialogOpen(true);
+  };
+  const openEditCoverDialog = (cover: AssociatedCover) => {
+    setEditingCover(cover);
+    setCoverDialogMode("edit");
+    setCoverDialogOpen(true);
+  };
+
+  const requestDeleteCover = (cover: AssociatedCover) => {
+    setPendingDeleteCover(cover);
+  };
+
+  const confirmDeleteCover = async () => {
+    const cover = pendingDeleteCover;
+    if (!cover || !cover.coverDetails) return;
+    const coverPk = cover.coverDetails.id;
+    setDeletingCoverId(coverPk);
+    try {
+      // DELETE /covers/{id}/ cascades to CoverMarking and CoverDate via the
+      // FK on_delete=CASCADE rules in common/models.py, so we don't need to
+      // fan out to /cover-markings/{id}/ or /cover-dates/{id}/ first.
+      await deleteCover(coverPk);
+      toast({
+        title: "Cover deleted",
+        description: "The cover and its dates were removed from this marking.",
+      });
+      setPendingDeleteCover(null);
+      await refreshAssociatedCovers({ resetOpen: true });
+    } catch (err) {
+      toast({
+        title: "Could not delete cover",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingCoverId(null);
+    }
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -903,7 +1037,7 @@ const RecordDetail = () => {
                       <div className="flex items-center justify-between gap-3">
                         <Button
                           size="sm"
-                          onClick={goNewCover}
+                          onClick={openNewCoverDialog}
                           className="bg-green-800 hover:bg-green-900 text-white"
                         >
                           <Plus className="mr-2 h-4 w-4" />
@@ -937,35 +1071,89 @@ const RecordDetail = () => {
                             key={cover.id}
                             cover={cover}
                             isFirst={idx === 0}
+                            onEdit={openEditCoverDialog}
+                            onDelete={isStaff ? requestDeleteCover : undefined}
+                            isDeleting={
+                              cover.coverDetails != null &&
+                              deletingCoverId === cover.coverDetails.id
+                            }
                           />
                         ))}
                         <div className="mt-6 flex items-center justify-between gap-3 pt-4 border-t border-border">
                           <Button
                             size="sm"
-                            onClick={goNewCover}
+                            onClick={openNewCoverDialog}
                             className="bg-green-800 hover:bg-green-900 text-white"
                           >
                             <Plus className="mr-2 h-4 w-4" />
                             Submit New Cover
                           </Button>
-                          {isStaff && (
-                            // Visual placement only. The backend delete actions
-                            // (DELETE /api/v2/covers/<id>/, DELETE
-                            // /api/v2/cover-markings/<id>/) need their behavior
-                            // / permissions verified before this button is
-                            // wired up. No-op onClick so the button stays
-                            // inert without surfacing a placeholder alert.
-                            <Button size="sm" variant="destructive">
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete Cover
-                            </Button>
-                          )}
                         </div>
                       </CardContent>
                     </CollapsibleContent>
                   </Collapsible>
                 )}
               </Card>
+
+              {markingId != null && !Number.isNaN(markingId) && (
+                <CoverDialog
+                  open={coverDialogOpen}
+                  onOpenChange={setCoverDialogOpen}
+                  mode={coverDialogMode}
+                  markingId={markingId}
+                  cover={coverDialogMode === "edit" ? editingCover : null}
+                  onSaved={() => refreshAssociatedCovers({ resetOpen: true })}
+                />
+              )}
+
+              <AlertDialog
+                open={pendingDeleteCover !== null}
+                onOpenChange={(next) => {
+                  // Block dismiss-while-deleting so the user can't
+                  // double-click cancel and leave a half-finished DELETE
+                  // request hanging out without UI feedback.
+                  if (deletingCoverId != null) return;
+                  if (!next) setPendingDeleteCover(null);
+                }}
+              >
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this cover?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {pendingDeleteCover?.coverDetails?.code
+                        ? `Cover "${pendingDeleteCover.coverDetails.code}" will be permanently removed, including its dates and link to this marking.`
+                        : "This cover will be permanently removed, including its dates and link to this marking."}{" "}
+                      This action cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={deletingCoverId != null}>
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={(e) => {
+                        // Stop AlertDialog from auto-closing on click; we
+                        // close manually inside confirmDeleteCover after
+                        // the DELETE request resolves so the UI state stays
+                        // consistent with the server.
+                        e.preventDefault();
+                        void confirmDeleteCover();
+                      }}
+                      disabled={deletingCoverId != null}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      {deletingCoverId != null ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Deleting...
+                        </>
+                      ) : (
+                        "Delete"
+                      )}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
 
               {record.desc.trim() && (
                 <Card className="shadow-archival-md">

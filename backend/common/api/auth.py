@@ -14,7 +14,7 @@ from django.core.mail import send_mail
 from django.utils.decorators import method_decorator
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 
 from rest_framework import serializers, status
 from rest_framework.authentication import SessionAuthentication
@@ -157,8 +157,21 @@ class LogoutView(APIView):
         401: OpenApiResponse(description="Not authenticated"),
     }
 )
+@method_decorator(ensure_csrf_cookie, name="dispatch")
 class CurrentUserView(APIView):
-    """Return current user payload when authenticated via session."""
+    """
+    Return current user payload when authenticated via session.
+
+    `@ensure_csrf_cookie` makes this endpoint double as the SPA's CSRF
+    cookie primer: the very first GET /me/ on a fresh session forces
+    Django to set the `csrftoken` cookie even when the visitor is
+    anonymous (response is 401 but the Set-Cookie header is still
+    emitted). The SPA's axios client is configured with
+    xsrfCookieName="csrftoken"/xsrfHeaderName="X-CSRFToken", so once the
+    cookie exists every subsequent unsafe write (POST/PATCH/DELETE)
+    automatically carries the token Django expects. Without this,
+    SessionAuthentication 403s with "CSRF Failed: CSRF token missing".
+    """
     permission_classes = [AllowAny]
 
     def get(self, request):
