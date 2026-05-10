@@ -14,7 +14,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Upload, CheckCircle, XCircle, Clock, Loader2, ChevronDown, ArrowUp, ArrowDown, Star } from "lucide-react";
+import { Upload, CheckCircle, XCircle, Clock, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Plus } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import type { FormEvent, MouseEvent } from "react";
 import { useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
@@ -1600,28 +1600,28 @@ const Contribute = () => {
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7"
-                          aria-label="Move image up"
+                          aria-label="Move image left"
                           disabled={i === 0}
                           onClick={(e) => {
                             e.stopPropagation();
                             moveMarkingImageBy(i, -1);
                           }}
                         >
-                          <ArrowUp className="h-3.5 w-3.5" />
+                          <ArrowLeft className="h-3.5 w-3.5" />
                         </Button>
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7"
-                          aria-label="Move image down"
+                          aria-label="Move image right"
                           disabled={i === previews.length - 1}
                           onClick={(e) => {
                             e.stopPropagation();
                             moveMarkingImageBy(i, 1);
                           }}
                         >
-                          <ArrowDown className="h-3.5 w-3.5" />
+                          <ArrowRight className="h-3.5 w-3.5" />
                         </Button>
                         <Button
                           type="button"
@@ -2419,6 +2419,21 @@ const Contribute = () => {
                         onChange={(e) => setContributorComment(e.target.value)}
                       />
                     </div>
+
+                    <Button
+                      type="button"
+                      className="w-full bg-green-800 hover:bg-green-900 text-white"
+                      onClick={() => {
+                        const target =
+                          editMarkingId != null
+                            ? `/cover/new?marking=${editMarkingId}`
+                            : "/cover/new";
+                        navigate(target);
+                      }}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Submit New Cover
+                    </Button>
 
                     <div className="flex flex-col sm:flex-row gap-3">
                       {!isEditMarking && (

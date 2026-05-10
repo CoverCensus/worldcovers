@@ -757,6 +757,51 @@ def classify_block(block_im, blocks_cache, model, verbose=False, label=""):
     return kind, True  # cache miss -> caller should save
 
 
+def drop_orphan_illustration_cuts(cut_ys, kinds, H, label_prefix=""):
+    """Apply the rule: every chunk must contain at least one text block.
+
+    A chunk that contains only illustration block(s) and no text is, by
+    definition, a fragment of a larger entry. Either:
+      - the deterministic detector split a single tall marking (e.g. an arc
+        postmark like 'DOVER' on top and 'MILLS' below) into two blocks
+        because the internal blank gap exceeded BLANK_RUN; both blocks got
+        classified illustration; both got their own cut; the top half ended
+        up alone as its own chunk.
+      - or two markings sharing one listing got cut between them.
+
+    Both cases want the same fix: merge the orphan illustration-only chunk
+    FORWARD into the next chunk that contains text. We do that by dropping
+    the cut that would have ended the orphan chunk.
+
+    Edge case: if the trailing chunk [last_kept_cut, H] is illustration-only,
+    drop the last kept cut to merge it BACKWARD into the previous chunk.
+    """
+    text_ys = [y0 for (y0, _y1, k) in kinds if k == "text"]
+
+    def slice_has_text(start, end):
+        return any(start <= ty < end for ty in text_ys)
+
+    new_cuts = []
+    slice_start = 0
+    for c in cut_ys:
+        if slice_has_text(slice_start, c):
+            new_cuts.append(c)
+            slice_start = c
+        else:
+            print(f"    {label_prefix}drop orphan-illustration cut y={c}: "
+                  f"chunk [{slice_start}, {c}] has no text below the marking")
+            # do not advance slice_start -- merge forward into next slice
+
+    # Trailing-orphan check.
+    if new_cuts and not slice_has_text(new_cuts[-1], H):
+        dropped = new_cuts.pop()
+        print(f"    {label_prefix}drop trailing orphan-illustration cut "
+              f"y={dropped}: final chunk [{dropped}, {H}] has no text "
+              f"below the marking; merging backward")
+
+    return new_cuts
+
+
 def find_blank_runs(slice_im):
     """Return [(start, end_exclusive), ...] for runs of >= BLANK_RUN
     consecutive blank rows in the slice, using the same row-darkness rule
@@ -979,6 +1024,16 @@ def stage_chunks(paths, model, force, page_filter, verbose=False,
                     kinds.append((y0, y1, kind))
                     if kind == "illustration":
                         cut_ys.append(y0)
+
+                # Drop cuts that would create chunks containing only an
+                # illustration (no text below the marking). This catches
+                # tall-marking-split-by-blank-gap cases (e.g. arc postmarks
+                # where the top arc text and bottom arc text are detected as
+                # two separate illustration blocks) and stacked-markings-
+                # sharing-one-listing cases.
+                cut_ys = drop_orphan_illustration_cuts(
+                    cut_ys, kinds, H, label_prefix=f"[{pn:04d}-{side}] ",
+                )
 
                 # Filter cuts that would produce slivers thinner than
                 # MIN_SLICE_HEIGHT_PX.

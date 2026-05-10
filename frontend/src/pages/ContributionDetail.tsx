@@ -1410,7 +1410,9 @@ const ContributionDetail = () => {
                 <div className="flex flex-wrap gap-2">
                   {hasValue(shape) ? <Badge variant="secondary">{shape}</Badge> : null}
                   {hasValue(color) ? <Badge variant="secondary">{color}</Badge> : null}
-                  <Badge variant="outline">Irregular: {isIrregular ? "Yes" : "No"}</Badge>
+                  {sd.is_irreg != null || sd.isIrreg != null ? (
+                    <Badge variant="outline">Irregular: {isIrregular ? "Yes" : "No"}</Badge>
+                  ) : null}
                 </div>
               </div>
 
@@ -1492,10 +1494,67 @@ const ContributionDetail = () => {
                               String(sd.height_mm ?? sd.heightMm ?? "").trim() !== "";
                             if (k === "dimensions" && hasMm) return false;
                             if (k === "original_postmark_id" || k === "originalPostmarkId") return false;
+                            if (
+                              k === "first_seen" || k === "firstSeen" ||
+                              k === "last_seen" || k === "lastSeen" ||
+                              k === "dates_observed" || k === "datesObserved" ||
+                              k === "references"
+                            ) return false;
                             return true;
                           })
                           .map(([key, val]) => {
-                            const label = key
+                            const labelOverrides: Record<string, string> = {
+                              type: "Marking Type",
+                              manuscript: "Manuscript",
+                              is_manuscript: "Manuscript",
+                              isManuscript: "Manuscript",
+                              state: "State",
+                              town: "Town/City",
+                              inscription_txt: "Inscription Text",
+                              inscriptionTxt: "Inscription Text",
+                              shape: "Shape",
+                              shape_id: "Shape",
+                              shapeId: "Shape",
+                              color: "Color",
+                              color_id: "Color",
+                              colorId: "Color",
+                              date_format_id: "Date Format",
+                              dateFormatId: "Date Format",
+                              date_format_ids: "Date Format",
+                              dateFormatIds: "Date Format",
+                              date_fmt: "Date Format",
+                              dateFmt: "Date Format",
+                              desc: "Description",
+                              description: "Description",
+                              rate_val: "Rate Value",
+                              rateVal: "Rate Value",
+                              dimensions: "Dimensions",
+                              width_mm: "Width (mm)",
+                              widthMm: "Width (mm)",
+                              height_mm: "Height (mm)",
+                              heightMm: "Height (mm)",
+                              reference_work_ids: "Reference Works",
+                              referenceWorkIds: "Reference Works",
+                              reference_work_details: "Reference Works",
+                              referenceWorkDetails: "Reference Works",
+                              lettering_style_id: "Lettering Style",
+                              letteringStyleId: "Lettering Style",
+                              lettering_id: "Lettering Style",
+                              letteringId: "Lettering Style",
+                              impression: "Impression",
+                              is_irreg: "Is Irregular",
+                              isIrreg: "Is Irregular",
+                              isIrregular: "Is Irregular",
+                              framing_style_id: "Framing Style",
+                              framingStyleId: "Framing Style",
+                              framing_style_ids: "Framing Style",
+                              framingStyleIds: "Framing Style",
+                              post_office_id: "Post Office",
+                              postOfficeId: "Post Office",
+                              submitter_name: "Submitter Name",
+                              submitterName: "Submitter Name",
+                            };
+                            const label = labelOverrides[key] ?? key
                               .replace(/_/g, " ")
                               .replace(/\b\w/g, (c) => c.toUpperCase())
                               .replace(/Id\b/, "")

@@ -1557,12 +1557,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                   <span className="text-foreground">{submission.color}</span>
                                 </div>
                               )}
-                              <div>
-                                <span className="text-muted-foreground">Submitted:</span>{" "}
-                                <span className="text-foreground">
-                                  {new Date(submission.created_at).toLocaleDateString()}
-                                </span>
-                              </div>
+                              {String(submission.status || "").toLowerCase() !== "draft" && (
+                                <div>
+                                  <span className="text-muted-foreground">Submitted:</span>{" "}
+                                  <span className="text-foreground">
+                                    {new Date(submission.created_at).toLocaleDateString()}
+                                  </span>
+                                </div>
+                              )}
                             </div>
 
                             {submission.description && (
