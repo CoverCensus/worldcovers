@@ -40,22 +40,50 @@ done
 # --chown=...  force ownership on server (requires remote rsync running as root)
 # --chmod=...  dirs: u=rwx, g/o=rx ; files: u=rw, g/o=r
 # --rsync-path="sudo -n rsync"  run remote rsync as root via passwordless sudo
-RSYNC_FLAGS=(
-  -a --delete --info=progress2
+#
+# Two flag sets: tools/wip is MIRRORED (--delete) so the import bundle on
+# the server matches local byte-for-byte; backend/media is ADDITIVE (no
+# --delete) so server-side files (manual uploads, prior catalog generations)
+# survive a re-push.
+RSYNC_FLAGS_COMMON=(
+  -a --info=progress2
   --chown=wocod:wocod
   --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r
   --rsync-path="sudo -n rsync"
+  --exclude='.DS_Store'
+)
+
+# wip: mirror + skip munger intermediate work dirs that the server never
+# reads. *_images/ is the per-marking PNG dump from ascc_image_extract.py
+# (Step 11 of the munger has already copied those into backend/media/<state>/
+# by the time we push). *_subchunks/ and *_subchunks_report.csv are
+# diagnostic outputs from the same tool. None of them are in
+# import_ascc_bundle's ASCC_LOAD_ORDER.
+RSYNC_FLAGS_WIP=(
+  "${RSYNC_FLAGS_COMMON[@]}"
+  --delete
+  --exclude='*_images/'
+  --exclude='*_subchunks/'
+  --exclude='*_subchunks_report.csv'
+  "${RSYNC_EXTRA[@]}"
+)
+
+# media: additive only.
+RSYNC_FLAGS_MEDIA=(
+  "${RSYNC_FLAGS_COMMON[@]}"
   "${RSYNC_EXTRA[@]}"
 )
 
 push_tree() {
   local src="$1" dst="$2"
+  shift 2
+  local flags=("$@")
   echo "==> rsync ${src} -> ${HOST}:${dst}"
-  rsync "${RSYNC_FLAGS[@]}" "${src}/" "${HOST}:${dst}/"
+  rsync "${flags[@]}" "${src}/" "${HOST}:${dst}/"
 }
 
-push_tree "tools/wip"    "${REMOTE_ROOT}/tools/wip"
-push_tree "backend/media" "${REMOTE_ROOT}/backend/media"
+push_tree "tools/wip"     "${REMOTE_ROOT}/tools/wip"     "${RSYNC_FLAGS_WIP[@]}"
+push_tree "backend/media" "${REMOTE_ROOT}/backend/media" "${RSYNC_FLAGS_MEDIA[@]}"
 
 if [[ $DO_IMPORT -eq 1 ]]; then
   echo "==> running reload_data.sh as wocod on ${HOST}"

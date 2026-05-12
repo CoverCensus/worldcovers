@@ -1187,7 +1187,7 @@ const RecordDetail = () => {
             // verified before this button is wired up. No-op onClick so the
             // button stays inert without surfacing a placeholder alert.
             <div className="mt-10 flex justify-end">
-              <Button variant="destructive">
+              <Button size="sm" variant="destructive">
                 <Trash2 className="mr-2 h-4 w-4" />
                 Delete Marking
               </Button>

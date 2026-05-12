@@ -143,20 +143,13 @@ class ImageSerializer(serializers.ModelSerializer):
         """
         Build the public URL for the stored image file.
 
-        Phase 2 layout: contributor uploads live under
-        MEDIA_ROOT/markings/<region_abbrev>/<uuid>.<ext>, with storage_filename
-        like 'va/<uuid>.png'. The public URL is MEDIA_URL + 'markings/' +
-        storage_filename, e.g. /media/markings/va/<uuid>.png.
+        Current layout: contributor uploads live under
+        MEDIA_ROOT/<region_abbrev>/<uuid>.<ext>, with storage_filename
+        like 'va/<uuid>.png'. The public URL is MEDIA_URL + storage_filename,
+        e.g. /media/va/<uuid>.png.
 
-        Back-compat branches:
-        - storage_filename starting with 'contributions/' was the brief
-          interim layout before region-namespacing; files lived under
-          MEDIA_ROOT/markings/contributions/.
-        - storage_filename starting with 'postmarks/' is from the original v1
-          layout, before the postmarks/ -> markings/ directory rename; those
-          files still live at MEDIA_ROOT/postmarks/...
-        - Anything else is treated as a legacy catalog image path served
-          directly from MEDIA_ROOT (e.g. 'iowa/Marking-...jpg').
+        Back-compat: storage_filename starting with 'postmarks/' is from the
+        original v1 layout; those files still live at MEDIA_ROOT/postmarks/...
         """
         storage = (obj.storage_filename or "").lstrip("/")
         if not storage:
@@ -166,17 +159,11 @@ class ImageSerializer(serializers.ModelSerializer):
             return None
         from django.conf import settings
         media_url = settings.MEDIA_URL.rstrip("/")
-        if storage.startswith("contributions/"):
-            path = f"{media_url}/markings/{storage}"
-        elif storage.startswith("postmarks/"):
-            path = f"{media_url}/{storage}"
-        elif "/" in storage and not storage.startswith("markings/"):
-            # New convention: '<abbrev>/<file>' served from /markings/<abbrev>/<file>.
-            # Legacy catalog paths like 'iowa/foo.jpg' also match this branch;
-            # those files must be moved to MEDIA_ROOT/markings/iowa/ at deploy.
-            path = f"{media_url}/markings/{storage}"
-        else:
-            path = f"{media_url}/{storage}"
+        if storage.startswith("markings/"):
+            # Legacy stored value: strip the markings/ prefix so files served
+            # from the new MEDIA_ROOT/<abbrev>/ layout resolve correctly.
+            storage = storage[len("markings/"):]
+        path = f"{media_url}/{storage}"
         return request.build_absolute_uri(path)
 
 
