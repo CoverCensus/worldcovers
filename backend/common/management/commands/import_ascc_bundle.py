@@ -12,13 +12,27 @@ Expected layout:
         regions.csv
         reference_works.csv
         post_offices.csv
+        post_office_regions.csv
         markings.csv
-        covers.csv
-        cover_dates.csv
-        cover_valuations.csv
-        cover_markings.csv
+        covers.csv             (optional)
+        dates_seen.csv
+        cover_valuations.csv   (optional)
+        cover_markings.csv     (optional)
         citations.csv
         images.csv
+
+    Three cover-related stems are optional because the munger no
+    longer auto-creates a Cover per listing; users author Covers,
+    CoverMarkings, and CoverValuations by hand after the bundle has
+    been imported. A bundle that omits those CSVs entirely still loads
+    cleanly. (When --allow-missing is set, ANY stem may be absent.)
+
+    dates_seen.csv is polymorphic: each row carries subject_type
+    (COVER | MARKING) and subject_id (the Cover or Marking pk). The
+    munger now emits MARKING-scoped rows anchored to the listing's
+    postmarks (one DateSeen per parsed date per postmark in the
+    listing), since under the new policy there is no auto-created
+    Cover to anchor dates to.
 
 Each CSV is in "Django shape": every row carries an explicit `id`,
 audit columns (created_date, modified_date, created_by, modified_by),
@@ -41,13 +55,14 @@ from django.db import connection, transaction
 from common.admin import (
     CitationResource,
     ColorResource,
-    CoverDateResource,
     CoverMarkingResource,
     CoverResource,
     CoverValuationResource,
+    DateSeenResource,
     ImageResource,
     LetteringResource,
     MarkingResource,
+    PostOfficeRegionResource,
     PostOfficeResource,
     ReferenceWorkResource,
     RegionResource,
@@ -64,9 +79,10 @@ RESOURCES = {
     "regions": RegionResource,
     "reference_works": ReferenceWorkResource,
     "post_offices": PostOfficeResource,
+    "post_office_regions": PostOfficeRegionResource,
     "markings": MarkingResource,
     "covers": CoverResource,
-    "cover_dates": CoverDateResource,
+    "dates_seen": DateSeenResource,
     "cover_valuations": CoverValuationResource,
     "cover_markings": CoverMarkingResource,
     "citations": CitationResource,
@@ -76,10 +92,12 @@ RESOURCES = {
 # Dependency-safe load order. Parents before children:
 #   colors, letterings, shapes, regions     -- pure leaf lookups
 #   reference_works                         -- leaf lookup (citation parent)
-#   post_offices                            -- depends on regions
+#   post_offices                            -- depends on nothing (region link is in junction)
+#   post_office_regions                     -- depends on post_offices and regions
 #   markings                                -- depends on shape, lettering, color, post_office
 #   covers                                  -- depends on color
-#   cover_dates, cover_valuations           -- depend on cover
+#   cover_valuations                        -- depends on cover
+#   dates_seen                              -- polymorphic; depends on cover and/or marking
 #   cover_markings                          -- depends on cover + marking
 #   citations                               -- depends on reference_work + marking (via subject_id)
 #   images                                  -- depends on marking (subject_id) and user (uploaded_by)
@@ -90,14 +108,27 @@ ASCC_LOAD_ORDER = (
     "regions",
     "reference_works",
     "post_offices",
+    "post_office_regions",
     "markings",
     "covers",
-    "cover_dates",
     "cover_valuations",
+    "dates_seen",
     "cover_markings",
     "citations",
     "images",
 )
+
+# Stems whose CSV may be absent from the bundle without --allow-missing.
+# Reason: the munger no longer auto-creates Covers and therefore does not
+# emit CoverMarking or CoverValuation rows either. Bundles produced after
+# that change omit these three files; older bundles still include them
+# and load normally. dates_seen.csv is NOT optional: under the new policy
+# the munger emits MARKING-scoped DateSeen rows anchored to postmarks.
+OPTIONAL_STEMS = frozenset({
+    "covers",
+    "cover_markings",
+    "cover_valuations",
+})
 
 
 def _load_dataset(path):
@@ -210,7 +241,7 @@ class Command(BaseCommand):
             "--truncate",
             action="store_true",
             help=(
-                "Before importing, delete every row from all 13 ASCC catalog "
+                "Before importing, delete every row from all 14 ASCC catalog "
                 "tables in reverse dependency order. Incompatible with --only "
                 "(a partial truncate would hit FK constraints). Under --dry-run "
                 "the truncate is rolled back too."
@@ -244,11 +275,16 @@ class Command(BaseCommand):
 
         # Pre-validate that every requested stem has a CSV before opening the
         # outer transaction. Catches typos in --only and missing-file errors
-        # without rolling back any work.
+        # without rolling back any work. Stems in OPTIONAL_STEMS are allowed
+        # to be absent unconditionally; --allow-missing widens that to every
+        # stem.
         for stem in order:
             path = os.path.join(directory, f"{stem}.csv")
-            if not os.path.isfile(path) and not options["allow_missing"]:
-                raise CommandError(f"Missing CSV: {path}")
+            if os.path.isfile(path):
+                continue
+            if stem in OPTIONAL_STEMS or options["allow_missing"]:
+                continue
+            raise CommandError(f"Missing CSV: {path}")
 
         totals = {"new": 0, "update": 0, "skip": 0, "invalid": 0, "error": 0}
         is_mysql = connection.vendor == "mysql"
@@ -263,7 +299,7 @@ class Command(BaseCommand):
             with transaction.atomic():
                 if truncate:
                     self.stdout.write(self.style.NOTICE(
-                        "Truncating 13 ASCC catalog tables in reverse dependency order..."
+                        "Truncating 14 ASCC catalog tables in reverse dependency order..."
                     ))
                     # Raw DELETE FROM with FOREIGN_KEY_CHECKS off (MySQL) so
                     # the wipe bypasses on_delete=PROTECT FKs from outside-
@@ -298,9 +334,18 @@ class Command(BaseCommand):
                     resource = RESOURCES[stem]()
 
                     try:
+                        # Always pass dry_run=False to django-import-export.
+                        # Their dry_run path enables a per-resource atomic
+                        # block AND calls set_rollback(True) at the end of
+                        # each stem, which would undo the rows just inserted
+                        # before the next stem can resolve FKs against them
+                        # (e.g. post_office_regions -> post_offices). The
+                        # outer atomic in this command + transaction.set_rollback(True)
+                        # at the tail handles dry-run semantics for the
+                        # whole bundle in one shot.
                         result = resource.import_data(
                             dataset,
-                            dry_run=dry_run,
+                            dry_run=False,
                             raise_errors=False,
                             use_transactions=False,
                             collect_failed_rows=True,

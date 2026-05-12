@@ -2,9 +2,9 @@
 ## WoCo Commons - API v2 Views (Phase 2 rewrite)
 ##
 ## Unified Marking model with type discriminator (TOWNMARK | RATEMARK | AUXMARK).
-## CoverMarking carries placement; CoverDate / CoverValuation belong to Cover.
-## Image is polymorphic over (subject_type, subject_id). Citation references
-## COVER | MARKING.
+## CoverMarking carries placement; CoverValuation belongs to Cover.
+## DateSeen, Image, and Citation are polymorphic over (subject_type, subject_id),
+## each referencing COVER | MARKING.
 ###################################################################################################
 from __future__ import annotations
 
@@ -49,9 +49,9 @@ from common.models import (
     Color,
     Contribution,
     Cover,
-    CoverDate,
     CoverMarking,
     CoverValuation,
+    DateSeen,
     FAQEntry,
     Image,
     Lettering,
@@ -78,10 +78,10 @@ from .serializers import (
     ContributionApproveRejectSerializer,
     ContributionDetailSerializer,
     ContributionListSerializer,
-    CoverDateSerializer,
     CoverMarkingSerializer,
     CoverSerializer,
     CoverValuationSerializer,
+    DateSeenSerializer,
     FAQEntrySerializer,
     ImageSerializer,
     LetteringSerializer,
@@ -115,8 +115,10 @@ def _user_is_responsible_for_marking(user, marking):
         return False
     if not marking or not marking.post_office_id:
         return False
-    region_id = marking.post_office.region_id
-    return _get_user_assigned_regions(user).filter(pk=region_id).exists()
+    region = marking.post_office.region
+    if region is None:
+        return False
+    return _get_user_assigned_regions(user).filter(pk=region.pk).exists()
 
 
 class IsResponsibleForRegion(BasePermission):
@@ -139,13 +141,17 @@ class IsResponsibleForRegion(BasePermission):
 
 
 def _marking_list_queryset():
-    """Optimized queryset for Marking list-style endpoints with date-range annotations."""
-    return Marking.objects.all().select_related(
-        "post_office__region", "shape", "lettering", "color"
-    ).annotate(
-        earliest_seen=Min("cover_markings__cover__cover_dates__date"),
-        latest_seen=Max("cover_markings__cover__cover_dates__date"),
-    )
+    """Optimized queryset for Marking list-style endpoints with date-range annotations.
+
+    Uses MarkingQuerySet.with_date_range so earliest_seen / latest_seen aggregate
+    both directly-attached DateSeen rows (subject_type='MARKING') and
+    cover-mediated DateSeen rows (subject_type='COVER' via cover_markings).
+    """
+    return Marking.objects.select_related(
+        "post_office", "shape", "lettering", "color"
+    ).prefetch_related(
+        "post_office__post_office_regions__region"
+    ).with_date_range()
 
 
 ###################################################################################################
@@ -202,12 +208,18 @@ class RegionViewSet(viewsets.ModelViewSet):
 
 
 class PostOfficeViewSet(viewsets.ModelViewSet):
-    queryset = PostOffice.objects.all().select_related("region")
+    queryset = PostOffice.objects.all().prefetch_related(
+        "post_office_regions__region"
+    )
     serializer_class = PostOfficeSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["region"]
-    search_fields = ["name", "region__name", "region__abbrev"]
+    filterset_fields = {"post_office_regions__region": ["exact"]}
+    search_fields = [
+        "name",
+        "post_office_regions__region__name",
+        "post_office_regions__region__abbrev",
+    ]
     ordering_fields = ["name", "created_date"]
     ordering = ["name"]
 
@@ -221,11 +233,12 @@ class PostOfficeViewSet(viewsets.ModelViewSet):
     def town_options(self, request):
         """Lightweight {town, state} payload for autocomplete controls."""
         rows = (
-            PostOffice.objects.select_related("region")
+            PostOffice.objects.prefetch_related("post_office_regions__region")
             .exclude(name__isnull=True)
             .exclude(name__exact="")
-            .values_list("name", "region__name")
-            .order_by("name", "region__name")
+            .values_list("name", "post_office_regions__region__name")
+            .order_by("name", "post_office_regions__region__name")
+            .distinct()
         )
         out = [
             {"town": (town or "").strip(), "state": (state or "").strip()}
@@ -309,7 +322,7 @@ class ImageViewSet(viewsets.ModelViewSet):
     serializer_class = ImageSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ["subject_type", "subject_id", "image_view"]
+    filterset_fields = ["subject_type", "subject_id", "image_view", "is_tracing"]
     ordering_fields = ["display_order", "created_date"]
     ordering = ["subject_type", "subject_id", "display_order"]
 
@@ -341,7 +354,7 @@ class CitationViewSet(viewsets.ModelViewSet):
 
 
 ###################################################################################################
-## Cover, CoverDate, CoverValuation, CoverMarking
+## Cover, DateSeen, CoverValuation, CoverMarking
 ###################################################################################################
 class CoverV2ViewSet(viewsets.ModelViewSet):
     queryset = Cover.objects.all().select_related("color")
@@ -358,15 +371,31 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         serializer.save(modified_by=self.request.user)
 
+    def perform_destroy(self, instance):
+        # DateSeen is polymorphic and has no FK to Cover, so DB cascade does
+        # not apply. Purge any cover-scoped DateSeen rows that reference this
+        # Cover before deleting it, so DELETE /covers/<id>/ stays equivalent
+        # to the old (pre-polymorphic) cascade. Done in the same transaction
+        # as the Cover delete to avoid orphan rows on partial failure.
+        with transaction.atomic():
+            DateSeen.objects.filter(
+                subject_type=DateSeen.SUBJECT_COVER,
+                subject_id=instance.pk,
+            ).delete()
+            instance.delete()
 
-class CoverDateViewSet(viewsets.ModelViewSet):
-    queryset = CoverDate.objects.all().select_related("cover")
-    serializer_class = CoverDateSerializer
+
+class DateSeenViewSet(viewsets.ModelViewSet):
+    # DateSeen is polymorphic. Clients filter by `subject_type=COVER|MARKING`
+    # plus `subject_id=<pk>` to retrieve the date observations for a given
+    # cover or marking.
+    queryset = DateSeen.objects.all()
+    serializer_class = DateSeenSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ["cover", "granularity"]
+    filterset_fields = ["subject_type", "subject_id", "granularity"]
     ordering_fields = ["date", "created_date"]
-    ordering = ["cover", "date"]
+    ordering = ["subject_type", "subject_id", "date"]
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, modified_by=self.request.user)
@@ -392,10 +421,14 @@ class CoverValuationViewSet(viewsets.ModelViewSet):
 
 
 class CoverMarkingViewSet(viewsets.ModelViewSet):
+    # DateSeen is polymorphic and has no FK back to Cover, so we can no longer
+    # prefetch it as a reverse relation. CoverSerializer.get_dates_seen issues
+    # its own query per cover; if that becomes a hotspot, swap in a
+    # Prefetch('dates_seen', queryset=DateSeen.objects.filter(subject_type='COVER'))
+    # gated through a custom helper or override get_queryset to attach the rows.
     queryset = (
         CoverMarking.objects.all()
         .select_related("cover", "cover__color", "marking")
-        .prefetch_related("cover__cover_dates")
     )
     serializer_class = CoverMarkingSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
@@ -430,7 +463,7 @@ class MarkingViewSet(viewsets.ModelViewSet):
         "catalog_txt",
         "inscription_txt",
         "desc",
-        "post_office__region__name",
+        "post_office__post_office_regions__region__name",
         "post_office__name",
         "shape__name",
         "lettering__name",
@@ -438,8 +471,8 @@ class MarkingViewSet(viewsets.ModelViewSet):
     ]
     ordering_fields = [
         # Location / identity
-        "post_office__region__name",
-        "post_office__region__abbrev",
+        "post_office__post_office_regions__region__name",
+        "post_office__post_office_regions__region__abbrev",
         "post_office__name",
         "code",
         "type",
@@ -455,7 +488,11 @@ class MarkingViewSet(viewsets.ModelViewSet):
         # Stable fallback
         "id",
     ]
-    ordering = ["post_office__region__name", "post_office__name", "id"]
+    ordering = [
+        "post_office__post_office_regions__region__name",
+        "post_office__name",
+        "earliest_seen",
+    ]
 
     def get_queryset(self):
         return _marking_list_queryset()
@@ -506,7 +543,14 @@ class MarkingViewSet(viewsets.ModelViewSet):
             after_payload={},
             extra_payload={"deleted_marking_id": instance.pk},
         )
-        super().perform_destroy(instance)
+        # DateSeen is polymorphic; marking-scoped rows have no FK and must be
+        # purged explicitly so a marking delete does not leave orphan dates.
+        with transaction.atomic():
+            DateSeen.objects.filter(
+                subject_type=DateSeen.SUBJECT_MARKING,
+                subject_id=instance.pk,
+            ).delete()
+            super().perform_destroy(instance)
 
     @action(detail=False, methods=["get"], url_path="my-assigned", permission_classes=[IsAuthenticated])
     def my_assigned(self, request):
@@ -519,7 +563,9 @@ class MarkingViewSet(viewsets.ModelViewSet):
                 serializer = self.get_serializer(page, many=True)
                 return self.get_paginated_response(serializer.data)
             return Response(self.get_serializer(empty, many=True).data)
-        qs = self.get_queryset().filter(post_office__region__in=assigned_regions).distinct().order_by("-created_date")
+        qs = self.get_queryset().filter(
+            post_office__post_office_regions__region__in=assigned_regions
+        ).distinct().order_by("-created_date")
         page = self.paginate_queryset(qs)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
@@ -533,7 +579,9 @@ class MarkingViewSet(viewsets.ModelViewSet):
         if not user.is_superuser:
             assigned_regions = _get_user_assigned_regions(user)
             if assigned_regions.exists():
-                qs = qs.filter(post_office__region__in=assigned_regions)
+                qs = qs.filter(
+                    post_office__post_office_regions__region__in=assigned_regions
+                ).distinct()
             else:
                 qs = qs.none()
         page = self.paginate_queryset(qs)
@@ -730,11 +778,16 @@ class MarkingViewSet(viewsets.ModelViewSet):
     )
 )
 class MarkingDateRangeView(APIView):
-    """Earliest and latest cover_date.date years across the catalog."""
+    """Earliest and latest dates_seen.date years across the catalog.
+
+    Aggregates every DateSeen row regardless of subject_type (COVER or
+    MARKING), so the returned range spans dates attached directly to a
+    marking and dates attached to a cover.
+    """
     permission_classes = [AllowAny]
 
     def get(self, request):
-        agg = CoverDate.objects.aggregate(
+        agg = DateSeen.objects.aggregate(
             earliest_year=Min(ExtractYear("date")),
             latest_year=Max(ExtractYear("date")),
         )
@@ -783,15 +836,29 @@ class DeleteMyMarkingView(APIView):
                 extra_payload={"deleted_marking_id": marking_id},
             )
 
+        def _purge_and_delete():
+            # DateSeen rows attached directly to this marking are not cascaded
+            # by the DB (polymorphic, no FK), so purge them in the same
+            # transaction as the marking delete.
+            with transaction.atomic():
+                DateSeen.objects.filter(
+                    subject_type=DateSeen.SUBJECT_MARKING,
+                    subject_id=marking_id,
+                ).delete()
+                marking.delete()
+
         if user.is_superuser:
             _log_delete()
-            marking.delete()
+            _purge_and_delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
 
-        region_id = marking.post_office.region_id if marking.post_office_id else None
+        # PostOffice.region resolves the current Region via post_office_regions
+        # (most-recent active link); None when the PO has no junction rows.
+        marking_region = marking.post_office.region if marking.post_office_id else None
+        region_id = marking_region.pk if marking_region else None
         if region_id and _get_user_assigned_regions(user).filter(pk=region_id).exists():
             _log_delete()
-            marking.delete()
+            _purge_and_delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
 
         try:
@@ -804,7 +871,7 @@ class DeleteMyMarkingView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
         _log_delete()
-        marking.delete()
+        _purge_and_delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -1024,7 +1091,7 @@ class ContributionSubmitView(APIView):
     plus `type` (TOWNMARK | RATEMARK | AUXMARK) and `desc`. The payload is
     persisted to Contribution.submitted_data and routed to a Collection by
     state. Final application to the catalog (creating / updating Marking,
-    Image, CoverMarking, CoverDate, CoverValuation rows) happens at approval
+    Image, CoverMarking, DateSeen, CoverValuation rows) happens at approval
     time; that pipeline is rebuilt against the unified schema in a follow-up
     pass and currently raises ContributionApplyNotImplemented.
 

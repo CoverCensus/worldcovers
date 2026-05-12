@@ -78,11 +78,12 @@ from .models import (
     Image,
     Postcover,
     PostcoverImage,
-    CoverDate,
+    DateSeen,
     CoverValuation,
     CoverMarking,
     Region,
     PostOffice,
+    PostOfficeRegion,
     ReferenceWork,
     Shape,
     Cover,
@@ -235,6 +236,17 @@ class RegionResource(TimestampedModelResource):
 
 
 class PostOfficeResource(TimestampedModelResource):
+    class Meta(TimestampedModelResource.Meta):
+        model = PostOffice
+        import_id_fields = ['id']
+
+
+class PostOfficeRegionResource(TimestampedModelResource):
+    post_office = fields.Field(
+        column_name='post_office',
+        attribute='post_office',
+        widget=ForeignKeyWidget(PostOffice, 'id'),
+    )
     region = fields.Field(
         column_name='region',
         attribute='region',
@@ -242,7 +254,7 @@ class PostOfficeResource(TimestampedModelResource):
     )
 
     class Meta(TimestampedModelResource.Meta):
-        model = PostOffice
+        model = PostOfficeRegion
         import_id_fields = ['id']
 
 
@@ -251,9 +263,9 @@ class CoverResource(TimestampedModelResource):
         model = Cover
 
 
-class CoverDateResource(TimestampedModelResource):
+class DateSeenResource(TimestampedModelResource):
     class Meta(TimestampedModelResource.Meta):
-        model = CoverDate
+        model = DateSeen
 
 
 class CoverValuationResource(TimestampedModelResource):
@@ -476,8 +488,8 @@ class CatalogRequestMarkingAdmin(MarkingAdmin):
 @admin.register(Image)
 class ImageAdmin(TimestampedModelAdmin):
     resource_class = ImageResource
-    list_display = ['image_id', 'subject_type', 'subject_id', 'original_filename', 'image_view', 'display_order', 'uploaded_by']
-    list_filter = ['subject_type', 'image_view']
+    list_display = ['image_id', 'subject_type', 'subject_id', 'original_filename', 'image_view', 'is_tracing', 'display_order', 'uploaded_by']
+    list_filter = ['subject_type', 'image_view', 'is_tracing']
     search_fields = ['original_filename', 'storage_filename', 'subject_id']
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date', 'file_checksum']
     paginator = NoCountPaginator
@@ -493,7 +505,7 @@ class ImageAdmin(TimestampedModelAdmin):
             ),
         }),
         ('Display Settings', {
-            'fields': ('image_view', 'image_description', 'display_order'),
+            'fields': ('image_view', 'image_description', 'is_tracing', 'display_order'),
         }),
         ('Submission Information', {
             'fields': ('uploaded_by',),
@@ -506,13 +518,6 @@ class ImageAdmin(TimestampedModelAdmin):
 
 
 # ========== COVER ADMIN ==========
-
-class CoverDateInline(admin.TabularInline):
-    model = CoverDate
-    extra = 0
-    fields = ['date', 'granularity']
-    exclude = ['created_by', 'modified_by', 'created_date', 'modified_date']
-
 
 class CoverValuationInline(admin.TabularInline):
     model = CoverValuation
@@ -531,22 +536,25 @@ class CoverMarkingForCoverInline(admin.TabularInline):
 
 @admin.register(Cover)
 class CoverAdmin(TimestampedModelAdmin):
+    # DateSeen is polymorphic (subject_type/subject_id) and no longer carries
+    # an FK to Cover, so it cannot be edited via TabularInline here. Manage
+    # DateSeen rows through the standalone DateSeenAdmin, filtering by
+    # subject_type='COVER' and the cover's PK.
     resource_class = CoverResource
     list_display = ['code', 'type', 'color', 'has_adhesive', 'height', 'width', 'is_institutional']
     list_filter = ['type', 'has_adhesive', 'is_institutional']
     search_fields = ['code', 'type']
     raw_id_fields = ['color']
-    inlines = [CoverMarkingForCoverInline, CoverDateInline, CoverValuationInline]
+    inlines = [CoverMarkingForCoverInline, CoverValuationInline]
 
 
-@admin.register(CoverDate)
-class CoverDateAdmin(TimestampedModelAdmin):
-    resource_class = CoverDateResource
-    list_display = ['cover', 'date', 'granularity']
-    list_filter = ['granularity']
-    search_fields = ['cover__code']
-    raw_id_fields = ['cover']
-    ordering = ['cover', 'date']
+@admin.register(DateSeen)
+class DateSeenAdmin(TimestampedModelAdmin):
+    resource_class = DateSeenResource
+    list_display = ['subject_type', 'subject_id', 'date', 'granularity']
+    list_filter = ['granularity', 'subject_type']
+    search_fields = ['subject_id']
+    ordering = ['subject_type', 'subject_id', 'date']
 
 
 @admin.register(CoverValuation)
@@ -928,10 +936,18 @@ class RegionAdmin(TimestampedModelAdmin):
 class PostOfficeAdmin(TimestampedModelAdmin):
     resource_class = PostOfficeResource
     list_display = ["name", "region"]
-    list_filter = ["region"]
-    search_fields = ["name", "region__name"]
-    raw_id_fields = ["region"]
+    search_fields = ["name", "post_office_regions__region__name"]
     ordering = ["name"]
+
+
+@admin.register(PostOfficeRegion)
+class PostOfficeRegionAdmin(TimestampedModelAdmin):
+    resource_class = PostOfficeRegionResource
+    list_display = ["post_office", "region"]
+    list_filter = ["region"]
+    search_fields = ["post_office__name", "region__name", "region__abbrev"]
+    raw_id_fields = ["post_office", "region"]
+    ordering = ["post_office__name", "region__name"]
 
 
 @admin.register(ReferenceWork)

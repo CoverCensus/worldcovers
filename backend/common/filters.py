@@ -3,7 +3,7 @@
 ## MPC: 2025/11/15
 ###################################################################################################
 import django_filters
-from django.db.models import Q, Min, Max
+from django.db.models import Q
 
 from .models import Marking, MarkingType
 
@@ -50,19 +50,20 @@ class MarkingListFilter(django_filters.FilterSet):
 
     @staticmethod
     def filter_earliest_use_year_min(queryset, name, value):
+        # Filter on the unioned (direct + cover-mediated) earliest date that
+        # `with_date_range` annotates onto the Marking queryset. Idempotent:
+        # re-annotating with the same expression is safe.
         if value is None:
             return queryset
-        return queryset.annotate(
-            _filter_earliest_date=Min('cover_markings__cover__cover_dates__date')
-        ).filter(_filter_earliest_date__year__gte=int(value))
+        return queryset.with_date_range().filter(earliest_seen__year__gte=int(value))
 
     @staticmethod
     def filter_latest_use_year_max(queryset, name, value):
+        # Filter on the unioned (direct + cover-mediated) latest date that
+        # `with_date_range` annotates onto the Marking queryset.
         if value is None:
             return queryset
-        return queryset.annotate(
-            _filter_latest_date=Max('cover_markings__cover__cover_dates__date')
-        ).filter(_filter_latest_date__year__lte=int(value))
+        return queryset.with_date_range().filter(latest_seen__year__lte=int(value))
 
     @staticmethod
     def filter_is_manuscript(queryset, name, value):
@@ -87,9 +88,9 @@ class MarkingListFilter(django_filters.FilterSet):
             return queryset
         value = str(value).strip()
         return queryset.filter(
-            Q(post_office__region__name__iexact=value)
-            | Q(post_office__region__abbrev__iexact=value)
-        )
+            Q(post_office__post_office_regions__region__name__iexact=value)
+            | Q(post_office__post_office_regions__region__abbrev__iexact=value)
+        ).distinct()
 
     @staticmethod
     def filter_has_images(queryset, name, value):
@@ -130,9 +131,9 @@ class MarkingFilter(django_filters.FilterSet):
             return queryset
         value = str(value).strip()
         return queryset.filter(
-            Q(post_office__region__name__iexact=value)
-            | Q(post_office__region__abbrev__iexact=value)
-        )
+            Q(post_office__post_office_regions__region__name__iexact=value)
+            | Q(post_office__post_office_regions__region__abbrev__iexact=value)
+        ).distinct()
 
     def filter_has_images(self, queryset, name, value):
         if value is None:

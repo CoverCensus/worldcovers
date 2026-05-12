@@ -37,7 +37,9 @@ def build_marking_snapshot(marking: Marking | None) -> dict[str, Any]:
         return {}
 
     post_office = getattr(marking, "post_office", None)
-    region = getattr(post_office, "region", None) if post_office else None
+    # PostOffice.region is a property that resolves to the most-recent active
+    # Region via the post_office_regions junction. May be None if no link exists.
+    region = post_office.region if post_office else None
     images = (
         Image.objects.filter(subject_type=Image.SUBJECT_MARKING, subject_id=marking.pk)
         .order_by("display_order")
@@ -72,7 +74,7 @@ def build_marking_snapshot(marking: Marking | None) -> dict[str, Any]:
             "desc": marking.desc,
             "post_office_id": marking.post_office_id,
             "town": post_office.name if post_office else "",
-            "region_id": post_office.region_id if post_office else None,
+            "region_id": region.id if region else None,
             "state": region.name if region else "",
             "shape_id": marking.shape_id,
             "lettering_id": marking.lettering_id,
@@ -155,8 +157,9 @@ def restore_marking_from_snapshot(marking: Marking, snapshot: dict[str, Any], ac
     """
     Restore a Marking from a snapshot dict. Phase 1 stub: scalar-field restore
     only. Image reattachment is deferred to the Phase 2 contribution rewrite,
-    which owns Image lifecycle for both COVER and MARKING subjects. cover_dates
-    are no longer marking-scoped and are intentionally not handled here.
+    which owns Image lifecycle for both COVER and MARKING subjects. DateSeen
+    rows are now polymorphic and live alongside Image / Citation under the same
+    (subject_type, subject_id) pattern; reattaching them is also deferred.
     """
     if not isinstance(snapshot, dict):
         return marking

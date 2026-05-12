@@ -704,20 +704,7 @@ const Contribute = () => {
                   typeof o.image_url === "string" ? o.image_url : null,
                 );
                 if (!url) return null;
-                // The Image schema doesn't have an explicit is_tracing
-                // column (see common/models.py Image). For a stored marking
-                // image, we treat image_view === "COMPARISON" as the
-                // canonical tracing/diagram view (FULL/DETAIL are the
-                // photographic options) and mirror the same fallbacks the
-                // RecordDetail gallery uses so older uploads tagged via
-                // image_description / filename still surface as tracings.
-                const view = String(o.image_view ?? "").trim().toUpperCase();
-                const desc = String(o.image_description ?? "").toLowerCase();
-                const fname = String(o.original_filename ?? "").toLowerCase();
-                const tracing =
-                  view === "COMPARISON" ||
-                  desc.includes("tracing") ||
-                  fname.includes("tracing");
+                const tracing = Boolean(o.is_tracing);
                 return { url, tracing };
               })
               .filter((row): row is { url: string; tracing: boolean } => row !== null)

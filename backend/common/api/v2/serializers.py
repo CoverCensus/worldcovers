@@ -3,7 +3,8 @@
 ##
 ## Unified Marking model: Postmark / Ratemark / Auxmark are now rows in a single
 ## Marking table discriminated by `type`. CoverMarking carries placement.
-## CoverDate / CoverValuation move date and valuation observation to the Cover.
+## CoverValuation belongs to Cover. DateSeen is polymorphic over
+## (subject_type, subject_id) and can be attached to a Cover or a Marking.
 ## Image is polymorphic over (subject_type, subject_id).
 ###################################################################################################
 from django.contrib.auth import get_user_model
@@ -17,9 +18,9 @@ from common.models import (
     Color,
     Contribution,
     Cover,
-    CoverDate,
     CoverMarking,
     CoverValuation,
+    DateSeen,
     FAQEntry,
     Image,
     Lettering,
@@ -74,8 +75,11 @@ class RegionSerializer(serializers.ModelSerializer):
 
 
 class PostOfficeSerializer(serializers.ModelSerializer):
-    region_name = serializers.CharField(source="region.name", read_only=True)
-    region_abbrev = serializers.CharField(source="region.abbrev", read_only=True)
+    # PostOffice.region is a property that resolves to the most-recent active
+    # Region via the post_office_regions junction; both fields return "" when
+    # the PO has no junction row.
+    region_name = serializers.CharField(source="region.name", read_only=True, default="")
+    region_abbrev = serializers.CharField(source="region.abbrev", read_only=True, default="")
 
     class Meta:
         model = PostOffice
@@ -132,6 +136,7 @@ class ImageSerializer(serializers.ModelSerializer):
             "file_size_bytes",
             "image_view",
             "image_description",
+            "is_tracing",
             "display_order",
             "uploaded_by",
             "image_url",
@@ -171,6 +176,13 @@ class ImageSerializer(serializers.ModelSerializer):
 ## Citation (subject_type COVER | MARKING)
 ###################################################################################################
 class CitationSerializer(serializers.ModelSerializer):
+    # Nested read-only view of the linked ReferenceWork so callers (the
+    # Marking detail endpoint, in particular) can render citation rows
+    # without a second round-trip to /reference-works/. Mirrors the
+    # `cover_details` pattern on CoverMarkingSerializer. The writable
+    # `reference_work` FK field is still exposed for create/update.
+    reference_work_details = ReferenceWorkSerializer(source="reference_work", read_only=True)
+
     class Meta:
         model = Citation
         fields = "__all__"
@@ -183,11 +195,11 @@ class CitationSerializer(serializers.ModelSerializer):
 
 
 ###################################################################################################
-## Cover, CoverDate, CoverValuation, CoverMarking
+## Cover, DateSeen, CoverValuation, CoverMarking
 ###################################################################################################
-class CoverDateSerializer(serializers.ModelSerializer):
+class DateSeenSerializer(serializers.ModelSerializer):
     class Meta:
-        model = CoverDate
+        model = DateSeen
         # Explicit field list (mirrors CoverSerializer / CoverMarkingSerializer)
         # so DRF doesn't auto-generate `created_by` / `modified_by` as
         # required write fields. Those columns come from the
@@ -198,7 +210,8 @@ class CoverDateSerializer(serializers.ModelSerializer):
         # because validation runs before perform_create.
         fields = [
             "id",
-            "cover",
+            "subject_type",
+            "subject_id",
             "date",
             "granularity",
             "created_date",
@@ -206,10 +219,18 @@ class CoverDateSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_date", "modified_date"]
 
+    def validate_subject_type(self, value):
+        if value not in {DateSeen.SUBJECT_COVER, DateSeen.SUBJECT_MARKING}:
+            raise serializers.ValidationError("subject_type must be COVER or MARKING.")
+        return value
+
 
 class CoverSerializer(serializers.ModelSerializer):
+    # `dates_seen` is not a reverse FK relation any more (DateSeen is polymorphic
+    # via subject_type/subject_id), so we expose it via a SerializerMethodField
+    # filtered to subject_type='COVER' and subject_id=cover.pk.
     color_name = serializers.CharField(source="color.name", read_only=True)
-    cover_dates = CoverDateSerializer(many=True, read_only=True)
+    dates_seen = serializers.SerializerMethodField()
 
     class Meta:
         model = Cover
@@ -223,11 +244,18 @@ class CoverSerializer(serializers.ModelSerializer):
             "height",
             "is_institutional",
             "width",
-            "cover_dates",
+            "dates_seen",
             "created_date",
             "modified_date",
         ]
         read_only_fields = ["id", "created_date", "modified_date"]
+
+    def get_dates_seen(self, obj):
+        qs = DateSeen.objects.filter(
+            subject_type=DateSeen.SUBJECT_COVER,
+            subject_id=obj.pk,
+        ).order_by("date")
+        return DateSeenSerializer(qs, many=True).data
 
 
 class CoverValuationSerializer(serializers.ModelSerializer):
