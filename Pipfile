@@ -11,6 +11,9 @@ anthropic = "*"
 openai = "*"
 python-dotenv = "*"
 jinja2 = "*"
+pandas = "*"
+numpy = "*"
+pillow = "*"
 
 [scripts]
 manage = "python backend/manage.py"

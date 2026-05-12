@@ -1111,7 +1111,7 @@ const ContributionDetail = () => {
   const baseImageUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
   const imageRoot = baseImageUrl || "/media";
   const resolveStorageImageUrl = (storageFilename: string) =>
-    normalizeImageUrl(`${imageRoot}/markings/${storageFilename.replace(/^\/+/, "")}`);
+    normalizeImageUrl(`${imageRoot}/${storageFilename.replace(/^\/+/, "")}`);
   const imageMetasRaw = (sd.image_metas ?? sd.imageMetas) as SubmittedData["image_metas"] | undefined;
   const imageMetaSingle = sd.image_meta as SubmittedData["image_meta"] | undefined;
   const imageMetaList: Array<{ imageUrl: string; originalFilename?: string }> = [];

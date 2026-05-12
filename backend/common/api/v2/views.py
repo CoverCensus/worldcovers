@@ -1074,7 +1074,7 @@ class ContributionSubmitView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Save uploaded marking image files under MEDIA_ROOT/markings/<region_abbrev>/.
+        # Save uploaded marking image files under MEDIA_ROOT/<region_abbrev>/.
         # Frontend posts FormData with one or more `marking_image` fields; we
         # stash the resulting metadata on Contribution.submitted_data so the
         # editor portal can display previews. Approval-time materialization
@@ -1135,7 +1135,7 @@ class ContributionSubmitView(APIView):
 
 def _save_contribution_image(uploaded_file, region_abbrev):
     """
-    Save an uploaded marking image under MEDIA_ROOT/markings/<region_abbrev>/
+    Save an uploaded marking image under MEDIA_ROOT/<region_abbrev>/
     and return a metadata dict suitable for Contribution.submitted_data.
 
     Returns dict with storage_filename, original_filename, file_checksum,
@@ -1143,7 +1143,8 @@ def _save_contribution_image(uploaded_file, region_abbrev):
     file is missing, oversize, or not a recognized image format.
 
     storage_filename is returned as '<region_abbrev>/<uuid>.<ext>'. Public
-    URLs are built by ImageSerializer.get_image_url, which prepends 'markings/'.
+    URLs are built by ImageSerializer.get_image_url, which serves from
+    MEDIA_URL directly (e.g. /media/<region_abbrev>/<uuid>.<ext>).
     """
     from common.images import extract_image_metadata
 
@@ -1173,9 +1174,9 @@ def _save_contribution_image(uploaded_file, region_abbrev):
         ext = "jpg"
     abbrev = (region_abbrev or "").strip().lower() or "unknown"
     storage_name = f"{abbrev}/{uuid.uuid4().hex}.{ext}"
-    sub_dir = os.path.join(settings.MEDIA_ROOT, "markings", abbrev)
+    sub_dir = os.path.join(settings.MEDIA_ROOT, abbrev)
     os.makedirs(sub_dir, exist_ok=True)
-    file_path = os.path.join(settings.MEDIA_ROOT, "markings", storage_name)
+    file_path = os.path.join(settings.MEDIA_ROOT, storage_name)
     with open(file_path, "wb") as f:
         f.write(content)
     return {

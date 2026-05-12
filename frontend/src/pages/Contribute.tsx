@@ -663,7 +663,7 @@ const Contribute = () => {
             const urls: string[] = [];
             metas.forEach((m) => {
               const sf = m?.storage_filename;
-              if (sf) urls.push(`${baseUrl}/markings/${sf}`);
+              if (sf) urls.push(`${baseUrl}/${sf.replace(/^\/+/, "")}`);
             });
             if (urls.length > 0) setMarkingImagePreviews(urls);
           }

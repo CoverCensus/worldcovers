@@ -18,6 +18,7 @@ Expected layout:
         cover_valuations.csv
         cover_markings.csv
         citations.csv
+        images.csv
 
 Each CSV is in "Django shape": every row carries an explicit `id`,
 audit columns (created_date, modified_date, created_by, modified_by),
@@ -44,6 +45,7 @@ from common.admin import (
     CoverMarkingResource,
     CoverResource,
     CoverValuationResource,
+    ImageResource,
     LetteringResource,
     MarkingResource,
     PostOfficeResource,
@@ -68,6 +70,7 @@ RESOURCES = {
     "cover_valuations": CoverValuationResource,
     "cover_markings": CoverMarkingResource,
     "citations": CitationResource,
+    "images": ImageResource,
 }
 
 # Dependency-safe load order. Parents before children:
@@ -79,6 +82,7 @@ RESOURCES = {
 #   cover_dates, cover_valuations           -- depend on cover
 #   cover_markings                          -- depends on cover + marking
 #   citations                               -- depends on reference_work + marking (via subject_id)
+#   images                                  -- depends on marking (subject_id) and user (uploaded_by)
 ASCC_LOAD_ORDER = (
     "colors",
     "letterings",
@@ -92,6 +96,7 @@ ASCC_LOAD_ORDER = (
     "cover_valuations",
     "cover_markings",
     "citations",
+    "images",
 )
 
 
@@ -205,7 +210,7 @@ class Command(BaseCommand):
             "--truncate",
             action="store_true",
             help=(
-                "Before importing, delete every row from all 12 ASCC catalog "
+                "Before importing, delete every row from all 13 ASCC catalog "
                 "tables in reverse dependency order. Incompatible with --only "
                 "(a partial truncate would hit FK constraints). Under --dry-run "
                 "the truncate is rolled back too."
@@ -258,7 +263,7 @@ class Command(BaseCommand):
             with transaction.atomic():
                 if truncate:
                     self.stdout.write(self.style.NOTICE(
-                        "Truncating 12 ASCC catalog tables in reverse dependency order..."
+                        "Truncating 13 ASCC catalog tables in reverse dependency order..."
                     ))
                     # Raw DELETE FROM with FOREIGN_KEY_CHECKS off (MySQL) so
                     # the wipe bypasses on_delete=PROTECT FKs from outside-
