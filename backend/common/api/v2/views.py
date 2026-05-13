@@ -321,13 +321,20 @@ class ImageViewSet(viewsets.ModelViewSet):
     queryset = Image.objects.all().select_related("uploaded_by")
     serializer_class = ImageSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ["subject_type", "subject_id", "image_view", "is_tracing"]
     ordering_fields = ["display_order", "created_date"]
     ordering = ["subject_type", "subject_id", "display_order"]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        # Image.uploaded_by is required (PROTECT FK); TimestampedModel also needs
+        # created_by / modified_by. All three must be set on create.
+        serializer.save(
+            created_by=self.request.user,
+            modified_by=self.request.user,
+            uploaded_by=self.request.user,
+        )
 
     def perform_update(self, serializer):
         serializer.save(modified_by=self.request.user)

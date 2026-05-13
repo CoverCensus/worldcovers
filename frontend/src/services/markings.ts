@@ -1,4 +1,4 @@
-import apiClient from "@/lib/api";
+import apiClient, { ensureCsrfToken } from "@/lib/api";
 
 /**
  * Unified Marking service. Replaces the legacy postmarks/ratemarks/auxmarks
@@ -44,6 +44,162 @@ export interface MarkingImage {
   imageDescription: string;
   isTracing: boolean;
   displayOrder: number;
+}
+
+export type ImageSubjectType = MarkingImage["subjectType"];
+
+interface ImageApiResponse {
+  count?: number;
+  next?: string | null;
+  previous?: string | null;
+  results?: unknown[];
+}
+
+interface ImageApiRow {
+  image_id?: unknown;
+  subject_type?: unknown;
+  subject_id?: unknown;
+  image_url?: unknown;
+  image_view?: unknown;
+  original_filename?: unknown;
+  storage_filename?: unknown;
+  image_description?: unknown;
+  is_tracing?: unknown;
+  display_order?: unknown;
+}
+
+function mapImageRow(raw: unknown): MarkingImage | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as ImageApiRow;
+  const imageId = toIdOrNull(o.image_id);
+  const subjectTypeRaw = String(o.subject_type ?? "").toUpperCase();
+  const subjectType: MarkingImage["subjectType"] =
+    subjectTypeRaw === "COVER" ? "COVER" : "MARKING";
+  const subjectId = toIdOrNull(o.subject_id);
+  if (imageId == null || subjectId == null) return null;
+  return {
+    imageId,
+    subjectType,
+    subjectId,
+    imageUrl: typeof o.image_url === "string" ? o.image_url : null,
+    imageView: toStr(o.image_view),
+    originalFilename: toStr(o.original_filename),
+    storageFilename: toStr(o.storage_filename),
+    imageDescription: toStr(o.image_description),
+    isTracing: Boolean(o.is_tracing),
+    displayOrder: toNumOrNull(o.display_order) ?? 0,
+  };
+}
+
+/** Pixel size for multipart image metadata (server still recomputes from bytes). */
+async function readImagePixelSize(file: File): Promise<{ width: number; height: number }> {
+  if (typeof createImageBitmap === "function") {
+    const bmp = await createImageBitmap(file);
+    try {
+      return { width: bmp.width, height: bmp.height };
+    } finally {
+      bmp.close?.();
+    }
+  }
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({
+        width: img.naturalWidth || img.width || 1,
+        height: img.naturalHeight || img.height || 1,
+      });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not decode image"));
+    };
+    img.src = url;
+  });
+}
+
+export async function getImagesForSubject(params: {
+  subjectType: ImageSubjectType;
+  subjectId: number;
+}): Promise<MarkingImage[]> {
+  try {
+    const res = await apiClient.get<ImageApiResponse>("/images/", {
+      params: {
+        subject_type: params.subjectType,
+        subject_id: String(params.subjectId),
+        ordering: "display_order",
+      },
+    });
+    const results = Array.isArray(res.data?.results) ? res.data.results : [];
+    return results.map(mapImageRow).filter((x): x is MarkingImage => x != null);
+  } catch {
+    return [];
+  }
+}
+
+export async function createImageForSubject(params: {
+  file: File;
+  subjectType: ImageSubjectType;
+  subjectId: number;
+  imageView: string;
+  imageDescription?: string | null;
+  isTracing?: boolean;
+  displayOrder?: number;
+}): Promise<MarkingImage | null> {
+  const form = new FormData();
+  form.append("file", params.file, params.file.name);
+  const safeName = (params.file.name || "image").slice(0, 255);
+  form.append("original_filename", safeName);
+  const mime =
+    params.file.type && params.file.type.startsWith("image/")
+      ? params.file.type
+      : "image/jpeg";
+  form.append("mime_type", mime);
+  form.append("file_size_bytes", String(params.file.size));
+  try {
+    const { width, height } = await readImagePixelSize(params.file);
+    form.append("image_width", String(width));
+    form.append("image_height", String(height));
+  } catch {
+    form.append("image_width", "1");
+    form.append("image_height", "1");
+  }
+  form.append("subject_type", params.subjectType);
+  form.append("subject_id", String(params.subjectId));
+  form.append("image_view", params.imageView);
+  if (params.imageDescription != null) {
+    form.append("image_description", params.imageDescription);
+  }
+  if (params.isTracing != null) {
+    form.append("is_tracing", String(params.isTracing));
+  }
+  if (params.displayOrder != null) {
+    form.append("display_order", String(params.displayOrder));
+  }
+  try {
+    await ensureCsrfToken();
+    const res = await apiClient.post("/images/", form);
+    return mapImageRow(res.data);
+  } catch {
+    return null;
+  }
+}
+
+export async function updateImage(
+  imageId: number,
+  patch: Partial<Pick<MarkingImage, "displayOrder" | "isTracing" | "imageDescription">>,
+): Promise<boolean> {
+  const payload: Record<string, unknown> = {};
+  if (patch.displayOrder != null) payload.display_order = patch.displayOrder;
+  if (patch.isTracing != null) payload.is_tracing = patch.isTracing;
+  if (patch.imageDescription != null) payload.image_description = patch.imageDescription;
+  try {
+    await apiClient.patch(`/images/${imageId}/`, payload);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

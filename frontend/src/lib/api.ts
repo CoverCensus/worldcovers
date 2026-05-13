@@ -1,4 +1,4 @@
-import axios, { AxiosError } from 'axios';
+import axios, { AxiosError, AxiosHeaders } from 'axios';
 
 // API base URL from environment variable
 // Use same-origin fallback to avoid mixed-content issues on HTTPS pages.
@@ -29,10 +29,27 @@ const apiClient = axios.create({
   withXSRFToken: true,
   xsrfCookieName: 'csrftoken',
   xsrfHeaderName: 'X-CSRFToken',
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  // Do NOT set a default `Content-Type: application/json` here. Axios's
+  // default transformRequest checks that header: if it sees `application/json`
+  // while `data` is a FormData, it **replaces** the body with
+  // `JSON.stringify(formDataToJSON(data))`, which breaks multipart uploads
+  // (Django then has no file; serializer reports missing storage_filename,
+  // mime_type, etc.). JSON requests still get `application/json` from the
+  // built-in transformRequest when posting plain objects.
   timeout: 10000, // 10 second timeout
+});
+
+/**
+ * Same as axios `resolveConfig`: in the browser, FormData must leave
+ * Content-Type unset so the runtime adds `multipart/form-data; boundary=...`.
+ */
+apiClient.interceptors.request.use((config) => {
+  if (typeof FormData !== "undefined" && config.data instanceof FormData) {
+    const headers = AxiosHeaders.from(config.headers);
+    headers.setContentType(undefined);
+    config.headers = headers;
+  }
+  return config;
 });
 
 function extractErrorMessage(data: unknown): string | null {

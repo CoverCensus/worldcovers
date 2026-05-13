@@ -120,6 +120,11 @@ class ImageSerializer(serializers.ModelSerializer):
     (subject_type, subject_id). Replaces PostmarkImageSerializer.
     """
     image_url = serializers.SerializerMethodField()
+    # Multipart upload support: clients may POST a raw image file under `file`.
+    # We store it under MEDIA_ROOT and persist storage_filename + extracted metadata.
+    # Use FileField (not ImageField): ImageField runs PIL validation before `create()`
+    # and can reject uploads that we still handle via extract_image_metadata.
+    file = serializers.FileField(write_only=True, required=False, allow_null=True)
 
     class Meta:
         model = Image
@@ -127,6 +132,7 @@ class ImageSerializer(serializers.ModelSerializer):
             "image_id",
             "subject_type",
             "subject_id",
+            "file",
             "original_filename",
             "storage_filename",
             "file_checksum",
@@ -142,7 +148,144 @@ class ImageSerializer(serializers.ModelSerializer):
             "image_url",
             "created_date",
         ]
-        read_only_fields = ["image_id", "file_checksum", "created_date", "modified_date"]
+        read_only_fields = [
+            "image_id",
+            "created_date",
+            "modified_date",
+            "uploaded_by",
+        ]
+        # These are always filled server-side when `file` is uploaded. DRF would
+        # otherwise require them on the incoming payload before `create()` runs.
+        extra_kwargs = {
+            "original_filename": {"required": False, "allow_blank": True},
+            "storage_filename": {"required": False, "allow_blank": True},
+            "mime_type": {"required": False, "allow_blank": True},
+            "image_width": {"required": False},
+            "image_height": {"required": False},
+            "file_size_bytes": {"required": False},
+            "file_checksum": {"required": False, "allow_blank": True},
+        }
+
+    def validate(self, attrs):
+        # Create: either multipart `file` (normal SPA upload) or a full manual row
+        # (imports) with storage_filename + metadata.
+        if self.instance is not None:
+            return attrs
+        has_file = attrs.get("file") is not None
+        if has_file:
+            return attrs
+        storage = (attrs.get("storage_filename") or "").strip()
+        if not storage:
+            raise serializers.ValidationError(
+                {
+                    "file": (
+                        "Send the image as multipart form field `file`. "
+                        "Optional text fields (original_filename, mime_type, etc.) "
+                        "may be included but are derived server-side when `file` is present."
+                    )
+                }
+            )
+        manual = (
+            "original_filename",
+            "mime_type",
+            "image_width",
+            "image_height",
+            "file_size_bytes",
+            "file_checksum",
+        )
+        missing = [k for k in manual if attrs.get(k) is None]
+        if missing:
+            raise serializers.ValidationError(
+                {k: "Required when `file` is omitted (import path)." for k in missing}
+            )
+        return attrs
+
+    def create(self, validated_data):
+        """
+        Support multipart upload: when `file` is provided, write it to MEDIA_ROOT
+        and populate the Image metadata fields server-side.
+
+        Clients may alternatively create Image rows by directly supplying
+        storage_filename + metadata (e.g. for imported assets); in that case
+        `file` can be omitted.
+        """
+        uploaded = validated_data.pop("file", None)
+        if uploaded is None:
+            return super().create(validated_data)
+
+        # Ignore empty client hints so computed metadata always wins.
+        for k in (
+            "original_filename",
+            "storage_filename",
+            "mime_type",
+            "image_width",
+            "image_height",
+            "file_size_bytes",
+            "file_checksum",
+        ):
+            validated_data.pop(k, None)
+
+        from django.conf import settings
+        from common.images import extract_image_metadata
+        import os
+        import uuid
+
+        content_type = (getattr(uploaded, "content_type", "") or "").strip().lower()
+        try:
+            uploaded.seek(0)
+        except Exception:
+            pass
+        content = uploaded.read()
+        if not content:
+            raise serializers.ValidationError({"file": "Uploaded file is empty."})
+        max_size_bytes = 100 * 1024 * 1024
+        if len(content) > max_size_bytes:
+            raise serializers.ValidationError({"file": "Uploaded file is too large (max 100MB)."})
+        try:
+            uploaded.seek(0)
+        except Exception:
+            pass
+
+        # Browsers sometimes omit or mislabel Content-Type on multipart parts.
+        if content_type not in {"image/png", "image/jpeg", "image/jpg", "image/tiff"}:
+            if content[:8] == b"\x89PNG\r\n\x1a\n":
+                content_type = "image/png"
+            elif content[:2] == b"\xff\xd8":
+                content_type = "image/jpeg"
+            elif content[:4] in (b"II*\x00", b"MM\x00*"):
+                content_type = "image/tiff"
+            else:
+                content_type = ""
+
+        metadata = extract_image_metadata(content, content_type)
+        if metadata is None:
+            raise serializers.ValidationError({"file": "Unsupported image format."})
+
+        if "png" in content_type:
+            ext = "png"
+        elif "tiff" in content_type:
+            ext = "tiff"
+        else:
+            ext = "jpg"
+
+        subdir = "uploads"
+        storage_name = f"{subdir}/{uuid.uuid4().hex}.{ext}"
+        os.makedirs(os.path.join(settings.MEDIA_ROOT, subdir), exist_ok=True)
+        file_path = os.path.join(settings.MEDIA_ROOT, storage_name)
+        with open(file_path, "wb") as f:
+            f.write(content)
+
+        validated_data["storage_filename"] = storage_name
+        validated_data["original_filename"] = (
+            (getattr(uploaded, "name", "") or "image")[:255]
+        )
+        validated_data["mime_type"] = metadata.get("mime_type") or content_type or "image/jpeg"
+        validated_data["image_width"] = metadata.get("image_width")
+        validated_data["image_height"] = metadata.get("image_height")
+        validated_data["file_size_bytes"] = metadata.get("file_size_bytes") or len(content)
+        validated_data["file_checksum"] = metadata.get("file_checksum")
+
+        return super().create(validated_data)
 
     def get_image_url(self, obj):
         """

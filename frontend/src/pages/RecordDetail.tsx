@@ -39,7 +39,6 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
-import { CoverDialog } from "@/components/CoverDialog";
 import { deleteCover } from "@/services/covers";
 import {
   AlertDialog,
@@ -275,10 +274,7 @@ function AssociatedCoverEntry({
 }: {
   cover: AssociatedCover;
   isFirst: boolean;
-  /**
-   * Per-row "Submit Edit" hook. Opens the shared CoverDialog in edit mode
-   * prefilled with `cover`.
-   */
+  /** Per-row "Submit Edit" hook. Navigates to cover edit page. */
   onEdit?: (cover: AssociatedCover) => void;
   /**
    * Per-row "Delete Cover" hook (editor-only). Rendered at the bottom of the
@@ -371,13 +367,6 @@ const RecordDetail = () => {
   const [record, setRecord] = useState<MarkingRecord | null>(null);
   const [associatedCovers, setAssociatedCovers] = useState<AssociatedCover[]>([]);
   const [coversOpen, setCoversOpen] = useState(true);
-  // CoverDialog state. mode + editingCover together pick "create new"
-  // vs. "edit this specific cover-marking link" without a second dialog.
-  const [coverDialogOpen, setCoverDialogOpen] = useState(false);
-  const [coverDialogMode, setCoverDialogMode] = useState<"create" | "edit">(
-    "create",
-  );
-  const [editingCover, setEditingCover] = useState<AssociatedCover | null>(null);
   // Delete-cover confirmation: holds the cover the user has just clicked
   // "Delete Cover" on. AlertDialog renders only when this is non-null.
   // deletingCoverId tracks the in-flight DELETE so the row's button can
@@ -440,10 +429,10 @@ const RecordDetail = () => {
     };
   }, [markingId]);
 
-  // Fetcher extracted so both the initial mount and the post-save callback
-  // from CoverDialog can refresh the cover list without duplicating the
-  // request logic. setCoversOpen is intentionally only touched on the
-  // mount path so a save doesn't clobber the user's collapse choice.
+  // Fetcher extracted so both the initial mount and post-edit navigation
+  // returns can refresh the cover list without duplicating request logic.
+  // setCoversOpen is intentionally only touched on the mount path so a save
+  // doesn't clobber the user's collapse choice.
   const refreshAssociatedCovers = useCallback(
     async (options?: { resetOpen?: boolean }) => {
       if (markingId == null || Number.isNaN(markingId)) {
@@ -723,15 +712,15 @@ const RecordDetail = () => {
   };
   const openNewCoverDialog = () => {
     if (!requireAuth()) return;
-    setEditingCover(null);
-    setCoverDialogMode("create");
-    setCoverDialogOpen(true);
+    navigate(`/record/${markingId}/cover/new`, {
+      state: { from: location.pathname + location.search },
+    });
   };
   const openEditCoverDialog = (cover: AssociatedCover) => {
     if (!requireAuth()) return;
-    setEditingCover(cover);
-    setCoverDialogMode("edit");
-    setCoverDialogOpen(true);
+    navigate(`/record/${markingId}/cover/${cover.id}`, {
+      state: { from: location.pathname + location.search },
+    });
   };
 
   const requestDeleteCover = (cover: AssociatedCover) => {
@@ -1191,17 +1180,6 @@ const RecordDetail = () => {
                   </Collapsible>
                 )}
               </Card>
-
-              {markingId != null && !Number.isNaN(markingId) && (
-                <CoverDialog
-                  open={coverDialogOpen}
-                  onOpenChange={setCoverDialogOpen}
-                  mode={coverDialogMode}
-                  markingId={markingId}
-                  cover={coverDialogMode === "edit" ? editingCover : null}
-                  onSaved={() => refreshAssociatedCovers({ resetOpen: true })}
-                />
-              )}
 
               <AlertDialog
                 open={pendingDeleteCover !== null}
