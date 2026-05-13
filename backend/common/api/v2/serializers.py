@@ -391,7 +391,7 @@ class CoverSerializer(serializers.ModelSerializer):
             "created_date",
             "modified_date",
         ]
-        read_only_fields = ["id", "created_date", "modified_date"]
+        read_only_fields = ["id", "code", "created_date", "modified_date"]
 
     def get_dates_seen(self, obj):
         qs = DateSeen.objects.filter(
@@ -417,6 +417,7 @@ class CoverValuationSerializer(serializers.ModelSerializer):
 
 class CoverMarkingSerializer(serializers.ModelSerializer):
     cover_details = CoverSerializer(source="cover", read_only=True)
+    reviewer_username = serializers.SerializerMethodField()
 
     class Meta:
         model = CoverMarking
@@ -427,10 +428,29 @@ class CoverMarkingSerializer(serializers.ModelSerializer):
             "marking",
             "is_backstamp",
             "placement",
+            "review_status",
+            "review_notes",
+            "reviewed_at",
+            "reviewer",
+            "reviewer_username",
             "created_date",
             "modified_date",
         ]
-        read_only_fields = ["id", "created_date", "modified_date"]
+        read_only_fields = [
+            "id",
+            "review_status",
+            "review_notes",
+            "reviewed_at",
+            "reviewer",
+            "reviewer_username",
+            "created_date",
+            "modified_date",
+        ]
+
+    def get_reviewer_username(self, obj):
+        if obj.reviewer_id and obj.reviewer:
+            return obj.reviewer.get_username()
+        return ""
 
 
 ###################################################################################################

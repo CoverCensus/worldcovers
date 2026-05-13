@@ -11,6 +11,7 @@ import RecordDetail from "./pages/RecordDetail";
 import ContributionDetail from "./pages/ContributionDetail";
 import Contribute from "./pages/Contribute";
 import CoverEdit from "./pages/CoverEdit";
+import CoverDetail from "./pages/CoverDetail";
 import Dashboard from "./pages/Dashboard";
 import MySuggestions from "./pages/MySuggestions";
 import Auth from "./pages/Auth";
@@ -61,6 +62,7 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/search" element={<Search />} />
             <Route path="/record/:id" element={<RecordDetail />} />
+            <Route path="/covers/:coverId" element={<CoverDetail />} />
             <Route
               path="/record/:id/cover/new"
               element={(

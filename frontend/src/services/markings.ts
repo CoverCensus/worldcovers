@@ -720,11 +720,24 @@ export interface AssociatedCoverDetails {
 }
 
 /** One CoverMarking row (a marking-on-cover association). */
+export type CoverMarkingReviewStatus = "pending" | "approved" | "rejected" | "needs_revision";
+
 export interface AssociatedCover {
   id: number;
+  /** Editor moderation for this cover↔marking link (defaults to approved for legacy rows). */
+  reviewStatus: CoverMarkingReviewStatus;
+  reviewNotes: string | null;
+  reviewedAt: string | null;
+  reviewerUsername: string;
   isBackstamp: boolean;
   placement: string | null;
   coverDetails: AssociatedCoverDetails | null;
+  /**
+   * Optional client enrichment: URL of the cover's default image
+   * (`display_order` 0, else first image). Set by
+   * `enrichAssociatedCoversWithDefaultImages` on the record detail page.
+   */
+  defaultImageUrl?: string | null;
 }
 
 interface CoverMarkingApiResponse {
@@ -773,6 +786,12 @@ function mapAssociatedCoverDetails(raw: unknown): AssociatedCoverDetails | null 
   };
 }
 
+function normalizeCoverMarkingReviewStatus(raw: unknown): CoverMarkingReviewStatus {
+  const s = String(raw ?? "").toLowerCase();
+  if (s === "pending" || s === "approved" || s === "rejected" || s === "needs_revision") return s;
+  return "approved";
+}
+
 function mapAssociatedCover(raw: unknown): AssociatedCover | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
@@ -780,6 +799,15 @@ function mapAssociatedCover(raw: unknown): AssociatedCover | null {
   if (id == null) return null;
   return {
     id,
+    reviewStatus: normalizeCoverMarkingReviewStatus(o.review_status),
+    reviewNotes: typeof o.review_notes === "string" ? o.review_notes : null,
+    reviewedAt: typeof o.reviewed_at === "string" ? o.reviewed_at : null,
+    reviewerUsername:
+      typeof o.reviewer_username === "string"
+        ? o.reviewer_username
+        : typeof (o as { reviewerUsername?: string }).reviewerUsername === "string"
+          ? (o as { reviewerUsername?: string }).reviewerUsername!
+          : "",
     isBackstamp: Boolean(o.is_backstamp),
     placement:
       typeof o.placement === "string" && o.placement ? o.placement : null,
@@ -826,6 +854,56 @@ export async function getMarkingCovers(
   } catch {
     return [];
   }
+}
+
+/** Parallel fetch of default thumbnail URLs for associated covers (cover image API). */
+export async function enrichAssociatedCoversWithDefaultImages(
+  covers: AssociatedCover[],
+): Promise<AssociatedCover[]> {
+  if (covers.length === 0) return [];
+  return Promise.all(
+    covers.map(async (c) => {
+      const cid = c.coverDetails?.id;
+      if (cid == null) return { ...c, defaultImageUrl: null };
+      const imgs = await getImagesForSubject({
+        subjectType: "COVER",
+        subjectId: cid,
+      });
+      const sorted = [...imgs].sort((a, b) => a.displayOrder - b.displayOrder);
+      const def = sorted[0];
+      return {
+        ...c,
+        defaultImageUrl: def?.imageUrl ? normalizeImageUrl(def.imageUrl) : null,
+      };
+    }),
+  );
+}
+
+/** Editor moderation: POST /cover-markings/{id}/approve|reject|request-revision/ */
+export type CoverMarkingReviewActionApi = "approve" | "reject" | "request-revision";
+
+export async function postCoverMarkingReview(
+  coverMarkingId: number,
+  action: CoverMarkingReviewActionApi,
+  reviewNotes?: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  await ensureCsrfToken();
+  try {
+    await apiClient.post(`/cover-markings/${coverMarkingId}/${action}/`, {
+      review_notes: reviewNotes ?? "",
+    });
+    return { ok: true };
+  } catch (err: unknown) {
+    const ax = err as { response?: { data?: { detail?: string } } };
+    const d = ax.response?.data?.detail;
+    return { ok: false, message: typeof d === "string" ? d : "Request failed." };
+  }
+}
+
+/** Contributor: POST /cover-markings/{id}/resubmit/ after addressing revision notes. */
+export async function postCoverMarkingResubmit(coverMarkingId: number): Promise<void> {
+  await ensureCsrfToken();
+  await apiClient.post(`/cover-markings/${coverMarkingId}/resubmit/`);
 }
 
 /** GET /markings/?page_size=1 - returns total marking count. */

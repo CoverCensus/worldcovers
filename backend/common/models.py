@@ -852,6 +852,20 @@ class Cover(TimestampedModel):
         verbose_name_plural = 'Covers'
         ordering = ['id']
 
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if self.code:
+            return
+        pk = self.pk
+        base = f"C-{pk}"
+        candidate = base
+        suffix = 0
+        while Cover.objects.filter(code=candidate).exclude(pk=pk).exists():
+            suffix += 1
+            candidate = f"{base}-{suffix}"
+        Cover.objects.filter(pk=pk).update(code=candidate)
+        self.code = candidate
+
     def __str__(self):
         if self.code:
             return f'Cover {self.code}'
@@ -923,10 +937,36 @@ class CoverMarking(TimestampedModel):
 
     model.md domain type: cover_markings
     """
+    REVIEW_PENDING = 'pending'
+    REVIEW_APPROVED = 'approved'
+    REVIEW_REJECTED = 'rejected'
+    REVIEW_NEEDS_REVISION = 'needs_revision'
+    REVIEW_STATUS_CHOICES = [
+        (REVIEW_PENDING, 'Pending review'),
+        (REVIEW_APPROVED, 'Approved'),
+        (REVIEW_REJECTED, 'Rejected'),
+        (REVIEW_NEEDS_REVISION, 'Needs revision'),
+    ]
+
     cover = models.ForeignKey(Cover, on_delete=models.CASCADE, related_name='cover_markings')
     marking = models.ForeignKey(Marking, on_delete=models.CASCADE, related_name='cover_markings')
     is_backstamp = models.BooleanField(default=False, help_text='Whether this marking appears on the reverse of the cover')
     placement = models.CharField(max_length=64, null=True, blank=True, help_text='Free-form placement qualifier; vocabulary not yet enumerated')
+    review_status = models.CharField(
+        max_length=20,
+        choices=REVIEW_STATUS_CHOICES,
+        default=REVIEW_APPROVED,
+        help_text='Editor moderation state for this cover–marking association.',
+    )
+    reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_cover_markings',
+    )
+    review_notes = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'cover_marking'

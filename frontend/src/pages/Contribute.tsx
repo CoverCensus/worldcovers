@@ -2407,20 +2407,20 @@ const Contribute = () => {
                       />
                     </div>
 
+                    {isEditMarking && editMarkingId != null && (
                     <Button
                       type="button"
                       className="w-full bg-green-800 hover:bg-green-900 text-white"
                       onClick={() => {
-                        const target =
-                          editMarkingId != null
-                            ? `/cover/new?marking=${editMarkingId}`
-                            : "/cover/new";
-                        navigate(target);
+                        navigate(`/record/${editMarkingId}/cover/new`, {
+                          state: { from: location.pathname + location.search },
+                        });
                       }}
                     >
                       <Plus className="mr-2 h-4 w-4" />
                       Submit New Cover
                     </Button>
+                    )}
 
                     <div className="flex flex-col sm:flex-row gap-3">
                       {!isEditMarking && (

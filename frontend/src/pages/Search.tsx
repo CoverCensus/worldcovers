@@ -12,7 +12,6 @@ import { Search as SearchIcon, SlidersHorizontal, Loader2, Plus, ArrowUp, ArrowD
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import imageNotAvailable from "@/assets/image-not-available.jpg";
 import {
   getMarkingsPage,
   type MarkingRecord,
@@ -25,6 +24,7 @@ import { useFilterOptions } from "@/hooks/useFilterOptions";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useMarkingYearRange } from "@/hooks/useMarkingYearRange";
 import { cn } from "@/lib/utils";
+import { ImageOrPlaceholder } from "@/components/ImageOrPlaceholder";
 
 const DEBOUNCE_MS = 400;
 type SubmissionQueueSortOption = "newest" | "oldest";
@@ -121,40 +121,6 @@ function validateYearString(raw: string, minYear: number, maxYear: number): stri
 function getSearchParam(params: URLSearchParams, key: string, defaultValue: string): string {
   const v = params.get(key);
   return v ?? defaultValue;
-}
-
-const noImageClassName = "w-full h-full min-w-0 min-h-0 object-cover bg-muted";
-
-/** Placeholder when image is missing or fails to load. Shows fallback artwork instead of text. */
-function ImageOrPlaceholder({
-  src,
-  alt,
-  className,
-}: {
-  src: string | null;
-  alt: string;
-  className?: string;
-}) {
-  const [error, setError] = useState(false);
-  if (error) {
-    return (
-      <img
-        src={imageNotAvailable}
-        alt="No image available"
-        className={cn(noImageClassName, className)}
-      />
-    );
-  }
-  if (!src) {
-    return (
-      <img
-        src={imageNotAvailable}
-        alt="No image available"
-        className={cn(noImageClassName, className)}
-      />
-    );
-  }
-  return <img src={src} alt={alt} className={className} onError={() => setError(true)} />;
 }
 
 /** Build compact page numbers for pagination (handles 500+ pages) */

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowDown, ArrowUp, Loader2, Plus, Star, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, ArrowDown, ArrowUp, Loader2, Star, Trash2, Upload } from "lucide-react";
 
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
@@ -12,7 +12,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 
-import { getColors, type ColorOption } from "@/services/colors";
 import {
   createCover,
   createCoverMarking,
@@ -28,6 +27,7 @@ import {
   getImagesForSubject,
   createImageForSubject,
   getMarkingCovers,
+  postCoverMarkingResubmit,
   reorderImages,
   updateImage,
   type AssociatedCover,
@@ -37,10 +37,10 @@ import {
 
 type Mode = "create" | "edit";
 
-type FormDate = {
+/** Single cover date row in the form (granularity is derived on save). */
+type CoverDateField = {
   existingId?: number;
   date: string;
-  granularity: DateSeenGranularity;
 };
 
 type PendingUpload = {
@@ -55,50 +55,49 @@ const COVER_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "FL", label: "FL - Folded Letter" },
 ];
 
-const GRANULARITY_OPTIONS: { value: DateSeenGranularity; label: string }[] = [
-  { value: "DAY", label: "Day (MM/DD/YYYY)" },
-  { value: "MONTH", label: "Month (MM/YYYY)" },
-  { value: "YEAR", label: "Year (YYYY)" },
-];
+const DEFAULT_COVER_TYPE = "FL";
 
-const NO_COLOR_VALUE = "__none__";
-const NO_TYPE_VALUE = "__none__";
+/**
+ * From a full ISO calendar day (YYYY-MM-DD from `<input type="date">`):
+ * Jan 1 → YEAR, first of any other month → MONTH, otherwise → DAY.
+ */
+function deriveGranularityFromIso(iso: string): { granularity: DateSeenGranularity; normalizedDate: string } | null {
+  const trimmed = iso.trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
 
-function normalizeFormDate(raw: string, granularity: DateSeenGranularity): string {
-  const trimmed = (raw ?? "").trim();
-  if (!trimmed) return "";
-  if (granularity === "YEAR") {
-    const yearMatch = /^(\d{4})/.exec(trimmed);
-    return yearMatch ? `${yearMatch[1]}-01-01` : trimmed;
+  const normalizedDate = `${m[1]}-${m[2]}-${m[3]}`;
+  if (month === 1 && day === 1) {
+    return { granularity: "YEAR", normalizedDate: `${y}-01-01` };
   }
-  if (granularity === "MONTH") {
-    const monthMatch = /^(\d{4})-(\d{2})/.exec(trimmed);
-    return monthMatch ? `${monthMatch[1]}-${monthMatch[2]}-01` : trimmed;
+  if (day === 1) {
+    return { granularity: "MONTH", normalizedDate: `${y}-${String(month).padStart(2, "0")}-01` };
   }
-  return trimmed;
+  return { granularity: "DAY", normalizedDate };
 }
 
-function toFormDate(d: AssociatedDateSeen): FormDate {
-  return {
-    existingId: d.id,
-    date: d.date.slice(0, 10),
-    granularity: d.granularity,
-  };
+function normalizeCoverType(raw: string | null | undefined): string {
+  return raw === "FC" || raw === "FL" ? raw : DEFAULT_COVER_TYPE;
 }
 
 function buildInitialState(cover: AssociatedCover | null | undefined) {
   const c = cover?.coverDetails ?? null;
+  const seen = c?.datesSeen ?? [];
+  const sorted = [...seen].sort((a, b) => a.date.localeCompare(b.date));
+  const primary = sorted[0];
+  const coverDate: CoverDateField =
+    primary != null ? { existingId: primary.id, date: primary.date.slice(0, 10) } : { date: "" };
+
   return {
-    code: c?.code ?? "",
-    colorId: c?.colorId != null && Number.isFinite(c.colorId) ? String(c.colorId) : "",
-    type: c?.type ?? "",
-    width: c?.width ?? "",
-    height: c?.height ?? "",
-    hasAdhesive: c?.hasAdhesive === true,
+    type: normalizeCoverType(c?.type ?? null),
     isInstitutional: c?.isInstitutional === true,
     isBackstamp: cover?.isBackstamp === true,
-    placement: cover?.placement ?? "",
-    dates: c?.datesSeen?.map(toFormDate) ?? [],
+    coverDate,
   };
 }
 
@@ -120,21 +119,12 @@ export default function CoverEdit() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [coverRow, setCoverRow] = useState<AssociatedCover | null>(null);
 
-  const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
-  const [colorsLoading, setColorsLoading] = useState(false);
-
   const initial = useMemo(() => buildInitialState(coverRow), [coverRow]);
 
-  const [code, setCode] = useState(initial.code);
-  const [colorId, setColorId] = useState(initial.colorId);
   const [type, setType] = useState(initial.type);
-  const [width, setWidth] = useState(initial.width);
-  const [height, setHeight] = useState(initial.height);
-  const [hasAdhesive, setHasAdhesive] = useState(initial.hasAdhesive);
   const [isInstitutional, setIsInstitutional] = useState(initial.isInstitutional);
   const [isBackstamp, setIsBackstamp] = useState(initial.isBackstamp);
-  const [placement, setPlacement] = useState(initial.placement);
-  const [dates, setDates] = useState<FormDate[]>(initial.dates);
+  const [coverDate, setCoverDate] = useState<CoverDateField>(initial.coverDate);
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -148,16 +138,10 @@ export default function CoverEdit() {
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
-    setCode(initial.code);
-    setColorId(initial.colorId);
     setType(initial.type);
-    setWidth(initial.width);
-    setHeight(initial.height);
-    setHasAdhesive(initial.hasAdhesive);
     setIsInstitutional(initial.isInstitutional);
     setIsBackstamp(initial.isBackstamp);
-    setPlacement(initial.placement);
-    setDates(initial.dates);
+    setCoverDate(initial.coverDate);
   }, [initial]);
 
   useEffect(() => {
@@ -196,25 +180,6 @@ export default function CoverEdit() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [markingId, coverMarkingId, mode]);
 
-  useEffect(() => {
-    if (colorOptions.length > 0 || colorsLoading) return;
-    let cancelled = false;
-    setColorsLoading(true);
-    getColors()
-      .then((rows) => {
-        if (!cancelled) setColorOptions(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setColorOptions([]);
-      })
-      .finally(() => {
-        if (!cancelled) setColorsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [colorOptions.length, colorsLoading]);
-
   const refreshImages = async () => {
     if (coverId == null) {
       setExistingImages([]);
@@ -233,16 +198,6 @@ export default function CoverEdit() {
     void refreshImages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coverId]);
-
-  const addDate = () => {
-    setDates((prev) => [...prev, { date: "", granularity: "DAY" }]);
-  };
-  const removeDate = (index: number) => {
-    setDates((prev) => prev.filter((_, i) => i !== index));
-  };
-  const updateDateAt = (index: number, patch: Partial<Pick<FormDate, "date" | "granularity">>) => {
-    setDates((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
-  };
 
   const handleBack = () => {
     const from = (location.state as { from?: string } | null)?.from;
@@ -392,47 +347,46 @@ export default function CoverEdit() {
     e.preventDefault();
     if (submitting) return;
 
-    for (const row of dates) {
-      const trimmed = (row.date ?? "").trim();
-      if (!trimmed) {
-        toast({
-          title: "Missing cover date",
-          description: "Each cover-date row needs a date, or remove the row.",
-          variant: "destructive",
-        });
-        return;
-      }
-      if (row.granularity === "YEAR" && !/^\d{4}/.test(trimmed)) {
-        toast({
-          title: "Invalid year",
-          description: "Year-granularity dates must start with a 4-digit year.",
-          variant: "destructive",
-        });
-        return;
-      }
-      if (row.granularity === "MONTH" && !/^\d{4}-\d{2}/.test(trimmed)) {
-        toast({
-          title: "Invalid month",
-          description: "Month-granularity dates must include both year and month.",
-          variant: "destructive",
-        });
-        return;
-      }
+    const imageCount = existingImages.length + pendingUploads.length;
+    if (imageCount < 1) {
+      toast({
+        title: "Cover image required",
+        description: "Add at least one image before saving.",
+        variant: "destructive",
+      });
+      return;
     }
 
-    const widthTrim = (width ?? "").trim();
-    const heightTrim = (height ?? "").trim();
-    const codeTrim = (code ?? "").trim();
-    const placementTrim = (placement ?? "").trim();
+    const trimmed = (coverDate.date ?? "").trim();
+    if (!trimmed) {
+      toast({
+        title: "Cover date required",
+        description: "Choose the date when this cover was used.",
+        variant: "destructive",
+      });
+      return;
+    }
 
+    const derived = deriveGranularityFromIso(trimmed);
+    if (!derived) {
+      toast({
+        title: "Invalid date",
+        description: "Enter a complete calendar date.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const { granularity, normalizedDate } = derived;
+
+    const coverType = normalizeCoverType(type);
     const coverPayload: CoverWritePayload = {
-      code: codeTrim || null,
-      color: colorId ? Number(colorId) : null,
-      type: type || null,
-      has_adhesive: hasAdhesive,
+      type: coverType,
+      color: null,
+      has_adhesive: false,
       is_institutional: isInstitutional,
-      width: widthTrim || null,
-      height: heightTrim || null,
+      width: null,
+      height: null,
     };
 
     setSubmitting(true);
@@ -448,7 +402,7 @@ export default function CoverEdit() {
           cover: savedCoverId,
           marking: markingId,
           is_backstamp: isBackstamp,
-          placement: placementTrim || null,
+          placement: null,
         });
         coverMarkingPk = link.id;
       } else {
@@ -462,25 +416,29 @@ export default function CoverEdit() {
         await updateCover(savedCoverId, coverPayload);
         await updateCoverMarking(coverMarkingPk, {
           is_backstamp: isBackstamp,
-          placement: placementTrim || null,
+          placement: null,
         });
       }
 
-      const keptIds = new Set(dates.map((d) => d.existingId).filter((x): x is number => x != null));
-      const deletions = originalDates.filter((d) => !keptIds.has(d.id)).map((d) => deleteDateSeen(d.id));
-      const writes = dates.map((row) => {
-        const dateValue = normalizeFormDate(row.date, row.granularity);
-        if (row.existingId != null) {
-          return updateDateSeen(row.existingId, { date: dateValue, granularity: row.granularity });
-        }
-        return createDateSeen({
-          subject_type: "COVER",
-          subject_id: savedCoverId,
-          date: dateValue,
-          granularity: row.granularity,
-        });
-      });
-      await Promise.all([...deletions, ...writes]);
+      const keepId = coverDate.existingId ?? null;
+      const deleteOps = originalDates.filter((d) => d.id !== keepId).map((d) => deleteDateSeen(d.id));
+
+      if (keepId != null) {
+        await Promise.all([
+          ...deleteOps,
+          updateDateSeen(keepId, { date: normalizedDate, granularity }),
+        ]);
+      } else {
+        await Promise.all([
+          ...deleteOps,
+          createDateSeen({
+            subject_type: "COVER",
+            subject_id: savedCoverId,
+            date: normalizedDate,
+            granularity,
+          }),
+        ]);
+      }
 
       toast({
         title: mode === "create" ? "Cover added" : "Cover updated",
@@ -496,6 +454,18 @@ export default function CoverEdit() {
 
       if (pendingUploads.length > 0) {
         await uploadPending(savedCoverId);
+      }
+
+      if (mode === "edit" && coverRow?.reviewStatus === "needs_revision") {
+        try {
+          await postCoverMarkingResubmit(coverMarkingPk);
+        } catch (re) {
+          toast({
+            title: "Could not resubmit for review",
+            description: re instanceof Error ? re.message : "Your edits were saved. Try resubmitting from the record page.",
+            variant: "destructive",
+          });
+        }
       }
 
       navigate(`/record/${markingId}`);
@@ -562,21 +532,40 @@ export default function CoverEdit() {
               </CardTitle>
               <p className="text-sm text-muted-foreground">
                 {mode === "create"
-                  ? "Describe the cover, add images, and record the dates it was used."
-                  : "Update this cover’s details, its images, and its observed dates."}
+                  ? "Choose the cover type, add at least one image, and record when it was used. Other details are optional."
+                  : "Update type, images, and observed date. Catalog key is assigned by the system."}
               </p>
+              {mode === "edit" && coverRow?.reviewStatus === "pending" && (
+                <p className="text-sm rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-amber-900 dark:text-amber-100">
+                  This cover is <strong>pending editor review</strong>. It is only visible to you and assigned editors until it is approved.
+                </p>
+              )}
+              {mode === "edit" && coverRow?.reviewStatus === "needs_revision" && (
+                <div className="text-sm rounded-md border border-orange-500/30 bg-orange-500/5 px-3 py-2 space-y-1">
+                  <p className="font-medium text-foreground">Editor requested changes</p>
+                  {(coverRow.reviewNotes ?? "").trim().length > 0 ? (
+                    <p className="text-muted-foreground whitespace-pre-wrap">{coverRow.reviewNotes}</p>
+                  ) : (
+                    <p className="text-muted-foreground">Update the cover below, then save to send it back for review.</p>
+                  )}
+                </div>
+              )}
             </CardHeader>
             <CardContent className="space-y-6">
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="space-y-2">
-                  <Label htmlFor="cover-code">Catalog key</Label>
-                  <Input
-                    id="cover-code"
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
-                    placeholder="e.g. C-1234"
-                    disabled={submitting}
-                  />
+                  <Label>Catalog key</Label>
+                  <div
+                    className="flex min-h-10 w-full items-center rounded-md border border-input bg-muted px-3 py-2 text-sm text-muted-foreground"
+                    aria-live="polite"
+                  >
+                    {mode === "edit" && coverRow?.coverDetails?.code
+                      ? coverRow.coverDetails.code
+                      : mode === "edit"
+                        ? "—"
+                        : "Generated automatically when you save"}
+                  </div>
+                  <p className="text-xs text-muted-foreground">This value cannot be edited.</p>
                 </div>
 
                 <div className="space-y-2">
@@ -584,11 +573,10 @@ export default function CoverEdit() {
                   <select
                     id="cover-type"
                     className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    value={type === "" ? NO_TYPE_VALUE : type}
-                    onChange={(e) => setType(e.target.value === NO_TYPE_VALUE ? "" : e.target.value)}
+                    value={normalizeCoverType(type)}
+                    onChange={(e) => setType(e.target.value)}
                     disabled={submitting}
                   >
-                    <option value={NO_TYPE_VALUE}>(none)</option>
                     {COVER_TYPE_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
                         {opt.label}
@@ -597,70 +585,7 @@ export default function CoverEdit() {
                   </select>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="cover-color">Color</Label>
-                  <select
-                    id="cover-color"
-                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    value={colorId === "" ? NO_COLOR_VALUE : colorId}
-                    onChange={(e) => setColorId(e.target.value === NO_COLOR_VALUE ? "" : e.target.value)}
-                    disabled={submitting || colorsLoading}
-                  >
-                    <option value={NO_COLOR_VALUE}>
-                      {colorsLoading ? "Loading colors..." : "(none)"}
-                    </option>
-                    {colorOptions.map((opt) => (
-                      <option key={opt.id} value={String(opt.id)}>
-                        {opt.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="cover-placement">Placement</Label>
-                  <Input
-                    id="cover-placement"
-                    value={placement}
-                    onChange={(e) => setPlacement(e.target.value)}
-                    placeholder="e.g. upper-right"
-                    disabled={submitting}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="cover-width">Width (mm)</Label>
-                  <Input
-                    id="cover-width"
-                    type="number"
-                    inputMode="decimal"
-                    step="0.01"
-                    min="0"
-                    value={width}
-                    onChange={(e) => setWidth(e.target.value)}
-                    disabled={submitting}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="cover-height">Height (mm)</Label>
-                  <Input
-                    id="cover-height"
-                    type="number"
-                    inputMode="decimal"
-                    step="0.01"
-                    min="0"
-                    value={height}
-                    onChange={(e) => setHeight(e.target.value)}
-                    disabled={submitting}
-                  />
-                </div>
-
                 <div className="space-y-3 pt-1">
-                  <label className="flex items-center gap-2 text-sm">
-                    <Checkbox checked={hasAdhesive} onCheckedChange={(v) => setHasAdhesive(v === true)} disabled={submitting} />
-                    Has adhesive
-                  </label>
                   <label className="flex items-center gap-2 text-sm">
                     <Checkbox checked={isInstitutional} onCheckedChange={(v) => setIsInstitutional(v === true)} disabled={submitting} />
                     Institutionally Owned
@@ -672,7 +597,10 @@ export default function CoverEdit() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Cover images</Label>
+                  <Label>
+                    Cover images <span className="text-destructive" aria-hidden="true">*</span>
+                  </Label>
+                  <p className="text-xs text-muted-foreground">At least one image is required.</p>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-xs text-muted-foreground sm:max-w-[60%]">
                       Upload photos or diagrams of this cover. Reorder and set default before or after save.
@@ -711,7 +639,7 @@ export default function CoverEdit() {
                         <div className="rounded-lg border border-dashed border-border p-6 text-center">
                           <Upload className="mx-auto h-10 w-10 text-muted-foreground mb-3" />
                           <p className="text-sm text-muted-foreground">
-                            Click “Add images” to upload (multiple allowed)
+                            At least one image is required. Click “Add images” to upload (multiple allowed).
                           </p>
                         </div>
                       ) : (
@@ -895,69 +823,25 @@ export default function CoverEdit() {
                 </div>
 
                 <div className="space-y-2 pt-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Cover dates</Label>
-                    <Button type="button" variant="outline" size="sm" onClick={addDate} disabled={submitting}>
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add date
-                    </Button>
+                  <div>
+                    <Label htmlFor="cover-date">
+                      Cover date <span className="text-destructive" aria-hidden="true">*</span>
+                    </Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Required. January 1 is stored as year-only; the 1st of any other month as month-only; all other
+                      days as a full date.
+                    </p>
                   </div>
 
-                  {dates.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      No dates added yet. Use “Add date” to record at least one observed use.
-                    </p>
-                  ) : (
-                    <div className="space-y-4">
-                      {dates.map((row, idx) => (
-                        <div
-                          key={row.existingId ?? `new-${idx}`}
-                          className="rounded-md border border-border p-4 space-y-3"
-                        >
-                          <div className="space-y-2">
-                            <Label htmlFor={`cover-date-${idx}`}>Date</Label>
-                            <Input
-                              id={`cover-date-${idx}`}
-                              type={row.granularity === "YEAR" ? "text" : "date"}
-                              value={row.date}
-                              onChange={(e) => updateDateAt(idx, { date: e.target.value })}
-                              placeholder={row.granularity === "YEAR" ? "YYYY" : undefined}
-                              disabled={submitting}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor={`cover-granularity-${idx}`}>Granularity</Label>
-                            <select
-                              id={`cover-granularity-${idx}`}
-                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                              value={row.granularity}
-                              onChange={(e) => updateDateAt(idx, { granularity: e.target.value as DateSeenGranularity })}
-                              disabled={submitting}
-                            >
-                              {GRANULARITY_OPTIONS.map((opt) => (
-                                <option key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="flex justify-end pt-1">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => removeDate(idx)}
-                              disabled={submitting}
-                              className="text-destructive border-destructive/40 hover:bg-destructive/10"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Remove date
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div className="rounded-md border border-border p-4 space-y-2">
+                    <Input
+                      id="cover-date"
+                      type="date"
+                      value={coverDate.date}
+                      onChange={(e) => setCoverDate((prev) => ({ ...prev, date: e.target.value }))}
+                      disabled={submitting}
+                    />
+                  </div>
                 </div>
 
                 <div className="flex justify-end gap-3 pt-4">

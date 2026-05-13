@@ -16,6 +16,7 @@ from django.contrib.auth import get_user_model
 from django.db import ProgrammingError, transaction
 from django.db.models import Min, Max, Q
 from django.db.models.functions import ExtractYear
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
@@ -435,20 +436,249 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
     # gated through a custom helper or override get_queryset to attach the rows.
     queryset = (
         CoverMarking.objects.all()
-        .select_related("cover", "cover__color", "marking")
+        .select_related("cover", "cover__color", "marking", "reviewer")
     )
     serializer_class = CoverMarkingSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ["cover", "marking", "is_backstamp", "placement"]
-    ordering_fields = ["id", "created_date"]
+    filterset_fields = ["cover", "marking", "is_backstamp", "placement", "review_status"]
+    ordering_fields = ["id", "created_date", "reviewed_at"]
     ordering = ["id"]
 
+    def get_queryset(self):
+        qs = (
+            CoverMarking.objects.all()
+            .select_related("cover", "cover__color", "marking", "reviewer")
+            .prefetch_related("marking__post_office__post_office_regions__region")
+        )
+        user = self.request.user
+        marking_param = self.request.query_params.get("marking")
+
+        if user.is_authenticated and user.is_superuser:
+            if marking_param:
+                try:
+                    return qs.filter(marking_id=int(marking_param))
+                except (TypeError, ValueError):
+                    return qs.none()
+            return qs
+
+        if marking_param:
+            try:
+                mid = int(marking_param)
+            except (TypeError, ValueError):
+                return qs.none()
+            marking = (
+                Marking.objects.filter(pk=mid)
+                .select_related("post_office")
+                .prefetch_related("post_office__post_office_regions__region")
+                .first()
+            )
+            if not marking:
+                return qs.none()
+            qs = qs.filter(marking_id=mid)
+            if not user.is_authenticated:
+                return qs.filter(review_status=CoverMarking.REVIEW_APPROVED)
+            if _user_is_responsible_for_marking(user, marking):
+                return qs
+            return qs.filter(
+                Q(review_status=CoverMarking.REVIEW_APPROVED) | Q(created_by_id=user.id)
+            )
+
+        if not user.is_authenticated:
+            return qs.none()
+        if user.has_perm(REVIEW_CONTRIBUTION_PERM):
+            region_ids = list(
+                Region.objects.filter(collection__id__in=user_assigned_collection_ids(user)).values_list(
+                    "pk", flat=True
+                )
+            )
+            if not region_ids:
+                return qs.filter(created_by=user)
+            return qs.filter(
+                Q(created_by=user)
+                | Q(marking__post_office__post_office_regions__region_id__in=region_ids)
+            ).distinct()
+        return qs.filter(created_by=user)
+
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        serializer.save(
+            created_by=self.request.user,
+            modified_by=self.request.user,
+            review_status=CoverMarking.REVIEW_PENDING,
+        )
 
     def perform_update(self, serializer):
         serializer.save(modified_by=self.request.user)
+
+    def _editor_may_review(self, user, cover_marking):
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_superuser:
+            return True
+        return _user_is_responsible_for_marking(user, cover_marking.marking)
+
+    def _transition_review(
+        self,
+        cover_marking,
+        *,
+        new_status,
+        actor,
+        review_notes,
+        log_action,
+    ):
+        before = {
+            "review_status": cover_marking.review_status,
+            "review_notes": cover_marking.review_notes,
+        }
+        cover_marking.review_status = new_status
+        cover_marking.reviewer = actor
+        cover_marking.review_notes = review_notes or ""
+        cover_marking.reviewed_at = timezone.now()
+        cover_marking.modified_by = actor
+        cover_marking.save(
+            update_fields=[
+                "review_status",
+                "reviewer",
+                "review_notes",
+                "reviewed_at",
+                "modified_by",
+                "modified_date",
+            ]
+        )
+        after = {
+            "review_status": cover_marking.review_status,
+            "review_notes": cover_marking.review_notes,
+        }
+        log_submission_transaction(
+            action=log_action,
+            actor=actor,
+            contribution=None,
+            marking=cover_marking.marking,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload=before,
+            after_payload=after,
+            extra_payload={
+                "cover_marking_id": cover_marking.pk,
+                "cover_id": cover_marking.cover_id,
+                "review_notes": review_notes or "",
+            },
+        )
+
+    @action(detail=True, methods=["post"], url_path="approve")
+    def approve(self, request, pk=None):
+        cm = self.get_object()
+        if not self._editor_may_review(request.user, cm):
+            return Response(
+                {"detail": "You do not have permission to approve this cover link."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if cm.review_status != CoverMarking.REVIEW_PENDING:
+            return Response(
+                {"detail": f"Only pending cover links can be approved (status: {cm.review_status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        review_notes = serializer.validated_data.get("review_notes", "")
+        self._transition_review(
+            cm,
+            new_status=CoverMarking.REVIEW_APPROVED,
+            actor=request.user,
+            review_notes=review_notes,
+            log_action=SubmissionTransaction.ACTION_APPROVE,
+        )
+        return Response({"detail": "Cover link approved.", "review_status": cm.review_status})
+
+    @action(detail=True, methods=["post"], url_path="reject")
+    def reject(self, request, pk=None):
+        cm = self.get_object()
+        if not self._editor_may_review(request.user, cm):
+            return Response(
+                {"detail": "You do not have permission to reject this cover link."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if cm.review_status != CoverMarking.REVIEW_PENDING:
+            return Response(
+                {"detail": f"Only pending cover links can be rejected (status: {cm.review_status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        review_notes = serializer.validated_data.get("review_notes", "")
+        self._transition_review(
+            cm,
+            new_status=CoverMarking.REVIEW_REJECTED,
+            actor=request.user,
+            review_notes=review_notes,
+            log_action=SubmissionTransaction.ACTION_REJECT,
+        )
+        return Response({"detail": "Cover link rejected.", "review_status": cm.review_status})
+
+    @action(detail=True, methods=["post"], url_path="request-revision")
+    def request_revision(self, request, pk=None):
+        cm = self.get_object()
+        if not self._editor_may_review(request.user, cm):
+            return Response(
+                {"detail": "You do not have permission to return this cover for revision."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if cm.review_status != CoverMarking.REVIEW_PENDING:
+            return Response(
+                {"detail": f"Only pending cover links can be returned for revision (status: {cm.review_status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        review_notes = (serializer.validated_data.get("review_notes") or "").strip()
+        if not review_notes:
+            return Response(
+                {"detail": "review_notes is required when requesting revision."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        self._transition_review(
+            cm,
+            new_status=CoverMarking.REVIEW_NEEDS_REVISION,
+            actor=request.user,
+            review_notes=review_notes,
+            log_action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
+        )
+        return Response({"detail": "Revision requested.", "review_status": cm.review_status})
+
+    @action(detail=True, methods=["post"], url_path="resubmit")
+    def resubmit(self, request, pk=None):
+        cm = self.get_object()
+        if not request.user.is_authenticated:
+            return Response(status=status.HTTP_401_UNAUTHORIZED)
+        if cm.created_by_id != request.user.id:
+            return Response(
+                {"detail": "Only the contributor who added this cover may resubmit it for review."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if cm.review_status != CoverMarking.REVIEW_NEEDS_REVISION:
+            return Response(
+                {"detail": "Resubmit is only available when the editor has requested changes."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        before = {"review_status": cm.review_status}
+        cm.review_status = CoverMarking.REVIEW_PENDING
+        cm.reviewer = None
+        cm.review_notes = ""
+        cm.reviewed_at = None
+        cm.modified_by = request.user
+        cm.save(
+            update_fields=["review_status", "reviewer", "review_notes", "reviewed_at", "modified_by", "modified_date"]
+        )
+        log_submission_transaction(
+            action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
+            actor=request.user,
+            contribution=None,
+            marking=cm.marking,
+            source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
+            before_payload=before,
+            after_payload={"review_status": cm.review_status},
+            extra_payload={"cover_marking_id": cm.pk, "cover_id": cm.cover_id},
+        )
+        return Response({"detail": "Cover link resubmitted for review.", "review_status": cm.review_status})
 
 
 ###################################################################################################
