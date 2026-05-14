@@ -7,7 +7,7 @@ schema. The Phase 1 model rewrite collapsed those tables into the unified
 Marking model, so the prior helpers no longer have anything to apply to.
 
 The full rewrite -- decomposing payloads into Marking + CoverMarking +
-CoverDate + CoverValuation + Image rows under the new shape -- belongs to
+DateSeen + CoverValuation + Image rows under the new shape -- belongs to
 Phase 2 (the API / contribution-flow rewrite). This module is left as an
 importable surface so admin and migration codepaths load cleanly. Any
 runtime call into the contribution flow raises NotImplementedError until

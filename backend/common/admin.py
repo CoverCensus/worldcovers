@@ -78,23 +78,17 @@ from .models import (
     Image,
     Postcover,
     PostcoverImage,
-    CoverDate,
+    DateSeen,
     CoverValuation,
     CoverMarking,
     Region,
     PostOffice,
+    PostOfficeRegion,
     ReferenceWork,
     Shape,
     Cover,
     Lettering,
     Citation,
-    LegacyAbbreviation,
-    LegacyRateLocation,
-    LegacyRateValue,
-    LegacyParseStep,
-    LegacyUserState,
-    LegacyRawStateDataPendingUpdate,
-    LegacyCover,
     Collection,
     CollectionAssignment,
     Contribution,
@@ -235,6 +229,17 @@ class RegionResource(TimestampedModelResource):
 
 
 class PostOfficeResource(TimestampedModelResource):
+    class Meta(TimestampedModelResource.Meta):
+        model = PostOffice
+        import_id_fields = ['id']
+
+
+class PostOfficeRegionResource(TimestampedModelResource):
+    post_office = fields.Field(
+        column_name='post_office',
+        attribute='post_office',
+        widget=ForeignKeyWidget(PostOffice, 'id'),
+    )
     region = fields.Field(
         column_name='region',
         attribute='region',
@@ -242,7 +247,7 @@ class PostOfficeResource(TimestampedModelResource):
     )
 
     class Meta(TimestampedModelResource.Meta):
-        model = PostOffice
+        model = PostOfficeRegion
         import_id_fields = ['id']
 
 
@@ -251,9 +256,9 @@ class CoverResource(TimestampedModelResource):
         model = Cover
 
 
-class CoverDateResource(TimestampedModelResource):
+class DateSeenResource(TimestampedModelResource):
     class Meta(TimestampedModelResource.Meta):
-        model = CoverDate
+        model = DateSeen
 
 
 class CoverValuationResource(TimestampedModelResource):
@@ -329,48 +334,6 @@ class FAQEntryResource(TimestampedModelResource):
     class Meta(TimestampedModelResource.Meta):
         model = FAQEntry
         import_id_fields = ['faq_entry_id']
-
-
-class LegacyAbbreviationResource(resources.ModelResource):
-    class Meta:
-        model = LegacyAbbreviation
-        import_id_fields = ['id']
-
-
-class LegacyRateLocationResource(resources.ModelResource):
-    class Meta:
-        model = LegacyRateLocation
-        import_id_fields = ['id']
-
-
-class LegacyRateValueResource(resources.ModelResource):
-    class Meta:
-        model = LegacyRateValue
-        import_id_fields = ['id']
-
-
-class LegacyParseStepResource(resources.ModelResource):
-    class Meta:
-        model = LegacyParseStep
-        import_id_fields = ['id']
-
-
-class LegacyUserStateResource(resources.ModelResource):
-    class Meta:
-        model = LegacyUserState
-        import_id_fields = ['id']
-
-
-class LegacyRawStateDataPendingUpdateResource(resources.ModelResource):
-    class Meta:
-        model = LegacyRawStateDataPendingUpdate
-        import_id_fields = ['id']
-
-
-class LegacyCoverResource(resources.ModelResource):
-    class Meta:
-        model = LegacyCover
-        import_id_fields = ['id']
 
 
 # ========== PHYSICAL CHARACTERISTICS ADMIN ==========
@@ -476,8 +439,8 @@ class CatalogRequestMarkingAdmin(MarkingAdmin):
 @admin.register(Image)
 class ImageAdmin(TimestampedModelAdmin):
     resource_class = ImageResource
-    list_display = ['image_id', 'subject_type', 'subject_id', 'original_filename', 'image_view', 'display_order', 'uploaded_by']
-    list_filter = ['subject_type', 'image_view']
+    list_display = ['image_id', 'subject_type', 'subject_id', 'original_filename', 'image_view', 'is_tracing', 'display_order', 'uploaded_by']
+    list_filter = ['subject_type', 'image_view', 'is_tracing']
     search_fields = ['original_filename', 'storage_filename', 'subject_id']
     readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date', 'file_checksum']
     paginator = NoCountPaginator
@@ -493,7 +456,7 @@ class ImageAdmin(TimestampedModelAdmin):
             ),
         }),
         ('Display Settings', {
-            'fields': ('image_view', 'image_description', 'display_order'),
+            'fields': ('image_view', 'image_description', 'is_tracing', 'display_order'),
         }),
         ('Submission Information', {
             'fields': ('uploaded_by',),
@@ -506,13 +469,6 @@ class ImageAdmin(TimestampedModelAdmin):
 
 
 # ========== COVER ADMIN ==========
-
-class CoverDateInline(admin.TabularInline):
-    model = CoverDate
-    extra = 0
-    fields = ['date', 'granularity']
-    exclude = ['created_by', 'modified_by', 'created_date', 'modified_date']
-
 
 class CoverValuationInline(admin.TabularInline):
     model = CoverValuation
@@ -531,22 +487,25 @@ class CoverMarkingForCoverInline(admin.TabularInline):
 
 @admin.register(Cover)
 class CoverAdmin(TimestampedModelAdmin):
+    # DateSeen is polymorphic (subject_type/subject_id) and no longer carries
+    # an FK to Cover, so it cannot be edited via TabularInline here. Manage
+    # DateSeen rows through the standalone DateSeenAdmin, filtering by
+    # subject_type='COVER' and the cover's PK.
     resource_class = CoverResource
     list_display = ['code', 'type', 'color', 'has_adhesive', 'height', 'width', 'is_institutional']
     list_filter = ['type', 'has_adhesive', 'is_institutional']
     search_fields = ['code', 'type']
     raw_id_fields = ['color']
-    inlines = [CoverMarkingForCoverInline, CoverDateInline, CoverValuationInline]
+    inlines = [CoverMarkingForCoverInline, CoverValuationInline]
 
 
-@admin.register(CoverDate)
-class CoverDateAdmin(TimestampedModelAdmin):
-    resource_class = CoverDateResource
-    list_display = ['cover', 'date', 'granularity']
-    list_filter = ['granularity']
-    search_fields = ['cover__code']
-    raw_id_fields = ['cover']
-    ordering = ['cover', 'date']
+@admin.register(DateSeen)
+class DateSeenAdmin(TimestampedModelAdmin):
+    resource_class = DateSeenResource
+    list_display = ['subject_type', 'subject_id', 'date', 'granularity']
+    list_filter = ['granularity', 'subject_type']
+    search_fields = ['subject_id']
+    ordering = ['subject_type', 'subject_id', 'date']
 
 
 @admin.register(CoverValuation)
@@ -607,68 +566,6 @@ class PostcoverImageAdmin(TimestampedModelAdmin):
     def get_postcover_key(self, obj):
         return obj.postcover.postcover_key
     get_postcover_key.short_description = 'Postcover'
-
-
-# ========== LEGACY ERD TABLES ==========
-
-@admin.register(LegacyAbbreviation)
-class LegacyAbbreviationAdmin(ImportExportModelAdmin):
-    resource_class = LegacyAbbreviationResource
-    list_display = ['id', 'txt_abbreviation', 'txt_meaning', 'n_order', 'yn_active']
-    list_filter = ['yn_active']
-    search_fields = ['txt_abbreviation', 'txt_meaning']
-    ordering = ['n_order', 'txt_abbreviation']
-
-
-@admin.register(LegacyRateLocation)
-class LegacyRateLocationAdmin(ImportExportModelAdmin):
-    resource_class = LegacyRateLocationResource
-    list_display = ['id', 'txt_townmark_rate_location', 'n_order', 'yn_active']
-    list_filter = ['yn_active']
-    ordering = ['n_order']
-
-
-@admin.register(LegacyRateValue)
-class LegacyRateValueAdmin(ImportExportModelAdmin):
-    resource_class = LegacyRateValueResource
-    list_display = ['id', 'txt_townmark_rate_value', 'n_order', 'yn_active']
-    list_filter = ['yn_active']
-    ordering = ['n_order']
-
-
-@admin.register(LegacyParseStep)
-class LegacyParseStepAdmin(ImportExportModelAdmin):
-    resource_class = LegacyParseStepResource
-    list_display = ['id', 'txt_parse_step', 'n_state_id', 'yn_completed', 'n_order', 'yn_active']
-    list_filter = ['yn_completed', 'yn_active']
-    search_fields = ['txt_parse_step']
-    ordering = ['n_state_id', 'n_order']
-
-
-@admin.register(LegacyUserState)
-class LegacyUserStateAdmin(ImportExportModelAdmin):
-    resource_class = LegacyUserStateResource
-    list_display = ['id', 'n_user_id', 'n_state_id', 'mem_roles']
-    list_filter = ['n_state_id']
-    ordering = ['n_user_id', 'n_state_id']
-
-
-@admin.register(LegacyRawStateDataPendingUpdate)
-class LegacyRawStateDataPendingUpdateAdmin(ImportExportModelAdmin):
-    resource_class = LegacyRawStateDataPendingUpdateResource
-    list_display = ['id', 'n_raw_state_data_id', 'n_state_id']
-    list_filter = ['n_state_id']
-    readonly_fields = ['payload']
-    ordering = ['-id']
-
-
-@admin.register(LegacyCover)
-class LegacyCoverAdmin(ImportExportModelAdmin):
-    resource_class = LegacyCoverResource
-    list_display = ['id', 'n_user_id', 'txt_cover_key_id', 'txt_state_abv', 'txt_town', 'n_estimated_value']
-    list_filter = ['txt_state_abv']
-    search_fields = ['txt_town', 'txt_cover_key_id', 'mem_notes']
-    ordering = ['n_user_id', 'id']
 
 
 # ========== USER ADMIN ==========
@@ -928,10 +825,18 @@ class RegionAdmin(TimestampedModelAdmin):
 class PostOfficeAdmin(TimestampedModelAdmin):
     resource_class = PostOfficeResource
     list_display = ["name", "region"]
-    list_filter = ["region"]
-    search_fields = ["name", "region__name"]
-    raw_id_fields = ["region"]
+    search_fields = ["name", "post_office_regions__region__name"]
     ordering = ["name"]
+
+
+@admin.register(PostOfficeRegion)
+class PostOfficeRegionAdmin(TimestampedModelAdmin):
+    resource_class = PostOfficeRegionResource
+    list_display = ["post_office", "region"]
+    list_filter = ["region"]
+    search_fields = ["post_office__name", "region__name", "region__abbrev"]
+    raw_id_fields = ["post_office", "region"]
+    ordering = ["post_office__name", "region__name"]
 
 
 @admin.register(ReferenceWork)

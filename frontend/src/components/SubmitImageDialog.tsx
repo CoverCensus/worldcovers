@@ -209,7 +209,7 @@ export const SubmitImageDialog = ({ open, onOpenChange }: SubmitImageDialogProps
               type="button"
               onClick={handleSubmit}
             >
-              Save changes
+              Submit Image
             </Button>
           </div>
         </div>

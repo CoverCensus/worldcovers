@@ -26,6 +26,8 @@ import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getFramings, type FramingOption } from "@/services/framings";
 import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
+import { ENTRY_LABELS } from "@/labels/entry";
+import { SUBMISSION_LABELS } from "@/labels/submission";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -71,9 +73,9 @@ const IMPRESSION_OPTIONS = [
 ];
 
 const MARKING_TYPE_OPTIONS = [
-  { value: "TOWNMARK", label: "Town mark" },
-  { value: "RATEMARK", label: "Rate mark" },
-  { value: "AUXMARK", label: "Auxiliary/Instructional Mark" },
+  { value: "TOWNMARK", label: ENTRY_LABELS.markingType.TOWNMARK },
+  { value: "RATEMARK", label: ENTRY_LABELS.markingType.RATEMARK },
+  { value: "AUXMARK", label: ENTRY_LABELS.markingType.AUXMARK },
 ];
 
 /** docs/model.md lettering seed values; the dropdown is restricted to these. */
@@ -100,28 +102,28 @@ const MODE_COPY: Record<ContributeMode, {
   toastBody: string;
 }> = {
   "new": {
-    h1: "Contributor Dashboard",
-    intro: "Submit new postmark records or corrections. All fields match what reviewers see on the Submission Detail page.",
-    card: "Submit New Entry",
-    button: "Submit Postmark",
-    toastTitle: "Submission sent",
-    toastBody: "Your catalog entry has been submitted for approval. It will appear in Search after an editor approves it.",
+    h1: "Create Marking",
+    intro: "Fill in the fields below. All fields match what reviewers see on the Submission Detail page.",
+    card: "New Marking",
+    button: SUBMISSION_LABELS.action.submitMarking,
+    toastTitle: SUBMISSION_LABELS.toast.received,
+    toastBody: "Your Marking has been submitted for approval. It will appear in Search after an editor approves it.",
   },
   "edit-contribution": {
     h1: "Edit and resubmit",
     intro: "Update your submission using the editor feedback, then submit to send it back for review.",
     card: "Edit submission",
-    button: "Resubmit Postmark",
+    button: SUBMISSION_LABELS.action.resubmit,
     toastTitle: "Changes submitted",
     toastBody: "Your updated submission has been sent for review again.",
   },
   "edit-marking": {
-    h1: "Edit Catalog Entry",
-    intro: "Edit requests are prefilled from the selected record and always go through the approval workflow before master listing data is updated.",
+    h1: "Edit Marking",
+    intro: "Edit requests are prefilled from the selected Marking and always go through the approval workflow before the published Marking is updated.",
     card: "Edit and Submit",
-    button: "Submit for Approval",
+    button: SUBMISSION_LABELS.action.submitMarking,
     toastTitle: "Submitted for review",
-    toastBody: "Changes to master listing fields are submitted for editor approval and do not update the catalog directly.",
+    toastBody: "Changes to published Marking fields are submitted for editor approval and do not update the catalog directly.",
   },
 };
 
@@ -469,7 +471,7 @@ const Contribute = () => {
     getShapes()
       .then(setShapeOptions)
       .catch((err) => {
-        setShapeOptionsError(err instanceof Error ? err.message : "Failed to load postmark shapes");
+        setShapeOptionsError(err instanceof Error ? err.message : "Failed to load marking shapes");
         setShapeOptions([]);
       })
       .finally(() => setLoadingShapes(false));
@@ -704,20 +706,7 @@ const Contribute = () => {
                   typeof o.image_url === "string" ? o.image_url : null,
                 );
                 if (!url) return null;
-                // The Image schema doesn't have an explicit is_tracing
-                // column (see common/models.py Image). For a stored marking
-                // image, we treat image_view === "COMPARISON" as the
-                // canonical tracing/diagram view (FULL/DETAIL are the
-                // photographic options) and mirror the same fallbacks the
-                // RecordDetail gallery uses so older uploads tagged via
-                // image_description / filename still surface as tracings.
-                const view = String(o.image_view ?? "").trim().toUpperCase();
-                const desc = String(o.image_description ?? "").toLowerCase();
-                const fname = String(o.original_filename ?? "").toLowerCase();
-                const tracing =
-                  view === "COMPARISON" ||
-                  desc.includes("tracing") ||
-                  fname.includes("tracing");
+                const tracing = Boolean(o.is_tracing);
                 return { url, tracing };
               })
               .filter((row): row is { url: string; tracing: boolean } => row !== null)
@@ -936,7 +925,7 @@ const Contribute = () => {
     if (!user) {
       toast({
         title: "Sign in required",
-        description: "Please sign in to submit listings.",
+        description: "Please sign in to submit entries.",
         variant: "destructive",
       });
       return;
@@ -1074,7 +1063,7 @@ const Contribute = () => {
     if (!apiBase) {
       toast({
         title: "Configuration error",
-        description: "VITE_API_URL is not set. Cannot submit postmark.",
+        description: "VITE_API_URL is not set. Cannot submit Marking.",
         variant: "destructive",
       });
       return;
@@ -1969,10 +1958,10 @@ const Contribute = () => {
                         options={shapeOptions.map((t) => ({ value: t.name, label: t.name }))}
                         loading={loadingShapes}
                         error={!!shapeOptionsError}
-                        errorMessage={shapeOptionsError ?? "Failed to load postmark shapes"}
+                        errorMessage={shapeOptionsError ?? "Failed to load marking shapes"}
                         searchPlaceholder="Search shapes..."
                         emptyMessage="No shape found."
-                        aria-label="Postmark shape"
+                        aria-label="Marking shape"
                         triggerClassName={fieldErrors.shape ? "border-destructive" : ""}
                       />
                       {fieldErrors.shape && (
@@ -2013,7 +2002,7 @@ const Contribute = () => {
                       <Label>
                         <span
                           className="cursor-help border-b border-dotted border-muted-foreground/40"
-                          title="Date format is how the date appears in the postmark (e.g. month/day order, abbreviations)."
+                          title="Date format is how the date appears in the marking (e.g. month/day order, abbreviations)."
                         >
                           Date format
                         </span>
@@ -2057,7 +2046,7 @@ const Contribute = () => {
                       <Label htmlFor="description">Description</Label>
                       <Textarea
                         id="description"
-                        placeholder="Details about the postmark..."
+                        placeholder="Details about the marking..."
                         rows={4}
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}

@@ -1,7 +1,8 @@
 import hashlib
 import uuid
 from django.db import models
-from django.db.models import Q, Min, Max
+from django.db.models import Q, Min, Max, OuterRef, Subquery, F
+from django.db.models.functions import Coalesce, Least, Greatest
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
@@ -43,13 +44,57 @@ class MarkingType(models.TextChoices):
 class MarkingQuerySet(models.QuerySet):
     def with_date_range(self):
         """
-        Annotate each Marking with the min/max cover_date.date values aggregated
-        across the covers it appears on (via cover_marking).
+        Annotate each Marking with the min/max date_seen.date values aggregated
+        from two sources:
+          1. DateSeen rows attached directly to the marking
+             (subject_type='MARKING', subject_id=marking.id)
+          2. DateSeen rows attached to covers that bear the marking via
+             cover_markings (subject_type='COVER', subject_id=cover.id)
         Exposed to serializers as `earliest_seen` / `latest_seen`.
+
+        Uses subqueries against DateSeen so the two sources can be unioned
+        without producing a Cartesian explosion between cover_markings and
+        directly-attached DateSeen rows.
         """
+        direct_qs = DateSeen.objects.filter(
+            subject_type='MARKING',
+            subject_id=OuterRef('pk'),
+        )
+        # The CoverMarking lookup sits TWO subqueries deep: the outermost
+        # query is Marking, the cover_qs Subquery (DateSeen) is one level in,
+        # and the CoverMarking filter that follows is two levels in. A bare
+        # `OuterRef('pk')` resolves only one level out -- it would join
+        # CoverMarking.marking_id against DateSeen.pk, which is gibberish and
+        # decorrelates the result so every Marking row gets the same span.
+        # Django's documented idiom for two-level nesting is
+        # `OuterRef(OuterRef('pk'))`; the outer wrapper hops past DateSeen
+        # back up to the Marking queryset.
+        cover_qs = DateSeen.objects.filter(
+            subject_type='COVER',
+            subject_id__in=CoverMarking.objects.filter(
+                marking_id=OuterRef(OuterRef('pk')),
+            ).values('cover_id'),
+        )
         return self.annotate(
-            earliest_seen=Min('cover_markings__cover__cover_dates__date'),
-            latest_seen=Max('cover_markings__cover__cover_dates__date'),
+            earliest_seen_direct=Subquery(direct_qs.order_by('date').values('date')[:1]),
+            latest_seen_direct=Subquery(direct_qs.order_by('-date').values('date')[:1]),
+            earliest_seen_via_cover=Subquery(cover_qs.order_by('date').values('date')[:1]),
+            latest_seen_via_cover=Subquery(cover_qs.order_by('-date').values('date')[:1]),
+        ).annotate(
+            # MySQL's GREATEST/LEAST return NULL if any argument is NULL, so we
+            # wrap in Coalesce to fall back to whichever source has a value when
+            # the other source is empty. Order of fallbacks does not affect
+            # correctness because Coalesce returns the first non-null arg.
+            earliest_seen=Coalesce(
+                Least('earliest_seen_direct', 'earliest_seen_via_cover'),
+                F('earliest_seen_direct'),
+                F('earliest_seen_via_cover'),
+            ),
+            latest_seen=Coalesce(
+                Greatest('latest_seen_direct', 'latest_seen_via_cover'),
+                F('latest_seen_direct'),
+                F('latest_seen_via_cover'),
+            ),
         )
 
 
@@ -313,7 +358,7 @@ class MarkingVersion(models.Model):
         return f"Marking #{self.marking_id} v{self.version_no}"
 
 
-IMAGE_MARKING_VIEW_CHOICES = ['FULL', 'DETAIL', 'COMPARISON']
+IMAGE_MARKING_VIEW_CHOICES = ['FULL', 'DETAIL']
 IMAGE_COVER_VIEW_CHOICES = ['FRONT', 'BACK', 'INTERIOR', 'DETAIL']
 IMAGE_VIEW_CHOICES_TUPLES = [(v, v.title()) for v in sorted(set(IMAGE_MARKING_VIEW_CHOICES + IMAGE_COVER_VIEW_CHOICES))]
 
@@ -343,6 +388,7 @@ class Image(TimestampedModel):
     file_size_bytes = models.BigIntegerField()
     image_view = models.CharField(max_length=16, choices=IMAGE_VIEW_CHOICES_TUPLES)
     image_description = models.TextField(blank=True)
+    is_tracing = models.BooleanField(default=False)
     display_order = models.IntegerField(default=0)
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='images_uploaded')
 
@@ -443,141 +489,6 @@ class PostcoverImage(TimestampedModel):
             self.file_checksum = Image.generate_checksum(self.file_object)
         super().save(*args, **kwargs)
 
-class LegacyAbbreviation(models.Model):
-    """TBLABBREVIATIONS: abbreviation → meaning (e.g. Arc, Box, DL)."""
-    id = models.AutoField(primary_key=True, db_column='ID')
-    txt_abbreviation = models.CharField(max_length=100, db_column='txtAbbreviation')
-    txt_meaning = models.CharField(max_length=255, blank=True, db_column='txtMeaning')
-    n_order = models.IntegerField(default=0, db_column='nOrder')
-    yn_active = models.BooleanField(default=True, db_column='ynActive')
-
-    class Meta:
-        db_table = 'LegacyAbbreviations'
-        verbose_name = 'Legacy Abbreviation'
-        ordering = ['n_order', 'txt_abbreviation']
-
-    def __str__(self):
-        return f'{self.txt_abbreviation}: {self.txt_meaning}'
-
-class LegacyRateLocation(models.Model):
-    """TBLTOWNMARKRATELOCATION: rate location lookup."""
-    id = models.AutoField(primary_key=True, db_column='nTownmarkRateLocationID')
-    txt_townmark_rate_location = models.CharField(max_length=100, db_column='txtTownmarkRateLocation')
-    mem_townmark_rate_location = models.CharField(max_length=255, blank=True, db_column='memTownmarkRateLocation')
-    n_order = models.IntegerField(default=0, db_column='nOrder')
-    yn_active = models.BooleanField(default=True, db_column='ynActive')
-
-    class Meta:
-        db_table = 'LegacyTownmarkRateLocations'
-        verbose_name = 'Legacy Rate Location'
-        ordering = ['n_order']
-
-    def __str__(self):
-        return self.txt_townmark_rate_location
-
-class LegacyRateValue(models.Model):
-    """TBLTOWNMARKRATEVALUE: rate value lookup (numeric or text)."""
-    id = models.AutoField(primary_key=True, db_column='nTownmarkRateValueID')
-    txt_townmark_rate_value = models.CharField(max_length=50, db_column='txtTownmarkRateValue')
-    n_order = models.IntegerField(default=0, db_column='nOrder')
-    yn_active = models.BooleanField(default=True, db_column='ynActive')
-
-    class Meta:
-        db_table = 'LegacyTownmarkRateValues'
-        verbose_name = 'Legacy Rate Value'
-        ordering = ['n_order']
-
-    def __str__(self):
-        return str(self.txt_townmark_rate_value)
-
-class LegacyParseStep(models.Model):
-    """TBLPARSESTEPS: parse step per state."""
-    id = models.AutoField(primary_key=True, db_column='nParseStepID')
-    txt_parse_step = models.CharField(max_length=255, db_column='txtParseStep')
-    n_state_id = models.IntegerField(db_column='nStateID')
-    yn_completed = models.BooleanField(default=False, db_column='ynCompleted')
-    n_order = models.IntegerField(default=0, db_column='nOrder')
-    yn_active = models.BooleanField(default=True, db_column='ynActive')
-
-    class Meta:
-        db_table = 'LegacyParseSteps'
-        verbose_name = 'Legacy Parse Step'
-        ordering = ['n_state_id', 'n_order']
-
-    def __str__(self):
-        return f'{self.txt_parse_step} (State {self.n_state_id})'
-
-class LegacyUserState(models.Model):
-    """CTUSERSTATES: user ↔ state visibility/roles."""
-    id = models.AutoField(primary_key=True, db_column='ID')
-    n_user_id = models.IntegerField(db_column='nUserID')
-    n_state_id = models.IntegerField(db_column='nStateID')
-    mem_roles = models.TextField(blank=True, db_column='memRoles')
-
-    class Meta:
-        db_table = 'LegacyUserStates'
-        verbose_name = 'Legacy User State'
-        unique_together = [['n_user_id', 'n_state_id']]
-        ordering = ['n_user_id', 'n_state_id']
-
-    def __str__(self):
-        return f'User {self.n_user_id} → State {self.n_state_id}'
-
-class LegacyRawStateDataPendingUpdate(models.Model):
-    """TBLRAWSTATEDATA_PENDINGUPDATE: pending edit rows; full row stored as JSON."""
-    id = models.AutoField(primary_key=True, db_column='id')
-    n_raw_state_data_id = models.IntegerField(null=True, blank=True, db_column='nRawStateDataID')
-    n_state_id = models.IntegerField(null=True, blank=True, db_column='nStateID')
-    payload = models.JSONField(default=dict, db_column='Payload')
-
-    class Meta:
-        db_table = 'LegacyRawStateDataPendingUpdates'
-        verbose_name = 'Legacy Pending Update'
-        ordering = ['-id']
-
-    def __str__(self):
-        return f'Pending #{self.id} (raw {self.n_raw_state_data_id})'
-
-class LegacyCover(models.Model):
-    """TBLCOVERS: user-entered cover records from legacy CSV."""
-    id = models.AutoField(primary_key=True, db_column='nCoverID')
-    n_user_id = models.IntegerField(db_column='nUserID')
-    txt_cover_key_id = models.CharField(max_length=100, blank=True, db_column='txtCoverKeyID')
-    txt_state_abv = models.CharField(max_length=20, blank=True, db_column='txtStateAbv')
-    txt_territory = models.CharField(max_length=255, blank=True, db_column='txtTerritory')
-    txt_town = models.CharField(max_length=255, blank=True, db_column='txtTown')
-    txt_townmark_shape = models.CharField(max_length=100, blank=True, db_column='txtTownmarkShape')
-    txt_lettering = models.CharField(max_length=100, blank=True, db_column='txtLettering')
-    txt_townmark_framing = models.CharField(max_length=100, blank=True, db_column='txtTownmarkFraming')
-    txt_date_format = models.CharField(max_length=100, blank=True, db_column='txtDateFormat')
-    txt_rate = models.CharField(max_length=50, blank=True, db_column='txtRate')
-    txt_rate_text = models.CharField(max_length=255, blank=True, db_column='txtRateText')
-    txt_second_rate = models.CharField(max_length=255, blank=True, db_column='txtSecondRate')
-    n_width = models.FloatField(null=True, blank=True, db_column='nWidth')
-    n_height = models.FloatField(null=True, blank=True, db_column='nHeight')
-    txt_color = models.CharField(max_length=100, blank=True, db_column='txtColor')
-    n_earliest_use_day = models.IntegerField(null=True, blank=True, db_column='nEarliestUseDay')
-    n_earliest_use_month = models.IntegerField(null=True, blank=True, db_column='nEarliestUseMonth')
-    n_earliest_use_year = models.IntegerField(null=True, blank=True, db_column='nEarliestUseYear')
-    n_latest_use_day = models.IntegerField(null=True, blank=True, db_column='nLatestUseDay')
-    n_latest_use_month = models.IntegerField(null=True, blank=True, db_column='nLatestUseMonth')
-    n_latest_use_year = models.IntegerField(null=True, blank=True, db_column='nLatestUseYear')
-    mem_ascc_text = models.TextField(blank=True, db_column='memASCCText')
-    mem_notes = models.TextField(blank=True, db_column='memNotes')
-    mem_other_char = models.TextField(blank=True, db_column='memOtherChar')
-    n_estimated_value = models.FloatField(null=True, blank=True, db_column='nEstimatedValue')
-    txt_published_id = models.CharField(max_length=100, blank=True, db_column='txtPublishedID')
-    txt_image1 = models.CharField(max_length=255, blank=True, db_column='txtImage1')
-    txt_image2 = models.CharField(max_length=255, blank=True, db_column='txtImage2')
-
-    class Meta:
-        db_table = 'LegacyCovers'
-        verbose_name = 'Legacy Cover'
-        ordering = ['n_user_id', 'id']
-
-    def __str__(self):
-        return f'Cover {self.id} ({self.txt_town or self.txt_cover_key_id})'
-
 class Collection(TimestampedModel):
     """
     An institutional collection — a curatorial unit that wraps exactly one Region
@@ -606,10 +517,7 @@ class Collection(TimestampedModel):
 
 
 class CollectionAssignment(TimestampedModel):
-    """
-    Links an Editor to a Collection they are responsible for curating.
-    Replaces the legacy UserLocationAssignment.
-    """
+    """Links an Editor to a Collection they are responsible for curating."""
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -693,23 +601,62 @@ class Region(TimestampedModel):
 
 class PostOffice(TimestampedModel):
     """
-    A postal facility that operated within a specific Region.
-    (name, region) must be unique.
+    A postal facility identified as a fixed geographic place. Its political
+    jurisdiction over time is recorded as a set of associations to regions
+    in post_office_regions; the post office row itself does not name a
+    single region.
 
     model.md domain type: PostOffice
     """
     name = models.CharField(max_length=255, help_text='Normalized town name, e.g. Abingdon, Richmond')
-    region = models.ForeignKey(Region, on_delete=models.PROTECT, related_name='post_offices')
 
     class Meta:
         db_table = 'post_office'
         verbose_name = 'Post Office'
         verbose_name_plural = 'Post Offices'
-        unique_together = [['name', 'region']]
         ordering = ['name']
 
     def __str__(self):
-        return f'{self.name} ({self.region})'
+        r = self.region
+        return f'{self.name} ({r})' if r is not None else self.name
+
+    @property
+    def region(self):
+        # Resolve the most-recent active Region linked via the
+        # post_office_regions junction. "Active" means defunct_date IS NULL;
+        # NULLS-FIRST on defunct_date_desc puts active rows ahead of expired
+        # ones, then we tie-break by latest established_date.
+        link = (
+            self.post_office_regions
+            .select_related('region')
+            .order_by(
+                F('region__defunct_date').desc(nulls_first=True),
+                F('region__established_date').desc(nulls_last=True),
+            )
+            .first()
+        )
+        return link.region if link is not None else None
+
+class PostOfficeRegion(TimestampedModel):
+    """
+    Association linking a PostOffice to a Region under whose jurisdiction
+    it operated. Temporal bounds are derived from Region.established_date
+    and Region.defunct_date; this junction carries no temporal columns.
+
+    model.md domain type: post_office_regions
+    """
+    post_office = models.ForeignKey(PostOffice, on_delete=models.CASCADE, related_name='post_office_regions')
+    region = models.ForeignKey(Region, on_delete=models.PROTECT, related_name='post_office_regions')
+
+    class Meta:
+        db_table = 'post_office_region'
+        verbose_name = 'Post Office Region'
+        verbose_name_plural = 'Post Office Regions'
+        unique_together = [['post_office', 'region']]
+        ordering = ['post_office__name', 'region__name']
+
+    def __str__(self):
+        return f'{self.post_office.name} -- {self.region.name}'
 
 class Lettering(TimestampedModel):
     """
@@ -772,26 +719,42 @@ class Cover(TimestampedModel):
             return f'Cover {self.code}'
         return f'Cover #{self.pk}'
 
-class CoverDate(TimestampedModel):
+class DateSeen(TimestampedModel):
     """
-    A single date point observed for a Cover.
+    A single date point observed for either a Cover or a Marking.
+    Polymorphic via (subject_type, subject_id), mirroring the Citation /
+    Image polymorphic pattern.
 
-    model.md domain type: cover_dates
+    model.md domain type: dates_seen
     """
+    SUBJECT_COVER = 'COVER'
+    SUBJECT_MARKING = 'MARKING'
+    SUBJECT_TYPE_CHOICES = [(SUBJECT_COVER, 'Cover'), (SUBJECT_MARKING, 'Marking')]
+
     GRANULARITY_CHOICES = [('DAY', 'Day'), ('MONTH', 'Month'), ('YEAR', 'Year')]
-    cover = models.ForeignKey(Cover, on_delete=models.CASCADE, related_name='cover_dates')
+
+    subject_type = models.CharField(max_length=8, choices=SUBJECT_TYPE_CHOICES)
+    subject_id = models.PositiveIntegerField(help_text='PK of the dated Cover or Marking')
     date = models.DateField(help_text='Calendar date of the observed use')
     granularity = models.CharField(max_length=5, choices=GRANULARITY_CHOICES)
 
     class Meta:
-        db_table = 'cover_date'
-        verbose_name = 'Cover Date'
-        verbose_name_plural = 'Cover Dates'
-        ordering = ['cover', 'date']
-        indexes = [models.Index(fields=['cover', 'date'], name='cover_date_cover_date_idx')]
+        db_table = 'dates_seen'
+        verbose_name = 'Date Seen'
+        verbose_name_plural = 'Dates Seen'
+        ordering = ['subject_type', 'subject_id', 'date']
+        indexes = [
+            models.Index(fields=['subject_type', 'subject_id', 'date'], name='dates_seen_subject_date_idx'),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=Q(subject_type__in=['COVER', 'MARKING']),
+                name='dates_seen_subject_type_valid',
+            ),
+        ]
 
     def __str__(self):
-        return f'Cover #{self.cover_id} -- {self.date} ({self.granularity})'
+        return f'{self.subject_type} #{self.subject_id} -- {self.date} ({self.granularity})'
 
 
 class CoverValuation(TimestampedModel):

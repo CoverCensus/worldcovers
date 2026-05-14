@@ -6,7 +6,7 @@
 
 # **Summary**
 
-This document defines the structural vocabulary for data accessible through WorldCovers. Fourteen tables describe the philatelic domain's persistent state. markings is the central entity \- the catalog entry itself \- unifying town markings, rate markings, and auxiliary markings under a single type discriminator. Each row in markings carries the authoritative catalog text, the physical inscription of the device, and a reference to a row in post\_offices, whose jurisdictional history is recorded in post\_office\_regions against a time-bounded regions hierarchy. covers are conceptually observations of markings, linked through the cover\_markings junction, which also records per-observation positional context. Marking classification is represented through two primary editorial dimensions: shapes and letterings. Both remain provisional editorial vocabularies: their current records preserve catalog usage patterns and known inconsistencies, and therefore do not yet constitute fully orthogonal or exhaustively normalized taxonomies. Curatorial responsibility is expressed through collections, each of which wraps exactly one region and serves as the routing target for contributions submitted within that region. Two junction tables resolve the document's many-to-many associations: cover\_markings (covers to markings) and post\_office\_regions (post offices to regions). The latter exists because a post office is a fixed geographic place whose political jurisdiction can change over time; a marking's effective region context is derived by intersecting the post office's region associations with the dates of the marking's covers.
+This document defines the structural vocabulary for data accessible through WorldCovers. Fourteen tables describe the philatelic domain's persistent state. markings is the central entity \- the catalog entry itself \- unifying town markings, rate markings, and auxiliary markings under a single type discriminator. Each row in markings carries the authoritative catalog text, the physical inscription of the device, and a reference to a row in post\_offices, whose jurisdictional history is recorded in post\_office\_regions against a time-bounded regions hierarchy. covers are conceptually observations of markings, linked through the cover\_markings junction, which also records per-observation positional context. Marking classification is represented through two primary editorial dimensions: shapes and letterings. Both remain provisional editorial vocabularies: their current records preserve catalog usage patterns and known inconsistencies, and therefore do not yet constitute fully orthogonal or exhaustively normalized taxonomies. Curatorial responsibility is expressed through collections, each of which wraps exactly one region and serves as the routing target for contributions submitted within that region. Two junction tables resolve the document's many-to-many associations: cover\_markings (covers to markings) and post\_office\_regions (post offices to regions). The latter exists because a post office is a fixed geographic place whose political jurisdiction can change over time; a marking's effective region context is derived by intersecting the post office's region associations with the marking's aggregated dates\_seen (both those attached directly to the marking and those attached to its associated covers). System-internal tables (submissions, comments, image attachments, audit log, and role assignments) are intentionally not modeled in this document; they live alongside the domain tables in `backend/common/`.
 
 ---
 
@@ -49,7 +49,7 @@ An institutional curatorial unit associated with exactly one region. Contributio
 
 * name is non-empty.  
 * region\_id references exactly one row in regions.  
-* region\_id is unique across all collections (one-to-one with regions).  
+* region\_id is unique across all collections (one-to-one with regions). v2 realizes the vision-doc multi-catalog goal via this region axis only: historical eras are expressed through the time-bounded regions hierarchy, and specialty-axis catalogs are out of v2 scope.  
 * is\_active defaults to true.
 
 *Relationships:*
@@ -99,31 +99,10 @@ A physical postal cover bearing one or more recorded markings. A cover is concep
 *Relationships:*
 
 * Associated with one or more markings (via cover\_markings).  
-* Has zero or more cover\_dates entries.  
+* Has zero or more dates\_seen entries.  
 * Has zero or more cover\_valuations entries.  
 * References zero or one color.  
 * Referenced by zero or more citations.
-
-### cover\_dates
-
-A single date point observed for a cover.
-
-*Fields:*
-
-* cover\_id \- Related cover.  
-* date \- Calendar date of the observed use.  
-* granularity \- Granularity of the recorded date.
-
-*Invariants:*
-
-* Belongs to exactly one cover.  
-* granularity is one of DAY, MONTH, or YEAR.  
-* If granularity is MONTH, the day component of date is synthetic (set to 01).  
-* If granularity is YEAR, the month and day components of date are synthetic (set to 01).
-
-*Relationships:*
-
-* References exactly one cover.
 
 ### cover\_markings
 
@@ -168,6 +147,29 @@ An estimated collector market value for a cover, as published in a reference sou
 *Relationships:*
 
 * Belongs to exactly one cover.
+
+### dates\_seen
+
+A single date point observed for either a cover or a marking. When attached to a cover, the date is anchored to a specific physical artifact. When attached directly to a marking, the date records a use of the marking that is not tied to a cover row -- for example, a catalog-attested date for a marking whose cover has not been recorded, or a documentary date drawn from a reference work.
+
+*Fields:*
+
+* date \- Calendar date of the observed use.  
+* granularity \- Granularity of the recorded date.  
+* subject\_id \- Identifier of the dated resource.  
+* subject\_type \- Type of the dated resource.
+
+*Invariants:*
+
+* subject\_type is one of COVER, or MARKING.  
+* subject\_id references exactly one resource of the type specified by subject\_type.  
+* granularity is one of DAY, MONTH, or YEAR.  
+* If granularity is MONTH, the day component of date is synthetic (set to 01).  
+* If granularity is YEAR, the month and day components of date are synthetic (set to 01).
+
+*Relationships:*
+
+* Targets exactly one cover or marking.
 
 ### letterings
 
@@ -241,12 +243,13 @@ A postal marking \-- town marking, rate marking, or auxiliary marking \-- as obs
 * post\_office\_id references exactly one row in post\_offices.  
 * impression, if set, is one of: Normal, Stencil, Negative.  
 * A marking may exist without any cover\_markings rows; covers are only created when a valuation is recorded, so catalog entries without recorded valuations have no associated cover.  
-* A marking's earliest and latest use dates are derived by aggregating the cover\_dates of all covers associated with that marking (via cover\_markings), rather than stored on the marking itself. A marking with no associated covers therefore has no derivable date range.  
-* A marking's region context is derived by joining its post office to post\_office\_regions and intersecting each linked region's date window with the cover\_dates of the marking's associated covers. A marking may resolve to multiple regions when its observed dates span a region transition (e.g., a marking observed on covers from before and after a territory becomes a state). A marking with no associated covers has no derivable region context.
+* A marking's earliest and latest use dates are derived by aggregating two sources: dates\_seen rows attached directly to the marking, and dates\_seen rows attached to covers associated with the marking (via cover\_markings). The marking row itself does not store its date range. A marking with no directly attached dates\_seen and no associated covers therefore has no derivable date range.  
+* A marking's region context is derived by joining its post office to post\_office\_regions and intersecting each linked region's date window with the marking's aggregated dates\_seen (both direct and cover-mediated, as defined above). A marking may resolve to multiple regions when its observed dates span a region transition (e.g., a marking observed before and after a territory becomes a state). A marking with no derivable date range has no derivable region context.
 
 *Relationships:*
 
 * Associated with zero or more covers (via cover\_markings).  
+* Has zero or more dates\_seen entries.  
 * References zero or one shape.  
 * References zero or one lettering.  
 * References zero or one color.  
@@ -406,13 +409,6 @@ string cover\_type
 boolean is\_institutional  
 }
 
-cover\_dates {  
-int id PK  
-int cover\_id FK  
-date date  
-string granularity  
-}
-
 cover\_markings {  
 int id PK  
 int cover\_id FK  
@@ -426,6 +422,14 @@ int id PK
 int cover\_id FK  
 decimal amt  
 date appraisal\_date  
+}
+
+dates\_seen {  
+int id PK  
+int subject\_id  
+string subject\_type  
+date date  
+string granularity  
 }
 
 letterings {  
@@ -496,7 +500,8 @@ string name
 covers ||--|{ cover\_markings : "has"  
 markings ||--|{ cover\_markings : "observed on"  
 covers ||--o{ cover\_valuations : "valued"  
-covers ||--o{ cover\_dates : "dated"  
+covers ||--o{ dates\_seen : "dated"  
+markings ||--o{ dates\_seen : "dated"  
 shapes o|--o{ markings : "classifies"  
 letterings o|--o{ markings : "classifies"  
 colors o|--o{ markings : "colors"  

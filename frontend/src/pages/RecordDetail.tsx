@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, History, Loader2, MessageSquare, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
@@ -28,8 +28,10 @@ import {
   normalizeImageUrl,
   reorderImages,
   type AssociatedCover,
-  type AssociatedCoverDate,
+  type AssociatedDateSeen,
   type MarkingChangelogEvent,
+  type MarkingCitation,
+  type MarkingCitationReferenceWork,
   type MarkingImage,
   type MarkingRecord,
   type MarkingTypeValue,
@@ -37,6 +39,18 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
+import { CoverDialog } from "@/components/CoverDialog";
+import { deleteCover } from "@/services/covers";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type GalleryImage = {
   imageUrl: string | null;
@@ -57,24 +71,6 @@ type GalleryImage = {
    */
   imageId: number | null;
 };
-
-/**
- * The Image schema does not store an explicit "is_tracing" flag (see
- * common/models.py Image). The contribution-time tag persists on Marking
- * images via the COMPARISON view choice — FULL/DETAIL are the photographic
- * options, COMPARISON is reserved for trace/diagram overlays. We also
- * accept "tracing" appearing in the description or filename so older
- * uploads that predate the COMPARISON convention still get labeled.
- */
-function imageIsTracing(img: MarkingImage): boolean {
-  if (img.subjectType !== "MARKING") return false;
-  if ((img.imageView ?? "").toUpperCase() === "COMPARISON") return true;
-  const desc = (img.imageDescription ?? "").toLowerCase();
-  if (desc.includes("tracing")) return true;
-  const name = (img.originalFilename ?? "").toLowerCase();
-  if (name.includes("tracing")) return true;
-  return false;
-}
 
 const EMPTY = "-";
 
@@ -125,8 +121,8 @@ function coverTypeLabel(t: string | null): string {
   return EMPTY;
 }
 
-function formatCoverDate(d: AssociatedCoverDate): string {
-  // Honor the cover-date granularity: YEAR -> "1980", MONTH -> "01/1980",
+function formatCoverDate(d: AssociatedDateSeen): string {
+  // Honor the dates_seen granularity: YEAR -> "1980", MONTH -> "01/1980",
   // DAY -> "01/01/1980". Truncating the ISO string before formatting lets
   // formatCatalogDate pick the matching display shape.
   const raw = d.date || "";
@@ -153,9 +149,38 @@ function formatRateValue(cents: string | null | undefined): string {
   return (n / 100).toFixed(2);
 }
 
+/**
+ * Title text for a citation entry. The optional reference-work `code`
+ * (editor-assigned identifier like "ASCC-204") is shown as a separate
+ * badge in the UI, so this function returns just the human-readable
+ * title and leaves the code to the caller.
+ */
+function citationTitle(citation: MarkingCitation): string {
+  const rw = citation.referenceWork;
+  if (!rw) return "Reference work";
+  const title = rw.title.trim();
+  if (title) return title;
+  const code = (rw.code ?? "").trim();
+  return code || "Reference work";
+}
+
+/**
+ * Build the "Author (Year)" subtitle that sits directly under the title.
+ * Returns "" when neither field is populated; either alone is fine.
+ */
+function citationByline(rw: MarkingCitationReferenceWork | null): string {
+  if (!rw) return "";
+  const authorship = rw.authorship.trim();
+  const year = rw.publicationYear != null ? String(rw.publicationYear) : "";
+  if (authorship && year) return `${authorship} (${year})`;
+  if (authorship) return authorship;
+  if (year) return `(${year})`;
+  return "";
+}
+
 function inscriptionLabel(type: MarkingTypeValue): string {
   if (type === "RATEMARK") return "Ratemark Text";
-  if (type === "AUXMARK") return "Auxiliary/Instructional Text";
+  if (type === "AUXMARK") return "Auxmark Text";
   return "Townmark Text";
 }
 
@@ -217,7 +242,7 @@ function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
     // tooling on ContributionDetail.tsx where displayOrder===0 is what gets
     // labeled "Default" / "Set default".
     isDefault: img.displayOrder === 0,
-    isTracing: imageIsTracing(img),
+    isTracing: img.subjectType === "MARKING" && img.isTracing,
     imageId: img.imageId > 0 ? img.imageId : null,
   }));
 }
@@ -244,14 +269,30 @@ function DetailRow({
 function AssociatedCoverEntry({
   cover,
   isFirst,
+  onEdit,
+  onDelete,
+  isDeleting,
 }: {
   cover: AssociatedCover;
   isFirst: boolean;
+  /**
+   * Per-row "Submit Edit" hook. Opens the shared CoverDialog in edit mode
+   * prefilled with `cover`.
+   */
+  onEdit?: (cover: AssociatedCover) => void;
+  /**
+   * Per-row "Remove Cover" hook (editor-only). Rendered at the bottom of the
+   * entry; parent owns the confirmation modal so all rows share a single
+   * Dialog.
+   */
+  onDelete?: (cover: AssociatedCover) => void;
+  /** True while a delete request is in flight against this cover. */
+  isDeleting?: boolean;
 }) {
   const c = cover.coverDetails;
   const datesText =
-    c && c.coverDates.length > 0
-      ? c.coverDates.map(formatCoverDate).filter(Boolean).join("\n")
+    c && c.datesSeen.length > 0
+      ? c.datesSeen.map(formatCoverDate).filter(Boolean).join("\n")
       : EMPTY;
   const colorText = c?.colorName?.trim() ?? "";
   const allRows: { label: string; value: string; show: boolean }[] = [
@@ -271,6 +312,20 @@ function AssociatedCoverEntry({
   const rows = allRows.filter((r) => r.show);
   return (
     <div className={isFirst ? "" : "border-t-2 border-primary/40 pt-6 mt-6"}>
+      {onEdit && (
+        <div className="flex justify-end gap-2 mb-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onEdit(cover)}
+            aria-label="Submit edit for this cover"
+            disabled={isDeleting}
+          >
+            <Pencil className="mr-2 h-4 w-4" />
+            Submit Edit
+          </Button>
+        </div>
+      )}
       <dl className="text-sm">
         {rows.map((r, i) => (
           <DetailRow
@@ -281,6 +336,24 @@ function AssociatedCoverEntry({
           />
         ))}
       </dl>
+      {onDelete && (
+        <div className="flex justify-end gap-2 mt-3">
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => onDelete(cover)}
+            aria-label="Remove this cover"
+            disabled={isDeleting}
+          >
+            {isDeleting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="mr-2 h-4 w-4" />
+            )}
+            Remove Cover
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -298,6 +371,21 @@ const RecordDetail = () => {
   const [record, setRecord] = useState<MarkingRecord | null>(null);
   const [associatedCovers, setAssociatedCovers] = useState<AssociatedCover[]>([]);
   const [coversOpen, setCoversOpen] = useState(true);
+  // CoverDialog state. mode + editingCover together pick "create new"
+  // vs. "edit this specific cover-marking link" without a second dialog.
+  const [coverDialogOpen, setCoverDialogOpen] = useState(false);
+  const [coverDialogMode, setCoverDialogMode] = useState<"create" | "edit">(
+    "create",
+  );
+  const [editingCover, setEditingCover] = useState<AssociatedCover | null>(null);
+  // Remove-cover confirmation: holds the cover the user has just clicked
+  // "Remove" on. Confirmation Dialog renders only when this is non-null.
+  // deletingCoverId tracks the in-flight DELETE so the row's button can
+  // show a spinner and other rows' delete buttons can be disabled while
+  // we're talking to the server.
+  const [pendingDeleteCover, setPendingDeleteCover] =
+    useState<AssociatedCover | null>(null);
+  const [deletingCoverId, setDeletingCoverId] = useState<number | null>(null);
   const [historyEvents, setHistoryEvents] = useState<MarkingChangelogEvent[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -351,6 +439,23 @@ const RecordDetail = () => {
       cancelled = true;
     };
   }, [markingId]);
+
+  // Fetcher extracted so both the initial mount and the post-save callback
+  // from CoverDialog can refresh the cover list without duplicating the
+  // request logic. setCoversOpen is intentionally only touched on the
+  // mount path so a save doesn't clobber the user's collapse choice.
+  const refreshAssociatedCovers = useCallback(
+    async (options?: { resetOpen?: boolean }) => {
+      if (markingId == null || Number.isNaN(markingId)) {
+        setAssociatedCovers([]);
+        return;
+      }
+      const rows = await getMarkingCovers(markingId);
+      setAssociatedCovers(rows);
+      if (options?.resetOpen) setCoversOpen(rows.length > 0);
+    },
+    [markingId],
+  );
 
   useEffect(() => {
     if (markingId == null || Number.isNaN(markingId)) {
@@ -608,12 +713,59 @@ const RecordDetail = () => {
   );
 
   const coverCount = associatedCovers.length;
-  const goNewCover = () => {
-    if (!user) {
-      navigate("/auth", { state: { from: location } });
-      return;
+  // Unauthenticated visitors clicking a write-action button get bounced to
+  // /auth with `from` state so the auth page can return them here after
+  // login. Matches the pattern used in App.tsx for protected routes.
+  const requireAuth = (): boolean => {
+    if (user) return true;
+    navigate("/auth", { state: { from: location } });
+    return false;
+  };
+  const openNewCoverDialog = () => {
+    if (!requireAuth()) return;
+    setEditingCover(null);
+    setCoverDialogMode("create");
+    setCoverDialogOpen(true);
+  };
+  const openEditCoverDialog = (cover: AssociatedCover) => {
+    if (!requireAuth()) return;
+    setEditingCover(cover);
+    setCoverDialogMode("edit");
+    setCoverDialogOpen(true);
+  };
+
+  const requestDeleteCover = (cover: AssociatedCover) => {
+    setPendingDeleteCover(cover);
+  };
+
+  const confirmDeleteCover = async () => {
+    const cover = pendingDeleteCover;
+    if (!cover || !cover.coverDetails) return;
+    const coverPk = cover.coverDetails.id;
+    setDeletingCoverId(coverPk);
+    try {
+      // DELETE /covers/{id}/ cascades to CoverMarking via FK on_delete=CASCADE.
+      // DateSeen is polymorphic (no FK), so cover-bound dates are NOT cascaded
+      // by the DB; the backend Cover delete path is responsible for cleaning
+      // up DateSeen rows where subject_type=COVER and subject_id=coverPk. We
+      // therefore still issue a single DELETE /covers/{id}/ here and rely on
+      // the server-side cleanup rather than fanning out to /dates-seen/{id}/.
+      await deleteCover(coverPk);
+      toast({
+        title: "Cover removed",
+        description: "The cover and its dates were removed from this marking.",
+      });
+      setPendingDeleteCover(null);
+      await refreshAssociatedCovers({ resetOpen: true });
+    } catch (err) {
+      toast({
+        title: "Could not remove cover",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingCoverId(null);
     }
-    navigate(`/cover/new?marking=${record.id}`);
   };
 
   return (
@@ -653,9 +805,6 @@ const RecordDetail = () => {
                             <img src={src} alt={alt} className="w-full h-full object-contain" />
                             <div className="absolute top-2 left-2 flex flex-wrap items-center gap-1">
                               <Badge variant="secondary">{img.subjectLabel}</Badge>
-                              {!isPlaceholder && img.isDefault && (
-                                <Badge variant="secondary">Default</Badge>
-                              )}
                               {!isPlaceholder && img.isTracing && (
                                 <Badge variant="secondary">Tracing</Badge>
                               )}
@@ -700,15 +849,7 @@ const RecordDetail = () => {
 
               <Card className="shadow-archival-md">
                 <CardHeader>
-                  <div className="flex items-center justify-between gap-3">
-                    <CardTitle className="font-heading text-lg">Associated Thumbnails</CardTitle>
-                    {isStaff && galleryImages.length > 1 && (
-                      <span className="text-xs text-muted-foreground">
-                        Editors: drag with the arrows or star to set the
-                        Catalog Search thumbnail.
-                      </span>
-                    )}
-                  </div>
+                  <CardTitle className="font-heading text-lg">Associated Thumbnails</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {galleryImages.length === 0 ? (
@@ -734,11 +875,6 @@ const RecordDetail = () => {
                                 alt={img.originalFilename || `Thumbnail ${idx + 1}`}
                                 className="h-full w-full object-cover"
                               />
-                              {img.isDefault && (
-                                <span className="absolute bottom-0 left-0 right-0 bg-primary/85 text-primary-foreground text-[9px] uppercase tracking-wide text-center leading-tight py-[1px]">
-                                  Default
-                                </span>
-                              )}
                             </button>
                             {canReorder && (
                               // Editor reorder strip. Each button issues a
@@ -895,46 +1031,145 @@ const RecordDetail = () => {
                 </CardContent>
               </Card>
 
+              {record.citations.length > 0 && (
+                <Card className="shadow-archival-md">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">
+                      Citations ({record.citations.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {record.citations.map((citation, idx) => {
+                      const rw = citation.referenceWork;
+                      const code = (rw?.code ?? "").trim();
+                      const title = citationTitle(citation);
+                      const byline = citationByline(rw);
+                      const detail = citation.citationDetail.trim();
+                      // A citation_detail that already looks like a URL is
+                      // surfaced as a clickable link in the Reference row;
+                      // this matches contributor practice of pasting a
+                      // deep-link (e.g. archive.org page) directly into
+                      // citation_detail. When detail is a URL we hide the
+                      // separate Link row so we don't show the same URL
+                      // twice on a single citation.
+                      const detailIsUrl = /^https?:\/\//i.test(detail);
+                      const rwUrl = (rw?.url ?? "").trim();
+                      const rows: { label: string; value: ReactNode }[] = [];
+                      // citation_detail is the most important field for a
+                      // reader scanning the catalog, so it leads. Labeled
+                      // "Page" per the convention used elsewhere in the UI,
+                      // even though the underlying field can also hold a
+                      // section reference or URL depending on the source.
+                      if (detail) {
+                        rows.push({
+                          label: "Page",
+                          value: detailIsUrl ? (
+                            <a
+                              href={detail}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="underline text-primary break-all"
+                            >
+                              {detail}
+                            </a>
+                          ) : (
+                            detail
+                          ),
+                        });
+                      }
+                      if (rw?.publisher.trim()) {
+                        rows.push({ label: "Publisher", value: rw.publisher.trim() });
+                      }
+                      if (rw?.edition.trim()) {
+                        rows.push({ label: "Edition", value: rw.edition.trim() });
+                      }
+                      if (rw?.volume.trim()) {
+                        rows.push({ label: "Volume", value: rw.volume.trim() });
+                      }
+                      if (rw?.isbn.trim()) {
+                        rows.push({ label: "ISBN", value: rw.isbn.trim() });
+                      }
+                      if (rwUrl && !detailIsUrl) {
+                        rows.push({
+                          label: "Link",
+                          value: (
+                            <a
+                              href={rwUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="underline text-primary break-all"
+                            >
+                              {rwUrl}
+                            </a>
+                          ),
+                        });
+                      }
+                      return (
+                        <div
+                          key={citation.id}
+                          className={
+                            idx === 0
+                              ? ""
+                              : "border-t-2 border-primary/40 pt-6 mt-6"
+                          }
+                        >
+                          <div className="flex items-baseline gap-2 flex-wrap">
+                            {code && (
+                              <Badge variant="secondary" className="font-mono">
+                                {code}
+                              </Badge>
+                            )}
+                            <div className="font-medium text-foreground">
+                              {title}
+                            </div>
+                          </div>
+                          {byline && (
+                            <div className="mt-1 text-xs text-muted-foreground italic">
+                              {byline}
+                            </div>
+                          )}
+                          {rows.length > 0 && (
+                            <dl className="mt-3 text-sm">
+                              {rows.map((r, i) => (
+                                <div
+                                  key={r.label}
+                                  className={`flex justify-between gap-4 py-2 ${i === rows.length - 1 ? "" : "border-b border-border"}`}
+                                >
+                                  <dt className="text-muted-foreground font-medium shrink-0">
+                                    {r.label}
+                                  </dt>
+                                  <dd className="text-foreground text-right break-words min-w-0">
+                                    {r.value}
+                                  </dd>
+                                </div>
+                              ))}
+                            </dl>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              )}
+
               <Card className="shadow-archival-md">
                 {coverCount === 0 ? (
-                  <>
-                    <CardHeader>
-                      <div className="flex items-center justify-between gap-3">
-                        <CardTitle className="font-heading text-lg">
-                          Associated Covers (0)
-                        </CardTitle>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="flex items-center justify-between gap-3">
-                        <Button
-                          size="sm"
-                          onClick={goNewCover}
-                          className="bg-green-800 hover:bg-green-900 text-white"
-                        >
-                          <Plus className="mr-2 h-4 w-4" />
-                          Submit New Cover
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </>
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">
+                      Associated Covers (0)
+                    </CardTitle>
+                  </CardHeader>
                 ) : (
                   <Collapsible open={coversOpen} onOpenChange={setCoversOpen}>
                     <CardHeader>
-                      <div className="flex items-center justify-between gap-3">
-                        <CollapsibleTrigger className="flex items-center gap-2 text-left cursor-pointer">
-                          <CardTitle className="font-heading text-lg">
-                            Associated Covers ({coverCount})
-                          </CardTitle>
-                          <ChevronDown
-                            className={`h-4 w-4 text-muted-foreground transition-transform ${coversOpen ? "rotate-180" : ""}`}
-                          />
-                        </CollapsibleTrigger>
-                        <Button variant="outline" size="sm" onClick={goEdit}>
-                          <Pencil className="mr-2 h-4 w-4" />
-                          Submit Edit
-                        </Button>
-                      </div>
+                      <CollapsibleTrigger className="flex items-center gap-2 text-left cursor-pointer">
+                        <CardTitle className="font-heading text-lg">
+                          Associated Covers ({coverCount})
+                        </CardTitle>
+                        <ChevronDown
+                          className={`h-4 w-4 text-muted-foreground transition-transform ${coversOpen ? "rotate-180" : ""}`}
+                        />
+                      </CollapsibleTrigger>
                     </CardHeader>
                     <CollapsibleContent>
                       <CardContent>
@@ -943,35 +1178,79 @@ const RecordDetail = () => {
                             key={cover.id}
                             cover={cover}
                             isFirst={idx === 0}
+                            onEdit={openEditCoverDialog}
+                            onDelete={isStaff ? requestDeleteCover : undefined}
+                            isDeleting={
+                              cover.coverDetails != null &&
+                              deletingCoverId === cover.coverDetails.id
+                            }
                           />
                         ))}
-                        <div className="mt-6 flex items-center justify-between gap-3 pt-4 border-t border-border">
-                          <Button
-                            size="sm"
-                            onClick={goNewCover}
-                            className="bg-green-800 hover:bg-green-900 text-white"
-                          >
-                            <Plus className="mr-2 h-4 w-4" />
-                            Submit New Cover
-                          </Button>
-                          {isStaff && (
-                            // Visual placement only. The backend delete actions
-                            // (DELETE /api/v2/covers/<id>/, DELETE
-                            // /api/v2/cover-markings/<id>/) need their behavior
-                            // / permissions verified before this button is
-                            // wired up. No-op onClick so the button stays
-                            // inert without surfacing a placeholder alert.
-                            <Button size="sm" variant="destructive">
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete Cover
-                            </Button>
-                          )}
-                        </div>
                       </CardContent>
                     </CollapsibleContent>
                   </Collapsible>
                 )}
               </Card>
+
+              {markingId != null && !Number.isNaN(markingId) && (
+                <CoverDialog
+                  open={coverDialogOpen}
+                  onOpenChange={setCoverDialogOpen}
+                  mode={coverDialogMode}
+                  markingId={markingId}
+                  cover={coverDialogMode === "edit" ? editingCover : null}
+                  onSaved={() => refreshAssociatedCovers({ resetOpen: true })}
+                />
+              )}
+
+              <AlertDialog
+                open={pendingDeleteCover !== null}
+                onOpenChange={(next) => {
+                  // Block dismiss-while-deleting so the user can't
+                  // double-click cancel and leave a half-finished DELETE
+                  // request hanging out without UI feedback.
+                  if (deletingCoverId != null) return;
+                  if (!next) setPendingDeleteCover(null);
+                }}
+              >
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Remove this cover?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {pendingDeleteCover?.coverDetails?.code
+                        ? `Cover "${pendingDeleteCover.coverDetails.code}" will be removed, along with its dates and link to this marking.`
+                        : "This cover will be removed, along with its dates and link to this marking."}{" "}
+                      This action cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={deletingCoverId != null}>
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={(e) => {
+                        // Stop AlertDialog from auto-closing on click; we
+                        // close manually inside confirmDeleteCover after
+                        // the DELETE request resolves so the UI state stays
+                        // consistent with the server.
+                        e.preventDefault();
+                        void confirmDeleteCover();
+                      }}
+                      disabled={deletingCoverId != null}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      {deletingCoverId != null ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Removing...
+                        </>
+                      ) : (
+                        "Remove"
+                      )}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
 
               {record.desc.trim() && (
                 <Card className="shadow-archival-md">
@@ -998,19 +1277,35 @@ const RecordDetail = () => {
             </div>
           </div>
 
-          {isStaff && (
-            // Visual placement only. The backend delete actions (DELETE
-            // /api/v2/markings/<id>/delete-mine/ and the standard
-            // MarkingViewSet destroy) need their behavior / permissions
-            // verified before this button is wired up. No-op onClick so the
-            // button stays inert without surfacing a placeholder alert.
-            <div className="mt-10 flex justify-end">
-              <Button size="sm" variant="destructive">
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete Marking
+          {/* Bottom action row. Mirrors the two-column grid above so
+              Submit New Cover sits under the left edge of the Associated
+              Covers card (right column) rather than against the page edge,
+              while Delete Marking stays flush right. */}
+          <div className="mt-10 grid items-start lg:grid-cols-2 gap-8">
+            <div className="hidden lg:block" />
+            <div className="flex items-center justify-between gap-3">
+              <Button
+                size="sm"
+                onClick={openNewCoverDialog}
+                className="bg-green-800 hover:bg-green-900 text-white"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Submit New Cover
               </Button>
+              {isStaff && (
+                // Visual placement only. The backend delete actions (DELETE
+                // /api/v2/markings/<id>/delete-mine/ and the standard
+                // MarkingViewSet destroy) need their behavior / permissions
+                // verified before this button is wired up. No-op onClick so
+                // the button stays inert without surfacing a placeholder
+                // alert.
+                <Button size="sm" variant="destructive">
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Remove Marking
+                </Button>
+              )}
             </div>
-          )}
+          </div>
         </div>
       </div>
       <Footer />

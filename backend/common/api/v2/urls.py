@@ -40,7 +40,7 @@ router.register(r"markings", views.MarkingViewSet, basename="marking")
 router.register(r"images", views.ImageViewSet, basename="image")
 router.register(r"covers", views.CoverV2ViewSet, basename="cover-v2")
 router.register(r"cover-markings", views.CoverMarkingViewSet, basename="cover-marking")
-router.register(r"cover-dates", views.CoverDateViewSet, basename="cover-date")
+router.register(r"dates-seen", views.DateSeenViewSet, basename="dates-seen")
 router.register(r"cover-valuations", views.CoverValuationViewSet, basename="cover-valuation")
 
 # Moderation, governance, admin

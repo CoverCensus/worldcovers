@@ -73,7 +73,7 @@ class MarkingListPagination(PageSizePagination):
 
 
 class LargePageSizePagination(PageNumberPagination):
-    """Use for list endpoints that are often consumed in full (e.g. administrative units for filter dropdown)."""
+    """Use for list endpoints that are often consumed in full (e.g. regions for filter dropdown)."""
     page_size = 100
     page_size_query_param = "page_size"
     max_page_size = 500

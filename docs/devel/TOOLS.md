@@ -22,9 +22,6 @@ All Django command examples use `pipenv run manage <cmd>` — the canonical invo
 | `list_v2_import_versions` | List all versioned v2 imports | `pipenv run manage list_v2_import_versions` |
 | `revert_v2_import_version` | Revert a versioned v2 import | `pipenv run manage revert_v2_import_version` |
 | `import_catalog_images` | Import postmark images from a CSV mapping | `pipenv run manage import_catalog_images` |
-| `import_all_legacy_csv` | Bulk-import all 13 v1 ERD CSVs in one pass | `pipenv run manage import_all_legacy_csv` |
-| `import_reference_csv` | Import reference tables (states, lettering, framing, date formats) | `pipenv run manage import_reference_csv` |
-| `import_ascc` | Import raw state data and images from v1 CSVs | `pipenv run manage import_ascc` |
 | DateFormat admin import | Import date formats via Django admin | `/admin/postmarks/dateformat/import/` |
 | `backup_auth` | Export user accounts, groups, and email addresses | `pipenv run manage backup_auth` |
 | `restore_auth` | Restore user accounts from a backup | `pipenv run manage restore_auth` |
@@ -146,7 +143,7 @@ pipenv run manage import_v2_data --dir tools/wip/out
 
 These are produced by the APMC notebooks in `tools/`.
 
-**Import order:** lookups (colors, shapes, etc.) → Covers → Ratemarks → Postmarks (with PostmarkV2 extension) → Auxmarks → DateObserved → junction tables (CoverPostmark, PostmarkRatemark, MarkFraming) → PostmarkValuation.
+**Import order:** lookups (colors, shapes, etc.) -> Covers -> Ratemarks -> Postmarks -> Auxmarks -> DateObserved -> junction tables (CoverPostmark, PostmarkRatemark, MarkFraming) -> PostmarkValuation.
 
 **Known limitation:** `post_offices.csv` has a blank `region_id` column — all PostOffice rows are assigned to a placeholder `Region("UNKNOWN")`. `postmark_valuation.csv` has empty `appraisal_date` so valuations are skipped.
 
@@ -170,7 +167,7 @@ Accepts the same `--dir` and `--user` flags as `import_v2_data`. `--tag` is a hu
 
 ### `import_catalog_images` — postmark image import
 
-Import catalog-extracted images as `PostmarkImage` records.
+Import catalog-extracted images as `Image` records (`subject_type='MARKING'`).
 
 **Prerequisites:** Image files must already be on disk under `MEDIA_ROOT` (typically `MEDIA_ROOT/<state>/<filename>`). The command reads the CSV for the mapping but does not copy files.
 
@@ -186,7 +183,6 @@ pipenv run manage import_catalog_images path/to/one.csv --dry-run    # single fi
 
 | Column | Required | Notes |
 |--------|----------|-------|
-| `postmark_key` | Yes | Matched against `Postmark.postmark_key` |
 | `storage_filename` | Yes | Path relative to `MEDIA_ROOT` (e.g. `iowa/IA-ABC-123-1.jpg`) |
 | `display_order` | No | Integer, default `0` |
 | `image_view` | No | `FULL` \| `DETAIL` \| `COMPARISON`, default `FULL` |
@@ -200,75 +196,12 @@ pipenv run manage import_catalog_images path/to/one.csv --dry-run    # single fi
 | `-r`, `--recursive` | off | Recurse into subdirectories when a directory is given |
 | `--user` | first superuser | Username for `uploaded_by` / `created_by` / `modified_by` |
 | `--dry-run` | off | Parse and validate without writing; rolls back the transaction |
-| `--truncate` | off | Delete all existing `PostmarkImage` rows before importing |
+| `--truncate` | off | Delete all existing marking `Image` rows before importing |
 | `--clean` | off | Rewrite each source CSV, dropping rows whose file is missing on disk |
 
-**Side effects:** `PostmarkImage.objects.update_or_create` — creates on first run, updates on subsequent runs. Rows with missing `postmark_key`, unreadable files, or invalid `image_view` are skipped with a log message.
+**Side effects:** `Image.objects.update_or_create` -- creates on first run, updates on subsequent runs. Rows with unreadable files or invalid `image_view` are skipped with a log message.
 
 Shared image utilities live at [backend/common/images.py](../backend/common/images.py).
-
----
-
-### Legacy CSV import (`import_all_legacy_csv`, `import_reference_csv`, `import_ascc`)
-
-Three commands for importing v1 ERD data. Run these before `import_v2_data` if you're seeding from the legacy APMC export.
-
-#### Option A: all 13 ERD CSVs at once (recommended)
-
-```sh
-pipenv run manage import_all_legacy_csv --dir "frontend/public/Old Data"
-```
-
-Runs in order: reference tables → legacy tables → raw state data and images. Options:
-
-| Flag | Default | Effect |
-|------|---------|--------|
-| `--dir` | `frontend/public/Old Data` | Directory with the 13 CSV files |
-| `--user` | first superuser | Username for `created_by` |
-| `--skip-ascc` | off | Skip `import_ascc` (raw state data + images) |
-
-#### Option B: step by step
-
-**Step 1 — reference tables** (states, lettering, framing, date formats):
-```sh
-pipenv run manage import_reference_csv --dir "frontend/public/Old Data"
-```
-
-Options: `--dir`, `--user`, `--only <type>` (e.g. `--only states --only lettering`).
-
-CSV → model mapping:
-
-| CSV file | Import type | Destination |
-|----------|-------------|-------------|
-| `tblStates.csv` | `states` | `AdministrativeUnit`, `AdministrativeUnitIdentity` |
-| `tblTownmarkLettering.csv` | `lettering` | `LetteringStyle` |
-| `tblTownmarkFraming.csv` | `framing` | `FramingStyle` |
-| `tblTownmarkDateFormat.csv` | `date_format` | `DateFormat` |
-
-**Step 2 — raw state data and images** (Postmark, PostmarkImage, etc.):
-```sh
-pipenv run manage import_ascc --dir "frontend/public/Old Data" --user your_admin_username
-```
-
-Run `import_reference_csv` first so lettering/framing/date format rows exist.
-
-#### All 13 ERD CSV → database mapping
-
-| ERD table | CSV file | Destination / import_type |
-|-----------|----------|--------------------------|
-| TBLSTATES | `tblStates.csv` | `states` → AdministrativeUnit, Identity |
-| TBLABBREVIATIONS | `tblAbbreviations.csv` | `abbreviations` → LegacyAbbreviation |
-| TBLTOWNMARKLETTERING | `tblTownmarkLettering.csv` | `lettering` → LetteringStyle |
-| TBLTOWNMARKFRAMING | `tblTownmarkFraming.csv` | `framing` → FramingStyle |
-| TBLTOWNMARKDATEFORMAT | `tblTownmarkDateFormat.csv` | `date_format` → DateFormat |
-| TBLTOWNMARKRATELOCATION | `tblTownmarkRateLocation.csv` | `rate_location` → LegacyRateLocation |
-| TBLTOWNMARKRATEVALUE | `tblTownmarkRateValue.csv` | `rate_value` → LegacyRateValue |
-| TBLRAWSTATEDATA | `tblRawStateData.csv` | `import_ascc` → Postmark, etc. |
-| TBLRAWSTATEDATA_PENDINGUPDATE | `tblRawStateData_pendingUpdate.csv` | `pending_updates` → LegacyRawStateDataPendingUpdate |
-| TBLTOWNMARKIMAGES | `tblTownmarkImages.csv` | `import_ascc` → PostmarkImage |
-| TBLPARSESTEPS | `tblParseSteps.csv` | `parse_steps` → LegacyParseStep |
-| CTUSERSTATES | `ctUserStates.csv` | `user_states` → LegacyUserState |
-| TBLCOVERS | `tblCovers.csv` | `legacy_covers` → LegacyCover |
 
 ---
 
