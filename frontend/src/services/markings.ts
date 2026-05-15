@@ -42,39 +42,7 @@ export interface MarkingImage {
   originalFilename: string;
   storageFilename: string;
   imageDescription: string;
-  isTracing: boolean;
   displayOrder: number;
-}
-
-/**
- * Subset of ReferenceWork fields embedded in a Citation row, sufficient
- * to render a citation entry without a second /reference-works/ call.
- * Mirrors the read-only `reference_work_details` field on the v2
- * CitationSerializer. Numeric ids come from the Django default `id` PK.
- */
-export interface MarkingCitationReferenceWork {
-  id: number;
-  code: string | null;
-  title: string;
-  authorship: string;
-  publisher: string;
-  publicationYear: number | null;
-  edition: string;
-  volume: string;
-  isbn: string;
-  url: string;
-}
-
-/** One Citation row attached to a marking via (subject_type=MARKING, subject_id=id). */
-export interface MarkingCitation {
-  id: number;
-  /**
-   * Page, section, or URL within the reference work. Backend column is
-   * non-null with max_length=500; we still defensively trim/coerce.
-   */
-  citationDetail: string;
-  /** Nested reference work data; null only if the API omits it. */
-  referenceWork: MarkingCitationReferenceWork | null;
 }
 
 /** Canonical UI shape for a marking row (list or detail). */
@@ -110,7 +78,6 @@ export interface MarkingRecord {
   mainImage: MarkingImage | null;
   secondImage: MarkingImage | null;
   images: MarkingImage[];
-  citations: MarkingCitation[];
 }
 
 export interface MarkingChangelogEvent {
@@ -248,7 +215,6 @@ function mapImage(raw: unknown): MarkingImage | null {
     originalFilename: toStr(o.original_filename),
     storageFilename: toStr(o.storage_filename),
     imageDescription: toStr(o.image_description),
-    isTracing: Boolean(o.is_tracing),
     displayOrder: toNumOrNull(o.display_order) ?? 0,
   };
 }
@@ -256,42 +222,6 @@ function mapImage(raw: unknown): MarkingImage | null {
 function mapImageList(raw: unknown): MarkingImage[] {
   if (!Array.isArray(raw)) return [];
   return raw.map(mapImage).filter((x): x is MarkingImage => x !== null);
-}
-
-function mapCitationReferenceWork(raw: unknown): MarkingCitationReferenceWork | null {
-  if (!raw || typeof raw !== "object") return null;
-  const o = raw as Record<string, unknown>;
-  const id = toIdOrNull(o.id);
-  if (id == null) return null;
-  return {
-    id,
-    code: typeof o.code === "string" && o.code ? o.code : null,
-    title: toStr(o.title),
-    authorship: toStr(o.authorship),
-    publisher: toStr(o.publisher),
-    publicationYear: toNumOrNull(o.publication_year),
-    edition: toStr(o.edition),
-    volume: toStr(o.volume),
-    isbn: toStr(o.isbn),
-    url: toStr(o.url),
-  };
-}
-
-function mapCitation(raw: unknown): MarkingCitation | null {
-  if (!raw || typeof raw !== "object") return null;
-  const o = raw as Record<string, unknown>;
-  const id = toIdOrNull(o.id);
-  if (id == null) return null;
-  return {
-    id,
-    citationDetail: toStr(o.citation_detail),
-    referenceWork: mapCitationReferenceWork(o.reference_work_details),
-  };
-}
-
-function mapCitationList(raw: unknown): MarkingCitation[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map(mapCitation).filter((x): x is MarkingCitation => x !== null);
 }
 
 /**
@@ -341,7 +271,6 @@ export function mapApiMarkingToRecord(raw: unknown): MarkingRecord {
     mainImage,
     secondImage,
     images,
-    citations: mapCitationList(o.citations),
   };
 }
 
@@ -532,13 +461,8 @@ export async function restoreMarkingVersion(
   }
 }
 
-/**
- * A single DateSeen row attached to an associated cover. The backing API row
- * is polymorphic (subject_type COVER|MARKING + subject_id); inside an
- * AssociatedCover the only rows the caller sees are the COVER-scoped ones,
- * so the discriminator is implicit and we expose just the observation fields.
- */
-export interface AssociatedDateSeen {
+/** A single CoverDate row attached to an associated cover. */
+export interface AssociatedCoverDate {
   id: number;
   date: string;
   granularity: "DAY" | "MONTH" | "YEAR";
@@ -560,7 +484,7 @@ export interface AssociatedCoverDetails {
   height: string | null;
   hasAdhesive: boolean | null;
   isInstitutional: boolean | null;
-  datesSeen: AssociatedDateSeen[];
+  coverDates: AssociatedCoverDate[];
 }
 
 /** One CoverMarking row (a marking-on-cover association). */
@@ -578,14 +502,14 @@ interface CoverMarkingApiResponse {
   results: unknown[];
 }
 
-function mapAssociatedDateSeen(raw: unknown): AssociatedDateSeen | null {
+function mapAssociatedCoverDate(raw: unknown): AssociatedCoverDate | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
   const id = toIdOrNull(o.id);
   const date = typeof o.date === "string" ? o.date : "";
   if (id == null || !date) return null;
   const gRaw = String(o.granularity ?? "").toUpperCase();
-  const granularity: AssociatedDateSeen["granularity"] =
+  const granularity: AssociatedCoverDate["granularity"] =
     gRaw === "MONTH" ? "MONTH" : gRaw === "YEAR" ? "YEAR" : "DAY";
   return { id, date, granularity };
 }
@@ -595,14 +519,10 @@ function mapAssociatedCoverDetails(raw: unknown): AssociatedCoverDetails | null 
   const o = raw as Record<string, unknown>;
   const id = toIdOrNull(o.id);
   if (id == null) return null;
-  // Backend serializer exposes the nested array under `dates_seen` (it used
-  // to be `cover_dates` before the polymorphic refactor). Caller code only
-  // sees COVER-scoped rows here because CoverSerializer.get_dates_seen
-  // filters by subject_type=COVER for this cover's pk.
-  const datesRaw = Array.isArray(o.dates_seen) ? o.dates_seen : [];
-  const datesSeen = datesRaw
-    .map(mapAssociatedDateSeen)
-    .filter((x): x is AssociatedDateSeen => x !== null);
+  const datesRaw = Array.isArray(o.cover_dates) ? o.cover_dates : [];
+  const coverDates = datesRaw
+    .map(mapAssociatedCoverDate)
+    .filter((x): x is AssociatedCoverDate => x !== null);
   return {
     id,
     code: typeof o.code === "string" && o.code ? o.code : null,
@@ -613,7 +533,7 @@ function mapAssociatedCoverDetails(raw: unknown): AssociatedCoverDetails | null 
     height: decimalToString(o.height),
     hasAdhesive: o.has_adhesive == null ? null : Boolean(o.has_adhesive),
     isInstitutional: o.is_institutional == null ? null : Boolean(o.is_institutional),
-    datesSeen,
+    coverDates,
   };
 }
 
@@ -649,7 +569,7 @@ function mapAssociatedCover(raw: unknown): AssociatedCover | null {
  *       "height": "10.50",
  *       "has_adhesive": false,
  *       "is_institutional": null,
- *       "dates_seen": [
+ *       "cover_dates": [
  *         { "id": 99, "date": "1851-04-12", "granularity": "DAY" }
  *       ]
  *     }
@@ -680,7 +600,7 @@ export async function getMarkingCount(): Promise<number> {
   return typeof res.data.count === "number" ? res.data.count : 0;
 }
 
-/** GET /markings-range/ - earliest/latest dates_seen year across catalog. */
+/** GET /markings-range/ - earliest/latest cover_date year across catalog. */
 export async function getMarkingYearRange(): Promise<MarkingYearRange> {
   const res = await apiClient.get<Record<string, number | null | undefined>>(
     "/markings-range/"

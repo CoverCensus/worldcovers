@@ -26,7 +26,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowDown, ArrowUp, Calendar, Loader2, Pencil, Plus, Search as SearchIcon, SlidersHorizontal } from "lucide-react";
+import { Calendar, Loader2, Plus, Search as SearchIcon, SlidersHorizontal } from "lucide-react";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
@@ -97,7 +97,7 @@ function resolveSubmissionImageUrl(
     const obj = meta as Record<string, unknown>;
     const sf = obj.storage_filename ?? obj.storageFilename;
     if (typeof sf !== "string" || !sf || !baseImageUrl) return null;
-    return normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/${sf.replace(/^\/+/, "")}`);
+    return normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/markings/${sf}`);
   };
   const metas = submittedData.image_metas ?? submittedData.imageMetas;
   if (Array.isArray(metas)) {
@@ -140,71 +140,13 @@ interface PendingReviewItem {
   state_display: string;
   town_display: string;
   shape_display: string;
-  color_display: string;
   marking_id: number | null;
   status: string;
   created_at: string;
   review_notes: string | null;
-  image_url: string | null;
 }
 
-type SortDir = "asc" | "desc";
-
-type MySubmissionsSortField = "status" | "state" | "town" | "shape" | "color" | "submitted";
-type EditorHistorySortField = "status" | "state" | "town" | "shape" | "color" | "submitted";
-
-type SortEntry<F extends string> = { field: F; dir: SortDir };
-
-function SortableLabel<F extends string>({
-  htmlFor,
-  label,
-  field,
-  currentSort,
-  onToggle,
-}: {
-  htmlFor?: string;
-  label: string;
-  field: F;
-  currentSort: SortEntry<F>[];
-  onToggle: (field: F, dir: SortDir) => void;
-}) {
-  const entry = currentSort.find((e) => e.field === field) ?? null;
-  const isAsc = entry?.dir === "asc";
-  const isDesc = entry?.dir === "desc";
-  return (
-    <div className="group flex items-center gap-1">
-      <Label htmlFor={htmlFor}>{label}</Label>
-      <button
-        type="button"
-        aria-label={`Sort by ${label} ascending`}
-        aria-pressed={isAsc}
-        onClick={() => onToggle(field, "asc")}
-        className={cn(
-          "p-0.5 rounded hover:bg-muted transition-opacity",
-          isAsc
-            ? "text-foreground opacity-100"
-            : "text-muted-foreground opacity-0 group-hover:opacity-100 focus:opacity-100",
-        )}
-      >
-        <ArrowUp className="h-3 w-3" />
-      </button>
-      <button
-        type="button"
-        aria-label={`Sort by ${label} descending`}
-        aria-pressed={isDesc}
-        onClick={() => onToggle(field, "desc")}
-        className={cn(
-          "p-0.5 rounded hover:bg-muted transition-opacity",
-          isDesc
-            ? "text-foreground opacity-100"
-            : "text-muted-foreground opacity-0 group-hover:opacity-100 focus:opacity-100",
-        )}
-      >
-        <ArrowDown className="h-3 w-3" />
-      </button>
-    </div>
-  );
-}
+type SubmissionQueueSortOption = "newest" | "oldest";
 
 type PaginatedResponse<T> = {
   count: number;
@@ -331,22 +273,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [editorSearchQuery, setEditorSearchQuery] = useState("");
   const [editorTownFilter, setEditorTownFilter] = useState("");
   const [editorShapeFilter, setEditorShapeFilter] = useState("all");
-  const [editorColorFilter, setEditorColorFilter] = useState("all");
   const [editorDateFrom, setEditorDateFrom] = useState("");
   const [editorDateTo, setEditorDateTo] = useState("");
-  const [submissionQueueSort, setSubmissionQueueSort] = useState<SortEntry<EditorHistorySortField>[]>([
-    { field: "submitted", dir: "desc" },
-  ]);
-  const toggleEditorHistorySort = (field: EditorHistorySortField, dir: SortDir) => {
-    setSubmissionQueueSort((prev) => {
-      const idx = prev.findIndex((e) => e.field === field);
-      if (idx === -1) return [...prev, { field, dir }];
-      if (prev[idx].dir === dir) return prev.filter((_, i) => i !== idx);
-      const next = prev.slice();
-      next[idx] = { field, dir };
-      return next;
-    });
-  };
+  const [submissionQueueSort, setSubmissionQueueSort] = useState<SubmissionQueueSortOption>("newest");
   const [editorHistoryPage, setEditorHistoryPage] = useState(1);
   const [editorHistoryTotal, setEditorHistoryTotal] = useState<number | null>(null);
   const [editorHistoryGoToInput, setEditorHistoryGoToInput] = useState("");
@@ -359,19 +288,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [townFilter, setTownFilter] = useState("");
   const [shapeFilter, setShapeFilter] = useState("all");
   const [colorFilter, setColorFilter] = useState("all");
-  const [mySubmissionsSort, setMySubmissionsSort] = useState<SortEntry<MySubmissionsSortField>[]>([
-    { field: "submitted", dir: "desc" },
-  ]);
-  const toggleMySubmissionsSort = (field: MySubmissionsSortField, dir: SortDir) => {
-    setMySubmissionsSort((prev) => {
-      const idx = prev.findIndex((e) => e.field === field);
-      if (idx === -1) return [...prev, { field, dir }];
-      if (prev[idx].dir === dir) return prev.filter((_, i) => i !== idx);
-      const next = prev.slice();
-      next[idx] = { field, dir };
-      return next;
-    });
-  };
+  const [mySubmissionsSort, setMySubmissionsSort] = useState<SubmissionQueueSortOption>("newest");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const dateFromInputRef = useRef<HTMLInputElement>(null);
@@ -748,36 +665,23 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           return;
         }
         setPendingReviewItems(
-          list.map((c) => {
-            const submittedData = (c as { submitted_data?: Record<string, unknown>; submittedData?: Record<string, unknown> }).submitted_data
-              ?? (c as { submittedData?: Record<string, unknown> }).submittedData
-              ?? {};
-            return {
-              id: c.id,
-              contributor_username: c.contributor_username ?? (c as { contributorUsername?: string }).contributorUsername ?? "",
-              display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
-              state_display: c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "",
-              town_display: c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "",
-              shape_display:
-                c.shape_display ??
-                (c as { shapeDisplay?: string }).shapeDisplay ??
-                c.type_display ??
-                (c as { typeDisplay?: string }).typeDisplay ??
-                "",
-              color_display: String(
-                c.color_display
-                  ?? (c as { colorDisplay?: string }).colorDisplay
-                  ?? c.color
-                  ?? (submittedData as { color?: string }).color
-                  ?? "",
-              ),
-              marking_id: c.marking_id ?? (c as { markingId?: number | null }).markingId ?? null,
-              status: String(c.status ?? "pending"),
-              created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
-              review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
-              image_url: resolveSubmissionImageUrl(c as Record<string, unknown>, submittedData as Record<string, unknown>),
-            };
-          }),
+          list.map((c) => ({
+            id: c.id,
+            contributor_username: c.contributor_username ?? (c as { contributorUsername?: string }).contributorUsername ?? "",
+            display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
+            state_display: c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "",
+            town_display: c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "",
+            shape_display:
+              c.shape_display ??
+              (c as { shapeDisplay?: string }).shapeDisplay ??
+              c.type_display ??
+              (c as { typeDisplay?: string }).typeDisplay ??
+              "",
+            marking_id: c.marking_id ?? (c as { markingId?: number | null }).markingId ?? null,
+            status: String(c.status ?? "pending"),
+            created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
+            review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
+          })),
         );
       })
       .catch((err) => {
@@ -830,36 +734,23 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           setEditorHistoryItems([]);
           return;
         }
-        let mapped = list.map((c) => {
-          const submittedData = (c as { submitted_data?: Record<string, unknown>; submittedData?: Record<string, unknown> }).submitted_data
-            ?? (c as { submittedData?: Record<string, unknown> }).submittedData
-            ?? {};
-          return {
-            id: c.id,
-            contributor_username: c.contributor_username ?? (c as { contributorUsername?: string }).contributorUsername ?? "",
-            display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
-            state_display: c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "",
-            town_display: c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "",
-            shape_display:
-              c.shape_display ??
-              (c as { shapeDisplay?: string }).shapeDisplay ??
-              c.type_display ??
-              (c as { typeDisplay?: string }).typeDisplay ??
-              "",
-            color_display: String(
-              c.color_display
-                ?? (c as { colorDisplay?: string }).colorDisplay
-                ?? c.color
-                ?? (submittedData as { color?: string }).color
-                ?? "",
-            ),
-            marking_id: c.marking_id ?? (c as { markingId?: number | null }).markingId ?? null,
-            status: String(c.status ?? "pending"),
-            created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
-            review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
-            image_url: resolveSubmissionImageUrl(c as Record<string, unknown>, submittedData as Record<string, unknown>),
-          };
-        });
+        let mapped = list.map((c) => ({
+          id: c.id,
+          contributor_username: c.contributor_username ?? (c as { contributorUsername?: string }).contributorUsername ?? "",
+          display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
+          state_display: c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "",
+          town_display: c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "",
+          shape_display:
+            c.shape_display ??
+            (c as { shapeDisplay?: string }).shapeDisplay ??
+            c.type_display ??
+            (c as { typeDisplay?: string }).typeDisplay ??
+            "",
+          marking_id: c.marking_id ?? (c as { markingId?: number | null }).markingId ?? null,
+          status: String(c.status ?? "pending"),
+          created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
+          review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
+        }));
         // Filter out drafts from the editor history lists; drafts are only
         // shown on the contributor-facing My Submissions tab.
         mapped = mapped.filter((i) => i.status !== "draft");
@@ -1063,62 +954,16 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   const filteredAndSortedSubmissions = useMemo(() => {
     const sorted = [...filteredSubmissions];
-    const valueFor = (item: DashboardItem, field: MySubmissionsSortField): string | number => {
-      switch (field) {
-        case "status":
-          return String(item.status || "").toLowerCase();
-        case "state":
-          return String(item.state || "").toLowerCase();
-        case "town":
-          return String(item.town || "").toLowerCase();
-        case "shape":
-          return String(item.shape || "").toLowerCase();
-        case "color":
-          return String(item.color || "").toLowerCase();
-        case "submitted":
-          return new Date(item.created_at).getTime();
-      }
-    };
     sorted.sort((a, b) => {
-      for (const entry of mySubmissionsSort) {
-        const av = valueFor(a, entry.field);
-        const bv = valueFor(b, entry.field);
-        if (av < bv) return entry.dir === "asc" ? -1 : 1;
-        if (av > bv) return entry.dir === "asc" ? 1 : -1;
+      if (mySubmissionsSort === "oldest") {
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       }
-      return 0;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
     return sorted;
   }, [filteredSubmissions, mySubmissionsSort]);
 
   const effectiveTotalCount = filteredAndSortedSubmissions.length;
-
-  const computeDateBounds = (items: { created_at: string }[]) => {
-    if (items.length === 0) return { earliest: "", latest: "" };
-    let minTs = Infinity;
-    let maxTs = -Infinity;
-    for (const s of items) {
-      const t = new Date(s.created_at).getTime();
-      if (!Number.isFinite(t)) continue;
-      if (t < minTs) minTs = t;
-      if (t > maxTs) maxTs = t;
-    }
-    const fmt = (ts: number) => {
-      if (!Number.isFinite(ts)) return "";
-      const d = new Date(ts);
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-      const yyyy = d.getFullYear();
-      return mm + "/" + dd + "/" + yyyy;
-    };
-    return { earliest: fmt(minTs), latest: fmt(maxTs) };
-  };
-
-  const submissionDateBounds = useMemo(() => computeDateBounds(submissions), [submissions]);
-  const editorSubmissionDateBounds = useMemo(
-    () => computeDateBounds(editorHistoryItems),
-    [editorHistoryItems],
-  );
 
   const totalPages = Math.max(1, Math.ceil(effectiveTotalCount / itemsPerPage));
 
@@ -1142,7 +987,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     switch (String(status || "").toLowerCase()) {
       case "draft":
         return (
-          <Badge className="rounded-full border border-amber-900 bg-amber-800 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-amber-800">
+          <Badge className="rounded-full border border-muted-foreground/40 bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground shadow-sm">
             Draft
           </Badge>
         );
@@ -1298,11 +1143,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         if (shape !== editorShapeFilter.toLowerCase()) return false;
       }
 
-      if (editorColorFilter !== "all") {
-        const color = String(item.color_display || "").trim().toLowerCase();
-        if (color !== editorColorFilter.toLowerCase()) return false;
-      }
-
       const createdAt = new Date(item.created_at);
       if (editorDateFrom && createdAt < new Date(editorDateFrom)) return false;
       if (editorDateTo && createdAt > new Date(editorDateTo)) return false;
@@ -1311,30 +1151,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     });
 
     const sorted = [...filtered];
-    const valueFor = (item: PendingReviewItem, field: EditorHistorySortField): string | number => {
-      switch (field) {
-        case "status":
-          return String(item.status || "").toLowerCase();
-        case "state":
-          return String(item.state_display || "").toLowerCase();
-        case "town":
-          return String(item.town_display || "").toLowerCase();
-        case "shape":
-          return String(item.shape_display || "").toLowerCase();
-        case "color":
-          return String(item.color_display || "").toLowerCase();
-        case "submitted":
-          return new Date(item.created_at).getTime();
-      }
-    };
     sorted.sort((a, b) => {
-      for (const entry of submissionQueueSort) {
-        const av = valueFor(a, entry.field);
-        const bv = valueFor(b, entry.field);
-        if (av < bv) return entry.dir === "asc" ? -1 : 1;
-        if (av > bv) return entry.dir === "asc" ? 1 : -1;
+      if (submissionQueueSort === "oldest") {
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       }
-      return 0;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
     return sorted;
   }, [
@@ -1342,7 +1163,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     editorSearchQuery,
     editorTownFilter,
     editorShapeFilter,
-    editorColorFilter,
     editorDateFrom,
     editorDateTo,
     submissionQueueSort,
@@ -1424,6 +1244,23 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   </div>
 
                   <div className="space-y-2">
+                    <Label htmlFor="my-submissions-sort">Sort Submission Queue</Label>
+                    <Select
+                      value={mySubmissionsSort}
+                      onValueChange={(value) => setMySubmissionsSort(value as SubmissionQueueSortOption)}
+                      disabled={filtersDisabled}
+                    >
+                      <SelectTrigger id="my-submissions-sort" className="bg-background">
+                        <SelectValue placeholder="Newest first" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="newest">Newest first</SelectItem>
+                        <SelectItem value="oldest">Oldest first</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
                     <Label>Search</Label>
                     <div className="relative">
                       <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -1440,12 +1277,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   </div>
 
                   <div className="space-y-2">
-                    <SortableLabel
-                      label="Status"
-                      field="status"
-                      currentSort={mySubmissionsSort}
-                      onToggle={toggleMySubmissionsSort}
-                    />
+                    <Label>Status</Label>
                     <Select value={statusFilter} onValueChange={setStatusFilter} disabled={filtersDisabled}>
                       <SelectTrigger className="bg-background">
                         <SelectValue placeholder="All Statuses" />
@@ -1462,13 +1294,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   </div>
 
                   <div className="space-y-2">
-                    <SortableLabel
-                      htmlFor="state"
-                      label="State"
-                      field="state"
-                      currentSort={mySubmissionsSort}
-                      onToggle={toggleMySubmissionsSort}
-                    />
+                    <Label htmlFor="state">State</Label>
                     <SearchableSelect
                       id="state"
                       value={stateFilter}
@@ -1487,13 +1313,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   </div>
 
                   <div className="space-y-2">
-                    <SortableLabel
-                      htmlFor="town"
-                      label="Town"
-                      field="town"
-                      currentSort={mySubmissionsSort}
-                      onToggle={toggleMySubmissionsSort}
-                    />
+                    <Label htmlFor="town">Town</Label>
                     <Input
                       id="town"
                       placeholder="Enter town name..."
@@ -1505,13 +1325,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   </div>
 
                   <div className="space-y-2">
-                    <SortableLabel
-                      htmlFor="shape"
-                      label="Shape"
-                      field="shape"
-                      currentSort={mySubmissionsSort}
-                      onToggle={toggleMySubmissionsSort}
-                    />
+                    <Label htmlFor="shape">Shape</Label>
                     <SearchableSelect
                       id="shape"
                       value={shapeFilter}
@@ -1530,13 +1344,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   </div>
 
                   <div className="space-y-2">
-                    <SortableLabel
-                      htmlFor="color"
-                      label="Color"
-                      field="color"
-                      currentSort={mySubmissionsSort}
-                      onToggle={toggleMySubmissionsSort}
-                    />
+                    <Label htmlFor="color">Color</Label>
                     <SearchableSelect
                       id="color"
                       value={colorFilter}
@@ -1556,25 +1364,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
                   <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
-                      <SortableLabel
-                        label="Submission Date From"
-                        field="submitted"
-                        currentSort={mySubmissionsSort}
-                        onToggle={toggleMySubmissionsSort}
-                      />
+                      <Label>Submission Date From</Label>
                       <div className="relative">
                         <Input
                           ref={dateFromInputRef}
-                          type={dateFrom ? "date" : "text"}
+                          type="date"
                           value={dateFrom}
-                          placeholder={submissionDateBounds.earliest}
-                          onFocus={(e) => {
-                            e.currentTarget.type = "date";
-                            e.currentTarget.showPicker?.();
-                          }}
-                          onBlur={(e) => {
-                            if (!e.currentTarget.value) e.currentTarget.type = "text";
-                          }}
                           onChange={(e) => setDateFrom(e.target.value)}
                           className="bg-background pr-10 date-input-hide-native-icon"
                           disabled={filtersDisabled}
@@ -1584,13 +1379,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           variant="ghost"
                           size="icon"
                           className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:bg-transparent hover:text-foreground"
-                          onClick={() => {
-                            const el = dateFromInputRef.current;
-                            if (!el) return;
-                            el.type = "date";
-                            el.focus();
-                            el.showPicker?.();
-                          }}
+                          onClick={() => dateFromInputRef.current?.showPicker?.()}
                           disabled={filtersDisabled}
                           aria-label="Open date picker"
                         >
@@ -1599,25 +1388,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <SortableLabel
-                        label="Submission Date To"
-                        field="submitted"
-                        currentSort={mySubmissionsSort}
-                        onToggle={toggleMySubmissionsSort}
-                      />
+                      <Label>Submission Date To</Label>
                       <div className="relative">
                         <Input
                           ref={dateToInputRef}
-                          type={dateTo ? "date" : "text"}
+                          type="date"
                           value={dateTo}
-                          placeholder={submissionDateBounds.latest}
-                          onFocus={(e) => {
-                            e.currentTarget.type = "date";
-                            e.currentTarget.showPicker?.();
-                          }}
-                          onBlur={(e) => {
-                            if (!e.currentTarget.value) e.currentTarget.type = "text";
-                          }}
                           onChange={(e) => setDateTo(e.target.value)}
                           className="bg-background pr-10 date-input-hide-native-icon"
                           disabled={filtersDisabled}
@@ -1627,13 +1403,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           variant="ghost"
                           size="icon"
                           className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:bg-transparent hover:text-foreground"
-                          onClick={() => {
-                            const el = dateToInputRef.current;
-                            if (!el) return;
-                            el.type = "date";
-                            el.focus();
-                            el.showPicker?.();
-                          }}
+                          onClick={() => dateToInputRef.current?.showPicker?.()}
                           disabled={filtersDisabled}
                           aria-label="Open date picker"
                         >
@@ -1653,7 +1423,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       setTownFilter("");
                       setShapeFilter("all");
                       setColorFilter("all");
-                      setMySubmissionsSort([{ field: "submitted", dir: "desc" }]);
+                      setMySubmissionsSort("newest");
                       setDateFrom("");
                       setDateTo("");
                     }}
@@ -1733,27 +1503,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     >
                       <CardContent className="p-6">
                         <div className="flex gap-6 md:flex-row flex-col">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const statusNorm = String(submission.status || "").toLowerCase();
-                              if (statusNorm === "draft") {
-                                navigate(`/contribute?edit=${submission.id}`);
-                              } else {
-                                navigate(`/contribution/${submission.id}`, {
-                                  state: { fromDashboard: true },
-                                });
-                              }
-                            }}
-                            className="md:w-32 md:h-32 w-full h-48 shrink-0 p-0 border-0 bg-transparent cursor-pointer rounded overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring"
-                            aria-label={`Open ${submission.name}`}
-                          >
-                            <ImageOrPlaceholder
-                              src={submission.image_url}
-                              alt={submission.name}
-                              className="w-full h-full object-cover rounded border border-border hover:opacity-90 transition-opacity"
-                            />
-                          </button>
+                          <ImageOrPlaceholder
+                            src={submission.image_url}
+                            alt={submission.name}
+                            className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border shrink-0"
+                          />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between gap-2 mb-2">
                               <div className="flex items-center gap-2 flex-wrap min-w-0">
@@ -1803,14 +1557,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                   <span className="text-foreground">{submission.color}</span>
                                 </div>
                               )}
-                              {String(submission.status || "").toLowerCase() !== "draft" && (
-                                <div>
-                                  <span className="text-muted-foreground">Submitted:</span>{" "}
-                                  <span className="text-foreground">
-                                    {new Date(submission.created_at).toLocaleDateString()}
-                                  </span>
-                                </div>
-                              )}
+                              <div>
+                                <span className="text-muted-foreground">Submitted:</span>{" "}
+                                <span className="text-foreground">
+                                  {new Date(submission.created_at).toLocaleDateString()}
+                                </span>
+                              </div>
                             </div>
 
                             {submission.description && (
@@ -1820,17 +1572,25 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             )}
 
                             <div className="mt-3 flex flex-wrap gap-2 justify-end">
-                              {String(submission.status || "").toLowerCase() === "draft" && (
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  className="font-medium"
-                                  onClick={() => navigate(`/contribute?edit=${submission.id}`)}
-                                >
-                                  <Pencil className="mr-1.5 h-4 w-4" />
-                                  Edit Draft
-                                </Button>
-                              )}
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                className="font-medium"
+                                onClick={() => {
+                                  const statusNorm = String(submission.status || "").toLowerCase();
+                                  if (statusNorm === "draft") {
+                                    navigate(`/contribute?edit=${submission.id}`);
+                                  } else {
+                                    navigate(`/contribution/${submission.id}`, {
+                                      state: { fromDashboard: true },
+                                    });
+                                  }
+                                }}
+                              >
+                                {String(submission.status || "").toLowerCase() === "draft"
+                                  ? "Edit draft"
+                                  : "View details"}
+                              </Button>
                               {(isSuperuser || isEditor) && submission.marking_id && (
                                 <>
                                   <Button
@@ -1996,12 +1756,29 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     </div>
 
                     <div className="space-y-2">
+                      <Label htmlFor="submission-queue-sort">Sort Submission Queue</Label>
+                      <Select
+                        value={submissionQueueSort}
+                        onValueChange={(value) => setSubmissionQueueSort(value as SubmissionQueueSortOption)}
+                        disabled={editorHistoryLoading}
+                      >
+                        <SelectTrigger id="submission-queue-sort" className="bg-background">
+                          <SelectValue placeholder="Newest first" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="newest">Newest first</SelectItem>
+                          <SelectItem value="oldest">Oldest first</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
                       <Label>Search</Label>
                       <div className="relative">
                         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
                           type="search"
-                          placeholder="Search across fields..."
+                          placeholder="Name, town, state, shape..."
                           value={editorSearchQuery}
                           onChange={(e) => setEditorSearchQuery(e.target.value)}
                           className="pl-9 bg-background"
@@ -2012,38 +1789,26 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     </div>
 
                     <div className="space-y-2">
-                      <SortableLabel
-                        htmlFor="editor-history-status"
-                        label="Status"
-                        field="status"
-                        currentSort={submissionQueueSort}
-                        onToggle={toggleEditorHistorySort}
-                      />
+                      <Label htmlFor="editor-history-status">Status</Label>
                       <Select
                         value={editorHistoryStatusFilter}
                         onValueChange={setEditorHistoryStatusFilter}
                         disabled={editorHistoryLoading}
                       >
                         <SelectTrigger id="editor-history-status" className="bg-background">
-                          <SelectValue placeholder="All Statuses" />
+                          <SelectValue placeholder="All statuses" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="all">All Statuses</SelectItem>
+                          <SelectItem value="all">All statuses</SelectItem>
                           <SelectItem value="pending">Pending</SelectItem>
                           <SelectItem value="approved">Approved</SelectItem>
                           <SelectItem value="rejected">Rejected</SelectItem>
-                          <SelectItem value="needs_revision">Needs Revision</SelectItem>
+                          <SelectItem value="needs_revision">Needs revision</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <SortableLabel
-                        htmlFor="editor-state-filter"
-                        label="State"
-                        field="state"
-                        currentSort={submissionQueueSort}
-                        onToggle={toggleEditorHistorySort}
-                      />
+                      <Label htmlFor="editor-state-filter">State</Label>
                       <SearchableSelect
                         id="editor-state-filter"
                         value={editorStateFilter}
@@ -2061,13 +1826,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       />
                     </div>
                     <div className="space-y-2">
-                      <SortableLabel
-                        htmlFor="editor-town-filter"
-                        label="Town"
-                        field="town"
-                        currentSort={submissionQueueSort}
-                        onToggle={toggleEditorHistorySort}
-                      />
+                      <Label htmlFor="editor-town-filter">Town</Label>
                       <Input
                         id="editor-town-filter"
                         placeholder="Enter town name..."
@@ -2078,13 +1837,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       />
                     </div>
                     <div className="space-y-2">
-                      <SortableLabel
-                        htmlFor="editor-shape-filter"
-                        label="Shape"
-                        field="shape"
-                        currentSort={submissionQueueSort}
-                        onToggle={toggleEditorHistorySort}
-                      />
+                      <Label htmlFor="editor-shape-filter">Shape</Label>
                       <SearchableSelect
                         id="editor-shape-filter"
                         value={editorShapeFilter}
@@ -2101,51 +1854,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         disabled={editorHistoryLoading || isLoadingFilters}
                       />
                     </div>
-                    <div className="space-y-2">
-                      <SortableLabel
-                        htmlFor="editor-color-filter"
-                        label="Color"
-                        field="color"
-                        currentSort={submissionQueueSort}
-                        onToggle={toggleEditorHistorySort}
-                      />
-                      <SearchableSelect
-                        id="editor-color-filter"
-                        value={editorColorFilter}
-                        onValueChange={setEditorColorFilter}
-                        placeholder="All Colors"
-                        allOption={{ value: "all", label: "All Colors" }}
-                        options={Array.isArray(colorOptions) ? colorOptions : []}
-                        loading={isLoadingFilters}
-                        error={!!filterError}
-                        errorMessage="Failed to load colors"
-                        searchPlaceholder="Search colors..."
-                        emptyMessage="No color found."
-                        aria-label="Filter editor history by color"
-                        disabled={editorHistoryLoading || isLoadingFilters}
-                      />
-                    </div>
                     <div className="grid grid-cols-1 gap-4">
                       <div className="space-y-2">
-                        <SortableLabel
-                          label="Submission Date From"
-                          field="submitted"
-                          currentSort={submissionQueueSort}
-                          onToggle={toggleEditorHistorySort}
-                        />
+                        <Label>Submission Date From</Label>
                         <div className="relative">
                           <Input
                             ref={editorDateFromInputRef}
-                            type={editorDateFrom ? "date" : "text"}
+                            type="date"
                             value={editorDateFrom}
-                            placeholder={editorSubmissionDateBounds.earliest}
-                            onFocus={(e) => {
-                              e.currentTarget.type = "date";
-                              e.currentTarget.showPicker?.();
-                            }}
-                            onBlur={(e) => {
-                              if (!e.currentTarget.value) e.currentTarget.type = "text";
-                            }}
                             onChange={(e) => setEditorDateFrom(e.target.value)}
                             className="bg-background pr-10 date-input-hide-native-icon"
                             disabled={editorHistoryLoading}
@@ -2155,13 +1871,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             variant="ghost"
                             size="icon"
                             className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:bg-transparent hover:text-foreground"
-                            onClick={() => {
-                              const el = editorDateFromInputRef.current;
-                              if (!el) return;
-                              el.type = "date";
-                              el.focus();
-                              el.showPicker?.();
-                            }}
+                            onClick={() => editorDateFromInputRef.current?.showPicker?.()}
                             disabled={editorHistoryLoading}
                             aria-label="Open date picker"
                           >
@@ -2170,25 +1880,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         </div>
                       </div>
                       <div className="space-y-2">
-                        <SortableLabel
-                          label="Submission Date To"
-                          field="submitted"
-                          currentSort={submissionQueueSort}
-                          onToggle={toggleEditorHistorySort}
-                        />
+                        <Label>Submission Date To</Label>
                         <div className="relative">
                           <Input
                             ref={editorDateToInputRef}
-                            type={editorDateTo ? "date" : "text"}
+                            type="date"
                             value={editorDateTo}
-                            placeholder={editorSubmissionDateBounds.latest}
-                            onFocus={(e) => {
-                              e.currentTarget.type = "date";
-                              e.currentTarget.showPicker?.();
-                            }}
-                            onBlur={(e) => {
-                              if (!e.currentTarget.value) e.currentTarget.type = "text";
-                            }}
                             onChange={(e) => setEditorDateTo(e.target.value)}
                             className="bg-background pr-10 date-input-hide-native-icon"
                             disabled={editorHistoryLoading}
@@ -2198,13 +1895,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             variant="ghost"
                             size="icon"
                             className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:bg-transparent hover:text-foreground"
-                            onClick={() => {
-                              const el = editorDateToInputRef.current;
-                              if (!el) return;
-                              el.type = "date";
-                              el.focus();
-                              el.showPicker?.();
-                            }}
+                            onClick={() => editorDateToInputRef.current?.showPicker?.()}
                             disabled={editorHistoryLoading}
                             aria-label="Open date picker"
                           >
@@ -2218,13 +1909,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       variant="outline"
                       className="w-full"
                       onClick={() => {
-                        setSubmissionQueueSort([{ field: "submitted", dir: "desc" }]);
+                        setSubmissionQueueSort("newest");
                         setEditorSearchQuery("");
                         setEditorHistoryStatusFilter("all");
                         setEditorStateFilter("all");
                         setEditorTownFilter("");
                         setEditorShapeFilter("all");
-                        setEditorColorFilter("all");
                         setEditorDateFrom("");
                         setEditorDateTo("");
                       }}
@@ -2496,31 +2186,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           key={item.id}
                           className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-card hover:shadow-archival-sm transition-shadow"
                         >
-                          <div className="flex items-center gap-4 min-w-0 flex-1">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                navigate(`/contribution/${item.id}`, { state: { fromDashboard: true } })
-                              }
-                              className="w-16 h-16 shrink-0 p-0 border-0 bg-transparent cursor-pointer rounded overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring"
-                              aria-label={`Open ${displayLabel}`}
-                            >
-                              <ImageOrPlaceholder
-                                src={item.image_url}
-                                alt={displayLabel}
-                                className="w-full h-full object-cover rounded border border-border hover:opacity-90 transition-opacity"
-                              />
-                            </button>
-                            <div className="min-w-0">
-                              <span className="font-medium text-foreground block truncate">
-                                {displayLabel}
-                              </span>
-                              <span className="text-muted-foreground text-sm">
-                                by {item.contributor_username}
-                                {" - "}
-                                {new Date(item.created_at).toLocaleDateString()}
-                              </span>
-                            </div>
+                          <div className="min-w-0">
+                            <span className="font-medium text-foreground block truncate">
+                              {displayLabel}
+                            </span>
+                            <span className="text-muted-foreground text-sm">
+                              by {item.contributor_username}
+                              {" · "}
+                              {new Date(item.created_at).toLocaleDateString()}
+                            </span>
                           </div>
                           <div className="flex flex-wrap items-center gap-2 shrink-0">
                             <Badge className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${statusClassName}`}>
@@ -2532,6 +2206,17 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                     ? "Rejected"
                                     : "Pending"}
                             </Badge>
+                            {/* {item.status !== "approved" && ( */}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  navigate(`/contribution/${item.id}`, { state: { fromDashboard: true } })
+                                }
+                              >
+                                View details
+                              </Button>
+                            {/* )} */}
                           </div>
                         </li>
                       );
