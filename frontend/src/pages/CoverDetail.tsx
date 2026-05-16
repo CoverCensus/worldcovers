@@ -1,42 +1,50 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  useLocation,
-  useNavigate,
-  useParams,
-} from "react-router-dom";
-import {
-  ArrowDown,
-  ArrowLeft,
-  ArrowUp,
-  Loader2,
-  Pencil,
-  Star,
-} from "lucide-react";
-
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Loader2, Pencil } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Carousel,
-  CarouselContent,
-  CarouselItem,
-  CarouselNext,
-  CarouselPrevious,
-  type CarouselApi,
-} from "@/components/ui/carousel";
-import imageNotAvailable from "@/assets/image-not-available.jpg";
+import { type CarouselApi } from "@/components/ui/carousel";
 import { formatCatalogDate } from "@/lib/catalogRecordDisplay";
+import { EntryDetailLayout } from "@/components/entry-detail/EntryDetailLayout";
+import { EntryImageGalleryCard } from "@/components/entry-detail/EntryImageGalleryCard";
+import { EntryAssociatedThumbnailsCard } from "@/components/entry-detail/EntryAssociatedThumbnailsCard";
+import { EntryRecordHistoryCard } from "@/components/entry-detail/EntryRecordHistoryCard";
+import { EntryCitationsCard, type EntryCitationItem } from "@/components/entry-detail/EntryCitationsCard";
+import { CoverRecordDetailFields } from "@/components/entry-detail/CoverRecordDetailFields";
+import { AssociatedMarkingPreviewCard } from "@/components/entry-detail/AssociatedMarkingPreviewCard";
+import type { EntryGalleryImage } from "@/components/entry-detail/types";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import {
   getImagesForSubject,
+  getMarkingChangelog,
+  getCoverMarkingsByCover,
+  loadAssociatedMarkingsForCover,
   normalizeImageUrl,
+  postCoverMarkingReview,
   reorderImages,
+  type AssociatedMarkingOnCover,
+  type CoverMarkingLink,
+  type CoverMarkingReviewActionApi,
+  type CoverMarkingReviewStatus,
+  type MarkingChangelogEvent,
   type MarkingImage,
 } from "@/services/markings";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { getCoverById, type CoverDetail, type CoverDateSeenItem } from "@/services/covers";
+import { listCitationsForSubject } from "@/services/citations";
+import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
 
 const EMPTY = "-";
 
@@ -46,36 +54,14 @@ type CoverDetailLocationState = {
   coverMarkingId?: number;
 };
 
-type CoverGalleryImage = {
-  imageUrl: string | null;
-  originalFilename?: string;
-  subjectLabel: string;
-  isDefault: boolean;
-  isTracing: boolean;
-  imageId: number | null;
-};
-
-function buildCoverGalleryImages(images: MarkingImage[]): CoverGalleryImage[] {
+function buildCoverGalleryImages(images: MarkingImage[]): EntryGalleryImage[] {
   return images.map((img) => ({
     imageUrl: normalizeImageUrl(img.imageUrl),
     originalFilename: img.originalFilename || undefined,
-    subjectLabel: "Cover",
     isDefault: img.displayOrder === 0,
     isTracing: img.isTracing,
     imageId: img.imageId > 0 ? img.imageId : null,
   }));
-}
-
-function coverDimensionsDisplay(
-  width: string | null,
-  height: string | null,
-): string {
-  const w = (width ?? "").trim();
-  const h = (height ?? "").trim();
-  if (w && h) return `${w}x${h} mm`;
-  if (w) return `${w} mm`;
-  if (h) return `${h} mm`;
-  return EMPTY;
 }
 
 function coverTypeLabel(t: string | null): string {
@@ -95,32 +81,38 @@ function formatCoverDate(d: CoverDateSeenItem): string {
   return formatCatalogDate(truncated) || truncated;
 }
 
-function DetailRow({
-  label,
-  value,
-  last,
-}: {
-  label: string;
-  value: string;
-  last: boolean;
-}) {
-  return (
-    <div
-      className={`flex justify-between py-2 ${last ? "" : "border-b border-border"}`}
-    >
-      <dt className="text-muted-foreground font-medium">{label}</dt>
-      <dd className="text-foreground whitespace-pre-line text-right">{value}</dd>
-    </div>
-  );
+
+
+
+function coverLinkReviewBadgeLabel(status: CoverMarkingReviewStatus): string {
+  switch (status) {
+    case "pending":
+      return "Pending review";
+    case "needs_revision":
+      return "Needs revision";
+    case "rejected":
+      return "Rejected";
+    default:
+      return "Approved";
+  }
 }
 
+
 const CoverDetailPage = () => {
-  const { coverId: coverIdParam } = useParams();
+  const { id: markingIdParam, coverId: coverIdParam } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const state = location.state as CoverDetailLocationState | undefined;
   const user = useAuth();
   const { toast } = useToast();
+
+  const markingIdFromRoute = useMemo(() => {
+    if (!markingIdParam) return null;
+    const n = parseInt(String(markingIdParam).replace(/^api-/, ""), 10);
+    return Number.isFinite(n) ? n : null;
+  }, [markingIdParam]);
+
+  const markingId = markingIdFromRoute ?? state?.markingId ?? null;
 
   const coverPk = useMemo(() => {
     const n = coverIdParam ? parseInt(String(coverIdParam), 10) : NaN;
@@ -134,6 +126,18 @@ const CoverDetailPage = () => {
   const [cover, setCover] = useState<CoverDetail | null>(null);
   const [images, setImages] = useState<MarkingImage[]>([]);
   const [reorderingImages, setReorderingImages] = useState(false);
+  const [coverMarkingLink, setCoverMarkingLink] = useState<CoverMarkingLink | null>(null);
+  const [associatedMarkings, setAssociatedMarkings] = useState<AssociatedMarkingOnCover[]>([]);
+  const [markingsLoadError, setMarkingsLoadError] = useState<string | null>(null);
+  const [citations, setCitations] = useState<EntryCitationItem[]>([]);
+  const [historyEvents, setHistoryEvents] = useState<MarkingChangelogEvent[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [coverReviewOpen, setCoverReviewOpen] = useState(false);
+  const [coverReviewKind, setCoverReviewKind] = useState<CoverMarkingReviewActionApi | null>(null);
+  const [coverReviewNotes, setCoverReviewNotes] = useState("");
+  const [coverReviewBusy, setCoverReviewBusy] = useState(false);
 
   const isStaff =
     !!user &&
@@ -141,9 +145,84 @@ const CoverDetailPage = () => {
       user.role === "administrator" ||
       user.is_superuser === true);
 
+  const canViewHistory = useMemo(() => {
+    if (!user) return false;
+    return (
+      user.role === "editor" ||
+      user.role === "administrator" ||
+      user.is_superuser === true
+    );
+  }, [user]);
+
+  const canReviewCover =
+    isStaff && coverMarkingLink != null && coverMarkingLink.reviewStatus === "pending";
+
+  const refreshCoverMarkingLink = useCallback(async () => {
+    if (coverPk == null) return;
+    const { links } = await getCoverMarkingsByCover(coverPk);
+    const link =
+      markingId != null
+        ? links.find((l) => l.markingId === markingId) ?? null
+        : links[0] ?? null;
+    setCoverMarkingLink(link);
+  }, [coverPk, markingId]);
+
+  const openCoverReview = (kind: CoverMarkingReviewActionApi) => {
+    setCoverReviewKind(kind);
+    setCoverReviewNotes("");
+    setCoverReviewOpen(true);
+  };
+
+  const submitCoverReview = async () => {
+    if (!coverMarkingLink || !coverReviewKind) return;
+    if (coverReviewKind === "request-revision" && !coverReviewNotes.trim()) {
+      toast({
+        title: "Comment required",
+        description: "Explain what should change before the contributor resubmits.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setCoverReviewBusy(true);
+    try {
+      const res = await postCoverMarkingReview(
+        coverMarkingLink.id,
+        coverReviewKind,
+        coverReviewNotes,
+      );
+      if (!res.ok) {
+        toast({
+          title: "Could not update cover",
+          description: res.message,
+          variant: "destructive",
+        });
+        return;
+      }
+      toast({
+        title: "Cover review saved",
+        description:
+          coverReviewKind === "approve"
+            ? "This cover link is now visible to everyone on the catalog record."
+            : coverReviewKind === "reject"
+              ? "The contributor will see this cover as rejected on the record."
+              : "The contributor can edit the cover and resubmit it for review.",
+      });
+      setCoverReviewOpen(false);
+      setCoverReviewKind(null);
+      setCoverReviewNotes("");
+      await refreshCoverMarkingLink();
+    } finally {
+      setCoverReviewBusy(false);
+    }
+  };
+
   const handleBack = () => {
     if (state?.from) {
       navigate(state.from);
+      return;
+    }
+    if (markingId != null) {
+      navigate(`/record/${markingId}`);
       return;
     }
     navigate(-1);
@@ -159,26 +238,103 @@ const CoverDetailPage = () => {
     setLoading(true);
     setError(null);
     void (async () => {
-      const [detail, imgs] = await Promise.all([
+      const [detail, imgs, linksResult, refWorks] = await Promise.all([
         getCoverById(coverPk),
         getImagesForSubject({ subjectType: "COVER", subjectId: coverPk }),
+        getCoverMarkingsByCover(coverPk),
+        getReferenceWorks(),
       ]);
       if (cancelled) return;
       if (!detail) {
         setCover(null);
         setImages([]);
+        setAssociatedMarkings([]);
+        setCitations([]);
+        setCoverMarkingLink(null);
         setError("Cover not found");
         setLoading(false);
         return;
       }
       setCover(detail);
       setImages(imgs);
-      setLoading(false);
+      setMarkingsLoadError(linksResult.error);
+
+      const linkForMarking =
+        markingId != null
+          ? linksResult.links.find((l) => l.markingId === markingId) ?? null
+          : linksResult.links[0] ?? null;
+      setCoverMarkingLink(linkForMarking);
+
+      const markings = await loadAssociatedMarkingsForCover(linksResult.links);
+      if (!cancelled) setAssociatedMarkings(markings);
+
+      const citationRows = await listCitationsForSubject({
+        subjectType: "COVER",
+        subjectId: coverPk,
+      });
+      const refById = new Map(refWorks.map((w) => [w.id, w]));
+      const built: EntryCitationItem[] = citationRows.map((row) => {
+        const rw = refById.get(row.referenceWorkId) ?? null;
+        return {
+          id: row.id,
+          citationDetail: row.citationDetail,
+          referenceWork: rw
+            ? {
+                code: rw.code,
+                title: rw.title,
+                authorship: rw.authorship,
+                publisher: rw.publisher,
+                publicationYear: rw.publicationYear,
+                edition: rw.edition,
+                volume: rw.volume,
+                isbn: rw.isbn,
+                url: rw.url,
+              }
+            : null,
+        };
+      });
+      if (!cancelled) setCitations(built);
+      if (!cancelled) setLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [coverPk]);
+  }, [coverPk, markingId]);
+
+  useEffect(() => {
+    if (markingId == null || Number.isNaN(markingId) || !canViewHistory) {
+      setHistoryEvents([]);
+      setHistoryError(null);
+      return;
+    }
+    let cancelled = false;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    setHistoryExpanded(false);
+    getMarkingChangelog(markingId)
+      .then((data) => {
+        if (cancelled) return;
+        if (!data) {
+          setHistoryEvents([]);
+          setHistoryError(
+            "Unable to load record history (you may not be assigned to this region).",
+          );
+          return;
+        }
+        setHistoryEvents(Array.isArray(data.events) ? data.events : []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setHistoryEvents([]);
+        setHistoryError("Unable to load record history.");
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [markingId, canViewHistory]);
 
   useEffect(() => {
     if (!api) return;
@@ -247,11 +403,15 @@ const CoverDetailPage = () => {
   };
 
   const openEditCover = () => {
-    const markingId = state?.markingId;
-    const coverMarkingId = state?.coverMarkingId;
-    if (markingId == null || coverMarkingId == null) return;
+    if (markingId == null || coverPk == null) return;
     if (!requireAuth()) return;
-    navigate(`/record/${markingId}/cover/${coverMarkingId}`, {
+    navigate(`/record/${markingId}/cover/${coverPk}/edit`, {
+      state: { from: location.pathname + location.search },
+    });
+  };
+
+  const goMarkingView = (markingIdTarget: number) => {
+    navigate(`/record/${markingIdTarget}`, {
       state: { from: location.pathname + location.search },
     });
   };
@@ -286,270 +446,237 @@ const CoverDetailPage = () => {
   }
 
   const galleryImages = buildCoverGalleryImages(images);
-  const markingId = state?.markingId;
-  const coverMarkingId = state?.coverMarkingId;
-  const canEditFromRecord =
-    user != null &&
-    markingId != null &&
-    coverMarkingId != null;
+  const canSubmitEdit = user != null && markingId != null && coverPk != null;
 
   const datesText =
     cover.datesSeen.length > 0
       ? cover.datesSeen.map(formatCoverDate).filter(Boolean).join("\n")
       : EMPTY;
-  const colorText = cover.colorName.trim();
 
-  const detailRows: { label: string; value: string; show: boolean }[] = [
-    { label: "Catalog key", value: cover.code?.trim() || EMPTY, show: true },
-    { label: "Color", value: colorText, show: colorText.length > 0 },
-    { label: "Type", value: coverTypeLabel(cover.type), show: true },
-    {
-      label: "Dimensions",
-      value: coverDimensionsDisplay(cover.width, cover.height),
-      show: coverDimensionsDisplay(cover.width, cover.height) !== EMPTY,
-    },
-    { label: "Dates", value: datesText, show: true },
-    { label: "Has adhesive", value: "Yes", show: cover.hasAdhesive === true },
-    {
-      label: "Institutionally Owned",
-      value: "Yes",
-      show: cover.isInstitutional === true,
-    },
-  ];
-  const visibleRows = detailRows.filter((r) => r.show);
+  const institutionalText =
+    cover.isInstitutional === true
+      ? "Yes"
+      : cover.isInstitutional === false
+        ? "No"
+        : EMPTY;
 
-  const titleCode = cover.code?.trim() || `Cover #${cover.id}`;
+  const backstampText = coverMarkingLink?.isBackstamp ? "Yes" : "No";
+
+  const ratemarkCount = associatedMarkings.filter(
+    (row) => row.marking.type === "RATEMARK",
+  ).length;
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <Navigation />
-      <div className="flex-1 bg-background">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-            <Button variant="ghost" onClick={handleBack} className="-ml-4">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back
-            </Button>
-            {canEditFromRecord && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={openEditCover}
-                aria-label="Edit this cover"
-                className="inline-flex shrink-0 gap-1.5"
-              >
-                <Pencil className="h-4 w-4 shrink-0" />
-                Edit
-              </Button>
+    <>
+      <EntryDetailLayout
+        onBack={handleBack}
+        leftColumn={
+          <>
+            <EntryImageGalleryCard
+              images={galleryImages}
+              showSubjectBadge={false}
+              carouselApi={api}
+              setCarouselApi={setApi}
+              currentIndex={current}
+            />
+            <EntryAssociatedThumbnailsCard
+              images={galleryImages}
+              carouselApi={api}
+              currentIndex={current}
+              emptyMessage="No images linked to this cover yet."
+              canReorder={isStaff}
+              reorderingImages={reorderingImages}
+              onMoveBy={moveImageBy}
+              onSetDefault={setImageAsDefault}
+            />
+            {canViewHistory && (
+              <EntryRecordHistoryCard
+                loading={historyLoading}
+                error={historyError}
+                events={historyEvents}
+                expanded={historyExpanded}
+                onToggleExpanded={() => setHistoryExpanded((v) => !v)}
+                unavailableMessage={
+                  markingId == null
+                    ? "Open this cover from a marking record to view audit history."
+                    : undefined
+                }
+              />
             )}
-          </div>
-
-          <div className="grid items-start lg:grid-cols-2 gap-8">
-            <div className="space-y-6">
-              <Card className="shadow-archival-lg">
-                <CardContent className="p-6">
-                  <Carousel setApi={setApi} className="w-full">
-                    <CarouselContent>
-                      {(galleryImages.length
-                        ? galleryImages
-                        : [
-                            {
-                              imageUrl: imageNotAvailable,
-                              subjectLabel: "Cover",
-                              isDefault: false,
-                              isTracing: false,
-                              imageId: null,
-                            } satisfies CoverGalleryImage,
-                          ]
-                      ).map((img, index) => {
-                        const src = img.imageUrl || imageNotAvailable;
-                        const alt =
-                          img.originalFilename || `Image ${index + 1}`;
-                        const isPlaceholder = !img.imageUrl;
-                        const inner = (
-                          <div className="relative flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
-                            <img
-                              src={src}
-                              alt={alt}
-                              className="w-full h-full object-contain"
-                            />
-                            <div className="absolute top-2 left-2 flex flex-wrap items-center gap-1">
-                              <Badge variant="secondary">{img.subjectLabel}</Badge>
-                              {!isPlaceholder && img.isTracing && (
-                                <Badge variant="secondary">Tracing</Badge>
-                              )}
-                            </div>
-                          </div>
-                        );
-                        return (
-                          <CarouselItem key={index}>
-                            {img.imageUrl ? (
-                              <a
-                                href={img.imageUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                aria-label={`Open ${alt} in new tab`}
-                                className="block"
-                              >
-                                {inner}
-                              </a>
-                            ) : (
-                              inner
-                            )}
-                          </CarouselItem>
-                        );
-                      })}
-                    </CarouselContent>
-                    {galleryImages.length > 1 && (
-                      <>
-                        <CarouselPrevious className="left-2" />
-                        <CarouselNext className="right-2" />
-                      </>
-                    )}
-                  </Carousel>
-                  {galleryImages.length > 1 && (
-                    <div className="flex justify-center gap-2 mt-4">
-                      {galleryImages.map((_, index) => (
-                        <button
-                          key={index}
-                          type="button"
-                          onClick={() => api?.scrollTo(index)}
-                          className={`h-2 rounded-full transition-all ${index === current ? "w-6 bg-primary" : "w-2 bg-muted-foreground/30"}`}
-                          aria-label={`Go to image ${index + 1}`}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card className="shadow-archival-md">
-                <CardHeader>
-                  <CardTitle className="font-heading text-lg">
-                    Associated Thumbnails
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {galleryImages.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      No images linked to this cover yet.
-                    </p>
-                  ) : (
-                    <div className="flex gap-3 overflow-x-auto pb-1">
-                      {galleryImages.map((img, idx) => {
-                        const canReorder =
-                          isStaff && img.imageId != null && galleryImages.length > 1;
-                        return (
-                          <div
-                            key={`${img.imageId ?? img.originalFilename ?? "img"}-${idx}`}
-                            className="flex flex-col items-center gap-1 shrink-0"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => api?.scrollTo(idx)}
-                              aria-label={`Show image ${idx + 1}`}
-                              className={`relative h-16 w-16 rounded border overflow-hidden transition-all ${idx === current ? "border-primary ring-2 ring-primary" : "border-border"}`}
-                            >
-                              <img
-                                src={img.imageUrl || imageNotAvailable}
-                                alt={
-                                  img.originalFilename || `Thumbnail ${idx + 1}`
-                                }
-                                className="h-full w-full object-cover"
-                              />
-                            </button>
-                            {canReorder && (
-                              <div className="flex items-center gap-0.5">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6"
-                                  aria-label="Move thumbnail left"
-                                  disabled={reorderingImages || idx === 0}
-                                  onClick={() => moveImageBy(idx, -1)}
-                                >
-                                  <ArrowUp className="h-3 w-3 -rotate-90" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6"
-                                  aria-label="Move thumbnail right"
-                                  disabled={
-                                    reorderingImages ||
-                                    idx === galleryImages.length - 1
-                                  }
-                                  onClick={() => moveImageBy(idx, 1)}
-                                >
-                                  <ArrowDown className="h-3 w-3 -rotate-90" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant={img.isDefault ? "secondary" : "ghost"}
-                                  size="icon"
-                                  className="h-6 w-6"
-                                  aria-label="Set as default catalog thumbnail"
-                                  title={
-                                    img.isDefault
-                                      ? "Default catalog thumbnail"
-                                      : "Set as default catalog thumbnail"
-                                  }
-                                  disabled={reorderingImages || img.isDefault}
-                                  onClick={() => setImageAsDefault(idx)}
-                                >
-                                  <Star
-                                    className={`h-3 w-3 ${img.isDefault ? "fill-current" : ""}`}
-                                  />
-                                </Button>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="space-y-6">
-              <Card className="shadow-archival-md">
-                <CardHeader>
-                  <CardTitle className="font-heading text-lg">{titleCode}</CardTitle>
-                  {markingId != null && (
-                    <Button
-                      type="button"
-                      variant="link"
-                      className="h-auto p-0 text-primary justify-start"
-                      onClick={() =>
-                        navigate(`/record/${markingId}`)
-                      }
-                    >
-                      Open parent marking record
+          </>
+        }
+        rightColumn={
+          <>
+            <Card className="shadow-archival-md">
+              <CardHeader>
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle className="font-heading text-lg">Record Details</CardTitle>
+                  {canSubmitEdit && (
+                    <Button variant="outline" size="sm" onClick={openEditCover}>
+                      <Pencil className="mr-2 h-4 w-4" />
+                      Submit Edit
                     </Button>
                   )}
-                </CardHeader>
-                <CardContent>
-                  <dl className="space-y-0 text-sm">
-                    {visibleRows.map((row, idx) => (
-                      <DetailRow
-                        key={row.label}
-                        label={row.label}
-                        value={row.value}
-                        last={idx === visibleRows.length - 1}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {coverMarkingLink && coverMarkingLink.reviewStatus !== "approved" && (
+                  <div className="mb-4 space-y-2">
+                    <Badge
+                      variant={
+                        coverMarkingLink.reviewStatus === "pending"
+                          ? "secondary"
+                          : coverMarkingLink.reviewStatus === "needs_revision"
+                            ? "outline"
+                            : "destructive"
+                      }
+                      className="font-normal"
+                    >
+                      {coverLinkReviewBadgeLabel(coverMarkingLink.reviewStatus)}
+                    </Badge>
+                    {(coverMarkingLink.reviewStatus === "needs_revision" ||
+                      coverMarkingLink.reviewStatus === "rejected") &&
+                      (coverMarkingLink.reviewNotes ?? "").trim().length > 0 && (
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap border-l-2 border-border pl-2">
+                          <span className="font-medium text-foreground">Editor note: </span>
+                          {coverMarkingLink.reviewNotes}
+                        </p>
+                      )}
+                  </div>
+                )}
+                <CoverRecordDetailFields
+                  type={coverTypeLabel(cover.type)}
+                  date={datesText}
+                  institutionallyOwned={institutionalText}
+                  backstamp={backstampText}
+                />
+                {canReviewCover && (
+                  <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-border">
+                    <Button type="button" size="sm" variant="default" onClick={() => openCoverReview("approve")}>
+                      Approve
+                    </Button>
+                    <Button type="button" size="sm" variant="secondary" onClick={() => openCoverReview("request-revision")}>
+                      Return for revision
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="text-destructive border-destructive/50 hover:bg-destructive/10"
+                      onClick={() => openCoverReview("reject")}
+                    >
+                      Reject
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <EntryCitationsCard
+              citations={citations}
+              emptyMessage="No citations linked to this cover yet."
+            />
+
+            <Card className="shadow-archival-md">
+              <CardHeader>
+                <CardTitle className="font-heading text-lg">
+                  Associated Markings ({ratemarkCount})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-0">
+                {markingsLoadError && (
+                  <p className="text-sm text-destructive rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2">
+                    {markingsLoadError}
+                  </p>
+                )}
+                {associatedMarkings.length === 0 && !markingsLoadError ? (
+                  <p className="text-sm text-muted-foreground">No markings linked to this cover yet.</p>
+                ) : (
+                  <div className="space-y-4">
+                    {associatedMarkings.map(({ marking, defaultImageUrl }) => (
+                      <AssociatedMarkingPreviewCard
+                        key={marking.id}
+                        marking={marking}
+                        defaultImageUrl={defaultImageUrl}
+                        onOpenMarking={() => goMarkingView(marking.id)}
                       />
                     ))}
-                  </dl>
-                </CardContent>
-              </Card>
-            </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </>
+        }
+      />
+
+      <Dialog
+        open={coverReviewOpen}
+        onOpenChange={(open) => {
+          if (coverReviewBusy) return;
+          setCoverReviewOpen(open);
+          if (!open) {
+            setCoverReviewKind(null);
+            setCoverReviewNotes("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {coverReviewKind === "approve"
+                ? "Approve this cover link"
+                : coverReviewKind === "reject"
+                  ? "Reject this cover link"
+                  : "Return this cover for revision"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="cover-detail-review-notes">
+              Note to contributor{" "}
+              <span className="text-destructive">
+                {coverReviewKind === "request-revision" ? "(required)" : "(optional)"}
+              </span>
+            </Label>
+            <Textarea
+              id="cover-detail-review-notes"
+              rows={4}
+              value={coverReviewNotes}
+              onChange={(e) => setCoverReviewNotes(e.target.value)}
+              disabled={coverReviewBusy}
+              placeholder={
+                coverReviewKind === "request-revision"
+                  ? "Describe what needs to change before this cover can be approved."
+                  : "Optional context for the contributor."
+              }
+            />
           </div>
-        </div>
-      </div>
-      <Footer />
-    </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCoverReviewOpen(false)}
+              disabled={coverReviewBusy}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void submitCoverReview()}
+              disabled={coverReviewBusy}
+            >
+              {coverReviewBusy ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                "Confirm"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };
 

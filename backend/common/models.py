@@ -952,6 +952,11 @@ class CoverMarking(TimestampedModel):
     marking = models.ForeignKey(Marking, on_delete=models.CASCADE, related_name='cover_markings')
     is_backstamp = models.BooleanField(default=False, help_text='Whether this marking appears on the reverse of the cover')
     placement = models.CharField(max_length=64, null=True, blank=True, help_text='Free-form placement qualifier; vocabulary not yet enumerated')
+    contributor_comment = models.TextField(
+        null=True,
+        blank=True,
+        help_text='Optional note from the contributor for reviewers when this link was submitted.',
+    )
     review_status = models.CharField(
         max_length=20,
         choices=REVIEW_STATUS_CHOICES,

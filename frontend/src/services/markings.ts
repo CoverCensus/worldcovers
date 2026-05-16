@@ -1,4 +1,13 @@
 import apiClient, { ensureCsrfToken } from "@/lib/api";
+import {
+  coverContributionDisplayName,
+  isCoverContributionData,
+  parentMarkingIdFromContribution,
+} from "@/lib/contributionDisplay";
+import {
+  contributionImageMetasFromSubmittedData,
+  contributionMetaImageUrl,
+} from "@/lib/contributionImages";
 
 /**
  * Unified Marking service. Replaces the legacy postmarks/ratemarks/auxmarks
@@ -596,6 +605,53 @@ export async function getMarkingById(markingId: number): Promise<MarkingRecord |
   }
 }
 
+/** Region string used to route contributions to a Collection (abbrev preferred). */
+export function routingStateFromMarkingRecord(record: MarkingRecord | null): string {
+  if (!record) return "";
+  return (
+    (record.stateAbbrev ?? "").trim() ||
+    (record.state ?? "").trim() ||
+    (record.regionName ?? "").trim()
+  );
+}
+
+/**
+ * Resolve collection routing state for a marking (for cover draft POST).
+ * Falls back to GET /post-offices/{id}/ when marking detail omits region fields.
+ */
+export async function resolveMarkingRoutingState(markingId: number): Promise<string> {
+  const record = await getMarkingById(markingId);
+  let route = routingStateFromMarkingRecord(record);
+  if (route) return route;
+
+  const raw = await getMarkingByIdRaw(markingId);
+  if (!raw) return "";
+
+  route =
+    toStr(raw.state_abbrev) ||
+    toStr((raw as { stateAbbrev?: string }).stateAbbrev) ||
+    toStr(raw.state) ||
+    toStr(raw.region_name) ||
+    toStr((raw as { regionName?: string }).regionName);
+  if (route.trim()) return route.trim();
+
+  const postOfficeId = record?.postOfficeId ?? toIdOrNull(raw.post_office);
+  if (postOfficeId == null) return "";
+
+  try {
+    const res = await apiClient.get(`/post-offices/${postOfficeId}/`);
+    const po = res.data as Record<string, unknown>;
+    route =
+      toStr(po.region_abbrev) ||
+      toStr((po as { regionAbbrev?: string }).regionAbbrev) ||
+      toStr(po.region_name) ||
+      toStr((po as { regionName?: string }).regionName);
+    return route.trim();
+  } catch {
+    return "";
+  }
+}
+
 /** Raw detail payload (snake_case) for callers that need server fields directly. */
 export async function getMarkingByIdRaw(markingId: number): Promise<Record<string, unknown> | null> {
   try {
@@ -731,7 +787,18 @@ export interface AssociatedCover {
   reviewerUsername: string;
   isBackstamp: boolean;
   placement: string | null;
+  /** Optional contributor note stored on the CoverMarking row for reviewers. */
+  contributorComment?: string | null;
   coverDetails: AssociatedCoverDetails | null;
+  /**
+   * When set, this row is a saved Contribution draft (not yet a CoverMarking).
+   * Thumbnail opens the cover editor with `?edit={id}`.
+   */
+  contributionDraftId?: number;
+  /** Contribution.status for draft rows (`draft`, `needs_revision`, …). */
+  contributionStatus?: string;
+  /** Human-readable title for draft rows (from submitted_data). */
+  displayLabel?: string;
   /**
    * Optional client enrichment: URL of the cover's default image
    * (`display_order` 0, else first image). Set by
@@ -811,6 +878,12 @@ function mapAssociatedCover(raw: unknown): AssociatedCover | null {
     isBackstamp: Boolean(o.is_backstamp),
     placement:
       typeof o.placement === "string" && o.placement ? o.placement : null,
+    contributorComment:
+      typeof o.contributor_comment === "string"
+        ? o.contributor_comment
+        : typeof (o as { contributorComment?: string }).contributorComment === "string"
+          ? (o as { contributorComment?: string }).contributorComment!
+          : null,
     coverDetails: mapAssociatedCoverDetails(o.cover_details),
   };
 }
@@ -839,21 +912,282 @@ function mapAssociatedCover(raw: unknown): AssociatedCover | null {
  *     }
  *   }
  */
-export async function getMarkingCovers(
-  markingId: number
-): Promise<AssociatedCover[]> {
+export type MarkingCoversResult = {
+  covers: AssociatedCover[];
+  error: string | null;
+};
+
+export async function getMarkingCovers(markingId: number): Promise<MarkingCoversResult> {
   try {
     const res = await apiClient.get<CoverMarkingApiResponse>(
       "/cover-markings/",
-      { params: { marking: String(markingId) } }
+      { params: { marking: String(markingId) } },
     );
     const results = Array.isArray(res.data?.results) ? res.data.results : [];
-    return results
+    const covers = results
       .map(mapAssociatedCover)
+      .filter((x): x is AssociatedCover => x !== null);
+    return { covers, error: null };
+  } catch (err: unknown) {
+    const ax = err as { response?: { data?: { detail?: unknown } } };
+    const detail = ax.response?.data?.detail;
+    let message = "Could not load associated covers.";
+    if (typeof detail === "string") {
+      message = detail;
+    } else if (Array.isArray(detail)) {
+      message = detail.map(String).join(" ");
+    } else if (detail && typeof detail === "object") {
+      message = JSON.stringify(detail);
+    }
+    return { covers: [], error: message };
+  }
+}
+
+/** Cover↔marking link row from GET /cover-markings/?cover={id}. */
+export interface CoverMarkingLink {
+  id: number;
+  coverId: number;
+  markingId: number;
+  isBackstamp: boolean;
+  reviewStatus: CoverMarkingReviewStatus;
+  reviewNotes: string | null;
+}
+
+function mapCoverMarkingLink(raw: unknown): CoverMarkingLink | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = toIdOrNull(o.id);
+  const coverId = toIdOrNull(o.cover);
+  const markingId = toIdOrNull(o.marking);
+  if (id == null || coverId == null || markingId == null) return null;
+  return {
+    id,
+    coverId,
+    markingId,
+    isBackstamp: Boolean(o.is_backstamp),
+    reviewStatus: normalizeCoverMarkingReviewStatus(o.review_status),
+    reviewNotes: typeof o.review_notes === "string" ? o.review_notes : null,
+  };
+}
+
+export type CoverMarkingsByCoverResult = {
+  links: CoverMarkingLink[];
+  error: string | null;
+};
+
+/** GET /cover-markings/?cover={id} — markings linked to a cover. */
+export async function getCoverMarkingsByCover(
+  coverId: number,
+): Promise<CoverMarkingsByCoverResult> {
+  try {
+    const res = await apiClient.get<CoverMarkingApiResponse>("/cover-markings/", {
+      params: { cover: String(coverId) },
+    });
+    const results = Array.isArray(res.data?.results) ? res.data.results : [];
+    const links = results
+      .map(mapCoverMarkingLink)
+      .filter((x): x is CoverMarkingLink => x !== null);
+    return { links, error: null };
+  } catch (err: unknown) {
+    const ax = err as { response?: { data?: { detail?: unknown } } };
+    const detail = ax.response?.data?.detail;
+    let message = "Could not load associated markings.";
+    if (typeof detail === "string") {
+      message = detail;
+    } else if (Array.isArray(detail)) {
+      message = detail.map(String).join(" ");
+    } else if (detail && typeof detail === "object") {
+      message = JSON.stringify(detail);
+    }
+    return { links: [], error: message };
+  }
+}
+
+export type AssociatedMarkingOnCover = {
+  link: CoverMarkingLink;
+  marking: MarkingRecord;
+  defaultImageUrl: string | null;
+};
+
+/** Load marking rows (and default thumbnails) for each cover-marking link. */
+export async function loadAssociatedMarkingsForCover(
+  links: CoverMarkingLink[],
+): Promise<AssociatedMarkingOnCover[]> {
+  if (links.length === 0) return [];
+  const markingIds = [...new Set(links.map((l) => l.markingId))];
+  const markings = await Promise.all(markingIds.map((id) => getMarkingById(id)));
+  const byId = new Map<number, MarkingRecord>();
+  for (const m of markings) {
+    if (m) byId.set(m.id, m);
+  }
+  const rows: AssociatedMarkingOnCover[] = [];
+  for (const link of links) {
+    const marking = byId.get(link.markingId);
+    if (!marking) continue;
+    let defaultImageUrl: string | null = null;
+    const sorted = [...marking.images].sort((a, b) => a.displayOrder - b.displayOrder);
+    const def = sorted.find((img) => img.displayOrder === 0) ?? sorted[0];
+    if (def?.imageUrl) defaultImageUrl = normalizeImageUrl(def.imageUrl);
+    rows.push({ link, marking, defaultImageUrl });
+  }
+  return rows;
+}
+
+function resolveCoverSubmissionThumbnail(
+  submittedData: Record<string, unknown>,
+  contrib?: Record<string, unknown>,
+): string | null {
+  const c = contrib ?? {};
+  const mainImage = c.mainImage as { imageUrl?: unknown } | string | null | undefined;
+  const mainImageFromList =
+    (mainImage && typeof mainImage === "object" && typeof mainImage.imageUrl === "string"
+      ? mainImage.imageUrl
+      : null) ?? (typeof mainImage === "string" ? mainImage : null);
+  const direct = normalizeImageUrl(
+    mainImageFromList ??
+      (typeof c.imageUrl === "string" ? c.imageUrl : null) ??
+      (typeof c.image_url === "string" ? c.image_url : null) ??
+      null,
+  );
+  if (direct) return direct;
+
+  for (const meta of contributionImageMetasFromSubmittedData(submittedData)) {
+    const url = contributionMetaImageUrl(meta);
+    if (url) return normalizeImageUrl(url) ?? url;
+  }
+  return null;
+}
+
+function datesSeenFromCoverSubmission(sd: Record<string, unknown>): AssociatedDateSeen[] {
+  const raw = sd.cover_date ?? sd.coverDate;
+  if (raw == null || String(raw).trim() === "") return [];
+  const date = String(raw).trim();
+  const gRaw = String(sd.date_granularity ?? sd.dateGranularity ?? "DAY").toUpperCase();
+  const granularity: AssociatedDateSeen["granularity"] =
+    gRaw === "MONTH" ? "MONTH" : gRaw === "YEAR" ? "YEAR" : "DAY";
+  return [{ id: 0, date, granularity }];
+}
+
+function mapCoverContributionToAssociatedCover(
+  contrib: Record<string, unknown>,
+  markingId: number,
+): AssociatedCover | null {
+  const id = toIdOrNull(contrib.id);
+  if (id == null) return null;
+  const sdRaw = contrib.submittedData ?? contrib.submitted_data;
+  if (!sdRaw || typeof sdRaw !== "object") return null;
+  const sd = sdRaw as Record<string, unknown>;
+  if (!isCoverContributionData(sd)) return null;
+  if (parentMarkingIdFromContribution(sd) !== markingId) return null;
+
+  const status = String(contrib.status ?? "draft").trim().toLowerCase();
+  if (status !== "draft") return null;
+  const sdMaterialized =
+    sd.materialized_cover_marking_id ??
+    sd.materializedCoverMarkingId ??
+    sd.cover_marking_id ??
+    sd.coverMarkingId;
+  if (sdMaterialized != null && String(sdMaterialized).trim() !== "") return null;
+
+  const reviewStatus: CoverMarkingReviewStatus =
+    status === "needs_revision" ? "needs_revision" : "pending";
+
+  const widthRaw = sd.width_mm ?? sd.widthMm ?? sd.width;
+  const heightRaw = sd.height_mm ?? sd.heightMm ?? sd.height;
+  const typeRaw = sd.type;
+  const type =
+    typeof typeRaw === "string" && typeRaw.trim() ? typeRaw.trim() : null;
+
+  return {
+    id: -id,
+    contributionDraftId: id,
+    contributionStatus: status,
+    displayLabel: coverContributionDisplayName(sd, id),
+    reviewStatus,
+    reviewNotes:
+      typeof contrib.review_notes === "string"
+        ? contrib.review_notes
+        : typeof contrib.reviewNotes === "string"
+          ? contrib.reviewNotes
+          : null,
+    reviewedAt: null,
+    reviewerUsername: "",
+    isBackstamp: Boolean(sd.is_backstamp ?? sd.isBackstamp),
+    placement:
+      typeof sd.placement === "string" && sd.placement.trim()
+        ? sd.placement.trim()
+        : null,
+    coverDetails: {
+      id: -id,
+      code: null,
+      colorId: null,
+      colorName: typeof sd.color === "string" ? sd.color : "",
+      type,
+      width: widthRaw != null && String(widthRaw).trim() ? String(widthRaw) : null,
+      height: heightRaw != null && String(heightRaw).trim() ? String(heightRaw) : null,
+      hasAdhesive:
+        typeof sd.has_adhesive === "boolean"
+          ? sd.has_adhesive
+          : typeof sd.hasAdhesive === "boolean"
+            ? sd.hasAdhesive
+            : null,
+      isInstitutional:
+        typeof sd.is_institutional === "boolean"
+          ? sd.is_institutional
+          : typeof sd.isInstitutional === "boolean"
+            ? sd.isInstitutional
+            : null,
+      datesSeen: datesSeenFromCoverSubmission(sd),
+    },
+    defaultImageUrl: resolveCoverSubmissionThumbnail(sd, contrib),
+  };
+}
+
+/** Discard a cover Contribution draft after the cover was submitted via the catalog API. */
+export async function abandonCoverContributionDraft(contributionId: number): Promise<void> {
+  await ensureCsrfToken();
+  const form = new FormData();
+  form.append("submission_kind", "cover");
+  form.append("abandon_draft", "true");
+  form.append("edit_contribution_id", String(contributionId));
+  await apiClient.post("/contributions/", form);
+}
+
+/** Cover contribution drafts for a marking (not yet materialized as CoverMarking rows). */
+export async function getCoverContributionDraftsForMarking(
+  markingId: number,
+): Promise<AssociatedCover[]> {
+  try {
+    const res = await apiClient.get<{ results?: unknown[] } | unknown[]>("/contributions/", {
+      withCredentials: true,
+    });
+    const data = res.data;
+    const list = Array.isArray(data)
+      ? data
+      : Array.isArray((data as { results?: unknown[] })?.results)
+        ? (data as { results: unknown[] }).results
+        : [];
+    return list
+      .map((row) =>
+        row && typeof row === "object"
+          ? mapCoverContributionToAssociatedCover(row as Record<string, unknown>, markingId)
+          : null,
+      )
       .filter((x): x is AssociatedCover => x !== null);
   } catch {
     return [];
   }
+}
+
+/** Cover-marking rows plus saved cover contribution drafts for a marking. */
+export async function loadAssociatedCoversForMarking(
+  markingId: number,
+): Promise<MarkingCoversResult> {
+  const { covers, error } = await getMarkingCovers(markingId);
+  const drafts = await getCoverContributionDraftsForMarking(markingId);
+  const merged = [...covers, ...drafts];
+  const enriched = await enrichAssociatedCoversWithDefaultImages(merged);
+  return { covers: enriched, error };
 }
 
 /** Parallel fetch of default thumbnail URLs for associated covers (cover image API). */
@@ -863,18 +1197,28 @@ export async function enrichAssociatedCoversWithDefaultImages(
   if (covers.length === 0) return [];
   return Promise.all(
     covers.map(async (c) => {
-      const cid = c.coverDetails?.id;
-      if (cid == null) return { ...c, defaultImageUrl: null };
-      const imgs = await getImagesForSubject({
-        subjectType: "COVER",
-        subjectId: cid,
-      });
-      const sorted = [...imgs].sort((a, b) => a.displayOrder - b.displayOrder);
-      const def = sorted[0];
-      return {
-        ...c,
-        defaultImageUrl: def?.imageUrl ? normalizeImageUrl(def.imageUrl) : null,
-      };
+      if (c.contributionDraftId != null) {
+        if (c.defaultImageUrl) {
+          return { ...c, defaultImageUrl: normalizeImageUrl(c.defaultImageUrl) ?? c.defaultImageUrl };
+        }
+        return { ...c, defaultImageUrl: null };
+      }
+      try {
+        const cid = c.coverDetails?.id;
+        if (cid == null || cid < 0) return { ...c, defaultImageUrl: null };
+        const imgs = await getImagesForSubject({
+          subjectType: "COVER",
+          subjectId: cid,
+        });
+        const sorted = [...imgs].sort((a, b) => a.displayOrder - b.displayOrder);
+        const def = sorted.find((img) => img.displayOrder === 0) ?? sorted[0];
+        return {
+          ...c,
+          defaultImageUrl: def?.imageUrl ? normalizeImageUrl(def.imageUrl) : null,
+        };
+      } catch {
+        return { ...c, defaultImageUrl: null };
+      }
     }),
   );
 }

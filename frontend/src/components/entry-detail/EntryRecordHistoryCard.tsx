@@ -1,0 +1,110 @@
+import { History, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import type { MarkingChangelogEvent } from "@/services/markings";
+
+const HISTORY_COLLAPSED_LIMIT = 1;
+const HISTORY_EXPANDED_LIMIT = 10;
+
+function formatHistoryTimestamp(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function historyActorDisplay(event: MarkingChangelogEvent): string {
+  const email = (event.actor_email ?? "").trim();
+  if (email) return email;
+  const actor = (event.actor ?? "").trim();
+  if (actor) return actor;
+  return "system";
+}
+
+export function EntryRecordHistoryCard({
+  loading,
+  error,
+  events,
+  expanded,
+  onToggleExpanded,
+  unavailableMessage,
+}: {
+  loading: boolean;
+  error: string | null;
+  events: MarkingChangelogEvent[];
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  unavailableMessage?: string;
+}) {
+  const visibleEvents = expanded
+    ? events.slice(0, HISTORY_EXPANDED_LIMIT)
+    : events.slice(0, HISTORY_COLLAPSED_LIMIT);
+  const hasMoreHistory = events.length > HISTORY_COLLAPSED_LIMIT;
+  const historyOverflow = Math.max(0, events.length - HISTORY_EXPANDED_LIMIT);
+
+  return (
+    <Card className="shadow-archival-md">
+      <CardHeader>
+        <CardTitle className="font-heading text-lg flex items-center gap-2">
+          <History className="h-5 w-5 text-muted-foreground" />
+          Record History
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {unavailableMessage ? (
+          <p className="text-sm text-muted-foreground">{unavailableMessage}</p>
+        ) : loading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading history...
+          </div>
+        ) : error ? (
+          <p className="text-sm text-muted-foreground">{error}</p>
+        ) : events.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No audit events recorded for this marking yet.</p>
+        ) : (
+          <>
+            <ul className="divide-y divide-border text-sm">
+              {visibleEvents.map((event) => (
+                <li key={event.event_id} className="py-3 first:pt-0 last:pb-0">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="font-medium text-foreground">
+                      {event.action_label || event.action}
+                    </span>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      {formatHistoryTimestamp(event.timestamp)}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground break-all">
+                    {historyActorDisplay(event)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            {hasMoreHistory && (
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <Button type="button" variant="ghost" size="sm" onClick={onToggleExpanded}>
+                  {expanded
+                    ? "Show only latest"
+                    : `Show recent history (up to ${HISTORY_EXPANDED_LIMIT})`}
+                </Button>
+                {expanded && historyOverflow > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    {historyOverflow} older event{historyOverflow === 1 ? "" : "s"} not shown
+                  </span>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

@@ -142,6 +142,7 @@ export interface CoverMarkingWritePayload {
   marking?: number;
   is_backstamp?: boolean;
   placement?: string | null;
+  contributor_comment?: string | null;
 }
 
 export interface CoverMarkingWriteResult {

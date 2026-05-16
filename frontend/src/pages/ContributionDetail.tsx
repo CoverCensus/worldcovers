@@ -25,6 +25,8 @@ import { getRegions } from "@/services/regions";
 import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
 import { getShapes, type ShapeOption } from "@/services/shapes";
 import { getColors, type ColorOption } from "@/services/colors";
+import { isCoverContributionData } from "@/lib/contributionDisplay";
+import CoverContributionDetail from "@/pages/CoverContributionDetail";
 
 const STATE_OTHER_VALUE = "__other__";
 const COLOR_OTHER_VALUE = "__other__";
@@ -1081,7 +1083,6 @@ const ContributionDetail = () => {
     );
   }
 
-  // Support both snake_case (API) and camelCase in case response is transformed
   const rawSubmitted =
     contribution.submitted_data ??
     (contribution as unknown as Record<string, unknown>).submittedData ??
@@ -1090,6 +1091,23 @@ const ContributionDetail = () => {
     typeof rawSubmitted === "object" && rawSubmitted !== null
       ? (rawSubmitted as Record<string, unknown>)
       : {};
+  if (isCoverContributionData(sd)) {
+    return (
+      <CoverContributionDetail
+        initialContribution={{
+          id: contribution.id,
+          contributor_id: contribution.contributor_id ?? null,
+          status: contribution.status,
+          contributor_username: contribution.contributor_username,
+          review_notes: contribution.review_notes,
+          created_at: contribution.created_at,
+          submitted_data: sd,
+          display_name: contribution.display_name,
+        }}
+      />
+    );
+  }
+
   const state = String(sd.state ?? "").trim();
   const town = String(sd.town ?? "").trim();
   const shape = String(sd.shape ?? sd.type ?? "").trim();

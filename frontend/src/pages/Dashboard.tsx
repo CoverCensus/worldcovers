@@ -31,6 +31,12 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { formatSizeFromSubmittedData } from "@/lib/dimensionsMm";
+import {
+  coverContributionDisplayName,
+  isCoverContributionData,
+  parentMarkingIdFromContribution,
+} from "@/lib/contributionDisplay";
+import { contributionMetaImageUrl } from "@/lib/contributionImages";
 import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { cn } from "@/lib/utils";
@@ -99,6 +105,15 @@ function resolveSubmissionImageUrl(
     if (typeof sf !== "string" || !sf || !baseImageUrl) return null;
     return normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/${sf.replace(/^\/+/, "")}`);
   };
+  const coverMetas = submittedData.cover_image_metas ?? submittedData.coverImageMetas;
+  if (Array.isArray(coverMetas)) {
+    for (const meta of coverMetas) {
+      const fromHelper = contributionMetaImageUrl(meta);
+      if (fromHelper) return normalizeImageUrl(fromHelper);
+      const url = fromMeta(meta);
+      if (url) return url;
+    }
+  }
   const metas = submittedData.image_metas ?? submittedData.imageMetas;
   if (Array.isArray(metas)) {
     for (const meta of metas) {
@@ -127,6 +142,33 @@ interface DashboardItem {
   marking_id?: number | null;
   /** True when this is a suggested edit to an existing catalog entry (not a new submission). */
   isSuggestion?: boolean;
+  /** Cover contribution (draft or pending), not a new marking. */
+  isCoverContribution?: boolean;
+  parentMarkingId?: number | null;
+  coverDate?: string;
+}
+
+function navigateToDraftEditor(
+  navigate: ReturnType<typeof useNavigate>,
+  submission: Pick<DashboardItem, "id" | "isCoverContribution" | "parentMarkingId">,
+) {
+  if (submission.isCoverContribution && submission.parentMarkingId != null) {
+    navigate(`/record/${submission.parentMarkingId}/cover/new?edit=${submission.id}`);
+    return;
+  }
+  navigate(`/contribute?edit=${submission.id}`);
+}
+
+function openDashboardSubmission(
+  navigate: ReturnType<typeof useNavigate>,
+  submission: Pick<DashboardItem, "id" | "status" | "isCoverContribution" | "parentMarkingId">,
+) {
+  const statusNorm = String(submission.status || "").toLowerCase();
+  if (statusNorm === "draft") {
+    navigateToDraftEditor(navigate, submission);
+    return;
+  }
+  navigate(`/contribution/${submission.id}`, { state: { fromDashboard: true } });
 }
 
 /** Catalog entry for User Submissions (state editor): postmarks in assigned states. */
@@ -141,6 +183,8 @@ interface PendingReviewItem {
   town_display: string;
   shape_display: string;
   color_display: string;
+  isCoverContribution?: boolean;
+  parentMarkingId?: number | null;
   marking_id: number | null;
   status: string;
   created_at: string;
@@ -462,15 +506,28 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
           const imageUrl = resolveSubmissionImageUrl(c, submittedData);
 
-          const displayName =
-            (c.display_name || c.displayName || "").trim() ||
-            [
-              [town, state].filter(Boolean).join(", "),
-              c.shapeName || c.shapeDisplay || c.typeDisplay || c.shape || c.type || submittedData.shape || submittedData.type,
-            ]
-              .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
-              .join(" — ") ||
-            `Submission #${c.id}`;
+          const statusStr = String(c.status || "pending");
+          const isCoverContribution = isCoverContributionData(submittedData as Record<string, unknown>);
+          const parentMarkingId = isCoverContribution
+            ? parentMarkingIdFromContribution(submittedData as Record<string, unknown>)
+            : null;
+
+          const displayName = isCoverContribution
+            ? coverContributionDisplayName(submittedData as Record<string, unknown>, c.id, statusStr)
+            : (c.display_name || c.displayName || "").trim() ||
+              [
+                [town, state].filter(Boolean).join(", "),
+                c.shapeName ||
+                  c.shapeDisplay ||
+                  c.typeDisplay ||
+                  c.shape ||
+                  c.type ||
+                  submittedData.shape ||
+                  submittedData.type,
+              ]
+                .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
+                .join(" — ") ||
+              `Submission #${c.id}`;
 
           const dateRange =
             c.dateRange ||
@@ -493,8 +550,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   ? c.marking.id
                   : null;
           const isSuggestion =
-            c.is_suggestion === true ||
-            !!(markingId || submittedData.original_marking_id || submittedData.originalMarkingId || c.original_marking_id);
+            !isCoverContribution &&
+            (c.is_suggestion === true ||
+              !!(
+                markingId ||
+                submittedData.original_marking_id ||
+                submittedData.originalMarkingId ||
+                c.original_marking_id
+              ));
 
           return {
             id: c.id,
@@ -516,6 +579,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             image_url: imageUrl,
             marking_id: markingId ?? null,
             isSuggestion,
+            isCoverContribution,
+            parentMarkingId,
+            coverDate: String(submittedData.cover_date ?? submittedData.coverDate ?? "").trim(),
           } as DashboardItem;
         });
         setSubmissions(mapped);
@@ -752,10 +818,20 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             const submittedData = (c as { submitted_data?: Record<string, unknown>; submittedData?: Record<string, unknown> }).submitted_data
               ?? (c as { submittedData?: Record<string, unknown> }).submittedData
               ?? {};
+            const statusStr = String(c.status ?? "pending");
+            const isCoverContribution = isCoverContributionData(submittedData);
+            const parentMarkingId = isCoverContribution
+              ? parentMarkingIdFromContribution(submittedData)
+              : null;
+            const coverDisplayName = isCoverContribution
+              ? coverContributionDisplayName(submittedData, c.id, statusStr)
+              : "";
             return {
               id: c.id,
               contributor_username: c.contributor_username ?? (c as { contributorUsername?: string }).contributorUsername ?? "",
-              display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
+              display_name:
+                coverDisplayName ||
+                String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
               state_display: c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "",
               town_display: c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "",
               shape_display:
@@ -776,6 +852,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
               review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
               image_url: resolveSubmissionImageUrl(c as Record<string, unknown>, submittedData as Record<string, unknown>),
+              isCoverContribution,
+              parentMarkingId,
             };
           }),
         );
@@ -834,10 +912,20 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           const submittedData = (c as { submitted_data?: Record<string, unknown>; submittedData?: Record<string, unknown> }).submitted_data
             ?? (c as { submittedData?: Record<string, unknown> }).submittedData
             ?? {};
+          const statusStr = String(c.status ?? "pending");
+          const isCoverContribution = isCoverContributionData(submittedData);
+          const parentMarkingId = isCoverContribution
+            ? parentMarkingIdFromContribution(submittedData)
+            : null;
+          const coverDisplayName = isCoverContribution
+            ? coverContributionDisplayName(submittedData, c.id, statusStr)
+            : "";
           return {
             id: c.id,
             contributor_username: c.contributor_username ?? (c as { contributorUsername?: string }).contributorUsername ?? "",
-            display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
+            display_name:
+              coverDisplayName ||
+              String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
             state_display: c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "",
             town_display: c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "",
             shape_display:
@@ -858,6 +946,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
             review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
             image_url: resolveSubmissionImageUrl(c as Record<string, unknown>, submittedData as Record<string, unknown>),
+            isCoverContribution,
+            parentMarkingId,
           };
         });
         // Filter out drafts from the editor history lists; drafts are only
@@ -1138,6 +1228,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     pageEnd = endIndex;
   }
 
+  const paginatedMarkingSubmissions = paginatedSubmissions.filter((s) => !s.isCoverContribution);
+  const paginatedCoverSubmissions = paginatedSubmissions.filter((s) => s.isCoverContribution);
+
   const getStatusBadge = (status: string) => {
     switch (String(status || "").toLowerCase()) {
       case "draft":
@@ -1347,6 +1440,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     editorDateTo,
     submissionQueueSort,
   ]);
+
+  const editorHistoryMarkingItems = filteredAndSortedEditorHistoryItems.filter((i) => !i.isCoverContribution);
+  const editorHistoryCoverItems = filteredAndSortedEditorHistoryItems.filter((i) => i.isCoverContribution);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -1725,8 +1821,16 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   </CardContent>
                 </Card>
               ) : (
-                <div className="space-y-4">
-                  {paginatedSubmissions.map((submission) => (
+                <div className="space-y-8">
+                  {[
+                    { key: "marking", title: "Marking submissions", items: paginatedMarkingSubmissions },
+                    { key: "cover", title: "Cover submissions", items: paginatedCoverSubmissions },
+                  ]
+                    .filter((section) => section.items.length > 0)
+                    .map((section) => (
+                      <div key={section.key} className="space-y-4">
+                        <h2 className="font-heading text-lg font-semibold text-foreground">{section.title}</h2>
+                        {section.items.map((submission) => (
                     <Card
                       key={submission.id}
                       className="shadow-archival-md hover:shadow-archival-lg transition-shadow"
@@ -1735,16 +1839,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         <div className="flex gap-6 md:flex-row flex-col">
                           <button
                             type="button"
-                            onClick={() => {
-                              const statusNorm = String(submission.status || "").toLowerCase();
-                              if (statusNorm === "draft") {
-                                navigate(`/contribute?edit=${submission.id}`);
-                              } else {
-                                navigate(`/contribution/${submission.id}`, {
-                                  state: { fromDashboard: true },
-                                });
-                              }
-                            }}
+                            onClick={() => openDashboardSubmission(navigate, submission)}
                             className="md:w-32 md:h-32 w-full h-48 shrink-0 p-0 border-0 bg-transparent cursor-pointer rounded overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring"
                             aria-label={`Open ${submission.name}`}
                           >
@@ -1760,6 +1855,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                 <h3 className="font-heading text-xl font-semibold text-foreground">
                                   {submission.name}
                                 </h3>
+                                {submission.isCoverContribution && (
+                                  <Badge variant="secondary" className="shrink-0 text-xs">
+                                    {String(submission.status || "").toLowerCase() === "draft"
+                                      ? "Cover draft"
+                                      : "Cover"}
+                                  </Badge>
+                                )}
                                 {submission.isSuggestion && (
                                   <Badge variant="outline" className="shrink-0 text-xs">
                                     Suggestion
@@ -1769,6 +1871,29 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               {getStatusBadge(submission.status)}
                             </div>
 
+                            {submission.isCoverContribution ? (
+                              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                                {submission.shape ? (
+                                  <div>
+                                    <span className="text-muted-foreground">Type:</span>{" "}
+                                    <span className="text-foreground">{submission.shape}</span>
+                                  </div>
+                                ) : null}
+                                {submission.coverDate ? (
+                                  <div>
+                                    <span className="text-muted-foreground">Date:</span>{" "}
+                                    <span className="text-foreground">{submission.coverDate}</span>
+                                  </div>
+                                ) : null}
+                                {submission.parentMarkingId != null ? (
+                                  <div>
+                                    <span className="text-muted-foreground">Marking:</span>{" "}
+                                    <span className="text-foreground">#{submission.parentMarkingId}</span>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : (
+                            <>
                             <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
                             {submission.town && (
                                 <div>
@@ -1812,6 +1937,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                 </div>
                               )}
                             </div>
+                            </>
+                            )}
 
                             {submission.description && (
                               <p className="text-sm text-muted-foreground line-clamp-2 mt-2">
@@ -1825,13 +1952,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                   variant="secondary"
                                   size="sm"
                                   className="font-medium"
-                                  onClick={() => navigate(`/contribute?edit=${submission.id}`)}
+                                  onClick={() => navigateToDraftEditor(navigate, submission)}
                                 >
                                   <Pencil className="mr-1.5 h-4 w-4" />
                                   Edit Draft
                                 </Button>
                               )}
-                              {(isSuperuser || isEditor) && submission.marking_id && (
+                              {(isSuperuser || isEditor) && submission.marking_id && !submission.isCoverContribution && (
                                 <>
                                   <Button
                                     variant="outline"
@@ -1860,7 +1987,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         </div>
                       </CardContent>
                     </Card>
-                  ))}
+                        ))}
+                      </div>
+                    ))}
                 </div>
               )}
 
@@ -2474,8 +2603,17 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     </CardContent>
                   </Card>
                 ) : (
-                  <ul className="space-y-3">
-                    {filteredAndSortedEditorHistoryItems.map((item) => {
+                  <div className="space-y-8">
+                    {[
+                      { key: "marking", title: "Marking submissions", items: editorHistoryMarkingItems },
+                      { key: "cover", title: "Cover submissions", items: editorHistoryCoverItems },
+                    ]
+                      .filter((section) => section.items.length > 0)
+                      .map((section) => (
+                        <div key={section.key} className="space-y-3">
+                          <h3 className="font-heading text-base font-semibold text-foreground">{section.title}</h3>
+                          <ul className="space-y-3">
+                            {section.items.map((item) => {
                       const title = [item.town_display, item.state_display].filter(Boolean).join(", ");
                       const shapeStr = (item.shape_display || "").trim();
                       const fallbackName =
@@ -2519,10 +2657,18 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                 by {item.contributor_username}
                                 {" - "}
                                 {new Date(item.created_at).toLocaleDateString()}
+                                {item.isCoverContribution && item.parentMarkingId != null
+                                  ? ` · Marking #${item.parentMarkingId}`
+                                  : ""}
                               </span>
                             </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            {item.isCoverContribution ? (
+                              <Badge variant="secondary" className="text-xs">
+                                Cover
+                              </Badge>
+                            ) : null}
                             <Badge className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${statusClassName}`}>
                               {item.status === "needs_revision"
                                 ? "Needs Revision"
@@ -2536,7 +2682,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         </li>
                       );
                     })}
-                  </ul>
+                          </ul>
+                        </div>
+                      ))}
+                  </div>
                 )}
 
                 {editorHistoryTotalPages > 1 && !editorHistoryLoading && !editorHistoryError && (

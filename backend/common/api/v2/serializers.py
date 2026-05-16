@@ -418,6 +418,11 @@ class CoverValuationSerializer(serializers.ModelSerializer):
 class CoverMarkingSerializer(serializers.ModelSerializer):
     cover_details = CoverSerializer(source="cover", read_only=True)
     reviewer_username = serializers.SerializerMethodField()
+    contributor_comment = serializers.CharField(
+        allow_blank=True,
+        allow_null=True,
+        required=False,
+    )
 
     class Meta:
         model = CoverMarking
@@ -428,6 +433,7 @@ class CoverMarkingSerializer(serializers.ModelSerializer):
             "marking",
             "is_backstamp",
             "placement",
+            "contributor_comment",
             "review_status",
             "review_notes",
             "reviewed_at",
@@ -465,6 +471,26 @@ def _format_decimal(value):
         return None
 
 
+def _marking_resolved_region(marking):
+    """Active Region for a marking via PostOffice.post_office_regions (not a Marking FK)."""
+    if not getattr(marking, "post_office_id", None):
+        return None
+    post_office = getattr(marking, "post_office", None)
+    if post_office is None:
+        return None
+    return post_office.region
+
+
+def _marking_state_name(marking) -> str:
+    region = _marking_resolved_region(marking)
+    return (region.name or "") if region else ""
+
+
+def _marking_state_abbrev(marking) -> str:
+    region = _marking_resolved_region(marking)
+    return (region.abbrev or "") if region else ""
+
+
 class MarkingListSerializer(serializers.ModelSerializer):
     """
     Lightweight Marking row used by /api/v2/markings/ list/search.
@@ -473,14 +499,14 @@ class MarkingListSerializer(serializers.ModelSerializer):
     (state, town, shape_name, color_name, ...), plus the unified `type`
     discriminator and aggregated earliest_seen / latest_seen.
     """
-    state = serializers.CharField(source="post_office.region.name", read_only=True, default="")
-    state_abbrev = serializers.CharField(source="post_office.region.abbrev", read_only=True, default="")
+    state = serializers.SerializerMethodField()
+    state_abbrev = serializers.SerializerMethodField()
+    region_name = serializers.SerializerMethodField()
     town = serializers.CharField(source="post_office.name", read_only=True, default="")
     shape_name = serializers.CharField(source="shape.name", read_only=True, default="")
     lettering_name = serializers.CharField(source="lettering.name", read_only=True, default="")
     color_name = serializers.CharField(source="color.name", read_only=True, default="")
     post_office_name = serializers.CharField(source="post_office.name", read_only=True, default="")
-    region_name = serializers.CharField(source="post_office.region.name", read_only=True, default="")
     earliest_seen = serializers.DateField(read_only=True, allow_null=True, required=False)
     latest_seen = serializers.DateField(read_only=True, allow_null=True, required=False)
     main_image = serializers.SerializerMethodField()
@@ -521,7 +547,15 @@ class MarkingListSerializer(serializers.ModelSerializer):
             "main_image",
             "second_image",
         ]
-        read_only_fields = fields
+
+    def get_state(self, obj):
+        return _marking_state_name(obj)
+
+    def get_state_abbrev(self, obj):
+        return _marking_state_abbrev(obj)
+
+    def get_region_name(self, obj):
+        return _marking_state_name(obj)
 
     def _images_for(self, obj):
         cached = getattr(obj, "_marking_images", None)
@@ -564,14 +598,14 @@ class MarkingSerializer(serializers.ModelSerializer):
     Includes images and citations attached to this marking, plus aggregated
     earliest_seen / latest_seen across covers it appears on.
     """
-    state = serializers.CharField(source="post_office.region.name", read_only=True, default="")
-    state_abbrev = serializers.CharField(source="post_office.region.abbrev", read_only=True, default="")
+    state = serializers.SerializerMethodField()
+    state_abbrev = serializers.SerializerMethodField()
+    region_name = serializers.SerializerMethodField()
     town = serializers.CharField(source="post_office.name", read_only=True, default="")
     shape_name = serializers.CharField(source="shape.name", read_only=True, default="")
     lettering_name = serializers.CharField(source="lettering.name", read_only=True, default="")
     color_name = serializers.CharField(source="color.name", read_only=True, default="")
     post_office_name = serializers.CharField(source="post_office.name", read_only=True, default="")
-    region_name = serializers.CharField(source="post_office.region.name", read_only=True, default="")
     earliest_seen = serializers.DateField(read_only=True, allow_null=True, required=False)
     latest_seen = serializers.DateField(read_only=True, allow_null=True, required=False)
     images = serializers.SerializerMethodField()
@@ -620,6 +654,15 @@ class MarkingSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_date", "modified_date"]
 
+    def get_state(self, obj):
+        return _marking_state_name(obj)
+
+    def get_state_abbrev(self, obj):
+        return _marking_state_abbrev(obj)
+
+    def get_region_name(self, obj):
+        return _marking_state_name(obj)
+
     def get_images(self, obj):
         rows = Image.objects.filter(
             subject_type=Image.SUBJECT_MARKING,
@@ -651,6 +694,24 @@ class MarkingSerializer(serializers.ModelSerializer):
 ###################################################################################################
 ## Contribution (moderation queue)
 ###################################################################################################
+def _contribution_submitted_data_is_cover(sd) -> bool:
+    if not isinstance(sd, dict):
+        return False
+    kind = str(sd.get("submission_kind") or sd.get("submissionKind") or "").strip().lower()
+    if kind == "cover":
+        return True
+    if kind in {"marking", "postmark", "townmark", "ratemark", "auxmark"}:
+        return False
+    type_value = str(sd.get("type") or "").strip().upper()
+    has_cover_type = type_value in {"FC", "FL"}
+    has_marking_type = type_value in {"TOWNMARK", "RATEMARK", "AUXMARK"}
+    has_town = bool(str(sd.get("town") or "").strip())
+    parent_raw = sd.get("parent_marking_id") or sd.get("marking_id")
+    has_parent = parent_raw not in (None, "")
+    has_cover_date = bool(str(sd.get("cover_date") or sd.get("coverDate") or "").strip())
+    return bool(has_parent and (has_cover_type or has_cover_date) and not has_town and not has_marking_type)
+
+
 class ContributionListSerializer(serializers.ModelSerializer):
     """List view for contributions (moderation queue)."""
     contributor_username = serializers.CharField(source="contributor.username", read_only=True)
@@ -698,6 +759,21 @@ class ContributionListSerializer(serializers.ModelSerializer):
 
     def get_display_name(self, obj):
         sd = obj.submitted_data or {}
+
+        if _contribution_submitted_data_is_cover(sd):
+            cover_types = {"FC": "Folded Cover", "FL": "Folded Letter"}
+            type_code = str(sd.get("type") or "").strip().upper()
+            type_label = cover_types.get(type_code, type_code or "Cover")
+            date = str(sd.get("cover_date") or sd.get("coverDate") or "").strip()
+            parent = sd.get("parent_marking_id") or sd.get("marking_id")
+            parts = ["Cover draft", type_label]
+            if date:
+                parts.append(date)
+            if parent not in (None, ""):
+                parts.append(f"Marking #{parent}")
+            label = " · ".join([p for p in parts if p])
+            return label or f"Cover draft #{obj.id}"
+
         town = (sd.get("town") or "").strip()
         state = (sd.get("state") or "").strip()
         type_display = (sd.get("type") or "").strip()

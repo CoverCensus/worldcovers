@@ -1,16 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, History, Loader2, MessageSquare, Pencil, Plus, Star, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, History, Loader2, MessageSquare, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import {
   Carousel,
   CarouselContent,
@@ -23,16 +18,13 @@ import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { ImageOrPlaceholder } from "@/components/ImageOrPlaceholder";
 import { formatCatalogDate, markingTypeLabel } from "@/lib/catalogRecordDisplay";
 import {
-  enrichAssociatedCoversWithDefaultImages,
   getMarkingById,
   getMarkingChangelog,
-  getMarkingCovers,
+  loadAssociatedCoversForMarking,
   normalizeImageUrl,
-  postCoverMarkingReview,
   reorderImages,
   type AssociatedCover,
   type AssociatedDateSeen,
-  type CoverMarkingReviewActionApi,
   type MarkingChangelogEvent,
   type MarkingCitation,
   type MarkingCitationReferenceWork,
@@ -43,26 +35,6 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
-import { deleteCover } from "@/services/covers";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 
 type GalleryImage = {
   imageUrl: string | null;
@@ -145,6 +117,45 @@ function formatCoverDate(d: AssociatedDateSeen): string {
         ? raw.slice(0, 7)
         : raw.slice(0, 10);
   return formatCatalogDate(truncated) || truncated;
+}
+
+function associatedCoverDatesDisplay(
+  c: AssociatedCover["coverDetails"],
+): string {
+  if (!c || c.datesSeen.length === 0) return EMPTY;
+  const parts = c.datesSeen.map(formatCoverDate).filter(Boolean);
+  return parts.length > 0 ? parts.join(", ") : EMPTY;
+}
+
+/** Preview fields for an associated cover (matches Catalog Search card layout). */
+function AssociatedCoverPreviewFields({ cover }: { cover: AssociatedCover }) {
+  const c = cover.coverDetails;
+  const typeText = coverTypeLabel(c?.type ?? null) || EMPTY;
+  const dateText = associatedCoverDatesDisplay(c) || EMPTY;
+  return (
+    <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+      <div className="min-w-0">
+        <span className="text-muted-foreground">Type:</span>{" "}
+        <span className="text-foreground break-words">{typeText}</span>
+      </div>
+      <div className="min-w-0">
+        <span className="text-muted-foreground">Date:</span>{" "}
+        <span className="text-foreground break-words">{dateText}</span>
+      </div>
+      {cover.isBackstamp && (
+        <div className="min-w-0">
+          <span className="text-muted-foreground">Backstamp:</span>{" "}
+          <span className="text-foreground break-words">Yes</span>
+        </div>
+      )}
+      {c?.isInstitutional === true && (
+        <div className="min-w-0">
+          <span className="text-muted-foreground">Institutional Ownership:</span>{" "}
+          <span className="text-foreground break-words">Yes</span>
+        </div>
+      )}
+    </dl>
+  );
 }
 
 function yearOnly(value: string | null | undefined): string {
@@ -278,8 +289,15 @@ function DetailRow({
   );
 }
 
-function coverLinkReviewBadgeLabel(status: AssociatedCover["reviewStatus"]): string {
-  switch (status) {
+function coverLinkReviewBadgeLabel(cover: AssociatedCover): string {
+  if (cover.contributionDraftId != null) {
+    const st = (cover.contributionStatus ?? "draft").toLowerCase();
+    if (st === "draft") return "Draft";
+    if (st === "needs_revision") return "Needs revision";
+    if (st === "pending") return "Pending review";
+    return st.charAt(0).toUpperCase() + st.slice(1);
+  }
+  switch (cover.reviewStatus) {
     case "pending":
       return "Pending review";
     case "needs_revision":
@@ -291,143 +309,9 @@ function coverLinkReviewBadgeLabel(status: AssociatedCover["reviewStatus"]): str
   }
 }
 
-function AssociatedCoverEntry({
-  cover,
-  isFirst,
-  onEdit,
-  onDelete,
-  onReview,
-  canReviewCovers,
-  isDeleting,
-}: {
-  cover: AssociatedCover;
-  isFirst: boolean;
-  /** Per-row "Edit" hook. Navigates to cover edit page. */
-  onEdit?: (cover: AssociatedCover) => void;
-  /**
-   * Per-row "Delete Cover" hook (editor-only). Rendered at the bottom of the
-   * entry; parent owns the confirmation modal so all rows share a single
-   * AlertDialog.
-   */
-  onDelete?: (cover: AssociatedCover) => void;
-  /** Editor opens moderation dialog (approve / reject / return for revision). */
-  onReview?: (cover: AssociatedCover, kind: CoverMarkingReviewActionApi) => void;
-  /** True when the signed-in user is an editor (server still enforces region). */
-  canReviewCovers?: boolean;
-  /** True while a delete request is in flight against this cover. */
-  isDeleting?: boolean;
-}) {
-  const c = cover.coverDetails;
-  const rs = cover.reviewStatus;
-  const datesText =
-    c && c.datesSeen.length > 0
-      ? c.datesSeen.map(formatCoverDate).filter(Boolean).join("\n")
-      : EMPTY;
-  const colorText = c?.colorName?.trim() ?? "";
-  const allRows: { label: string; value: string; show: boolean }[] = [
-    { label: "Catalog key", value: c?.code?.trim() || EMPTY, show: true },
-    { label: "Color", value: colorText, show: colorText.length > 0 },
-    { label: "Type", value: coverTypeLabel(c?.type ?? null), show: true },
-    {
-      label: "Dimensions",
-      value: coverDimensionsDisplay(c?.width ?? null, c?.height ?? null),
-      show: coverDimensionsDisplay(c?.width ?? null, c?.height ?? null) !== EMPTY,
-    },
-    { label: "Dates", value: datesText, show: true },
-    { label: "Has adhesive", value: "Yes", show: c?.hasAdhesive === true },
-    { label: "Institutionally Owned", value: "Yes", show: c?.isInstitutional === true },
-    { label: "Backstamp", value: "Yes", show: cover.isBackstamp === true },
-  ];
-  const rows = allRows.filter((r) => r.show);
-  return (
-    <div className={isFirst ? "" : "border-t-2 border-primary/40 pt-6 mt-6"}>
-      {(rs !== "approved" || (cover.reviewNotes ?? "").trim().length > 0) && (
-        <div className="mb-3 space-y-2">
-          {rs !== "approved" && (
-            <Badge
-              variant={
-                rs === "pending"
-                  ? "secondary"
-                  : rs === "needs_revision"
-                    ? "outline"
-                    : "destructive"
-              }
-              className="font-normal"
-            >
-              {coverLinkReviewBadgeLabel(rs)}
-            </Badge>
-          )}
-          {(rs === "needs_revision" || rs === "rejected") && (cover.reviewNotes ?? "").trim().length > 0 && (
-            <p className="text-sm text-muted-foreground whitespace-pre-wrap border-l-2 border-border pl-2">
-              <span className="font-medium text-foreground">Editor note: </span>
-              {cover.reviewNotes}
-            </p>
-          )}
-        </div>
-      )}
-      <dl className="text-sm">
-        {rows.map((r, i) => (
-          <DetailRow
-            key={r.label}
-            label={r.label}
-            value={r.value}
-            last={i === rows.length - 1}
-          />
-        ))}
-      </dl>
-      {canReviewCovers && rs === "pending" && onReview && (
-        <div className="flex flex-wrap gap-2 mt-3">
-          <Button size="sm" variant="default" onClick={() => onReview(cover, "approve")}>
-            Approve
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => onReview(cover, "request-revision")}>
-            Return for revision
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-destructive border-destructive/50 hover:bg-destructive/10"
-            onClick={() => onReview(cover, "reject")}
-          >
-            Reject
-          </Button>
-        </div>
-      )}
-      {onEdit && (
-        <div className="flex justify-end gap-2 mt-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onEdit(cover)}
-            aria-label="Edit this cover"
-            disabled={isDeleting || rs === "rejected"}
-            className="inline-flex gap-1.5"
-          >
-            <Pencil className="h-4 w-4 shrink-0" />
-            Edit
-          </Button>
-        </div>
-      )}
-      {onDelete && (
-        <div className="flex justify-end gap-2 mt-3">
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => onDelete(cover)}
-            aria-label="Delete this cover"
-            disabled={isDeleting}
-          >
-            {isDeleting ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Trash2 className="mr-2 h-4 w-4" />
-            )}
-            Delete Cover
-          </Button>
-        </div>
-      )}
-    </div>
-  );
+function associatedCoverShowsStatusBadge(cover: AssociatedCover): boolean {
+  if (cover.contributionDraftId != null) return true;
+  return cover.reviewStatus !== "approved";
 }
 
 const RecordDetail = () => {
@@ -442,21 +326,7 @@ const RecordDetail = () => {
   const [error, setError] = useState<string | null>(null);
   const [record, setRecord] = useState<MarkingRecord | null>(null);
   const [associatedCovers, setAssociatedCovers] = useState<AssociatedCover[]>([]);
-  /** Collapsed by default: inline thumbnails are primary; this reveals full rows + moderation. */
-  const [coversDetailsOpen, setCoversDetailsOpen] = useState(false);
-  // Delete-cover confirmation: holds the cover the user has just clicked
-  // "Delete Cover" on. AlertDialog renders only when this is non-null.
-  // deletingCoverId tracks the in-flight DELETE so the row's button can
-  // show a spinner and other rows' delete buttons can be disabled while
-  // we're talking to the server.
-  const [pendingDeleteCover, setPendingDeleteCover] =
-    useState<AssociatedCover | null>(null);
-  const [deletingCoverId, setDeletingCoverId] = useState<number | null>(null);
-  const [coverReviewOpen, setCoverReviewOpen] = useState(false);
-  const [coverReviewCover, setCoverReviewCover] = useState<AssociatedCover | null>(null);
-  const [coverReviewKind, setCoverReviewKind] = useState<CoverMarkingReviewActionApi | null>(null);
-  const [coverReviewNotes, setCoverReviewNotes] = useState("");
-  const [coverReviewBusy, setCoverReviewBusy] = useState(false);
+  const [coversLoadError, setCoversLoadError] = useState<string | null>(null);
   const [historyEvents, setHistoryEvents] = useState<MarkingChangelogEvent[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -474,15 +344,6 @@ const RecordDetail = () => {
   // the two surfaces. user is `null` while we're still resolving auth, so
   // wait for that to settle before deciding.
   const canViewHistory = useMemo(() => {
-    if (!user) return false;
-    return (
-      user.role === "editor" ||
-      user.role === "administrator" ||
-      user.is_superuser === true
-    );
-  }, [user]);
-
-  const canReviewCovers = useMemo(() => {
     if (!user) return false;
     return (
       user.role === "editor" ||
@@ -522,79 +383,23 @@ const RecordDetail = () => {
 
   // Fetcher extracted so both the initial mount and post-edit navigation
   // returns can refresh the cover list without duplicating request logic.
-  const refreshAssociatedCovers = useCallback(
-    async (options?: { resetOpen?: boolean }) => {
-      if (markingId == null || Number.isNaN(markingId)) {
-        setAssociatedCovers([]);
-        return;
-      }
-      const rows = await getMarkingCovers(markingId);
-      const enriched = await enrichAssociatedCoversWithDefaultImages(rows);
-      setAssociatedCovers(enriched);
-      if (options?.resetOpen) {
-        setCoversDetailsOpen(enriched.length > 0);
-      }
-    },
-    [markingId],
-  );
-
-  const submitCoverReview = async () => {
-    if (!coverReviewCover || !coverReviewKind) return;
-    if (coverReviewKind === "request-revision" && !coverReviewNotes.trim()) {
-      toast({
-        title: "Comment required",
-        description: "Explain what should change before the contributor resubmits.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setCoverReviewBusy(true);
-    try {
-      const res = await postCoverMarkingReview(coverReviewCover.id, coverReviewKind, coverReviewNotes);
-      if (!res.ok) {
-        toast({
-          title: "Could not update cover",
-          description: res.message,
-          variant: "destructive",
-        });
-        return;
-      }
-      toast({
-        title: "Cover review saved",
-        description:
-          coverReviewKind === "approve"
-            ? "This cover link is now visible to everyone on the catalog record."
-            : coverReviewKind === "reject"
-              ? "The contributor will see this cover as rejected on the record."
-              : "The contributor can edit the cover and resubmit it for review.",
-      });
-      setCoverReviewOpen(false);
-      setCoverReviewCover(null);
-      setCoverReviewKind(null);
-      setCoverReviewNotes("");
-      await refreshAssociatedCovers();
-    } finally {
-      setCoverReviewBusy(false);
-    }
-  };
-
   useEffect(() => {
     if (markingId == null || Number.isNaN(markingId)) {
       setAssociatedCovers([]);
+      setCoversLoadError(null);
       return;
     }
     let cancelled = false;
     void (async () => {
-      const rows = await getMarkingCovers(markingId);
-      const enriched = await enrichAssociatedCoversWithDefaultImages(rows);
+      const { covers: rows, error: coversErr } = await loadAssociatedCoversForMarking(markingId);
       if (cancelled) return;
-      setAssociatedCovers(enriched);
-      setCoversDetailsOpen(false);
+      setCoversLoadError(coversErr);
+      setAssociatedCovers(rows);
     })();
     return () => {
       cancelled = true;
     };
-  }, [markingId]);
+  }, [markingId, user?.id, location.pathname, location.search]);
 
   // Record History (audit trail). Only fires for editor-class users since the
   // backend `markings/{id}/changelog/` endpoint requires
@@ -850,57 +655,19 @@ const RecordDetail = () => {
       state: { from: location.pathname + location.search },
     });
   };
-  const openEditCoverDialog = (cover: AssociatedCover) => {
-    if (!requireAuth()) return;
-    navigate(`/record/${markingId}/cover/${cover.id}`, {
+  const goCoverView = (cover: AssociatedCover) => {
+    if (markingId == null) return;
+    if (cover.contributionDraftId != null) {
+      navigate(`/record/${markingId}/cover/new?edit=${cover.contributionDraftId}`, {
+        state: { from: location.pathname + location.search },
+      });
+      return;
+    }
+    const coverId = cover.coverDetails?.id;
+    if (coverId == null || coverId < 0) return;
+    navigate(`/record/${markingId}/cover/${coverId}`, {
       state: { from: location.pathname + location.search },
     });
-  };
-
-  const goCoverDetail = (cover: AssociatedCover) => {
-    const cid = cover.coverDetails?.id;
-    if (cid == null) return;
-    navigate(`/covers/${cid}`, {
-      state: {
-        from: location.pathname + location.search,
-        markingId: markingId ?? undefined,
-        coverMarkingId: cover.id,
-      },
-    });
-  };
-
-  const requestDeleteCover = (cover: AssociatedCover) => {
-    setPendingDeleteCover(cover);
-  };
-
-  const confirmDeleteCover = async () => {
-    const cover = pendingDeleteCover;
-    if (!cover || !cover.coverDetails) return;
-    const coverPk = cover.coverDetails.id;
-    setDeletingCoverId(coverPk);
-    try {
-      // DELETE /covers/{id}/ cascades to CoverMarking via FK on_delete=CASCADE.
-      // DateSeen is polymorphic (no FK), so cover-bound dates are NOT cascaded
-      // by the DB; the backend Cover delete path is responsible for cleaning
-      // up DateSeen rows where subject_type=COVER and subject_id=coverPk. We
-      // therefore still issue a single DELETE /covers/{id}/ here and rely on
-      // the server-side cleanup rather than fanning out to /dates-seen/{id}/.
-      await deleteCover(coverPk);
-      toast({
-        title: "Cover deleted",
-        description: "The cover and its dates were removed from this marking.",
-      });
-      setPendingDeleteCover(null);
-      await refreshAssociatedCovers({ resetOpen: true });
-    } catch (err) {
-      toast({
-        title: "Could not delete cover",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setDeletingCoverId(null);
-    }
   };
 
   return (
@@ -1288,316 +1055,103 @@ const RecordDetail = () => {
               )}
 
               <Card className="shadow-archival-md">
-                {coverCount === 0 ? (
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg">
-                      Associated Covers (0)
-                    </CardTitle>
-                  </CardHeader>
-                ) : (
-                  <>
-                    <CardHeader>
-                      <CardTitle className="font-heading text-lg">
-                        Associated Covers ({coverCount})
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-6 pt-0">
-                      <div className="grid grid-cols-1 gap-4">
+                <CardHeader>
+                  <CardTitle className="font-heading text-lg">
+                    Associated Covers ({coverCount})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 pt-0">
+                  {coversLoadError && (
+                    <p className="text-sm text-destructive rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2">
+                      {coversLoadError}
+                    </p>
+                  )}
+                  {coverCount === 0 && !coversLoadError && (
+                    <p className="text-sm text-muted-foreground">No covers linked to this marking yet.</p>
+                  )}
+                  {coverCount > 0 && (
+                    <>
+                    <div className="space-y-4">
                         {associatedCovers.map((cover) => {
                           const c = cover.coverDetails;
                           const thumb = cover.defaultImageUrl ?? null;
                           const codeLabel =
-                            c?.code?.trim() || `Cover #${c?.id ?? cover.id}`;
+                            cover.displayLabel?.trim() ||
+                            c?.code?.trim() ||
+                            (cover.contributionDraftId != null
+                              ? `Cover draft #${cover.contributionDraftId}`
+                              : `Cover #${c?.id ?? cover.id}`);
                           const rs = cover.reviewStatus;
+                          const canOpenCover =
+                            markingId != null &&
+                            (cover.contributionDraftId != null ||
+                              (c?.id != null && c.id > 0));
                           return (
-                            <div
-                              key={cover.id}
-                              className="flex gap-4 rounded-lg border border-border p-4 shadow-archival-sm hover:shadow-archival-md transition-shadow md:flex-row flex-col"
+                            <Card
+                              key={cover.contributionDraftId ?? cover.id}
+                              className={`shadow-archival-md hover:shadow-archival-lg transition-shadow ${
+                                canOpenCover ? "cursor-pointer" : ""
+                              }`}
+                              onClick={
+                                canOpenCover
+                                  ? () => goCoverView(cover)
+                                  : undefined
+                              }
+                              onKeyDown={
+                                canOpenCover
+                                  ? (e) => {
+                                      if (e.key === "Enter" || e.key === " ") {
+                                        e.preventDefault();
+                                        goCoverView(cover);
+                                      }
+                                    }
+                                  : undefined
+                              }
+                              role={canOpenCover ? "button" : undefined}
+                              tabIndex={canOpenCover ? 0 : undefined}
+                              aria-label={canOpenCover ? `Open cover ${codeLabel}` : undefined}
                             >
-                              <button
-                                type="button"
-                                onClick={() => goCoverDetail(cover)}
-                                disabled={c == null}
-                                className="shrink-0 text-left disabled:opacity-50 disabled:pointer-events-none"
-                                aria-label={`Open cover ${codeLabel}`}
-                              >
-                                <ImageOrPlaceholder
-                                  src={thumb}
-                                  alt={codeLabel}
-                                  className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border"
-                                />
-                              </button>
-                              <div className="flex-1 min-w-0 space-y-2">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <h3 className="font-heading text-lg font-semibold text-foreground">
-                                    {codeLabel}
-                                  </h3>
-                                  {rs !== "approved" && (
-                                    <Badge
-                                      variant={
-                                        rs === "pending"
-                                          ? "secondary"
-                                          : rs === "needs_revision"
-                                            ? "outline"
-                                            : "destructive"
-                                      }
-                                      className="font-normal"
-                                    >
-                                      {coverLinkReviewBadgeLabel(rs)}
-                                    </Badge>
-                                  )}
-                                </div>
-                                <p className="text-sm text-muted-foreground">
-                                  {coverTypeLabel(c?.type ?? null)}
-                                  {c?.colorName?.trim()
-                                    ? ` · ${c.colorName.trim()}`
-                                    : ""}
-                                </p>
-                                {canReviewCovers && rs === "pending" && (
-                                  <div className="flex flex-wrap gap-2">
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="default"
-                                      className="shrink-0"
-                                      onClick={() => {
-                                        setCoverReviewCover(cover);
-                                        setCoverReviewKind("approve");
-                                        setCoverReviewNotes("");
-                                        setCoverReviewOpen(true);
-                                      }}
-                                    >
-                                      Approve
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="secondary"
-                                      className="shrink-0"
-                                      onClick={() => {
-                                        setCoverReviewCover(cover);
-                                        setCoverReviewKind("request-revision");
-                                        setCoverReviewNotes("");
-                                        setCoverReviewOpen(true);
-                                      }}
-                                    >
-                                      Return for revision
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      className="shrink-0 text-destructive border-destructive/50 hover:bg-destructive/10"
-                                      onClick={() => {
-                                        setCoverReviewCover(cover);
-                                        setCoverReviewKind("reject");
-                                        setCoverReviewNotes("");
-                                        setCoverReviewOpen(true);
-                                      }}
-                                    >
-                                      Reject
-                                    </Button>
-                                  </div>
-                                )}
-                                <div className="flex flex-wrap items-center gap-2 pt-1">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => goCoverDetail(cover)}
-                                    disabled={c == null}
-                                    className="shrink-0"
-                                  >
-                                    View
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => openEditCoverDialog(cover)}
-                                    disabled={cover.reviewStatus === "rejected"}
-                                    aria-label="Edit this cover"
-                                    className="inline-flex shrink-0 gap-1.5"
-                                  >
-                                    <Pencil className="h-4 w-4 shrink-0" />
-                                    Edit
-                                  </Button>
-                                  {isStaff && (
-                                    <Button
-                                      type="button"
-                                      variant="destructive"
-                                      size="sm"
-                                      onClick={() => requestDeleteCover(cover)}
-                                      disabled={
-                                        c != null && deletingCoverId === c.id
-                                      }
-                                      className="inline-flex shrink-0 gap-1.5"
-                                    >
-                                      {c != null && deletingCoverId === c.id ? (
-                                        <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                                      ) : (
-                                        <Trash2 className="h-4 w-4 shrink-0" />
+                              <CardContent className="p-4">
+                                <div className="flex gap-6 md:flex-row flex-col">
+                                  <ImageOrPlaceholder
+                                    src={thumb}
+                                    alt={codeLabel}
+                                    className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border shrink-0"
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
+                                      <h3 className="font-heading text-xl font-semibold text-foreground">
+                                        {codeLabel}
+                                      </h3>
+                                      {associatedCoverShowsStatusBadge(cover) && (
+                                        <Badge
+                                          variant={
+                                            cover.contributionDraftId != null
+                                              ? "secondary"
+                                              : rs === "pending"
+                                                ? "secondary"
+                                                : rs === "needs_revision"
+                                                  ? "outline"
+                                                  : "destructive"
+                                          }
+                                          className="font-normal shrink-0"
+                                        >
+                                          {coverLinkReviewBadgeLabel(cover)}
+                                        </Badge>
                                       )}
-                                      Delete
-                                    </Button>
-                                  )}
+                                    </div>
+                                    <AssociatedCoverPreviewFields cover={cover} />
+                                  </div>
                                 </div>
-                              </div>
-                            </div>
+                              </CardContent>
+                            </Card>
                           );
                         })}
-                      </div>
-                      <Collapsible
-                        open={coversDetailsOpen}
-                        onOpenChange={setCoversDetailsOpen}
-                      >
-                        <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground cursor-pointer">
-                          <ChevronDown
-                            className={`h-4 w-4 transition-transform ${coversDetailsOpen ? "rotate-180" : ""}`}
-                          />
-                          Full details & moderation
-                        </CollapsibleTrigger>
-                        <CollapsibleContent className="pt-4">
-                          {associatedCovers.map((cover, idx) => (
-                            <AssociatedCoverEntry
-                              key={cover.id}
-                              cover={cover}
-                              isFirst={idx === 0}
-                              onEdit={openEditCoverDialog}
-                              onDelete={isStaff ? requestDeleteCover : undefined}
-                              canReviewCovers={canReviewCovers}
-                              onReview={(cRow, kind) => {
-                                setCoverReviewCover(cRow);
-                                setCoverReviewKind(kind);
-                                setCoverReviewNotes("");
-                                setCoverReviewOpen(true);
-                              }}
-                              isDeleting={
-                                cover.coverDetails != null &&
-                                deletingCoverId === cover.coverDetails.id
-                              }
-                            />
-                          ))}
-                        </CollapsibleContent>
-                      </Collapsible>
-                    </CardContent>
-                  </>
-                )}
+                    </div>
+                    </>
+                  )}
+                </CardContent>
               </Card>
-
-              <AlertDialog
-                open={pendingDeleteCover !== null}
-                onOpenChange={(next) => {
-                  // Block dismiss-while-deleting so the user can't
-                  // double-click cancel and leave a half-finished DELETE
-                  // request hanging out without UI feedback.
-                  if (deletingCoverId != null) return;
-                  if (!next) setPendingDeleteCover(null);
-                }}
-              >
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete this cover?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {pendingDeleteCover?.coverDetails?.code
-                        ? `Cover "${pendingDeleteCover.coverDetails.code}" will be permanently removed, including its dates and link to this marking.`
-                        : "This cover will be permanently removed, including its dates and link to this marking."}{" "}
-                      This action cannot be undone.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel disabled={deletingCoverId != null}>
-                      Cancel
-                    </AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={(e) => {
-                        // Stop AlertDialog from auto-closing on click; we
-                        // close manually inside confirmDeleteCover after
-                        // the DELETE request resolves so the UI state stays
-                        // consistent with the server.
-                        e.preventDefault();
-                        void confirmDeleteCover();
-                      }}
-                      disabled={deletingCoverId != null}
-                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    >
-                      {deletingCoverId != null ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Deleting...
-                        </>
-                      ) : (
-                        "Delete"
-                      )}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-
-              <Dialog
-                open={coverReviewOpen}
-                onOpenChange={(open) => {
-                  if (coverReviewBusy) return;
-                  setCoverReviewOpen(open);
-                  if (!open) {
-                    setCoverReviewCover(null);
-                    setCoverReviewKind(null);
-                    setCoverReviewNotes("");
-                  }
-                }}
-              >
-                <DialogContent className="sm:max-w-md">
-                  <DialogHeader>
-                    <DialogTitle>
-                      {coverReviewKind === "approve"
-                        ? "Approve this cover link"
-                        : coverReviewKind === "reject"
-                          ? "Reject this cover link"
-                          : "Return this cover for revision"}
-                    </DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-2 py-2">
-                    <Label htmlFor="cover-review-notes">
-                      Note to contributor{" "}
-                      <span className="text-destructive">
-                        {coverReviewKind === "request-revision" ? "(required)" : "(optional)"}
-                      </span>
-                    </Label>
-                    <Textarea
-                      id="cover-review-notes"
-                      rows={4}
-                      value={coverReviewNotes}
-                      onChange={(e) => setCoverReviewNotes(e.target.value)}
-                      disabled={coverReviewBusy}
-                      placeholder={
-                        coverReviewKind === "request-revision"
-                          ? "Describe what needs to change before this cover can be approved."
-                          : "Optional context for the contributor."
-                      }
-                    />
-                  </div>
-                  <DialogFooter className="gap-2 sm:gap-0">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setCoverReviewOpen(false)}
-                      disabled={coverReviewBusy}
-                    >
-                      Cancel
-                    </Button>
-                    <Button type="button" onClick={() => void submitCoverReview()} disabled={coverReviewBusy}>
-                      {coverReviewBusy ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Saving…
-                        </>
-                      ) : (
-                        "Confirm"
-                      )}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
 
               {record.desc.trim() && (
                 <Card className="shadow-archival-md">
@@ -1629,8 +1183,8 @@ const RecordDetail = () => {
               Covers card (right column) rather than against the page edge,
               while Delete Marking stays flush right. */}
           <div className="mt-10 grid items-start lg:grid-cols-2 gap-8">
-            <div className="hidden lg:block" />
-            <div className="flex items-center justify-between gap-3">
+            <div className="hidden lg:block" aria-hidden />
+            <div className="flex flex-wrap justify-end gap-3">
               <Button
                 size="sm"
                 onClick={openNewCoverDialog}
