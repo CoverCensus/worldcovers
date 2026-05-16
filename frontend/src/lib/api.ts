@@ -1,8 +1,10 @@
 import axios, { AxiosError, AxiosHeaders } from 'axios';
 
-// API base URL from environment variable
+// API base URL from environment variable (prefer VITE_API_URL so login and data share one base).
 // Use same-origin fallback to avoid mixed-content issues on HTTPS pages.
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v2';
+const API_BASE_URL = String(
+  import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || "/api/v2"
+).replace(/\/+$/, "") || "/api/v2";
 
 // Create axios instance with default configuration.
 //

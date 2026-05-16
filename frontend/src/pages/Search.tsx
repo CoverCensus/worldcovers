@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
-import { Search as SearchIcon, SlidersHorizontal, Loader2, Plus, ArrowUp, ArrowDown } from "lucide-react";
+import { Search as SearchIcon, SlidersHorizontal, Loader2, Plus } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
@@ -28,81 +28,67 @@ import { ImageOrPlaceholder } from "@/components/ImageOrPlaceholder";
 
 const DEBOUNCE_MS = 400;
 type SubmissionQueueSortOption = "newest" | "oldest";
+type CatalogSortOption =
+  | "newest"
+  | "oldest"
+  | "state_asc"
+  | "state_desc"
+  | "town_asc"
+  | "town_desc"
+  | "type_asc"
+  | "type_desc"
+  | "shape_asc"
+  | "shape_desc"
+  | "lettering_asc"
+  | "lettering_desc"
+  | "color_asc"
+  | "color_desc"
+  | "earliest_asc"
+  | "earliest_desc"
+  | "latest_asc"
+  | "latest_desc";
 
-/**
- * Catalog sort is an ordered list of (field, direction) entries. Insertion
- * order = priority: the first entry is the primary sort, the second is the
- * tiebreaker, and so on. Clicking an arrow on a filter label appends/modifies
- * the entry for that field; clicking the same-direction arrow again removes
- * the entry (toggle off).
- */
-type SortField = "state" | "town" | "type" | "shape" | "color" | "earliest" | "latest";
-type SortDir = "asc" | "desc";
-type SortEntry = { field: SortField; dir: SortDir };
-
-const SORT_FIELD_COLUMN: Record<SortField, string> = {
-  state: "post_office__region__name",
-  town: "post_office__name",
-  type: "type",
-  shape: "shape__name",
-  color: "color__name",
-  earliest: "earliest_seen",
-  latest: "latest_seen",
-};
-
-const DEFAULT_SORT: SortEntry[] = [{ field: "state", dir: "asc" }];
-
-function parseSortParam(raw: string | null): SortEntry[] {
-  if (raw === null) return [...DEFAULT_SORT];
-  if (raw === "none" || raw === "") return [];
-  const entries: SortEntry[] = [];
-  const seen = new Set<SortField>();
-  for (const token of raw.split(",")) {
-    const t = token.trim();
-    if (!t) continue;
-    const m = t.match(/^(state|town|type|shape|color|earliest|latest)_(asc|desc)$/);
-    if (!m) continue;
-    const field = m[1] as SortField;
-    if (seen.has(field)) continue;
-    seen.add(field);
-    entries.push({ field, dir: m[2] as SortDir });
+function orderingParamForSort(sort: CatalogSortOption): string | undefined {
+  switch (sort) {
+    case "state_asc":
+      return "post_office__region__name,post_office__name,id";
+    case "state_desc":
+      return "-post_office__region__name,post_office__name,id";
+    case "town_asc":
+      return "post_office__name,post_office__region__name,id";
+    case "town_desc":
+      return "-post_office__name,post_office__region__name,id";
+    case "type_asc":
+      return "type,post_office__region__name,post_office__name,id";
+    case "type_desc":
+      return "-type,post_office__region__name,post_office__name,id";
+    case "shape_asc":
+      return "shape__name,post_office__region__name,post_office__name,id";
+    case "shape_desc":
+      return "-shape__name,post_office__region__name,post_office__name,id";
+    case "lettering_asc":
+      return "lettering__name,post_office__region__name,post_office__name,id";
+    case "lettering_desc":
+      return "-lettering__name,post_office__region__name,post_office__name,id";
+    case "color_asc":
+      return "color__name,post_office__region__name,post_office__name,id";
+    case "color_desc":
+      return "-color__name,post_office__region__name,post_office__name,id";
+    case "earliest_asc":
+      return "earliest_seen,post_office__region__name,post_office__name,id";
+    case "earliest_desc":
+      return "-earliest_seen,post_office__region__name,post_office__name,id";
+    case "latest_asc":
+      return "latest_seen,post_office__region__name,post_office__name,id";
+    case "latest_desc":
+      return "-latest_seen,post_office__region__name,post_office__name,id";
+    case "oldest":
+      return "id";
+    case "newest":
+      return "-id";
+    default:
+      return undefined;
   }
-  return entries;
-}
-
-function serializeSort(entries: SortEntry[]): string {
-  return entries.map((e) => `${e.field}_${e.dir}`).join(",");
-}
-
-function isDefaultSort(entries: SortEntry[]): boolean {
-  return (
-    entries.length === DEFAULT_SORT.length &&
-    entries.every((e, i) => e.field === DEFAULT_SORT[i].field && e.dir === DEFAULT_SORT[i].dir)
-  );
-}
-
-/**
- * Build the DRF `?ordering=` value from the entries. Appends sensible
- * tiebreakers (region, post office name) and finally `id` for determinism,
- * skipping any that the user already explicitly picked.
- */
-function orderingParamForSort(entries: SortEntry[]): string {
-  if (entries.length === 0) return "id";
-  const cols: string[] = [];
-  const used = new Set<string>();
-  for (const e of entries) {
-    const col = SORT_FIELD_COLUMN[e.field];
-    cols.push((e.dir === "desc" ? "-" : "") + col);
-    used.add(col);
-  }
-  for (const tb of ["post_office__region__name", "post_office__name"]) {
-    if (!used.has(tb)) {
-      cols.push(tb);
-      used.add(tb);
-    }
-  }
-  cols.push("id");
-  return cols.join(",");
 }
 
 function validateYearString(raw: string, minYear: number, maxYear: number): string | null {
@@ -137,63 +123,6 @@ function getPaginationPages(currentPage: number, totalPages: number): (number | 
   if (currentPage < totalPages - delta - 1) pages.push("ellipsis");
   pages.push(totalPages);
   return pages;
-}
-
-/**
- * Filter label with hover-revealed up/down arrows that drive the multi-column
- * catalogSort list. Clicking the active arrow toggles the entry off; clicking
- * the opposite arrow flips it; clicking an inactive field appends a new entry
- * at the lowest priority (insertion order = sort priority).
- */
-function SortableLabel({
-  htmlFor,
-  label,
-  field,
-  currentSort,
-  onToggle,
-}: {
-  htmlFor?: string;
-  label: string;
-  field: SortField;
-  currentSort: SortEntry[];
-  onToggle: (field: SortField, dir: SortDir) => void;
-}) {
-  const entry = currentSort.find((e) => e.field === field) ?? null;
-  const isAsc = entry?.dir === "asc";
-  const isDesc = entry?.dir === "desc";
-  return (
-    <div className="group flex items-center gap-1">
-      <Label htmlFor={htmlFor}>{label}</Label>
-      <button
-        type="button"
-        aria-label={`Sort by ${label} ascending`}
-        aria-pressed={isAsc}
-        onClick={() => onToggle(field, "asc")}
-        className={cn(
-          "p-0.5 rounded hover:bg-muted transition-opacity",
-          isAsc
-            ? "text-foreground opacity-100"
-            : "text-muted-foreground opacity-0 group-hover:opacity-100 focus:opacity-100",
-        )}
-      >
-        <ArrowUp className="h-3 w-3" />
-      </button>
-      <button
-        type="button"
-        aria-label={`Sort by ${label} descending`}
-        aria-pressed={isDesc}
-        onClick={() => onToggle(field, "desc")}
-        className={cn(
-          "p-0.5 rounded hover:bg-muted transition-opacity",
-          isDesc
-            ? "text-foreground opacity-100"
-            : "text-muted-foreground opacity-0 group-hover:opacity-100 focus:opacity-100",
-        )}
-      >
-        <ArrowDown className="h-3 w-3" />
-      </button>
-    </div>
-  );
 }
 
 const Search = () => {
@@ -231,24 +160,10 @@ const Search = () => {
   const [submissionQueueSort, setSubmissionQueueSort] = useState<SubmissionQueueSortOption>(
     () => (getSearchParam(searchParams, "sort", "newest") === "oldest" ? "oldest" : "newest"),
   );
-  const [catalogSort, setCatalogSort] = useState<SortEntry[]>(() =>
-    parseSortParam(searchParams.get("order")),
-  );
-
-  // Apply an up/down arrow click on a filter label. Same direction toggles
-  // the entry off; opposite direction flips it; inactive appends at the end.
-  const toggleSort = (field: SortField, dir: SortDir) => {
-    setCatalogSort((prev) => {
-      const idx = prev.findIndex((e) => e.field === field);
-      if (idx === -1) return [...prev, { field, dir }];
-      if (prev[idx].dir === dir) return prev.filter((_, i) => i !== idx);
-      const next = prev.slice();
-      next[idx] = { field, dir };
-      return next;
-    });
-  };
-
-  const catalogSortKey = useMemo(() => serializeSort(catalogSort), [catalogSort]);
+  const [catalogSort, setCatalogSort] = useState<CatalogSortOption>(() => {
+    const raw = getSearchParam(searchParams, "order", "newest") as CatalogSortOption;
+    return raw || "newest";
+  });
 
   // Debounced values for text inputs - API called only after user stops typing
   const debouncedKeywordSearch = useDebounce(keywordSearch, DEBOUNCE_MS);
@@ -281,7 +196,7 @@ const Search = () => {
   const prevManuscriptFilterRef = useRef(manuscriptFilter);
   const prevTypeFilterRef = useRef(typeFilter);
   const prevSortRef = useRef(submissionQueueSort);
-  const prevCatalogSortRef = useRef(catalogSortKey);
+  const prevCatalogSortRef = useRef(catalogSort);
 
   const beginYearError = useMemo(
     () => validateYearString(beginYear, minYear, maxYear),
@@ -324,7 +239,7 @@ const Search = () => {
     const manuscriptFilterJustChanged = prevManuscriptFilterRef.current !== manuscriptFilter;
     const typeFilterJustChanged = prevTypeFilterRef.current !== typeFilter;
     const sortJustChanged = prevSortRef.current !== submissionQueueSort;
-    const catalogSortJustChanged = prevCatalogSortRef.current !== catalogSortKey;
+    const catalogSortJustChanged = prevCatalogSortRef.current !== catalogSort;
     if (searchJustChanged) prevKeywordRef.current = debouncedKeywordSearch;
     if (shapeFilterJustChanged) prevShapeFilterRef.current = shapeFilter;
     if (colorFilterJustChanged) prevColorFilterRef.current = colorFilter;
@@ -336,7 +251,7 @@ const Search = () => {
     if (manuscriptFilterJustChanged) prevManuscriptFilterRef.current = manuscriptFilter;
     if (typeFilterJustChanged) prevTypeFilterRef.current = typeFilter;
     if (sortJustChanged) prevSortRef.current = submissionQueueSort;
-    if (catalogSortJustChanged) prevCatalogSortRef.current = catalogSortKey;
+    if (catalogSortJustChanged) prevCatalogSortRef.current = catalogSort;
 
     const anyFilterChanged =
       searchJustChanged ||
@@ -354,7 +269,7 @@ const Search = () => {
     if (anyFilterChanged) {
       setCurrentPage(1);
     }
-  }, [debouncedKeywordSearch, shapeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, manuscriptFilter, typeFilter, submissionQueueSort, catalogSortKey]);
+  }, [debouncedKeywordSearch, shapeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, manuscriptFilter, typeFilter, submissionQueueSort, catalogSort]);
 
   // Treat years as active filters only when they are valid and 4 digits.
   const normalizedBeginYear = useMemo(() => {
@@ -401,7 +316,7 @@ const Search = () => {
       manuscriptFilter,
       typeFilterApi,
       itemsPerPage,
-      catalogSortKey,
+      catalogSort,
     ],
     queryFn: async () => {
       const normalizedFrom =
@@ -472,9 +387,7 @@ const Search = () => {
     if (manuscriptFilter !== "both") params.set("manuscripts", manuscriptFilter);
     if (imagesOnly) params.set("images", "true");
     if (submissionQueueSort !== "newest") params.set("sort", submissionQueueSort);
-    // Empty list (user toggled off all sorts) -> persist as the sentinel
-    // "none" so a page reload distinguishes that intent from "no param".
-    if (!isDefaultSort(catalogSort)) params.set("order", catalogSortKey || "none");
+    if (catalogSort !== "newest") params.set("order", catalogSort);
     if (itemsPerPage !== 10) params.set("pageSize", String(itemsPerPage));
     if (currentPage > 1) params.set("page", String(currentPage));
     const next = params.toString();
@@ -482,7 +395,7 @@ const Search = () => {
     if (next !== current) {
       setSearchParams(next ? params : {}, { replace: true });
     }
-  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, shapeFilter, typeFilter, colorFilter, manuscriptFilter, imagesOnly, submissionQueueSort, catalogSort, catalogSortKey, itemsPerPage, searchParams, setSearchParams]);
+  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, shapeFilter, typeFilter, colorFilter, manuscriptFilter, imagesOnly, submissionQueueSort, catalogSort, itemsPerPage, searchParams, setSearchParams]);
 
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
   const pageStart = (currentPage - 1) * itemsPerPage;
@@ -507,7 +420,7 @@ const Search = () => {
     setManuscriptFilter("both");
     setImagesOnly(false);
     setSubmissionQueueSort("newest");
-    setCatalogSort([...DEFAULT_SORT]);
+    setCatalogSort("newest");
     setCurrentPage(1);
     setItemsPerPage(10);
     setSearchParams("", { replace: true });
@@ -547,6 +460,56 @@ const Search = () => {
                   </div>
 
                   <div className="space-y-2">
+                    <Label htmlFor="catalog-sort">Sort Submission Queue</Label>
+                    <Select
+                      value={submissionQueueSort}
+                      onValueChange={(value) => setSubmissionQueueSort(value as SubmissionQueueSortOption)}
+                      disabled={filtersDisabled}
+                    >
+                      <SelectTrigger id="catalog-sort">
+                        <SelectValue placeholder="Newest first" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="newest">Newest first</SelectItem>
+                        <SelectItem value="oldest">Oldest first</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="catalog-order">Sort Results</Label>
+                    <Select
+                      value={catalogSort}
+                      onValueChange={(v) => setCatalogSort(v as CatalogSortOption)}
+                      disabled={filtersDisabled}
+                    >
+                      <SelectTrigger id="catalog-order">
+                        <SelectValue placeholder="Newest first" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="newest">Newest first (default)</SelectItem>
+                        <SelectItem value="oldest">Oldest first</SelectItem>
+                        <SelectItem value="state_asc">State (A→Z)</SelectItem>
+                        <SelectItem value="state_desc">State (Z→A)</SelectItem>
+                        <SelectItem value="town_asc">Town (A→Z)</SelectItem>
+                        <SelectItem value="town_desc">Town (Z→A)</SelectItem>
+                        <SelectItem value="type_asc">Type (A→Z)</SelectItem>
+                        <SelectItem value="type_desc">Type (Z→A)</SelectItem>
+                        <SelectItem value="shape_asc">Shape (A→Z)</SelectItem>
+                        <SelectItem value="shape_desc">Shape (Z→A)</SelectItem>
+                        <SelectItem value="lettering_asc">Lettering (A→Z)</SelectItem>
+                        <SelectItem value="lettering_desc">Lettering (Z→A)</SelectItem>
+                        <SelectItem value="color_asc">Color (A→Z)</SelectItem>
+                        <SelectItem value="color_desc">Color (Z→A)</SelectItem>
+                        <SelectItem value="earliest_asc">Earliest seen (old→new)</SelectItem>
+                        <SelectItem value="earliest_desc">Earliest seen (new→old)</SelectItem>
+                        <SelectItem value="latest_asc">Latest seen (old→new)</SelectItem>
+                        <SelectItem value="latest_desc">Latest seen (new→old)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
                     <Label htmlFor="keyword-search">Search</Label>
                     <div className="relative">
                       <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -564,13 +527,7 @@ const Search = () => {
                   </div>
 
                   <div className="space-y-2">
-                    <SortableLabel
-                      htmlFor="state"
-                      label="State"
-                      field="state"
-                      currentSort={catalogSort}
-                      onToggle={toggleSort}
-                    />
+                    <Label htmlFor="state">State</Label>
                     <SearchableSelect
                       id="state"
                       value={stateFilter}
@@ -589,13 +546,7 @@ const Search = () => {
                   </div>
 
                   <div className="space-y-2">
-                    <SortableLabel
-                      htmlFor="town"
-                      label="Town"
-                      field="town"
-                      currentSort={catalogSort}
-                      onToggle={toggleSort}
-                    />
+                    <Label htmlFor="town">Town</Label>
                     <Input
                       id="town"
                       placeholder="Enter town name..."
@@ -607,13 +558,7 @@ const Search = () => {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <SortableLabel
-                        htmlFor="beginYear"
-                        label="Begin Year"
-                        field="earliest"
-                        currentSort={catalogSort}
-                        onToggle={toggleSort}
-                      />
+                      <Label htmlFor="beginYear">Begin Year</Label>
                       <Input
                         id="beginYear"
                         type="number"
@@ -635,13 +580,7 @@ const Search = () => {
                       )}
                     </div>
                     <div className="space-y-2">
-                      <SortableLabel
-                        htmlFor="endYear"
-                        label="End Year"
-                        field="latest"
-                        currentSort={catalogSort}
-                        onToggle={toggleSort}
-                      />
+                      <Label htmlFor="endYear">End Year</Label>
                       <Input
                         id="endYear"
                         type="number"
@@ -666,13 +605,7 @@ const Search = () => {
 
                   {manuscriptFilter !== "only" && (
                     <div className="space-y-2">
-                      <SortableLabel
-                        htmlFor="shape"
-                        label="Shape"
-                        field="shape"
-                        currentSort={catalogSort}
-                        onToggle={toggleSort}
-                      />
+                      <Label htmlFor="shape">Shape</Label>
                       <SearchableSelect
                         id="shape"
                         disabled={filtersDisabled}
@@ -692,13 +625,7 @@ const Search = () => {
                   )}
 
                   <div className="space-y-2">
-                    <SortableLabel
-                      htmlFor="mark-type"
-                      label="Type"
-                      field="type"
-                      currentSort={catalogSort}
-                      onToggle={toggleSort}
-                    />
+                    <Label htmlFor="mark-type">Type</Label>
                     <Select value={typeFilter} onValueChange={setTypeFilter} disabled={filtersDisabled}>
                       <SelectTrigger id="mark-type">
                         <SelectValue placeholder="All Types" />
@@ -713,13 +640,7 @@ const Search = () => {
                   </div>
 
                   <div className="space-y-2">
-                    <SortableLabel
-                      htmlFor="color"
-                      label="Color"
-                      field="color"
-                      currentSort={catalogSort}
-                      onToggle={toggleSort}
-                    />
+                    <Label htmlFor="color">Color</Label>
                     <SearchableSelect
                       id="color"
                       value={colorFilter}
@@ -809,6 +730,26 @@ const Search = () => {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Select
+                    value={String(itemsPerPage)}
+                    onValueChange={(v) => {
+                      const n = parseInt(v, 10);
+                      if (n === 10 || n === 25 || n === 50 || n === 100) {
+                        setItemsPerPage(n);
+                      }
+                    }}
+                    disabled={filtersDisabled}
+                  >
+                    <SelectTrigger className="h-9 w-[120px]" aria-label="Records per page">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10 / page</SelectItem>
+                      <SelectItem value="25">25 / page</SelectItem>
+                      <SelectItem value="50">50 / page</SelectItem>
+                      <SelectItem value="100">100 / page</SelectItem>
+                    </SelectContent>
+                  </Select>
                   {refreshing && (
                     <div className="flex items-center gap-1 text-xs text-muted-foreground">
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
@@ -873,124 +814,97 @@ const Search = () => {
               )}
 
               {/* Pagination - compact for 500+ pages */}
-              {!loading && catalogRecords.length > 0 && (
+              {totalPages > 1 && !loading && (
                 <div className="mt-8 flex flex-col items-center gap-4">
-                  {totalPages > 1 && (
-                    <Pagination>
-                      <PaginationContent>
-                        <PaginationItem>
-                          <PaginationPrevious
-                            onClick={() => {
-                              setCurrentPage(p => Math.max(1, p - 1));
-                            }}
-                            className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
-                          />
-                        </PaginationItem>
+                  <Pagination>
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious
+                          onClick={() => {
+                            setCurrentPage(p => Math.max(1, p - 1));
+                          }}
+                          className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                        />
+                      </PaginationItem>
 
-                        {getPaginationPages(currentPage, totalPages).map((p, i) =>
-                          p === "ellipsis" ? (
-                            <PaginationItem key={`ellipsis-${i}`}>
-                              <PaginationEllipsis />
-                            </PaginationItem>
-                          ) : (
-                            <PaginationItem key={p}>
-                              <PaginationLink
-                                onClick={() => {
-                                  setCurrentPage(p);
-                                }}
-                                isActive={currentPage === p}
-                                className="cursor-pointer"
-                              >
-                                {p}
-                              </PaginationLink>
-                            </PaginationItem>
-                          )
-                        )}
+                      {getPaginationPages(currentPage, totalPages).map((p, i) =>
+                        p === "ellipsis" ? (
+                          <PaginationItem key={`ellipsis-${i}`}>
+                            <PaginationEllipsis />
+                          </PaginationItem>
+                        ) : (
+                          <PaginationItem key={p}>
+                            <PaginationLink
+                              onClick={() => {
+                                setCurrentPage(p);
+                              }}
+                              isActive={currentPage === p}
+                              className="cursor-pointer"
+                            >
+                              {p}
+                            </PaginationLink>
+                          </PaginationItem>
+                        )
+                      )}
 
-                        <PaginationItem>
-                          <PaginationNext
-                            onClick={() => {
-                              setCurrentPage(p => Math.min(totalPages, p + 1));
-                            }}
-                            className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
-                          />
-                        </PaginationItem>
-                      </PaginationContent>
-                    </Pagination>
-                  )}
+                      <PaginationItem>
+                        <PaginationNext
+                          onClick={() => {
+                            setCurrentPage(p => Math.min(totalPages, p + 1));
+                          }}
+                          className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
 
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">Records shown</span>
-                    <Select
-                      value={String(itemsPerPage)}
-                      onValueChange={(v) => {
-                        const n = parseInt(v, 10);
-                        if (n === 10 || n === 25 || n === 50 || n === 100) {
-                          setItemsPerPage(n);
+                    <span className="text-sm text-muted-foreground">Go to page</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={totalPages}
+                      placeholder="Page"
+                      value={goToPageInput}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (raw === "") {
+                          setGoToPageInput("");
+                          return;
+                        }
+                        const n = parseInt(raw, 10);
+                        if (Number.isNaN(n)) return;
+                        const clamped = Math.max(1, Math.min(totalPages, n));
+                        setGoToPageInput(String(clamped));
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          const n = parseInt(goToPageInput, 10);
+                          if (!Number.isNaN(n)) {
+                            setCurrentPage(Math.max(1, Math.min(totalPages, n)));
+                            setGoToPageInput("");
+                          }
                         }
                       }}
-                      disabled={filtersDisabled}
+                      className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      aria-label="Go to page number"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9"
+                      onClick={() => {
+                        const n = parseInt(goToPageInput, 10);
+                        if (!Number.isNaN(n)) {
+                          setCurrentPage(Math.max(1, Math.min(totalPages, n)));
+                          setGoToPageInput("");
+                        }
+                      }}
                     >
-                      <SelectTrigger className="h-9 w-[80px]" aria-label="Records per page">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="10">10</SelectItem>
-                        <SelectItem value="25">25</SelectItem>
-                        <SelectItem value="50">50</SelectItem>
-                        <SelectItem value="100">100</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {totalPages > 1 && (
-                      <>
-                        <span className="text-sm text-muted-foreground">Go to page</span>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={totalPages}
-                          placeholder="Page"
-                          value={goToPageInput}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (raw === "") {
-                              setGoToPageInput("");
-                              return;
-                            }
-                            const n = parseInt(raw, 10);
-                            if (Number.isNaN(n)) return;
-                            const clamped = Math.max(1, Math.min(totalPages, n));
-                            setGoToPageInput(String(clamped));
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              const n = parseInt(goToPageInput, 10);
-                              if (!Number.isNaN(n)) {
-                                setCurrentPage(Math.max(1, Math.min(totalPages, n)));
-                                setGoToPageInput("");
-                              }
-                            }
-                          }}
-                          className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                          aria-label="Go to page number"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-9"
-                          onClick={() => {
-                            const n = parseInt(goToPageInput, 10);
-                            if (!Number.isNaN(n)) {
-                              setCurrentPage(Math.max(1, Math.min(totalPages, n)));
-                              setGoToPageInput("");
-                            }
-                          }}
-                        >
-                          Go
-                        </Button>
-                      </>
-                    )}
+                      Go
+                    </Button>
                   </div>
                 </div>
               )}

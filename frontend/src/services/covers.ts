@@ -1,14 +1,7 @@
 /**
  * Covers (v2 Cover entity): GET /covers/, plus full CRUD over the cover
- * graph (Cover, CoverMarking link, DateSeen child rows) used by the cover
+ * graph (Cover, CoverMarking link, CoverDate child rows) used by the cover
  * add/edit dialog on the Record Detail page.
- *
- * Date observations now live in the polymorphic /dates-seen/ resource, keyed
- * by subject_type ("COVER" | "MARKING") and subject_id. For cover-bound dates
- * the helpers below pin subject_type to "COVER" and pass the Cover pk as
- * subject_id; the underlying row can also be attached to a Marking via a
- * direct subject_type="MARKING" call, but that flow is owned by the
- * marking-side editor, not this module.
  */
 import apiClient, { ensureCsrfToken } from "@/lib/api";
 
@@ -65,11 +58,10 @@ export async function getCovers(): Promise<CoverRecord[]> {
  *
  * The backend exposes three sibling resources that together describe a
  * marking's covers:
- *   * /covers/         -- the Cover row itself (code, color, type, dims, ...)
- *   * /cover-markings/ -- the link row tying a Cover to a Marking, with
- *                         is_backstamp/placement
- *   * /dates-seen/     -- N "this subject was used on <date>" rows, with
- *                         subject_type="COVER" for cover-bound observations
+ *   * /covers/         — the Cover row itself (code, color, type, dims, …)
+ *   * /cover-markings/ — the link row tying a Cover to a Marking, with
+ *                        is_backstamp/placement
+ *   * /cover-dates/    — N "this cover was used on <date>" rows
  *
  * The dialog drives all three from a single form, so the helpers below are
  * intentionally thin: they each map to one HTTP verb on one resource. The
@@ -184,60 +176,53 @@ export async function deleteCoverMarking(id: number): Promise<void> {
   await apiClient.delete(`/cover-markings/${id}/`);
 }
 
-/** Granularity matches DateSeen.GRANULARITY_CHOICES on the backend. */
-export type DateSeenGranularity = "DAY" | "MONTH" | "YEAR";
+/** Granularity matches CoverDate.GRANULARITY_CHOICES on the backend. */
+export type CoverDateGranularity = "DAY" | "MONTH" | "YEAR";
 
-/** Subject discriminator on the polymorphic /dates-seen/ resource. */
-export type DateSeenSubjectType = "COVER" | "MARKING";
-
-/** Body shape accepted by both POST and PATCH for /dates-seen/. */
-export interface DateSeenWritePayload {
-  /** Required on create; immutable on update. */
-  subject_type?: DateSeenSubjectType;
-  /** Required on create; immutable on update. PK of the Cover or Marking. */
-  subject_id?: number;
+/** Body shape accepted by both POST and PATCH for /cover-dates/. */
+export interface CoverDateWritePayload {
+  cover?: number;
   /** ISO date string (YYYY-MM-DD); month/year granularity uses YYYY-MM-01 / YYYY-01-01. */
   date?: string;
-  granularity?: DateSeenGranularity;
+  granularity?: CoverDateGranularity;
 }
 
-export interface DateSeenWriteResult {
+export interface CoverDateWriteResult {
   id: number;
-  subject_type: DateSeenSubjectType;
-  subject_id: number;
+  cover: number;
   date: string;
-  granularity: DateSeenGranularity;
+  granularity: CoverDateGranularity;
 }
 
-/** POST /dates-seen/ -- attach a date observation to a Cover or Marking. */
-export async function createDateSeen(
-  payload: DateSeenWritePayload,
-): Promise<DateSeenWriteResult> {
+/** POST /cover-dates/ — attach a date to a Cover. */
+export async function createCoverDate(
+  payload: CoverDateWritePayload,
+): Promise<CoverDateWriteResult> {
   await ensureCsrfToken();
-  const res = await apiClient.post<DateSeenWriteResult>(
-    "/dates-seen/",
+  const res = await apiClient.post<CoverDateWriteResult>(
+    "/cover-dates/",
     payload,
   );
   return res.data;
 }
 
-/** PATCH /dates-seen/{id}/ -- adjust date or granularity in place. */
-export async function updateDateSeen(
+/** PATCH /cover-dates/{id}/ — adjust date or granularity in place. */
+export async function updateCoverDate(
   id: number,
-  payload: DateSeenWritePayload,
-): Promise<DateSeenWriteResult> {
+  payload: CoverDateWritePayload,
+): Promise<CoverDateWriteResult> {
   await ensureCsrfToken();
-  const res = await apiClient.patch<DateSeenWriteResult>(
-    `/dates-seen/${id}/`,
+  const res = await apiClient.patch<CoverDateWriteResult>(
+    `/cover-dates/${id}/`,
     payload,
   );
   return res.data;
 }
 
-/** DELETE /dates-seen/{id}/ -- remove a single date observation. */
-export async function deleteDateSeen(id: number): Promise<void> {
+/** DELETE /cover-dates/{id}/ — remove a single date row. */
+export async function deleteCoverDate(id: number): Promise<void> {
   await ensureCsrfToken();
-  await apiClient.delete(`/dates-seen/${id}/`);
+  await apiClient.delete(`/cover-dates/${id}/`);
 }
 
 /* -------------------------------------------------------------------------

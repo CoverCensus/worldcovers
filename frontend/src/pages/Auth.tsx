@@ -13,11 +13,7 @@ import { Formik, Form, Field, FormikHelpers } from "formik";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { getStoredUser, setStoredUser } from "@/lib/auth";
-
-function getLoginApiUrl(): string {
-  const base = import.meta.env.VITE_API_URL || "";
-  return base ? `${String(base).replace(/\/+$/, "")}/login/` : (import.meta.env.VITE_API_BASE_URL || '/api/v2') + "/login/";
-}
+import apiClient, { ensureCsrfToken } from "@/lib/api";
 
 interface AuthValues {
   email: string;
@@ -58,32 +54,22 @@ const Auth = () => {
     { setSubmitting }: FormikHelpers<AuthValues>
   ) => {
     try {
-      const res = await fetch(getLoginApiUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          email: values.email.trim(),
-          password: values.password,
-        }),
+      try {
+        await ensureCsrfToken();
+      } catch {
+        // Best-effort only; login may still succeed (e.g. CSRF-exempt view or token already present).
+      }
+      const res = await apiClient.post<{
+        user?: { id: number; username: string; email: string; is_staff: boolean; role?: string };
+        message?: string;
+        detail?: string;
+      }>("/login/", {
+        email: values.email.trim(),
+        password: values.password,
       });
 
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        const message =
-          (data as { message?: string }).message ||
-          (data as { detail?: string }).detail ||
-          (typeof data === "string" ? data : "Sign in failed");
-        toast({
-          title: "Sign in failed",
-          description: message,
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const userData = (data as { user?: { id: number; username: string; email: string; is_staff: boolean; role?: string } }).user;
+      const data = res.data;
+      const userData = data?.user;
       if (userData) {
         setStoredUser(userData);
       }
