@@ -96,3 +96,43 @@ export function markingImagesFromContributionMetas(
   });
   return rows;
 }
+
+/** True for preview rows from Contribution.submitted_data (not yet Image rows). */
+export function isDraftContributionImage(imageId: number): boolean {
+  return imageId < 0;
+}
+
+/** Fetch a draft contribution preview into a File for catalog image upload. */
+export async function fileFromContributionDraftImage(img: {
+  imageUrl: string;
+  originalFilename?: string;
+  storageFilename?: string;
+}): Promise<File> {
+  const url = contributionMetaImageUrl({
+    url: img.imageUrl,
+    storage_filename: img.storageFilename,
+    original_filename: img.originalFilename,
+  }) ?? img.imageUrl;
+  if (!url) {
+    throw new Error("Draft image is missing a URL.");
+  }
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) {
+    throw new Error(`Could not read draft image (${res.status}).`);
+  }
+  const blob = await res.blob();
+  const name =
+    (img.originalFilename || "").trim() ||
+    (img.storageFilename || "").split("/").pop() ||
+    "cover-image.jpg";
+  const type =
+    blob.type && blob.type.startsWith("image/") ? blob.type : guessMimeFromFilename(name);
+  return new File([blob], name, { type });
+}
+
+function guessMimeFromFilename(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".tif") || lower.endsWith(".tiff")) return "image/tiff";
+  return "image/jpeg";
+}

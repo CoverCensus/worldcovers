@@ -33,19 +33,21 @@ import { cn } from "@/lib/utils";
 import { isCoverContributionData } from "@/lib/contributionDisplay";
 import {
   contributionImageMetasFromSubmittedData,
+  fileFromContributionDraftImage,
+  isDraftContributionImage,
   markingImagesFromContributionMetas,
 } from "@/lib/contributionImages";
 
 import {
   createCover,
+  createCoverDate,
   createCoverMarking,
-  createDateSeen,
-  deleteDateSeen,
+  deleteCoverDate,
   updateCover,
+  updateCoverDate,
   updateCoverMarking,
-  updateDateSeen,
+  type CoverDateGranularity,
   type CoverWritePayload,
-  type DateSeenGranularity,
 } from "@/services/covers";
 import {
   createCitationSubject,
@@ -119,7 +121,7 @@ function formatAxiosError(err: unknown): string {
   return err.message || "Request failed.";
 }
 
-function deriveGranularityFromIso(iso: string): { granularity: DateSeenGranularity; normalizedDate: string } | null {
+function deriveGranularityFromIso(iso: string): { granularity: CoverDateGranularity; normalizedDate: string } | null {
   const trimmed = iso.trim();
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
   if (!m) return null;
@@ -580,7 +582,10 @@ export default function CoverEdit() {
   const applyExistingImageOrder = async (newImages: MarkingImage[]) => {
     if (reorderingImages) return;
     const ids = newImages.map((img) => img.imageId).filter((id) => id > 0);
-    if (ids.length === 0) return;
+    if (ids.length === 0) {
+      setExistingImages(newImages.map((img, idx) => ({ ...img, displayOrder: idx })));
+      return;
+    }
     setReorderingImages(true);
     setExistingImages(newImages.map((img, idx) => ({ ...img, displayOrder: idx })));
     try {
@@ -617,6 +622,10 @@ export default function CoverEdit() {
   const toggleExistingTracing = async (index: number, tracing: boolean) => {
     const img = existingImages[index];
     if (!img) return;
+    if (isDraftContributionImage(img.imageId)) {
+      setExistingImages((prev) => prev.map((row, i) => (i === index ? { ...row, isTracing: tracing } : row)));
+      return;
+    }
     const ok = await updateImage(img.imageId, { isTracing: tracing });
     if (!ok) {
       toast({
@@ -629,13 +638,33 @@ export default function CoverEdit() {
     setExistingImages((prev) => prev.map((row, i) => (i === index ? { ...row, isTracing: tracing } : row)));
   };
 
-  const uploadPendingOrThrow = async (targetCoverId: number) => {
+  /** Materialize draft contribution previews and new picks onto the Cover row. */
+  const uploadAllCoverImagesOrThrow = async (targetCoverId: number) => {
     if (uploading) return;
-    if (pendingUploads.length === 0) return;
+    const draftImages = existingImages
+      .filter((img) => isDraftContributionImage(img.imageId))
+      .sort((a, b) => a.displayOrder - b.displayOrder);
+    if (draftImages.length === 0 && pendingUploads.length === 0) return;
+
     setUploading(true);
     try {
-      const baseOrder = existingImages.length;
+      let displayOrder = existingImages.filter((img) => img.imageId > 0).length;
       const created: Array<MarkingImage | null> = [];
+
+      for (const img of draftImages) {
+        const file = await fileFromContributionDraftImage(img);
+        const row = await createImageForSubject({
+          file,
+          subjectType: "COVER",
+          subjectId: targetCoverId,
+          imageView: "FRONT",
+          isTracing: img.isTracing === true,
+          displayOrder,
+        });
+        created.push(row);
+        if (row) displayOrder += 1;
+      }
+
       for (let i = 0; i < pendingUploads.length; i += 1) {
         const row = pendingUploads[i];
         const img = await createImageForSubject({
@@ -644,17 +673,23 @@ export default function CoverEdit() {
           subjectId: targetCoverId,
           imageView: "FRONT",
           isTracing: row.tracing,
-          displayOrder: baseOrder + i,
+          displayOrder: displayOrder + i,
         });
         created.push(img);
       }
+
       const okCount = created.filter(Boolean).length;
-      if (okCount === 0) {
+      const expected = draftImages.length + pendingUploads.length;
+      if (expected > 0 && okCount === 0) {
         throw new Error("Could not upload cover images. Check format (PNG, JPG, TIFF) and try again.");
       }
+      if (okCount < expected) {
+        throw new Error("Some cover images could not be uploaded. Please try again.");
+      }
+
       pendingUploads.forEach((p) => URL.revokeObjectURL(p.previewUrl));
       setPendingUploads([]);
-      await refreshImages();
+      setExistingImages((prev) => prev.filter((img) => !isDraftContributionImage(img.imageId)));
     } finally {
       setUploading(false);
     }
@@ -932,16 +967,18 @@ export default function CoverEdit() {
       }
 
       const keepId = coverDate.existingId ?? null;
-      const deleteOps = originalDates.filter((d) => d.id !== keepId).map((d) => deleteDateSeen(d.id));
+      const deleteOps = originalDates.filter((d) => d.id !== keepId).map((d) => deleteCoverDate(d.id));
 
       if (keepId != null) {
-        await Promise.all([...deleteOps, updateDateSeen(keepId, { date: normalizedDate, granularity })]);
+        await Promise.all([
+          ...deleteOps,
+          updateCoverDate(keepId, { date: normalizedDate, granularity }),
+        ]);
       } else {
         await Promise.all([
           ...deleteOps,
-          createDateSeen({
-            subject_type: "COVER",
-            subject_id: savedCoverId,
+          createCoverDate({
+            cover: savedCoverId,
             date: normalizedDate,
             granularity,
           }),
@@ -950,14 +987,26 @@ export default function CoverEdit() {
 
       await syncCoverCitations(savedCoverId);
 
+      await uploadAllCoverImagesOrThrow(savedCoverId);
+
       if (mode === "create") {
         const { covers } = await getMarkingCovers(markingId);
         const found = covers.find((c) => c.id === coverMarkingPk) ?? null;
         setCoverRow(found);
-      }
-
-      if (pendingUploads.length > 0) {
-        await uploadPendingOrThrow(savedCoverId);
+        if (found?.coverDetails?.id) {
+          setImagesLoading(true);
+          try {
+            const imgs = await getImagesForSubject({
+              subjectType: "COVER",
+              subjectId: found.coverDetails.id,
+            });
+            setExistingImages(imgs);
+          } finally {
+            setImagesLoading(false);
+          }
+        }
+      } else if (coverId != null) {
+        await refreshImages();
       }
 
       if (mode === "edit" && coverRow?.reviewStatus === "needs_revision") {

@@ -46,7 +46,7 @@ import type { AssociatedCover, AssociatedCoverDate } from "@/services/markings";
  * Save flow:
  *   create mode -> POST /covers/         (Cover row)
  *               -> POST /cover-markings/ (link to current marking)
- *               -> POST /cover-dates/    (one per row in the dates table)
+ *               -> POST /dates-seen/     (subject_type=COVER, one per row)
  *   edit   mode -> PATCH /covers/{id}/
  *               -> PATCH /cover-markings/{id}/
  *               -> diff dates: PATCH/POST/DELETE per row vs. the original.
@@ -330,7 +330,7 @@ export function CoverDialog({
         });
       }
 
-      // Reconcile cover-dates: anything still in `dates` is kept (PATCHed
+      // Reconcile dates-seen rows: anything still in `dates` is kept (PATCHed
       // if it has an existingId, POSTed otherwise); anything that used to
       // be on the cover but was removed from the form is DELETEd.
       const keptIds = new Set(
