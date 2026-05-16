@@ -351,7 +351,7 @@ A named geographic or administrative area used to organize post offices within a
 
 ### shapes
 
-Editorial value table for the primary form assigned to a postal marking. This vocabulary is intentionally provisional: while many values describe base geometry, some records reflect catalog terminology that may combine geometry, motif, framing treatment, or construction style. Compound ASCC codes (e.g., DC, DLC, DLDC, DO, DLO, DLDO, NOR, Pmk) are carried verbatim as rows in shapes rather than decomposed into separate shape-and-framing axes.
+Editorial value table for the primary form assigned to a postal marking. This vocabulary is intentionally provisional: while many values describe base geometry, some records reflect catalog terminology that may combine geometry, motif, framing treatment, or construction style. Compound ASCC codes (e.g., DC, DLC, DLDC, DO, DLO, DLDO, NOR) are carried verbatim as rows in shapes rather than decomposed into separate shape-and-framing axes.
 
 *Fields:*
 
