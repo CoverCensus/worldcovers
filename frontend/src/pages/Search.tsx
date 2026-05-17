@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
-import { Search as SearchIcon, SlidersHorizontal, Loader2, Plus } from "lucide-react";
+import { Search as SearchIcon, SlidersHorizontal, Loader2, Plus, ArrowUp, ArrowDown } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
@@ -19,6 +19,7 @@ import {
 } from "@/services/markings";
 import { buildCatalogSearchRow } from "@/lib/catalogRecordDisplay";
 import { CatalogRecordFields } from "@/components/CatalogRecordFields";
+import { ENTRY_LABELS } from "@/labels/entry";
 import { useToast } from "@/hooks/use-toast";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
 import { useDebounce } from "@/hooks/useDebounce";
@@ -28,67 +29,81 @@ import { ImageOrPlaceholder } from "@/components/ImageOrPlaceholder";
 
 const DEBOUNCE_MS = 400;
 type SubmissionQueueSortOption = "newest" | "oldest";
-type CatalogSortOption =
-  | "newest"
-  | "oldest"
-  | "state_asc"
-  | "state_desc"
-  | "town_asc"
-  | "town_desc"
-  | "type_asc"
-  | "type_desc"
-  | "shape_asc"
-  | "shape_desc"
-  | "lettering_asc"
-  | "lettering_desc"
-  | "color_asc"
-  | "color_desc"
-  | "earliest_asc"
-  | "earliest_desc"
-  | "latest_asc"
-  | "latest_desc";
 
-function orderingParamForSort(sort: CatalogSortOption): string | undefined {
-  switch (sort) {
-    case "state_asc":
-      return "post_office__region__name,post_office__name,id";
-    case "state_desc":
-      return "-post_office__region__name,post_office__name,id";
-    case "town_asc":
-      return "post_office__name,post_office__region__name,id";
-    case "town_desc":
-      return "-post_office__name,post_office__region__name,id";
-    case "type_asc":
-      return "type,post_office__region__name,post_office__name,id";
-    case "type_desc":
-      return "-type,post_office__region__name,post_office__name,id";
-    case "shape_asc":
-      return "shape__name,post_office__region__name,post_office__name,id";
-    case "shape_desc":
-      return "-shape__name,post_office__region__name,post_office__name,id";
-    case "lettering_asc":
-      return "lettering__name,post_office__region__name,post_office__name,id";
-    case "lettering_desc":
-      return "-lettering__name,post_office__region__name,post_office__name,id";
-    case "color_asc":
-      return "color__name,post_office__region__name,post_office__name,id";
-    case "color_desc":
-      return "-color__name,post_office__region__name,post_office__name,id";
-    case "earliest_asc":
-      return "earliest_seen,post_office__region__name,post_office__name,id";
-    case "earliest_desc":
-      return "-earliest_seen,post_office__region__name,post_office__name,id";
-    case "latest_asc":
-      return "latest_seen,post_office__region__name,post_office__name,id";
-    case "latest_desc":
-      return "-latest_seen,post_office__region__name,post_office__name,id";
-    case "oldest":
-      return "id";
-    case "newest":
-      return "-id";
-    default:
-      return undefined;
+/**
+ * Catalog sort is an ordered list of (field, direction) entries. Insertion
+ * order = priority: the first entry is the primary sort, the second is the
+ * tiebreaker, and so on. Clicking an arrow on a filter label appends/modifies
+ * the entry for that field; clicking the same-direction arrow again removes
+ * the entry (toggle off).
+ */
+type SortField = "state" | "town" | "type" | "shape" | "color" | "earliest" | "latest";
+type SortDir = "asc" | "desc";
+type SortEntry = { field: SortField; dir: SortDir };
+
+const SORT_FIELD_COLUMN: Record<SortField, string> = {
+  state: "post_office__region__name",
+  town: "post_office__name",
+  type: "type",
+  shape: "shape__name",
+  color: "color__name",
+  earliest: "earliest_seen",
+  latest: "latest_seen",
+};
+
+const DEFAULT_SORT: SortEntry[] = [{ field: "state", dir: "asc" }];
+
+function parseSortParam(raw: string | null): SortEntry[] {
+  if (raw === null) return [...DEFAULT_SORT];
+  if (raw === "none" || raw === "") return [];
+  const entries: SortEntry[] = [];
+  const seen = new Set<SortField>();
+  for (const token of raw.split(",")) {
+    const t = token.trim();
+    if (!t) continue;
+    const m = t.match(/^(state|town|type|shape|color|earliest|latest)_(asc|desc)$/);
+    if (!m) continue;
+    const field = m[1] as SortField;
+    if (seen.has(field)) continue;
+    seen.add(field);
+    entries.push({ field, dir: m[2] as SortDir });
   }
+  return entries;
+}
+
+function serializeSort(entries: SortEntry[]): string {
+  return entries.map((e) => `${e.field}_${e.dir}`).join(",");
+}
+
+function isDefaultSort(entries: SortEntry[]): boolean {
+  return (
+    entries.length === DEFAULT_SORT.length &&
+    entries.every((e, i) => e.field === DEFAULT_SORT[i].field && e.dir === DEFAULT_SORT[i].dir)
+  );
+}
+
+/**
+ * Build the DRF `?ordering=` value from the entries. Appends sensible
+ * tiebreakers (region, post office name) and finally `id` for determinism,
+ * skipping any that the user already explicitly picked.
+ */
+function orderingParamForSort(entries: SortEntry[]): string {
+  if (entries.length === 0) return "id";
+  const cols: string[] = [];
+  const used = new Set<string>();
+  for (const e of entries) {
+    const col = SORT_FIELD_COLUMN[e.field];
+    cols.push((e.dir === "desc" ? "-" : "") + col);
+    used.add(col);
+  }
+  for (const tb of ["post_office__region__name", "post_office__name"]) {
+    if (!used.has(tb)) {
+      cols.push(tb);
+      used.add(tb);
+    }
+  }
+  cols.push("id");
+  return cols.join(",");
 }
 
 function validateYearString(raw: string, minYear: number, maxYear: number): string | null {
@@ -123,6 +138,63 @@ function getPaginationPages(currentPage: number, totalPages: number): (number | 
   if (currentPage < totalPages - delta - 1) pages.push("ellipsis");
   pages.push(totalPages);
   return pages;
+}
+
+/**
+ * Filter label with hover-revealed up/down arrows that drive the multi-column
+ * catalogSort list. Clicking the active arrow toggles the entry off; clicking
+ * the opposite arrow flips it; clicking an inactive field appends a new entry
+ * at the lowest priority (insertion order = sort priority).
+ */
+function SortableLabel({
+  htmlFor,
+  label,
+  field,
+  currentSort,
+  onToggle,
+}: {
+  htmlFor?: string;
+  label: string;
+  field: SortField;
+  currentSort: SortEntry[];
+  onToggle: (field: SortField, dir: SortDir) => void;
+}) {
+  const entry = currentSort.find((e) => e.field === field) ?? null;
+  const isAsc = entry?.dir === "asc";
+  const isDesc = entry?.dir === "desc";
+  return (
+    <div className="group flex items-center gap-1">
+      <Label htmlFor={htmlFor}>{label}</Label>
+      <button
+        type="button"
+        aria-label={`Sort by ${label} ascending`}
+        aria-pressed={isAsc}
+        onClick={() => onToggle(field, "asc")}
+        className={cn(
+          "p-0.5 rounded hover:bg-muted transition-opacity",
+          isAsc
+            ? "text-foreground opacity-100"
+            : "text-muted-foreground opacity-0 group-hover:opacity-100 focus:opacity-100",
+        )}
+      >
+        <ArrowUp className="h-3 w-3" />
+      </button>
+      <button
+        type="button"
+        aria-label={`Sort by ${label} descending`}
+        aria-pressed={isDesc}
+        onClick={() => onToggle(field, "desc")}
+        className={cn(
+          "p-0.5 rounded hover:bg-muted transition-opacity",
+          isDesc
+            ? "text-foreground opacity-100"
+            : "text-muted-foreground opacity-0 group-hover:opacity-100 focus:opacity-100",
+        )}
+      >
+        <ArrowDown className="h-3 w-3" />
+      </button>
+    </div>
+  );
 }
 
 const Search = () => {
@@ -160,10 +232,24 @@ const Search = () => {
   const [submissionQueueSort, setSubmissionQueueSort] = useState<SubmissionQueueSortOption>(
     () => (getSearchParam(searchParams, "sort", "newest") === "oldest" ? "oldest" : "newest"),
   );
-  const [catalogSort, setCatalogSort] = useState<CatalogSortOption>(() => {
-    const raw = getSearchParam(searchParams, "order", "newest") as CatalogSortOption;
-    return raw || "newest";
-  });
+  const [catalogSort, setCatalogSort] = useState<SortEntry[]>(() =>
+    parseSortParam(searchParams.get("order")),
+  );
+
+  // Apply an up/down arrow click on a filter label. Same direction toggles
+  // the entry off; opposite direction flips it; inactive appends at the end.
+  const toggleSort = (field: SortField, dir: SortDir) => {
+    setCatalogSort((prev) => {
+      const idx = prev.findIndex((e) => e.field === field);
+      if (idx === -1) return [...prev, { field, dir }];
+      if (prev[idx].dir === dir) return prev.filter((_, i) => i !== idx);
+      const next = prev.slice();
+      next[idx] = { field, dir };
+      return next;
+    });
+  };
+
+  const catalogSortKey = useMemo(() => serializeSort(catalogSort), [catalogSort]);
 
   // Debounced values for text inputs - API called only after user stops typing
   const debouncedKeywordSearch = useDebounce(keywordSearch, DEBOUNCE_MS);
@@ -196,7 +282,7 @@ const Search = () => {
   const prevManuscriptFilterRef = useRef(manuscriptFilter);
   const prevTypeFilterRef = useRef(typeFilter);
   const prevSortRef = useRef(submissionQueueSort);
-  const prevCatalogSortRef = useRef(catalogSort);
+  const prevCatalogSortRef = useRef(catalogSortKey);
 
   const beginYearError = useMemo(
     () => validateYearString(beginYear, minYear, maxYear),
@@ -239,7 +325,7 @@ const Search = () => {
     const manuscriptFilterJustChanged = prevManuscriptFilterRef.current !== manuscriptFilter;
     const typeFilterJustChanged = prevTypeFilterRef.current !== typeFilter;
     const sortJustChanged = prevSortRef.current !== submissionQueueSort;
-    const catalogSortJustChanged = prevCatalogSortRef.current !== catalogSort;
+    const catalogSortJustChanged = prevCatalogSortRef.current !== catalogSortKey;
     if (searchJustChanged) prevKeywordRef.current = debouncedKeywordSearch;
     if (shapeFilterJustChanged) prevShapeFilterRef.current = shapeFilter;
     if (colorFilterJustChanged) prevColorFilterRef.current = colorFilter;
@@ -251,7 +337,7 @@ const Search = () => {
     if (manuscriptFilterJustChanged) prevManuscriptFilterRef.current = manuscriptFilter;
     if (typeFilterJustChanged) prevTypeFilterRef.current = typeFilter;
     if (sortJustChanged) prevSortRef.current = submissionQueueSort;
-    if (catalogSortJustChanged) prevCatalogSortRef.current = catalogSort;
+    if (catalogSortJustChanged) prevCatalogSortRef.current = catalogSortKey;
 
     const anyFilterChanged =
       searchJustChanged ||
@@ -269,7 +355,7 @@ const Search = () => {
     if (anyFilterChanged) {
       setCurrentPage(1);
     }
-  }, [debouncedKeywordSearch, shapeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, manuscriptFilter, typeFilter, submissionQueueSort, catalogSort]);
+  }, [debouncedKeywordSearch, shapeFilter, stateFilter, debouncedTownFilter, debouncedBeginYear, debouncedEndYear, imagesOnly, colorFilter, manuscriptFilter, typeFilter, submissionQueueSort, catalogSortKey]);
 
   // Treat years as active filters only when they are valid and 4 digits.
   const normalizedBeginYear = useMemo(() => {
@@ -316,7 +402,7 @@ const Search = () => {
       manuscriptFilter,
       typeFilterApi,
       itemsPerPage,
-      catalogSort,
+      catalogSortKey,
     ],
     queryFn: async () => {
       const normalizedFrom =
@@ -387,7 +473,9 @@ const Search = () => {
     if (manuscriptFilter !== "both") params.set("manuscripts", manuscriptFilter);
     if (imagesOnly) params.set("images", "true");
     if (submissionQueueSort !== "newest") params.set("sort", submissionQueueSort);
-    if (catalogSort !== "newest") params.set("order", catalogSort);
+    // Empty list (user toggled off all sorts) -> persist as the sentinel
+    // "none" so a page reload distinguishes that intent from "no param".
+    if (!isDefaultSort(catalogSort)) params.set("order", catalogSortKey || "none");
     if (itemsPerPage !== 10) params.set("pageSize", String(itemsPerPage));
     if (currentPage > 1) params.set("page", String(currentPage));
     const next = params.toString();
@@ -395,7 +483,7 @@ const Search = () => {
     if (next !== current) {
       setSearchParams(next ? params : {}, { replace: true });
     }
-  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, shapeFilter, typeFilter, colorFilter, manuscriptFilter, imagesOnly, submissionQueueSort, catalogSort, itemsPerPage, searchParams, setSearchParams]);
+  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, normalizedBeginYear, normalizedEndYear, shapeFilter, typeFilter, colorFilter, manuscriptFilter, imagesOnly, submissionQueueSort, catalogSort, catalogSortKey, itemsPerPage, searchParams, setSearchParams]);
 
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
   const pageStart = (currentPage - 1) * itemsPerPage;
@@ -420,7 +508,7 @@ const Search = () => {
     setManuscriptFilter("both");
     setImagesOnly(false);
     setSubmissionQueueSort("newest");
-    setCatalogSort("newest");
+    setCatalogSort([...DEFAULT_SORT]);
     setCurrentPage(1);
     setItemsPerPage(10);
     setSearchParams("", { replace: true });
@@ -527,7 +615,13 @@ const Search = () => {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="state">State</Label>
+                    <SortableLabel
+                      htmlFor="state"
+                      label="State"
+                      field="state"
+                      currentSort={catalogSort}
+                      onToggle={toggleSort}
+                    />
                     <SearchableSelect
                       id="state"
                       value={stateFilter}
@@ -546,7 +640,13 @@ const Search = () => {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="town">Town</Label>
+                    <SortableLabel
+                      htmlFor="town"
+                      label="Town"
+                      field="town"
+                      currentSort={catalogSort}
+                      onToggle={toggleSort}
+                    />
                     <Input
                       id="town"
                       placeholder="Enter town name..."
@@ -558,7 +658,13 @@ const Search = () => {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="beginYear">Begin Year</Label>
+                      <SortableLabel
+                        htmlFor="beginYear"
+                        label={ENTRY_LABELS.datesObserved.earliest}
+                        field="earliest"
+                        currentSort={catalogSort}
+                        onToggle={toggleSort}
+                      />
                       <Input
                         id="beginYear"
                         type="number"
@@ -580,7 +686,13 @@ const Search = () => {
                       )}
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="endYear">End Year</Label>
+                      <SortableLabel
+                        htmlFor="endYear"
+                        label={ENTRY_LABELS.datesObserved.latest}
+                        field="latest"
+                        currentSort={catalogSort}
+                        onToggle={toggleSort}
+                      />
                       <Input
                         id="endYear"
                         type="number"
@@ -605,7 +717,13 @@ const Search = () => {
 
                   {manuscriptFilter !== "only" && (
                     <div className="space-y-2">
-                      <Label htmlFor="shape">Shape</Label>
+                      <SortableLabel
+                        htmlFor="shape"
+                        label="Shape"
+                        field="shape"
+                        currentSort={catalogSort}
+                        onToggle={toggleSort}
+                      />
                       <SearchableSelect
                         id="shape"
                         disabled={filtersDisabled}
@@ -625,7 +743,13 @@ const Search = () => {
                   )}
 
                   <div className="space-y-2">
-                    <Label htmlFor="mark-type">Type</Label>
+                    <SortableLabel
+                      htmlFor="mark-type"
+                      label="Type"
+                      field="type"
+                      currentSort={catalogSort}
+                      onToggle={toggleSort}
+                    />
                     <Select value={typeFilter} onValueChange={setTypeFilter} disabled={filtersDisabled}>
                       <SelectTrigger id="mark-type">
                         <SelectValue placeholder="All Types" />
@@ -640,7 +764,13 @@ const Search = () => {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="color">Color</Label>
+                    <SortableLabel
+                      htmlFor="color"
+                      label="Color"
+                      field="color"
+                      currentSort={catalogSort}
+                      onToggle={toggleSort}
+                    />
                     <SearchableSelect
                       id="color"
                       value={colorFilter}

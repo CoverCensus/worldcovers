@@ -22,31 +22,36 @@ import { useToast } from "@/hooks/use-toast";
 import { getColors, type ColorOption } from "@/services/colors";
 import {
   createCover,
-  createCoverDate,
   createCoverMarking,
-  deleteCoverDate,
+  createDateSeen,
+  deleteDateSeen,
   updateCover,
-  updateCoverDate,
   updateCoverMarking,
-  type CoverDateGranularity,
+  updateDateSeen,
+  type DateSeenGranularity,
   type CoverWritePayload,
 } from "@/services/covers";
-import type { AssociatedCover, AssociatedCoverDate } from "@/services/markings";
+import type { AssociatedCover, AssociatedDateSeen } from "@/services/markings";
 
 /**
  * CoverDialog
  * -----------
  * Single modal that powers both "Submit New Cover" and "Edit Cover" flows
- * on the Record Detail page. The Cover graph spans three tables on the
- * backend (Cover, CoverMarking, CoverDate) and the dialog is the only
+ * on the Record Detail page. The Cover graph spans three resources on the
+ * backend (Cover, CoverMarking, DateSeen) and the dialog is the only
  * place in the SPA where editors/contributors get to edit all three at
  * once, so the orchestration lives here rather than being duplicated by
  * each caller.
  *
+ * DateSeen is polymorphic (subject_type=COVER|MARKING + subject_id);
+ * this dialog only ever writes COVER-scoped rows for the cover it is
+ * editing.
+ *
  * Save flow:
  *   create mode -> POST /covers/         (Cover row)
  *               -> POST /cover-markings/ (link to current marking)
- *               -> POST /dates-seen/     (subject_type=COVER, one per row)
+ *               -> POST /dates-seen/     (one per row, subject_type=COVER,
+ *                                         subject_id=<new cover.id>)
  *   edit   mode -> PATCH /covers/{id}/
  *               -> PATCH /cover-markings/{id}/
  *               -> diff dates: PATCH/POST/DELETE per row vs. the original.
@@ -58,11 +63,11 @@ import type { AssociatedCover, AssociatedCoverDate } from "@/services/markings";
 type Mode = "create" | "edit";
 
 type FormDate = {
-  /** Existing CoverDate.id (edit mode only); undefined when locally added. */
+  /** Existing DateSeen.id (edit mode only); undefined when locally added. */
   existingId?: number;
   /** ISO YYYY-MM-DD value bound to <input type="date">. */
   date: string;
-  granularity: CoverDateGranularity;
+  granularity: DateSeenGranularity;
 };
 
 interface CoverDialogProps {
@@ -86,7 +91,7 @@ const COVER_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "FL", label: "FL - Folded Letter" },
 ];
 
-const GRANULARITY_OPTIONS: { value: CoverDateGranularity; label: string }[] = [
+const GRANULARITY_OPTIONS: { value: DateSeenGranularity; label: string }[] = [
   { value: "DAY", label: "Day (MM/DD/YYYY)" },
   { value: "MONTH", label: "Month (MM/YYYY)" },
   { value: "YEAR", label: "Year (YYYY)" },
@@ -104,7 +109,7 @@ const NO_TYPE_VALUE = "__none__";
  */
 function normalizeFormDate(
   raw: string,
-  granularity: CoverDateGranularity,
+  granularity: DateSeenGranularity,
 ): string {
   const trimmed = (raw ?? "").trim();
   if (!trimmed) return "";
@@ -119,8 +124,8 @@ function normalizeFormDate(
   return trimmed;
 }
 
-/** Convert AssociatedCoverDate (read model) -> FormDate (write model). */
-function toFormDate(d: AssociatedCoverDate): FormDate {
+/** Convert AssociatedDateSeen (read model) -> FormDate (write model). */
+function toFormDate(d: AssociatedDateSeen): FormDate {
   return {
     existingId: d.id,
     date: d.date.slice(0, 10),
@@ -147,7 +152,7 @@ function buildInitialState(cover: AssociatedCover | null | undefined) {
     isInstitutional: c?.isInstitutional === true,
     isBackstamp: cover?.isBackstamp === true,
     placement: cover?.placement ?? "",
-    dates: c?.coverDates?.map(toFormDate) ?? [],
+    dates: c?.datesSeen?.map(toFormDate) ?? [],
   };
 }
 
@@ -225,7 +230,7 @@ export function CoverDialog({
   const addDate = () => {
     setDates((prev) => [
       ...prev,
-      { date: "", granularity: "DAY" satisfies CoverDateGranularity },
+      { date: "", granularity: "DAY" satisfies DateSeenGranularity },
     ]);
   };
 
@@ -303,7 +308,7 @@ export function CoverDialog({
     try {
       let coverId: number;
       let coverMarkingId: number;
-      let originalDates: AssociatedCoverDate[] = [];
+      let originalDates: AssociatedDateSeen[] = [];
 
       if (mode === "create") {
         const created = await createCover(coverPayload);
@@ -321,7 +326,7 @@ export function CoverDialog({
         }
         coverId = cover.coverDetails.id;
         coverMarkingId = cover.id;
-        originalDates = cover.coverDetails.coverDates;
+        originalDates = cover.coverDetails.datesSeen;
 
         await updateCover(coverId, coverPayload);
         await updateCoverMarking(coverMarkingId, {
@@ -330,26 +335,28 @@ export function CoverDialog({
         });
       }
 
-      // Reconcile dates-seen rows: anything still in `dates` is kept (PATCHed
-      // if it has an existingId, POSTed otherwise); anything that used to
-      // be on the cover but was removed from the form is DELETEd.
+      // Reconcile DateSeen rows on this cover: anything still in `dates` is
+      // kept (PATCHed if it has an existingId, POSTed otherwise); anything
+      // that used to be on the cover but was removed from the form is
+      // DELETEd. All writes here are subject_type=COVER, subject_id=coverId.
       const keptIds = new Set(
         dates.map((d) => d.existingId).filter((x): x is number => x != null),
       );
       const deletions = originalDates
         .filter((d) => !keptIds.has(d.id))
-        .map((d) => deleteCoverDate(d.id));
+        .map((d) => deleteDateSeen(d.id));
 
       const writes = dates.map((row) => {
         const dateValue = normalizeFormDate(row.date, row.granularity);
         if (row.existingId != null) {
-          return updateCoverDate(row.existingId, {
+          return updateDateSeen(row.existingId, {
             date: dateValue,
             granularity: row.granularity,
           });
         }
-        return createCoverDate({
-          cover: coverId,
+        return createDateSeen({
+          subject_type: "COVER",
+          subject_id: coverId,
           date: dateValue,
           granularity: row.granularity,
         });
@@ -584,7 +591,7 @@ export function CoverDialog({
                         value={row.granularity}
                         onValueChange={(v) =>
                           updateDateAt(idx, {
-                            granularity: v as CoverDateGranularity,
+                            granularity: v as DateSeenGranularity,
                           })
                         }
                         disabled={submitting}
@@ -631,7 +638,7 @@ export function CoverDialog({
                 ? "Saving..."
                 : mode === "create"
                   ? "Submit Cover"
-                  : "Save changes"}
+                  : "Save"}
             </Button>
           </div>
         </form>

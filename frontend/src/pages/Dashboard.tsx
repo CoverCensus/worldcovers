@@ -27,6 +27,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ArrowDown, ArrowUp, Calendar, Loader2, Pencil, Plus, Search as SearchIcon, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowUp, Calendar, Loader2, Pencil, Plus, Search as SearchIcon, SlidersHorizontal } from "lucide-react";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
@@ -1026,7 +1027,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         throw new Error(typeof msg === "string" ? msg : "Request failed");
       }
       const actionLabel =
-        statusDecisionKind === "approve" ? "Approved" : statusDecisionKind === "reject" ? "Rejected" : "Revision requested";
+        statusDecisionKind === "approve" ? "Approved" : statusDecisionKind === "reject" ? "Rejected" : "Submission returned";
       toast({ title: actionLabel, description: "Your comment was saved for the contributor." });
       setPendingReviewItems((prev) => prev.filter((i) => i.id !== statusDecisionTarget.id));
       setStatusDecisionTarget(null);
@@ -1053,7 +1054,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     if (!apiUrl) {
       toast({
         title: "Configuration error",
-        description: "VITE_API_URL is not set, cannot delete catalog entry.",
+        description: "VITE_API_URL is not set, cannot remove catalog entry.",
         variant: "destructive",
       });
       return;
@@ -1073,7 +1074,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         headers,
       });
       if (!res.ok) {
-        throw new Error(`Delete failed: ${res.status} ${res.statusText}`);
+        throw new Error(`Remove failed: ${res.status} ${res.statusText}`);
       }
       // Remove from the visible list (submissions or assigned catalog)
       const targetId = (deleteTarget as { id?: number }).id ?? (deleteTarget as { marking_id?: number }).marking_id;
@@ -1084,12 +1085,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       // Refetch catalog so total and list stay in sync with server
       setAssignedCatalogRefetchKey((k) => k + 1);
       toast({
-        title: "Catalog entry deleted",
+        title: "Catalog entry removed",
         description: "The catalog entry linked to this submission has been removed.",
       });
     } catch (error: unknown) {
       toast({
-        title: "Could not delete catalog entry",
+        title: "Could not remove catalog entry",
         description: error instanceof Error ? error.message : "Please try again or contact an admin.",
         variant: "destructive",
       });
@@ -1620,7 +1621,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       errorMessage="Failed to load types"
                       searchPlaceholder="Search types..."
                       emptyMessage="No type found."
-                      aria-label="Filter by postmark type"
+                      aria-label="Filter by marking type"
                       disabled={filtersDisabled}
                     />
                   </div>
@@ -1977,7 +1978,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                       size="sm"
                                       onClick={() => setDeleteTarget(submission)}
                                     >
-                                      Delete
+                                      Remove
                                     </Button>
                                   )}
                                 </>
@@ -2806,9 +2807,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this submission?</AlertDialogTitle>
+            <AlertDialogTitle>Remove this submission?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently remove{" "}
+              This will remove{" "}
               <span className="font-medium text-foreground">
                 {deleteTarget?.name ?? "this catalog entry"}
               </span>{" "}
@@ -2822,7 +2823,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               disabled={!!deletingId}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deletingId ? "Deleting..." : "Delete"}
+              {deletingId ? "Removing..." : "Remove"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2846,7 +2847,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 ? "Approve submission"
                 : statusDecisionKind === "reject"
                   ? "Reject submission"
-                  : "Request revision"}
+                  : "Return submission"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {statusDecisionKind === "approve"
@@ -2859,7 +2860,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           <div className="space-y-2 py-2">
             {statusDecisionKind === "approve" && (
               <div className="space-y-1.5">
-                <Label htmlFor="approve-value">Value (of this postmark) <span className="text-destructive">*</span></Label>
+                <Label htmlFor="approve-value">Value (of this marking) <span className="text-destructive">*</span></Label>
                 <Input
                   id="approve-value"
                   type="number"
@@ -2916,7 +2917,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   ? "Approve"
                   : statusDecisionKind === "reject"
                     ? "Reject"
-                    : "Request revision"}
+                    : "Return"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

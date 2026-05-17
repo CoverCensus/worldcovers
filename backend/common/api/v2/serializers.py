@@ -115,10 +115,7 @@ class FAQEntrySerializer(serializers.ModelSerializer):
 ## Image (polymorphic over COVER | MARKING)
 ###################################################################################################
 class ImageSerializer(serializers.ModelSerializer):
-    """
-    Polymorphic image attached to either a Cover or a Marking by
-    (subject_type, subject_id). Replaces PostmarkImageSerializer.
-    """
+    """Polymorphic image attached to either a Cover or a Marking by (subject_type, subject_id)."""
     image_url = serializers.SerializerMethodField()
     # Multipart upload support: clients may POST a raw image file under `file`.
     # We store it under MEDIA_ROOT and persist storage_filename + extracted metadata.
@@ -392,6 +389,13 @@ class CoverSerializer(serializers.ModelSerializer):
             "modified_date",
         ]
         read_only_fields = ["id", "code", "created_date", "modified_date"]
+
+    def get_dates_seen(self, obj):
+        qs = DateSeen.objects.filter(
+            subject_type=DateSeen.SUBJECT_COVER,
+            subject_id=obj.pk,
+        ).order_by("date")
+        return DateSeenSerializer(qs, many=True).data
 
     def get_dates_seen(self, obj):
         qs = DateSeen.objects.filter(

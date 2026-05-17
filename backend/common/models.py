@@ -380,7 +380,13 @@ class Image(TimestampedModel):
     subject_type = models.CharField(max_length=8, choices=SUBJECT_TYPE_CHOICES)
     subject_id = models.PositiveIntegerField()
     original_filename = models.CharField(max_length=255)
-    storage_filename = models.CharField(max_length=255, unique=True)
+    # storage_filename is intentionally NOT unique: a single image file on
+    # disk can be referenced by multiple Image rows (e.g. one per color
+    # fan-out child of a parent marking in the ASCC munger output). Default
+    # destroy only removes the row, leaving the file and any sibling rows
+    # intact -- see ImageViewSet.destroy and the absence of pre_delete
+    # signals on this model.
+    storage_filename = models.CharField(max_length=255)
     file_checksum = models.CharField(max_length=64)
     mime_type = models.CharField(max_length=64)
     image_width = models.IntegerField()
@@ -456,29 +462,6 @@ class Postcover(TimestampedModel):
     def __str__(self):
         return f'{self.postcover_key} (Owner: {self.owner_user})'
 
-class PostcoverImage(TimestampedModel):
-    """Images of physical postal covers"""
-    IMAGE_VIEW_CHOICES = [('FRONT', 'Front'), ('BACK', 'Back'), ('INTERIOR', 'Interior'), ('DETAIL', 'Detail')]
-    postcover_image_id = models.AutoField(primary_key=True)
-    postcover = models.ForeignKey(Postcover, on_delete=models.CASCADE, related_name='images')
-    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='postcover_images_uploaded')
-    original_filename = models.CharField(max_length=255)
-    storage_filename = models.CharField(max_length=255, unique=True)
-    file_checksum = models.CharField(max_length=64)
-    mime_type = models.CharField(max_length=50)
-    image_width = models.IntegerField()
-    image_height = models.IntegerField()
-    file_size_bytes = models.BigIntegerField()
-    image_view = models.CharField(max_length=20, choices=IMAGE_VIEW_CHOICES)
-    image_description = models.TextField(blank=True)
-    display_order = models.IntegerField(default=0)
-
-    class Meta:
-        db_table = 'PostcoverImages'
-        verbose_name = 'Example Image'
-        verbose_name_plural = 'Example Images'
-        ordering = ['postcover', 'display_order']
-        indexes = [models.Index(fields=['postcover', 'display_order']), models.Index(fields=['file_checksum'])]
 
     def __str__(self):
         return f'{self.postcover} - {self.original_filename}'
@@ -488,141 +471,6 @@ class PostcoverImage(TimestampedModel):
         if not self.file_checksum and hasattr(self, 'file_object'):
             self.file_checksum = Image.generate_checksum(self.file_object)
         super().save(*args, **kwargs)
-
-class LegacyAbbreviation(models.Model):
-    """TBLABBREVIATIONS: abbreviation → meaning (e.g. Arc, Box, DL)."""
-    id = models.AutoField(primary_key=True, db_column='ID')
-    txt_abbreviation = models.CharField(max_length=100, db_column='txtAbbreviation')
-    txt_meaning = models.CharField(max_length=255, blank=True, db_column='txtMeaning')
-    n_order = models.IntegerField(default=0, db_column='nOrder')
-    yn_active = models.BooleanField(default=True, db_column='ynActive')
-
-    class Meta:
-        db_table = 'LegacyAbbreviations'
-        verbose_name = 'Legacy Abbreviation'
-        ordering = ['n_order', 'txt_abbreviation']
-
-    def __str__(self):
-        return f'{self.txt_abbreviation}: {self.txt_meaning}'
-
-class LegacyRateLocation(models.Model):
-    """TBLTOWNMARKRATELOCATION: rate location lookup."""
-    id = models.AutoField(primary_key=True, db_column='nTownmarkRateLocationID')
-    txt_townmark_rate_location = models.CharField(max_length=100, db_column='txtTownmarkRateLocation')
-    mem_townmark_rate_location = models.CharField(max_length=255, blank=True, db_column='memTownmarkRateLocation')
-    n_order = models.IntegerField(default=0, db_column='nOrder')
-    yn_active = models.BooleanField(default=True, db_column='ynActive')
-
-    class Meta:
-        db_table = 'LegacyTownmarkRateLocations'
-        verbose_name = 'Legacy Rate Location'
-        ordering = ['n_order']
-
-    def __str__(self):
-        return self.txt_townmark_rate_location
-
-class LegacyRateValue(models.Model):
-    """TBLTOWNMARKRATEVALUE: rate value lookup (numeric or text)."""
-    id = models.AutoField(primary_key=True, db_column='nTownmarkRateValueID')
-    txt_townmark_rate_value = models.CharField(max_length=50, db_column='txtTownmarkRateValue')
-    n_order = models.IntegerField(default=0, db_column='nOrder')
-    yn_active = models.BooleanField(default=True, db_column='ynActive')
-
-    class Meta:
-        db_table = 'LegacyTownmarkRateValues'
-        verbose_name = 'Legacy Rate Value'
-        ordering = ['n_order']
-
-    def __str__(self):
-        return str(self.txt_townmark_rate_value)
-
-class LegacyParseStep(models.Model):
-    """TBLPARSESTEPS: parse step per state."""
-    id = models.AutoField(primary_key=True, db_column='nParseStepID')
-    txt_parse_step = models.CharField(max_length=255, db_column='txtParseStep')
-    n_state_id = models.IntegerField(db_column='nStateID')
-    yn_completed = models.BooleanField(default=False, db_column='ynCompleted')
-    n_order = models.IntegerField(default=0, db_column='nOrder')
-    yn_active = models.BooleanField(default=True, db_column='ynActive')
-
-    class Meta:
-        db_table = 'LegacyParseSteps'
-        verbose_name = 'Legacy Parse Step'
-        ordering = ['n_state_id', 'n_order']
-
-    def __str__(self):
-        return f'{self.txt_parse_step} (State {self.n_state_id})'
-
-class LegacyUserState(models.Model):
-    """CTUSERSTATES: user ↔ state visibility/roles."""
-    id = models.AutoField(primary_key=True, db_column='ID')
-    n_user_id = models.IntegerField(db_column='nUserID')
-    n_state_id = models.IntegerField(db_column='nStateID')
-    mem_roles = models.TextField(blank=True, db_column='memRoles')
-
-    class Meta:
-        db_table = 'LegacyUserStates'
-        verbose_name = 'Legacy User State'
-        unique_together = [['n_user_id', 'n_state_id']]
-        ordering = ['n_user_id', 'n_state_id']
-
-    def __str__(self):
-        return f'User {self.n_user_id} → State {self.n_state_id}'
-
-class LegacyRawStateDataPendingUpdate(models.Model):
-    """TBLRAWSTATEDATA_PENDINGUPDATE: pending edit rows; full row stored as JSON."""
-    id = models.AutoField(primary_key=True, db_column='id')
-    n_raw_state_data_id = models.IntegerField(null=True, blank=True, db_column='nRawStateDataID')
-    n_state_id = models.IntegerField(null=True, blank=True, db_column='nStateID')
-    payload = models.JSONField(default=dict, db_column='Payload')
-
-    class Meta:
-        db_table = 'LegacyRawStateDataPendingUpdates'
-        verbose_name = 'Legacy Pending Update'
-        ordering = ['-id']
-
-    def __str__(self):
-        return f'Pending #{self.id} (raw {self.n_raw_state_data_id})'
-
-class LegacyCover(models.Model):
-    """TBLCOVERS: user-entered cover records from legacy CSV."""
-    id = models.AutoField(primary_key=True, db_column='nCoverID')
-    n_user_id = models.IntegerField(db_column='nUserID')
-    txt_cover_key_id = models.CharField(max_length=100, blank=True, db_column='txtCoverKeyID')
-    txt_state_abv = models.CharField(max_length=20, blank=True, db_column='txtStateAbv')
-    txt_territory = models.CharField(max_length=255, blank=True, db_column='txtTerritory')
-    txt_town = models.CharField(max_length=255, blank=True, db_column='txtTown')
-    txt_townmark_shape = models.CharField(max_length=100, blank=True, db_column='txtTownmarkShape')
-    txt_lettering = models.CharField(max_length=100, blank=True, db_column='txtLettering')
-    txt_townmark_framing = models.CharField(max_length=100, blank=True, db_column='txtTownmarkFraming')
-    txt_date_format = models.CharField(max_length=100, blank=True, db_column='txtDateFormat')
-    txt_rate = models.CharField(max_length=50, blank=True, db_column='txtRate')
-    txt_rate_text = models.CharField(max_length=255, blank=True, db_column='txtRateText')
-    txt_second_rate = models.CharField(max_length=255, blank=True, db_column='txtSecondRate')
-    n_width = models.FloatField(null=True, blank=True, db_column='nWidth')
-    n_height = models.FloatField(null=True, blank=True, db_column='nHeight')
-    txt_color = models.CharField(max_length=100, blank=True, db_column='txtColor')
-    n_earliest_use_day = models.IntegerField(null=True, blank=True, db_column='nEarliestUseDay')
-    n_earliest_use_month = models.IntegerField(null=True, blank=True, db_column='nEarliestUseMonth')
-    n_earliest_use_year = models.IntegerField(null=True, blank=True, db_column='nEarliestUseYear')
-    n_latest_use_day = models.IntegerField(null=True, blank=True, db_column='nLatestUseDay')
-    n_latest_use_month = models.IntegerField(null=True, blank=True, db_column='nLatestUseMonth')
-    n_latest_use_year = models.IntegerField(null=True, blank=True, db_column='nLatestUseYear')
-    mem_ascc_text = models.TextField(blank=True, db_column='memASCCText')
-    mem_notes = models.TextField(blank=True, db_column='memNotes')
-    mem_other_char = models.TextField(blank=True, db_column='memOtherChar')
-    n_estimated_value = models.FloatField(null=True, blank=True, db_column='nEstimatedValue')
-    txt_published_id = models.CharField(max_length=100, blank=True, db_column='txtPublishedID')
-    txt_image1 = models.CharField(max_length=255, blank=True, db_column='txtImage1')
-    txt_image2 = models.CharField(max_length=255, blank=True, db_column='txtImage2')
-
-    class Meta:
-        db_table = 'LegacyCovers'
-        verbose_name = 'Legacy Cover'
-        ordering = ['n_user_id', 'id']
-
-    def __str__(self):
-        return f'Cover {self.id} ({self.txt_town or self.txt_cover_key_id})'
 
 class Collection(TimestampedModel):
     """
@@ -652,10 +500,7 @@ class Collection(TimestampedModel):
 
 
 class CollectionAssignment(TimestampedModel):
-    """
-    Links an Editor to a Collection they are responsible for curating.
-    Replaces the legacy UserLocationAssignment.
-    """
+    """Links an Editor to a Collection they are responsible for curating."""
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,

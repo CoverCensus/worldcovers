@@ -6,7 +6,7 @@
 
 # **Summary**
 
-This document defines the structural vocabulary for data accessible through WorldCovers. Fourteen tables describe the philatelic domain's persistent state. markings is the central entity \- the catalog entry itself \- unifying town markings, rate markings, and auxiliary markings under a single type discriminator. Each row in markings carries the authoritative catalog text, the physical inscription of the device, and a reference to a row in post\_offices, whose jurisdictional history is recorded in post\_office\_regions against a time-bounded regions hierarchy. covers are conceptually observations of markings, linked through the cover\_markings junction, which also records per-observation positional context. Marking classification is represented through two primary editorial dimensions: shapes and letterings. Both remain provisional editorial vocabularies: their current records preserve catalog usage patterns and known inconsistencies, and therefore do not yet constitute fully orthogonal or exhaustively normalized taxonomies. Curatorial responsibility is expressed through collections, each of which wraps exactly one region and serves as the routing target for contributions submitted within that region. Two junction tables resolve the document's many-to-many associations: cover\_markings (covers to markings) and post\_office\_regions (post offices to regions). The latter exists because a post office is a fixed geographic place whose political jurisdiction can change over time; a marking's effective region context is derived by intersecting the post office's region associations with the marking's aggregated dates\_seen (both those attached directly to the marking and those attached to its associated covers).
+This document defines the structural vocabulary for data accessible through WorldCovers. Fourteen tables describe the philatelic domain's persistent state. markings is the central entity \- the catalog entry itself \- unifying town markings, rate markings, and auxiliary markings under a single type discriminator. Each row in markings carries the authoritative catalog text, the physical inscription of the device, and a reference to a row in post\_offices, whose jurisdictional history is recorded in post\_office\_regions against a time-bounded regions hierarchy. covers are conceptually observations of markings, linked through the cover\_markings junction, which also records per-observation positional context. Marking classification is represented through two primary editorial dimensions: shapes and letterings. Both remain provisional editorial vocabularies: their current records preserve catalog usage patterns and known inconsistencies, and therefore do not yet constitute fully orthogonal or exhaustively normalized taxonomies. Curatorial responsibility is expressed through collections, each of which wraps exactly one region and serves as the routing target for contributions submitted within that region. Two junction tables resolve the document's many-to-many associations: cover\_markings (covers to markings) and post\_office\_regions (post offices to regions). The latter exists because a post office is a fixed geographic place whose political jurisdiction can change over time; a marking's effective region context is derived by intersecting the post office's region associations with the marking's aggregated dates\_seen (both those attached directly to the marking and those attached to its associated covers). System-internal tables (submissions, comments, image attachments, audit log, and role assignments) are intentionally not modeled in this document; they live alongside the domain tables in `backend/common/`.
 
 ---
 
@@ -49,7 +49,7 @@ An institutional curatorial unit associated with exactly one region. Contributio
 
 * name is non-empty.  
 * region\_id references exactly one row in regions.  
-* region\_id is unique across all collections (one-to-one with regions).  
+* region\_id is unique across all collections (one-to-one with regions). v2 realizes the vision-doc multi-catalog goal via this region axis only: historical eras are expressed through the time-bounded regions hierarchy, and specialty-axis catalogs are out of v2 scope.  
 * is\_active defaults to true.
 
 *Relationships:*
@@ -351,7 +351,7 @@ A named geographic or administrative area used to organize post offices within a
 
 ### shapes
 
-Editorial value table for the primary form assigned to a postal marking. This vocabulary is intentionally provisional: while many values describe base geometry, some records reflect catalog terminology that may combine geometry, motif, framing treatment, or construction style. Compound ASCC codes (e.g., DC, DLC, DLDC, DO, DLO, DLDO, NOR, Pmk) are carried verbatim as rows in shapes rather than decomposed into separate shape-and-framing axes.
+Editorial value table for the primary form assigned to a postal marking. This vocabulary is intentionally provisional: while many values describe base geometry, some records reflect catalog terminology that may combine geometry, motif, framing treatment, or construction style. Compound ASCC codes (e.g., DC, DLC, DLDC, DO, DLO, DLDO, NOR) are carried verbatim as rows in shapes rather than decomposed into separate shape-and-framing axes.
 
 *Fields:*
 

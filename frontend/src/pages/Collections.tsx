@@ -123,17 +123,17 @@ const Collections = () => {
   };
 
   const onDelete = async (id: number, name: string) => {
-    if (!confirm(`Delete Collection "${name}"? Contributions referencing it will block deletion.`)) {
+    if (!confirm(`Remove Collection "${name}"? Contributions referencing it will block removal.`)) {
       return;
     }
     try {
       await deleteCollection(id);
-      toast({ title: "Collection deleted." });
+      toast({ title: "Collection removed." });
       if (selectedId === id) setSelectedId(null);
       await reload();
     } catch (err) {
       toast({
-        title: "Could not delete Collection",
+        title: "Could not remove Collection",
         description: err instanceof Error ? err.message : String(err),
         variant: "destructive",
       });

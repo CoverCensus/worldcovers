@@ -1054,7 +1054,7 @@ class MarkingDateRangeView(APIView):
 class DeleteMyMarkingView(APIView):
     """
     Delete one of your own user-contributed catalog markings, OR delete any marking
-    in a region you are an editor for. Replaces the v1 /postmarks/<id>/delete-mine/.
+    in a region you are an editor for.
     """
     permission_classes = [IsAuthenticated]
 

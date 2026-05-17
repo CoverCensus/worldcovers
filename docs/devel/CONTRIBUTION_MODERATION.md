@@ -55,7 +55,7 @@ The Contribution model lives in the existing `common` app because:
 ## Permissions
 
 - **Contributors**: Create contributions, view their own, edit pending ones
-- **State Editors**: Users assigned to a region (via `UserLocationAssignment` or `AdministrativeUnitResponsibility`) can list, retrieve, approve, and reject contributions for that region
+- **Region Editors**: Users assigned to a Collection (via `CollectionAssignment`) can list, retrieve, approve, and reject contributions for the Region wrapped by that Collection
 - **Superusers**: Full access
 
 ---

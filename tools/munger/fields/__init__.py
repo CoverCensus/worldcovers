@@ -1,0 +1,244 @@
+import re
+
+import pandas as pd
+
+from .dates import parse_date_field, MONTHS_PAT, DATE_FIELD_RE
+from .sizes import parse_size_field, SHAPE_CODE_SET, SHAPE_CODE_PAT, SIZE_SUFFIX_PAT, SIZE_FIELD_RE
+from .rates import parse_rate_field
+from .colors import parse_color_field
+from ..classify import _csv_manuscript_truthy
+
+
+RATE_FIELD_RE = re.compile(
+    r'(?:'
+    r'\bPAID\b|\bFREE\b|\bSTEAM\b|\bDUE\b'
+    r'|\bP\.?M\.?'
+    r'|\bfrank\b'
+    r'|\[[^\]]*\]'         # brackets: [ms], [C], [hdstp rate], [cogged circle]
+    r'|\bwith\s+\d'        # "with 24" = with adhesive
+    r')',
+    re.IGNORECASE
+)
+
+KNOWN_COLORS = {
+    'black', 'red', 'blue', 'green', 'brown', 'orange', 'purple',
+    'magenta', 'yellow', 'olive', 'violet', 'carmine', 'vermilion',
+    'pink', 'gray', 'grey', 'buff', 'salmon', 'rose', 'maroon',
+    'crimson', 'indigo', 'lilac', 'scarlet', 'amber',
+}
+
+def is_color_token(tok):
+    """Check a single token (possibly hyphen-compound) against color vocabulary."""
+    parts = tok.strip().lower().split('-')
+    return all(p in KNOWN_COLORS for p in parts if p)
+
+def is_color_field(field):
+    """True if all comma-separated tokens in the field are known colors."""
+    tokens = [t.strip() for t in field.split(',') if t.strip()]
+    return bool(tokens) and all(is_color_token(t) for t in tokens)
+
+BARE_NUMBER_RE = re.compile(r'^\d{1,3}(?:\.\d+)?$')
+
+def classify_paren_field(field_text):
+    """Classify a single paren field by intrinsic content signals.
+    Returns one of: date, ms, size, rate, color, other, empty."""
+    f = field_text.strip()
+    if not f:
+        return 'empty'
+
+    # 1. Manuscript (exact)
+    if f == 'Ms':
+        return 'ms'
+
+    # 2. Date expression
+    if DATE_FIELD_RE.search(f):
+        return 'date'
+
+    # 3. Rate/auxmark (checked before size -- brackets disambiguate)
+    if RATE_FIELD_RE.search(f):
+        return 'rate'
+
+    # 4. Size/shape/dateformat composite
+    if SIZE_FIELD_RE.search(f):
+        return 'size'
+
+    # 5. Color
+    if is_color_field(f):
+        return 'color'
+
+    # 6. Bare small number -> size by ASCC convention
+    if BARE_NUMBER_RE.match(f):
+        return 'size'
+
+    return 'other'
+
+def classify_all_fields(paren_fields):
+    """Classify each field in the list. Returns parallel list of type labels."""
+    types = [classify_paren_field(f) for f in paren_fields]
+    
+    # Positional disambiguation: ASCC entries have at most one size field.
+    # If a second 'size' appears and it's a bare number (no shape code, no
+    # dateformat, no dimension separator), reclassify it as 'rate'.
+    size_seen = False
+    for i, (field, ftype) in enumerate(zip(paren_fields, types)):
+        if ftype == 'size':
+            if size_seen and BARE_NUMBER_RE.match(field.strip()):
+                types[i] = 'rate'
+            else:
+                size_seen = True
+
+    return types
+
+TRUNCATED_DATE_RE = re.compile(r'^\d{3}-\d{0,2}$')
+
+SIZE_WITH_DASH_RE = re.compile(
+    r'^(?:' + SHAPE_CODE_PAT + r'|arc)[\s\-]*-{1,2}$', re.IGNORECASE
+)
+
+BARE_RATE_RE = re.compile(
+    r'^(?:(?:large|fancy|shaded|Double|small)\s+)?'
+    r'(?:\d+(?:-\d+(?:/\d+)?)?|[IVXLCDM]+)'
+    r'(?:\s*,\s*(?:\d+(?:-\d+(?:/\d+)?)?|[IVXLCDM]+))*$'
+)
+
+IRREGULAR_SIZE_RE = re.compile(r'^irregular\s+\d', re.IGNORECASE)
+
+MULTI_DIM_RE = re.compile(r'^\d{2,3}\s*,\s*\d{2,3}$')
+
+def triage_other_field(text):
+    """Attempt reclassification of an 'other' field.
+    Returns (new_type, parsed_result) or ('other', None) if unresolvable."""
+    t = text.strip()
+
+    # Truncated date: "185-", "186-", "183-51"
+    if TRUNCATED_DATE_RE.match(t):
+        # Treat as approximate date range
+        prefix = t.split('-')[0]
+        suffix = t.split('-')[1] if '-' in t else ''
+        if len(prefix) == 3:
+            decade_base = int(prefix + '0')
+            if suffix and suffix.isdigit():
+                year_end = int(prefix + suffix) if len(suffix) == 1 else int('1' + suffix) if len(suffix) == 2 else decade_base + 9
+            else:
+                year_end = decade_base + 9
+            return 'date', {
+                'date_month': None, 'date_day': None,
+                'date_year_start': decade_base,
+                'date_year_end': year_end,
+                'date_granularity': 'RANGE',
+                'date_is_circa': False,
+                'date_raw': t,
+                'date_error': 'reclassified from other (truncated date)',
+            }
+
+    # Size with unknown dim: "DC--", "DLC--", "arc--"
+    if SIZE_WITH_DASH_RE.match(t):
+        # Extract shape code
+        shape = re.match(r'^([A-Za-z]+)', t).group(1).upper()
+        return 'size', {
+            'size_shape_code': shape,
+            'size_dim1': None, 'size_dim2': None,
+            'size_dateformat': None, 'size_is_irregular': False,
+            'size_qualifier': None, 'size_raw': t, 'size_error': None,
+        }
+
+    # Irregular size: "irregular 34"
+    if IRREGULAR_SIZE_RE.match(t):
+        return 'size', parse_size_field(t)
+
+    # Multi-dimension: "30,32"
+    if MULTI_DIM_RE.match(t):
+        dims = t.split(',')
+        return 'size', {
+            'size_shape_code': None,
+            'size_dim1': float(dims[0].strip()),
+            'size_dim2': float(dims[1].strip()),
+            'size_dateformat': None, 'size_is_irregular': False,
+            'size_qualifier': None, 'size_raw': t, 'size_error': None,
+        }
+
+    # Bare rate amounts or roman+amount combos: "5,10", "12-1/2", "V,X", "Double 50"
+    if BARE_RATE_RE.match(t):
+        return 'rate', parse_rate_field(t)
+
+    # Color with unknown terms (partial match)
+    tokens = [tok.strip() for tok in t.split(',') if tok.strip()]
+    known_count = sum(1 for tok in tokens if is_color_token(tok))
+    if known_count > 0 and known_count >= len(tokens) - 1:
+        # At least one unknown term but majority are colors -> reclassify
+        return 'color', [t.upper() for t in tokens]
+
+    return 'other', None
+
+def subparse_fields(row):
+    """Apply the appropriate sub-parser to each paren field based on its type.
+    Returns parallel lists: parsed_dates, parsed_sizes, parsed_rates, parsed_colors,
+    plus is_manuscript flag and other_fields list.
+
+    is_manuscript is derived from paren `(ms)` fields, then *unioned* with the
+    optional per-row `Manuscript` CSV column (truthy values promote; the column
+    cannot demote a paren-detected manuscript).
+    """
+    fields = row['paren_fields']
+    types = row['paren_field_types']
+
+    parsed_dates = []
+    parsed_sizes = []
+    parsed_rates = []
+    parsed_colors = []
+    is_manuscript = False
+    other_fields = []
+    reclassified = []
+
+    for i, (field, ftype) in enumerate(zip(fields, types)):
+        if ftype == 'ms':
+            is_manuscript = True
+        elif ftype == 'date':
+            parsed_dates.append(parse_date_field(field))
+        elif ftype == 'size':
+            parsed_sizes.append(parse_size_field(field))
+        elif ftype == 'rate':
+            parsed_rates.append(parse_rate_field(field))
+        elif ftype == 'color':
+            parsed_colors.extend(parse_color_field(field))
+        elif ftype == 'other':
+            new_type, parsed = triage_other_field(field)
+            if new_type != 'other':
+                reclassified.append({
+                    'position': i, 'original_type': 'other',
+                    'new_type': new_type, 'field': field,
+                })
+                if new_type == 'date':
+                    parsed_dates.append(parsed)
+                elif new_type == 'size':
+                    parsed_sizes.append(parsed)
+                elif new_type == 'rate':
+                    if isinstance(parsed, list):
+                        parsed_rates.append(parsed)
+                    else:
+                        parsed_rates.append([parsed])
+                elif new_type == 'color':
+                    parsed_colors.extend(parsed)
+            else:
+                other_fields.append(field)
+
+    # Union the optional CSV `Manuscript` column (if present + truthy).
+    if _csv_manuscript_truthy(row):
+        is_manuscript = True
+
+    return pd.Series({
+        'parsed_dates': parsed_dates,
+        'parsed_sizes': parsed_sizes,
+        'parsed_rates': parsed_rates,
+        'parsed_colors': parsed_colors,
+        'is_manuscript': is_manuscript,
+        'other_fields': other_fields,
+        'reclassified_fields': reclassified,
+    })
+
+def _split_ms_date_token(token):
+    """Split a captured ms_date_text into individual sub-tokens that
+    parse_date_field understands. `1811,1849-55` -> [`1811`, `1849-55`]."""
+    if token is None or (isinstance(token, float)) or token == '--':
+        return []
+    return [t.strip() for t in token.split(',') if t.strip()]
