@@ -12,6 +12,7 @@ import { Search as SearchIcon, SlidersHorizontal, Loader2, Plus, ArrowUp, ArrowD
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import imageNotAvailable from "@/assets/image-not-available.jpg";
 import {
   getMarkingsPage,
   type MarkingRecord,
@@ -19,13 +20,11 @@ import {
 } from "@/services/markings";
 import { buildCatalogSearchRow } from "@/lib/catalogRecordDisplay";
 import { CatalogRecordFields } from "@/components/CatalogRecordFields";
-import { ENTRY_LABELS } from "@/labels/entry";
 import { useToast } from "@/hooks/use-toast";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useMarkingYearRange } from "@/hooks/useMarkingYearRange";
 import { cn } from "@/lib/utils";
-import { ImageOrPlaceholder } from "@/components/ImageOrPlaceholder";
 
 const DEBOUNCE_MS = 400;
 type SubmissionQueueSortOption = "newest" | "oldest";
@@ -122,6 +121,40 @@ function validateYearString(raw: string, minYear: number, maxYear: number): stri
 function getSearchParam(params: URLSearchParams, key: string, defaultValue: string): string {
   const v = params.get(key);
   return v ?? defaultValue;
+}
+
+const noImageClassName = "w-full h-full min-w-0 min-h-0 object-cover bg-muted";
+
+/** Placeholder when image is missing or fails to load. Shows fallback artwork instead of text. */
+function ImageOrPlaceholder({
+  src,
+  alt,
+  className,
+}: {
+  src: string | null;
+  alt: string;
+  className?: string;
+}) {
+  const [error, setError] = useState(false);
+  if (error) {
+    return (
+      <img
+        src={imageNotAvailable}
+        alt="No image available"
+        className={cn(noImageClassName, className)}
+      />
+    );
+  }
+  if (!src) {
+    return (
+      <img
+        src={imageNotAvailable}
+        alt="No image available"
+        className={cn(noImageClassName, className)}
+      />
+    );
+  }
+  return <img src={src} alt={alt} className={className} onError={() => setError(true)} />;
 }
 
 /** Build compact page numbers for pagination (handles 500+ pages) */
@@ -548,56 +581,6 @@ const Search = () => {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="catalog-sort">Sort Submission Queue</Label>
-                    <Select
-                      value={submissionQueueSort}
-                      onValueChange={(value) => setSubmissionQueueSort(value as SubmissionQueueSortOption)}
-                      disabled={filtersDisabled}
-                    >
-                      <SelectTrigger id="catalog-sort">
-                        <SelectValue placeholder="Newest first" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="newest">Newest first</SelectItem>
-                        <SelectItem value="oldest">Oldest first</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="catalog-order">Sort Results</Label>
-                    <Select
-                      value={catalogSort}
-                      onValueChange={(v) => setCatalogSort(v as CatalogSortOption)}
-                      disabled={filtersDisabled}
-                    >
-                      <SelectTrigger id="catalog-order">
-                        <SelectValue placeholder="Newest first" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="newest">Newest first (default)</SelectItem>
-                        <SelectItem value="oldest">Oldest first</SelectItem>
-                        <SelectItem value="state_asc">State (A→Z)</SelectItem>
-                        <SelectItem value="state_desc">State (Z→A)</SelectItem>
-                        <SelectItem value="town_asc">Town (A→Z)</SelectItem>
-                        <SelectItem value="town_desc">Town (Z→A)</SelectItem>
-                        <SelectItem value="type_asc">Type (A→Z)</SelectItem>
-                        <SelectItem value="type_desc">Type (Z→A)</SelectItem>
-                        <SelectItem value="shape_asc">Shape (A→Z)</SelectItem>
-                        <SelectItem value="shape_desc">Shape (Z→A)</SelectItem>
-                        <SelectItem value="lettering_asc">Lettering (A→Z)</SelectItem>
-                        <SelectItem value="lettering_desc">Lettering (Z→A)</SelectItem>
-                        <SelectItem value="color_asc">Color (A→Z)</SelectItem>
-                        <SelectItem value="color_desc">Color (Z→A)</SelectItem>
-                        <SelectItem value="earliest_asc">Earliest seen (old→new)</SelectItem>
-                        <SelectItem value="earliest_desc">Earliest seen (new→old)</SelectItem>
-                        <SelectItem value="latest_asc">Latest seen (old→new)</SelectItem>
-                        <SelectItem value="latest_desc">Latest seen (new→old)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
                     <Label htmlFor="keyword-search">Search</Label>
                     <div className="relative">
                       <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -660,7 +643,7 @@ const Search = () => {
                     <div className="space-y-2">
                       <SortableLabel
                         htmlFor="beginYear"
-                        label={ENTRY_LABELS.datesObserved.earliest}
+                        label="Begin Year"
                         field="earliest"
                         currentSort={catalogSort}
                         onToggle={toggleSort}
@@ -688,7 +671,7 @@ const Search = () => {
                     <div className="space-y-2">
                       <SortableLabel
                         htmlFor="endYear"
-                        label={ENTRY_LABELS.datesObserved.latest}
+                        label="End Year"
                         field="latest"
                         currentSort={catalogSort}
                         onToggle={toggleSort}
@@ -860,26 +843,6 @@ const Search = () => {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Select
-                    value={String(itemsPerPage)}
-                    onValueChange={(v) => {
-                      const n = parseInt(v, 10);
-                      if (n === 10 || n === 25 || n === 50 || n === 100) {
-                        setItemsPerPage(n);
-                      }
-                    }}
-                    disabled={filtersDisabled}
-                  >
-                    <SelectTrigger className="h-9 w-[120px]" aria-label="Records per page">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="10">10 / page</SelectItem>
-                      <SelectItem value="25">25 / page</SelectItem>
-                      <SelectItem value="50">50 / page</SelectItem>
-                      <SelectItem value="100">100 / page</SelectItem>
-                    </SelectContent>
-                  </Select>
                   {refreshing && (
                     <div className="flex items-center gap-1 text-xs text-muted-foreground">
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
@@ -944,97 +907,124 @@ const Search = () => {
               )}
 
               {/* Pagination - compact for 500+ pages */}
-              {totalPages > 1 && !loading && (
+              {!loading && catalogRecords.length > 0 && (
                 <div className="mt-8 flex flex-col items-center gap-4">
-                  <Pagination>
-                    <PaginationContent>
-                      <PaginationItem>
-                        <PaginationPrevious
-                          onClick={() => {
-                            setCurrentPage(p => Math.max(1, p - 1));
-                          }}
-                          className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
-                        />
-                      </PaginationItem>
+                  {totalPages > 1 && (
+                    <Pagination>
+                      <PaginationContent>
+                        <PaginationItem>
+                          <PaginationPrevious
+                            onClick={() => {
+                              setCurrentPage(p => Math.max(1, p - 1));
+                            }}
+                            className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                          />
+                        </PaginationItem>
 
-                      {getPaginationPages(currentPage, totalPages).map((p, i) =>
-                        p === "ellipsis" ? (
-                          <PaginationItem key={`ellipsis-${i}`}>
-                            <PaginationEllipsis />
-                          </PaginationItem>
-                        ) : (
-                          <PaginationItem key={p}>
-                            <PaginationLink
-                              onClick={() => {
-                                setCurrentPage(p);
-                              }}
-                              isActive={currentPage === p}
-                              className="cursor-pointer"
-                            >
-                              {p}
-                            </PaginationLink>
-                          </PaginationItem>
-                        )
-                      )}
+                        {getPaginationPages(currentPage, totalPages).map((p, i) =>
+                          p === "ellipsis" ? (
+                            <PaginationItem key={`ellipsis-${i}`}>
+                              <PaginationEllipsis />
+                            </PaginationItem>
+                          ) : (
+                            <PaginationItem key={p}>
+                              <PaginationLink
+                                onClick={() => {
+                                  setCurrentPage(p);
+                                }}
+                                isActive={currentPage === p}
+                                className="cursor-pointer"
+                              >
+                                {p}
+                              </PaginationLink>
+                            </PaginationItem>
+                          )
+                        )}
 
-                      <PaginationItem>
-                        <PaginationNext
-                          onClick={() => {
-                            setCurrentPage(p => Math.min(totalPages, p + 1));
-                          }}
-                          className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
-                        />
-                      </PaginationItem>
-                    </PaginationContent>
-                  </Pagination>
+                        <PaginationItem>
+                          <PaginationNext
+                            onClick={() => {
+                              setCurrentPage(p => Math.min(totalPages, p + 1));
+                            }}
+                            className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                          />
+                        </PaginationItem>
+                      </PaginationContent>
+                    </Pagination>
+                  )}
 
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">Go to page</span>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={totalPages}
-                      placeholder="Page"
-                      value={goToPageInput}
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        if (raw === "") {
-                          setGoToPageInput("");
-                          return;
-                        }
-                        const n = parseInt(raw, 10);
-                        if (Number.isNaN(n)) return;
-                        const clamped = Math.max(1, Math.min(totalPages, n));
-                        setGoToPageInput(String(clamped));
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          const n = parseInt(goToPageInput, 10);
-                          if (!Number.isNaN(n)) {
-                            setCurrentPage(Math.max(1, Math.min(totalPages, n)));
-                            setGoToPageInput("");
-                          }
+                    <span className="text-sm text-muted-foreground">Records shown</span>
+                    <Select
+                      value={String(itemsPerPage)}
+                      onValueChange={(v) => {
+                        const n = parseInt(v, 10);
+                        if (n === 10 || n === 25 || n === 50 || n === 100) {
+                          setItemsPerPage(n);
                         }
                       }}
-                      className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                      aria-label="Go to page number"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-9"
-                      onClick={() => {
-                        const n = parseInt(goToPageInput, 10);
-                        if (!Number.isNaN(n)) {
-                          setCurrentPage(Math.max(1, Math.min(totalPages, n)));
-                          setGoToPageInput("");
-                        }
-                      }}
+                      disabled={filtersDisabled}
                     >
-                      Go
-                    </Button>
+                      <SelectTrigger className="h-9 w-[80px]" aria-label="Records per page">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="25">25</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {totalPages > 1 && (
+                      <>
+                        <span className="text-sm text-muted-foreground">Go to page</span>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={totalPages}
+                          placeholder="Page"
+                          value={goToPageInput}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (raw === "") {
+                              setGoToPageInput("");
+                              return;
+                            }
+                            const n = parseInt(raw, 10);
+                            if (Number.isNaN(n)) return;
+                            const clamped = Math.max(1, Math.min(totalPages, n));
+                            setGoToPageInput(String(clamped));
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              const n = parseInt(goToPageInput, 10);
+                              if (!Number.isNaN(n)) {
+                                setCurrentPage(Math.max(1, Math.min(totalPages, n)));
+                                setGoToPageInput("");
+                              }
+                            }
+                          }}
+                          className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          aria-label="Go to page number"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-9"
+                          onClick={() => {
+                            const n = parseInt(goToPageInput, 10);
+                            if (!Number.isNaN(n)) {
+                              setCurrentPage(Math.max(1, Math.min(totalPages, n)));
+                              setGoToPageInput("");
+                            }
+                          }}
+                        >
+                          Go
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
