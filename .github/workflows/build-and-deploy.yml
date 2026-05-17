@@ -14,6 +14,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Fail fast if any known malware fingerprint is present in the tree.
+      # Runs before any install / build step so a compromised commit cannot
+      # execute code on the runner. Patterns are catalogued in
+      # tools/fingerprint.sh.
+      - name: Malware fingerprint scan
+        run: bash tools/fingerprint.sh
+
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
         with:
