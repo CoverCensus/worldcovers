@@ -45,6 +45,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { getCoverById, type CoverDetail, type CoverDateSeenItem } from "@/services/covers";
 import { listCitationsForSubject } from "@/services/citations";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
+import { SUBMISSION_LABELS } from "@/labels/submission";
 
 const EMPTY = "-";
 
@@ -514,7 +515,7 @@ const CoverDetailPage = () => {
                   {canSubmitEdit && (
                     <Button variant="outline" size="sm" onClick={openEditCover}>
                       <Pencil className="mr-2 h-4 w-4" />
-                      Submit Edit
+                      {SUBMISSION_LABELS.action.submitEditToCover}
                     </Button>
                   )}
                 </div>
@@ -572,11 +573,6 @@ const CoverDetailPage = () => {
               </CardContent>
             </Card>
 
-            <EntryCitationsCard
-              citations={citations}
-              emptyMessage="No citations linked to this cover yet."
-            />
-
             <Card className="shadow-archival-md">
               <CardHeader>
                 <CardTitle className="font-heading text-lg">
@@ -605,6 +601,11 @@ const CoverDetailPage = () => {
                 )}
               </CardContent>
             </Card>
+
+            <EntryCitationsCard
+              citations={citations}
+              emptyMessage="No citations linked to this cover yet."
+            />
           </>
         }
       />

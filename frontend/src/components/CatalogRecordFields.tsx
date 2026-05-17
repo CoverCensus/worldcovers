@@ -42,12 +42,12 @@ export function CatalogRecordFields({
       </div>
 
       {hidePhysicalFieldsOnSearch ? (
-        <>
+        descForSearch ? (
           <div className="min-w-0 sm:col-span-2">
             <span className="text-muted-foreground">Description:</span>{" "}
-            <span className="text-foreground break-words">{descForSearch || "-"}</span>
+            <span className="text-foreground break-words">{descForSearch}</span>
           </div>
-        </>
+        ) : null
       ) : (
         <>
           <div className="min-w-0">

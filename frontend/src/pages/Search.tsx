@@ -25,6 +25,7 @@ import { useFilterOptions } from "@/hooks/useFilterOptions";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useMarkingYearRange } from "@/hooks/useMarkingYearRange";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const DEBOUNCE_MS = 400;
 type SubmissionQueueSortOption = "newest" | "oldest";
@@ -198,34 +199,44 @@ function SortableLabel({
   return (
     <div className="group flex items-center gap-1">
       <Label htmlFor={htmlFor}>{label}</Label>
-      <button
-        type="button"
-        aria-label={`Sort by ${label} ascending`}
-        aria-pressed={isAsc}
-        onClick={() => onToggle(field, "asc")}
-        className={cn(
-          "p-0.5 rounded hover:bg-muted transition-opacity",
-          isAsc
-            ? "text-foreground opacity-100"
-            : "text-muted-foreground opacity-0 group-hover:opacity-100 focus:opacity-100",
-        )}
-      >
-        <ArrowUp className="h-3 w-3" />
-      </button>
-      <button
-        type="button"
-        aria-label={`Sort by ${label} descending`}
-        aria-pressed={isDesc}
-        onClick={() => onToggle(field, "desc")}
-        className={cn(
-          "p-0.5 rounded hover:bg-muted transition-opacity",
-          isDesc
-            ? "text-foreground opacity-100"
-            : "text-muted-foreground opacity-0 group-hover:opacity-100 focus:opacity-100",
-        )}
-      >
-        <ArrowDown className="h-3 w-3" />
-      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={`Sort by ${label} ascending`}
+            aria-pressed={isAsc}
+            onClick={() => onToggle(field, "asc")}
+            className={cn(
+              "p-0.5 rounded hover:bg-muted transition-opacity",
+              isAsc
+                ? "text-foreground opacity-100"
+                : "text-muted-foreground opacity-0 group-hover:opacity-100 focus:opacity-100",
+            )}
+          >
+            <ArrowUp className="h-3 w-3" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Sort by Ascending</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={`Sort by ${label} descending`}
+            aria-pressed={isDesc}
+            onClick={() => onToggle(field, "desc")}
+            className={cn(
+              "p-0.5 rounded hover:bg-muted transition-opacity",
+              isDesc
+                ? "text-foreground opacity-100"
+                : "text-muted-foreground opacity-0 group-hover:opacity-100 focus:opacity-100",
+            )}
+          >
+            <ArrowDown className="h-3 w-3" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Sort by Descending</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

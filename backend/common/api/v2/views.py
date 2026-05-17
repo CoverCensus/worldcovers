@@ -1024,16 +1024,31 @@ class MarkingViewSet(viewsets.ModelViewSet):
     )
 )
 class MarkingDateRangeView(APIView):
-    """Earliest and latest dates_seen.date years across the catalog.
+    """Earliest and latest dates_seen.date years across the approved catalog.
 
-    Aggregates every DateSeen row regardless of subject_type (COVER or
-    MARKING), so the returned range spans dates attached directly to a
-    marking and dates attached to a cover.
+    Aggregates DateSeen rows that belong to approved catalog content only:
+      * subject_type='MARKING': subject_id must reference an existing Marking.
+        Draft contributions do not have a Marking row yet (Contribution.marking
+        is null until approval), so MARKING-scoped draft dates cannot exist.
+      * subject_type='COVER':  subject_id must reference a Cover that is linked
+        to at least one Marking via an APPROVED CoverMarking. Cover-scoped
+        DateSeen rows created during draft / pending / rejected reviews are
+        therefore excluded from the public catalog range.
     """
     permission_classes = [AllowAny]
 
     def get(self, request):
-        agg = DateSeen.objects.aggregate(
+        approved_cover_ids = CoverMarking.objects.filter(
+            review_status=CoverMarking.REVIEW_APPROVED,
+        ).values("cover_id")
+        approved_marking_ids = Marking.objects.values("pk")
+
+        qs = DateSeen.objects.filter(
+            Q(subject_type=DateSeen.SUBJECT_MARKING, subject_id__in=approved_marking_ids)
+            | Q(subject_type=DateSeen.SUBJECT_COVER, subject_id__in=approved_cover_ids)
+        )
+
+        agg = qs.aggregate(
             earliest_year=Min(ExtractYear("date")),
             latest_year=Max(ExtractYear("date")),
         )

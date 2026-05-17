@@ -105,7 +105,7 @@ const MODE_COPY: Record<ContributeMode, {
     h1: "Create Marking",
     intro: "Fill in the fields below. All fields match what reviewers see on the Submission Detail page.",
     card: "New Marking",
-    button: SUBMISSION_LABELS.action.submitMarking,
+    button: SUBMISSION_LABELS.action.submitNewMarking,
     toastTitle: SUBMISSION_LABELS.toast.received,
     toastBody: "Your Marking has been submitted for approval. It will appear in Search after an editor approves it.",
   },
@@ -121,7 +121,7 @@ const MODE_COPY: Record<ContributeMode, {
     h1: "Edit Marking",
     intro: "Edit requests are prefilled from the selected Marking and always go through the approval workflow before the published Marking is updated.",
     card: "Edit and Submit",
-    button: SUBMISSION_LABELS.action.submitMarking,
+    button: SUBMISSION_LABELS.action.submitEditToMarking,
     toastTitle: "Submitted for review",
     toastBody: "Changes to published Marking fields are submitted for editor approval and do not update the catalog directly.",
   },
@@ -2408,21 +2408,6 @@ const Contribute = () => {
                         onChange={(e) => setContributorComment(e.target.value)}
                       />
                     </div>
-
-                    {isEditMarking && editMarkingId != null && (
-                    <Button
-                      type="button"
-                      className="w-full bg-green-800 hover:bg-green-900 text-white"
-                      onClick={() => {
-                        navigate(`/record/${editMarkingId}/cover/new`, {
-                          state: { from: location.pathname + location.search },
-                        });
-                      }}
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      Submit New Cover
-                    </Button>
-                    )}
 
                     <div className="flex flex-col sm:flex-row gap-3">
                       {!isEditMarking && (

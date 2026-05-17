@@ -33,6 +33,7 @@ import {
   type MarkingTypeValue,
 } from "@/services/markings";
 import { useToast } from "@/hooks/use-toast";
+import { SUBMISSION_LABELS } from "@/labels/submission";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
 
@@ -706,7 +707,6 @@ const RecordDetail = () => {
                           <div className="relative flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
                             <img src={src} alt={alt} className="w-full h-full object-contain" />
                             <div className="absolute top-2 left-2 flex flex-wrap items-center gap-1">
-                              <Badge variant="secondary">{img.subjectLabel}</Badge>
                               {!isPlaceholder && img.isTracing && (
                                 <Badge variant="secondary">Tracing</Badge>
                               )}
@@ -915,7 +915,7 @@ const RecordDetail = () => {
                     <CardTitle className="font-heading text-lg">Record Details</CardTitle>
                     <Button variant="outline" size="sm" onClick={goEdit}>
                       <Pencil className="mr-2 h-4 w-4" />
-                      Submit Edit
+                      {SUBMISSION_LABELS.action.submitEditToMarking}
                     </Button>
                   </div>
                 </CardHeader>
@@ -933,132 +933,21 @@ const RecordDetail = () => {
                 </CardContent>
               </Card>
 
-              {record.citations.length > 0 && (
-                <Card className="shadow-archival-md">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg">
-                      Citations ({record.citations.length})
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {record.citations.map((citation, idx) => {
-                      const rw = citation.referenceWork;
-                      const code = (rw?.code ?? "").trim();
-                      const title = citationTitle(citation);
-                      const byline = citationByline(rw);
-                      const detail = citation.citationDetail.trim();
-                      // A citation_detail that already looks like a URL is
-                      // surfaced as a clickable link in the Reference row;
-                      // this matches contributor practice of pasting a
-                      // deep-link (e.g. archive.org page) directly into
-                      // citation_detail. When detail is a URL we hide the
-                      // separate Link row so we don't show the same URL
-                      // twice on a single citation.
-                      const detailIsUrl = /^https?:\/\//i.test(detail);
-                      const rwUrl = (rw?.url ?? "").trim();
-                      const rows: { label: string; value: ReactNode }[] = [];
-                      // citation_detail is the most important field for a
-                      // reader scanning the catalog, so it leads. Labeled
-                      // "Page" per the convention used elsewhere in the UI,
-                      // even though the underlying field can also hold a
-                      // section reference or URL depending on the source.
-                      if (detail) {
-                        rows.push({
-                          label: "Page",
-                          value: detailIsUrl ? (
-                            <a
-                              href={detail}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="underline text-primary break-all"
-                            >
-                              {detail}
-                            </a>
-                          ) : (
-                            detail
-                          ),
-                        });
-                      }
-                      if (rw?.publisher.trim()) {
-                        rows.push({ label: "Publisher", value: rw.publisher.trim() });
-                      }
-                      if (rw?.edition.trim()) {
-                        rows.push({ label: "Edition", value: rw.edition.trim() });
-                      }
-                      if (rw?.volume.trim()) {
-                        rows.push({ label: "Volume", value: rw.volume.trim() });
-                      }
-                      if (rw?.isbn.trim()) {
-                        rows.push({ label: "ISBN", value: rw.isbn.trim() });
-                      }
-                      if (rwUrl && !detailIsUrl) {
-                        rows.push({
-                          label: "Link",
-                          value: (
-                            <a
-                              href={rwUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="underline text-primary break-all"
-                            >
-                              {rwUrl}
-                            </a>
-                          ),
-                        });
-                      }
-                      return (
-                        <div
-                          key={citation.id}
-                          className={
-                            idx === 0
-                              ? ""
-                              : "border-t-2 border-primary/40 pt-6 mt-6"
-                          }
-                        >
-                          <div className="flex items-baseline gap-2 flex-wrap">
-                            {code && (
-                              <Badge variant="secondary" className="font-mono">
-                                {code}
-                              </Badge>
-                            )}
-                            <div className="font-medium text-foreground">
-                              {title}
-                            </div>
-                          </div>
-                          {byline && (
-                            <div className="mt-1 text-xs text-muted-foreground italic">
-                              {byline}
-                            </div>
-                          )}
-                          {rows.length > 0 && (
-                            <dl className="mt-3 text-sm">
-                              {rows.map((r, i) => (
-                                <div
-                                  key={r.label}
-                                  className={`flex justify-between gap-4 py-2 ${i === rows.length - 1 ? "" : "border-b border-border"}`}
-                                >
-                                  <dt className="text-muted-foreground font-medium shrink-0">
-                                    {r.label}
-                                  </dt>
-                                  <dd className="text-foreground text-right break-words min-w-0">
-                                    {r.value}
-                                  </dd>
-                                </div>
-                              ))}
-                            </dl>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </CardContent>
-                </Card>
-              )}
-
               <Card className="shadow-archival-md">
                 <CardHeader>
-                  <CardTitle className="font-heading text-lg">
-                    Associated Covers ({coverCount})
-                  </CardTitle>
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle className="font-heading text-lg">
+                      Associated Covers ({coverCount})
+                    </CardTitle>
+                    <Button
+                      size="sm"
+                      onClick={openNewCoverDialog}
+                      className="bg-green-800 hover:bg-green-900 text-white"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      {SUBMISSION_LABELS.action.submitNewCover}
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-4 pt-0">
                   {coversLoadError && (
@@ -1175,38 +1064,126 @@ const RecordDetail = () => {
                   </CardContent>
                 </Card>
               )}
-            </div>
-          </div>
 
-          {/* Bottom action row. Mirrors the two-column grid above so
-              Submit New Cover sits under the left edge of the Associated
-              Covers card (right column) rather than against the page edge,
-              while Delete Marking stays flush right. */}
-          <div className="mt-10 grid items-start lg:grid-cols-2 gap-8">
-            <div className="hidden lg:block" aria-hidden />
-            <div className="flex flex-wrap justify-end gap-3">
-              <Button
-                size="sm"
-                onClick={openNewCoverDialog}
-                className="bg-green-800 hover:bg-green-900 text-white"
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Submit New Cover
-              </Button>
-              {isStaff && (
-                // Visual placement only. The backend delete actions (DELETE
-                // /api/v2/markings/<id>/delete-mine/ and the standard
-                // MarkingViewSet destroy) need their behavior / permissions
-                // verified before this button is wired up. No-op onClick so
-                // the button stays inert without surfacing a placeholder
-                // alert.
-                <Button size="sm" variant="destructive">
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Delete Marking
-                </Button>
+              {record.citations.length > 0 && (
+                <Card className="shadow-archival-md">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">
+                      Citations ({record.citations.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {record.citations.map((citation, idx) => {
+                      const rw = citation.referenceWork;
+                      const code = (rw?.code ?? "").trim();
+                      const title = citationTitle(citation);
+                      const byline = citationByline(rw);
+                      const detail = citation.citationDetail.trim();
+                      const detailIsUrl = /^https?:\/\//i.test(detail);
+                      const rwUrl = (rw?.url ?? "").trim();
+                      const rows: { label: string; value: ReactNode }[] = [];
+                      if (detail) {
+                        rows.push({
+                          label: "Page",
+                          value: detailIsUrl ? (
+                            <a
+                              href={detail}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="underline text-primary break-all"
+                            >
+                              {detail}
+                            </a>
+                          ) : (
+                            detail
+                          ),
+                        });
+                      }
+                      if (rw?.publisher.trim()) {
+                        rows.push({ label: "Publisher", value: rw.publisher.trim() });
+                      }
+                      if (rw?.edition.trim()) {
+                        rows.push({ label: "Edition", value: rw.edition.trim() });
+                      }
+                      if (rw?.volume.trim()) {
+                        rows.push({ label: "Volume", value: rw.volume.trim() });
+                      }
+                      if (rw?.isbn.trim()) {
+                        rows.push({ label: "ISBN", value: rw.isbn.trim() });
+                      }
+                      if (rwUrl && !detailIsUrl) {
+                        rows.push({
+                          label: "Link",
+                          value: (
+                            <a
+                              href={rwUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="underline text-primary break-all"
+                            >
+                              {rwUrl}
+                            </a>
+                          ),
+                        });
+                      }
+                      return (
+                        <div
+                          key={citation.id}
+                          className={
+                            idx === 0
+                              ? ""
+                              : "border-t-2 border-primary/40 pt-6 mt-6"
+                          }
+                        >
+                          <div className="flex items-baseline gap-2 flex-wrap">
+                            {code && (
+                              <Badge variant="secondary" className="font-mono">
+                                {code}
+                              </Badge>
+                            )}
+                            <div className="font-medium text-foreground">
+                              {title}
+                            </div>
+                          </div>
+                          {byline && (
+                            <div className="mt-1 text-xs text-muted-foreground italic">
+                              {byline}
+                            </div>
+                          )}
+                          {rows.length > 0 && (
+                            <dl className="mt-3 text-sm">
+                              {rows.map((r, i) => (
+                                <div
+                                  key={r.label}
+                                  className={`flex justify-between gap-4 py-2 ${i === rows.length - 1 ? "" : "border-b border-border"}`}
+                                >
+                                  <dt className="text-muted-foreground font-medium shrink-0">
+                                    {r.label}
+                                  </dt>
+                                  <dd className="text-foreground text-right break-words min-w-0">
+                                    {r.value}
+                                  </dd>
+                                </div>
+                              ))}
+                            </dl>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
               )}
             </div>
           </div>
+
+          {isStaff && (
+            <div className="mt-10 flex flex-wrap justify-end gap-3">
+              <Button size="sm" variant="destructive">
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete Marking
+              </Button>
+            </div>
+          )}
         </div>
       </div>
       <Footer />

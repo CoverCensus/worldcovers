@@ -10,7 +10,11 @@ export const SUBMISSION_LABELS = {
   },
   action: {
     submitMarking: "Submit Marking",
+    submitNewMarking: "Submit New Marking",
+    submitEditToMarking: "Submit Edit to Marking",
     submitCover: "Submit Cover",
+    submitNewCover: "Submit New Cover",
+    submitEditToCover: "Submit Edit to Cover",
     resubmit: "Resubmit",
     saveDraft: "Save Draft",
   },
