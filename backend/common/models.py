@@ -380,7 +380,13 @@ class Image(TimestampedModel):
     subject_type = models.CharField(max_length=8, choices=SUBJECT_TYPE_CHOICES)
     subject_id = models.PositiveIntegerField()
     original_filename = models.CharField(max_length=255)
-    storage_filename = models.CharField(max_length=255, unique=True)
+    # storage_filename is intentionally NOT unique: a single image file on
+    # disk can be referenced by multiple Image rows (e.g. one per color
+    # fan-out child of a parent marking in the ASCC munger output). Default
+    # destroy only removes the row, leaving the file and any sibling rows
+    # intact -- see ImageViewSet.destroy and the absence of pre_delete
+    # signals on this model.
+    storage_filename = models.CharField(max_length=255)
     file_checksum = models.CharField(max_length=64)
     mime_type = models.CharField(max_length=64)
     image_width = models.IntegerField()
@@ -456,29 +462,6 @@ class Postcover(TimestampedModel):
     def __str__(self):
         return f'{self.postcover_key} (Owner: {self.owner_user})'
 
-class PostcoverImage(TimestampedModel):
-    """Images of physical postal covers"""
-    IMAGE_VIEW_CHOICES = [('FRONT', 'Front'), ('BACK', 'Back'), ('INTERIOR', 'Interior'), ('DETAIL', 'Detail')]
-    postcover_image_id = models.AutoField(primary_key=True)
-    postcover = models.ForeignKey(Postcover, on_delete=models.CASCADE, related_name='images')
-    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='postcover_images_uploaded')
-    original_filename = models.CharField(max_length=255)
-    storage_filename = models.CharField(max_length=255, unique=True)
-    file_checksum = models.CharField(max_length=64)
-    mime_type = models.CharField(max_length=50)
-    image_width = models.IntegerField()
-    image_height = models.IntegerField()
-    file_size_bytes = models.BigIntegerField()
-    image_view = models.CharField(max_length=20, choices=IMAGE_VIEW_CHOICES)
-    image_description = models.TextField(blank=True)
-    display_order = models.IntegerField(default=0)
-
-    class Meta:
-        db_table = 'PostcoverImages'
-        verbose_name = 'Example Image'
-        verbose_name_plural = 'Example Images'
-        ordering = ['postcover', 'display_order']
-        indexes = [models.Index(fields=['postcover', 'display_order']), models.Index(fields=['file_checksum'])]
 
     def __str__(self):
         return f'{self.postcover} - {self.original_filename}'

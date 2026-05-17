@@ -1362,6 +1362,58 @@ def main(argv=None):
         print('No shape resolution errors.')
 
     # ======================================================================
+    # 8.25 Image Flow-Down Pre-Pass
+    # ======================================================================
+    # Catalog layout convention: when N images sit directly above a listing,
+    # only the first (counter=1, top-left in reading order) belongs to that
+    # listing; images 2..N "flow down" to the next listing in catalog order,
+    # recursively, stopping when the next listing already has its own
+    # OCR-detected images above it (non-zero 'Images Above').
+    #
+    # This pre-pass computes, per source-listing row, the definitive list of
+    # image file refs (page, chunk, counter) that listing owns. Refs are
+    # later used by Step 11 to emit image rows. File names are unchanged by
+    # flow-down; only the listing they associate with changes.
+    _ordered_idx = list(listings.index)
+    _refs_by_idx = {}
+    _ocr_count_by_idx = {}
+    for _idx in _ordered_idx:
+        _row = listings.loc[_idx]
+        _ia = _row.get('Images Above')
+        _n = int(_ia) if pd.notna(_ia) else 0
+        _ocr_count_by_idx[_idx] = _n
+        _page = _row.get('Page')
+        _chunk = _row.get('Chunk')
+        if _n > 0 and pd.notna(_page) and pd.notna(_chunk):
+            _refs_by_idx[_idx] = [
+                (int(_page), int(_chunk), _c) for _c in range(1, _n + 1)
+            ]
+        else:
+            _refs_by_idx[_idx] = []
+    _flow_events = 0
+    for _pos, _idx in enumerate(_ordered_idx):
+        _refs = _refs_by_idx[_idx]
+        if len(_refs) <= 1:
+            continue
+        if _pos + 1 >= len(_ordered_idx):
+            continue
+        _next_idx = _ordered_idx[_pos + 1]
+        if _ocr_count_by_idx[_next_idx] > 0:
+            continue
+        # Flow refs[1:] down to next listing; refs[0] stays here.
+        _refs_by_idx[_next_idx] = _refs[1:] + _refs_by_idx[_next_idx]
+        _refs_by_idx[_idx] = _refs[:1]
+        _flow_events += 1
+    listings['image_file_refs'] = listings.index.map(_refs_by_idx)
+    _total_refs = sum(len(v) for v in _refs_by_idx.values())
+    _listings_with_imgs = sum(1 for v in _refs_by_idx.values() if v)
+    print()
+    print('Image flow-down pre-pass:')
+    print(f'  Total image refs:              {_total_refs}')
+    print(f'  Listings with at least 1 ref:  {_listings_with_imgs}')
+    print(f'  Flow-down events applied:      {_flow_events}')
+
+    # ======================================================================
     # 8.3 Color Fan-Out
     # ======================================================================
     expanded_rows = []
@@ -2840,31 +2892,20 @@ def main(argv=None):
     pm_to_final_id = marking_id_by_tm
     image_rows = []
     next_image_id = 1
-    seen_chunk_keys = set()
+    # Driven by per-source-listing image_file_refs computed in Step 8.25.
+    # Every townmark (including each color-fanout sibling) gets its own
+    # image rows pointing at the same on-disk files: same original_filename
+    # and storage_filename, different subject_id, new image_id per row.
     for _, pm in townmarks_df.sort_values('townmark_id').iterrows():
-        n = int(pm.get('images_above') or 0)
-        if n == 0:
+        src_idx = int(pm['source_listing_idx'])
+        refs = listings.loc[src_idx, 'image_file_refs']
+        if not refs:
             continue
-        page = pm.get('page')
-        chunk = pm.get('chunk')
-        if page is None or chunk is None:
-            print(f'WARNING: townmark_id={pm["townmark_id"]} has images_above={n} but '
-                  f'page={page!r} chunk={chunk!r}; skipping.')
-            continue
-        page = int(page)
-        chunk = int(chunk)
-        chunk_key = (page, chunk)
-        if chunk_key in seen_chunk_keys:
-            # Fan-out duplicate: images already emitted for this chunk.
-            continue
-        seen_chunk_keys.add(chunk_key)
-
         final_marking_id = pm_to_final_id.get(pm['townmark_id'])
         if final_marking_id is None:
             print(f'WARNING: no marking_id for townmark_id={pm["townmark_id"]}; skipping.')
             continue
-
-        for counter in range(1, n + 1):
+        for display_order, (page, chunk, counter) in enumerate(refs, start=1):
             fname = f'{IMAGES_SUBDIR}-{page}-{chunk}-{counter}.png'
             disk_path = MEDIA_ROOT / IMAGES_SUBDIR / fname
             if not disk_path.exists():
@@ -2894,7 +2935,7 @@ def main(argv=None):
                 'image_view': 'FULL',
                 'image_description': '',
                 'is_tracing': True,
-                'display_order': counter,
+                'display_order': display_order,
                 'uploaded_by': AUDIT_USER_ID,
             })
             next_image_id += 1
@@ -2911,24 +2952,26 @@ def main(argv=None):
     )
     images_out = _stamp(images_out)
     _img_counts = images_out.groupby('subject_id')['image_id'].count()
-    _check_pm = townmarks_df[
-        townmarks_df['images_above'].notna() & (townmarks_df['images_above'] > 0)
-    ]
-    _checked = set()
-    for _, pm in _check_pm.iterrows():
-        chunk_key = (pm.get('page'), pm.get('chunk'))
-        if chunk_key in _checked:
+    # Per-townmark validation: every townmark must have one image row per
+    # ref in its source listing's image_file_refs (post flow-down). This
+    # asserts both the flow-down arithmetic (counts match the flowed
+    # totals) and the color-fanout duplication (every color child has its
+    # own rows).
+    for _, pm in townmarks_df.iterrows():
+        src_idx = int(pm['source_listing_idx'])
+        refs = listings.loc[src_idx, 'image_file_refs']
+        expected = len(refs) if refs else 0
+        if expected == 0:
             continue
-        _checked.add(chunk_key)
         mid = pm_to_final_id.get(pm['townmark_id'])
         if mid is None:
             continue
-        expected = int(pm['images_above'])
         actual = int(_img_counts.get(mid, 0))
         if expected != actual:
             raise AssertionError(
                 f'Image count mismatch for marking_id={mid} '
-                f'(page={pm.get("page")}, chunk={pm.get("chunk")}): '
+                f'(townmark_id={pm["townmark_id"]}, '
+                f'source_listing_idx={src_idx}): '
                 f'expected {expected}, emitted {actual}'
             )
     _img_int_cols = [

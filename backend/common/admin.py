@@ -77,7 +77,6 @@ from .models import (
     MarkingVersion,
     Image,
     Postcover,
-    PostcoverImage,
     DateSeen,
     CoverValuation,
     CoverMarking,
@@ -539,33 +538,11 @@ class MarkingVersionAdmin(admin.ModelAdmin):
 
 # ========== POSTCOVER (DEPRECATED) ADMIN ==========
 
-class PostcoverImageInline(admin.TabularInline):
-    model = PostcoverImage
-    extra = 1
-    readonly_fields = ['file_checksum']
-    fields = ['original_filename', 'storage_filename', 'image_view', 'display_order']
-    exclude = ['created_by', 'modified_by', 'created_date', 'modified_date']
-
-
 @admin.register(Postcover)
 class PostcoverAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     list_display = ['postcover_key', 'owner_user']
     search_fields = ['postcover_key', 'owner_user__username', 'description']
     raw_id_fields = ['owner_user']
-    inlines = [PostcoverImageInline]
-
-
-@admin.register(PostcoverImage)
-class PostcoverImageAdmin(TimestampedModelAdmin):
-    list_display = ['get_postcover_key', 'original_filename', 'image_view', 'display_order', 'uploaded_by']
-    list_filter = ['image_view']
-    search_fields = ['postcover__postcover_key', 'original_filename']
-    readonly_fields = ['created_by', 'created_date', 'modified_by', 'modified_date', 'file_checksum']
-    raw_id_fields = ['postcover']
-
-    def get_postcover_key(self, obj):
-        return obj.postcover.postcover_key
-    get_postcover_key.short_description = 'Postcover'
 
 
 # ========== USER ADMIN ==========
