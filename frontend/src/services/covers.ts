@@ -250,6 +250,16 @@ export async function deleteCoverDate(id: number): Promise<void> {
   await apiClient.delete(`/dates-seen/${id}/`);
 }
 
+// Aliases for the in-progress DateSeen rename. CoverDialog and newer
+// callers use these names; CoverEdit still uses CoverDate*. Both point
+// at the same exports.
+export type DateSeenGranularity = CoverDateGranularity;
+export type DateSeenWritePayload = CoverDateWritePayload;
+export type DateSeenWriteResult = CoverDateWriteResult;
+export const createDateSeen = createCoverDate;
+export const updateDateSeen = updateCoverDate;
+export const deleteDateSeen = deleteCoverDate;
+
 /* -------------------------------------------------------------------------
  * Cover detail (read)
  * ----------------------------------------------------------------------- */

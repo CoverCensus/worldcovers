@@ -25,10 +25,7 @@ import {
   reorderImages,
   type AssociatedCover,
   type AssociatedDateSeen,
-  type AssociatedDateSeen,
   type MarkingChangelogEvent,
-  type MarkingCitation,
-  type MarkingCitationReferenceWork,
   type MarkingCitation,
   type MarkingCitationReferenceWork,
   type MarkingImage,
@@ -38,18 +35,6 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
-import { CoverDialog } from "@/components/CoverDialog";
-import { deleteCover } from "@/services/covers";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 
 type GalleryImage = {
   imageUrl: string | null;
@@ -120,8 +105,6 @@ function coverTypeLabel(t: string | null): string {
   return EMPTY;
 }
 
-function formatCoverDate(d: AssociatedDateSeen): string {
-  // Honor the dates_seen granularity: YEAR -> "1980", MONTH -> "01/1980",
 function formatCoverDate(d: AssociatedDateSeen): string {
   // Honor the dates_seen granularity: YEAR -> "1980", MONTH -> "01/1980",
   // DAY -> "01/01/1980". Truncating the ISO string before formatting lets
@@ -218,35 +201,6 @@ function citationByline(rw: MarkingCitationReferenceWork | null): string {
   return "";
 }
 
-/**
- * Title text for a citation entry. The optional reference-work `code`
- * (editor-assigned identifier like "ASCC-204") is shown as a separate
- * badge in the UI, so this function returns just the human-readable
- * title and leaves the code to the caller.
- */
-function citationTitle(citation: MarkingCitation): string {
-  const rw = citation.referenceWork;
-  if (!rw) return "Reference work";
-  const title = rw.title.trim();
-  if (title) return title;
-  const code = (rw.code ?? "").trim();
-  return code || "Reference work";
-}
-
-/**
- * Build the "Author (Year)" subtitle that sits directly under the title.
- * Returns "" when neither field is populated; either alone is fine.
- */
-function citationByline(rw: MarkingCitationReferenceWork | null): string {
-  if (!rw) return "";
-  const authorship = rw.authorship.trim();
-  const year = rw.publicationYear != null ? String(rw.publicationYear) : "";
-  if (authorship && year) return `${authorship} (${year})`;
-  if (authorship) return authorship;
-  if (year) return `(${year})`;
-  return "";
-}
-
 function inscriptionLabel(type: MarkingTypeValue): string {
   if (type === "RATEMARK") return "Ratemark Text";
   if (type === "AUXMARK") return "Auxmark Text";
@@ -311,7 +265,6 @@ function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
     // tooling on ContributionDetail.tsx where displayOrder===0 is what gets
     // labeled "Default" / "Set default".
     isDefault: img.displayOrder === 0,
-    isTracing: img.subjectType === "MARKING" && img.isTracing,
     isTracing: img.subjectType === "MARKING" && img.isTracing,
     imageId: img.imageId > 0 ? img.imageId : null,
   }));
@@ -799,7 +752,6 @@ const RecordDetail = () => {
               <Card className="shadow-archival-md">
                 <CardHeader>
                   <CardTitle className="font-heading text-lg">Associated Thumbnails</CardTitle>
-                  <CardTitle className="font-heading text-lg">Associated Thumbnails</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {galleryImages.length === 0 ? (
@@ -1200,66 +1152,6 @@ const RecordDetail = () => {
                   )}
                 </CardContent>
               </Card>
-
-              {markingId != null && !Number.isNaN(markingId) && (
-                <CoverDialog
-                  open={coverDialogOpen}
-                  onOpenChange={setCoverDialogOpen}
-                  mode={coverDialogMode}
-                  markingId={markingId}
-                  cover={coverDialogMode === "edit" ? editingCover : null}
-                  onSaved={() => refreshAssociatedCovers({ resetOpen: true })}
-                />
-              )}
-
-              <AlertDialog
-                open={pendingDeleteCover !== null}
-                onOpenChange={(next) => {
-                  // Block dismiss-while-deleting so the user can't
-                  // double-click cancel and leave a half-finished DELETE
-                  // request hanging out without UI feedback.
-                  if (deletingCoverId != null) return;
-                  if (!next) setPendingDeleteCover(null);
-                }}
-              >
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Remove this cover?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {pendingDeleteCover?.coverDetails?.code
-                        ? `Cover "${pendingDeleteCover.coverDetails.code}" will be removed, along with its dates and link to this marking.`
-                        : "This cover will be removed, along with its dates and link to this marking."}{" "}
-                      This action cannot be undone.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel disabled={deletingCoverId != null}>
-                      Cancel
-                    </AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={(e) => {
-                        // Stop AlertDialog from auto-closing on click; we
-                        // close manually inside confirmDeleteCover after
-                        // the DELETE request resolves so the UI state stays
-                        // consistent with the server.
-                        e.preventDefault();
-                        void confirmDeleteCover();
-                      }}
-                      disabled={deletingCoverId != null}
-                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    >
-                      {deletingCoverId != null ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Removing...
-                        </>
-                      ) : (
-                        "Remove"
-                      )}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
 
               {record.desc.trim() && (
                 <Card className="shadow-archival-md">

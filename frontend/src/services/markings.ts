@@ -52,7 +52,6 @@ export interface MarkingImage {
   storageFilename: string;
   imageDescription: string;
   isTracing: boolean;
-  isTracing: boolean;
   displayOrder: number;
 }
 
@@ -277,7 +276,6 @@ export interface MarkingRecord {
   secondImage: MarkingImage | null;
   images: MarkingImage[];
   citations: MarkingCitation[];
-  citations: MarkingCitation[];
 }
 
 export interface MarkingChangelogEvent {
@@ -416,7 +414,6 @@ function mapImage(raw: unknown): MarkingImage | null {
     storageFilename: toStr(o.storage_filename),
     imageDescription: toStr(o.image_description),
     isTracing: Boolean(o.is_tracing),
-    isTracing: Boolean(o.is_tracing),
     displayOrder: toNumOrNull(o.display_order) ?? 0,
   };
 }
@@ -424,42 +421,6 @@ function mapImage(raw: unknown): MarkingImage | null {
 function mapImageList(raw: unknown): MarkingImage[] {
   if (!Array.isArray(raw)) return [];
   return raw.map(mapImage).filter((x): x is MarkingImage => x !== null);
-}
-
-function mapCitationReferenceWork(raw: unknown): MarkingCitationReferenceWork | null {
-  if (!raw || typeof raw !== "object") return null;
-  const o = raw as Record<string, unknown>;
-  const id = toIdOrNull(o.id);
-  if (id == null) return null;
-  return {
-    id,
-    code: typeof o.code === "string" && o.code ? o.code : null,
-    title: toStr(o.title),
-    authorship: toStr(o.authorship),
-    publisher: toStr(o.publisher),
-    publicationYear: toNumOrNull(o.publication_year),
-    edition: toStr(o.edition),
-    volume: toStr(o.volume),
-    isbn: toStr(o.isbn),
-    url: toStr(o.url),
-  };
-}
-
-function mapCitation(raw: unknown): MarkingCitation | null {
-  if (!raw || typeof raw !== "object") return null;
-  const o = raw as Record<string, unknown>;
-  const id = toIdOrNull(o.id);
-  if (id == null) return null;
-  return {
-    id,
-    citationDetail: toStr(o.citation_detail),
-    referenceWork: mapCitationReferenceWork(o.reference_work_details),
-  };
-}
-
-function mapCitationList(raw: unknown): MarkingCitation[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map(mapCitation).filter((x): x is MarkingCitation => x !== null);
 }
 
 function mapCitationReferenceWork(raw: unknown): MarkingCitationReferenceWork | null {
@@ -545,7 +506,6 @@ export function mapApiMarkingToRecord(raw: unknown): MarkingRecord {
     mainImage,
     secondImage,
     images,
-    citations: mapCitationList(o.citations),
     citations: mapCitationList(o.citations),
   };
 }
@@ -791,13 +751,6 @@ export async function restoreMarkingVersion(
  * so the discriminator is implicit and we expose just the observation fields.
  */
 export interface AssociatedDateSeen {
-/**
- * A single DateSeen row attached to an associated cover. The backing API row
- * is polymorphic (subject_type COVER|MARKING + subject_id); inside an
- * AssociatedCover the only rows the caller sees are the COVER-scoped ones,
- * so the discriminator is implicit and we expose just the observation fields.
- */
-export interface AssociatedDateSeen {
   id: number;
   date: string;
   granularity: "DAY" | "MONTH" | "YEAR";
@@ -813,19 +766,12 @@ export interface AssociatedCoverDetails {
    * (which is keyed by id) without a second round-trip.
    */
   colorId: number | null;
-  /**
-   * FK id of the Color row (or null when no color is set). Carried alongside
-   * colorName so the cover edit dialog can prefill the colour <Select>
-   * (which is keyed by id) without a second round-trip.
-   */
-  colorId: number | null;
   colorName: string;
   type: string | null;
   width: string | null;
   height: string | null;
   hasAdhesive: boolean | null;
   isInstitutional: boolean | null;
-  datesSeen: AssociatedDateSeen[];
   datesSeen: AssociatedDateSeen[];
 }
 
@@ -869,14 +815,12 @@ interface CoverMarkingApiResponse {
 }
 
 function mapAssociatedDateSeen(raw: unknown): AssociatedDateSeen | null {
-function mapAssociatedDateSeen(raw: unknown): AssociatedDateSeen | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
   const id = toIdOrNull(o.id);
   const date = typeof o.date === "string" ? o.date : "";
   if (id == null || !date) return null;
   const gRaw = String(o.granularity ?? "").toUpperCase();
-  const granularity: AssociatedDateSeen["granularity"] =
   const granularity: AssociatedDateSeen["granularity"] =
     gRaw === "MONTH" ? "MONTH" : gRaw === "YEAR" ? "YEAR" : "DAY";
   return { id, date, granularity };
@@ -895,18 +839,9 @@ function mapAssociatedCoverDetails(raw: unknown): AssociatedCoverDetails | null 
   const datesSeen = datesRaw
     .map(mapAssociatedDateSeen)
     .filter((x): x is AssociatedDateSeen => x !== null);
-  // Backend serializer exposes the nested array under `dates_seen` (it used
-  // to be `cover_dates` before the polymorphic refactor). Caller code only
-  // sees COVER-scoped rows here because CoverSerializer.get_dates_seen
-  // filters by subject_type=COVER for this cover's pk.
-  const datesRaw = Array.isArray(o.dates_seen) ? o.dates_seen : [];
-  const datesSeen = datesRaw
-    .map(mapAssociatedDateSeen)
-    .filter((x): x is AssociatedDateSeen => x !== null);
   return {
     id,
     code: typeof o.code === "string" && o.code ? o.code : null,
-    colorId: toIdOrNull(o.color),
     colorId: toIdOrNull(o.color),
     colorName: toStr(o.color_name),
     type: typeof o.type === "string" && o.type ? o.type : null,
@@ -914,7 +849,6 @@ function mapAssociatedCoverDetails(raw: unknown): AssociatedCoverDetails | null 
     height: decimalToString(o.height),
     hasAdhesive: o.has_adhesive == null ? null : Boolean(o.has_adhesive),
     isInstitutional: o.is_institutional == null ? null : Boolean(o.is_institutional),
-    datesSeen,
     datesSeen,
   };
 }
@@ -972,7 +906,6 @@ function mapAssociatedCover(raw: unknown): AssociatedCover | null {
  *       "height": "10.50",
  *       "has_adhesive": false,
  *       "is_institutional": null,
- *       "dates_seen": [
  *       "dates_seen": [
  *         { "id": 99, "date": "1851-04-12", "granularity": "DAY" }
  *       ]
@@ -1325,7 +1258,6 @@ export async function getMarkingCount(): Promise<number> {
   return typeof res.data.count === "number" ? res.data.count : 0;
 }
 
-/** GET /markings-range/ - earliest/latest dates_seen year across catalog. */
 /** GET /markings-range/ - earliest/latest dates_seen year across catalog. */
 export async function getMarkingYearRange(): Promise<MarkingYearRange> {
   const res = await apiClient.get<Record<string, number | null | undefined>>(
