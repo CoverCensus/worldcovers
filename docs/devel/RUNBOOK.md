@@ -58,7 +58,7 @@ Database backups are stored in `backups/`. To restore:
 
 ```sh
 mysql -u wocod -p worldcovers < backups/worldcovers_YYYY-MM-DD.sql
-pipenv run manage migrate
+woco migrate
 ```
 
 ## Checking the admin

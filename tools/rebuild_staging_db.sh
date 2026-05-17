@@ -32,36 +32,36 @@ fi
 
 export DB_NAME
 echo "[2/5] Running migrations..."
-(cd backend && python manage.py migrate --noinput)
+uv run python backend/manage.py migrate --noinput
 
 echo "[3/5] Ensuring admin user (admin / admin; change password after first login)..."
-(cd backend && python manage.py shell -c "
+uv run python backend/manage.py shell -c "
 from django.contrib.auth import get_user_model;
 User = get_user_model();
 u, created = User.objects.get_or_create(username='admin', defaults={'is_superuser': True, 'is_staff': True});
 u.set_password('admin');
 u.save();
 print('Admin user ready.' if not created else 'Admin user created.')
-")
+"
 
 echo "[4/5] Creating Site for Django..."
-(cd backend && python manage.py shell -c "
+uv run python backend/manage.py shell -c "
 from django.contrib.sites.models import Site;
 s, _ = Site.objects.get_or_create(pk=1, defaults={'domain': 'example.com', 'name': 'WorldCovers'});
 s.domain = 'hellowoco.app';
 s.name = 'WorldCovers';
 s.save();
 print('Site updated.')
-")
+"
 
 echo "[5/5] Running full import (reference + legacy + ASCC)..."
 if [[ $SKIP_IMPORT -eq 1 ]]; then
-  echo "Skipped (--no-import). Run manually: cd backend && python manage.py import_all_legacy_csv --dir imports --user admin"
+  echo "Skipped (--no-import). Run manually: uv run python backend/manage.py import_all_legacy_csv --dir imports --user admin"
 else
-  if ! (cd backend && test -d "$IMPORT_DIR"); then
-    echo "Warning: Import dir backend/$IMPORT_DIR not found. Run import manually: cd backend && python manage.py import_all_legacy_csv --dir imports --user admin" >&2
+  if [[ ! -d "backend/$IMPORT_DIR" ]]; then
+    echo "Warning: Import dir backend/$IMPORT_DIR not found. Run import manually: uv run python backend/manage.py import_all_legacy_csv --dir imports --user admin" >&2
   else
-    (cd backend && python manage.py import_all_legacy_csv --dir "$IMPORT_DIR" --user admin)
+    uv run python backend/manage.py import_all_legacy_csv --dir "$IMPORT_DIR" --user admin
   fi
 fi
 

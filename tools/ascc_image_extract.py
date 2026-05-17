@@ -45,9 +45,9 @@ produces the authoritative CSV with Images Above counts).
 
 Usage (run from tools/ so relative paths under wip/ resolve):
 
-    pipenv run python ascc_image_extract.py VA_ASCC_CTLG
-    pipenv run python ascc_image_extract.py VA_ASCC_CTLG --pages 419-425
-    pipenv run python ascc_image_extract.py VA_ASCC_CTLG -v
+    uv run python ascc_image_extract.py VA_ASCC_CTLG
+    uv run python ascc_image_extract.py VA_ASCC_CTLG --pages 419-425
+    uv run python ascc_image_extract.py VA_ASCC_CTLG -v
 
 No caches: both stages are deterministic and re-run quickly.
 

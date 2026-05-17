@@ -24,7 +24,7 @@ Pipeline (three stages, gateable from the CLI):
 
 Usage:
 
-    pipenv run python ascc_page_processor.py [--stages STAGES]
+    uv run python ascc_page_processor.py [--stages STAGES]
                                               [--pages RANGE]
                                               [--force STAGES]
 

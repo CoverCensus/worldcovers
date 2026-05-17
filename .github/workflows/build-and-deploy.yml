@@ -14,10 +14,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
         with:
-          python-version: "3.11"
+          # Pin uv version so CI is deterministic. Bump deliberately.
+          version: "0.11.2"
+          enable-cache: true
+          # Python version comes from .python-version at repo root (3.13).
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -27,7 +30,8 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Python dependencies
-        run: pip install -r backend/requirements.txt
+        # Same flags as the server: locked resolution, no dev group.
+        run: uv sync --no-dev --frozen
 
       # `migrate --check` was the original step here, but it needs a live
       # MySQL to inspect django_migrations and CI doesn't provide one, so it
@@ -40,7 +44,7 @@ jobs:
       # MySQL service block + DATABASE config; see the `services:` pattern
       # in https://docs.github.com/en/actions/using-containerized-services.
       - name: Django system checks
-        run: python backend/manage.py check
+        run: uv run python backend/manage.py check
 
       - name: Build frontend
         run: |

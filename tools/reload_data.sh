@@ -5,14 +5,13 @@
 
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# Must run from repo root so pipenv finds the [scripts] Pipfile + shared venv
-# (there's also a backend/Pipfile without [scripts] — don't let pipenv grab it).
+# Run from repo root so 'uv run' finds pyproject.toml and .venv.
 cd "$REPO_ROOT"
 
 echo "[1/1] import_ascc_bundle --truncate"
-pipenv run manage import_ascc_bundle tools/wip/out --truncate
+uv run python backend/manage.py import_ascc_bundle tools/wip/out --truncate
 
 #echo "[2/2] import_catalog_images"
-#pipenv run manage import_catalog_images
+#uv run python backend/manage.py import_catalog_images
 
 echo "Done."

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Convenience wrapper: 'woco <args>' == 'uv run woco <args>'.
+# The actual entry point lives in woco_cli.py + [project.scripts] woco
+# in pyproject.toml. This shim just avoids the 'uv run' prefix and lets
+# you run from anywhere via 'ln -s "$PWD/woco" ~/.local/bin/woco'.
+set -e
+HERE="$(cd "$(dirname "$0")" && pwd)"
+exec uv run --project "$HERE" woco "$@"

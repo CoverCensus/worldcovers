@@ -27,7 +27,7 @@ lsof -ti :8000 | xargs kill
 From the project root:
 
 ```bash
-pipenv run manage runserver
+woco runserver
 ```
 
 ---

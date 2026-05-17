@@ -9,7 +9,7 @@
 
 1. From the project root:
    ```bash
-   pipenv run manage createsuperuser
+   woco createsuperuser
    ```
 2. Use the credentials above when prompted.
 3. Log in at:
@@ -19,7 +19,7 @@
 ## Optional: Create a regular user via Django shell
 
 ```bash
-pipenv run manage shell
+woco shell
 ```
 
 ```python

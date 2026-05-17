@@ -10,10 +10,10 @@ produces the chunk PNGs); upstream of tools/apmc_data_munger.ipynb.
 
 Usage (run from the tools/ directory so relative paths resolve):
 
-    pipenv run python ascc_page_extract.py VA_ASCC_CTLG
-    pipenv run python ascc_page_extract.py VA_ASCC_CTLG --pages 419-420
-    pipenv run python ascc_page_extract.py VA_ASCC_CTLG --pages 419 --force
-    pipenv run python ascc_page_extract.py VA_ASCC_CTLG -v
+    uv run python ascc_page_extract.py VA_ASCC_CTLG
+    uv run python ascc_page_extract.py VA_ASCC_CTLG --pages 419-420
+    uv run python ascc_page_extract.py VA_ASCC_CTLG --pages 419 --force
+    uv run python ascc_page_extract.py VA_ASCC_CTLG -v
 
 Cache:
     wip/cache/<basename>_extract.json -- one entry per chunk; tagged with

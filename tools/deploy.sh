@@ -5,18 +5,14 @@
 set -e
 cd "$(dirname "$0")/.."
 
-echo "[1/4] Installing Python dependencies..."
-# Pipfile only declares dev/notebook tooling. Runtime deps (Django, DRF,
-# drf-spectacular, ...) live in backend/requirements.txt so CI and the
-# server install from a single canonical list. We sync Pipfile first, then
-# install the runtime requirements into the same pipenv venv.
-# --no-deps is intentional: requirements.txt is already a fully-resolved
-# pin set, so we skip pip's transitive resolution to avoid version drift.
-pipenv install
-pipenv run pip install --no-deps -r backend/requirements.txt
+echo "[1/4] Syncing Python dependencies (uv)..."
+# --no-dev: skip the [dependency-groups] dev list (ipykernel, anthropic, ...).
+# --frozen: fail if uv.lock is out of date instead of silently regenerating;
+#           on a server we want the locked resolution or nothing.
+uv sync --no-dev --frozen
 
 echo "[2/4] Running migrations..."
-pipenv run manage migrate --noinput
+uv run python backend/manage.py migrate --noinput
 
 echo "[3/4] Building frontend (creates frontend/dist/)..."
 # Load frontend/.env if present (not in git; create on server or set env vars in host dashboard).
@@ -26,6 +22,6 @@ rm -rf frontend/dist
 (cd frontend && npm ci && npm run build)
 
 echo "[4/4] Collecting static files (Django)..."
-pipenv run manage collectstatic --noinput
+uv run python backend/manage.py collectstatic --noinput
 
 echo "Done."

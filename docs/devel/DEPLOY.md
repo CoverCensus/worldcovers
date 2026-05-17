@@ -19,7 +19,7 @@ For data import commands and ETL tools, see [TOOLS.md](TOOLS.md). For day-to-day
   tools/          # deploy.sh, worldcovers.service, notebooks
   mysql.cnf       # DB user/password — gitignored, must be created on host
   backend/.env    # SECRET_KEY, DEBUG, ALLOWED_HOSTS — gitignored, must be created on host
-  .venv/          # pipenv virtual environment
+  .venv/          # uv virtual environment (created by 'uv sync')
   backups/        # database backups
 ```
 
@@ -84,7 +84,12 @@ Prerequisites on the host:
    ./tools/deploy.sh         # installs deps, migrates, builds frontend
    # Then restart your app (gunicorn/systemd or the current runserver process)
    ```
-3. The server must have **Python + pipenv** and **Node.js + npm** (for the build step).
+3. The server must have **uv** (which manages Python) and **Node.js + npm** (for the build step). One-time install on the server (as the `wocod` user):
+   ```bash
+   sudo -u wocod bash -lc "curl -LsSf https://astral.sh/uv/0.11.2/install.sh | sh"
+   sudo -u wocod bash -lc "uv --version"   # expect 0.11.2
+   ```
+   After uv is installed, `tools/deploy.sh` calls `uv sync --no-dev --frozen` to recreate `/srv/woco/.venv/` from `uv.lock`. The systemd unit's `ExecStart=/srv/woco/.venv/bin/gunicorn` works unchanged.
 
 ### Option B: GitHub Actions (CI) + your host
 
@@ -100,7 +105,7 @@ Prerequisites on the host:
 1. **Push** to `staging`.
 2. In your host’s dashboard, set the **build command** to:
    ```bash
-   pip install -r backend/requirements.txt && cd frontend && npm ci && npm run build && cd ..
+   uv sync --no-dev --frozen && cd frontend && npm ci && npm run build && cd ..
    ```
 3. Set the **start command** to your Django command (e.g. `cd backend && gunicorn woco.wsgi:application`).
 
@@ -115,7 +120,7 @@ So after a fresh deploy, the server has the Python/Django code and the React **s
 
 The **deploy process** must:
 
-1. **Install Python deps** and run Django migrations (e.g. `pipenv install`, `pipenv run manage migrate`).
+1. **Install Python deps** and run Django migrations (e.g. `uv sync --no-dev --frozen`, `woco migrate`).
 2. **Build the frontend** so `frontend/dist/` exists **before** Django serves the site:
    ```bash
    cd frontend
@@ -123,11 +128,11 @@ The **deploy process** must:
    npm run build
    cd ..
    ```
-3. **Start Django** (e.g. `gunicorn`, `pipenv run manage runserver`, or your usual command).
+3. **Start Django** (e.g. `gunicorn` via systemd, or `woco runserver` for ad-hoc).
 
 So the **deploy environment** needs:
 
-- **Python and pipenv** (and your Python deps)
+- **uv** (which manages Python and the venv from `uv.lock`)
 - **Node.js and npm** (only for the build step)
 
 ## Example: one-off deploy script
@@ -136,15 +141,15 @@ From the **project root** (worldcovers/):
 
 ```bash
 # 1. Python
-pipenv install
-pipenv run manage migrate --noinput
-pipenv run manage collectstatic --noinput
+uv sync --no-dev --frozen
+woco migrate --noinput
+woco collectstatic --noinput
 
 # 2. Frontend (creates frontend/dist/)
 cd frontend && npm ci && npm run build && cd ..
 
 # 3. Run the app (example; use gunicorn/uwsgi in production)
-pipenv run manage runserver 0.0.0.0:8000
+woco runserver 0.0.0.0:8000
 ```
 
 ## Example: GitHub Actions (CI)

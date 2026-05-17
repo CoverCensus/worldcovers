@@ -2,7 +2,7 @@
 
 Everything in the repo that isn't the Django app itself: host scripts, the systemd unit, and the Django management commands.
 
-All Django command examples use `pipenv run manage <cmd>` — the canonical invocation defined in `Pipfile [scripts]`. Please do not use `django-admin` or `python manage.py`.
+All Django command examples use `woco <cmd>` -- the project's CLI shim (a bash wrapper around `uv run woco`, which calls `woco_cli.py` -> Django's `execute_from_command_line`). Please do not use `django-admin` or `python manage.py` directly.
 
 ---
 
@@ -17,18 +17,18 @@ All Django command examples use `pipenv run manage <cmd>` — the canonical invo
 | `apmc_data_explorer.ipynb` | Browse raw APMC catalog data | `tools/apmc_data_explorer.ipynb` |
 | `apmc_data_munger.ipynb` | Munge APMC data into import-ready CSVs | `tools/apmc_data_munger.ipynb` |
 | `apmc_data_transforms.ipynb` | Apply transforms to APMC data | `tools/apmc_data_transforms.ipynb` |
-| `import_v2_data` | Primary v2 catalog import (postmarks, covers, marks) | `pipenv run manage import_v2_data` |
-| `import_v2_data_versioned` | Same as above, wrapped in a django-reversion revision | `pipenv run manage import_v2_data_versioned` |
-| `list_v2_import_versions` | List all versioned v2 imports | `pipenv run manage list_v2_import_versions` |
-| `revert_v2_import_version` | Revert a versioned v2 import | `pipenv run manage revert_v2_import_version` |
-| `import_catalog_images` | Import postmark images from a CSV mapping | `pipenv run manage import_catalog_images` |
+| `import_v2_data` | Primary v2 catalog import (postmarks, covers, marks) | `woco import_v2_data` |
+| `import_v2_data_versioned` | Same as above, wrapped in a django-reversion revision | `woco import_v2_data_versioned` |
+| `list_v2_import_versions` | List all versioned v2 imports | `woco list_v2_import_versions` |
+| `revert_v2_import_version` | Revert a versioned v2 import | `woco revert_v2_import_version` |
+| `import_catalog_images` | Import postmark images from a CSV mapping | `woco import_catalog_images` |
 | DateFormat admin import | Import date formats via Django admin | `/admin/postmarks/dateformat/import/` |
-| `backup_auth` | Export user accounts, groups, and email addresses | `pipenv run manage backup_auth` |
-| `restore_auth` | Restore user accounts from a backup | `pipenv run manage restore_auth` |
-| `set_user_password` | Set a user's password without the shell | `pipenv run manage set_user_password` |
-| `backfill_listing_rate_values` | Backfill missing rate values on listing records | `pipenv run manage backfill_listing_rate_values` |
-| `backfill_listing_states` | Backfill missing state assignments on listing records | `pipenv run manage backfill_listing_states` |
-| `check_listing_admin` | Diagnostic: verify admin listing configuration | `pipenv run manage check_listing_admin` |
+| `backup_auth` | Export user accounts, groups, and email addresses | `woco backup_auth` |
+| `restore_auth` | Restore user accounts from a backup | `woco restore_auth` |
+| `set_user_password` | Set a user's password without the shell | `woco set_user_password` |
+| `backfill_listing_rate_values` | Backfill missing rate values on listing records | `woco backfill_listing_rate_values` |
+| `backfill_listing_states` | Backfill missing state assignments on listing records | `woco backfill_listing_states` |
+| `check_listing_admin` | Diagnostic: verify admin listing configuration | `woco check_listing_admin` |
 
 ---
 
@@ -41,7 +41,7 @@ All Django command examples use `pipenv run manage <cmd>` — the canonical invo
 **Who runs it:** The GitHub Actions CI workflow runs it over SSH on every push to `staging`. Humans can run it manually after `git pull`.
 
 **Prerequisites:**
-- Python + pipenv installed on the host
+- `uv` installed on the host (Python toolchain manager; auto-installs the pinned Python version from `.python-version`)
 - Node.js + npm installed on the host (for the frontend build)
 - `mysql.cnf` present at the repo root on the host (see [BUILD.md](BUILD.md))
 - `wocod` deploy user has the sudoers entries described in [RUNBOOK.md](RUNBOOK.md)
@@ -94,7 +94,7 @@ See [RUNBOOK.md](RUNBOOK.md) for the required sudoers entries and full host-boot
 tools/rebuild_staging_db.sh
 ```
 
-After running, apply migrations to set up the schema: `pipenv run manage migrate`.
+After running, apply migrations to set up the schema: `woco migrate`. (`rebuild_staging_db.sh` already runs migrations as part of the rebuild; this is a manual fallback.)
 
 ---
 
@@ -126,7 +126,7 @@ The primary command for importing v2 catalog data. Works on a fresh database wit
 
 **Invocation:**
 ```sh
-pipenv run manage import_v2_data --dir tools/wip/out
+woco import_v2_data --dir tools/wip/out
 ```
 
 **Flags:**
@@ -156,9 +156,9 @@ These are produced by the APMC notebooks in `tools/`.
 Wrap `import_v2_data` inside a django-reversion revision so you can tag, list, and revert imports.
 
 ```sh
-pipenv run manage import_v2_data_versioned --dir tools/wip/out --tag my-import-label
-pipenv run manage list_v2_import_versions
-pipenv run manage revert_v2_import_version --tag my-import-label
+woco import_v2_data_versioned --dir tools/wip/out --tag my-import-label
+woco list_v2_import_versions
+woco revert_v2_import_version --tag my-import-label
 ```
 
 Accepts the same `--dir` and `--user` flags as `import_v2_data`. `--tag` is a human-readable label for the revision. Use this instead of `import_v2_data` when you want to be able to roll back.
@@ -173,10 +173,10 @@ Import catalog-extracted images as `Image` records (`subject_type='MARKING'`).
 
 **Invocation:**
 ```sh
-pipenv run manage import_catalog_images                              # auto-discover *_image_mapping.csv in MEDIA_ROOT
-pipenv run manage import_catalog_images backend/media/               # all *.csv in a directory
-pipenv run manage import_catalog_images backend/media/VA*.csv        # shell-expanded file list
-pipenv run manage import_catalog_images path/to/one.csv --dry-run    # single file, no writes
+woco import_catalog_images                              # auto-discover *_image_mapping.csv in MEDIA_ROOT
+woco import_catalog_images backend/media/               # all *.csv in a directory
+woco import_catalog_images backend/media/VA*.csv        # shell-expanded file list
+woco import_catalog_images path/to/one.csv --dry-run    # single file, no writes
 ```
 
 **CSV columns:**
@@ -235,7 +235,7 @@ Drop `nOrder`, `ynActive`, `ynDeleted`, `dtEntered`, `dtUpdated` — the importe
 
 **Quick conversion script** (generates an import-ready CSV from the legacy file):
 ```sh
-pipenv run manage convert_dateformat_csv \
+woco convert_dateformat_csv \
   "frontend/public/Old Data/tblTownmarkDateFormat.csv" \
   --output dateformat_import.csv \
   --user-id 1
@@ -250,8 +250,8 @@ Then upload `dateformat_import.csv` at `/admin/postmarks/dateformat/import/`.
 Export and restore user accounts, groups, and email addresses using django-import-export resources.
 
 ```sh
-pipenv run manage backup_auth users.csv groups.csv emails.csv
-pipenv run manage restore_auth users.csv groups.csv emails.csv
+woco backup_auth users.csv groups.csv emails.csv
+woco restore_auth users.csv groups.csv emails.csv
 ```
 
 Run `backup_auth` before destructive DB operations. `restore_auth` is idempotent — safe to re-run.
@@ -261,7 +261,7 @@ Run `backup_auth` before destructive DB operations. `restore_auth` is idempotent
 ### `set_user_password` — set a password without the shell
 
 ```sh
-pipenv run manage set_user_password <username> <new_password>
+woco set_user_password <username> <new_password>
 ```
 
 Sets a user's password directly. Useful when you can't reach the admin UI.
@@ -273,8 +273,8 @@ Sets a user's password directly. Useful when you can't reach the admin UI.
 One-time backfill commands for filling in missing data on existing listing records after a schema change or data import gap. Safe to re-run (idempotent).
 
 ```sh
-pipenv run manage backfill_listing_rate_values
-pipenv run manage backfill_listing_states
+woco backfill_listing_rate_values
+woco backfill_listing_states
 ```
 
 ---
@@ -284,5 +284,5 @@ pipenv run manage backfill_listing_states
 Verifies that the Django admin listing configuration is consistent. Prints any mismatches to stdout. No writes.
 
 ```sh
-pipenv run manage check_listing_admin
+woco check_listing_admin
 ```

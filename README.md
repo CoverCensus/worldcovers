@@ -43,7 +43,7 @@ For more details see [design.md](./docs/design.md)
 
 ### Quickstart
 
-This project uses `pipenv` and `django`. Make sure you have at least `python` 3.13 installed. All Django commands use `pipenv run manage <cmd>` — for example `pipenv run manage runserver`.
+This project uses `uv` (Python toolchain + venv manager) and `django`. Install uv with `curl -LsSf https://astral.sh/uv/install.sh | sh`; it auto-installs the Python version pinned in `.python-version` (3.13). All Django commands use `woco <cmd>` -- for example `./woco runserver`. (`./woco` is a bash shim at the repo root; symlink it onto your PATH if you want it available from anywhere.)
 
 For full setup instructions (dependencies, database credentials, frontend build, migrations), see [docs/BUILD.md](./docs/BUILD.md).
 
@@ -61,11 +61,12 @@ To run **WorldCovers** in production, deploy with `tools/deploy.sh` then manage 
 sudo systemctl start worldcovers
 ```
 
-To run in development, build the frontend once, then start Django (it serves the built SPA at `/`):
+To run in development, use the one-command launcher (frontend HMR + Django autoreload, sharing one terminal, single Ctrl+C kills both):
 ```sh
-cd frontend && npm ci && npm run build && cd ..
-pipenv run manage runserver
+./run.sh
 ```
+
+`run.sh` reads Django's `DEBUG`: with `DEBUG=True` (the default) it runs the Vite dev server on :8080 and Django on :8000 -- open `http://localhost:8080`. With `DEBUG=False` it builds `frontend/dist/` and lets Django serve it at :8000 (useful for a final pre-push sanity check). See [docs/devel/BUILD.md](./docs/devel/BUILD.md) for details.
 
 For day-to-day operator tasks (restarts, imports, backups, approving contributions), see [docs/RUNBOOK.md](./docs/RUNBOOK.md).
 
