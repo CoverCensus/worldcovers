@@ -130,22 +130,32 @@ def roll_up_catalog_text(listings_df):
         return str(v)
 
     n = len(listings_df)
-    rolled = [None] * n
-    prior_siblings = {}  # parent_pos -> list of own clean_text seen so far
 
+    # Pass 1: collect every child's clean_text per parent, in catalog order.
+    children_by_parent = {}  # parent_idx label -> list of clean_text
+    for pos in range(n):
+        row = listings_df.iloc[pos]
+        pidx = row.get('parent_idx')
+        if pidx is None or (isinstance(pidx, float) and pd.isna(pidx)):
+            continue
+        children_by_parent.setdefault(pidx, []).append(_txt(row.get('clean_text')))
+
+    # Pass 2: emit rolled text. Children get parent + ALL siblings (incl. self,
+    # incl. siblings that come after them in catalog order). Independents get
+    # their own clean_text plus all of their children below.
+    rolled = [None] * n
     for pos in range(n):
         row = listings_df.iloc[pos]
         own = _txt(row.get('clean_text'))
         pidx = row.get('parent_idx')
         if pidx is None or (isinstance(pidx, float) and pd.isna(pidx)):
-            rolled[pos] = own
-            prior_siblings[pos] = []
+            own_label = listings_df.index[pos]
+            kids = children_by_parent.get(own_label, [])
+            rolled[pos] = '\n'.join([own] + list(kids))
         else:
             parent_text = _txt(listings_df.loc[pidx, 'clean_text'])
-            parent_pos = listings_df.index.get_loc(pidx)
-            sibs = prior_siblings.setdefault(parent_pos, [])
-            rolled[pos] = '\n'.join([parent_text] + list(sibs) + [own])
-            sibs.append(own)
+            sibs = children_by_parent.get(pidx, [])
+            rolled[pos] = '\n'.join([parent_text] + list(sibs))
 
     listings_df['rolled_catalog_text'] = rolled
     return listings_df

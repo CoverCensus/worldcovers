@@ -119,26 +119,79 @@ def main(argv=None):
     for t in df.loc[df['s2_cross_ref'], 'clean_text']:
         print(f'  {t[:120]}')
 
-    # Backstamp annotation: any listing whose raw text contains '(backstamp)'
-    # (case-insensitive) gets a "Backstamp" line in the emitted marking's desc.
-    _BACKSTAMP_RE = re.compile(r'\(backstamp\)', re.IGNORECASE)
-    df['has_backstamp'] = df['clean_text'].apply(lambda t: bool(_BACKSTAMP_RE.search(str(t))))
-    # See-clause for cross-reference rows: the literal 'See ...' fragment up to
-    # the next ';', ')', or '...'. Empty for non-cross-ref rows.
-    _SEE_RE = re.compile(r'\bSee\b[^;)]*?(?=\s*(?:\.{2,}|\)|;|$))', re.IGNORECASE)
-    # Trailing junk to strip off the captured See-clause: dotted leaders, the
-    # '--' no-price marker, and any leftover punctuation/whitespace.
-    _SEE_TAIL_RE = re.compile(r'(?:\s|\.|-){2,}.*$|\s+--\s*$')
-    def _extract_see(t):
-        m = _SEE_RE.search(str(t))
-        if not m:
-            return None
-        clause = _SEE_TAIL_RE.sub('', m.group(0)).strip()
-        return clause or None
-    df['see_clause'] = df.apply(
-        lambda r: _extract_see(r['clean_text']) if r['s2_cross_ref'] else None,
-        axis=1,
-    )
+    # Parenthetical annotations promoted to the marking's desc. Each pattern
+    # is matched case-insensitively against clean_text; when present, the
+    # mapped desc-line is appended (newline-joined) to the townmark's desc.
+    _DESC_PAREN_ANNOTATIONS = [
+        (re.compile(r'\(backstamp\)', re.IGNORECASE),    'Backstamp'),
+        (re.compile(r'\(no town cds\)', re.IGNORECASE),  'No town cds'),
+    ]
+    def _paren_annotation_lines(text):
+        s = str(text or '')
+        return [label for pat, label in _DESC_PAREN_ANNOTATIONS if pat.search(s)]
+    df['paren_annotations_desc'] = df['clean_text'].apply(_paren_annotation_lines)
+    # Keep has_backstamp as a separate column for any callers that depend on
+    # the specific flag (none today, but cheaper than searching for them).
+    df['has_backstamp'] = df['paren_annotations_desc'].apply(lambda xs: 'Backstamp' in xs)
+    # See-clause handling for cross-references. The user wants these preserved
+    # as real markings (not dropped), with the See-clause captured in desc.
+    # Strategy: capture the see-clause text for desc, strip it out of
+    # clean_text so the rest of the pipeline parses the row as a normal
+    # listing, and clear s2_cross_ref so classify_entry routes it as such.
+    # Without this, head parsing pollutes inscription/town with the See
+    # fragment ("FREDERICKSBURGSee Colonial listing" -> creates a new bogus
+    # post_office) and "(L) See State" rows lose their relationship marker.
+    _SEE_PAREN_RE = re.compile(r'\(\s*(See\b[^)]*)\)', re.IGNORECASE)
+    # Bare-See regex: stop the lazy capture before '--' (the no-valuation tail
+    # marker), '...', ';', or end-of-string. The '--' alternative is critical:
+    # otherwise the lazy match extends through it (no other terminator before
+    # $) and the tail marker gets eaten, breaking later tail decomposition.
+    _SEE_BARE_RE  = re.compile(r'\b(See\b[^;)]*?)(?=\s*(?:--|\.{2,}|;|$))', re.IGNORECASE)
+    _MULTI_WS_RE  = re.compile(r'\s{2,}')
+    def _extract_and_strip_see(text):
+        s = str(text or '')
+        clause = None
+        m = _SEE_PAREN_RE.search(s)
+        if m:
+            clause = m.group(1).strip()
+            s = _SEE_PAREN_RE.sub('', s, count=1)
+        else:
+            m = _SEE_BARE_RE.search(s)
+            if m:
+                clause = m.group(1).strip()
+                s = _SEE_BARE_RE.sub('', s, count=1)
+        s = _MULTI_WS_RE.sub(' ', s).strip()
+        return clause, s
+    _see_clauses = []
+    _cleaned_texts = []
+    # Bare-rel-marker pattern: '(L) --', '(E) --', etc. with nothing else.
+    # After see-clause stripping, these rows have no second paren for
+    # segment_entry's simple_paren form to consume, so the rel marker ends up
+    # in seg_paren instead of seg_head -- head parsing then misses the rel
+    # type and the row gets treated as an orphan independent entry. Pad with
+    # '(cross-ref)' to give segmentation a sacrificial last-paren group;
+    # head parsing then correctly extracts (L)/(E) as the rel indicator and
+    # resolve_relationships inherits inscription/town from the parent.
+    _BARE_REL_RE = re.compile(r'^\s*[(\[{][LE][)\]}]\s*--\s*$', re.IGNORECASE)
+    for _, _row in df.iterrows():
+        if _row['s2_cross_ref']:
+            _c, _s = _extract_and_strip_see(_row['clean_text'])
+            _see_clauses.append(_c)
+            if _s:
+                if _BARE_REL_RE.match(_s):
+                    _s = _s.replace('--', '(cross-ref) --', 1)
+                _cleaned_texts.append(_s)
+            else:
+                _cleaned_texts.append(_row['clean_text'])
+        else:
+            _see_clauses.append(None)
+            _cleaned_texts.append(_row['clean_text'])
+    df['see_clause'] = _see_clauses
+    df['clean_text'] = _cleaned_texts
+    # Re-route cleaned cross-refs through normal classification: their text no
+    # longer matches detect_cross_reference, so flip the signal to match.
+    df.loc[df['s2_cross_ref'] & df['see_clause'].notna(), 's2_cross_ref'] = False
+    print(f'See-clause extracted: {df["see_clause"].notna().sum()} rows (re-classified as listings)')
 
     # ======================================================================
     # Signal 3: Fragment Detection
@@ -261,13 +314,6 @@ def main(argv=None):
     # 2.1 Entry Form Classification
     # ======================================================================
     listings = df[df['classification'] == 'listing'].copy()
-    # Cross-reference rows are not full catalog listings, but the user wants
-    # them preserved as standalone markings with their See-clause (and any
-    # backstamp annotation) captured in desc. Held aside here and re-injected
-    # at marking emission time so they bypass segmentation/head/relationship
-    # parsing, which their text shape would not survive cleanly.
-    cross_ref_df = df[df['classification'] == 'cross_reference'].copy()
-    print(f'Holding {len(cross_ref_df)} cross-reference rows for desc-only emission')
     print(f'Segmenting {len(listings)} listings')
     listings['entry_form'] = listings.apply(classify_entry_form, axis=1)
     print()
@@ -2602,12 +2648,17 @@ def main(argv=None):
             sli = _tm.get("source_listing_idx")
             if sli is not None and sli not in catalog_text_by_listing:
                 catalog_text_by_listing[sli] = _tm.get("catalog_text")
-    # Per-listing backstamp flag, looked up at townmark emission time.
-    backstamp_by_listing = {}
-    if 'has_backstamp' in listings.columns:
-        for _lidx, _lrow in listings.iterrows():
-            if bool(_lrow.get('has_backstamp')):
-                backstamp_by_listing[_lidx] = True
+    # Per-listing desc text, looked up at townmark emission time. Combines
+    # the parenthetical annotation lines (Backstamp, No town cds, ...) and
+    # the See-clause for cross-reference rows.
+    desc_by_listing = {}
+    for _lidx, _lrow in listings.iterrows():
+        _lines = list(_lrow.get('paren_annotations_desc') or [])
+        _see = _lrow.get('see_clause')
+        if _see and isinstance(_see, str) and _see.strip():
+            _lines.append(_see.strip())
+        if _lines:
+            desc_by_listing[_lidx] = "\n".join(_lines)
     marking_rows = []
     for kind, src_id, mk_id in emit_order:
         if kind == "TM":
@@ -2652,11 +2703,9 @@ def main(argv=None):
         is_irreg_val = r.get("is_irregular")
         if not is_ms and (is_irreg_val is None or (isinstance(is_irreg_val, float) and pd.isna(is_irreg_val))):
             is_irreg_val = False
-        # desc: only townmarks carry the backstamp annotation; ratemarks
-        # and auxmarks inherit it implicitly through their parent townmark.
-        desc_val = None
-        if kind == "TM" and backstamp_by_listing.get(src_idx):
-            desc_val = "Backstamp"
+        # desc: only townmarks carry annotations (Backstamp, See-clause);
+        # ratemarks and auxmarks inherit them implicitly via their parent.
+        desc_val = desc_by_listing.get(src_idx) if kind == "TM" else None
         marking_rows.append({
             "id": mk_id,
             "code": f"{RW_CODE}-{REGION_ABBREV}-{mk_id}",
@@ -2676,49 +2725,6 @@ def main(argv=None):
             "rate_val": rate_val,
             "post_office": _resolve_int_fk(po_id_by_internal, po_internal),
         })
-    # Supplemental cross-reference markings. These were classified as
-    # cross_reference and held aside; they are not full catalog listings, so
-    # they bypass the normal townmark/fanout pipeline. Each gets a single
-    # marking row carrying the See-clause (and "Backstamp" annotation when
-    # the raw text contained '(backstamp)') in desc.
-    cross_ref_emit = []  # list of (mk_id, source_row) for downstream citation rows
-    if len(cross_ref_df):
-        _sl_shape_id = None
-        _sl = _shapes_src[_shapes_src["name"] == "SL - Straight Line"]
-        if len(_sl):
-            _sl_shape_id = int(_sl.iloc[0]["id"])
-        for _, _xr in cross_ref_df.iterrows():
-            _desc_lines = []
-            if bool(_xr.get('has_backstamp')):
-                _desc_lines.append("Backstamp")
-            _see = _xr.get('see_clause')
-            if _see:
-                _desc_lines.append(str(_see))
-            _desc_val = "\n".join(_desc_lines) if _desc_lines else None
-            _raw = str(_xr.get('clean_text') or '').strip()
-            _insc = _raw.split('(', 1)[0].strip().rstrip(',') or None
-            mk_id = _next_marking_id
-            _next_marking_id += 1
-            marking_rows.append({
-                "id": mk_id,
-                "code": f"{RW_CODE}-{REGION_ABBREV}-{mk_id}",
-                "type": "TOWNMARK",
-                "catalog_txt": _raw,
-                "inscription_txt": _insc,
-                "desc": _desc_val,
-                "is_manuscript": False,
-                "shape": _sl_shape_id,
-                "lettering": None,
-                "color": None,
-                "is_irreg": False,
-                "width": None,
-                "height": None,
-                "date_fmt": None,
-                "impression": None,
-                "rate_val": None,
-                "post_office": None,
-            })
-            cross_ref_emit.append((mk_id, _xr))
     markings_out = pd.DataFrame(marking_rows) if marking_rows else pd.DataFrame(columns=[
         "id", "code", "type", "catalog_txt", "inscription_txt", "desc", "is_manuscript",
         "shape", "lettering", "color", "is_irreg", "width", "height", "date_fmt",
@@ -2787,22 +2793,6 @@ def main(argv=None):
             "subject_type": "MARKING",
             "subject_id": mk_id,
             "citation_detail": page_str,
-        })
-    # Citations for cross-reference markings (held outside emit_order).
-    for _mk_id, _xr in cross_ref_emit:
-        _pg = _xr.get('Page')
-        if _pg is None or (isinstance(_pg, float) and pd.isna(_pg)):
-            _pg_str = ""
-        else:
-            try:
-                _pg_str = str(int(_pg))
-            except (TypeError, ValueError):
-                _pg_str = str(_pg).strip()
-        cit_rows.append({
-            "reference_work": RW_ID,
-            "subject_type": "MARKING",
-            "subject_id": _mk_id,
-            "citation_detail": _pg_str,
         })
     citations_out = pd.DataFrame(cit_rows) if cit_rows else pd.DataFrame(
         columns=["reference_work", "subject_type", "subject_id", "citation_detail"]
