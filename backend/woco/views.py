@@ -9,28 +9,46 @@ from django.http import FileResponse, Http404
 from django.views import View
 
 
+_FAVICON_FILES = {
+    "favicon.ico": "image/x-icon",
+    "favicon.svg": "image/svg+xml",
+    "favicon-96x96.png": "image/png",
+    "apple-touch-icon.png": "image/png",
+    "web-app-manifest-192x192.png": "image/png",
+    "web-app-manifest-512x512.png": "image/png",
+    "site.webmanifest": "application/manifest+json",
+}
+
+
 class FaviconView(View):
-    """Serve the frontend favicon for all site pages (admin, SPA, API, etc.) so backend pages show the same icon as the frontend."""
+    """Serve the frontend favicon-set files for backend pages (admin, DRF browsable API, etc.) so they match the SPA icon."""
 
     def get(self, request, *_args, **_kwargs):
-        want_ico = request.path.rstrip("/").endswith(".ico")
-        # Prefer built frontend dist, then fall back to frontend/public (source)
+        name = request.path.rstrip("/").rsplit("/", 1)[-1]
+        content_type = _FAVICON_FILES.get(name)
+        if content_type is None:
+            raise Http404("Unknown favicon asset: {0}".format(name))
         for root in (Path(settings.FRONTEND_DIST), Path(settings.REPO_ROOT) / "frontend" / "public"):
-            if want_ico:
-                favicon_path = root / "favicon.ico"
-                content_type = "image/x-icon"
-                if not favicon_path.is_file():
-                    favicon_path = root / "favicon.png"
-                    content_type = "image/png"
-            else:
-                favicon_path = root / "favicon.png"
-                content_type = "image/png"
+            favicon_path = root / name
             if favicon_path.is_file():
-                return FileResponse(
-                    favicon_path.open("rb"),
-                    content_type=content_type,
-                )
-        raise Http404("Favicon not found. Add frontend/public/favicon.png or build frontend: cd frontend && npm run build")
+                return FileResponse(favicon_path.open("rb"), content_type=content_type)
+        raise Http404(
+            "Favicon asset {0} not found. Add frontend/public/{0} or build frontend: cd frontend && npm run build".format(name)
+        )
+
+
+class AdminFaviconView(View):
+    """Serve the admin-only favicon set from backend/static/admin-favicon/ so the Django admin can use a distinct icon from the SPA."""
+
+    def get(self, request, *_args, **_kwargs):
+        name = request.path.rstrip("/").rsplit("/", 1)[-1]
+        content_type = _FAVICON_FILES.get(name)
+        if content_type is None:
+            raise Http404("Unknown admin favicon asset: {0}".format(name))
+        favicon_path = Path(settings.REPO_ROOT) / "backend" / "static" / "admin-favicon" / name
+        if favicon_path.is_file():
+            return FileResponse(favicon_path.open("rb"), content_type=content_type)
+        raise Http404("Admin favicon asset {0} not found. Add backend/static/admin-favicon/{0}".format(name))
 
 
 class ServeSPAView(View):

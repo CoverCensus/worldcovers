@@ -14,7 +14,7 @@ from django.contrib import admin
 
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
-from .views import ServeSPAView, FaviconView
+from .views import ServeSPAView, FaviconView, AdminFaviconView
 from common.api.auth import LoginView, LogoutView
 
 
@@ -23,7 +23,20 @@ from common.api.auth import LoginView, LogoutView
 # Paths without trailing slash are redirected so they hit Django, not the SPA.
 urlpatterns = [
     path("favicon.ico", FaviconView.as_view()),
-    path("favicon.png", FaviconView.as_view()),
+    path("favicon.svg", FaviconView.as_view()),
+    path("favicon-96x96.png", FaviconView.as_view()),
+    path("apple-touch-icon.png", FaviconView.as_view()),
+    path("web-app-manifest-192x192.png", FaviconView.as_view()),
+    path("web-app-manifest-512x512.png", FaviconView.as_view()),
+    path("site.webmanifest", FaviconView.as_view()),
+
+    path("admin-favicon/favicon.ico", AdminFaviconView.as_view()),
+    path("admin-favicon/favicon.svg", AdminFaviconView.as_view()),
+    path("admin-favicon/favicon-96x96.png", AdminFaviconView.as_view()),
+    path("admin-favicon/apple-touch-icon.png", AdminFaviconView.as_view()),
+    path("admin-favicon/web-app-manifest-192x192.png", AdminFaviconView.as_view()),
+    path("admin-favicon/web-app-manifest-512x512.png", AdminFaviconView.as_view()),
+    path("admin-favicon/site.webmanifest", AdminFaviconView.as_view()),
     path("admin", RedirectView.as_view(url="/admin/", permanent=True)),
     path("admin/", admin.site.urls),
     path("accounts", RedirectView.as_view(url="/accounts/", permanent=True)),

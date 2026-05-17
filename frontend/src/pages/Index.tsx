@@ -168,7 +168,7 @@ const Index = () => {
       
       {/* Hero Section */}
       <section className="relative bg-gradient-to-br from-background to-secondary overflow-hidden">
-        <div className="absolute inset-0 opacity-10">
+        <div className="absolute inset-0 opacity-20">
           <img 
             src={heroImage} 
             alt="" 
@@ -186,25 +186,27 @@ const Index = () => {
                 : "Explore historical postal markings from across America. "}
               A comprehensive, open-access archive for researchers, collectors, and philatelic enthusiasts.
             </p>
-            <div className="flex flex-col sm:flex-row gap-4">
-              <Button 
-                size="lg" 
-                className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-archival-md"
-                onClick={() => navigate('/search')}
-              >
-                <Search className="mr-2 h-5 w-5" />
-                Browse Catalog
-              </Button>
-              <Button 
-                size="lg" 
-                variant="outline"
-                className="border-primary text-primary hover:bg-primary/5"
-                onClick={handleContributeClick}
-              >
-                <Users className="mr-2 h-5 w-5" />
-                Contribute
-              </Button>
-            </div>
+            {!user && (
+              <div className="flex flex-col sm:flex-row gap-4">
+                <Button
+                  size="lg"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-archival-md"
+                  onClick={() => navigate('/search')}
+                >
+                  <Search className="mr-2 h-5 w-5" />
+                  Browse Catalog
+                </Button>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="border-primary text-primary hover:bg-primary/5"
+                  onClick={handleContributeClick}
+                >
+                  <Users className="mr-2 h-5 w-5" />
+                  Contribute
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -293,24 +295,25 @@ const Index = () => {
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="py-16 bg-gradient-to-br from-primary/5 to-accent/5">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-4">
-            Help Preserve Postal History
-          </h2>
-          <p className="text-lg text-muted-foreground mb-8">
-            Join our community of contributors and help document America's postal heritage. Your submissions help researchers and collectors worldwide.
-          </p>
-          <Button 
-            size="lg"
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
-            onClick={handleContributeClick}
-          >
-            Start Contributing
-          </Button>
-        </div>
-      </section>
+      {!user && (
+        <section className="py-16 bg-gradient-to-br from-primary/5 to-accent/5">
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <h2 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-4">
+              Help Preserve Postal History
+            </h2>
+            <p className="text-lg text-muted-foreground mb-8">
+              Join our community of contributors and help document America's postal heritage. Your submissions help researchers and collectors worldwide.
+            </p>
+            <Button
+              size="lg"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              onClick={handleContributeClick}
+            >
+              Start Contributing
+            </Button>
+          </div>
+        </section>
+      )}
 
       {faqs.length > 0 && (
         <section id="faq" className="py-16 md:py-24 scroll-mt-16">

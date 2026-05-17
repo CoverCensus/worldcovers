@@ -1,0 +1,19 @@
+{% extends "admin/base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block branding %}
+<h1 id="site-name"><a href="{% url 'admin:index' %}">{{ site_header|default:_('Django administration') }}</a></h1>
+{% endblock %}
+
+{% block nav-global %}{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<link rel="icon" type="image/x-icon" href="/admin-favicon/favicon.ico" />
+<link rel="icon" type="image/svg+xml" href="/admin-favicon/favicon.svg" />
+<link rel="icon" type="image/png" sizes="96x96" href="/admin-favicon/favicon-96x96.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="/admin-favicon/apple-touch-icon.png" />
+<link rel="manifest" href="/admin-favicon/site.webmanifest" />
+{% endblock %}
