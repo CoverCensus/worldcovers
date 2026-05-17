@@ -38,16 +38,25 @@ class FaviconView(View):
 
 
 class AdminFaviconView(View):
-    """Serve the admin-only favicon set from backend/static/admin-favicon/ so the Django admin can use a distinct icon from the SPA."""
+    """Serve the admin-only favicon set so the Django admin can use a distinct icon from the SPA.
+
+    Reads from STATIC_ROOT/admin-favicon/ first (the post-collectstatic location used in
+    production), and falls back to the in-repo source at backend/static/admin-favicon/ for
+    dev environments where collectstatic has not been run.
+    """
 
     def get(self, request, *_args, **_kwargs):
         name = request.path.rstrip("/").rsplit("/", 1)[-1]
         content_type = _FAVICON_FILES.get(name)
         if content_type is None:
             raise Http404("Unknown admin favicon asset: {0}".format(name))
-        favicon_path = Path(settings.REPO_ROOT) / "backend" / "static" / "admin-favicon" / name
-        if favicon_path.is_file():
-            return FileResponse(favicon_path.open("rb"), content_type=content_type)
+        for root in (
+            Path(settings.STATIC_ROOT) / "admin-favicon",
+            Path(settings.REPO_ROOT) / "backend" / "static" / "admin-favicon",
+        ):
+            favicon_path = root / name
+            if favicon_path.is_file():
+                return FileResponse(favicon_path.open("rb"), content_type=content_type)
         raise Http404("Admin favicon asset {0} not found. Add backend/static/admin-favicon/{0}".format(name))
 
 

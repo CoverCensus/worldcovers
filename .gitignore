@@ -176,6 +176,8 @@ venv.bak/
 !/static/_DELETE.ME
 /backend/static/*
 !/backend/static/_DELETE.ME
+!/backend/static/admin-favicon/
+!/backend/static/admin-favicon/**
 
 # runtime uploaded media
 media/*
