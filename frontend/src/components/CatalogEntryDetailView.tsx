@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft } from "lucide-react";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
+import { ENTRY_LABELS } from "@/labels/entry";
 
 /** Unified shape for catalog entry (from catalog_records or submissions). */
 export type CatalogEntry = {
@@ -27,7 +28,7 @@ export type CatalogEntry = {
   reviewed_at?: string | null;
 };
 
-/** Parses date_range (e.g. "1825-1845" or "1825") into First Seen / Last Seen for display. */
+/** Parses date_range (e.g. "1825-1845" or "1825") into Earliest seen / Latest seen for display. */
 function parseDateRange(dateRange: string): { firstSeen: string; lastSeen: string } {
   const s = (dateRange ?? "").trim();
   if (!s) return { firstSeen: "—", lastSeen: "—" };
@@ -140,11 +141,11 @@ export const CatalogEntryDetailView = ({
                   <dd className="text-foreground">{entry.town}</dd>
                 </div>
                 <div className="flex justify-between py-2 border-b border-border">
-                  <dt className="text-muted-foreground font-medium">First Seen</dt>
+                  <dt className="text-muted-foreground font-medium">{ENTRY_LABELS.datesObserved.earliest}</dt>
                   <dd className="text-foreground">{firstSeen}</dd>
                 </div>
                 <div className="flex justify-between py-2 border-b border-border">
-                  <dt className="text-muted-foreground font-medium">Last Seen</dt>
+                  <dt className="text-muted-foreground font-medium">{ENTRY_LABELS.datesObserved.latest}</dt>
                   <dd className="text-foreground">{lastSeen}</dd>
                 </div>
                 <div className="flex justify-between py-2">

@@ -108,7 +108,7 @@ class MarkingFilter(django_filters.FilterSet):
 
     q = django_filters.CharFilter(method="filter_q", label="Search (code, catalog/inscription text)")
     type = django_filters.ChoiceFilter(field_name='type', choices=MarkingType.choices, label='Marking type')
-    state = django_filters.CharFilter(method="filter_by_state", label="Administrative Unit (name or abbreviation)")
+    state = django_filters.CharFilter(method="filter_by_state", label="Region (name or abbreviation)")
     color = django_filters.CharFilter(field_name="color__name", lookup_expr="iexact", label="Color")
     has_images = django_filters.BooleanFilter(method="filter_has_images", label="Has Images")
 

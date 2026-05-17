@@ -13,9 +13,10 @@ import uuid
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import ProgrammingError, transaction
+from django.db import IntegrityError, ProgrammingError, transaction
 from django.db.models import Min, Max, Q
 from django.db.models.functions import ExtractYear
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
@@ -321,13 +322,20 @@ class ImageViewSet(viewsets.ModelViewSet):
     queryset = Image.objects.all().select_related("uploaded_by")
     serializer_class = ImageSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ["subject_type", "subject_id", "image_view", "is_tracing"]
     ordering_fields = ["display_order", "created_date"]
     ordering = ["subject_type", "subject_id", "display_order"]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        # Image.uploaded_by is required (PROTECT FK); TimestampedModel also needs
+        # created_by / modified_by. All three must be set on create.
+        serializer.save(
+            created_by=self.request.user,
+            modified_by=self.request.user,
+            uploaded_by=self.request.user,
+        )
 
     def perform_update(self, serializer):
         serializer.save(modified_by=self.request.user)
@@ -428,20 +436,258 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
     # gated through a custom helper or override get_queryset to attach the rows.
     queryset = (
         CoverMarking.objects.all()
-        .select_related("cover", "cover__color", "marking")
+        .select_related("cover", "cover__color", "marking", "reviewer")
     )
     serializer_class = CoverMarkingSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ["cover", "marking", "is_backstamp", "placement"]
-    ordering_fields = ["id", "created_date"]
+    filterset_fields = ["cover", "marking", "is_backstamp", "placement", "review_status"]
+    ordering_fields = ["id", "created_date", "reviewed_at"]
     ordering = ["id"]
 
+    def get_queryset(self):
+        qs = (
+            CoverMarking.objects.all()
+            .select_related("cover", "cover__color", "marking", "reviewer")
+            .prefetch_related("marking__post_office__post_office_regions__region")
+        )
+        user = self.request.user
+        marking_param = self.request.query_params.get("marking")
+
+        if user.is_authenticated and user.is_superuser:
+            if marking_param:
+                try:
+                    return qs.filter(marking_id=int(marking_param))
+                except (TypeError, ValueError):
+                    return qs.none()
+            return qs
+
+        if marking_param:
+            try:
+                mid = int(marking_param)
+            except (TypeError, ValueError):
+                return qs.none()
+            marking = (
+                Marking.objects.filter(pk=mid)
+                .select_related("post_office")
+                .prefetch_related("post_office__post_office_regions__region")
+                .first()
+            )
+            if not marking:
+                return qs.none()
+            qs = qs.filter(marking_id=mid)
+            if not user.is_authenticated:
+                return qs.filter(review_status=CoverMarking.REVIEW_APPROVED)
+            if _user_is_responsible_for_marking(user, marking):
+                return qs
+            return qs.filter(
+                Q(review_status=CoverMarking.REVIEW_APPROVED) | Q(created_by_id=user.id)
+            )
+
+        if not user.is_authenticated:
+            return qs.none()
+        if user.has_perm(REVIEW_CONTRIBUTION_PERM):
+            region_ids = list(
+                Region.objects.filter(collection__id__in=user_assigned_collection_ids(user)).values_list(
+                    "pk", flat=True
+                )
+            )
+            if not region_ids:
+                return qs.filter(created_by=user)
+            return qs.filter(
+                Q(created_by=user)
+                | Q(marking__post_office__post_office_regions__region_id__in=region_ids)
+            ).distinct()
+        return qs.filter(created_by=user)
+
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        serializer.save(
+            created_by=self.request.user,
+            modified_by=self.request.user,
+            review_status=CoverMarking.REVIEW_PENDING,
+        )
+
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except IntegrityError:
+            return Response(
+                {"detail": "This cover is already linked to this marking."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     def perform_update(self, serializer):
         serializer.save(modified_by=self.request.user)
+
+    def _editor_may_review(self, user, cover_marking):
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_superuser:
+            return True
+        return _user_is_responsible_for_marking(user, cover_marking.marking)
+
+    def _transition_review(
+        self,
+        cover_marking,
+        *,
+        new_status,
+        actor,
+        review_notes,
+        log_action,
+    ):
+        before = {
+            "review_status": cover_marking.review_status,
+            "review_notes": cover_marking.review_notes,
+        }
+        cover_marking.review_status = new_status
+        cover_marking.reviewer = actor
+        cover_marking.review_notes = review_notes or ""
+        cover_marking.reviewed_at = timezone.now()
+        cover_marking.modified_by = actor
+        cover_marking.save(
+            update_fields=[
+                "review_status",
+                "reviewer",
+                "review_notes",
+                "reviewed_at",
+                "modified_by",
+                "modified_date",
+            ]
+        )
+        after = {
+            "review_status": cover_marking.review_status,
+            "review_notes": cover_marking.review_notes,
+        }
+        log_submission_transaction(
+            action=log_action,
+            actor=actor,
+            contribution=None,
+            marking=cover_marking.marking,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload=before,
+            after_payload=after,
+            extra_payload={
+                "cover_marking_id": cover_marking.pk,
+                "cover_id": cover_marking.cover_id,
+                "review_notes": review_notes or "",
+            },
+        )
+
+    @action(detail=True, methods=["post"], url_path="approve")
+    def approve(self, request, pk=None):
+        cm = self.get_object()
+        if not self._editor_may_review(request.user, cm):
+            return Response(
+                {"detail": "You do not have permission to approve this cover link."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if cm.review_status != CoverMarking.REVIEW_PENDING:
+            return Response(
+                {"detail": f"Only pending cover links can be approved (status: {cm.review_status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        review_notes = serializer.validated_data.get("review_notes", "")
+        self._transition_review(
+            cm,
+            new_status=CoverMarking.REVIEW_APPROVED,
+            actor=request.user,
+            review_notes=review_notes,
+            log_action=SubmissionTransaction.ACTION_APPROVE,
+        )
+        return Response({"detail": "Cover link approved.", "review_status": cm.review_status})
+
+    @action(detail=True, methods=["post"], url_path="reject")
+    def reject(self, request, pk=None):
+        cm = self.get_object()
+        if not self._editor_may_review(request.user, cm):
+            return Response(
+                {"detail": "You do not have permission to reject this cover link."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if cm.review_status != CoverMarking.REVIEW_PENDING:
+            return Response(
+                {"detail": f"Only pending cover links can be rejected (status: {cm.review_status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        review_notes = serializer.validated_data.get("review_notes", "")
+        self._transition_review(
+            cm,
+            new_status=CoverMarking.REVIEW_REJECTED,
+            actor=request.user,
+            review_notes=review_notes,
+            log_action=SubmissionTransaction.ACTION_REJECT,
+        )
+        return Response({"detail": "Cover link rejected.", "review_status": cm.review_status})
+
+    @action(detail=True, methods=["post"], url_path="request-revision")
+    def request_revision(self, request, pk=None):
+        cm = self.get_object()
+        if not self._editor_may_review(request.user, cm):
+            return Response(
+                {"detail": "You do not have permission to return this cover for revision."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if cm.review_status != CoverMarking.REVIEW_PENDING:
+            return Response(
+                {"detail": f"Only pending cover links can be returned for revision (status: {cm.review_status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        review_notes = (serializer.validated_data.get("review_notes") or "").strip()
+        if not review_notes:
+            return Response(
+                {"detail": "review_notes is required when requesting revision."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        self._transition_review(
+            cm,
+            new_status=CoverMarking.REVIEW_NEEDS_REVISION,
+            actor=request.user,
+            review_notes=review_notes,
+            log_action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
+        )
+        return Response({"detail": "Revision requested.", "review_status": cm.review_status})
+
+    @action(detail=True, methods=["post"], url_path="resubmit")
+    def resubmit(self, request, pk=None):
+        cm = self.get_object()
+        if not request.user.is_authenticated:
+            return Response(status=status.HTTP_401_UNAUTHORIZED)
+        if cm.created_by_id != request.user.id:
+            return Response(
+                {"detail": "Only the contributor who added this cover may resubmit it for review."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if cm.review_status != CoverMarking.REVIEW_NEEDS_REVISION:
+            return Response(
+                {"detail": "Resubmit is only available when the editor has requested changes."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        before = {"review_status": cm.review_status}
+        cm.review_status = CoverMarking.REVIEW_PENDING
+        cm.reviewer = None
+        cm.review_notes = ""
+        cm.reviewed_at = None
+        cm.modified_by = request.user
+        cm.save(
+            update_fields=["review_status", "reviewer", "review_notes", "reviewed_at", "modified_by", "modified_date"]
+        )
+        log_submission_transaction(
+            action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
+            actor=request.user,
+            contribution=None,
+            marking=cm.marking,
+            source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
+            before_payload=before,
+            after_payload={"review_status": cm.review_status},
+            extra_payload={"cover_marking_id": cm.pk, "cover_id": cm.cover_id},
+        )
+        return Response({"detail": "Cover link resubmitted for review.", "review_status": cm.review_status})
 
 
 ###################################################################################################
@@ -808,7 +1054,7 @@ class MarkingDateRangeView(APIView):
 class DeleteMyMarkingView(APIView):
     """
     Delete one of your own user-contributed catalog markings, OR delete any marking
-    in a region you are an editor for. Replaces the v1 /postmarks/<id>/delete-mine/.
+    in a region you are an editor for.
     """
     permission_classes = [IsAuthenticated]
 
@@ -1082,6 +1328,120 @@ class ContributionViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet
         400: OpenApiResponse(description="Validation error"),
     },
 )
+def _region_routing_value_from_post_office(post_office) -> str:
+    """Collection routing key: region abbrev when set, else full region name."""
+    if post_office is None:
+        return ""
+    region = post_office.region
+    if region is None:
+        return ""
+    abbrev = (region.abbrev or "").strip()
+    name = (region.name or "").strip()
+    return abbrev or name
+
+
+def _resolve_contribution_state_value(data) -> str:
+    """
+    Resolve the state/region string used to pick a Collection.
+
+    Cover drafts may omit `state` in the form; derive it from the parent
+    marking's post office when parent_marking_id / marking_id is present.
+    """
+    explicit = (data.get("state") or "").strip()
+    if explicit:
+        return explicit
+    for key in ("parent_marking_id", "marking_id", "marking"):
+        raw = data.get(key)
+        if raw in (None, ""):
+            continue
+        try:
+            marking_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        marking = (
+            Marking.objects.filter(pk=marking_id)
+            .select_related("post_office")
+            .prefetch_related("post_office__post_office_regions__region")
+            .first()
+        )
+        if not marking:
+            continue
+        routed = _region_routing_value_from_post_office(marking.post_office)
+        if routed:
+            return routed
+    return ""
+
+
+def _is_save_as_draft_submission(data) -> bool:
+    save_as_draft_raw = str(
+        data.get("save_as_draft") or data.get("saveAsDraft") or data.get("status") or ""
+    ).strip().lower()
+    return save_as_draft_raw in {"draft", "true", "1", "yes", "on"}
+
+
+def _is_cover_submission_data(data) -> bool:
+    """Detect cover drafts/submissions (submission_kind or cover-only payload shape)."""
+    kind = str(data.get("submission_kind") or data.get("submissionKind") or "").strip().lower()
+    if kind == "cover":
+        return True
+    if kind in {"marking", "postmark", "townmark", "ratemark", "auxmark"}:
+        return False
+    type_value = str(data.get("type") or "").strip().upper()
+    has_cover_type = type_value in {"FC", "FL"}
+    has_marking_type = type_value in {"TOWNMARK", "RATEMARK", "AUXMARK"}
+    has_town = bool(str(data.get("town") or "").strip())
+    parent_raw = data.get("parent_marking_id") or data.get("marking_id")
+    has_parent = parent_raw not in (None, "")
+    has_cover_date = bool(str(data.get("cover_date") or data.get("coverDate") or "").strip())
+    if has_parent and (has_cover_type or has_cover_date) and not has_town and not has_marking_type:
+        return True
+    return False
+
+
+def _submitted_data_is_cover(sd) -> bool:
+    if not isinstance(sd, dict):
+        return False
+    return _is_cover_submission_data(sd)
+
+
+def _resolve_collection_for_submission(
+    *,
+    state_value: str,
+    is_draft: bool,
+    is_cover_submission: bool,
+):
+    """
+    Return (region, collection, effective_state_value).
+
+    Cover *drafts* may be stored even when the parent marking has no routable
+    region: we attach them to any active Collection to satisfy the NOT NULL FK.
+    Editors re-route on final submit when the contributor completes the form.
+    """
+    region = None
+    collection = None
+    effective_state = state_value
+
+    if state_value:
+        region = Region.objects.filter(
+            Q(name__iexact=state_value) | Q(abbrev__iexact=state_value)
+        ).first()
+        if region:
+            collection = Collection.objects.filter(region=region, is_active=True).first()
+
+    if collection is None and is_draft and is_cover_submission:
+        collection = (
+            Collection.objects.filter(is_active=True)
+            .select_related("region")
+            .order_by("pk")
+            .first()
+        )
+        if collection and collection.region_id and not effective_state:
+            r = collection.region
+            effective_state = (r.abbrev or "").strip() or (r.name or "").strip()
+
+    return region, collection, effective_state
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class ContributionSubmitView(APIView):
     """
@@ -1103,53 +1463,101 @@ class ContributionSubmitView(APIView):
 
     def post(self, request):
         data = request.data if isinstance(request.data, dict) else dict(request.data)
-        state_value = (data.get("state") or "").strip()
-        if not state_value:
-            return Response(
-                {"detail": "state is required to route the contribution to a Collection."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        region = Region.objects.filter(
-            Q(name__iexact=state_value) | Q(abbrev__iexact=state_value)
-        ).first()
-        if not region:
-            return Response(
-                {"detail": f"No Region matches state={state_value!r}."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        collection = Collection.objects.filter(region=region, is_active=True).first()
-        if not collection:
+        is_cover_submission = _is_cover_submission_data(data)
+        is_draft = _is_save_as_draft_submission(data)
+        edit_pk = None
+        edit_raw = data.get("edit_contribution_id") or data.get("editContributionId")
+        if edit_raw not in (None, ""):
+            try:
+                edit_pk = int(edit_raw)
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "Invalid edit_contribution_id."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        abandon_draft = str(
+            data.get("abandon_draft") or data.get("abandonDraft") or ""
+        ).lower() in {"1", "true", "yes", "on"}
+        if abandon_draft:
+            if edit_pk is None:
+                return Response(
+                    {"detail": "edit_contribution_id is required to abandon a draft."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            contrib = Contribution.objects.filter(
+                pk=edit_pk,
+                contributor=request.user,
+                status=Contribution.STATUS_DRAFT,
+            ).first()
+            if not contrib:
+                return Response(
+                    {"detail": "Draft not found or not editable."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            if not _submitted_data_is_cover(contrib.submitted_data or {}):
+                return Response(
+                    {"detail": "Not a cover draft."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            contrib.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        routing_state = _resolve_contribution_state_value(data)
+        region, collection, state_value = _resolve_collection_for_submission(
+            state_value=routing_state,
+            is_draft=is_draft,
+            is_cover_submission=is_cover_submission,
+        )
+        routing_deferred = is_draft and is_cover_submission and not routing_state
+
+        if collection is None:
+            if not routing_state:
+                return Response(
+                    {"detail": "state is required to route the contribution to a Collection."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if region is None:
+                return Response(
+                    {"detail": f"No Region matches state={routing_state!r}."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             return Response(
                 {"detail": f"No active Collection covers region {region.name!r}."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Optional draft mode: when save_as_draft is truthy, contributions are
-        # created with status=DRAFT instead of PENDING so they are visible only
-        # to the contributor in "My Submissions" until they choose to submit.
-        save_as_draft_raw = str(
-            data.get("save_as_draft")
-            or data.get("saveAsDraft")
-            or data.get("status")
-        ).strip().lower()
-        is_draft = save_as_draft_raw in {"draft", "true", "1", "yes", "on"}
-
         type_value = (data.get("type") or "").strip().upper()
-        if type_value and type_value not in {"TOWNMARK", "RATEMARK", "AUXMARK"}:
+        if not is_cover_submission:
+            if type_value and type_value not in {"TOWNMARK", "RATEMARK", "AUXMARK"}:
+                return Response(
+                    {"detail": "type must be TOWNMARK, RATEMARK, or AUXMARK."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif type_value and type_value not in {"FC", "FL"}:
+            # Cover contributions may send cover type as `type` (FC | FL).
             return Response(
-                {"detail": "type must be TOWNMARK, RATEMARK, or AUXMARK."},
+                {"detail": "For cover submissions, type must be FC or FL when provided."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Save uploaded marking image files under MEDIA_ROOT/<region_abbrev>/.
-        # Frontend posts FormData with one or more `marking_image` fields; we
+        # Save uploaded image files under MEDIA_ROOT/<region_abbrev>/.
+        # Marking flow uses `marking_image`; cover draft flow uses `cover_image`.
         # stash the resulting metadata on Contribution.submitted_data so the
         # editor portal can display previews. Approval-time materialization
         # into Image rows happens in the contribution-apply pipeline.
-        region_abbrev = (region.abbrev or "").strip().lower() or "unknown"
+        if region is not None:
+            region_abbrev = (region.abbrev or "").strip().lower() or "unknown"
+        elif collection is not None and collection.region_id:
+            region_abbrev = (collection.region.abbrev or "").strip().lower() or "unknown"
+        else:
+            region_abbrev = "draft"
         uploaded_files = []
         try:
-            uploaded_files = request.FILES.getlist("marking_image")
+            if is_cover_submission:
+                uploaded_files = request.FILES.getlist("cover_image")
+            else:
+                uploaded_files = request.FILES.getlist("marking_image")
         except AttributeError:
             uploaded_files = []
         image_metas = []
@@ -1162,8 +1570,14 @@ class ContributionSubmitView(APIView):
         # Skip raw file objects: they are not JSON-serializable and we have already
         # captured them in image_metas above.
         submitted_data = {}
+        skip_keys = {
+            "marking_image",
+            "cover_image",
+            "edit_contribution_id",
+            "editContributionId",
+        }
         for key in data:
-            if key == "marking_image":
+            if key in skip_keys:
                 continue
             value = data.get(key)
             if hasattr(value, "read") and hasattr(value, "name"):
@@ -1173,9 +1587,68 @@ class ContributionSubmitView(APIView):
             except Exception:
                 submitted_data[key] = str(value)
 
+        if is_cover_submission:
+            submitted_data["submission_kind"] = "cover"
+            submitted_data["entity_type"] = "cover"
+        else:
+            submitted_data["submission_kind"] = submitted_data.get("submission_kind") or "marking"
+            submitted_data["entity_type"] = "marking"
+        if state_value:
+            submitted_data["state"] = state_value
+        if routing_deferred:
+            submitted_data["routing_deferred"] = True
+
+        if edit_pk is not None:
+            if not is_draft:
+                return Response(
+                    {
+                        "detail": "Use save_as_draft to update a draft, or abandon_draft to discard it after catalog submit."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            contrib = Contribution.objects.filter(
+                pk=edit_pk,
+                contributor=request.user,
+                status=Contribution.STATUS_DRAFT,
+            ).first()
+            if not contrib:
+                return Response(
+                    {"detail": "Draft not found or not editable."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            existing_sd = dict(contrib.submitted_data or {})
+            if image_metas:
+                meta_key = "cover_image_metas" if is_cover_submission else "marking_image_metas"
+                prior = existing_sd.get(meta_key) or existing_sd.get("image_metas") or []
+                if not isinstance(prior, list):
+                    prior = []
+                merged_metas = list(prior) + image_metas
+                submitted_data[meta_key] = merged_metas
+                submitted_data["image_metas"] = merged_metas
+                submitted_data["image_meta"] = merged_metas[0] if merged_metas else existing_sd.get("image_meta")
+            existing_sd.update(submitted_data)
+            contrib.submitted_data = existing_sd
+            contrib.collection = collection
+            contrib.save(update_fields=["submitted_data", "collection", "updated_at"])
+            log_submission_transaction(
+                action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
+                actor=request.user,
+                contribution=contrib,
+                marking=None,
+                source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
+                before_payload={},
+                after_payload=existing_sd,
+            )
+            return Response(
+                ContributionDetailSerializer(contrib, context={"request": request}).data,
+                status=status.HTTP_200_OK,
+            )
+
         if image_metas:
             submitted_data["marking_image_metas"] = image_metas
-            # Legacy keys still consumed by Dashboard.tsx and ContributionDetail.tsx.
+            if is_cover_submission:
+                submitted_data["cover_image_metas"] = image_metas
             submitted_data["image_metas"] = image_metas
             submitted_data["image_meta"] = image_metas[0]
 

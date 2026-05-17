@@ -1,4 +1,13 @@
-import apiClient from "@/lib/api";
+import apiClient, { ensureCsrfToken } from "@/lib/api";
+import {
+  coverContributionDisplayName,
+  isCoverContributionData,
+  parentMarkingIdFromContribution,
+} from "@/lib/contributionDisplay";
+import {
+  contributionImageMetasFromSubmittedData,
+  contributionMetaImageUrl,
+} from "@/lib/contributionImages";
 
 /**
  * Unified Marking service. Replaces the legacy postmarks/ratemarks/auxmarks
@@ -42,7 +51,196 @@ export interface MarkingImage {
   originalFilename: string;
   storageFilename: string;
   imageDescription: string;
+  isTracing: boolean;
+  isTracing: boolean;
   displayOrder: number;
+}
+
+export type ImageSubjectType = MarkingImage["subjectType"];
+
+interface ImageApiResponse {
+  count?: number;
+  next?: string | null;
+  previous?: string | null;
+  results?: unknown[];
+}
+
+interface ImageApiRow {
+  image_id?: unknown;
+  subject_type?: unknown;
+  subject_id?: unknown;
+  image_url?: unknown;
+  image_view?: unknown;
+  original_filename?: unknown;
+  storage_filename?: unknown;
+  image_description?: unknown;
+  is_tracing?: unknown;
+  display_order?: unknown;
+}
+
+function mapImageRow(raw: unknown): MarkingImage | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as ImageApiRow;
+  const imageId = toIdOrNull(o.image_id);
+  const subjectTypeRaw = String(o.subject_type ?? "").toUpperCase();
+  const subjectType: MarkingImage["subjectType"] =
+    subjectTypeRaw === "COVER" ? "COVER" : "MARKING";
+  const subjectId = toIdOrNull(o.subject_id);
+  if (imageId == null || subjectId == null) return null;
+  return {
+    imageId,
+    subjectType,
+    subjectId,
+    imageUrl: typeof o.image_url === "string" ? o.image_url : null,
+    imageView: toStr(o.image_view),
+    originalFilename: toStr(o.original_filename),
+    storageFilename: toStr(o.storage_filename),
+    imageDescription: toStr(o.image_description),
+    isTracing: Boolean(o.is_tracing),
+    displayOrder: toNumOrNull(o.display_order) ?? 0,
+  };
+}
+
+/** Pixel size for multipart image metadata (server still recomputes from bytes). */
+async function readImagePixelSize(file: File): Promise<{ width: number; height: number }> {
+  if (typeof createImageBitmap === "function") {
+    const bmp = await createImageBitmap(file);
+    try {
+      return { width: bmp.width, height: bmp.height };
+    } finally {
+      bmp.close?.();
+    }
+  }
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({
+        width: img.naturalWidth || img.width || 1,
+        height: img.naturalHeight || img.height || 1,
+      });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not decode image"));
+    };
+    img.src = url;
+  });
+}
+
+export async function getImagesForSubject(params: {
+  subjectType: ImageSubjectType;
+  subjectId: number;
+}): Promise<MarkingImage[]> {
+  try {
+    const res = await apiClient.get<ImageApiResponse>("/images/", {
+      params: {
+        subject_type: params.subjectType,
+        subject_id: String(params.subjectId),
+        ordering: "display_order",
+      },
+    });
+    const results = Array.isArray(res.data?.results) ? res.data.results : [];
+    return results.map(mapImageRow).filter((x): x is MarkingImage => x != null);
+  } catch {
+    return [];
+  }
+}
+
+export async function createImageForSubject(params: {
+  file: File;
+  subjectType: ImageSubjectType;
+  subjectId: number;
+  imageView: string;
+  imageDescription?: string | null;
+  isTracing?: boolean;
+  displayOrder?: number;
+}): Promise<MarkingImage | null> {
+  const form = new FormData();
+  form.append("file", params.file, params.file.name);
+  const safeName = (params.file.name || "image").slice(0, 255);
+  form.append("original_filename", safeName);
+  const mime =
+    params.file.type && params.file.type.startsWith("image/")
+      ? params.file.type
+      : "image/jpeg";
+  form.append("mime_type", mime);
+  form.append("file_size_bytes", String(params.file.size));
+  try {
+    const { width, height } = await readImagePixelSize(params.file);
+    form.append("image_width", String(width));
+    form.append("image_height", String(height));
+  } catch {
+    form.append("image_width", "1");
+    form.append("image_height", "1");
+  }
+  form.append("subject_type", params.subjectType);
+  form.append("subject_id", String(params.subjectId));
+  form.append("image_view", params.imageView);
+  if (params.imageDescription != null) {
+    form.append("image_description", params.imageDescription);
+  }
+  if (params.isTracing != null) {
+    form.append("is_tracing", String(params.isTracing));
+  }
+  if (params.displayOrder != null) {
+    form.append("display_order", String(params.displayOrder));
+  }
+  try {
+    await ensureCsrfToken();
+    const res = await apiClient.post("/images/", form);
+    return mapImageRow(res.data);
+  } catch {
+    return null;
+  }
+}
+
+export async function updateImage(
+  imageId: number,
+  patch: Partial<Pick<MarkingImage, "displayOrder" | "isTracing" | "imageDescription">>,
+): Promise<boolean> {
+  const payload: Record<string, unknown> = {};
+  if (patch.displayOrder != null) payload.display_order = patch.displayOrder;
+  if (patch.isTracing != null) payload.is_tracing = patch.isTracing;
+  if (patch.imageDescription != null) payload.image_description = patch.imageDescription;
+  try {
+    await apiClient.patch(`/images/${imageId}/`, payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Subset of ReferenceWork fields embedded in a Citation row, sufficient
+ * to render a citation entry without a second /reference-works/ call.
+ * Mirrors the read-only `reference_work_details` field on the v2
+ * CitationSerializer. Numeric ids come from the Django default `id` PK.
+ */
+export interface MarkingCitationReferenceWork {
+  id: number;
+  code: string | null;
+  title: string;
+  authorship: string;
+  publisher: string;
+  publicationYear: number | null;
+  edition: string;
+  volume: string;
+  isbn: string;
+  url: string;
+}
+
+/** One Citation row attached to a marking via (subject_type=MARKING, subject_id=id). */
+export interface MarkingCitation {
+  id: number;
+  /**
+   * Page, section, or URL within the reference work. Backend column is
+   * non-null with max_length=500; we still defensively trim/coerce.
+   */
+  citationDetail: string;
+  /** Nested reference work data; null only if the API omits it. */
+  referenceWork: MarkingCitationReferenceWork | null;
 }
 
 /** Canonical UI shape for a marking row (list or detail). */
@@ -78,6 +276,8 @@ export interface MarkingRecord {
   mainImage: MarkingImage | null;
   secondImage: MarkingImage | null;
   images: MarkingImage[];
+  citations: MarkingCitation[];
+  citations: MarkingCitation[];
 }
 
 export interface MarkingChangelogEvent {
@@ -215,6 +415,8 @@ function mapImage(raw: unknown): MarkingImage | null {
     originalFilename: toStr(o.original_filename),
     storageFilename: toStr(o.storage_filename),
     imageDescription: toStr(o.image_description),
+    isTracing: Boolean(o.is_tracing),
+    isTracing: Boolean(o.is_tracing),
     displayOrder: toNumOrNull(o.display_order) ?? 0,
   };
 }
@@ -222,6 +424,78 @@ function mapImage(raw: unknown): MarkingImage | null {
 function mapImageList(raw: unknown): MarkingImage[] {
   if (!Array.isArray(raw)) return [];
   return raw.map(mapImage).filter((x): x is MarkingImage => x !== null);
+}
+
+function mapCitationReferenceWork(raw: unknown): MarkingCitationReferenceWork | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = toIdOrNull(o.id);
+  if (id == null) return null;
+  return {
+    id,
+    code: typeof o.code === "string" && o.code ? o.code : null,
+    title: toStr(o.title),
+    authorship: toStr(o.authorship),
+    publisher: toStr(o.publisher),
+    publicationYear: toNumOrNull(o.publication_year),
+    edition: toStr(o.edition),
+    volume: toStr(o.volume),
+    isbn: toStr(o.isbn),
+    url: toStr(o.url),
+  };
+}
+
+function mapCitation(raw: unknown): MarkingCitation | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = toIdOrNull(o.id);
+  if (id == null) return null;
+  return {
+    id,
+    citationDetail: toStr(o.citation_detail),
+    referenceWork: mapCitationReferenceWork(o.reference_work_details),
+  };
+}
+
+function mapCitationList(raw: unknown): MarkingCitation[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(mapCitation).filter((x): x is MarkingCitation => x !== null);
+}
+
+function mapCitationReferenceWork(raw: unknown): MarkingCitationReferenceWork | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = toIdOrNull(o.id);
+  if (id == null) return null;
+  return {
+    id,
+    code: typeof o.code === "string" && o.code ? o.code : null,
+    title: toStr(o.title),
+    authorship: toStr(o.authorship),
+    publisher: toStr(o.publisher),
+    publicationYear: toNumOrNull(o.publication_year),
+    edition: toStr(o.edition),
+    volume: toStr(o.volume),
+    isbn: toStr(o.isbn),
+    url: toStr(o.url),
+  };
+}
+
+function mapCitation(raw: unknown): MarkingCitation | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = toIdOrNull(o.id);
+  if (id == null) return null;
+  return {
+    id,
+    citationDetail: toStr(o.citation_detail),
+    referenceWork: mapCitationReferenceWork(o.reference_work_details),
+  };
+}
+
+function mapCitationList(raw: unknown): MarkingCitation[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(mapCitation).filter((x): x is MarkingCitation => x !== null);
 }
 
 /**
@@ -271,6 +545,8 @@ export function mapApiMarkingToRecord(raw: unknown): MarkingRecord {
     mainImage,
     secondImage,
     images,
+    citations: mapCitationList(o.citations),
+    citations: mapCitationList(o.citations),
   };
 }
 
@@ -369,6 +645,53 @@ export async function getMarkingById(markingId: number): Promise<MarkingRecord |
   }
 }
 
+/** Region string used to route contributions to a Collection (abbrev preferred). */
+export function routingStateFromMarkingRecord(record: MarkingRecord | null): string {
+  if (!record) return "";
+  return (
+    (record.stateAbbrev ?? "").trim() ||
+    (record.state ?? "").trim() ||
+    (record.regionName ?? "").trim()
+  );
+}
+
+/**
+ * Resolve collection routing state for a marking (for cover draft POST).
+ * Falls back to GET /post-offices/{id}/ when marking detail omits region fields.
+ */
+export async function resolveMarkingRoutingState(markingId: number): Promise<string> {
+  const record = await getMarkingById(markingId);
+  let route = routingStateFromMarkingRecord(record);
+  if (route) return route;
+
+  const raw = await getMarkingByIdRaw(markingId);
+  if (!raw) return "";
+
+  route =
+    toStr(raw.state_abbrev) ||
+    toStr((raw as { stateAbbrev?: string }).stateAbbrev) ||
+    toStr(raw.state) ||
+    toStr(raw.region_name) ||
+    toStr((raw as { regionName?: string }).regionName);
+  if (route.trim()) return route.trim();
+
+  const postOfficeId = record?.postOfficeId ?? toIdOrNull(raw.post_office);
+  if (postOfficeId == null) return "";
+
+  try {
+    const res = await apiClient.get(`/post-offices/${postOfficeId}/`);
+    const po = res.data as Record<string, unknown>;
+    route =
+      toStr(po.region_abbrev) ||
+      toStr((po as { regionAbbrev?: string }).regionAbbrev) ||
+      toStr(po.region_name) ||
+      toStr((po as { regionName?: string }).regionName);
+    return route.trim();
+  } catch {
+    return "";
+  }
+}
+
 /** Raw detail payload (snake_case) for callers that need server fields directly. */
 export async function getMarkingByIdRaw(markingId: number): Promise<Record<string, unknown> | null> {
   try {
@@ -461,8 +784,20 @@ export async function restoreMarkingVersion(
   }
 }
 
-/** A single CoverDate row attached to an associated cover. */
-export interface AssociatedCoverDate {
+/**
+ * A single DateSeen row attached to an associated cover. The backing API row
+ * is polymorphic (subject_type COVER|MARKING + subject_id); inside an
+ * AssociatedCover the only rows the caller sees are the COVER-scoped ones,
+ * so the discriminator is implicit and we expose just the observation fields.
+ */
+export interface AssociatedDateSeen {
+/**
+ * A single DateSeen row attached to an associated cover. The backing API row
+ * is polymorphic (subject_type COVER|MARKING + subject_id); inside an
+ * AssociatedCover the only rows the caller sees are the COVER-scoped ones,
+ * so the discriminator is implicit and we expose just the observation fields.
+ */
+export interface AssociatedDateSeen {
   id: number;
   date: string;
   granularity: "DAY" | "MONTH" | "YEAR";
@@ -478,21 +813,52 @@ export interface AssociatedCoverDetails {
    * (which is keyed by id) without a second round-trip.
    */
   colorId: number | null;
+  /**
+   * FK id of the Color row (or null when no color is set). Carried alongside
+   * colorName so the cover edit dialog can prefill the colour <Select>
+   * (which is keyed by id) without a second round-trip.
+   */
+  colorId: number | null;
   colorName: string;
   type: string | null;
   width: string | null;
   height: string | null;
   hasAdhesive: boolean | null;
   isInstitutional: boolean | null;
-  coverDates: AssociatedCoverDate[];
+  datesSeen: AssociatedDateSeen[];
+  datesSeen: AssociatedDateSeen[];
 }
 
 /** One CoverMarking row (a marking-on-cover association). */
+export type CoverMarkingReviewStatus = "pending" | "approved" | "rejected" | "needs_revision";
+
 export interface AssociatedCover {
   id: number;
+  /** Editor moderation for this cover↔marking link (defaults to approved for legacy rows). */
+  reviewStatus: CoverMarkingReviewStatus;
+  reviewNotes: string | null;
+  reviewedAt: string | null;
+  reviewerUsername: string;
   isBackstamp: boolean;
   placement: string | null;
+  /** Optional contributor note stored on the CoverMarking row for reviewers. */
+  contributorComment?: string | null;
   coverDetails: AssociatedCoverDetails | null;
+  /**
+   * When set, this row is a saved Contribution draft (not yet a CoverMarking).
+   * Thumbnail opens the cover editor with `?edit={id}`.
+   */
+  contributionDraftId?: number;
+  /** Contribution.status for draft rows (`draft`, `needs_revision`, …). */
+  contributionStatus?: string;
+  /** Human-readable title for draft rows (from submitted_data). */
+  displayLabel?: string;
+  /**
+   * Optional client enrichment: URL of the cover's default image
+   * (`display_order` 0, else first image). Set by
+   * `enrichAssociatedCoversWithDefaultImages` on the record detail page.
+   */
+  defaultImageUrl?: string | null;
 }
 
 interface CoverMarkingApiResponse {
@@ -502,14 +868,16 @@ interface CoverMarkingApiResponse {
   results: unknown[];
 }
 
-function mapAssociatedCoverDate(raw: unknown): AssociatedCoverDate | null {
+function mapAssociatedDateSeen(raw: unknown): AssociatedDateSeen | null {
+function mapAssociatedDateSeen(raw: unknown): AssociatedDateSeen | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
   const id = toIdOrNull(o.id);
   const date = typeof o.date === "string" ? o.date : "";
   if (id == null || !date) return null;
   const gRaw = String(o.granularity ?? "").toUpperCase();
-  const granularity: AssociatedCoverDate["granularity"] =
+  const granularity: AssociatedDateSeen["granularity"] =
+  const granularity: AssociatedDateSeen["granularity"] =
     gRaw === "MONTH" ? "MONTH" : gRaw === "YEAR" ? "YEAR" : "DAY";
   return { id, date, granularity };
 }
@@ -519,13 +887,26 @@ function mapAssociatedCoverDetails(raw: unknown): AssociatedCoverDetails | null 
   const o = raw as Record<string, unknown>;
   const id = toIdOrNull(o.id);
   if (id == null) return null;
-  const datesRaw = Array.isArray(o.cover_dates) ? o.cover_dates : [];
-  const coverDates = datesRaw
-    .map(mapAssociatedCoverDate)
-    .filter((x): x is AssociatedCoverDate => x !== null);
+  // Backend serializer exposes the nested array under `dates_seen` (it used
+  // to be `cover_dates` before the polymorphic refactor). Caller code only
+  // sees COVER-scoped rows here because CoverSerializer.get_dates_seen
+  // filters by subject_type=COVER for this cover's pk.
+  const datesRaw = Array.isArray(o.dates_seen) ? o.dates_seen : [];
+  const datesSeen = datesRaw
+    .map(mapAssociatedDateSeen)
+    .filter((x): x is AssociatedDateSeen => x !== null);
+  // Backend serializer exposes the nested array under `dates_seen` (it used
+  // to be `cover_dates` before the polymorphic refactor). Caller code only
+  // sees COVER-scoped rows here because CoverSerializer.get_dates_seen
+  // filters by subject_type=COVER for this cover's pk.
+  const datesRaw = Array.isArray(o.dates_seen) ? o.dates_seen : [];
+  const datesSeen = datesRaw
+    .map(mapAssociatedDateSeen)
+    .filter((x): x is AssociatedDateSeen => x !== null);
   return {
     id,
     code: typeof o.code === "string" && o.code ? o.code : null,
+    colorId: toIdOrNull(o.color),
     colorId: toIdOrNull(o.color),
     colorName: toStr(o.color_name),
     type: typeof o.type === "string" && o.type ? o.type : null,
@@ -533,8 +914,15 @@ function mapAssociatedCoverDetails(raw: unknown): AssociatedCoverDetails | null 
     height: decimalToString(o.height),
     hasAdhesive: o.has_adhesive == null ? null : Boolean(o.has_adhesive),
     isInstitutional: o.is_institutional == null ? null : Boolean(o.is_institutional),
-    coverDates,
+    datesSeen,
+    datesSeen,
   };
+}
+
+function normalizeCoverMarkingReviewStatus(raw: unknown): CoverMarkingReviewStatus {
+  const s = String(raw ?? "").toLowerCase();
+  if (s === "pending" || s === "approved" || s === "rejected" || s === "needs_revision") return s;
+  return "approved";
 }
 
 function mapAssociatedCover(raw: unknown): AssociatedCover | null {
@@ -544,9 +932,24 @@ function mapAssociatedCover(raw: unknown): AssociatedCover | null {
   if (id == null) return null;
   return {
     id,
+    reviewStatus: normalizeCoverMarkingReviewStatus(o.review_status),
+    reviewNotes: typeof o.review_notes === "string" ? o.review_notes : null,
+    reviewedAt: typeof o.reviewed_at === "string" ? o.reviewed_at : null,
+    reviewerUsername:
+      typeof o.reviewer_username === "string"
+        ? o.reviewer_username
+        : typeof (o as { reviewerUsername?: string }).reviewerUsername === "string"
+          ? (o as { reviewerUsername?: string }).reviewerUsername!
+          : "",
     isBackstamp: Boolean(o.is_backstamp),
     placement:
       typeof o.placement === "string" && o.placement ? o.placement : null,
+    contributorComment:
+      typeof o.contributor_comment === "string"
+        ? o.contributor_comment
+        : typeof (o as { contributorComment?: string }).contributorComment === "string"
+          ? (o as { contributorComment?: string }).contributorComment!
+          : null,
     coverDetails: mapAssociatedCoverDetails(o.cover_details),
   };
 }
@@ -569,27 +972,349 @@ function mapAssociatedCover(raw: unknown): AssociatedCover | null {
  *       "height": "10.50",
  *       "has_adhesive": false,
  *       "is_institutional": null,
- *       "cover_dates": [
+ *       "dates_seen": [
+ *       "dates_seen": [
  *         { "id": 99, "date": "1851-04-12", "granularity": "DAY" }
  *       ]
  *     }
  *   }
  */
-export async function getMarkingCovers(
-  markingId: number
-): Promise<AssociatedCover[]> {
+export type MarkingCoversResult = {
+  covers: AssociatedCover[];
+  error: string | null;
+};
+
+export async function getMarkingCovers(markingId: number): Promise<MarkingCoversResult> {
   try {
     const res = await apiClient.get<CoverMarkingApiResponse>(
       "/cover-markings/",
-      { params: { marking: String(markingId) } }
+      { params: { marking: String(markingId) } },
     );
     const results = Array.isArray(res.data?.results) ? res.data.results : [];
-    return results
+    const covers = results
       .map(mapAssociatedCover)
+      .filter((x): x is AssociatedCover => x !== null);
+    return { covers, error: null };
+  } catch (err: unknown) {
+    const ax = err as { response?: { data?: { detail?: unknown } } };
+    const detail = ax.response?.data?.detail;
+    let message = "Could not load associated covers.";
+    if (typeof detail === "string") {
+      message = detail;
+    } else if (Array.isArray(detail)) {
+      message = detail.map(String).join(" ");
+    } else if (detail && typeof detail === "object") {
+      message = JSON.stringify(detail);
+    }
+    return { covers: [], error: message };
+  }
+}
+
+/** Cover↔marking link row from GET /cover-markings/?cover={id}. */
+export interface CoverMarkingLink {
+  id: number;
+  coverId: number;
+  markingId: number;
+  isBackstamp: boolean;
+  reviewStatus: CoverMarkingReviewStatus;
+  reviewNotes: string | null;
+}
+
+function mapCoverMarkingLink(raw: unknown): CoverMarkingLink | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = toIdOrNull(o.id);
+  const coverId = toIdOrNull(o.cover);
+  const markingId = toIdOrNull(o.marking);
+  if (id == null || coverId == null || markingId == null) return null;
+  return {
+    id,
+    coverId,
+    markingId,
+    isBackstamp: Boolean(o.is_backstamp),
+    reviewStatus: normalizeCoverMarkingReviewStatus(o.review_status),
+    reviewNotes: typeof o.review_notes === "string" ? o.review_notes : null,
+  };
+}
+
+export type CoverMarkingsByCoverResult = {
+  links: CoverMarkingLink[];
+  error: string | null;
+};
+
+/** GET /cover-markings/?cover={id} — markings linked to a cover. */
+export async function getCoverMarkingsByCover(
+  coverId: number,
+): Promise<CoverMarkingsByCoverResult> {
+  try {
+    const res = await apiClient.get<CoverMarkingApiResponse>("/cover-markings/", {
+      params: { cover: String(coverId) },
+    });
+    const results = Array.isArray(res.data?.results) ? res.data.results : [];
+    const links = results
+      .map(mapCoverMarkingLink)
+      .filter((x): x is CoverMarkingLink => x !== null);
+    return { links, error: null };
+  } catch (err: unknown) {
+    const ax = err as { response?: { data?: { detail?: unknown } } };
+    const detail = ax.response?.data?.detail;
+    let message = "Could not load associated markings.";
+    if (typeof detail === "string") {
+      message = detail;
+    } else if (Array.isArray(detail)) {
+      message = detail.map(String).join(" ");
+    } else if (detail && typeof detail === "object") {
+      message = JSON.stringify(detail);
+    }
+    return { links: [], error: message };
+  }
+}
+
+export type AssociatedMarkingOnCover = {
+  link: CoverMarkingLink;
+  marking: MarkingRecord;
+  defaultImageUrl: string | null;
+};
+
+/** Load marking rows (and default thumbnails) for each cover-marking link. */
+export async function loadAssociatedMarkingsForCover(
+  links: CoverMarkingLink[],
+): Promise<AssociatedMarkingOnCover[]> {
+  if (links.length === 0) return [];
+  const markingIds = [...new Set(links.map((l) => l.markingId))];
+  const markings = await Promise.all(markingIds.map((id) => getMarkingById(id)));
+  const byId = new Map<number, MarkingRecord>();
+  for (const m of markings) {
+    if (m) byId.set(m.id, m);
+  }
+  const rows: AssociatedMarkingOnCover[] = [];
+  for (const link of links) {
+    const marking = byId.get(link.markingId);
+    if (!marking) continue;
+    let defaultImageUrl: string | null = null;
+    const sorted = [...marking.images].sort((a, b) => a.displayOrder - b.displayOrder);
+    const def = sorted.find((img) => img.displayOrder === 0) ?? sorted[0];
+    if (def?.imageUrl) defaultImageUrl = normalizeImageUrl(def.imageUrl);
+    rows.push({ link, marking, defaultImageUrl });
+  }
+  return rows;
+}
+
+function resolveCoverSubmissionThumbnail(
+  submittedData: Record<string, unknown>,
+  contrib?: Record<string, unknown>,
+): string | null {
+  const c = contrib ?? {};
+  const mainImage = c.mainImage as { imageUrl?: unknown } | string | null | undefined;
+  const mainImageFromList =
+    (mainImage && typeof mainImage === "object" && typeof mainImage.imageUrl === "string"
+      ? mainImage.imageUrl
+      : null) ?? (typeof mainImage === "string" ? mainImage : null);
+  const direct = normalizeImageUrl(
+    mainImageFromList ??
+      (typeof c.imageUrl === "string" ? c.imageUrl : null) ??
+      (typeof c.image_url === "string" ? c.image_url : null) ??
+      null,
+  );
+  if (direct) return direct;
+
+  for (const meta of contributionImageMetasFromSubmittedData(submittedData)) {
+    const url = contributionMetaImageUrl(meta);
+    if (url) return normalizeImageUrl(url) ?? url;
+  }
+  return null;
+}
+
+function datesSeenFromCoverSubmission(sd: Record<string, unknown>): AssociatedDateSeen[] {
+  const raw = sd.cover_date ?? sd.coverDate;
+  if (raw == null || String(raw).trim() === "") return [];
+  const date = String(raw).trim();
+  const gRaw = String(sd.date_granularity ?? sd.dateGranularity ?? "DAY").toUpperCase();
+  const granularity: AssociatedDateSeen["granularity"] =
+    gRaw === "MONTH" ? "MONTH" : gRaw === "YEAR" ? "YEAR" : "DAY";
+  return [{ id: 0, date, granularity }];
+}
+
+function mapCoverContributionToAssociatedCover(
+  contrib: Record<string, unknown>,
+  markingId: number,
+): AssociatedCover | null {
+  const id = toIdOrNull(contrib.id);
+  if (id == null) return null;
+  const sdRaw = contrib.submittedData ?? contrib.submitted_data;
+  if (!sdRaw || typeof sdRaw !== "object") return null;
+  const sd = sdRaw as Record<string, unknown>;
+  if (!isCoverContributionData(sd)) return null;
+  if (parentMarkingIdFromContribution(sd) !== markingId) return null;
+
+  const status = String(contrib.status ?? "draft").trim().toLowerCase();
+  if (status !== "draft") return null;
+  const sdMaterialized =
+    sd.materialized_cover_marking_id ??
+    sd.materializedCoverMarkingId ??
+    sd.cover_marking_id ??
+    sd.coverMarkingId;
+  if (sdMaterialized != null && String(sdMaterialized).trim() !== "") return null;
+
+  const reviewStatus: CoverMarkingReviewStatus =
+    status === "needs_revision" ? "needs_revision" : "pending";
+
+  const widthRaw = sd.width_mm ?? sd.widthMm ?? sd.width;
+  const heightRaw = sd.height_mm ?? sd.heightMm ?? sd.height;
+  const typeRaw = sd.type;
+  const type =
+    typeof typeRaw === "string" && typeRaw.trim() ? typeRaw.trim() : null;
+
+  return {
+    id: -id,
+    contributionDraftId: id,
+    contributionStatus: status,
+    displayLabel: coverContributionDisplayName(sd, id),
+    reviewStatus,
+    reviewNotes:
+      typeof contrib.review_notes === "string"
+        ? contrib.review_notes
+        : typeof contrib.reviewNotes === "string"
+          ? contrib.reviewNotes
+          : null,
+    reviewedAt: null,
+    reviewerUsername: "",
+    isBackstamp: Boolean(sd.is_backstamp ?? sd.isBackstamp),
+    placement:
+      typeof sd.placement === "string" && sd.placement.trim()
+        ? sd.placement.trim()
+        : null,
+    coverDetails: {
+      id: -id,
+      code: null,
+      colorId: null,
+      colorName: typeof sd.color === "string" ? sd.color : "",
+      type,
+      width: widthRaw != null && String(widthRaw).trim() ? String(widthRaw) : null,
+      height: heightRaw != null && String(heightRaw).trim() ? String(heightRaw) : null,
+      hasAdhesive:
+        typeof sd.has_adhesive === "boolean"
+          ? sd.has_adhesive
+          : typeof sd.hasAdhesive === "boolean"
+            ? sd.hasAdhesive
+            : null,
+      isInstitutional:
+        typeof sd.is_institutional === "boolean"
+          ? sd.is_institutional
+          : typeof sd.isInstitutional === "boolean"
+            ? sd.isInstitutional
+            : null,
+      datesSeen: datesSeenFromCoverSubmission(sd),
+    },
+    defaultImageUrl: resolveCoverSubmissionThumbnail(sd, contrib),
+  };
+}
+
+/** Discard a cover Contribution draft after the cover was submitted via the catalog API. */
+export async function abandonCoverContributionDraft(contributionId: number): Promise<void> {
+  await ensureCsrfToken();
+  const form = new FormData();
+  form.append("submission_kind", "cover");
+  form.append("abandon_draft", "true");
+  form.append("edit_contribution_id", String(contributionId));
+  await apiClient.post("/contributions/", form);
+}
+
+/** Cover contribution drafts for a marking (not yet materialized as CoverMarking rows). */
+export async function getCoverContributionDraftsForMarking(
+  markingId: number,
+): Promise<AssociatedCover[]> {
+  try {
+    const res = await apiClient.get<{ results?: unknown[] } | unknown[]>("/contributions/", {
+      withCredentials: true,
+    });
+    const data = res.data;
+    const list = Array.isArray(data)
+      ? data
+      : Array.isArray((data as { results?: unknown[] })?.results)
+        ? (data as { results: unknown[] }).results
+        : [];
+    return list
+      .map((row) =>
+        row && typeof row === "object"
+          ? mapCoverContributionToAssociatedCover(row as Record<string, unknown>, markingId)
+          : null,
+      )
       .filter((x): x is AssociatedCover => x !== null);
   } catch {
     return [];
   }
+}
+
+/** Cover-marking rows plus saved cover contribution drafts for a marking. */
+export async function loadAssociatedCoversForMarking(
+  markingId: number,
+): Promise<MarkingCoversResult> {
+  const { covers, error } = await getMarkingCovers(markingId);
+  const drafts = await getCoverContributionDraftsForMarking(markingId);
+  const merged = [...covers, ...drafts];
+  const enriched = await enrichAssociatedCoversWithDefaultImages(merged);
+  return { covers: enriched, error };
+}
+
+/** Parallel fetch of default thumbnail URLs for associated covers (cover image API). */
+export async function enrichAssociatedCoversWithDefaultImages(
+  covers: AssociatedCover[],
+): Promise<AssociatedCover[]> {
+  if (covers.length === 0) return [];
+  return Promise.all(
+    covers.map(async (c) => {
+      if (c.contributionDraftId != null) {
+        if (c.defaultImageUrl) {
+          return { ...c, defaultImageUrl: normalizeImageUrl(c.defaultImageUrl) ?? c.defaultImageUrl };
+        }
+        return { ...c, defaultImageUrl: null };
+      }
+      try {
+        const cid = c.coverDetails?.id;
+        if (cid == null || cid < 0) return { ...c, defaultImageUrl: null };
+        const imgs = await getImagesForSubject({
+          subjectType: "COVER",
+          subjectId: cid,
+        });
+        const sorted = [...imgs].sort((a, b) => a.displayOrder - b.displayOrder);
+        const def = sorted.find((img) => img.displayOrder === 0) ?? sorted[0];
+        return {
+          ...c,
+          defaultImageUrl: def?.imageUrl ? normalizeImageUrl(def.imageUrl) : null,
+        };
+      } catch {
+        return { ...c, defaultImageUrl: null };
+      }
+    }),
+  );
+}
+
+/** Editor moderation: POST /cover-markings/{id}/approve|reject|request-revision/ */
+export type CoverMarkingReviewActionApi = "approve" | "reject" | "request-revision";
+
+export async function postCoverMarkingReview(
+  coverMarkingId: number,
+  action: CoverMarkingReviewActionApi,
+  reviewNotes?: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  await ensureCsrfToken();
+  try {
+    await apiClient.post(`/cover-markings/${coverMarkingId}/${action}/`, {
+      review_notes: reviewNotes ?? "",
+    });
+    return { ok: true };
+  } catch (err: unknown) {
+    const ax = err as { response?: { data?: { detail?: string } } };
+    const d = ax.response?.data?.detail;
+    return { ok: false, message: typeof d === "string" ? d : "Request failed." };
+  }
+}
+
+/** Contributor: POST /cover-markings/{id}/resubmit/ after addressing revision notes. */
+export async function postCoverMarkingResubmit(coverMarkingId: number): Promise<void> {
+  await ensureCsrfToken();
+  await apiClient.post(`/cover-markings/${coverMarkingId}/resubmit/`);
 }
 
 /** GET /markings/?page_size=1 - returns total marking count. */
@@ -600,7 +1325,8 @@ export async function getMarkingCount(): Promise<number> {
   return typeof res.data.count === "number" ? res.data.count : 0;
 }
 
-/** GET /markings-range/ - earliest/latest cover_date year across catalog. */
+/** GET /markings-range/ - earliest/latest dates_seen year across catalog. */
+/** GET /markings-range/ - earliest/latest dates_seen year across catalog. */
 export async function getMarkingYearRange(): Promise<MarkingYearRange> {
   const res = await apiClient.get<Record<string, number | null | undefined>>(
     "/markings-range/"

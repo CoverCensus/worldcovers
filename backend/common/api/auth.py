@@ -1,8 +1,4 @@
-"""
-Session-based auth views shared by the SPA. Carved out of the deleted v1 API
-during the Phase 1 model rewrite so /api/login, /api/logout, and the SPA
-session check stay live while v2 is being rewritten.
-"""
+"""Session-based auth views shared by the SPA: /api/login, /api/logout, and the SPA session check."""
 from __future__ import annotations
 
 import re

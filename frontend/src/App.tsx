@@ -7,9 +7,10 @@ import { useEffect, type ReactNode } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import Index from "./pages/Index";
 import Search from "./pages/Search";
-import RecordDetail from "./pages/RecordDetail";
+import EntryDetail from "./pages/EntryDetail";
 import ContributionDetail from "./pages/ContributionDetail";
 import Contribute from "./pages/Contribute";
+import CoverEdit from "./pages/CoverEdit";
 import Dashboard from "./pages/Dashboard";
 import MySuggestions from "./pages/MySuggestions";
 import Auth from "./pages/Auth";
@@ -59,7 +60,25 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/search" element={<Search />} />
-            <Route path="/record/:id" element={<RecordDetail />} />
+            <Route path="/record/:id" element={<EntryDetail />} />
+            <Route path="/covers/:coverId" element={<EntryDetail />} />
+            <Route
+              path="/record/:id/cover/new"
+              element={(
+                <RequireAuth>
+                  <CoverEdit />
+                </RequireAuth>
+              )}
+            />
+            <Route path="/record/:id/cover/:coverId" element={<EntryDetail />} />
+            <Route
+              path="/record/:id/cover/:coverId/edit"
+              element={(
+                <RequireAuth>
+                  <CoverEdit />
+                </RequireAuth>
+              )}
+            />
             <Route
               path="/contribution/:id"
               element={(

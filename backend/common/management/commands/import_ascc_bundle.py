@@ -30,7 +30,7 @@ Expected layout:
     dates_seen.csv is polymorphic: each row carries subject_type
     (COVER | MARKING) and subject_id (the Cover or Marking pk). The
     munger now emits MARKING-scoped rows anchored to the listing's
-    postmarks (one DateSeen per parsed date per postmark in the
+    markings (one DateSeen per parsed date per marking in the
     listing), since under the new policy there is no auto-created
     Cover to anchor dates to.
 
@@ -123,7 +123,7 @@ ASCC_LOAD_ORDER = (
 # emit CoverMarking or CoverValuation rows either. Bundles produced after
 # that change omit these three files; older bundles still include them
 # and load normally. dates_seen.csv is NOT optional: under the new policy
-# the munger emits MARKING-scoped DateSeen rows anchored to postmarks.
+# the munger emits MARKING-scoped DateSeen rows anchored to markings.
 OPTIONAL_STEMS = frozenset({
     "covers",
     "cover_markings",

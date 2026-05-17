@@ -61,7 +61,7 @@ export async function getCovers(): Promise<CoverRecord[]> {
  *   * /covers/         — the Cover row itself (code, color, type, dims, …)
  *   * /cover-markings/ — the link row tying a Cover to a Marking, with
  *                        is_backstamp/placement
- *   * /cover-dates/    — N "this cover was used on <date>" rows
+ *   * /dates-seen/     — polymorphic date rows (subject_type=COVER, subject_id=cover pk)
  *
  * The dialog drives all three from a single form, so the helpers below are
  * intentionally thin: they each map to one HTTP verb on one resource. The
@@ -134,6 +134,7 @@ export interface CoverMarkingWritePayload {
   marking?: number;
   is_backstamp?: boolean;
   placement?: string | null;
+  contributor_comment?: string | null;
 }
 
 export interface CoverMarkingWriteResult {
@@ -175,11 +176,12 @@ export async function deleteCoverMarking(id: number): Promise<void> {
   await apiClient.delete(`/cover-markings/${id}/`);
 }
 
-/** Granularity matches CoverDate.GRANULARITY_CHOICES on the backend. */
+/** Granularity matches DateSeen.GRANULARITY_CHOICES on the backend. */
 export type CoverDateGranularity = "DAY" | "MONTH" | "YEAR";
 
-/** Body shape accepted by both POST and PATCH for /cover-dates/. */
+/** Body for creating a cover-scoped date via POST /dates-seen/. */
 export interface CoverDateWritePayload {
+  /** Cover pk; mapped to subject_type=COVER and subject_id on the API. */
   cover?: number;
   /** ISO date string (YYYY-MM-DD); month/year granularity uses YYYY-MM-01 / YYYY-01-01. */
   date?: string;
@@ -193,33 +195,152 @@ export interface CoverDateWriteResult {
   granularity: CoverDateGranularity;
 }
 
-/** POST /cover-dates/ — attach a date to a Cover. */
+type DateSeenApiRow = {
+  id: number;
+  subject_type?: string;
+  subject_id?: number;
+  date: string;
+  granularity: CoverDateGranularity;
+};
+
+function mapDateSeenToCoverDate(row: DateSeenApiRow): CoverDateWriteResult {
+  const subjectId = row.subject_id;
+  return {
+    id: row.id,
+    cover: typeof subjectId === "number" ? subjectId : 0,
+    date: row.date,
+    granularity: row.granularity,
+  };
+}
+
+/** POST /dates-seen/ — attach a date observation to a Cover. */
 export async function createCoverDate(
   payload: CoverDateWritePayload,
 ): Promise<CoverDateWriteResult> {
   await ensureCsrfToken();
-  const res = await apiClient.post<CoverDateWriteResult>(
-    "/cover-dates/",
-    payload,
-  );
-  return res.data;
+  const coverId = payload.cover;
+  if (coverId == null) {
+    throw new Error("cover id is required to create a cover date.");
+  }
+  const res = await apiClient.post<DateSeenApiRow>("/dates-seen/", {
+    subject_type: "COVER",
+    subject_id: coverId,
+    date: payload.date,
+    granularity: payload.granularity,
+  });
+  return mapDateSeenToCoverDate(res.data);
 }
 
-/** PATCH /cover-dates/{id}/ — adjust date or granularity in place. */
+/** PATCH /dates-seen/{id}/ — adjust date or granularity in place. */
 export async function updateCoverDate(
   id: number,
   payload: CoverDateWritePayload,
 ): Promise<CoverDateWriteResult> {
   await ensureCsrfToken();
-  const res = await apiClient.patch<CoverDateWriteResult>(
-    `/cover-dates/${id}/`,
-    payload,
-  );
-  return res.data;
+  const body: Record<string, unknown> = {};
+  if (payload.date != null) body.date = payload.date;
+  if (payload.granularity != null) body.granularity = payload.granularity;
+  const res = await apiClient.patch<DateSeenApiRow>(`/dates-seen/${id}/`, body);
+  return mapDateSeenToCoverDate(res.data);
 }
 
-/** DELETE /cover-dates/{id}/ — remove a single date row. */
+/** DELETE /dates-seen/{id}/ — remove a single date row. */
 export async function deleteCoverDate(id: number): Promise<void> {
   await ensureCsrfToken();
-  await apiClient.delete(`/cover-dates/${id}/`);
+  await apiClient.delete(`/dates-seen/${id}/`);
+}
+
+/* -------------------------------------------------------------------------
+ * Cover detail (read)
+ * ----------------------------------------------------------------------- */
+
+export interface CoverDateSeenItem {
+  id: number;
+  date: string;
+  granularity: "DAY" | "MONTH" | "YEAR";
+}
+
+function mapCoverDateSeen(raw: unknown): CoverDateSeenItem | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = typeof o.id === "number" ? o.id : Number(o.id);
+  if (!Number.isFinite(id)) return null;
+  const date = typeof o.date === "string" ? o.date : "";
+  if (!date) return null;
+  const gRaw = String(o.granularity ?? "").toUpperCase();
+  const granularity: CoverDateSeenItem["granularity"] =
+    gRaw === "MONTH" ? "MONTH" : gRaw === "YEAR" ? "YEAR" : "DAY";
+  return { id: id as number, date, granularity };
+}
+
+function decimalToString(v: unknown): string | null {
+  if (v == null || v === "") return null;
+  const s = String(v).trim();
+  return s || null;
+}
+
+function toIdOrNull(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/** Normalized GET /covers/{id}/ payload (aligned with AssociatedCoverDetails). */
+export interface CoverDetail {
+  id: number;
+  code: string | null;
+  colorId: number | null;
+  colorName: string;
+  type: string | null;
+  hasAdhesive: boolean;
+  isInstitutional: boolean | null;
+  width: string | null;
+  height: string | null;
+  datesSeen: CoverDateSeenItem[];
+  createdDate: string;
+  modifiedDate: string;
+}
+
+function mapCoverDetail(data: unknown): CoverDetail | null {
+  if (!data || typeof data !== "object") return null;
+  const o = data as Record<string, unknown>;
+  const id = toIdOrNull(o.id);
+  if (id == null) return null;
+  const colorName =
+    typeof o.color_name === "string" ? o.color_name : "";
+  const datesRaw = Array.isArray(o.dates_seen) ? o.dates_seen : [];
+  const datesSeen = datesRaw
+    .map(mapCoverDateSeen)
+    .filter((x): x is CoverDateSeenItem => x !== null);
+  const hasAdhesive = o.has_adhesive == null ? false : Boolean(o.has_adhesive);
+  return {
+    id,
+    code: typeof o.code === "string" && o.code ? o.code : null,
+    colorId: toIdOrNull(o.color),
+    colorName,
+    type: typeof o.type === "string" && o.type ? o.type : null,
+    hasAdhesive,
+    isInstitutional:
+      o.is_institutional == null ? null : Boolean(o.is_institutional),
+    width: decimalToString(o.width),
+    height: decimalToString(o.height),
+    datesSeen,
+    createdDate:
+      typeof o.created_date === "string" ? o.created_date : "",
+    modifiedDate:
+      typeof o.modified_date === "string" ? o.modified_date : "",
+  };
+}
+
+/** GET /covers/{id}/ — read a single cover row. */
+export async function getCoverById(coverId: number): Promise<CoverDetail | null> {
+  try {
+    const res = await apiClient.get(`/covers/${coverId}/`);
+    return mapCoverDetail(res.data);
+  } catch {
+    return null;
+  }
 }

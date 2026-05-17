@@ -5,6 +5,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { ENTRY_LABELS } from "@/labels/entry";
+import { SUBMISSION_LABELS } from "@/labels/submission";
 
 type EditSubmissionDialogProps = {
   open: boolean;
@@ -42,7 +44,7 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
     if (!state.trim() || !town.trim() || !firstSeen.trim() || !shape.trim() || !color.trim()) {
       toast({
         title: "Missing required fields",
-        description: "State, town, first seen year, shape, and color are required.",
+        description: "State, town, earliest seen, shape, and color are required.",
         variant: "destructive",
       });
       return;
@@ -84,8 +86,8 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
       }
 
       toast({
-        title: "Submission sent",
-        description: "Your entry has been submitted for approval. It will appear in the catalog after review.",
+        title: SUBMISSION_LABELS.toast.received,
+        description: "Your Marking has been submitted for approval. It will appear in the catalog after review.",
       });
       onOpenChange(false);
     } catch (err: unknown) {
@@ -131,7 +133,7 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-firstSeen">First Seen Year</Label>
+              <Label htmlFor="edit-firstSeen">{ENTRY_LABELS.datesObserved.earliest}</Label>
               <Input
                 id="edit-firstSeen"
                 type="number"
@@ -140,7 +142,7 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-lastSeen">Last Seen Year</Label>
+              <Label htmlFor="edit-lastSeen">{ENTRY_LABELS.datesObserved.latest}</Label>
               <Input
                 id="edit-lastSeen"
                 type="number"
@@ -189,7 +191,7 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
               Cancel
             </Button>
             <Button type="submit" disabled={submitting}>
-              {submitting ? "Saving..." : "Submit Edited Entry"}
+              {submitting ? "Saving..." : "Submit Edit"}
             </Button>
           </div>
         </form>

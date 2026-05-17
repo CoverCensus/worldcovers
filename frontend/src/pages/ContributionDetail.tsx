@@ -25,6 +25,8 @@ import { getRegions } from "@/services/regions";
 import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
 import { getShapes, type ShapeOption } from "@/services/shapes";
 import { getColors, type ColorOption } from "@/services/colors";
+import { isCoverContributionData } from "@/lib/contributionDisplay";
+import CoverContributionDetail from "@/pages/CoverContributionDetail";
 
 const STATE_OTHER_VALUE = "__other__";
 const COLOR_OTHER_VALUE = "__other__";
@@ -718,9 +720,9 @@ const ContributionDetail = () => {
     if (!editorEdits.inscription_txt.trim()) {
       errors.inscription = `${inscriptionLabel} is required`;
     }
-    const fe = getYearError(editorEdits.firstSeen, { required: true, label: "First Seen Year" });
+    const fe = getYearError(editorEdits.firstSeen, { required: true, label: ENTRY_LABELS.datesObserved.earliest });
     if (fe) errors.firstSeen = fe;
-    const le = getYearError(editorEdits.lastSeen, { required: false, label: "Last Seen Year" });
+    const le = getYearError(editorEdits.lastSeen, { required: false, label: ENTRY_LABELS.datesObserved.latest });
     if (le) errors.lastSeen = le;
     if (manuscriptVal === "No" && !shapeVal) {
       errors.shape = "Shape is required when Manuscript is No";
@@ -898,7 +900,7 @@ const ContributionDetail = () => {
         const msg = resBody?.review_notes?.[0] ?? resBody?.detail ?? res.statusText;
         throw new Error(typeof msg === "string" ? msg : "Request failed");
       }
-      const actionLabel = kind === "approve" ? "Approved" : kind === "reject" ? "Rejected" : "Revision requested";
+      const actionLabel = kind === "approve" ? "Approved" : kind === "reject" ? "Rejected" : "Submission returned";
       toast({ title: actionLabel, description: "Your comment was saved for the contributor." });
       if (kind === "approve") {
         const data = await res.json();
@@ -975,7 +977,7 @@ const ContributionDetail = () => {
 
   const handleDeleteMasterListing = async (postmarkId: number) => {
     const confirmed = window.confirm(
-      "Delete this master listing? This action is audit-tracked and intended for cleanup cases."
+      "Remove this Marking? This action is audit-tracked and intended for cleanup cases."
     );
     if (!confirmed) return;
     try {
@@ -984,13 +986,13 @@ const ContributionDetail = () => {
       const headers = csrfToken ? { "X-CSRFToken": csrfToken } : undefined;
       await apiClient.delete(`/markings/${postmarkId}/delete-mine/`, headers ? { headers } : undefined);
       toast({
-        title: "Master listing deleted",
-        description: "Deletion was recorded in audit history.",
+        title: "Master entry removed",
+        description: "Removal was recorded in audit history.",
       });
       navigate("/dashboard", { state: { tab: "editor" } });
     } catch (err) {
       toast({
-        title: "Could not delete master listing",
+        title: "Could not remove master entry",
         description: err instanceof Error ? err.message : "Please try again.",
         variant: "destructive",
       });
@@ -1081,7 +1083,6 @@ const ContributionDetail = () => {
     );
   }
 
-  // Support both snake_case (API) and camelCase in case response is transformed
   const rawSubmitted =
     contribution.submitted_data ??
     (contribution as unknown as Record<string, unknown>).submittedData ??
@@ -1090,6 +1091,23 @@ const ContributionDetail = () => {
     typeof rawSubmitted === "object" && rawSubmitted !== null
       ? (rawSubmitted as Record<string, unknown>)
       : {};
+  if (isCoverContributionData(sd)) {
+    return (
+      <CoverContributionDetail
+        initialContribution={{
+          id: contribution.id,
+          contributor_id: contribution.contributor_id ?? null,
+          status: contribution.status,
+          contributor_username: contribution.contributor_username,
+          review_notes: contribution.review_notes,
+          created_at: contribution.created_at,
+          submitted_data: sd,
+          display_name: contribution.display_name,
+        }}
+      />
+    );
+  }
+
   const state = String(sd.state ?? "").trim();
   const town = String(sd.town ?? "").trim();
   const shape = String(sd.shape ?? sd.type ?? "").trim();
@@ -1300,7 +1318,7 @@ const ContributionDetail = () => {
                   <CardHeader>
                     <CardTitle className="font-heading text-lg">Review this submission</CardTitle>
                     <p className="text-sm text-muted-foreground">
-                      Choose Approve, Reject, or Request revision.
+                      Choose Approve, Reject, or Return.
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -1348,7 +1366,7 @@ const ContributionDetail = () => {
                         disabled={submitting}
                       >
                         <MessageSquare className="mr-2 h-4 w-4" />
-                        Request revision
+                        Return
                       </Button>
                     </div>
                   </CardContent>
@@ -1595,18 +1613,18 @@ const ContributionDetail = () => {
                       Review Submission
                     </CardTitle>
                     <p className="text-sm text-muted-foreground">
-                      Single submission form with prefilled values. Any change goes through approval workflow; master listing updates only after approval.
+                      Single submission form with prefilled values. Any change goes through approval workflow; master entry updates only after approval.
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-6">
                     {postmarkId != null && (
                       <div className="space-y-2">
-                        <Label>Existing master listing images (context)</Label>
+                        <Label>Existing master entry images (context)</Label>
                         {masterListingImages.length > 0 ? (
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                             {masterListingImages.map((img, idx) => (
                               <div key={`${img.id}-${idx}`} className="rounded border border-border overflow-hidden bg-muted p-1">
-                                <img src={img.imageUrl} alt={`Master listing ${idx + 1}`} className="h-24 w-full object-cover rounded" />
+                                <img src={img.imageUrl} alt={`Master entry ${idx + 1}`} className="h-24 w-full object-cover rounded" />
                                 <div className="mt-1 flex items-center justify-between gap-2">
                                   <span className="text-[10px] uppercase text-muted-foreground">{img.imageType}</span>
                                   <Button
@@ -1628,7 +1646,7 @@ const ContributionDetail = () => {
                             ))}
                           </div>
                         ) : (
-                          <p className="text-xs text-muted-foreground">No existing master listing images found.</p>
+                          <p className="text-xs text-muted-foreground">No existing master entry images found.</p>
                         )}
                         <p className="text-xs text-muted-foreground">
                           Editors can directly set one default image per type: mark, cover, tracing.
@@ -1638,7 +1656,7 @@ const ContributionDetail = () => {
                     {postmarkId != null && (
                       <div className="rounded-md border border-destructive/30 p-3 bg-destructive/5 space-y-2">
                         <p className="text-xs text-muted-foreground">
-                          Direct editor action allowed: delete master listing (audit-tracked), mainly for cleanup tasks such as multi-color corrections.
+                          Direct editor action allowed: remove master entry (audit-tracked), mainly for cleanup tasks such as multi-color corrections.
                         </p>
                         <Button
                           type="button"
@@ -1647,7 +1665,7 @@ const ContributionDetail = () => {
                           disabled={deletingMasterListing}
                           onClick={() => handleDeleteMasterListing(postmarkId)}
                         >
-                          {deletingMasterListing ? "Deleting..." : "Delete master listing"}
+                          {deletingMasterListing ? "Removing..." : "Remove Marking"}
                         </Button>
                       </div>
                     )}
@@ -1791,7 +1809,7 @@ const ContributionDetail = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="contrib-edit-firstSeen">
-                          First Seen Year <span className="text-destructive">*</span>
+                          {ENTRY_LABELS.datesObserved.earliest} <span className="text-destructive">*</span>
                         </Label>
                         <Input
                           id="contrib-edit-firstSeen"
@@ -1802,7 +1820,7 @@ const ContributionDetail = () => {
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                             setEditorEdits((p) => ({ ...p, firstSeen: v }));
-                            const err = getYearError(v, { required: true, label: "First Seen Year" });
+                            const err = getYearError(v, { required: true, label: ENTRY_LABELS.datesObserved.earliest });
                             setEditorFieldErrors((prev) => ({ ...prev, firstSeen: err || undefined }));
                           }}
                           maxLength={5}
@@ -1814,7 +1832,7 @@ const ContributionDetail = () => {
                         )}
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="contrib-edit-lastSeen">Last Seen Year</Label>
+                        <Label htmlFor="contrib-edit-lastSeen">{ENTRY_LABELS.datesObserved.latest}</Label>
                         <Input
                           id="contrib-edit-lastSeen"
                           type="text"
@@ -1824,7 +1842,7 @@ const ContributionDetail = () => {
                           onChange={(e) => {
                             const v = e.target.value.replace(/\D/g, "").slice(0, 4);
                             setEditorEdits((p) => ({ ...p, lastSeen: v }));
-                            const err = getYearError(v, { required: false, label: "Last Seen Year" });
+                            const err = getYearError(v, { required: false, label: ENTRY_LABELS.datesObserved.latest });
                             setEditorFieldErrors((prev) => ({ ...prev, lastSeen: err || undefined }));
                           }}
                           maxLength={5}
@@ -1941,10 +1959,10 @@ const ContributionDetail = () => {
                         options={shapeSelectOptions}
                         loading={loadingShapes}
                         error={!!shapeOptionsError}
-                        errorMessage={shapeOptionsError ?? "Failed to load postmark shapes"}
+                        errorMessage={shapeOptionsError ?? "Failed to load marking shapes"}
                         searchPlaceholder="Search shapes..."
                         emptyMessage="No shape found."
-                        aria-label="Postmark shape"
+                        aria-label="Marking shape"
                         disabled={submitting}
                         triggerClassName={editorFieldErrors.shape ? "border-destructive" : ""}
                       />

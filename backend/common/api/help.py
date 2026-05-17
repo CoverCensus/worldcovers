@@ -1,8 +1,4 @@
-"""
-Help page docs API. Serves markdown files from docs/ to the SPA Help page.
-Carved out of the deleted v1 API during the Phase 1 model rewrite; restored
-here because Phase 1 also dropped the v2/help-docs/ route by mistake.
-"""
+"""Help page docs API. Serves markdown files from docs/ to the SPA Help page."""
 from __future__ import annotations
 
 import re
