@@ -1,4 +1,3 @@
-"""relationships -- extracted from tools/apmc_data_munger.ipynb. See driver script for narrative."""
 import re
 import pandas as pd
 
@@ -13,18 +12,28 @@ def extract_town_root(inscription):
 
 def resolve_relationships(listings_df):
     """Walk listings in catalog order, resolve inheritance.
-    
+
     Modifies listings_df in place, adding:
-      parent_idx, resolved_inscription, resolved_town, s7_warnings
+      parent_idx, prev_sibling_idx, resolved_inscription, resolved_town,
+      s7_warnings
+
+    parent_idx points at the most recent independent (parent) entry.
+    prev_sibling_idx points at the carry-forward source for attribute
+    inheritance: the immediately preceding sibling under the same
+    parent, or (for the first child) the parent itself. None for
+    independent and orphan-rel entries.
     """
     n = len(listings_df)
     parent_idx = [None] * n
+    prev_sibling_idx = [None] * n
     resolved_inscription = [None] * n
     resolved_town = [None] * n
     s7_warnings = [[] for _ in range(n)]
 
     # Track the most recent independent entry by iteration position
     current_parent_pos = None
+    # Track most recent child position per parent, for sibling-walk inheritance
+    last_child_pos_by_parent = {}
 
     for pos in range(n):
         row = listings_df.iloc[pos]
@@ -40,9 +49,11 @@ def resolve_relationships(listings_df):
             town = extract_town_root(inscription)
 
             parent_idx[pos] = None
+            prev_sibling_idx[pos] = None
             resolved_inscription[pos] = inscription
             resolved_town[pos] = town
             current_parent_pos = pos
+            last_child_pos_by_parent[pos] = None
 
         else:
             # --- Relationship entry ---
@@ -52,10 +63,18 @@ def resolve_relationships(listings_df):
                 _nb = row['head_name_body']
                 fallback = '' if (_nb is None or (isinstance(_nb, float) and pd.isna(_nb))) else (_nb or '')
                 parent_idx[pos] = None
+                prev_sibling_idx[pos] = None
                 resolved_inscription[pos] = fallback
                 resolved_town[pos] = extract_town_root(fallback) if fallback else ''
             else:
                 parent_idx[pos] = listings_df.index[current_parent_pos]
+                prev_child_pos = last_child_pos_by_parent.get(current_parent_pos)
+                if prev_child_pos is None:
+                    # First child: carry-forward source is the parent.
+                    prev_sibling_idx[pos] = listings_df.index[current_parent_pos]
+                else:
+                    prev_sibling_idx[pos] = listings_df.index[prev_child_pos]
+                last_child_pos_by_parent[current_parent_pos] = pos
                 p_inscription = resolved_inscription[current_parent_pos]
                 p_town = resolved_town[current_parent_pos]
 
@@ -88,6 +107,7 @@ def resolve_relationships(listings_df):
         s7_warnings[pos] = warnings
 
     listings_df['parent_idx'] = parent_idx
+    listings_df['prev_sibling_idx'] = prev_sibling_idx
     listings_df['resolved_inscription'] = resolved_inscription
     listings_df['resolved_town'] = resolved_town
     listings_df['s7_warnings'] = s7_warnings

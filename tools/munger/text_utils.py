@@ -1,4 +1,3 @@
-"""text_utils -- extracted from tools/apmc_data_munger.ipynb. See driver script for narrative."""
 import re
 
 

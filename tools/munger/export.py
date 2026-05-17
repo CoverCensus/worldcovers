@@ -1,4 +1,3 @@
-"""export -- extracted from tools/apmc_data_munger.ipynb. See driver script for narrative."""
 import os
 import shutil
 import pandas as pd

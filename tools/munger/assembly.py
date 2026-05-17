@@ -1,4 +1,3 @@
-"""assembly -- extracted from tools/apmc_data_munger.ipynb. See driver script for narrative."""
 import re
 from datetime import date as dt_date
 import pandas as pd

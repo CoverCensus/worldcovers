@@ -1,4 +1,3 @@
-"""fields.sizes -- extracted from tools/apmc_data_munger.ipynb. See driver script for narrative."""
 import re
 
 SIZE_SUFFIX_PAT = r'(?:YMDD|MDD|YMD|YD|MD|NOR)'

@@ -1,4 +1,3 @@
-"""images -- extracted from tools/apmc_data_munger.ipynb. See driver script for narrative."""
 import hashlib
 import mimetypes
 from pathlib import Path

@@ -1,4 +1,3 @@
-"""rate_assembly -- extracted from tools/apmc_data_munger.ipynb. See driver script for narrative."""
 import re
 from datetime import date as _date_cls
 import pandas as pd

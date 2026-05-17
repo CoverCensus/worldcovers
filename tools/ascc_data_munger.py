@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""apmc_data_munger -- ASCC catalog CSV -> Django-shape import bundle.
+"""ascc_data_munger -- ASCC catalog CSV -> Django-shape import bundle.
 
-Restructured from tools/apmc_data_munger.ipynb. Hoistable function and
-constant definitions live at module scope; functions or constants that
-depend on runtime pipeline state remain inside main(). Behavior matches
-the notebook; the one intentional change is AUDIT_TS honoring the
-APMC_AUDIT_TS env var when set, for diffable test runs.
+Hoistable function and constant definitions live at module scope;
+functions or constants that depend on runtime pipeline state remain
+inside main(). AUDIT_TS honors the ASCC_AUDIT_TS env var when set, for
+diffable test runs.
 """
 import argparse
 import hashlib
@@ -119,6 +118,27 @@ def main(argv=None):
     print()
     for t in df.loc[df['s2_cross_ref'], 'clean_text']:
         print(f'  {t[:120]}')
+
+    # Backstamp annotation: any listing whose raw text contains '(backstamp)'
+    # (case-insensitive) gets a "Backstamp" line in the emitted marking's desc.
+    _BACKSTAMP_RE = re.compile(r'\(backstamp\)', re.IGNORECASE)
+    df['has_backstamp'] = df['clean_text'].apply(lambda t: bool(_BACKSTAMP_RE.search(str(t))))
+    # See-clause for cross-reference rows: the literal 'See ...' fragment up to
+    # the next ';', ')', or '...'. Empty for non-cross-ref rows.
+    _SEE_RE = re.compile(r'\bSee\b[^;)]*?(?=\s*(?:\.{2,}|\)|;|$))', re.IGNORECASE)
+    # Trailing junk to strip off the captured See-clause: dotted leaders, the
+    # '--' no-price marker, and any leftover punctuation/whitespace.
+    _SEE_TAIL_RE = re.compile(r'(?:\s|\.|-){2,}.*$|\s+--\s*$')
+    def _extract_see(t):
+        m = _SEE_RE.search(str(t))
+        if not m:
+            return None
+        clause = _SEE_TAIL_RE.sub('', m.group(0)).strip()
+        return clause or None
+    df['see_clause'] = df.apply(
+        lambda r: _extract_see(r['clean_text']) if r['s2_cross_ref'] else None,
+        axis=1,
+    )
 
     # ======================================================================
     # Signal 3: Fragment Detection
@@ -241,6 +261,13 @@ def main(argv=None):
     # 2.1 Entry Form Classification
     # ======================================================================
     listings = df[df['classification'] == 'listing'].copy()
+    # Cross-reference rows are not full catalog listings, but the user wants
+    # them preserved as standalone markings with their See-clause (and any
+    # backstamp annotation) captured in desc. Held aside here and re-injected
+    # at marking emission time so they bypass segmentation/head/relationship
+    # parsing, which their text shape would not survive cleanly.
+    cross_ref_df = df[df['classification'] == 'cross_reference'].copy()
+    print(f'Holding {len(cross_ref_df)} cross-reference rows for desc-only emission')
     print(f'Segmenting {len(listings)} listings')
     listings['entry_form'] = listings.apply(classify_entry_form, axis=1)
     print()
@@ -937,36 +964,51 @@ def main(argv=None):
     inherited_ms_count = 0
     inherited_color_count = 0
     inherited_size_count = 0
+    inherited_dates_count = 0
+    # Walk in catalog order. Source is the preceding sibling under the same
+    # parent (or the parent itself, for first children) -- prev_sibling_idx
+    # encodes both cases. Because earlier siblings have already been mutated
+    # by this same loop, reading from listings.loc[src_idx] yields the
+    # post-inheritance value, giving us transitive carry-forward "until
+    # someone overrides" semantics without a second pass.
     for pos in range(len(listings)):
         row = listings.iloc[pos]
-        if pd.isna(row['parent_idx']):
+        src_idx = row['prev_sibling_idx']
+        if src_idx is None or (isinstance(src_idx, float) and pd.isna(src_idx)):
             continue
 
-        parent = listings.loc[row['parent_idx']]
+        src = listings.loc[src_idx]
         child_types = set(row['paren_field_types'])
 
         # is_manuscript
         if 'ms' not in child_types and 'size' not in child_types:
-            if parent['is_manuscript'] != row['is_manuscript']:
-                listings.iat[pos, listings.columns.get_loc('is_manuscript')] = parent['is_manuscript']
+            if src['is_manuscript'] != row['is_manuscript']:
+                listings.iat[pos, listings.columns.get_loc('is_manuscript')] = src['is_manuscript']
                 inherited_ms_count += 1
 
         # parsed_colors
         if not row['parsed_colors']:
-            if parent['parsed_colors']:
-                listings.iat[pos, listings.columns.get_loc('parsed_colors')] = parent['parsed_colors'].copy()
+            if src['parsed_colors']:
+                listings.iat[pos, listings.columns.get_loc('parsed_colors')] = src['parsed_colors'].copy()
                 inherited_color_count += 1
 
         # parsed_sizes
         if not row['parsed_sizes']:
-            if parent['parsed_sizes']:
-                listings.iat[pos, listings.columns.get_loc('parsed_sizes')] = parent['parsed_sizes'].copy()
+            if src['parsed_sizes']:
+                listings.iat[pos, listings.columns.get_loc('parsed_sizes')] = src['parsed_sizes'].copy()
                 inherited_size_count += 1
+
+        # parsed_dates
+        if not row['parsed_dates']:
+            if src['parsed_dates']:
+                listings.iat[pos, listings.columns.get_loc('parsed_dates')] = src['parsed_dates'].copy()
+                inherited_dates_count += 1
     print()
-    print('Step 7.1b: Attribute inheritance')
+    print('Step 7.1b: Attribute inheritance (from preceding sibling)')
     print(f'  is_manuscript inherited:  {inherited_ms_count}')
     print(f'  parsed_colors inherited:  {inherited_color_count}')
     print(f'  parsed_sizes inherited:   {inherited_size_count}')
+    print(f'  parsed_dates inherited:   {inherited_dates_count}')
     canonical_by_alias = {}
     for rt in listings['resolved_town'].dropna().unique():
         m = OR_ALIAS_RE.match(str(rt))
@@ -2310,10 +2352,18 @@ def main(argv=None):
     # 9.8 DateSeen (Marking-Scoped)
     # ======================================================================
     _tm_codes_by_lst = _tm_codes_by_listing(townmarks_df)
+    # Ratemarks and auxmarks inherit dates from their parent townmark by
+    # default; emit dates_seen rows keyed by their codes too. Both frames
+    # carry source_listing_idx + code, so the same helper works.
+    _rm_codes_by_lst = _tm_codes_by_listing(ratemarks_df)
+    _ax_codes_by_lst = _tm_codes_by_listing(auxmarks_df)
     ds_rows = []  # (marking_code, date, granularity)
     for listing_idx, src in listings.iterrows():
         tm_codes = [c for c in _tm_codes_by_lst.get(listing_idx, []) if c]
-        if not tm_codes:
+        rm_codes = [c for c in _rm_codes_by_lst.get(listing_idx, []) if c]
+        ax_codes = [c for c in _ax_codes_by_lst.get(listing_idx, []) if c]
+        all_codes = tm_codes + rm_codes + ax_codes
+        if not all_codes:
             continue
         for d in (src.get('parsed_dates') or []):
             gran = d.get('date_granularity')
@@ -2336,7 +2386,7 @@ def main(argv=None):
                 # Bad date components in source; Step 6 already reports parse errors.
                 continue
             for obs_str, out_gran in obs_rows:
-                for mc in tm_codes:
+                for mc in all_codes:
                     ds_rows.append({
                         'marking_code': mc,
                         'date': obs_str,
@@ -2462,7 +2512,7 @@ def main(argv=None):
             + (" ..." if len(_missing) > len(head) else "")
         )
     print(f"Coverage check: all {len(listings)} listings emitted at least one marking.")
-    AUDIT_TS = os.environ.get("APMC_AUDIT_TS") or pd.Timestamp.now(tz="UTC").isoformat(timespec="microseconds")
+    AUDIT_TS = os.environ.get("ASCC_AUDIT_TS") or pd.Timestamp.now(tz="UTC").isoformat(timespec="microseconds")
     def _stamp(frame):
         out = frame.copy()
         out["created_date"]  = AUDIT_TS
@@ -2478,7 +2528,10 @@ def main(argv=None):
     marking_id_by_ax = {}
     emit_order = []  # list of ("TM"|"RM"|"AX", source_id, marking_id) in emission order
     _next_marking_id = 1
-    for listing_idx in range(len(listings)):
+    # Iterate listings.index, not range(len(listings)): the index can be
+    # non-contiguous (gaps and trailing values past len), and source_listing_idx
+    # on townmark/ratemark/auxmark frames is set from the actual index.
+    for listing_idx in listings.index:
         for pm_id in tm_idx_by_listing.get(listing_idx, []):
             marking_id_by_tm[pm_id] = _next_marking_id
             emit_order.append(("TM", pm_id, _next_marking_id))
@@ -2549,6 +2602,12 @@ def main(argv=None):
             sli = _tm.get("source_listing_idx")
             if sli is not None and sli not in catalog_text_by_listing:
                 catalog_text_by_listing[sli] = _tm.get("catalog_text")
+    # Per-listing backstamp flag, looked up at townmark emission time.
+    backstamp_by_listing = {}
+    if 'has_backstamp' in listings.columns:
+        for _lidx, _lrow in listings.iterrows():
+            if bool(_lrow.get('has_backstamp')):
+                backstamp_by_listing[_lidx] = True
     marking_rows = []
     for kind, src_id, mk_id in emit_order:
         if kind == "TM":
@@ -2593,13 +2652,18 @@ def main(argv=None):
         is_irreg_val = r.get("is_irregular")
         if not is_ms and (is_irreg_val is None or (isinstance(is_irreg_val, float) and pd.isna(is_irreg_val))):
             is_irreg_val = False
+        # desc: only townmarks carry the backstamp annotation; ratemarks
+        # and auxmarks inherit it implicitly through their parent townmark.
+        desc_val = None
+        if kind == "TM" and backstamp_by_listing.get(src_idx):
+            desc_val = "Backstamp"
         marking_rows.append({
             "id": mk_id,
             "code": f"{RW_CODE}-{REGION_ABBREV}-{mk_id}",
             "type": type_label,
             "catalog_txt": catalog_txt,
             "inscription_txt": r.get("inscription_text"),
-            "desc": None,
+            "desc": desc_val,
             "is_manuscript": is_ms,
             "shape": shape_id,
             "lettering": _resolve_int_fk(lettering_id_by_internal, r.get("lettering_id")),
@@ -2612,6 +2676,49 @@ def main(argv=None):
             "rate_val": rate_val,
             "post_office": _resolve_int_fk(po_id_by_internal, po_internal),
         })
+    # Supplemental cross-reference markings. These were classified as
+    # cross_reference and held aside; they are not full catalog listings, so
+    # they bypass the normal townmark/fanout pipeline. Each gets a single
+    # marking row carrying the See-clause (and "Backstamp" annotation when
+    # the raw text contained '(backstamp)') in desc.
+    cross_ref_emit = []  # list of (mk_id, source_row) for downstream citation rows
+    if len(cross_ref_df):
+        _sl_shape_id = None
+        _sl = _shapes_src[_shapes_src["name"] == "SL - Straight Line"]
+        if len(_sl):
+            _sl_shape_id = int(_sl.iloc[0]["id"])
+        for _, _xr in cross_ref_df.iterrows():
+            _desc_lines = []
+            if bool(_xr.get('has_backstamp')):
+                _desc_lines.append("Backstamp")
+            _see = _xr.get('see_clause')
+            if _see:
+                _desc_lines.append(str(_see))
+            _desc_val = "\n".join(_desc_lines) if _desc_lines else None
+            _raw = str(_xr.get('clean_text') or '').strip()
+            _insc = _raw.split('(', 1)[0].strip().rstrip(',') or None
+            mk_id = _next_marking_id
+            _next_marking_id += 1
+            marking_rows.append({
+                "id": mk_id,
+                "code": f"{RW_CODE}-{REGION_ABBREV}-{mk_id}",
+                "type": "TOWNMARK",
+                "catalog_txt": _raw,
+                "inscription_txt": _insc,
+                "desc": _desc_val,
+                "is_manuscript": False,
+                "shape": _sl_shape_id,
+                "lettering": None,
+                "color": None,
+                "is_irreg": False,
+                "width": None,
+                "height": None,
+                "date_fmt": None,
+                "impression": None,
+                "rate_val": None,
+                "post_office": None,
+            })
+            cross_ref_emit.append((mk_id, _xr))
     markings_out = pd.DataFrame(marking_rows) if marking_rows else pd.DataFrame(columns=[
         "id", "code", "type", "catalog_txt", "inscription_txt", "desc", "is_manuscript",
         "shape", "lettering", "color", "is_irreg", "width", "height", "date_fmt",
@@ -2629,6 +2736,16 @@ def main(argv=None):
     if townmarks_df is not None and len(townmarks_df) and "townmark_id" in townmarks_df.columns and "code" in townmarks_df.columns:
         for _, _r in townmarks_df.iterrows():
             _mid = marking_id_by_tm.get(_r["townmark_id"])
+            if _mid is not None:
+                _tm_code_to_mid[_r["code"]] = _mid
+    if ratemarks_df is not None and len(ratemarks_df) and "ratemark_id" in ratemarks_df.columns and "code" in ratemarks_df.columns:
+        for _, _r in ratemarks_df.iterrows():
+            _mid = marking_id_by_rm.get(_r["ratemark_id"])
+            if _mid is not None:
+                _tm_code_to_mid[_r["code"]] = _mid
+    if auxmarks_df is not None and len(auxmarks_df) and "auxmark_id" in auxmarks_df.columns and "code" in auxmarks_df.columns:
+        for _, _r in auxmarks_df.iterrows():
+            _mid = marking_id_by_ax.get(_r["auxmark_id"])
             if _mid is not None:
                 _tm_code_to_mid[_r["code"]] = _mid
     _ds = dates_seen_df.copy() if dates_seen_df is not None else pd.DataFrame(columns=["marking_code", "date", "granularity"])
@@ -2670,6 +2787,22 @@ def main(argv=None):
             "subject_type": "MARKING",
             "subject_id": mk_id,
             "citation_detail": page_str,
+        })
+    # Citations for cross-reference markings (held outside emit_order).
+    for _mk_id, _xr in cross_ref_emit:
+        _pg = _xr.get('Page')
+        if _pg is None or (isinstance(_pg, float) and pd.isna(_pg)):
+            _pg_str = ""
+        else:
+            try:
+                _pg_str = str(int(_pg))
+            except (TypeError, ValueError):
+                _pg_str = str(_pg).strip()
+        cit_rows.append({
+            "reference_work": RW_ID,
+            "subject_type": "MARKING",
+            "subject_id": _mk_id,
+            "citation_detail": _pg_str,
         })
     citations_out = pd.DataFrame(cit_rows) if cit_rows else pd.DataFrame(
         columns=["reference_work", "subject_type", "subject_id", "citation_detail"]
