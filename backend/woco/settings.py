@@ -21,7 +21,12 @@ REPO_ROOT = BASE_DIR.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "DUMMY-KEY-HERE-NO-FALSE-POSITIVES-NO-WHAMMY-NO-WHAMMY-STOP"
+# Read from env (decouple). No default -- the app refuses to start if
+# DJANGO_SECRET_KEY is missing, which is the correct behaviour for a
+# secret. Generate a new value with:
+#   python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+# and put it in the local .env (dev) or /srv/woco/.env (prod).
+SECRET_KEY = config("DJANGO_SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config("DEBUG", default=True, cast=bool)

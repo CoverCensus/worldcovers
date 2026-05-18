@@ -73,22 +73,32 @@ jobs:
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: hellowoco.app
-          username: jlogan
+          # SSH as wocod (service account) directly. wocod has a narrow
+          # passwordless-sudo entry in /etc/sudoers.d/wocod-deploy granting
+          # exactly the four commands invoked below: systemctl stop/start
+          # worldcovers, systemctl daemon-reload, and install of the
+          # systemd unit file. Stealing this SSH key buys an attacker
+          # those four commands plus a shell as wocod (no general sudo).
+          username: wocod
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 20m
           script: |
             set -euo pipefail
-            # Stop app so migrations can run without table locks (ALTER TABLE on Postmarks can block otherwise)
-            sudo systemctl stop worldcovers
-            # Sync unit file if it has changed (must run as privileged user, before wocod block)
-            sudo -u wocod git -C /srv/woco fetch origin
-            sudo -u wocod git -C /srv/woco reset --hard origin/staging
+            # Stop the app so migrations can run without table locks
+            # (ALTER TABLE on Postmarks can block otherwise).
+            sudo -n /bin/systemctl stop worldcovers
+            # Pull the latest staging tip. wocod owns /srv/woco so no sudo
+            # is needed here.
+            git -C /srv/woco fetch origin
+            git -C /srv/woco reset --hard origin/staging
+            # Re-install the systemd unit file only when it has changed.
+            # The install path is pinned in sudoers so the exact source
+            # and destination must match the sudoers entry verbatim.
             if ! diff -q /srv/woco/tools/worldcovers.service /etc/systemd/system/worldcovers.service > /dev/null 2>&1; then
                 echo "Updating systemd unit file..."
-                sudo install -m 644 /srv/woco/tools/worldcovers.service /etc/systemd/system/worldcovers.service
-                sudo systemctl daemon-reload
+                sudo -n /usr/bin/install -m 644 /srv/woco/tools/worldcovers.service /etc/systemd/system/worldcovers.service
+                sudo -n /bin/systemctl daemon-reload
             fi
-            # Ensure wocod can delete and recreate frontend/dist (fixes EACCES during vite build)
-            sudo chown -R wocod:wocod /srv/woco/frontend/dist 2>/dev/null || true
-            sudo -u wocod -s bash -lc "cd /srv/woco && ./tools/deploy.sh"
-            sudo systemctl start worldcovers
+            # Run the actual deploy as wocod (we already are wocod).
+            cd /srv/woco && ./tools/deploy.sh
+            sudo -n /bin/systemctl start worldcovers
