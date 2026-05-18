@@ -1554,9 +1554,12 @@ class ContributionSubmitView(APIView):
                     {"detail": "Draft not found or not editable."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
-            if not _submitted_data_is_cover(contrib.submitted_data or {}):
+            sd = contrib.submitted_data or {}
+            is_cover_draft = _submitted_data_is_cover(sd)
+            is_marking_edit_draft = bool(sd.get("edit_postmark_id"))
+            if not (is_cover_draft or is_marking_edit_draft):
                 return Response(
-                    {"detail": "Not a cover draft."},
+                    {"detail": "This draft type cannot be abandoned via this endpoint."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             contrib.delete()
@@ -1663,6 +1666,37 @@ class ContributionSubmitView(APIView):
             submitted_data["state"] = state_value
         if routing_deferred:
             submitted_data["routing_deferred"] = True
+
+        # Collapse duplicate marking-edit drafts. When a contributor saves a
+        # draft against an existing marking (edit_postmark_id) without already
+        # targeting a specific draft (no edit_contribution_id), look for an
+        # open draft of theirs against the same marking and route the save
+        # through the update branch below. Closes the race where two tabs (or
+        # a fast click before the frontend dedupe GET resolves) would each
+        # create a parallel draft row. Form-posted values arrive as strings;
+        # the JSON branch posts ints. Query both to cover legacy rows.
+        if edit_pk is None and is_draft:
+            edit_postmark_id_raw = submitted_data.get("edit_postmark_id")
+            if edit_postmark_id_raw not in (None, ""):
+                try:
+                    epi_int = int(edit_postmark_id_raw)
+                except (TypeError, ValueError):
+                    epi_int = None
+                epi_str = str(edit_postmark_id_raw)
+                value_filter = Q(submitted_data__edit_postmark_id=epi_str)
+                if epi_int is not None:
+                    value_filter |= Q(submitted_data__edit_postmark_id=epi_int)
+                existing_draft = (
+                    Contribution.objects.filter(
+                        contributor=request.user,
+                        status=Contribution.STATUS_DRAFT,
+                    )
+                    .filter(value_filter)
+                    .order_by("-updated_at")
+                    .first()
+                )
+                if existing_draft is not None:
+                    edit_pk = existing_draft.pk
 
         if edit_pk is not None:
             if is_draft:

@@ -84,6 +84,11 @@ export const KNOWN_SUBMITTED_DATA_KEYS: ReadonlySet<string> = new Set([
   // ignored: bookkeeping that doesn't appear in the field list
   "submitter_name", "submitterName",
   "original_postmark_id", "originalPostmarkId",
+  // ignored: marking-edit draft bookkeeping. edit_postmark_id is the target
+  // marking; marking_modified_at_baseline is the timestamp captured when the
+  // draft was last saved so resume can detect upstream edits.
+  "edit_postmark_id", "editPostmarkId",
+  "marking_modified_at_baseline", "markingModifiedAtBaseline",
   "post_office_id", "postOfficeId",
   "submission_kind", "submissionKind",
   "entity_type", "entityType",

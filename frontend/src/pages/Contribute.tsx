@@ -351,10 +351,16 @@ const Contribute = () => {
   // "edit-contribution"; drives the header copy so a draft does not display
   // "use the editor feedback" wording.
   const [loadedContributionStatus, setLoadedContributionStatus] = useState<string | null>(null);
+  // When resuming an edit-contribution draft that targets an existing
+  // marking, this holds that marking's id. Drives both the staleness
+  // banner and the page copy ("Submit edit to Marking" vs "Submit new
+  // Marking"). Null for new-marking drafts.
+  const [resumedEditPostmarkId, setResumedEditPostmarkId] = useState<number | null>(null);
   // Resolve page copy. For "edit-contribution" we further split on the
   // loaded contribution's status so a draft does not show the
   // "use the editor feedback" wording reserved for needs_revision /
-  // rejected resubmissions.
+  // rejected resubmissions, and further on whether the draft targets an
+  // existing marking (edit-marking draft) vs a brand-new marking.
   const baseCopy = MODE_COPY[mode];
   // The "Resubmit" / "Edit and resubmit" / "use the editor feedback" wording
   // baked into MODE_COPY["edit-contribution"] only fits the
@@ -366,17 +372,28 @@ const Contribute = () => {
     loadedContributionStatus === "needs_revision" ||
     loadedContributionStatus === "rejected";
   const isResumingDraft = isEditContribution && !isResubmissionStatus;
+  const isResumingMarkingEditDraft = isResumingDraft && resumedEditPostmarkId != null;
   const copy = isResumingDraft
-    ? {
-        ...baseCopy,
-        h1: "Continue your draft",
-        intro: "Pick up where you left off. Keep saving as a draft or submit when you are ready for editor review.",
-        card: "Edit draft",
-        button: SUBMISSION_LABELS.action.submitNewMarking,
-        toastTitle: SUBMISSION_LABELS.toast.received,
-        toastBody:
-          "Your Marking has been submitted for approval. It will appear in Search after an editor approves it.",
-      }
+    ? isResumingMarkingEditDraft
+      ? {
+          ...baseCopy,
+          h1: "Continue your draft",
+          intro: "Pick up where you left off. Keep saving as a draft or submit your edit when you are ready for editor review.",
+          card: "Edit draft",
+          button: SUBMISSION_LABELS.action.submitEditToMarking,
+          toastTitle: "Submitted for review",
+          toastBody: "Changes to published Marking fields are submitted for editor approval and do not update the catalog directly.",
+        }
+      : {
+          ...baseCopy,
+          h1: "Continue your draft",
+          intro: "Pick up where you left off. Keep saving as a draft or submit when you are ready for editor review.",
+          card: "Edit draft",
+          button: SUBMISSION_LABELS.action.submitNewMarking,
+          toastTitle: SUBMISSION_LABELS.toast.received,
+          toastBody:
+            "Your Marking has been submitted for approval. It will appear in Search after an editor approves it.",
+        }
     : baseCopy;
   const [loadingRecord, setLoadingRecord] = useState(isEditMarking);
   const [recordError, setRecordError] = useState<string | null>(null);
@@ -411,6 +428,15 @@ const Contribute = () => {
   // not via a contribution round-trip.
   const [existingImages, setExistingImages] = useState<Array<{ url: string; tracing: boolean }>>([]);
   const [removedExistingImageKeys, setRemovedExistingImageKeys] = useState<string[]>([]);
+  // Timestamp of the marking record as observed when this edit session loaded
+  // (Marking.modified_date). Stamped into save-as-draft payloads so a later
+  // resume can detect upstream edits and warn the user before they overwrite.
+  const [markingModifiedAtBaseline, setMarkingModifiedAtBaseline] = useState<string | null>(null);
+  // True when resume detected that the marking was modified after the
+  // baseline -- drives the staleness banner. Reset on every load.
+  const [markingChangedSinceDraft, setMarkingChangedSinceDraft] = useState(false);
+  // Whether the discard action is in flight (disables both banner buttons).
+  const [discardingDraft, setDiscardingDraft] = useState(false);
   const [shape, setShape] = useState("");
   const [color, setColor] = useState("");
   const [widthMm, setWidthMm] = useState("");
@@ -732,6 +758,56 @@ const Contribute = () => {
         }
         setEditLoadError(null);
         setEditLoadDone(true);
+
+        // Marking-edit draft rehydration: if the draft targets an existing
+        // marking, fetch the marking so (a) the existing-image rail shows
+        // the marking's current images (the draft only snapshots field
+        // edits, not images) and (b) we can compare its modified_date to
+        // the baseline stamped in submitted_data and flag a stale draft.
+        const editPostmarkIdRaw = (sd as Record<string, unknown>).edit_postmark_id;
+        const editPostmarkIdNum =
+          typeof editPostmarkIdRaw === "number"
+            ? editPostmarkIdRaw
+            : typeof editPostmarkIdRaw === "string" && editPostmarkIdRaw.trim() !== ""
+              ? Number(editPostmarkIdRaw)
+              : NaN;
+        if (Number.isFinite(editPostmarkIdNum) && editPostmarkIdNum > 0) {
+          setResumedEditPostmarkId(editPostmarkIdNum);
+          const baselineRaw = (sd as Record<string, unknown>).marking_modified_at_baseline;
+          const baseline = typeof baselineRaw === "string" ? baselineRaw : null;
+          const removedRaw = (sd as Record<string, unknown>).removed_existing_image_keys;
+          if (Array.isArray(removedRaw)) {
+            setRemovedExistingImageKeys(removedRaw.map((k) => String(k)));
+          }
+          getMarkingByIdRaw(editPostmarkIdNum)
+            .then((m) => {
+              if (cancelled || !m) return;
+              if (existingUrls.length === 0 && Array.isArray(m.images)) {
+                const rows = (m.images as unknown[])
+                  .map((img) => {
+                    const o = img as Record<string, unknown>;
+                    const url = normalizeImageUrl(
+                      typeof o.image_url === "string" ? o.image_url : null,
+                    );
+                    if (!url) return null;
+                    const tracing = Boolean(o.is_tracing);
+                    return { url, tracing };
+                  })
+                  .filter(
+                    (row): row is { url: string; tracing: boolean } => row !== null,
+                  );
+                if (rows.length > 0) setExistingImages(rows);
+              }
+              const modified = typeof m.modified_date === "string" ? m.modified_date : null;
+              if (baseline && modified && modified > baseline) {
+                setMarkingChangedSinceDraft(true);
+              }
+            })
+            .catch(() => {
+              // Non-fatal: the form is still usable, just without the
+              // marking's existing images and without the staleness check.
+            });
+        }
       })
       .catch((err) => {
         if (!cancelled) {
@@ -745,12 +821,22 @@ const Contribute = () => {
   }, [editContributionId]); // shapeOptions/colorOptions may not be loaded yet; we set shape/color as strings
 
   // Load Marking record for edit-marking mode (from /edit/:id).
+  //
+  // Before loading, dedupe against any existing open draft this user has
+  // for the same marking. If one is found, redirect to its resume URL so
+  // we never fork a parallel draft. The backend also enforces this in
+  // ContributionSubmitView.post (collapse-on-create) -- this fetch is a
+  // UX optimization so the user is not put through "fresh form, then
+  // suddenly redirected" once they start typing.
   useEffect(() => {
     if (!isEditMarking || editMarkingId == null) return;
     let cancelled = false;
     setLoadingRecord(true);
     setRecordError(null);
-    getMarkingByIdRaw(editMarkingId)
+
+    const loadMarking = () => {
+      if (cancelled) return;
+      getMarkingByIdRaw(editMarkingId)
       .then((data) => {
         if (cancelled) return;
         if (!data) {
@@ -773,6 +859,10 @@ const Contribute = () => {
           : [];
         setExistingImages(existingRows);
         setRemovedExistingImageKeys([]);
+
+        const modifiedDate = typeof data.modified_date === "string" ? data.modified_date : null;
+        setMarkingModifiedAtBaseline(modifiedDate);
+        setMarkingChangedSinceDraft(false);
 
         const typeRaw = String(data.type ?? "").trim().toUpperCase();
         if (typeRaw === "RATEMARK") setMarkingType("RATEMARK");
@@ -823,10 +913,50 @@ const Contribute = () => {
       .finally(() => {
         if (!cancelled) setLoadingRecord(false);
       });
+    };
+
+    const apiBase = getApiBaseUrl();
+    if (!apiBase) {
+      loadMarking();
+      return () => {
+        cancelled = true;
+      };
+    }
+    fetch(`${apiBase}/contributions/?status=draft&ordering=-created_at`, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((page) => {
+        if (cancelled) return;
+        const rows: unknown[] = Array.isArray(page)
+          ? page
+          : Array.isArray((page as Record<string, unknown> | null)?.results)
+            ? ((page as Record<string, unknown>).results as unknown[])
+            : [];
+        const match = rows.find((row) => {
+          const r = row as Record<string, unknown>;
+          const sd = (r.submitted_data ?? r.submittedData) as
+            | Record<string, unknown>
+            | undefined;
+          const epi = sd?.edit_postmark_id;
+          if (epi == null || epi === "") return false;
+          return Number(epi) === Number(editMarkingId);
+        }) as Record<string, unknown> | undefined;
+        if (match && match.id != null) {
+          navigate(`/contribute?edit=${match.id}`, { replace: true });
+          return;
+        }
+        loadMarking();
+      })
+      .catch(() => {
+        if (!cancelled) loadMarking();
+      });
     return () => {
       cancelled = true;
     };
-  }, [isEditMarking, editMarkingId, dateFormatOptions, shapeOptions]);
+  }, [isEditMarking, editMarkingId, dateFormatOptions, shapeOptions, navigate]);
 
   const noAssignedStates = false;
 
@@ -1179,6 +1309,9 @@ const Contribute = () => {
         }
         if (saveAsDraft) {
           form.append("save_as_draft", "true");
+          if (isEditMarking && markingModifiedAtBaseline) {
+            form.append("marking_modified_at_baseline", markingModifiedAtBaseline);
+          }
         }
         if (selectedPostOfficeId != null) form.append("post_office_id", String(selectedPostOfficeId));
         form.append("state", stateVal);
@@ -1296,6 +1429,9 @@ const Contribute = () => {
             ? { existing_image_tags: existingTagMap }
             : {}),
           ...(saveAsDraft ? { save_as_draft: true } : {}),
+          ...(saveAsDraft && isEditMarking && markingModifiedAtBaseline
+            ? { marking_modified_at_baseline: markingModifiedAtBaseline }
+            : {}),
         });
       }
 
@@ -1804,6 +1940,84 @@ const Contribute = () => {
                       <Button variant="link" className="p-0 h-auto text-amber-700 dark:text-amber-300" onClick={() => navigate("/auth")}>
                         Sign in
                       </Button>
+                    </div>
+                  )}
+
+                  {markingChangedSinceDraft && resumedEditPostmarkId != null && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-4 text-sm text-amber-800 dark:text-amber-200 space-y-3">
+                      <p className="leading-relaxed">
+                        This marking has been updated since you saved this draft.
+                        Review your changes before submitting -- your edits will overwrite the current values.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/40"
+                          onClick={() => {
+                            window.open(`/record/${resumedEditPostmarkId}`, "_blank", "noopener,noreferrer");
+                          }}
+                        >
+                          View current marking
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/40"
+                          disabled={discardingDraft || editContributionId == null}
+                          onClick={async () => {
+                            if (editContributionId == null || resumedEditPostmarkId == null) return;
+                            const ok = window.confirm(
+                              "Discard this draft and start over from the current marking? Your saved draft will be deleted.",
+                            );
+                            if (!ok) return;
+                            const apiBase = getApiBaseUrl();
+                            if (!apiBase) {
+                              toast({
+                                title: "Configuration error",
+                                description: "VITE_API_URL is not set.",
+                                variant: "destructive",
+                              });
+                              return;
+                            }
+                            setDiscardingDraft(true);
+                            try {
+                              const csrfToken = await ensureCsrfToken(apiBase);
+                              const headers: Record<string, string> = {
+                                "Content-Type": "application/json",
+                              };
+                              if (csrfToken) headers["X-CSRFToken"] = csrfToken;
+                              const res = await fetch(`${apiBase}/contributions/`, {
+                                method: "POST",
+                                credentials: "include",
+                                headers,
+                                body: JSON.stringify({
+                                  edit_contribution_id: editContributionId,
+                                  abandon_draft: "true",
+                                }),
+                              });
+                              if (!res.ok && res.status !== 204) {
+                                const body = await res.json().catch(() => ({}));
+                                const msg = body?.detail || res.statusText || "Could not discard draft.";
+                                throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+                              }
+                              navigate(`/contribute/edit/${resumedEditPostmarkId}`, { replace: true });
+                            } catch (err: unknown) {
+                              toast({
+                                title: "Could not discard draft",
+                                description: err instanceof Error ? err.message : "Try again.",
+                                variant: "destructive",
+                              });
+                            } finally {
+                              setDiscardingDraft(false);
+                            }
+                          }}
+                        >
+                          Discard this draft and start fresh
+                        </Button>
+                      </div>
                     </div>
                   )}
 
@@ -2486,19 +2700,17 @@ const Contribute = () => {
                     </div>
 
                     <div className="flex flex-col sm:flex-row gap-3">
-                      {!isEditMarking && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="w-full sm:flex-1"
-                          disabled={submitting || noAssignedStates}
-                          onClick={(e) => {
-                            handleSubmit(e, true);
-                          }}
-                        >
-                          Save as Draft
-                        </Button>
-                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full sm:flex-1"
+                        disabled={submitting || noAssignedStates}
+                        onClick={(e) => {
+                          handleSubmit(e, true);
+                        }}
+                      >
+                        Save as Draft
+                      </Button>
                       <Button
                         type="submit"
                         className="w-full sm:flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
