@@ -861,7 +861,7 @@ const Search = () => {
                   )}
                   <Button
                     size="sm"
-                    onClick={() => navigate("/contribute")}
+                    onClick={() => navigate("/contribute", { state: { from: "/search" } })}
                     className="shrink-0 bg-green-800 hover:bg-green-900 text-white"
                   >
                     <Plus className="mr-2 h-4 w-4" />

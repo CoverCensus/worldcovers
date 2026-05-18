@@ -244,6 +244,8 @@ class SubmissionTransaction(models.Model):
     """Immutable audit events for submission and moderation workflows."""
     ACTION_SUBMIT = "submit"
     ACTION_EDIT_SUBMISSION = "edit_submission"
+    # Retained for historical log rows; no longer written after the
+    # editor inline-edit form was removed from ContributionDetail.
     ACTION_EDITOR_EDIT = "editor_edit"
     ACTION_APPROVE = "approve"
     ACTION_REJECT = "reject"

@@ -17,6 +17,8 @@ import {
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { ImageOrPlaceholder } from "@/components/ImageOrPlaceholder";
 import { formatCatalogDate, markingTypeLabel } from "@/lib/catalogRecordDisplay";
+import { buildMarkingFields } from "@/lib/markingFields";
+import { MarkingFieldsDisplay } from "@/components/MarkingFieldsDisplay";
 import {
   getMarkingById,
   getMarkingChangelog,
@@ -30,7 +32,6 @@ import {
   type MarkingCitationReferenceWork,
   type MarkingImage,
   type MarkingRecord,
-  type MarkingTypeValue,
 } from "@/services/markings";
 import { useToast } from "@/hooks/use-toast";
 import { SUBMISSION_LABELS } from "@/labels/submission";
@@ -202,12 +203,6 @@ function citationByline(rw: MarkingCitationReferenceWork | null): string {
   return "";
 }
 
-function inscriptionLabel(type: MarkingTypeValue): string {
-  if (type === "RATEMARK") return "Ratemark Text";
-  if (type === "AUXMARK") return "Auxmark Text";
-  return "Townmark Text";
-}
-
 /**
  * Format a server-side ISO timestamp (e.g. "2026-04-12T19:34:51.123Z") for
  * the Record History row. We render in the viewer's locale so timestamps
@@ -251,11 +246,6 @@ function shouldShowEditorComment(params: {
   );
 }
 
-function hasDisplayValue(v: unknown): boolean {
-  const s = String(v ?? "").trim();
-  return s !== "" && s !== "-" && s.toLowerCase() !== "unknown";
-}
-
 function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
   const typeLabel = markingTypeLabel(record.type) || "Marking";
   return record.images.map((img: MarkingImage) => ({
@@ -269,25 +259,6 @@ function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
     isTracing: img.subjectType === "MARKING" && img.isTracing,
     imageId: img.imageId > 0 ? img.imageId : null,
   }));
-}
-
-function DetailRow({
-  label,
-  value,
-  last,
-}: {
-  label: string;
-  value: string;
-  last: boolean;
-}) {
-  return (
-    <div
-      className={`flex justify-between py-2 ${last ? "" : "border-b border-border"}`}
-    >
-      <dt className="text-muted-foreground font-medium">{label}</dt>
-      <dd className="text-foreground whitespace-pre-line text-right">{value}</dd>
-    </div>
-  );
 }
 
 function coverLinkReviewBadgeLabel(cover: AssociatedCover): string {
@@ -575,7 +546,6 @@ const RecordDetail = () => {
     record.impression && record.impression.trim().toLowerCase() !== "normal"
       ? record.impression
       : "";
-  const isIrregValue = record.isIrreg === true ? "Yes" : "";
   const isStaff =
     !!user &&
     (user.role === "editor" ||
@@ -597,48 +567,29 @@ const RecordDetail = () => {
     historyEvents.length - HISTORY_EXPANDED_LIMIT,
   );
 
-  // Field order mirrors the contribute/edit form. Town and State/Territory show
-  // for every mark type (Townmark, Ratemark, Auxmark), not just Townmarks.
-  //
-  // Shape / Lettering / Dimensions:
-  //   - Manuscripts have no shape/lettering/dimensions by data model, so we
-  //     always hide these rows for manuscript markings.
-  //   - Townmarks always include them (subject to the standard
-  //     alwaysShow=false + hasDisplayValue filter that hides blanks).
-  //   - Ratemark / Auxmark also include them with the same blank-filter, so
-  //     real values still show on the record detail page; the Search card
-  //     (CatalogRecordFields.tsx, variant="search") intentionally hides them
-  //     for non-Townmarks to avoid cluttering result rows.
-  const showPhysicalDetailFields = record.isManuscript !== true;
-  const details = [
-    { label: "Type", value: typeLabel, alwaysShow: false },
-    { label: "Manuscript", value: record.isManuscript ? "Yes" : "No", alwaysShow: false },
-    { label: "State/Territory", value: record.state, alwaysShow: false },
-    { label: "Town", value: record.town, alwaysShow: false },
-    { label: inscriptionLabel(record.type), value: record.inscriptionTxt, alwaysShow: false },
-    { label: "Earliest Seen", value: earliestValue, alwaysShow: true },
-    { label: "Latest Seen", value: latestValue, alwaysShow: true },
-    ...(showPhysicalDetailFields ? [{ label: "Shape", value: record.shapeName, alwaysShow: false }] : []),
-    // Rate Value: always shown for Ratemarks (even when blank), shown for
-    // Auxmarks only when populated, never shown for Townmarks.
-    ...(record.type === "RATEMARK"
-      ? [{ label: "Rate Value", value: formatRateValue(record.rateVal), alwaysShow: true }]
-      : record.type === "AUXMARK"
-        ? [{ label: "Rate Value", value: formatRateValue(record.rateVal), alwaysShow: false }]
-        : []),
-    { label: "Date Format", value: record.dateFmt, alwaysShow: false },
-    { label: "Impression", value: impressionValue, alwaysShow: false },
-    { label: "Is Irregular", value: isIrregValue, alwaysShow: false },
-    { label: "Color", value: record.colorName, alwaysShow: false },
-    ...(showPhysicalDetailFields ? [{ label: "Lettering", value: record.letteringName, alwaysShow: false }] : []),
-    ...(showPhysicalDetailFields ? [{ label: "Dimensions", value: dimensionsValue, alwaysShow: false }] : []),
-    ...(isStaff
-      ? [{ label: "Catalog text", value: record.catalogTxt, alwaysShow: false }]
-      : []),
-    { label: "Catalog code", value: record.code, alwaysShow: false },
-  ];
-  const visibleDetails = details.filter(
-    (row) => row.alwaysShow || hasDisplayValue(row.value),
+  // Field order and visibility rules live in buildMarkingFields so
+  // ContributionDetail renders the same sequence.
+  const detailRows = buildMarkingFields(
+    {
+      type: record.type,
+      isManuscript: record.isManuscript,
+      state: record.state,
+      town: record.town,
+      inscriptionTxt: record.inscriptionTxt,
+      earliestSeen: earliestValue,
+      latestSeen: latestValue,
+      shapeName: record.shapeName,
+      rateValFormatted: formatRateValue(record.rateVal),
+      dateFmt: record.dateFmt,
+      impression: impressionValue,
+      isIrreg: record.isIrreg,
+      colorName: record.colorName,
+      letteringName: record.letteringName,
+      dimensions: dimensionsValue,
+      catalogTxt: record.catalogTxt,
+      code: record.code,
+    },
+    { isStaff },
   );
 
   const coverCount = associatedCovers.length;
@@ -920,16 +871,7 @@ const RecordDetail = () => {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <dl className="space-y-0 text-sm">
-                    {visibleDetails.map((row, idx) => (
-                      <DetailRow
-                        key={row.label}
-                        label={row.label}
-                        value={String(row.value || EMPTY)}
-                        last={idx === visibleDetails.length - 1}
-                      />
-                    ))}
-                  </dl>
+                  <MarkingFieldsDisplay rows={detailRows} mode="record" />
                 </CardContent>
               </Card>
 

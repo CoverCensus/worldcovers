@@ -21,6 +21,7 @@ import { useNavigate, useLocation, useSearchParams, useParams } from "react-rout
 import { getColors, type ColorOption } from "@/services/colors";
 import { getShapes, type ShapeOption } from "@/services/shapes";
 import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
+import { getRegions } from "@/services/regions";
 import { getMarkingByIdRaw, normalizeImageUrl } from "@/services/markings";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getFramings, type FramingOption } from "@/services/framings";
@@ -151,6 +152,7 @@ const FIELD_ERROR_SCROLL_TARGETS: Array<[string, string]> = [
   ["widthMm", "width-mm"],
   ["heightMm", "height-mm"],
   ["lettering", "lettering"],
+  ["rateValue", "rate-value"],
   ["images", "postmark-images-input"],
 ];
 
@@ -342,9 +344,40 @@ const Contribute = () => {
   const isEditContribution = mode === "edit-contribution";
   const isEditMarking = mode === "edit-marking";
   const isEditMode = isEditContribution || isEditMarking;
-  const copy = MODE_COPY[mode];
   const [editLoadDone, setEditLoadDone] = useState(!editContributionId);
   const [editLoadError, setEditLoadError] = useState<string | null>(null);
+  // Status of the contribution we are editing (draft / needs_revision /
+  // rejected / pending / approved). Only meaningful when mode is
+  // "edit-contribution"; drives the header copy so a draft does not display
+  // "use the editor feedback" wording.
+  const [loadedContributionStatus, setLoadedContributionStatus] = useState<string | null>(null);
+  // Resolve page copy. For "edit-contribution" we further split on the
+  // loaded contribution's status so a draft does not show the
+  // "use the editor feedback" wording reserved for needs_revision /
+  // rejected resubmissions.
+  const baseCopy = MODE_COPY[mode];
+  // The "Resubmit" / "Edit and resubmit" / "use the editor feedback" wording
+  // baked into MODE_COPY["edit-contribution"] only fits the
+  // needs_revision / rejected resubmission flow. Drafts (and the brief
+  // window before status loads) get a draft-style header + Submit button
+  // instead. Status check is an explicit allowlist so a future status
+  // value never silently falls back to "Resubmit".
+  const isResubmissionStatus =
+    loadedContributionStatus === "needs_revision" ||
+    loadedContributionStatus === "rejected";
+  const isResumingDraft = isEditContribution && !isResubmissionStatus;
+  const copy = isResumingDraft
+    ? {
+        ...baseCopy,
+        h1: "Continue your draft",
+        intro: "Pick up where you left off. Keep saving as a draft or submit when you are ready for editor review.",
+        card: "Edit draft",
+        button: SUBMISSION_LABELS.action.submitNewMarking,
+        toastTitle: SUBMISSION_LABELS.toast.received,
+        toastBody:
+          "Your Marking has been submitted for approval. It will appear in Search after an editor approves it.",
+      }
+    : baseCopy;
   const [loadingRecord, setLoadingRecord] = useState(isEditMarking);
   const [recordError, setRecordError] = useState<string | null>(null);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
@@ -408,6 +441,7 @@ const Contribute = () => {
     lettering?: string;
     dateFormat?: string;
     inscriptionText?: string;
+    rateValue?: string;
   }>({});
 
   // Contributor: lettering, framing, date format (loaded for all)
@@ -449,21 +483,39 @@ const Contribute = () => {
       .finally(() => setLoadingTowns(false));
   }, []);
 
+  // State options for the Contribute form come from the Regions endpoint
+  // (same source as Catalog Search), not from the post-office town-options
+  // payload. Deriving states from post offices silently filtered the
+  // dropdown down to whichever states currently have post_office_regions
+  // links populated (commonly just Virginia in dev fixtures), even though
+  // the contributor may have authorization to submit for any state.
   useEffect(() => {
-    const seen = new Set<string>();
-    const options = postOffices
-      .map((facility) => (facility.state || "").trim())
-      .filter((name) => {
-        if (!name) return false;
-        const key = name.toLowerCase();
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
+    let cancelled = false;
+    getRegions(false)
+      .then((regions) => {
+        if (cancelled) return;
+        const seen = new Set<string>();
+        const options = regions
+          .map((r) => ({ value: String(r.value || "").trim(), label: String(r.label || "").trim() }))
+          .filter((opt) => {
+            if (!opt.value) return false;
+            const key = opt.value.toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+          .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+        setStateOptions(options);
       })
-      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
-      .map((name) => ({ value: name, label: name }));
-    setStateOptions(options);
-  }, [postOffices]);
+      .catch((err) => {
+        if (cancelled) return;
+        setTownOptionsError(err instanceof Error ? err.message : "Failed to load states");
+        setStateOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     setLoadingShapes(true);
@@ -599,6 +651,7 @@ const Contribute = () => {
       })
       .then((data: Record<string, unknown>) => {
         if (cancelled) return;
+        setLoadedContributionStatus(String(data.status ?? "").toLowerCase() || null);
         const sd = (data.submitted_data ?? data.submittedData) as Record<string, unknown> | undefined;
         if (!sd || typeof sd !== "object") {
           setEditLoadDone(true);
@@ -649,26 +702,33 @@ const Contribute = () => {
           ? dids.map((x) => String(x)).filter(Boolean)
           : [];
         setDateFormatIds(normalizedDateFormatIds);
+        // Route existing images through `existingImages` (same path used by
+        // the edit-marking flow) so the dedicated remove button records
+        // removals in `removedExistingImageKeys`. Mixing prior URLs into
+        // `markingImagePreviews` breaks the index alignment with
+        // `markingImageFiles` and silently drops removals on submit.
         const submittedMarkingImages = Array.isArray(sd.marking_images)
           ? (sd.marking_images as unknown[])
               .map((v) => (typeof v === "string" ? v.trim() : ""))
               .filter((v) => v.length > 0)
           : [];
-        if (submittedMarkingImages.length > 0) {
-          setMarkingImagePreviews(submittedMarkingImages);
-        } else {
+        let existingUrls: string[] = submittedMarkingImages;
+        if (existingUrls.length === 0) {
           const metas = Array.isArray(sd.marking_image_metas)
             ? (sd.marking_image_metas as Array<{ storage_filename?: string }>)
             : [];
-          const baseUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
-          if (baseUrl && metas.length > 0) {
-            const urls: string[] = [];
-            metas.forEach((m) => {
+          const baseUrl =
+            (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "") || "/media";
+          existingUrls = metas
+            .map((m) => {
               const sf = m?.storage_filename;
-              if (sf) urls.push(`${baseUrl}/${sf.replace(/^\/+/, "")}`);
-            });
-            if (urls.length > 0) setMarkingImagePreviews(urls);
-          }
+              return sf ? `${baseUrl}/${sf.replace(/^\/+/, "")}` : "";
+            })
+            .filter((u) => u.length > 0);
+        }
+        if (existingUrls.length > 0) {
+          setExistingImages(existingUrls.map((url) => ({ url, tracing: false })));
+          setRemovedExistingImageKeys([]);
         }
         setEditLoadError(null);
         setEditLoadDone(true);
@@ -964,6 +1024,9 @@ const Contribute = () => {
       if (!inscriptionText.trim()) {
         errors.inscriptionText = `${inscriptionLabel} is required`;
       }
+      if (isRatemark && !rateValue.trim()) {
+        errors.rateValue = "Rate Value is required for Ratemarks";
+      }
 
       // At least one image must accompany every entry.
       // - "new":               at least one freshly-uploaded file.
@@ -975,6 +1038,13 @@ const Contribute = () => {
       } else if (
         mode === "edit-marking" &&
         existingImages.length === 0 &&
+        markingImageFiles.length === 0
+      ) {
+        errors.images = "At least one image is required";
+      } else if (
+        mode === "edit-contribution" &&
+        existingImages.length === 0 &&
+        markingImagePreviews.length === 0 &&
         markingImageFiles.length === 0
       ) {
         errors.images = "At least one image is required";
@@ -1156,10 +1226,10 @@ const Contribute = () => {
           form.append("contributor_comment", trimmedComment);
           form.append("comment_for_editor", trimmedComment);
         }
+        if ((isEditMarking || isEditContribution) && removedExistingImageKeys.length > 0) {
+          form.append("removed_existing_image_keys", JSON.stringify(removedExistingImageKeys));
+        }
         if (isEditMarking) {
-          if (removedExistingImageKeys.length > 0) {
-            form.append("removed_existing_image_keys", JSON.stringify(removedExistingImageKeys));
-          }
           // existing_image_tags is a {url: "tracing"|"photograph"} map. We
           // emit it for every image (not just tracings) so an editor who
           // *unchecks* Tracing on a previously-tagged row can still flip
@@ -1219,7 +1289,7 @@ const Contribute = () => {
           ...(trimmedComment
             ? { contributor_comment: trimmedComment, comment_for_editor: trimmedComment }
             : {}),
-          ...(isEditMarking && removedExistingImageKeys.length > 0
+          ...((isEditMarking || isEditContribution) && removedExistingImageKeys.length > 0
             ? { removed_existing_image_keys: removedExistingImageKeys }
             : {}),
           ...(isEditMarking && Object.keys(existingTagMap).length > 0
@@ -1268,9 +1338,15 @@ const Contribute = () => {
         return;
       }
 
-      if (isEditContribution && resData?.contributionId != null) {
-        navigate(`/contribution/${resData.contributionId}`, { state: { fromDashboard: true } });
-        return;
+      if (isEditContribution) {
+        const returnedId =
+          resData?.contributionId ??
+          (resData as Record<string, unknown> | undefined)?.id ??
+          editContributionId;
+        if (returnedId != null) {
+          navigate(`/contribution/${returnedId}`, { state: { fromDashboard: true } });
+          return;
+        }
       }
 
       if (isEditMarking) {
@@ -1290,32 +1366,21 @@ const Contribute = () => {
         return;
       }
 
-      setState("");
-      setTown("");
-      setMarkingType("");
-      setRateValue("");
-      setRateText("");
-      setDescription("");
-      setShape("");
-      setColor("");
-      setWidthMm("");
-      setHeightMm("");
-      setManuscript("No");
-      setIsIrregular(false);
-      setImpression("Normal");
-      setInscriptionText("");
-      setContributorComment("");
-      setPendingReferenceWorkIds([]);
-      setSelectedReferenceWorks([]);
-      setReferenceDetailsById({});
-      setReferenceDetailErrorsById({});
-      setMarkingImageFiles([]);
-      setMarkingImagePreviews([]);
-      setMarkingImageTags([]);
-      setLetteringId("");
-      setFramingIds([]);
-      setDateFormatIds([]);
-      if (markingFileInputRef.current) markingFileInputRef.current.value = "";
+      // New-marking submit: return the user to wherever they came from
+      // (Dashboard, Search, Index, etc.) so the post-submit landing is the
+      // page that launched the contribute flow rather than an empty form.
+      // Fall back to /dashboard when there is no prior history entry
+      // (e.g. user opened /contribute directly).
+      const navState = (location.state || {}) as Record<string, unknown>;
+      const fromPath = typeof navState.from === "string" ? (navState.from as string) : "";
+      if (fromPath) {
+        navigate(fromPath);
+      } else if (window.history.length > 1) {
+        navigate(-1);
+      } else {
+        navigate("/dashboard");
+      }
+      return;
     } catch (err: unknown) {
       toast({
         title: "Submission failed",
@@ -2054,14 +2119,25 @@ const Contribute = () => {
                     </div>
 
                     {showRateValueField && <div className="space-y-2">
-                      <Label htmlFor="rate-value">Rate Value</Label>
+                      <Label htmlFor="rate-value">
+                        Rate Value <span className="text-destructive" aria-hidden="true">*</span>
+                      </Label>
                       <Input
                         id="rate-value"
                         type="text"
                         placeholder="e.g. 5"
                         value={rateValue}
-                        onChange={(e) => setRateValue(e.target.value)}
+                        onChange={(e) => {
+                          setRateValue(e.target.value);
+                          if (fieldErrors.rateValue) {
+                            setFieldErrors((prev) => ({ ...prev, rateValue: undefined }));
+                          }
+                        }}
+                        className={fieldErrors.rateValue ? "border-destructive" : ""}
                       />
+                      {fieldErrors.rateValue && (
+                        <p className="text-sm text-destructive">{fieldErrors.rateValue}</p>
+                      )}
                     </div>}
 
                     {isHandstamped && (
