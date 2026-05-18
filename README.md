@@ -63,10 +63,10 @@ sudo systemctl start worldcovers
 
 To run in development, use the one-command launcher (frontend HMR + Django autoreload, sharing one terminal, single Ctrl+C kills both):
 ```sh
-./run.sh
+woco dev
 ```
 
-`run.sh` reads Django's `DEBUG`: with `DEBUG=True` (the default) it runs the Vite dev server on :8080 and Django on :8000 -- open `http://localhost:8080`. With `DEBUG=False` it builds `frontend/dist/` and lets Django serve it at :8000 (useful for a final pre-push sanity check). See [docs/devel/BUILD.md](./docs/devel/BUILD.md) for details.
+`woco dev` reads Django's `DEBUG`: with `DEBUG=True` (the default) it runs the Vite dev server on :8080 and Django on :8000 -- open `http://localhost:8080`. With `DEBUG=False` it builds `frontend/dist/` and lets Django serve it at :8000 (useful for a final pre-push sanity check). See [docs/devel/BUILD.md](./docs/devel/BUILD.md) for details.
 
 For day-to-day operator tasks (restarts, imports, backups, approving contributions), see [docs/RUNBOOK.md](./docs/RUNBOOK.md).
 
