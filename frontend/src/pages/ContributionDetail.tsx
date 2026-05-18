@@ -14,7 +14,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { normalizeImageUrl } from "@/services/markings";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
-import { getFramings, type FramingOption } from "@/services/framings";
 import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
 import { isCoverContributionData } from "@/lib/contributionDisplay";
 import CoverContributionDetail from "@/pages/CoverContributionDetail";
@@ -82,16 +81,8 @@ interface SubmittedData {
   AuxmarkImages?: string[];
   /** Contributor-provided; used when editor approves (editor only fills value + comment). */
   lettering_style_id?: number;
-  framing_style_id?: number;
-  date_format_id?: number;
-  framing_style_ids?: number[];
-  date_format_ids?: number[];
   /** API may return camelCase */
   letteringStyleId?: number;
-  framingStyleId?: number;
-  dateFormatId?: number;
-  framingStyleIds?: number[];
-  dateFormatIds?: number[];
   dates_observed?: string;
   datesObserved?: string;
 }
@@ -129,7 +120,6 @@ const ContributionDetail = () => {
   const [resubmitting, setResubmitting] = useState(false);
   // Options to display names for lettering/framing/date format in Submitted data
   const [letteringOptions, setLetteringOptions] = useState<LetteringOption[]>([]);
-  const [framingOptions, setFramingOptions] = useState<FramingOption[]>([]);
   const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
   const [carouselApi, setCarouselApi] = useState<CarouselApi>();
   const [carouselCurrent, setCarouselCurrent] = useState(0);
@@ -215,22 +205,20 @@ const ContributionDetail = () => {
     };
   }, [carouselApi]);
 
-  // Lettering / framing / date format lookups -- needed to resolve numeric
-  // ids stored on a contribution's submitted_data to human-readable names.
+  // Lettering / date format lookups -- needed to resolve numeric ids /
+  // codes stored on a contribution's submitted_data to human-readable names.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getLetterings(), getFramings(), getDateFormats()])
-      .then(([lettering, framing, dateFormat]) => {
+    Promise.all([getLetterings(), getDateFormats()])
+      .then(([lettering, dateFormat]) => {
         if (!cancelled) {
           setLetteringOptions(lettering);
-          setFramingOptions(framing);
           setDateFormatOptions(dateFormat);
         }
       })
       .catch(() => {
         if (!cancelled) {
           setLetteringOptions([]);
-          setFramingOptions([]);
           setDateFormatOptions([]);
         }
       });
@@ -372,8 +360,6 @@ const ContributionDetail = () => {
       sd.comment ??
       ""
   ).trim();
-  const manuscript = String(sd.manuscript ?? "").trim();
-  const isIrregular = Boolean(sd.is_irreg ?? sd.isIrreg);
   const title = [town, state].filter(Boolean).join(", ") || `Submission #${contribution.id}`;
   const displayName = [title, shape].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") || title;
   const baseImageUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
@@ -457,7 +443,6 @@ const ContributionDetail = () => {
           ? "rounded-full border border-orange-600 bg-orange-500 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-orange-500"
           : "rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500";
   const canReview = isStateEditor && isPending && !!user;
-  const showPeerReviewNotice = false;
 
   // Build the canonical field-row list from submitted_data. Both editors
   // and contributors now see this read-only view; editors act on it via
@@ -467,7 +452,7 @@ const ContributionDetail = () => {
   try {
     const fieldInput = submittedDataToFieldInput(
       sd,
-      { letteringOptions, framingOptions, dateFormatOptions },
+      { letteringOptions, dateFormatOptions },
       { contributionId: contribution.id },
     );
     fieldRows = buildMarkingFields(fieldInput, { isStaff: !!isStateEditor });
@@ -486,10 +471,6 @@ const ContributionDetail = () => {
       : postmarkIdRaw != null && String(postmarkIdRaw).trim() !== ""
         ? parseInt(String(postmarkIdRaw), 10)
         : null;
-  const hasValue = (v: unknown) => {
-    const s = v != null ? String(v).trim() : "";
-    return s !== "" && s.toLowerCase() !== "unknown";
-  };
 
   return (
     <div className="min-h-screen flex flex-col">

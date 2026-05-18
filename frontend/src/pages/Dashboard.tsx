@@ -339,13 +339,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     { field: "submitted", dir: "desc" },
   ]);
   const toggleEditorHistorySort = (field: EditorHistorySortField, dir: SortDir) => {
+    // Single-column sort: clicking an arrow replaces the sort. Clicking the
+    // already-active direction clears the sort (returns to API order). The
+    // previous "stack" behavior left "submitted desc" pinned as the primary
+    // key, so secondary fields never affected order because created_at is
+    // unique per row.
     setSubmissionQueueSort((prev) => {
-      const idx = prev.findIndex((e) => e.field === field);
-      if (idx === -1) return [...prev, { field, dir }];
-      if (prev[idx].dir === dir) return prev.filter((_, i) => i !== idx);
-      const next = prev.slice();
-      next[idx] = { field, dir };
-      return next;
+      const current = prev[0];
+      if (current && current.field === field && current.dir === dir) return [];
+      return [{ field, dir }];
     });
   };
   const [editorHistoryPage, setEditorHistoryPage] = useState(1);
@@ -364,13 +366,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     { field: "submitted", dir: "desc" },
   ]);
   const toggleMySubmissionsSort = (field: MySubmissionsSortField, dir: SortDir) => {
+    // See toggleEditorHistorySort for the single-column rationale.
     setMySubmissionsSort((prev) => {
-      const idx = prev.findIndex((e) => e.field === field);
-      if (idx === -1) return [...prev, { field, dir }];
-      if (prev[idx].dir === dir) return prev.filter((_, i) => i !== idx);
-      const next = prev.slice();
-      next[idx] = { field, dir };
-      return next;
+      const current = prev[0];
+      if (current && current.field === field && current.dir === dir) return [];
+      return [{ field, dir }];
     });
   };
   const [dateFrom, setDateFrom] = useState("");

@@ -7,14 +7,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Upload, CheckCircle, XCircle, Clock, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Plus } from "lucide-react";
+import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import type { FormEvent, MouseEvent } from "react";
 import { useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
@@ -24,7 +23,6 @@ import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
 import { getRegions } from "@/services/regions";
 import { getMarkingByIdRaw, normalizeImageUrl } from "@/services/markings";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
-import { getFramings, type FramingOption } from "@/services/framings";
 import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
 import { ENTRY_LABELS } from "@/labels/entry";
@@ -294,24 +292,6 @@ function parseReferenceWorkDetails(raw: unknown): Record<number, ReferenceDetail
   return out;
 }
 
-function formatReferenceWorkForReferences(
-  work: ReferenceWorkRecord,
-  detail?: ReferenceDetailInput,
-): string {
-  const parts: string[] = [];
-  if (work.title?.trim()) parts.push(`Title: ${work.title.trim()}`);
-  if (work.authorship?.trim()) parts.push(`Authorship: ${work.authorship.trim()}`);
-  if (work.publisher?.trim()) parts.push(`Publisher: ${work.publisher.trim()}`);
-  if (work.publicationYear != null) parts.push(`Publication year: ${work.publicationYear}`);
-  if (work.edition?.trim()) parts.push(`Edition: ${work.edition.trim()}`);
-  if (work.volume?.trim()) parts.push(`Volume: ${work.volume.trim()}`);
-  if (work.isbn?.trim()) parts.push(`Isbn: ${work.isbn.trim()}`);
-  if (work.url?.trim()) parts.push(`Url: ${work.url.trim()}`);
-  if (detail?.pageNumber?.trim()) parts.push(`Page number: ${detail.pageNumber.trim()}`);
-  if (detail?.citationUrl?.trim()) parts.push(`Citation url: ${detail.citationUrl.trim()}`);
-  return parts.join("\n");
-}
-
 const Contribute = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -343,7 +323,6 @@ const Contribute = () => {
         : "new";
   const isEditContribution = mode === "edit-contribution";
   const isEditMarking = mode === "edit-marking";
-  const isEditMode = isEditContribution || isEditMarking;
   const [editLoadDone, setEditLoadDone] = useState(!editContributionId);
   const [editLoadError, setEditLoadError] = useState<string | null>(null);
   // Status of the contribution we are editing (draft / needs_revision /
@@ -414,7 +393,6 @@ const Contribute = () => {
   const [town, setTown] = useState("");
   const [markingType, setMarkingType] = useState("");
   const [rateValue, setRateValue] = useState("");
-  const [rateText, setRateText] = useState("");
   const [description, setDescription] = useState("");
   const [contributorComment, setContributorComment] = useState("");
   // Existing images on the loaded Marking (edit-marking mode). Each entry is
@@ -441,7 +419,7 @@ const Contribute = () => {
   const [color, setColor] = useState("");
   const [widthMm, setWidthMm] = useState("");
   const [heightMm, setHeightMm] = useState("");
-  const [manuscript, setManuscript] = useState("No");
+  const [isManuscript, setIsManuscript] = useState(false);
   const [isIrregular, setIsIrregular] = useState(false);
   const [impression, setImpression] = useState("Normal");
   const [inscriptionText, setInscriptionText] = useState("");
@@ -452,7 +430,6 @@ const Contribute = () => {
   const [markingImagePreviews, setMarkingImagePreviews] = useState<string[]>([]);
   const [markingImageTags, setMarkingImageTags] = useState<string[]>([]);
   const [letteringId, setLetteringId] = useState("");
-  const [framingIds, setFramingIds] = useState<string[]>([]);
   const [dateFormatIds, setDateFormatIds] = useState<string[]>([]);
   const [fieldErrors, setFieldErrors] = useState<{
     markingType?: string;
@@ -472,7 +449,6 @@ const Contribute = () => {
 
   // Contributor: lettering, framing, date format (loaded for all)
   const [letteringOptions, setLetteringOptions] = useState<LetteringOption[]>([]);
-  const [framingOptions, setFramingOptions] = useState<FramingOption[]>([]);
   const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
   const [catalogOptionsLoading, setCatalogOptionsLoading] = useState(false);
   const [referenceWorks, setReferenceWorks] = useState<ReferenceWorkRecord[]>([]);
@@ -573,7 +549,7 @@ const Contribute = () => {
    */
   useEffect(() => {
     if (loadingShapes || shapeOptions.length === 0) return;
-    if (manuscript === "Yes") return;
+    if (isManuscript) return;
     if (shape.trim()) return;
     const t = normalizeMarkingTypeValue(markingType);
     if (t !== "RATEMARK" && t !== "AUXMARK") return;
@@ -588,35 +564,29 @@ const Contribute = () => {
         String(opt.name).trim().toLowerCase().includes("straight line"),
       );
     if (slOption) setShape(slOption.name);
-  }, [markingType, manuscript, shape, shapeOptions, loadingShapes]);
+  }, [markingType, isManuscript, shape, shapeOptions, loadingShapes]);
 
   useEffect(() => {
     setCatalogOptionsLoading(true);
-    Promise.all([getLetterings(), getFramings(), getDateFormats()])
-      .then(([lettering, framing, dateFmt]) => {
+    Promise.all([getLetterings(), getDateFormats()])
+      .then(([lettering, dateFmt]) => {
         setLetteringOptions(lettering);
-        setFramingOptions(framing);
         setDateFormatOptions(dateFmt);
 
-        // Defaults (when creating a new submission): Lettering = Normal, Framing = None.
+        // Default Lettering = Normal when creating a new submission.
         if (!editContributionId) {
           if (!letteringId) {
             const normal = lettering.find((o) => String(o.name || "").trim().toLowerCase() === "normal");
             if (normal) setLetteringId(String(normal.id));
           }
-          if (framingIds.length === 0) {
-            const none = framing.find((o) => String(o.name || "").trim().toLowerCase() === "none");
-            if (none) setFramingIds([String(none.id)]);
-          }
         }
       })
       .catch(() => {
         setLetteringOptions([]);
-        setFramingOptions([]);
         setDateFormatOptions([]);
       })
       .finally(() => setCatalogOptionsLoading(false));
-  }, [editContributionId, letteringId, framingIds.length]);
+  }, [editContributionId, letteringId]);
 
   useEffect(() => {
     if (referenceWorksFetched || referenceWorksLoading) return;
@@ -698,13 +668,13 @@ const Contribute = () => {
         const wh = submittedDataToWidthHeightStrings(sd as Record<string, unknown>);
         setWidthMm(wh.width);
         setHeightMm(wh.height);
-        const loadedManuscript = getStr(sd.manuscript);
-        setManuscript(loadedManuscript === "Yes" ? "Yes" : "No");
+        setIsManuscript(sd.is_manuscript === true);
         const loadedImpression = getStr(sd.impression);
         setImpression(loadedImpression || "Normal");
         setIsIrregular(Boolean(sd.is_irreg));
         setInscriptionText(getStr(sd.inscription_txt));
         setDescription(getStr(sd.desc));
+        setRateValue(getStr((sd as Record<string, unknown>).rate_val));
         const referenceWorkIds = parseReferenceWorkIds(
           (sd as Record<string, unknown>).reference_work_ids
         );
@@ -718,16 +688,23 @@ const Contribute = () => {
         }
         const lid = sd.lettering_id ?? sd.lettering_style_id;
         setLetteringId(lid != null ? String(lid) : "");
-        const fids = sd.framing_style_ids as unknown;
-        const normalizedFramingIds = Array.isArray(fids)
-          ? fids.map((x) => String(x)).filter(Boolean)
-          : [];
-        setFramingIds(normalizedFramingIds);
-        const dids = sd.date_format_ids as unknown;
-        const normalizedDateFormatIds = Array.isArray(dids)
-          ? dids.map((x) => String(x)).filter(Boolean)
-          : [];
-        setDateFormatIds(normalizedDateFormatIds);
+        const dateFmtCode = getStr(sd.date_fmt ?? sd.dateFmt);
+        if (dateFmtCode) {
+          // dateFormatOptions is loaded by a separate effect; resolve once
+          // the options arrive. For draft-rehydrate we look up by description
+          // (the actual MD/YMD/... code) and fall back to no selection.
+          const tryResolve = () => {
+            const opt = dateFormatOptions.find(
+              (o) =>
+                String(o.description ?? "").trim().toLowerCase() === dateFmtCode.toLowerCase() ||
+                String(o.name ?? "").trim().toLowerCase() === dateFmtCode.toLowerCase(),
+            );
+            setDateFormatIds(opt ? [String(opt.id)] : []);
+          };
+          tryResolve();
+        } else {
+          setDateFormatIds([]);
+        }
         // Route existing images through `existingImages` (same path used by
         // the edit-marking flow) so the dedicated remove button records
         // removals in `removedExistingImageKeys`. Mixing prior URLs into
@@ -818,7 +795,12 @@ const Contribute = () => {
     return () => {
       cancelled = true;
     };
-  }, [editContributionId]); // shapeOptions/colorOptions may not be loaded yet; we set shape/color as strings
+    // shapeOptions/colorOptions may not be loaded yet; we set shape/color as
+    // strings. dateFormatOptions is read inside the closure for code -> id
+    // resolution; adding it to deps would refire the entire fetch every
+    // time options load, so we accept the snapshot at fetch time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editContributionId]);
 
   // Load Marking record for edit-marking mode (from /edit/:id).
   //
@@ -884,7 +866,7 @@ const Contribute = () => {
         setColor(typeof data.color_name === "string" ? data.color_name : "");
         setWidthMm(String(data.width ?? "").replace(/[^0-9.]/g, ""));
         setHeightMm(String(data.height ?? "").replace(/[^0-9.]/g, ""));
-        setManuscript(data.is_manuscript ? "Yes" : "No");
+        setIsManuscript(Boolean(data.is_manuscript));
         setIsIrregular(Boolean(data.is_irreg));
         const impressionRaw = String(data.impression ?? "").trim();
         const normalizedImpression = impressionRaw
@@ -1002,20 +984,12 @@ const Contribute = () => {
   const isTownmark = normalizedMarkingType === "TOWNMARK";
   const isRatemark = normalizedMarkingType === "RATEMARK";
   const isAuxmark = normalizedMarkingType === "AUXMARK";
-  const isHandstamped = manuscript !== "Yes";
+  const isHandstamped = !isManuscript;
   const showShapeField = isHandstamped;
   const showDateFormatField = isHandstamped && isTownmark;
   const showRateValueField = isRatemark;
   const showAnythingElseSection = isHandstamped && (isTownmark || isRatemark || isAuxmark);
 
-  const selectedFramingSummary = useMemo(() => {
-    if (framingIds.length === 0) return "Select one or more framing styles";
-    const selectedNames = framingOptions
-      .filter((opt) => framingIds.includes(String(opt.id)))
-      .map((opt) => opt.name);
-    if (selectedNames.length <= 2) return selectedNames.join(", ");
-    return `${selectedNames.slice(0, 2).join(", ")} +${selectedNames.length - 2} more`;
-  }, [framingIds, framingOptions]);
   const selectedDateFormatSummary = useMemo(() => {
     if (dateFormatIds.length === 0) return "Select one or more date formats";
     const selectedCodes = dateFormatOptions
@@ -1123,7 +1097,7 @@ const Contribute = () => {
 
     const stateVal = state.trim();
     const townVal = town.trim();
-    const isManuscriptSelected = manuscript === "Yes";
+    const isManuscriptSelected = isManuscript;
     const shapeVal = isManuscriptSelected ? "" : shape.trim();
     const typeVal = normalizeMarkingTypeValue(markingType.trim()) || markingType.trim();
     const shapeIdVal = shapeOptions.find(
@@ -1246,10 +1220,6 @@ const Contribute = () => {
       return;
     }
 
-    const referencesToSend = selectedReferenceWorks
-      .map((work) => formatReferenceWorkForReferences(work, referenceDetailsById[work.id]))
-      .filter(Boolean)
-      .join("\n\n");
     const referenceWorkIdsToSend = selectedReferenceWorks.map((work) => work.id);
     const referenceWorkDetailsToSend: ReferenceDetailPayload[] = selectedReferenceWorks.map((work) => {
       const detail = referenceDetailsById[work.id];
@@ -1286,16 +1256,19 @@ const Contribute = () => {
 
     setSubmitting(true);
     try {
-      const submitterName = user?.username || user?.email || undefined;
-
       let body: string | FormData;
 
       const derivedIsCircular = isCircularType(shapeVal);
-      const derivedDimensions = (() => {
-        const w = widthMm.trim();
-        const h = derivedIsCircular ? w : heightMm.trim();
-        if (w && h) return `${w}×${h} mm`;
-        return "";
+      const widthToSend = widthMm.trim();
+      const heightToSend = (derivedIsCircular ? widthMm : heightMm).trim();
+      // Resolve the active date_fmt code (e.g. "MD", "YMD") from the
+      // multi-select state. The picker stores DateFormatOption.id; the
+      // backend wants the string code, which lives on .description.
+      const dateFmtCode = (() => {
+        const id = dateFormatIds[0];
+        if (!id) return "";
+        const opt = dateFormatOptions.find((o) => String(o.id) === String(id));
+        return opt ? String(opt.description ?? "").trim() : "";
       })();
       const inscriptionToSend = inscriptionText.trim();
 
@@ -1321,8 +1294,8 @@ const Contribute = () => {
         if (!isManuscriptSelected && shapeIdVal != null) form.append("shape_id", String(shapeIdVal));
         if (colorIdVal != null) form.append("color_id", String(colorIdVal));
         form.append("color", colorVal);
-        if (derivedDimensions) form.append("dimensions", derivedDimensions);
-        if (manuscript.trim()) form.append("manuscript", manuscript.trim());
+        if (widthToSend) form.append("width_mm", widthToSend);
+        if (heightToSend) form.append("height_mm", heightToSend);
         form.append("is_manuscript", String(isManuscriptSelected));
         if (!isManuscriptSelected) {
           form.append("is_irreg", String(isIrregular));
@@ -1333,23 +1306,13 @@ const Contribute = () => {
           form.append("desc", description.trim());
         }
         if (inscriptionToSend) form.append("inscription_txt", inscriptionToSend);
-        if (referencesToSend) form.append("references", referencesToSend);
         referenceWorkIdsToSend.forEach((id) => form.append("reference_work_ids[]", String(id)));
         if (referenceWorkDetailsToSend.length > 0) {
           form.append("reference_work_details", JSON.stringify(referenceWorkDetailsToSend));
         }
-        if (submitterName) form.append("submitter_name", submitterName);
         if (!isManuscriptSelected && letteringId) form.append("lettering_style_id", letteringId);
         if (!isManuscriptSelected && letteringId) form.append("lettering_id", letteringId);
-        if (framingIds.length > 0) {
-          form.append("framing_style_id", framingIds[0]);
-          framingIds.forEach((id) => form.append("framing_style_ids[]", id));
-        }
-        if (dateFormatIds.length > 0) {
-          form.append("date_format_id", dateFormatIds[0]);
-          if (showDateFormatField) form.append("date_fmt", dateFormatIds[0]);
-          dateFormatIds.forEach((id) => form.append("date_format_ids[]", id));
-        }
+        if (showDateFormatField && dateFmtCode) form.append("date_fmt", dateFmtCode);
         for (const file of markingImageFiles) {
           form.append("marking_image", file, file.name);
         }
@@ -1399,25 +1362,19 @@ const Contribute = () => {
           shape_id: isManuscriptSelected ? null : shapeIdVal ?? null,
           color_id: colorIdVal ?? undefined,
           color: colorVal,
-          dimensions: derivedDimensions || undefined,
-          manuscript: manuscript.trim() || undefined,
+          width_mm: widthToSend || undefined,
+          height_mm: heightToSend || undefined,
           is_manuscript: isManuscriptSelected,
           is_irreg: isManuscriptSelected ? null : isIrregular,
           impression: isManuscriptSelected ? null : impression.trim() || undefined,
           rate_val: showRateValueField ? rateValue.trim() || undefined : undefined,
           desc: description.trim() || undefined,
           inscription_txt: inscriptionToSend || undefined,
-          references: referencesToSend || undefined,
           reference_work_ids: referenceWorkIdsToSend.length > 0 ? referenceWorkIdsToSend : undefined,
           reference_work_details: referenceWorkDetailsToSend.length > 0 ? referenceWorkDetailsToSend : undefined,
-          submitter_name: submitterName || undefined,
           lettering_style_id: isManuscriptSelected ? null : letteringId ? Number(letteringId) : undefined,
           lettering_id: isManuscriptSelected ? null : letteringId ? Number(letteringId) : undefined,
-          framing_style_id: framingIds[0] ? Number(framingIds[0]) : undefined,
-          framing_style_ids: framingIds.length > 0 ? framingIds.map((id) => Number(id)) : undefined,
-          date_format_id: dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
-          date_fmt: showDateFormatField && dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
-          date_format_ids: dateFormatIds.length > 0 ? dateFormatIds.map((id) => Number(id)) : undefined,
+          date_fmt: showDateFormatField && dateFmtCode ? dateFmtCode : undefined,
           marking_image_tags: markingImageTags,
           ...(trimmedComment
             ? { contributor_comment: trimmedComment, comment_for_editor: trimmedComment }
@@ -2065,11 +2022,11 @@ const Contribute = () => {
                         id="manuscript"
                         type="checkbox"
                         className="h-4 w-4 accent-primary"
-                        checked={manuscript === "Yes"}
+                        checked={isManuscript}
                         onChange={(e) => {
-                          const next = e.target.checked ? "Yes" : "No";
-                          setManuscript(next);
-                          if (next === "Yes") {
+                          const next = e.target.checked;
+                          setIsManuscript(next);
+                          if (next) {
                             setShape("");
                             setLetteringId("");
                             setImpression("");
@@ -2220,7 +2177,7 @@ const Contribute = () => {
                     {showShapeField && <div className="space-y-2">
                       <Label htmlFor="shape">
                         Shape
-                        {manuscript === "No" ? (
+                        {!isManuscript ? (
                           <span className="text-destructive" aria-hidden="true">*</span>
                         ) : null}
                       </Label>

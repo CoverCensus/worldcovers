@@ -13,7 +13,6 @@ import type { MarkingTypeValue } from "@/services/markings";
 
 export interface ContributionLookups {
   letteringOptions: { id: number; name: string }[];
-  framingOptions: { id: number; name: string }[];
   dateFormatOptions: { id: number; name: string; description?: string }[];
 }
 
@@ -29,7 +28,6 @@ export const KNOWN_SUBMITTED_DATA_KEYS: ReadonlySet<string> = new Set([
   "town",
   "type",
   "marking_type", "markingType",
-  "manuscript",
   "is_manuscript", "isManuscript",
   // consumed: inscription text
   "inscription_txt", "inscriptionTxt",
@@ -46,25 +44,15 @@ export const KNOWN_SUBMITTED_DATA_KEYS: ReadonlySet<string> = new Set([
   "is_irreg", "isIrreg", "isIrregular",
   "width_mm", "widthMm",
   "height_mm", "heightMm",
-  "dimensions",
   // consumed: lookup-resolved fields (id forms + nested + name fallbacks)
   "lettering_style_id", "letteringStyleId",
   "lettering_id",
   "lettering_style", "letteringStyle",
   "lettering_style_name", "letteringStyleName",
-  "framing_style_id", "framingStyleId",
-  "framing_style_ids", "framingStyleIds",
-  "framing_style", "framingStyle",
-  "framing_name", "framingName",
-  "framing",
-  "date_format_id", "dateFormatId",
-  "date_format_ids", "dateFormatIds",
-  "date_format", "dateFormat",
   "date_fmt", "dateFmt",
   // consumed: free-text catalog suggestions from the contributor
   "description",
   "desc",
-  "references",
   // ignored: contributor comments (rendered separately above the field list)
   "contributor_comment", "contributorComment",
   "comment_for_editor", "commentForEditor",
@@ -82,7 +70,6 @@ export const KNOWN_SUBMITTED_DATA_KEYS: ReadonlySet<string> = new Set([
   "ratemark_images", "ratemarkImages", "RatemarkImages",
   "auxmark_images", "auxmarkImages", "AuxmarkImages",
   // ignored: bookkeeping that doesn't appear in the field list
-  "submitter_name", "submitterName",
   "original_postmark_id", "originalPostmarkId",
   // ignored: marking-edit draft bookkeeping. edit_postmark_id is the target
   // marking; marking_modified_at_baseline is the timestamp captured when the
@@ -116,9 +103,7 @@ function normalizeMarkingType(raw: string): MarkingTypeValue | null {
 }
 
 function isManuscriptValue(sd: Record<string, unknown>): boolean {
-  if (sd.is_manuscript === true || sd.isManuscript === true) return true;
-  const ms = toStr(sd.manuscript).toLowerCase();
-  return ms === "yes" || ms === "true";
+  return sd.is_manuscript === true || sd.isManuscript === true;
 }
 
 function formatRateValue(raw: unknown): string {
@@ -162,8 +147,7 @@ function formatDimensions(sd: Record<string, unknown>, shapeName: string, isManu
   if (w && h) return `${w}x${h} mm`;
   if (w) return `${w} mm`;
   if (h) return `${h} mm`;
-  const leg = toStr(sd.dimensions);
-  return leg;
+  return "";
 }
 
 function readImpression(sd: Record<string, unknown>): string {
@@ -206,57 +190,6 @@ function readLetteringId(sd: Record<string, unknown>): number | undefined {
   return undefined;
 }
 
-function readFramingIds(sd: Record<string, unknown>): number[] {
-  const arr = Array.isArray(sd.framing_style_ids)
-    ? sd.framing_style_ids
-    : Array.isArray(sd.framingStyleIds)
-      ? sd.framingStyleIds
-      : null;
-  if (arr) {
-    return arr
-      .map((x) => (typeof x === "number" ? x : typeof x === "string" ? parseInt(x, 10) : NaN))
-      .filter((x): x is number => !Number.isNaN(x));
-  }
-  const single =
-    sd.framing_style_id ??
-    sd.framingStyleId ??
-    readNestedId(sd.framing_style, "framing_style_id", "framingStyleId") ??
-    readNestedId(sd.framingStyle, "framing_style_id", "framingStyleId");
-  if (typeof single === "number") return [single];
-  if (typeof single === "string" && single.trim() !== "") {
-    const n = parseInt(single, 10);
-    return Number.isNaN(n) ? [] : [n];
-  }
-  return [];
-}
-
-function readDateFormatId(sd: Record<string, unknown>): number | undefined {
-  const arr = Array.isArray(sd.date_format_ids)
-    ? sd.date_format_ids
-    : Array.isArray(sd.dateFormatIds)
-      ? sd.dateFormatIds
-      : null;
-  if (arr && arr.length > 0) {
-    const first = arr[0];
-    if (typeof first === "number") return first;
-    if (typeof first === "string" && first.trim() !== "") {
-      const n = parseInt(first, 10);
-      return Number.isNaN(n) ? undefined : n;
-    }
-  }
-  const direct =
-    sd.date_format_id ??
-    sd.dateFormatId ??
-    readNestedId(sd.date_format, "date_format_id", "dateFormatId") ??
-    readNestedId(sd.dateFormat, "date_format_id", "dateFormatId");
-  if (typeof direct === "number") return direct;
-  if (typeof direct === "string" && direct.trim() !== "") {
-    const n = parseInt(direct, 10);
-    return Number.isNaN(n) ? undefined : n;
-  }
-  return undefined;
-}
-
 // Resolve "Lettering" display text: prefer the id lookup, fall back to the
 // embedded *_name field if the id isn't usable. Returns "" when neither is
 // available (renderer prints "-").
@@ -269,46 +202,22 @@ function resolveLettering(sd: Record<string, unknown>, lookups: ContributionLook
   return toStr(sd.lettering_style_name ?? sd.letteringStyleName);
 }
 
-function resolveFraming(sd: Record<string, unknown>, lookups: ContributionLookups): string {
-  const ids = readFramingIds(sd);
-  if (ids.length > 0) {
-    const names = ids
-      .map((id) => lookups.framingOptions.find((o) => o.id === id)?.name ?? "")
-      .filter((s) => s.length > 0);
-    if (names.length > 0) return names.join(", ");
-  }
-  return toStr(sd.framing_name ?? sd.framingName ?? sd.framing);
-}
-
 function resolveDateFormat(sd: Record<string, unknown>, lookups: ContributionLookups): string {
-  const id = readDateFormatId(sd);
-  if (id != null) {
-    const opt = lookups.dateFormatOptions.find((o) => o.id === id);
-    if (opt) return opt.name;
-  }
-  return toStr(sd.date_fmt ?? sd.dateFmt);
+  const code = toStr(sd.date_fmt ?? sd.dateFmt);
+  if (!code) return "";
+  const opt = lookups.dateFormatOptions.find(
+    (o) =>
+      String(o.description ?? "").trim().toLowerCase() === code.toLowerCase() ||
+      String(o.name ?? "").trim().toLowerCase() === code.toLowerCase(),
+  );
+  return opt ? opt.name : code;
 }
 
-// Combine the contributor's description (free text catalog suggestion) with
-// references into a single "Catalog text" block. RecordDetail's "Catalog
-// text" field is editor-only; the analogue from a contribution is the
-// description the contributor filled in.
+// The contributor's description is the analogue of RecordDetail's
+// editor-only "Catalog text" field. Reference works are rendered
+// separately via the contribution payload's reference_work_* keys.
 function buildCatalogText(sd: Record<string, unknown>): string {
-  const desc = toStr(sd.description ?? sd.desc);
-  const refs = toStr(sd.references);
-  const parts: string[] = [];
-  if (desc) parts.push(desc);
-  if (refs) parts.push(`References: ${refs}`);
-  return parts.join("\n\n");
-}
-
-// Lettering / Framing are presented under a single "Lettering" row in the
-// canonical field list (RecordDetail only shows lettering, not framing).
-// Show framing inline so it isn't silently dropped from a contribution
-// review.
-function combineLetteringAndFraming(lettering: string, framing: string): string {
-  if (lettering && framing) return `${lettering} (${framing})`;
-  return lettering || framing;
+  return toStr(sd.description ?? sd.desc);
 }
 
 export function submittedDataToFieldInput(
@@ -340,7 +249,6 @@ export function submittedDataToFieldInput(
   const { earliest, latest } = readEarliestLatest(sd);
 
   const lettering = resolveLettering(sd, lookups);
-  const framing = resolveFraming(sd, lookups);
 
   return {
     type,
@@ -356,7 +264,7 @@ export function submittedDataToFieldInput(
     impression: readImpression(sd),
     isIrreg: readIsIrreg(sd),
     colorName: toStr(sd.color),
-    letteringName: combineLetteringAndFraming(lettering, framing),
+    letteringName: lettering,
     dimensions: formatDimensions(sd, shapeName, isManuscript),
     catalogTxt: buildCatalogText(sd),
     code: "",
