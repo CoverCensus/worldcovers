@@ -1,6 +1,7 @@
 """
 Tests for the public submission endpoint plus the editor-only moderation
-actions on the Contribution viewset (`editor-edit`, `approve`, `reject`).
+actions on the Contribution viewset (`editor-edit`, `approve`, `reject`,
+`request-revision`) and the contributor-side resubmit-after-revision path.
 """
 from __future__ import annotations
 
@@ -243,3 +244,130 @@ class ContributionApproveTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_501_NOT_IMPLEMENTED)
         self.contrib.refresh_from_db()
         self.assertEqual(self.contrib.status, Contribution.STATUS_PENDING)
+
+
+class ContributionRequestRevisionTest(APITestCase):
+    """Editor returns a pending contribution to the contributor for changes."""
+
+    def setUp(self):
+        self.admin = make_superuser()
+        self.region = make_region(creator=self.admin)
+        self.collection = make_collection(region=self.region, creator=self.admin)
+        self.editor = make_editor()
+        assign_editor(self.editor, self.collection, creator=self.admin)
+        self.contributor = make_contributor()
+        self.contrib = Contribution.objects.create(
+            contributor=self.contributor,
+            collection=self.collection,
+            submitted_data={"state": "Virginia", "town": "Richmond"},
+        )
+
+    def test_assigned_editor_can_request_revision(self):
+        self.client.force_login(self.editor)
+        url = reverse("contribution-request-revision", args=[self.contrib.pk])
+        response = self.client.post(
+            url, {"review_notes": "Please attach a clearer image."}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.contrib.refresh_from_db()
+        self.assertEqual(self.contrib.status, Contribution.STATUS_NEEDS_REVISION)
+        self.assertEqual(self.contrib.reviewer_id, self.editor.pk)
+        self.assertEqual(self.contrib.review_notes, "Please attach a clearer image.")
+        # submitted_data is not modified by the return action.
+        self.assertEqual(self.contrib.submitted_data["town"], "Richmond")
+        self.assertTrue(
+            SubmissionTransaction.objects.filter(
+                action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
+                contribution=self.contrib,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            ).exists()
+        )
+
+    def test_review_notes_required(self):
+        self.client.force_login(self.editor)
+        url = reverse("contribution-request-revision", args=[self.contrib.pk])
+        response = self.client.post(url, {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.contrib.refresh_from_db()
+        self.assertEqual(self.contrib.status, Contribution.STATUS_PENDING)
+
+    def test_whitespace_only_review_notes_rejected(self):
+        self.client.force_login(self.editor)
+        url = reverse("contribution-request-revision", args=[self.contrib.pk])
+        response = self.client.post(url, {"review_notes": "   "}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_cannot_request_revision_when_not_pending(self):
+        self.contrib.status = Contribution.STATUS_NEEDS_REVISION
+        self.contrib.save(update_fields=["status"])
+        self.client.force_login(self.editor)
+        url = reverse("contribution-request-revision", args=[self.contrib.pk])
+        response = self.client.post(url, {"review_notes": "again"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class ContributionContributorResubmitTest(APITestCase):
+    """Contributor edits a returned contribution and resubmits it for review."""
+
+    def setUp(self):
+        self.admin = make_superuser()
+        self.region = make_region(name="Virginia", abbrev="VA", creator=self.admin)
+        self.collection = make_collection(region=self.region, creator=self.admin)
+        self.contributor = make_contributor()
+        self.contrib = Contribution.objects.create(
+            contributor=self.contributor,
+            collection=self.collection,
+            submitted_data={"state": "Virginia", "town": "Richmond"},
+            status=Contribution.STATUS_NEEDS_REVISION,
+            review_notes="Please attach a clearer image.",
+        )
+
+    def _post(self, payload):
+        return self.client.post(reverse("contribution-list"), payload, format="multipart")
+
+    def test_resubmit_after_revision_flips_back_to_pending(self):
+        self.client.force_login(self.contributor)
+        response = self._post({
+            "state": "Virginia",
+            "town": "Fairfax",
+            "type": "TOWNMARK",
+            "edit_contribution_id": str(self.contrib.pk),
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.contrib.refresh_from_db()
+        self.assertEqual(self.contrib.pk, response.data["id"])
+        self.assertEqual(self.contrib.status, Contribution.STATUS_PENDING)
+        self.assertIsNone(self.contrib.reviewer_id)
+        self.assertEqual(self.contrib.review_notes, "")
+        self.assertEqual(self.contrib.submitted_data["town"], "Fairfax")
+        self.assertEqual(self.contrib.submitted_data["state"], "Virginia")
+        self.assertTrue(
+            SubmissionTransaction.objects.filter(
+                action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
+                contribution=self.contrib,
+                source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
+            ).exists()
+        )
+
+    def test_resubmit_against_rejected_contribution_is_404(self):
+        self.contrib.status = Contribution.STATUS_REJECTED
+        self.contrib.save(update_fields=["status"])
+        self.client.force_login(self.contributor)
+        response = self._post({
+            "state": "Virginia",
+            "town": "Fairfax",
+            "edit_contribution_id": str(self.contrib.pk),
+        })
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_other_contributor_cannot_resubmit(self):
+        intruder = make_contributor("intruder")
+        self.client.force_login(intruder)
+        response = self._post({
+            "state": "Virginia",
+            "town": "Fairfax",
+            "edit_contribution_id": str(self.contrib.pk),
+        })
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.contrib.refresh_from_db()
+        self.assertEqual(self.contrib.status, Contribution.STATUS_NEEDS_REVISION)

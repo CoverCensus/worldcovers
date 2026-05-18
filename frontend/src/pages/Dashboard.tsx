@@ -92,12 +92,13 @@ function resolveSubmissionImageUrl(
   }
 
   const baseImageUrl = (import.meta.env.VITE_IMAGE_URL as string | undefined) ?? "";
+  const imageRoot = baseImageUrl.replace(/\/+$/, "") || "/media";
   const fromMeta = (meta: unknown): string | null => {
     if (!meta || typeof meta !== "object") return null;
     const obj = meta as Record<string, unknown>;
     const sf = obj.storage_filename ?? obj.storageFilename;
-    if (typeof sf !== "string" || !sf || !baseImageUrl) return null;
-    return normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/${sf.replace(/^\/+/, "")}`);
+    if (typeof sf !== "string" || !sf) return null;
+    return normalizeImageUrl(`${imageRoot}/${sf.replace(/^\/+/, "")}`);
   };
   const metas = submittedData.image_metas ?? submittedData.imageMetas;
   if (Array.isArray(metas)) {
@@ -354,7 +355,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   // Filter states (mirror Catalog Search)
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("pending");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
   const [townFilter, setTownFilter] = useState("");
   const [shapeFilter, setShapeFilter] = useState("all");
@@ -1699,7 +1700,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 <div className="flex items-center gap-2">
                   <Button
                     size="sm"
-                    onClick={() => navigate("/contribute")}
+                    onClick={() => navigate("/contribute", { state: { from: "/dashboard" } })}
                     className="shrink-0 bg-green-800 hover:bg-green-900 text-white"
                   >
                     <Plus className="mr-2 h-4 w-4" />

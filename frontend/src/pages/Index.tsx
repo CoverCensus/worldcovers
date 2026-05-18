@@ -156,7 +156,7 @@ const Index = () => {
 
   const handleContributeClick = () => {
     if (user) {
-      navigate('/contribute');
+      navigate('/contribute', { state: { from: '/' } });
     } else {
       navigate('/auth');
     }

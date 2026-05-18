@@ -8,6 +8,7 @@
 ###################################################################################################
 from __future__ import annotations
 
+import json
 import os
 import uuid
 
@@ -339,6 +340,28 @@ class ImageViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         serializer.save(modified_by=self.request.user)
+
+    def perform_destroy(self, instance):
+        # "Default image" is implicit: for a given (subject_type, subject_id),
+        # the main image is whichever row has the lowest (display_order,
+        # image_id) -- see MarkingSerializer.get_main_image. Tracings live in
+        # the same set, they are not a separate subject. After deleting an
+        # image, if no row in that subject still has display_order=0, promote
+        # the next-lowest row so a stable default exists.
+        subject_type = instance.subject_type
+        subject_id = instance.subject_id
+        with transaction.atomic():
+            super().perform_destroy(instance)
+            siblings = Image.objects.filter(
+                subject_type=subject_type,
+                subject_id=subject_id,
+            ).order_by("display_order", "image_id")
+            if not siblings.filter(display_order=0).exists():
+                next_default = siblings.first()
+                if next_default is not None:
+                    next_default.display_order = 0
+                    next_default.modified_by = self.request.user
+                    next_default.save(update_fields=["display_order", "modified_by", "modified_date"])
 
 
 ###################################################################################################
@@ -1184,67 +1207,52 @@ class ContributionViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet
         return submit_view.post(request)
 
     def get_queryset(self):
+        # Visibility rules:
+        #   list (default)          -> "My Contributions": only rows where the
+        #                              logged-in user is the contributor. This
+        #                              applies to everyone including editors
+        #                              and superusers, so the dashboard's
+        #                              My Contributions tab never leaks other
+        #                              users' work.
+        #   list ?mode=editor       -> editor review queue: contributions on
+        #                              collections the user is assigned to.
+        #                              Requires the review permission;
+        #                              superusers see everything.
+        #   retrieve (detail) and
+        #   action endpoints        -> union of "mine" and "editor view" so
+        #                              opening a single contribution from
+        #                              either tab works without the caller
+        #                              having to know which lens it came
+        #                              from. Approve/reject/request-revision
+        #                              additionally enforce the review
+        #                              permission via the decorator on each
+        #                              action.
         user = self.request.user
         base_qs = Contribution.objects.select_related(
             "contributor", "reviewer", "marking", "collection", "collection__region"
         )
-        if user.is_superuser:
-            return base_qs
-        if user.has_perm(REVIEW_CONTRIBUTION_PERM):
-            return _get_editor_contribution_queryset(user)
+        if self.action != "list":
+            if user.is_superuser:
+                return base_qs
+            mine = Q(contributor=user)
+            if user.has_perm(REVIEW_CONTRIBUTION_PERM):
+                assigned_ids = user_assigned_collection_ids(user)
+                if assigned_ids:
+                    return base_qs.filter(mine | Q(collection_id__in=assigned_ids)).distinct()
+            return base_qs.filter(mine).distinct()
+        mode = (self.request.query_params.get("mode") or "").strip().lower()
+        if mode == "editor":
+            if user.is_superuser:
+                return base_qs
+            if user.has_perm(REVIEW_CONTRIBUTION_PERM):
+                return _get_editor_contribution_queryset(user)
+            return base_qs.none()
         return base_qs.filter(contributor=user).distinct()
 
     def get_serializer_class(self):
         if self.action == "list":
             return ContributionListSerializer
         return ContributionDetailSerializer
-
-    @action(detail=True, methods=["patch"], url_path="editor-edit")
-    def editor_edit(self, request, pk=None):
-        """
-        Editor-side merge of submitted_data prior to approve.
-
-        Frontend (ContributionDetail.tsx -> persistEditorEdits) PATCHes a JSON
-        object whose keys mirror the contribute payload (state, town, type,
-        width_mm, height_mm, lettering_style_id, ...). The values are merged
-        into `Contribution.submitted_data`; explicit `null` clears a field,
-        omitted keys leave existing values untouched. Approve later reads from
-        the merged submitted_data when applying to the catalog.
-        """
-        contrib = self.get_object()
-        if contrib.status != Contribution.STATUS_PENDING:
-            return Response(
-                {"detail": f"Contribution is not pending (status: {contrib.status})."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        payload = request.data
-        if not isinstance(payload, dict):
-            return Response(
-                {"detail": "Request body must be a JSON object of submission fields."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        before_submission = dict(contrib.submitted_data or {})
-        merged = dict(before_submission)
-        for key, value in payload.items():
-            merged[key] = value
-
-        with transaction.atomic():
-            contrib.submitted_data = merged
-            contrib.save(update_fields=["submitted_data", "updated_at"])
-            log_submission_transaction(
-                action=SubmissionTransaction.ACTION_EDITOR_EDIT,
-                actor=request.user,
-                contribution=contrib,
-                marking=contrib.marking,
-                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-                before_payload=before_submission,
-                after_payload=merged,
-                extra_payload={"changed_keys": sorted(payload.keys())},
-            )
-
-        serializer = ContributionDetailSerializer(contrib, context={"request": request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="approve")
     def approve(self, request, pk=None):
@@ -1318,6 +1326,42 @@ class ContributionViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet
             extra_payload={"review_notes": review_notes},
         )
         return Response({"detail": "Contribution rejected."}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="request-revision")
+    def request_revision(self, request, pk=None):
+        contrib = self.get_object()
+        if contrib.status != Contribution.STATUS_PENDING:
+            return Response(
+                {"detail": f"Contribution is not pending (status: {contrib.status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        review_notes = (serializer.validated_data.get("review_notes") or "").strip()
+        if not review_notes:
+            return Response(
+                {"detail": "review_notes is required when requesting revision."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        before_submission = dict(contrib.submitted_data or {})
+        contrib.status = Contribution.STATUS_NEEDS_REVISION
+        contrib.reviewer = request.user
+        contrib.review_notes = review_notes
+        contrib.save(update_fields=["status", "reviewer", "review_notes", "updated_at"])
+        log_submission_transaction(
+            action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
+            actor=request.user,
+            contribution=contrib,
+            marking=contrib.marking,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload=before_submission,
+            after_payload=before_submission,
+            extra_payload={"review_notes": review_notes},
+        )
+        return Response(
+            {"detail": "Contribution returned for revision.", "status": contrib.status},
+            status=status.HTTP_200_OK,
+        )
 
 
 @extend_schema(
@@ -1590,6 +1634,13 @@ class ContributionSubmitView(APIView):
             "cover_image",
             "edit_contribution_id",
             "editContributionId",
+            "removed_existing_image_keys",
+            # Submit-mode controls -- consumed by _is_save_as_draft_submission
+            # above; should not be persisted into the JSON submitted_data
+            # payload that the review UI renders as field rows.
+            "save_as_draft",
+            "saveAsDraft",
+            "status",
         }
         for key in data:
             if key in skip_keys:
@@ -1614,25 +1665,101 @@ class ContributionSubmitView(APIView):
             submitted_data["routing_deferred"] = True
 
         if edit_pk is not None:
-            if not is_draft:
-                return Response(
-                    {
-                        "detail": "Use save_as_draft to update a draft, or abandon_draft to discard it after catalog submit."
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+            if is_draft:
+                # Allow save-as-draft against either an actual draft or a
+                # needs_revision row (contributor saving partial edits before
+                # they are ready to resubmit). The needs_revision row keeps
+                # its status so it stays in the editor's history and the
+                # original review_notes remain visible.
+                target_statuses = [
+                    Contribution.STATUS_DRAFT,
+                    Contribution.STATUS_NEEDS_REVISION,
+                ]
+                transition_to_pending = False
+            else:
+                # Non-draft submit with edit_pk: contributor either resubmitting
+                # after the editor returned the contribution for revision OR
+                # promoting one of their own drafts to pending review for the
+                # first time. Both transition the row to pending.
+                target_statuses = [
+                    Contribution.STATUS_DRAFT,
+                    Contribution.STATUS_NEEDS_REVISION,
+                ]
+                transition_to_pending = True
 
             contrib = Contribution.objects.filter(
                 pk=edit_pk,
                 contributor=request.user,
-                status=Contribution.STATUS_DRAFT,
+                status__in=target_statuses,
             ).first()
             if not contrib:
-                return Response(
-                    {"detail": "Draft not found or not editable."},
-                    status=status.HTTP_404_NOT_FOUND,
+                detail = (
+                    "Contribution not found, not owned by you, or not in a submittable status (draft / needs_revision)."
+                    if transition_to_pending
+                    else "Draft or returned contribution not found or not editable."
                 )
+                return Response({"detail": detail}, status=status.HTTP_404_NOT_FOUND)
             existing_sd = dict(contrib.submitted_data or {})
+
+            # Honor contributor-side image removals. Frontend
+            # (Contribute.tsx -> removeExistingImageAt) sends a JSON list of
+            # the displayed URLs that the user removed from the edit form.
+            # We drop matching entries from marking_images (URL strings) and
+            # from any *_metas lists (matching by storage_filename tail) so
+            # the resubmission reflects what the contributor actually wants.
+            removed_keys_raw = data.get("removed_existing_image_keys")
+            removed_keys = []
+            if isinstance(removed_keys_raw, str):
+                try:
+                    parsed = json.loads(removed_keys_raw)
+                    if isinstance(parsed, list):
+                        removed_keys = [str(k) for k in parsed if k]
+                except (ValueError, TypeError):
+                    removed_keys = []
+            elif isinstance(removed_keys_raw, list):
+                removed_keys = [str(k) for k in removed_keys_raw if k]
+
+            if removed_keys:
+                removed_set = set(removed_keys)
+                # marking_images is a list of URL strings; drop direct hits.
+                existing_marking_images = existing_sd.get("marking_images")
+                if isinstance(existing_marking_images, list):
+                    existing_sd["marking_images"] = [
+                        u for u in existing_marking_images if u not in removed_set
+                    ]
+
+                def _meta_was_removed(meta):
+                    if not isinstance(meta, dict):
+                        return False
+                    sf = str(meta.get("storage_filename") or "").lstrip("/")
+                    if not sf:
+                        return False
+                    for k in removed_set:
+                        kn = str(k).lstrip("/")
+                        if kn == sf or kn.endswith(sf):
+                            return True
+                    return False
+
+                for meta_key in ("marking_image_metas", "cover_image_metas", "image_metas"):
+                    metas_list = existing_sd.get(meta_key)
+                    if isinstance(metas_list, list):
+                        existing_sd[meta_key] = [
+                            m for m in metas_list if not _meta_was_removed(m)
+                        ]
+
+                # image_meta is the catalog-default thumbnail pointer; if it
+                # was just removed, replace it with the next surviving meta
+                # (or None if none remain).
+                primary = existing_sd.get("image_meta")
+                if isinstance(primary, dict) and _meta_was_removed(primary):
+                    replacement = None
+                    for fallback_key in ("marking_image_metas", "image_metas", "cover_image_metas"):
+                        fallback_list = existing_sd.get(fallback_key)
+                        if isinstance(fallback_list, list) and fallback_list:
+                            replacement = fallback_list[0]
+                            break
+                    existing_sd["image_meta"] = replacement
+
             if image_metas:
                 meta_key = "cover_image_metas" if is_cover_submission else "marking_image_metas"
                 prior = existing_sd.get(meta_key) or existing_sd.get("image_metas") or []
@@ -1645,7 +1772,13 @@ class ContributionSubmitView(APIView):
             existing_sd.update(submitted_data)
             contrib.submitted_data = existing_sd
             contrib.collection = collection
-            contrib.save(update_fields=["submitted_data", "collection", "updated_at"])
+            update_fields = ["submitted_data", "collection", "updated_at"]
+            if transition_to_pending:
+                contrib.status = Contribution.STATUS_PENDING
+                contrib.reviewer = None
+                contrib.review_notes = ""
+                update_fields += ["status", "reviewer", "review_notes"]
+            contrib.save(update_fields=update_fields)
             log_submission_transaction(
                 action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
                 actor=request.user,
@@ -1654,6 +1787,7 @@ class ContributionSubmitView(APIView):
                 source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
                 before_payload={},
                 after_payload=existing_sd,
+                extra_payload={"resubmitted": transition_to_pending},
             )
             return Response(
                 ContributionDetailSerializer(contrib, context={"request": request}).data,
