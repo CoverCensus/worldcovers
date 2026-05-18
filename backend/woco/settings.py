@@ -137,6 +137,11 @@ DATABASES = {
     }
 }
 
+# MariaDB cannot enforce partial unique constraints, so allauth's
+# account.EmailAddress model triggers models.W036 on every manage.py
+# check. Uniqueness is still enforced in application code by allauth.
+SILENCED_SYSTEM_CHECKS = ["models.W036"]
+
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 AUTH_PASSWORD_VALIDATORS = [

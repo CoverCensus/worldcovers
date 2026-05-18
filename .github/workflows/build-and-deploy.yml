@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Fail fast if any known malware fingerprint is present in the tree.
       # Runs before any install / build step so a compromised commit cannot
@@ -22,7 +22,7 @@ jobs:
         run: bash tools/fingerprint.sh
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           # Pin uv version so CI is deterministic. Bump deliberately.
           version: "0.11.2"
@@ -30,7 +30,7 @@ jobs:
           # Python version comes from .python-version at repo root (3.13).
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
           cache: "npm"
@@ -39,6 +39,16 @@ jobs:
       - name: Install Python dependencies
         # Same flags as the server: locked resolution, no dev group.
         run: uv sync --no-dev --frozen
+
+      # Build the frontend before running Django system checks. Django's
+      # STATICFILES_DIRS points at frontend/dist/, and `manage.py check`
+      # raises staticfiles.W004 if that directory is missing. Building
+      # first keeps the check log clean.
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
 
       # `migrate --check` was the original step here, but it needs a live
       # MySQL to inspect django_migrations and CI doesn't provide one, so it
@@ -59,14 +69,8 @@ jobs:
           DJANGO_SECRET_KEY: ci-dummy-not-a-real-secret-do-not-use-anywhere
         run: uv run python backend/manage.py check
 
-      - name: Build frontend
-        run: |
-          cd frontend
-          npm ci
-          npm run build
-
       - name: Upload frontend build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: frontend-dist
           path: frontend/dist/
@@ -90,6 +94,11 @@ jobs:
           command_timeout: 20m
           script: |
             set -euo pipefail
+            # Non-interactive SSH does not source .bashrc / .profile, so
+            # user-level installs (uv lives at ~/.local/bin/uv by default)
+            # are not on PATH. Add the standard user-bin directory so the
+            # deploy script can find uv without a system-wide install.
+            export PATH="$HOME/.local/bin:$PATH"
             # Stop the app so migrations can run without table locks
             # (ALTER TABLE on Postmarks can block otherwise).
             sudo -n /bin/systemctl stop worldcovers
