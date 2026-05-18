@@ -7,6 +7,21 @@ import path from "path";
 export default defineConfig(({ mode }) => ({
   build: {
     sourcemap: true, // unminify errors in devtools (file:line instead of index-xxx.js)
+    chunkSizeWarningLimit: 768,
+    rollupOptions: {
+      output: {
+        // Split the 900+ kB vendor monolith into long-lived cacheable
+        // chunks. Anything not matched falls through into the per-page
+        // chunks rollup already produces.
+        manualChunks: (id) => {
+          if (!id.includes("node_modules")) return;
+          if (/[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom)[\\/]/.test(id)) return "react";
+          if (/[\\/]node_modules[\\/]@radix-ui[\\/]/.test(id)) return "radix";
+          if (/[\\/]node_modules[\\/]recharts[\\/]/.test(id)) return "charts";
+          if (/[\\/]node_modules[\\/](react-hook-form|@hookform[\\/]resolvers|formik|zod)[\\/]/.test(id)) return "forms";
+        },
+      },
+    },
   },
   server: {
     host: "::",
