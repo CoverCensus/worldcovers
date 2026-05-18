@@ -1,9 +1,10 @@
 /* Google Fonts - @import must be first */
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "tw-animate-css";
+@plugin "@tailwindcss/typography";
+@custom-variant dark (&:where(.dark, .dark *));
 
 /* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
 All colors MUST be HSL.
@@ -91,6 +92,44 @@ All colors MUST be HSL.
     --input: 0 0% 22%;
     --ring: 0 45% 45%;
   }
+}
+
+/* Expose the design tokens defined above to Tailwind v4 utilities. The
+   `inline` keyword means these values are inlined into the generated
+   utility CSS instead of being looked up via var() at runtime, which is
+   what allows bg-primary / text-foreground / etc. to resolve under v4. */
+@theme inline {
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-archive-brown: hsl(var(--archive-brown));
+  --color-archive-cream: hsl(var(--archive-cream));
+  --color-archive-gold: hsl(var(--archive-gold));
+  --color-archive-gray: hsl(var(--archive-gray));
+  --font-heading: "Playfair Display", serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --shadow-archival-sm: var(--shadow-sm);
+  --shadow-archival-md: var(--shadow-md);
+  --shadow-archival-lg: var(--shadow-lg);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
 }
 
 @layer base {
