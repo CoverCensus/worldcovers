@@ -51,6 +51,12 @@ jobs:
       # MySQL service block + DATABASE config; see the `services:` pattern
       # in https://docs.github.com/en/actions/using-containerized-services.
       - name: Django system checks
+        # The runner has no /srv/woco/.env so we provide a literal dummy
+        # secret here. manage.py check does no crypto; it just needs
+        # settings.py to import. The real secret lives in /srv/woco/.env
+        # on the server and is loaded by decouple at runtime there.
+        env:
+          DJANGO_SECRET_KEY: ci-dummy-not-a-real-secret-do-not-use-anywhere
         run: uv run python backend/manage.py check
 
       - name: Build frontend
