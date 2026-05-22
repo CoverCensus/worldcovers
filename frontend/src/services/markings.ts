@@ -1,4 +1,5 @@
 import apiClient, { ensureCsrfToken } from "@/lib/api";
+import { listContributions } from "@/services/contributions";
 import {
   coverContributionDisplayName,
   isCoverContributionData,
@@ -1089,8 +1090,9 @@ function mapCoverContributionToAssociatedCover(
     sd.coverMarkingId;
   if (sdMaterialized != null && String(sdMaterialized).trim() !== "") return null;
 
-  const reviewStatus: CoverMarkingReviewStatus =
-    status === "needs_revision" ? "needs_revision" : "pending";
+  // Only "draft" rows reach this point (guarded above), so a draft cover is
+  // always surfaced as "pending" review.
+  const reviewStatus: CoverMarkingReviewStatus = "pending";
 
   const widthRaw = sd.width_mm ?? sd.widthMm ?? sd.width;
   const heightRaw = sd.height_mm ?? sd.heightMm ?? sd.height;
@@ -1143,35 +1145,15 @@ function mapCoverContributionToAssociatedCover(
   };
 }
 
-/** Discard a cover Contribution draft after the cover was submitted via the catalog API. */
-export async function abandonCoverContributionDraft(contributionId: number): Promise<void> {
-  await ensureCsrfToken();
-  const form = new FormData();
-  form.append("submission_kind", "cover");
-  form.append("abandon_draft", "true");
-  form.append("edit_contribution_id", String(contributionId));
-  await apiClient.post("/contributions/", form);
-}
-
 /** Cover contribution drafts for a marking (not yet materialized as CoverMarking rows). */
 export async function getCoverContributionDraftsForMarking(
   markingId: number,
 ): Promise<AssociatedCover[]> {
   try {
-    const res = await apiClient.get<{ results?: unknown[] } | unknown[]>("/contributions/", {
-      withCredentials: true,
-    });
-    const data = res.data;
-    const list = Array.isArray(data)
-      ? data
-      : Array.isArray((data as { results?: unknown[] })?.results)
-        ? (data as { results: unknown[] }).results
-        : [];
-    return list
+    const { rawItems } = await listContributions();
+    return rawItems
       .map((row) =>
-        row && typeof row === "object"
-          ? mapCoverContributionToAssociatedCover(row as Record<string, unknown>, markingId)
-          : null,
+        mapCoverContributionToAssociatedCover(row as Record<string, unknown>, markingId),
       )
       .filter((x): x is AssociatedCover => x !== null);
   } catch {

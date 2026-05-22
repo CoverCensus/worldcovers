@@ -355,8 +355,7 @@ export function CoverDialog({
           });
         }
         return createDateSeen({
-          subject_type: "COVER",
-          subject_id: coverId,
+          cover: coverId,
           date: dateValue,
           granularity: row.granularity,
         });

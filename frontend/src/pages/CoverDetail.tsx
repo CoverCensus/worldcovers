@@ -194,7 +194,7 @@ const CoverDetailPage = () => {
       if (!res.ok) {
         toast({
           title: "Could not update cover",
-          description: res.message,
+          description: "message" in res ? res.message : "Request failed.",
           variant: "destructive",
         });
         return;

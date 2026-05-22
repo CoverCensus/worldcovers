@@ -28,7 +28,7 @@ import {
   isCoverContributionData,
   parentMarkingIdFromContribution,
 } from "@/lib/contributionDisplay";
-import { getCsrfTokenFromCookie } from "@/lib/api";
+import { type Contribution, getContribution, decideContribution } from "@/services/contributions";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 
@@ -36,35 +36,6 @@ const COVER_TYPE_LABELS: Record<string, string> = {
   FC: "Folded Cover",
   FL: "Folded Letter",
 };
-
-type ContributionRecord = {
-  id: number;
-  contributor_id: number | null;
-  status: string;
-  contributor_username: string;
-  review_notes: string | null;
-  created_at: string;
-  submitted_data: Record<string, unknown>;
-  display_name?: string;
-};
-
-function normalizeContribution(data: Record<string, unknown>): ContributionRecord {
-  return {
-    id: data.id as number,
-    contributor_id:
-      typeof data.contributor === "number"
-        ? data.contributor
-        : typeof (data as { contributorId?: number }).contributorId === "number"
-          ? (data as { contributorId: number }).contributorId
-          : null,
-    status: (data.status as string) ?? "pending",
-    contributor_username: (data.contributor_username ?? data.contributorUsername) as string,
-    review_notes: (data.review_notes ?? data.reviewNotes) as string | null,
-    created_at: (data.created_at ?? data.createdAt) as string,
-    submitted_data: (data.submitted_data ?? data.submittedData ?? {}) as Record<string, unknown>,
-    display_name: (data.display_name ?? data.displayName) as string | undefined,
-  };
-}
 
 function boolLabel(raw: unknown): string {
   if (raw === true || raw === "true" || raw === "1" || raw === 1) return "Yes";
@@ -103,7 +74,7 @@ function tracingFlagsFromSubmittedData(sd: Record<string, unknown>, imageCount: 
 
 interface CoverContributionDetailProps {
   /** When ContributionDetail already loaded the row, skip a duplicate fetch. */
-  initialContribution?: ContributionRecord | null;
+  initialContribution?: Contribution | null;
 }
 
 export default function CoverContributionDetail({ initialContribution = null }: CoverContributionDetailProps) {
@@ -113,7 +84,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   const { toast } = useToast();
   const user = useAuth();
 
-  const [contribution, setContribution] = useState<ContributionRecord | null>(initialContribution);
+  const [contribution, setContribution] = useState<Contribution | null>(initialContribution);
   const [loading, setLoading] = useState(!initialContribution);
   const [error, setError] = useState<string | null>(null);
   const [carouselApi, setCarouselApi] = useState<CarouselApi>();
@@ -139,27 +110,11 @@ export default function CoverContributionDetail({ initialContribution = null }: 
       return;
     }
 
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      setError("VITE_API_URL is not set.");
-      setLoading(false);
-      return;
-    }
-
     let cancelled = false;
-    fetch(`${apiBase}/contributions/${contributionId}/`, {
-      method: "GET",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(res.status === 404 ? "Contribution not found" : res.statusText);
-        return res.json();
-      })
-      .then((data: Record<string, unknown>) => {
+    getContribution(contributionId)
+      .then((normalized) => {
         if (cancelled) return;
-        const normalized = normalizeContribution(data);
-        if (!isCoverContributionData(normalized.submitted_data)) {
+        if (!isCoverContributionData(normalized.submittedData)) {
           throw new Error("Not a cover submission");
         }
         setContribution(normalized);
@@ -180,13 +135,15 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     setCarouselCurrent(carouselApi.selectedScrollSnap());
     const onSelect = () => setCarouselCurrent(carouselApi.selectedScrollSnap());
     carouselApi.on("select", onSelect);
-    return () => carouselApi.off("select", onSelect);
+    return () => {
+      carouselApi.off("select", onSelect);
+    };
   }, [carouselApi]);
 
-  const sd = contribution?.submitted_data ?? {};
+  const sd = contribution?.submittedData ?? {};
   const parentMarkingId = parentMarkingIdFromContribution(sd);
   const displayName =
-    contribution?.display_name?.trim() ||
+    contribution?.displayName?.trim() ||
     coverContributionDisplayName(sd, contribution?.id ?? 0, contribution?.status);
 
   const images = useMemo(() => {
@@ -209,15 +166,15 @@ export default function CoverContributionDetail({ initialContribution = null }: 
           isTracing: tracingFlags[index] === true,
         };
       })
-      .filter((row): row is { imageUrl: string; originalFilename?: string; isTracing: boolean } => row != null);
+      .filter((row): row is NonNullable<typeof row> => row != null);
   }, [sd, contribution?.id]);
 
   const isContributor =
     !!user &&
     !!contribution &&
-    (contribution.contributor_id === user.id ||
-      contribution.contributor_username === user.username ||
-      contribution.contributor_username === user.email);
+    (contribution.contributorId === user.id ||
+      contribution.contributorUsername === user.username ||
+      contribution.contributorUsername === user.email);
 
   const handleBack = () => {
     if (fromDashboard) {
@@ -235,33 +192,11 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     }
     setCommentError(null);
 
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      toast({ title: "Configuration error", description: "VITE_API_URL is not set.", variant: "destructive" });
-      return;
-    }
-
-    const actionPath = kind === "approve" ? "approve" : kind === "reject" ? "reject" : "request-revision";
-    const body: Record<string, unknown> = {};
-    if (comment.trim()) body.review_notes = comment.trim();
-
     setSubmitting(true);
-    const csrfToken = getCsrfTokenFromCookie();
-    const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
-    if (csrfToken) headers["X-CSRFToken"] = csrfToken;
-
     try {
-      const res = await fetch(`${apiBase}/contributions/${contribution.id}/${actionPath}/`, {
-        method: "POST",
-        credentials: "include",
-        headers,
-        body: JSON.stringify(body),
+      await decideContribution(contribution.id, kind, {
+        reviewNotes: comment.trim() || undefined,
       });
-      if (!res.ok) {
-        const resBody = await res.json().catch(() => ({}));
-        const msg = resBody?.review_notes?.[0] ?? resBody?.detail ?? res.statusText;
-        throw new Error(typeof msg === "string" ? msg : "Request failed");
-      }
       const actionLabel = kind === "approve" ? "Approved" : kind === "reject" ? "Rejected" : "Revision requested";
       toast({ title: actionLabel, description: "Your comment was saved for the contributor." });
       if (kind === "approve" && parentMarkingId != null) {
@@ -332,7 +267,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   const isPending = normalizedStatus === "pending";
   const canReview = isStateEditor && isPending && !!user && !isContributor;
   const showEditorFeedbackCard =
-    contribution.status !== "pending" || !!(contribution.review_notes && contribution.review_notes.trim());
+    contribution.status !== "pending" || !!(contribution.reviewNotes && contribution.reviewNotes.trim());
   const canContributorResubmit =
     isContributor && (contribution.status === "rejected" || contribution.status === "needs_revision");
   const contributorComment = String(
@@ -506,9 +441,9 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                           Outcome: <Badge className={statusBadgeClassName}>{statusLabel}</Badge>
                         </p>
                       )}
-                      {contribution.review_notes?.trim() ? (
+                      {contribution.reviewNotes?.trim() ? (
                         <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
-                          {contribution.review_notes.trim()}
+                          {contribution.reviewNotes.trim()}
                         </p>
                       ) : null}
                       {canContributorResubmit && parentMarkingId != null ? (
@@ -584,8 +519,8 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                     </p>
                   ) : null}
                   <p className="text-sm text-muted-foreground">
-                    Submitted {new Date(contribution.created_at).toLocaleString()}
-                    {contribution.contributor_username ? ` by ${contribution.contributor_username}` : ""}
+                    Submitted {new Date(contribution.createdAt).toLocaleString()}
+                    {contribution.contributorUsername ? ` by ${contribution.contributorUsername}` : ""}
                   </p>
                 </CardContent>
               </Card>

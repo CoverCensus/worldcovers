@@ -25,6 +25,7 @@ import { getMarkingByIdRaw, normalizeImageUrl } from "@/services/markings";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
+import { getContribution, listContributions, createContribution } from "@/services/contributions";
 import { ENTRY_LABELS } from "@/labels/entry";
 import { SUBMISSION_LABELS } from "@/labels/submission";
 import { useToast } from "@/hooks/use-toast";
@@ -34,31 +35,6 @@ import {
   validateMmPair,
   submittedDataToWidthHeightStrings,
 } from "@/lib/dimensionsMm";
-
-/** Base URL for Django API (contributions, etc.) */
-function getApiBaseUrl(): string | null {
-  const env = import.meta.env.VITE_API_URL;
-  if (!env || typeof env !== "string" || env.trim() === "") return null;
-  return env.trim().replace(/\/+$/, "");
-}
-
-function getCsrfTokenFromCookie(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/(^|;\s*)csrftoken=([^;]+)/);
-  return match ? decodeURIComponent(match[2]) : null;
-}
-
-async function ensureCsrfToken(apiBase: string): Promise<string | null> {
-  const existing = getCsrfTokenFromCookie();
-  if (existing) return existing;
-  // Trigger Django CSRF middleware to set csrftoken cookie for session-auth writes.
-  await fetch(`${apiBase}/me/`, {
-    method: "GET",
-    credentials: "include",
-    headers: { Accept: "application/json" },
-  }).catch(() => undefined);
-  return getCsrfTokenFromCookie();
-}
 
 const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 100;
@@ -629,26 +605,12 @@ const Contribute = () => {
       setEditLoadDone(true);
       return;
     }
-    const apiBase = getApiBaseUrl();
-    if (!apiBase) {
-      setEditLoadError("VITE_API_URL is not set.");
-      setEditLoadDone(true);
-      return;
-    }
     let cancelled = false;
-    fetch(`${apiBase}/contributions/${editContributionId}/`, {
-      method: "GET",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(res.status === 404 ? "Contribution not found" : res.statusText);
-        return res.json();
-      })
-      .then((data: Record<string, unknown>) => {
+    getContribution(editContributionId)
+      .then((contribution) => {
         if (cancelled) return;
-        setLoadedContributionStatus(String(data.status ?? "").toLowerCase() || null);
-        const sd = (data.submitted_data ?? data.submittedData) as Record<string, unknown> | undefined;
+        setLoadedContributionStatus(String(contribution.status ?? "").toLowerCase() || null);
+        const sd = contribution.submittedData as Record<string, unknown> | undefined;
         if (!sd || typeof sd !== "object") {
           setEditLoadDone(true);
           return;
@@ -897,35 +859,17 @@ const Contribute = () => {
       });
     };
 
-    const apiBase = getApiBaseUrl();
-    if (!apiBase) {
-      loadMarking();
-      return () => {
-        cancelled = true;
-      };
-    }
-    fetch(`${apiBase}/contributions/?status=draft&ordering=-created_at`, {
-      method: "GET",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((page) => {
+    listContributions({ status: "draft", ordering: "-created_at" })
+      .then(({ rawItems }) => {
         if (cancelled) return;
-        const rows: unknown[] = Array.isArray(page)
-          ? page
-          : Array.isArray((page as Record<string, unknown> | null)?.results)
-            ? ((page as Record<string, unknown>).results as unknown[])
-            : [];
-        const match = rows.find((row) => {
-          const r = row as Record<string, unknown>;
+        const match = rawItems.find((r) => {
           const sd = (r.submitted_data ?? r.submittedData) as
             | Record<string, unknown>
             | undefined;
           const epi = sd?.edit_postmark_id;
           if (epi == null || epi === "") return false;
           return Number(epi) === Number(editMarkingId);
-        }) as Record<string, unknown> | undefined;
+        });
         if (match && match.id != null) {
           navigate(`/contribute?edit=${match.id}`, { replace: true });
           return;
@@ -1229,16 +1173,6 @@ const Contribute = () => {
         url: detail?.citationUrl?.trim() || undefined,
       };
     });
-    const apiBase = getApiBaseUrl();
-    if (!apiBase) {
-      toast({
-        title: "Configuration error",
-        description: "VITE_API_URL is not set. Cannot submit Marking.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     const allImageFiles = markingImageFiles;
     // The Tracing checkbox replaces the old mark/cover/tracing dropdown, so
     // every entry in markingImageTags now defaults to "photograph"; there is
@@ -1256,7 +1190,7 @@ const Contribute = () => {
 
     setSubmitting(true);
     try {
-      let body: string | FormData;
+      let body: FormData | Record<string, unknown>;
 
       const derivedIsCircular = isCircularType(shapeVal);
       const widthToSend = widthMm.trim();
@@ -1347,7 +1281,7 @@ const Contribute = () => {
         for (const img of existingImages) {
           existingTagMap[img.url] = tracingToTag(img.tracing);
         }
-        body = JSON.stringify({
+        body = {
           ...(isEditContribution && editContributionId != null
             ? { edit_contribution_id: editContributionId }
             : {}),
@@ -1389,35 +1323,10 @@ const Contribute = () => {
           ...(saveAsDraft && isEditMarking && markingModifiedAtBaseline
             ? { marking_modified_at_baseline: markingModifiedAtBaseline }
             : {}),
-        });
+        };
       }
 
-      const csrfToken = await ensureCsrfToken(apiBase);
-      const headers: Record<string, string> = typeof body === "string" ? { "Content-Type": "application/json" } : {};
-      if (csrfToken) headers["X-CSRFToken"] = csrfToken;
-
-      const res = await fetch(`${apiBase}/contributions/`, {
-        method: "POST",
-        credentials: "include",
-        headers,
-        body,
-      });
-
-      if (!res.ok) {
-        if (res.status === 413) {
-          toast({
-            title: "Image too large",
-            description: `The image file is too large for the server to accept. Please use an image under ${MAX_IMAGE_SIZE_MB}MB. If your image is already under ${MAX_IMAGE_SIZE_MB}MB, the server may have a lower limit—try a smaller file.`,
-            variant: "destructive",
-          });
-          return;
-        }
-        const errBody = await res.json().catch(() => ({}));
-        const msg = errBody?.detail || res.statusText || "Could not submit.";
-        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
-      }
-
-      const resData = (await res.json().catch(() => ({}))) as { contributionId?: number; detail?: string };
+      const result = await createContribution(body);
 
       toast({
         title: saveAsDraft ? "Draft saved" : copy.toastTitle,
@@ -1432,10 +1341,7 @@ const Contribute = () => {
       }
 
       if (isEditContribution) {
-        const returnedId =
-          resData?.contributionId ??
-          (resData as Record<string, unknown> | undefined)?.id ??
-          editContributionId;
+        const returnedId = result.contributionId ?? editContributionId;
         if (returnedId != null) {
           navigate(`/contribution/${returnedId}`, { state: { fromDashboard: true } });
           return;
@@ -1447,8 +1353,8 @@ const Contribute = () => {
         const fromDashboardDirect = (location.state as Record<string, unknown> | null)?.fromDashboardDirect;
         const fromDashboardViaDetail = (location.state as Record<string, unknown> | null)?.fromDashboardViaDetail;
         const fromSearch = (location.state as Record<string, unknown> | null)?.fromSearch;
-        if (resData?.contributionId != null) {
-          navigate(`/contribution/${resData.contributionId}`, { state: { fromDashboard: true } });
+        if (result.contributionId != null) {
+          navigate(`/contribution/${result.contributionId}`, { state: { fromDashboard: true } });
         } else if (fromDashboardDirect || fromDashboard || fromDashboardViaDetail) {
           navigate("/dashboard");
         } else if (fromSearch) {
@@ -1475,6 +1381,14 @@ const Contribute = () => {
       }
       return;
     } catch (err: unknown) {
+      if ((err as { status?: number })?.status === 413) {
+        toast({
+          title: "Image too large",
+          description: `The image file is too large for the server to accept. Please use an image under ${MAX_IMAGE_SIZE_MB}MB. If your image is already under ${MAX_IMAGE_SIZE_MB}MB, the server may have a lower limit-try a smaller file.`,
+          variant: "destructive",
+        });
+        return;
+      }
       toast({
         title: "Submission failed",
         description: err instanceof Error ? err.message : "Could not submit. Try again.",
@@ -1930,36 +1844,12 @@ const Contribute = () => {
                               "Discard this draft and start over from the current marking? Your saved draft will be deleted.",
                             );
                             if (!ok) return;
-                            const apiBase = getApiBaseUrl();
-                            if (!apiBase) {
-                              toast({
-                                title: "Configuration error",
-                                description: "VITE_API_URL is not set.",
-                                variant: "destructive",
-                              });
-                              return;
-                            }
                             setDiscardingDraft(true);
                             try {
-                              const csrfToken = await ensureCsrfToken(apiBase);
-                              const headers: Record<string, string> = {
-                                "Content-Type": "application/json",
-                              };
-                              if (csrfToken) headers["X-CSRFToken"] = csrfToken;
-                              const res = await fetch(`${apiBase}/contributions/`, {
-                                method: "POST",
-                                credentials: "include",
-                                headers,
-                                body: JSON.stringify({
-                                  edit_contribution_id: editContributionId,
-                                  abandon_draft: "true",
-                                }),
+                              await createContribution({
+                                edit_contribution_id: editContributionId,
+                                abandon_draft: "true",
                               });
-                              if (!res.ok && res.status !== 204) {
-                                const body = await res.json().catch(() => ({}));
-                                const msg = body?.detail || res.statusText || "Could not discard draft.";
-                                throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
-                              }
                               navigate(`/contribute/edit/${resumedEditPostmarkId}`, { replace: true });
                             } catch (err: unknown) {
                               toast({

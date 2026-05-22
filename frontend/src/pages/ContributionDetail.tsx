@@ -20,88 +20,16 @@ import CoverContributionDetail from "@/pages/CoverContributionDetail";
 import { buildMarkingFields } from "@/lib/markingFields";
 import { submittedDataToFieldInput } from "@/lib/contributionToFields";
 import { MarkingFieldsDisplay } from "@/components/MarkingFieldsDisplay";
+import { type Contribution, getContribution, decideContribution } from "@/services/contributions";
 
 
-function getCsrfTokenFromCookie(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/(^|;\s*)csrftoken=([^;]+)/);
-  return match ? decodeURIComponent(match[2]) : null;
-}
-
-interface SubmittedData {
-  state?: string;
-  town?: string;
-  date_range?: string;
-  dateRange?: string;
-  first_seen?: string;
-  last_seen?: string;
-  firstSeen?: string;
-  lastSeen?: string;
-  shape?: string;
-  type?: string;
-  color?: string;
-  manuscript?: string;
-  dimensions?: string;
-  width_mm?: string | number;
-  height_mm?: string | number;
-  widthMm?: string | number;
-  heightMm?: string | number;
-  description?: string;
-  references?: string;
-  is_irreg?: boolean;
-  isIrreg?: boolean;
-  submitter_name?: string;
-  original_postmark_id?: string;
-  image_meta?: {
-    storage_filename?: string;
-    original_filename?: string;
-    /** API may return camelCase */
-    storageFilename?: string;
-    originalFilename?: string;
-  };
-  /** Multiple images; API may return as image_metas or imageMetas */
-  image_metas?: Array<{
-    storage_filename?: string;
-    original_filename?: string;
-    storageFilename?: string;
-    originalFilename?: string;
-  }>;
-  /** API may return camelCase */
-  imageMetas?: SubmittedData["image_metas"];
-  /** Categorized public image URLs returned by backend sanitization */
-  postmark_images?: string[];
-  ratemark_images?: string[];
-  auxmark_images?: string[];
-  /** API may return camelCase or PascalCase */
-  postmarkImages?: string[];
-  ratemarkImages?: string[];
-  auxmarkImages?: string[];
-  PostmarkImages?: string[];
-  RatemarkImages?: string[];
-  AuxmarkImages?: string[];
-  /** Contributor-provided; used when editor approves (editor only fills value + comment). */
-  lettering_style_id?: number;
-  /** API may return camelCase */
-  letteringStyleId?: number;
-  dates_observed?: string;
-  datesObserved?: string;
-}
-
-interface Contribution {
-  id: number;
-  /** Submitter user id (from API `contributor` FK) */
-  contributor_id?: number | null;
-  status: string;
-  contributor_username: string;
-  review_notes: string | null;
-  created_at: string;
-  submitted_data: SubmittedData;
-  /** Postmaker-style title from API: "Town, State — Type" or "Submission #id" */
-  display_name?: string;
-  postmark_id?: number | null;
-  /** When approved, FK to catalog postmark (API may return as postmark or postmark_id) */
-  postmark?: number | null;
-}
+/** Shape of the per-image metadata blobs stored in a contribution's submitted_data. */
+type ContributionImageMeta = {
+  storage_filename?: string;
+  original_filename?: string;
+  storageFilename?: string;
+  originalFilename?: string;
+};
 
 const ContributionDetail = () => {
   const navigate = useNavigate();
@@ -131,9 +59,9 @@ const ContributionDetail = () => {
   const isContributor =
     !!user &&
     !!contribution &&
-    (contribution.contributor_id === user.id ||
-      contribution.contributor_username === user.username ||
-      contribution.contributor_username === user.email);
+    (contribution.contributorId === user.id ||
+      contribution.contributorUsername === user.username ||
+      contribution.contributorUsername === user.email);
 
   useEffect(() => {
     const contributionId = id ? parseInt(String(id), 10) : null;
@@ -143,43 +71,10 @@ const ContributionDetail = () => {
       return;
     }
 
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      setError("VITE_API_URL is not set.");
-      setLoading(false);
-      return;
-    }
-
     let cancelled = false;
-    fetch(`${apiBase}/contributions/${contributionId}/`, {
-      method: "GET",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(res.status === 404 ? "Contribution not found" : res.statusText);
-        return res.json();
-      })
-      .then((data: Record<string, unknown>) => {
+    getContribution(contributionId)
+      .then((normalized) => {
         if (cancelled) return;
-        // API returns camelCase (CamelCaseJSONRenderer); normalize so component can use snake_case
-        const normalized: Contribution = {
-          id: data.id as number,
-          contributor_id:
-            typeof data.contributor === "number"
-              ? data.contributor
-              : typeof (data as { contributorId?: number }).contributorId === "number"
-                ? (data as { contributorId: number }).contributorId
-                : null,
-          status: (data.status as string) ?? "pending",
-          contributor_username: (data.contributor_username ?? data.contributorUsername) as string,
-          review_notes: (data.review_notes ?? data.reviewNotes) as string | null,
-          created_at: (data.created_at ?? data.createdAt) as string,
-          submitted_data: (data.submitted_data ?? data.submittedData) as SubmittedData,
-          display_name: (data.display_name ?? data.displayName) as string | undefined,
-          postmark_id: (data.postmark_id ?? data.postmarkId ?? data.postmark) as number | null | undefined,
-          postmark: (data.postmark ?? data.postmark_id ?? data.postmarkId) as number | null | undefined,
-        };
         setContribution(normalized);
       })
       .catch((err) => {
@@ -236,44 +131,16 @@ const ContributionDetail = () => {
     }
     setCommentError(null);
 
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      toast({ title: "Configuration error", description: "VITE_API_URL is not set.", variant: "destructive" });
-      return;
-    }
-
-    const actionPath = kind === "approve" ? "approve" : kind === "reject" ? "reject" : "request-revision";
-    const body: Record<string, unknown> = {};
-    if (comment.trim()) {
-      body.review_notes = comment.trim();
-    }
-
     setSubmitting(true);
-    const csrfToken = getCsrfTokenFromCookie();
-    const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
-    if (csrfToken) headers["X-CSRFToken"] = csrfToken;
-
     try {
-      const res = await fetch(`${apiBase}/contributions/${contribution.id}/${actionPath}/`, {
-        method: "POST",
-        credentials: "include",
-        headers,
-        body: JSON.stringify(body),
+      const result = await decideContribution(contribution.id, kind, {
+        reviewNotes: comment.trim() || undefined,
       });
-      if (!res.ok) {
-        const resBody = await res.json().catch(() => ({}));
-        const msg = resBody?.review_notes?.[0] ?? resBody?.detail ?? res.statusText;
-        throw new Error(typeof msg === "string" ? msg : "Request failed");
-      }
       const actionLabel = kind === "approve" ? "Approved" : kind === "reject" ? "Rejected" : "Submission returned";
       toast({ title: actionLabel, description: "Your comment was saved for the contributor." });
-      if (kind === "approve") {
-        const data = await res.json();
-        const postmarkId = data?.postmark_id ?? data?.postmarkId;
-        if (postmarkId != null) {
-          navigate(`/record/${postmarkId}`, { state: { fromDashboard: true } });
-          return;
-        }
+      if (kind === "approve" && result.postmarkId != null) {
+        navigate(`/record/${result.postmarkId}`, { state: { fromDashboard: true } });
+        return;
       }
       navigate("/dashboard", { state: { tab: "editor" } });
     } catch (err) {
@@ -321,10 +188,7 @@ const ContributionDetail = () => {
     );
   }
 
-  const rawSubmitted =
-    contribution.submitted_data ??
-    (contribution as unknown as Record<string, unknown>).submittedData ??
-    {};
+  const rawSubmitted = contribution.submittedData;
   const sd: Record<string, unknown> =
     typeof rawSubmitted === "object" && rawSubmitted !== null
       ? (rawSubmitted as Record<string, unknown>)
@@ -332,16 +196,7 @@ const ContributionDetail = () => {
   if (isCoverContributionData(sd)) {
     return (
       <CoverContributionDetail
-        initialContribution={{
-          id: contribution.id,
-          contributor_id: contribution.contributor_id ?? null,
-          status: contribution.status,
-          contributor_username: contribution.contributor_username,
-          review_notes: contribution.review_notes,
-          created_at: contribution.created_at,
-          submitted_data: sd,
-          display_name: contribution.display_name,
-        }}
+        initialContribution={{ ...contribution, submittedData: sd }}
       />
     );
   }
@@ -366,8 +221,8 @@ const ContributionDetail = () => {
   const imageRoot = baseImageUrl || "/media";
   const resolveStorageImageUrl = (storageFilename: string) =>
     normalizeImageUrl(`${imageRoot}/${storageFilename.replace(/^\/+/, "")}`);
-  const imageMetasRaw = (sd.image_metas ?? sd.imageMetas) as SubmittedData["image_metas"] | undefined;
-  const imageMetaSingle = sd.image_meta as SubmittedData["image_meta"] | undefined;
+  const imageMetasRaw = (sd.image_metas ?? sd.imageMetas) as ContributionImageMeta[] | undefined;
+  const imageMetaSingle = sd.image_meta as ContributionImageMeta | undefined;
   const imageMetaList: Array<{ imageUrl: string; originalFilename?: string }> = [];
   const asImageUrlArray = (raw: unknown): string[] => {
     if (!Array.isArray(raw)) return [];
@@ -460,17 +315,10 @@ const ContributionDetail = () => {
     fieldRowsError = err instanceof Error ? err.message : String(err);
   }
   const showEditorFeedbackCard =
-    contribution.status !== "pending" || !!(contribution.review_notes && contribution.review_notes.trim());
+    contribution.status !== "pending" || !!(contribution.reviewNotes && contribution.reviewNotes.trim());
   const canContributorResubmit =
     isContributor && (contribution.status === "rejected" || contribution.status === "needs_revision");
-  const postmarkIdRaw =
-    contribution.postmark_id ?? contribution.postmark ?? (contribution as unknown as Record<string, unknown>).postmarkId ?? null;
-  const postmarkId =
-    typeof postmarkIdRaw === "number"
-      ? postmarkIdRaw
-      : postmarkIdRaw != null && String(postmarkIdRaw).trim() !== ""
-        ? parseInt(String(postmarkIdRaw), 10)
-        : null;
+  const postmarkId = contribution.postmarkId;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -639,9 +487,9 @@ const ContributionDetail = () => {
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    {contribution.review_notes?.trim() ? (
+                    {contribution.reviewNotes?.trim() ? (
                       <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
-                        {contribution.review_notes.trim()}
+                        {contribution.reviewNotes.trim()}
                       </p>
                     ) : null}
                     {canContributorResubmit ? (

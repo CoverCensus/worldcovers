@@ -35,14 +35,9 @@ import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { cn } from "@/lib/utils";
 import { normalizeImageUrl, getAssignedCatalogPage, type MarkingRecord } from "@/services/markings";
+import { listContributions, decideContribution } from "@/services/contributions";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
-
-function getCsrfTokenFromCookie(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/(^|;\\s*)csrftoken=([^;]+)/);
-  return match ? decodeURIComponent(match[2]) : null;
-}
 
 const noImageClassName = "w-full h-full min-w-0 min-h-0 object-cover bg-muted";
 
@@ -198,13 +193,6 @@ function SortableLabel<F extends string>({
     </div>
   );
 }
-
-type PaginatedResponse<T> = {
-  count: number;
-  page: number;
-  page_size: number;
-  results: T[];
-};
 
 /** Build compact page numbers for pagination (shared with Catalog Search) */
 function getPaginationPages(currentPage: number, totalPages: number): (number | "ellipsis")[] {
@@ -406,37 +394,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     const fetchSubmissions = async () => {
       setLoading(true);
       try {
-        const apiEnv = import.meta.env.VITE_API_URL;
-        const apiBase =
-          apiEnv && typeof apiEnv === "string" && apiEnv.trim() !== ""
-            ? apiEnv.trim().replace(/\/+$/, "")
-            : null;
-
-        if (!apiBase) {
-          toast({
-            title: "Configuration error",
-            description: "VITE_API_URL is not set, cannot load submissions.",
-            variant: "destructive",
-          });
-          setSubmissions([]);
-          return;
-        }
-
-        // Fetch all contributions (new submissions + suggestions) so both appear in My Submissions
-        const res = await fetch(`${apiBase}/contributions/`, {
-          method: "GET",
-          credentials: "include",
-          headers: { Accept: "application/json" },
-        });
-        if (!res.ok) {
-          throw new Error(`API error: ${res.status} ${res.statusText}`);
-        }
-        const data: any = await res.json();
-        const list: any[] = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.results)
-            ? data.results
-            : [];
+        // Fetch all contributions (new submissions + suggestions) so both appear in My Submissions.
+        // rawItems carry dynamic camelCase-or-snake_case display fields the mapper reads positionally.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const list = (await listContributions()).rawItems as any[];
         if (!list.length) {
           setSubmissions([]);
           return;
@@ -540,13 +501,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   // Fetch suggestions (corrections) for the current user
   useEffect(() => {
-    const apiEnv = import.meta.env.VITE_API_URL;
-    const apiBase =
-      apiEnv && typeof apiEnv === "string" && apiEnv.trim() !== ""
-        ? apiEnv.trim().replace(/\/+$/, "")
-        : null;
-
-    if (!apiBase || !user) {
+    if (!user) {
       setSuggestions([]);
       setSuggestionsLoading(false);
       return;
@@ -559,20 +514,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
       setSuggestionsLoading(true);
       try {
-        const res = await fetch(`${apiBase}/contributions/?kind=suggestion`, {
-          method: "GET",
-          credentials: "include",
-          headers: { Accept: "application/json" },
-        });
-        if (!res.ok) {
-          throw new Error(`API error: ${res.status} ${res.statusText}`);
-        }
-        const data: any = await res.json();
-        const list: any[] = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.results)
-            ? data.results
-            : [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const list = (await listContributions({ kind: "suggestion" })).rawItems as any[];
         if (!list.length) {
           setSuggestions([]);
           return;
@@ -704,40 +647,19 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Load pending contributions for editor review (approve/reject/request revision)
   useEffect(() => {
     if (!isEditor || activeTab !== "editor") return;
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      setPendingReviewError("VITE_API_URL is not set.");
-      setPendingReviewItems([]);
-      setPendingReviewTotal(null);
-      return;
-    }
     setPendingReviewError(null);
     setPendingReviewLoading(true);
-    const stateParam = editorStateFilter !== "all" ? `&state=${encodeURIComponent(editorStateFilter)}` : "";
-    fetch(
-      `${apiBase}/contributions/?mode=editor&status=pending${stateParam}&page=${pendingReviewPage}&page_size=${pendingReviewPageSize}`,
-      {
-      method: "GET",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-      },
-    )
-      .then((res) => {
-        if (!res.ok) throw new Error(res.statusText || "Failed to load pending submissions");
-        return res.json();
-      })
-      .then((data: any[] | PaginatedResponse<any>) => {
-        const list = Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : null;
-        const total = Array.isArray(data)
-          ? data.length
-          : typeof (data as PaginatedResponse<any>)?.count === "number"
-            ? (data as PaginatedResponse<any>).count
-            : null;
-        setPendingReviewTotal(total);
-        if (!Array.isArray(list)) {
-          setPendingReviewItems([]);
-          return;
-        }
+    listContributions({
+      mode: "editor",
+      status: "pending",
+      state: editorStateFilter !== "all" ? editorStateFilter : undefined,
+      page: pendingReviewPage,
+      pageSize: pendingReviewPageSize,
+    })
+      .then(({ rawItems, count }) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const list = rawItems as any[];
+        setPendingReviewTotal(count);
         setPendingReviewItems(
           list.map((c) => {
             const submittedData = (c as { submitted_data?: Record<string, unknown>; submittedData?: Record<string, unknown> }).submitted_data
@@ -782,45 +704,24 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Load editor history (all user suggestions in assigned states) for the Editor tab
   useEffect(() => {
     if (!isEditor || activeTab !== "editor") return;
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      setEditorHistoryError("VITE_API_URL is not set.");
-      setEditorHistoryItems([]);
-      setEditorHistoryTotal(null);
-      return;
-    }
     setEditorHistoryError(null);
     setEditorHistoryLoading(true);
-    const statusParam =
+    const historyStatus =
       editorHistoryStatusFilter !== "all" &&
       ["pending", "approved", "rejected", "needs_revision"].includes(editorHistoryStatusFilter)
-        ? `&status=${editorHistoryStatusFilter}`
-        : "";
-    const stateParam = editorStateFilter !== "all" ? `&state=${encodeURIComponent(editorStateFilter)}` : "";
-    fetch(
-      `${apiBase}/contributions/?mode=editor${statusParam}${stateParam}&page=${editorHistoryPage}&page_size=${editorHistoryPageSize}`,
-      {
-      method: "GET",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-      },
-    )
-      .then((res) => {
-        if (!res.ok) throw new Error(res.statusText || "Failed to load history");
-        return res.json();
-      })
-      .then((data: any[] | PaginatedResponse<any>) => {
-        const list = Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : null;
-        const total = Array.isArray(data)
-          ? data.length
-          : typeof (data as PaginatedResponse<any>)?.count === "number"
-            ? (data as PaginatedResponse<any>).count
-            : null;
-        setEditorHistoryTotal(total);
-        if (!Array.isArray(list)) {
-          setEditorHistoryItems([]);
-          return;
-        }
+        ? editorHistoryStatusFilter
+        : undefined;
+    listContributions({
+      mode: "editor",
+      status: historyStatus,
+      state: editorStateFilter !== "all" ? editorStateFilter : undefined,
+      page: editorHistoryPage,
+      pageSize: editorHistoryPageSize,
+    })
+      .then(({ rawItems, count }) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const list = rawItems as any[];
+        setEditorHistoryTotal(count);
         let mapped = list.map((c) => {
           const submittedData = (c as { submitted_data?: Record<string, unknown>; submittedData?: Record<string, unknown> }).submitted_data
             ?? (c as { submittedData?: Record<string, unknown> }).submittedData
@@ -899,33 +800,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         return;
       }
     }
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      toast({ title: "Configuration error", description: "VITE_API_URL is not set.", variant: "destructive" });
-      return;
-    }
-    const actionPath =
-      statusDecisionKind === "approve" ? "approve" : statusDecisionKind === "reject" ? "reject" : "request-revision";
-    const body: Record<string, unknown> = { review_notes: statusComment.trim() };
-    if (statusDecisionKind === "approve") {
-      body.estimated_value = parseFloat(approveValue);
-    }
     setStatusSubmitting(true);
-    const csrfToken = getCsrfTokenFromCookie();
-    const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
-    if (csrfToken) headers["X-CSRFToken"] = csrfToken;
     try {
-      const res = await fetch(`${apiBase}/contributions/${statusDecisionTarget.id}/${actionPath}/`, {
-        method: "POST",
-        credentials: "include",
-        headers,
-        body: JSON.stringify(body),
+      await decideContribution(statusDecisionTarget.id, statusDecisionKind, {
+        reviewNotes: statusComment.trim(),
+        estimatedValue: statusDecisionKind === "approve" ? parseFloat(approveValue) : undefined,
       });
-      if (!res.ok) {
-        const resBody = await res.json().catch(() => ({}));
-        const msg = resBody?.review_notes?.[0] ?? resBody?.detail ?? res.statusText;
-        throw new Error(typeof msg === "string" ? msg : "Request failed");
-      }
       const actionLabel =
         statusDecisionKind === "approve" ? "Approved" : statusDecisionKind === "reject" ? "Rejected" : "Revision requested";
       toast({ title: actionLabel, description: "Your comment was saved for the contributor." });

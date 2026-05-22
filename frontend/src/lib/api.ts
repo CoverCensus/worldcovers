@@ -93,9 +93,14 @@ apiClient.interceptors.response.use(
   (error: AxiosError) => {
     const parsedMessage = extractErrorMessage(error.response?.data);
     const message = parsedMessage || error.message || 'Network error';
-    
+
     console.error('API Error:', message);
-    return Promise.reject(new Error(message));
+    // Preserve the HTTP status on the rejected Error so callers can branch on it
+    // (e.g. Contribute.tsx shows a tailored toast for 413 oversized uploads).
+    // Backward compatible: existing callers that only read `.message` ignore it.
+    const normalizedError = new Error(message);
+    (normalizedError as { status?: number }).status = error.response?.status;
+    return Promise.reject(normalizedError);
   }
 );
 

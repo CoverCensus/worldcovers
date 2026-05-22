@@ -648,6 +648,7 @@ const RecordDetail = () => {
                               subjectLabel: typeLabel,
                               isDefault: false,
                               isTracing: false,
+                              imageId: null,
                             } satisfies GalleryImage,
                           ]
                       ).map((img, index) => {

@@ -10,7 +10,7 @@ import {
   Upload,
 } from "lucide-react";
 import axios from "axios";
-import apiClient, { ensureCsrfToken } from "@/lib/api";
+import { getContribution, createContribution, abandonCoverContributionDraft } from "@/services/contributions";
 
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
@@ -58,7 +58,6 @@ import {
 import {
   createImageForSubject,
   getImagesForSubject,
-  abandonCoverContributionDraft,
   getMarkingById,
   getMarkingCovers,
   normalizeImageUrl,
@@ -256,7 +255,6 @@ export default function CoverEdit() {
 
   const initial = useMemo(
     () => (mode === "edit" ? buildEditState(coverRow) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [mode, coverRow],
   );
 
@@ -308,9 +306,8 @@ export default function CoverEdit() {
     setDraftLoadError(null);
     void (async () => {
       try {
-        const res = await apiClient.get(`/contributions/${editContributionId}/`);
-        const data = res.data as Record<string, unknown>;
-        const sd = (data.submitted_data ?? data.submittedData) as Record<string, unknown> | undefined;
+        const contribution = await getContribution(editContributionId);
+        const sd = contribution.submittedData as Record<string, unknown> | undefined;
         if (!sd || typeof sd !== "object" || !isCoverContributionData(sd)) {
           if (!cancelled) {
             setDraftLoadError("This draft is not a cover submission.");
@@ -455,7 +452,6 @@ export default function CoverEdit() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [markingId, routeCoverId, mode]);
 
   useEffect(() => {
@@ -836,8 +832,6 @@ export default function CoverEdit() {
 
     setSubmitting(true);
     try {
-      await ensureCsrfToken();
-
       const form = new FormData();
       form.append("submission_kind", "cover");
       form.append("save_as_draft", "true");
@@ -878,7 +872,7 @@ export default function CoverEdit() {
         form.append("cover_image", row.file, row.file.name);
       }
 
-      await apiClient.post("/contributions/", form);
+      await createContribution(form);
 
       toast({
         title: editContributionId != null ? "Cover draft updated" : "Cover draft saved",
@@ -1252,7 +1246,6 @@ export default function CoverEdit() {
                                   <div key={img.imageId} className="flex flex-col items-center gap-2 rounded border border-border p-3">
                                     <div className="h-36 w-36 rounded overflow-hidden bg-muted shrink-0 flex items-center justify-center border border-border">
                                       {url ? (
-                                        // eslint-disable-next-line @next/next/no-img-element
                                         <img src={url} alt="" className="max-h-full max-w-full object-contain" />
                                       ) : (
                                         <span className="text-xs text-muted-foreground text-center px-2">No preview</span>
@@ -1310,7 +1303,6 @@ export default function CoverEdit() {
                                 return (
                                   <div key={row.key} className="flex flex-col items-center gap-2 rounded border border-border p-3">
                                     <div className="h-36 w-36 rounded overflow-hidden bg-muted shrink-0 flex items-center justify-center border border-border">
-                                      {/* eslint-disable-next-line @next/next/no-img-element */}
                                       <img src={row.previewUrl} alt="" className="max-h-full max-w-full object-contain" />
                                     </div>
                                     <div className="flex items-center justify-center gap-1">

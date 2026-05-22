@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { ENTRY_LABELS } from "@/labels/entry";
 import { SUBMISSION_LABELS } from "@/labels/submission";
+import { createContribution } from "@/services/contributions";
 
 type EditSubmissionDialogProps = {
   open: boolean;
@@ -21,12 +22,6 @@ type EditSubmissionDialogProps = {
     description: string;
   };
 };
-
-function getApiBaseUrl(): string | null {
-  const env = import.meta.env.VITE_API_URL;
-  if (!env || typeof env !== "string" || env.trim() === "") return null;
-  return env.trim().replace(/\/+$/, "");
-}
 
 export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmissionDialogProps) {
   const { toast } = useToast();
@@ -50,19 +45,9 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
       return;
     }
 
-    const apiBase = getApiBaseUrl();
-    if (!apiBase) {
-      toast({
-        title: "Configuration error",
-        description: "VITE_API_URL is not set. Cannot submit changes.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     setSubmitting(true);
     try {
-      const body = {
+      await createContribution({
         state: state.trim(),
         town: town.trim(),
         first_seen: firstSeen.trim(),
@@ -70,20 +55,7 @@ export function EditSubmissionDialog({ open, onOpenChange, initial }: EditSubmis
         shape: shape.trim(),
         color: color.trim(),
         description: description.trim() || undefined,
-      };
-
-      const res = await fetch(`${apiBase}/contributions/`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
       });
-
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        const msg = errBody?.detail || res.statusText || "Could not submit changes.";
-        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
-      }
 
       toast({
         title: SUBMISSION_LABELS.toast.received,
