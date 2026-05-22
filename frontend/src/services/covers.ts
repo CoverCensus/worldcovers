@@ -170,12 +170,6 @@ export async function updateCoverMarking(
   return res.data;
 }
 
-/** DELETE /cover-markings/{id}/ — drop only the link, keep the Cover row. */
-export async function deleteCoverMarking(id: number): Promise<void> {
-  await ensureCsrfToken();
-  await apiClient.delete(`/cover-markings/${id}/`);
-}
-
 /** Granularity matches DateSeen.GRANULARITY_CHOICES on the backend. */
 export type CoverDateGranularity = "DAY" | "MONTH" | "YEAR";
 

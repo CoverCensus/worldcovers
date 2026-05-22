@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowUp, History, Loader2, MessageSquare, Pencil, Plus, Star, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, History, Loader2, MessageSquare, Pencil, Plus, Star } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
@@ -1118,14 +1118,6 @@ const RecordDetail = () => {
             </div>
           </div>
 
-          {isStaff && (
-            <div className="mt-10 flex flex-wrap justify-end gap-3">
-              <Button size="sm" variant="destructive">
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete Marking
-              </Button>
-            </div>
-          )}
         </div>
       </div>
       <Footer />

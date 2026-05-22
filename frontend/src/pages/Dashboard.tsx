@@ -38,14 +38,6 @@ import { normalizeImageUrl, getAssignedCatalogPage, type MarkingRecord } from "@
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
 
-function getMarkingsApiUrl(): string | null {
-  const env = import.meta.env.VITE_API_URL;
-  if (!env || typeof env !== "string" || env.trim() === "") return null;
-  const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith((import.meta.env.VITE_API_BASE_URL || '/api/v2') + "/markings")) return base;
-  return `${base}/markings`;
-}
-
 function getCsrfTokenFromCookie(): string | null {
   if (typeof document === "undefined") return null;
   const match = document.cookie.match(/(^|;\\s*)csrftoken=([^;]+)/);
@@ -285,8 +277,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [loading, setLoading] = useState(true);
   const [submissionsRefetchKey, setSubmissionsRefetchKey] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [goToPageInput, setGoToPageInput] = useState("");
   const itemsPerPage = 10;
@@ -298,7 +288,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [suggestionsGoToInput, setSuggestionsGoToInput] = useState("");
   const suggestionsPageSize = 10;
 
-  // User Submissions (state editor): catalog entries for assigned states – view, edit, delete
+  // User Submissions (state editor): catalog entries for assigned states -- view, edit
   const [assignedCatalogItems, setAssignedCatalogItems] = useState<AssignedCatalogEntry[]>([]);
   const [assignedCatalogPage, setAssignedCatalogPage] = useState(1);
   const [assignedCatalogTotal, setAssignedCatalogTotal] = useState<number | null>(null);
@@ -952,60 +942,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       });
     } finally {
       setStatusSubmitting(false);
-    }
-  };
-
-  const handleDeleteSubmission = async () => {
-    if (!deleteTarget) return;
-    const markingId = (deleteTarget as { marking_id?: number }).marking_id ?? (deleteTarget as { id?: number }).id;
-    if (markingId == null) return;
-
-    const apiUrl = getMarkingsApiUrl();
-    if (!apiUrl) {
-      toast({
-        title: "Configuration error",
-        description: "VITE_API_URL is not set, cannot delete catalog entry.",
-        variant: "destructive",
-      });
-      return;
-    }
-    const base = apiUrl.replace(/\/+$/, "");
-    const url = `${base}/${markingId}/delete-mine/`;
-    const csrfToken = getCsrfTokenFromCookie();
-    const headers: HeadersInit = {};
-    if (csrfToken) {
-      headers["X-CSRFToken"] = csrfToken;
-    }
-    try {
-      setDeletingId(markingId);
-      const res = await fetch(url, {
-        method: "DELETE",
-        credentials: "include",
-        headers,
-      });
-      if (!res.ok) {
-        throw new Error(`Delete failed: ${res.status} ${res.statusText}`);
-      }
-      // Remove from the visible list (submissions or assigned catalog)
-      const targetId = (deleteTarget as { id?: number }).id ?? (deleteTarget as { marking_id?: number }).marking_id;
-      setSubmissions(prev => prev.filter((s) => s.id !== targetId && s.marking_id !== markingId));
-      setAssignedCatalogItems(prev => prev.filter((e) => e.id !== markingId));
-      setAssignedCatalogTotal((prev) => (prev != null && prev > 0 ? prev - 1 : null));
-      setDeleteTarget(null);
-      // Refetch catalog so total and list stay in sync with server
-      setAssignedCatalogRefetchKey((k) => k + 1);
-      toast({
-        title: "Catalog entry deleted",
-        description: "The catalog entry linked to this submission has been removed.",
-      });
-    } catch (error: unknown) {
-      toast({
-        title: "Could not delete catalog entry",
-        description: error instanceof Error ? error.message : "Please try again or contact an admin.",
-        variant: "destructive",
-      });
-    } finally {
-      setDeletingId(null);
     }
   };
 
@@ -1845,15 +1781,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                   >
                                     Edit
                                   </Button>
-                                  {isSuperuser && (
-                                    <Button
-                                      variant="destructive"
-                                      size="sm"
-                                      onClick={() => setDeleteTarget(submission)}
-                                    >
-                                      Delete
-                                    </Button>
-                                  )}
                                 </>
                               )}
                             </div>
@@ -2647,38 +2574,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           )}
       </div>
       <Footer />
-
-      <AlertDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => {
-          if (!open && !deletingId) {
-            setDeleteTarget(null);
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this submission?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently remove{" "}
-              <span className="font-medium text-foreground">
-                {deleteTarget?.name ?? "this catalog entry"}
-              </span>{" "}
-              from your submissions. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={!!deletingId}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteSubmission}
-              disabled={!!deletingId}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {deletingId ? "Deleting..." : "Delete"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       {/* Status decision (approve / reject / request revision) — comment required; approve requires value (lettering/framing/date from submission) */}
       <AlertDialog

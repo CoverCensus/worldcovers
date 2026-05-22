@@ -98,6 +98,20 @@ class MarkingQuerySet(models.QuerySet):
         )
 
 
+class MarkingManager(models.Manager.from_queryset(MarkingQuerySet)):
+    """
+    Default manager for Marking. Hides rows that are in the recycle bin
+    (i.e. that have a related MarkingRecycleBin row). A marking is "removed"
+    by creating its recycle-bin sidecar row, not by mutating the Marking
+    itself -- see MarkingRecycleBin. Code that must see removed markings
+    (recycle-bin endpoints, restore, audit) uses Marking.all_objects.
+
+    Keeps the MarkingQuerySet methods (e.g. with_date_range) via from_queryset.
+    """
+    def get_queryset(self):
+        return super().get_queryset().filter(recycle_bin_entry__isnull=True)
+
+
 MARKING_DATE_FMT_CHOICES = [('MD', 'MD'), ('MDD', 'MDD'), ('YD', 'YD'), ('YMD', 'YMD'), ('YMDD', 'YMDD')]
 MARKING_IMPRESSION_CHOICES = [('Normal', 'Normal'), ('Stencil', 'Stencil'), ('Negative', 'Negative')]
 
@@ -131,13 +145,20 @@ class Marking(TimestampedModel):
     rate_val = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Non-negative rate amount; most common on RATEMARK and integrated-rate TOWNMARK rows')
     post_office = models.ForeignKey('PostOffice', on_delete=models.PROTECT, related_name='markings')
 
-    objects = MarkingQuerySet.as_manager()
+    # objects: default manager, EXCLUDES recycle-binned markings.
+    # all_objects: unfiltered, INCLUDES recycle-binned markings.
+    # base_manager_name='all_objects' makes Django's related/FK access
+    # (contribution.marking, cover_marking.marking, etc.) resolve via the
+    # unfiltered manager so structural references never break on a removed row.
+    objects = MarkingManager()
+    all_objects = MarkingQuerySet.as_manager()
 
     class Meta:
         db_table = 'Markings'
         verbose_name = 'Marking'
         verbose_name_plural = 'Markings'
         ordering = ['id']
+        base_manager_name = 'all_objects'
         constraints = [
             models.CheckConstraint(
                 check=Q(type__in=[c[0] for c in MarkingType.choices]),
@@ -254,6 +275,13 @@ class SubmissionTransaction(models.Model):
     ACTION_RECORD_CREATE = "record_create"
     ACTION_RECORD_UPDATE = "record_update"
     ACTION_RECORD_DELETE = "record_delete"
+    # New deletion-model actions (see MarkingRecycleBin):
+    #   DRAFT_DELETED   -- a contributor/editor hard-deleted their own draft
+    #   MARKING_REMOVED -- a marking was soft-removed into the recycle bin
+    #   MARKING_RESTORED-- a marking was restored from the recycle bin
+    ACTION_DRAFT_DELETED = "draft_deleted"
+    ACTION_MARKING_REMOVED = "marking_removed"
+    ACTION_MARKING_RESTORED = "marking_restored"
     ACTION_CHOICES = [
         (ACTION_SUBMIT, "Submit"),
         (ACTION_EDIT_SUBMISSION, "Edit submission"),
@@ -265,6 +293,9 @@ class SubmissionTransaction(models.Model):
         (ACTION_RECORD_CREATE, "Record create"),
         (ACTION_RECORD_UPDATE, "Record update"),
         (ACTION_RECORD_DELETE, "Record delete"),
+        (ACTION_DRAFT_DELETED, "Draft deleted"),
+        (ACTION_MARKING_REMOVED, "Marking removed"),
+        (ACTION_MARKING_RESTORED, "Marking restored"),
     ]
 
     SOURCE_CONTRIBUTOR_PORTAL = "contributor_portal"
@@ -358,6 +389,44 @@ class MarkingVersion(models.Model):
 
     def __str__(self):
         return f"Marking #{self.marking_id} v{self.version_no}"
+
+
+class MarkingRecycleBin(models.Model):
+    """
+    Soft-delete sidecar for Marking. The presence of a row here means the
+    referenced Marking is "removed" (in the recycle bin). The Marking row
+    itself never moves and is never mutated, so all FKs, versions, cover
+    links, dates, images and citations stay intact -- complete history is
+    preserved. Restoring a marking is just deleting its row here.
+
+    The default Marking manager (MarkingManager) excludes any Marking that
+    has a row in this table; Marking.all_objects includes them.
+    """
+    marking = models.OneToOneField(
+        Marking,
+        on_delete=models.CASCADE,
+        primary_key=True,
+        related_name="recycle_bin_entry",
+    )
+    removed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="markings_removed",
+    )
+    removed_at = models.DateTimeField(auto_now_add=True)
+    reason = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "marking_recycle_bin"
+        verbose_name = "Recycle-binned Marking"
+        verbose_name_plural = "Recycle-binned Markings"
+        ordering = ["-removed_at"]
+        indexes = [
+            models.Index(fields=["removed_at"]),
+        ]
+
+    def __str__(self):
+        return f"Marking #{self.marking_id} removed at {self.removed_at}"
 
 
 IMAGE_MARKING_VIEW_CHOICES = ['FULL', 'DETAIL']

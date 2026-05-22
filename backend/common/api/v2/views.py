@@ -40,6 +40,8 @@ from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_seriali
 from common.audit import (
     build_marking_snapshot,
     create_marking_version,
+    log_marking_removed,
+    log_marking_restored,
     log_submission_transaction,
     restore_marking_from_snapshot,
 )
@@ -58,6 +60,7 @@ from common.models import (
     Image,
     Lettering,
     Marking,
+    MarkingRecycleBin,
     MarkingVersion,
     PostOffice,
     ReferenceWork,
@@ -71,6 +74,7 @@ from .permissions import (
     REVIEW_CONTRIBUTION_PERM,
     CanManageReferenceWorks,
     CanReviewContribution,
+    IsDraftOwner,
     user_assigned_collection_ids,
 )
 from .serializers import (
@@ -395,25 +399,16 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
     filterset_fields = ["color", "type", "has_adhesive", "is_institutional"]
     ordering_fields = ["id", "code", "created_date"]
     ordering = ["id"]
+    # DELETE is intentionally not exposed. Cover deletion has no sanctioned flow
+    # yet (no recycle bin, no audit); it will be designed in a later PR. Until
+    # then there is no unaudited hard-delete path for covers.
+    http_method_names = ["get", "post", "put", "patch", "head", "options", "trace"]
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, modified_by=self.request.user)
 
     def perform_update(self, serializer):
         serializer.save(modified_by=self.request.user)
-
-    def perform_destroy(self, instance):
-        # DateSeen is polymorphic and has no FK to Cover, so DB cascade does
-        # not apply. Purge any cover-scoped DateSeen rows that reference this
-        # Cover before deleting it, so DELETE /covers/<id>/ stays equivalent
-        # to the old (pre-polymorphic) cascade. Done in the same transaction
-        # as the Cover delete to avoid orphan rows on partial failure.
-        with transaction.atomic():
-            DateSeen.objects.filter(
-                subject_type=DateSeen.SUBJECT_COVER,
-                subject_id=instance.pk,
-            ).delete()
-            instance.delete()
 
 
 class DateSeenViewSet(viewsets.ModelViewSet):
@@ -467,6 +462,9 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
     filterset_fields = ["cover", "marking", "is_backstamp", "placement", "review_status"]
     ordering_fields = ["id", "created_date", "reviewed_at"]
     ordering = ["id"]
+    # DELETE is intentionally not exposed. Unlinking a cover from a marking has
+    # no sanctioned flow yet; deferred to the same later PR as cover deletion.
+    http_method_names = ["get", "post", "put", "patch", "head", "options", "trace"]
 
     def get_queryset(self):
         qs = (
@@ -727,6 +725,10 @@ class MarkingViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly, IsResponsibleForRegion]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = MarkingListFilter
+    # No raw DELETE: removing a marking goes through the audited, reversible
+    # POST /markings/<pk>/remove/ (recycle bin) action instead. Custom POST
+    # actions (remove, restore) are unaffected by this restriction.
+    http_method_names = ["get", "post", "put", "patch", "head", "options", "trace"]
     search_fields = [
         "code",
         "catalog_txt",
@@ -800,26 +802,111 @@ class MarkingViewSet(viewsets.ModelViewSet):
         )
         create_marking_version(marking, txn, self.request.user)
 
-    def perform_destroy(self, instance):
-        before_snapshot = build_marking_snapshot(instance)
-        log_submission_transaction(
-            action=SubmissionTransaction.ACTION_RECORD_DELETE,
-            actor=self.request.user,
-            contribution=getattr(instance, "contribution", None),
-            marking=instance,
-            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-            before_payload=before_snapshot,
-            after_payload={},
-            extra_payload={"deleted_marking_id": instance.pk},
+    @action(detail=True, methods=["post"], url_path="remove", permission_classes=[IsAuthenticated])
+    def remove(self, request, pk=None):
+        """
+        Soft-REMOVE this marking into the recycle bin. The Marking row is not
+        mutated or deleted; a MarkingRecycleBin sidecar row is created, which
+        causes the default manager to hide it. Reversible via restore.
+        Permitted for the editor responsible for the marking's region, or a
+        superuser. Optional JSON body: {"reason": "..."}.
+        """
+        marking = (
+            Marking.all_objects.filter(pk=pk).select_related("post_office").first()
         )
-        # DateSeen is polymorphic; marking-scoped rows have no FK and must be
-        # purged explicitly so a marking delete does not leave orphan dates.
+        if not marking:
+            return Response({"detail": "Marking not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not _user_is_responsible_for_marking(request.user, marking):
+            return Response(
+                {"detail": "You are not allowed to remove this marking."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if MarkingRecycleBin.objects.filter(marking=marking).exists():
+            return Response(
+                {"detail": "Marking is already in the recycle bin."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        reason = ""
+        if isinstance(request.data, dict):
+            reason = (request.data.get("reason") or "").strip()
         with transaction.atomic():
-            DateSeen.objects.filter(
-                subject_type=DateSeen.SUBJECT_MARKING,
-                subject_id=instance.pk,
-            ).delete()
-            super().perform_destroy(instance)
+            log_marking_removed(marking, request.user, reason)
+            MarkingRecycleBin.objects.create(
+                marking=marking, removed_by=request.user, reason=reason
+            )
+        return Response(
+            {"detail": "Marking removed.", "markingId": marking.pk},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"], url_path="restore", permission_classes=[IsAuthenticated])
+    def restore(self, request, pk=None):
+        """
+        Restore this marking from the recycle bin by deleting its
+        MarkingRecycleBin sidecar row. Permitted for the editor responsible for
+        the marking's region, or a superuser.
+        """
+        marking = (
+            Marking.all_objects.filter(pk=pk).select_related("post_office").first()
+        )
+        if not marking:
+            return Response({"detail": "Marking not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not _user_is_responsible_for_marking(request.user, marking):
+            return Response(
+                {"detail": "You are not allowed to restore this marking."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        entry = MarkingRecycleBin.objects.filter(marking=marking).first()
+        if not entry:
+            return Response(
+                {"detail": "Marking is not in the recycle bin."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        with transaction.atomic():
+            entry.delete()
+            log_marking_restored(marking, request.user)
+        return Response(
+            {"detail": "Marking restored.", "markingId": marking.pk},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=False, methods=["get"], url_path="recycle-bin", permission_classes=[IsAuthenticated])
+    def recycle_bin(self, request):
+        """
+        List markings currently in the recycle bin (removed), scoped to the
+        regions the editor is responsible for; superusers see all. Uses
+        Marking.all_objects since the default manager hides removed rows.
+        Returns the same list shape as the main marking list so the dashboard
+        can render the rows with its existing card. Per-row removal metadata
+        (who/when/why) lives in the marking changelog.
+        """
+        user = request.user
+        if not (user.is_superuser or user.has_perm(REVIEW_CONTRIBUTION_PERM)):
+            return Response(
+                {"detail": "You are not allowed to view the recycle bin."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        qs = (
+            Marking.all_objects.filter(recycle_bin_entry__isnull=False)
+            .select_related("post_office", "shape", "lettering", "color")
+            .prefetch_related("post_office__post_office_regions__region")
+            .with_date_range()
+            .order_by("-recycle_bin_entry__removed_at")
+        )
+        if not user.is_superuser:
+            assigned_regions = _get_user_assigned_regions(user)
+            if assigned_regions.exists():
+                qs = qs.filter(
+                    post_office__post_office_regions__region__in=assigned_regions
+                ).distinct()
+            else:
+                qs = qs.none()
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = MarkingListSerializer(page, many=True, context=self.get_serializer_context())
+            return self.get_paginated_response(serializer.data)
+        serializer = MarkingListSerializer(qs, many=True, context=self.get_serializer_context())
+        return Response(serializer.data)
 
     @action(detail=False, methods=["get"], url_path="my-assigned", permission_classes=[IsAuthenticated])
     def my_assigned(self, request):
@@ -861,7 +948,12 @@ class MarkingViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"], url_path="changelog", permission_classes=[IsAuthenticated])
     def changelog(self, request, pk=None):
-        marking = self.get_object()
+        # Use all_objects so a removed (recycle-binned) marking's history stays
+        # viewable; the default manager would 404 it. Responsibility is checked
+        # explicitly below.
+        marking = Marking.all_objects.filter(pk=pk).first()
+        if not marking:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         if not _user_is_responsible_for_marking(request.user, marking):
             return Response(
                 {"detail": "You are not allowed to view changelog for this record."},
@@ -1080,85 +1172,6 @@ class MarkingDateRangeView(APIView):
         return Response({"earliest_year": earliest, "latest_year": latest})
 
 
-@extend_schema(
-    responses={
-        204: OpenApiResponse(description="Marking deleted"),
-        400: OpenApiResponse(description="Invalid marking ID"),
-        403: OpenApiResponse(description="Not permitted to delete this marking"),
-        404: OpenApiResponse(description="Marking not found"),
-    }
-)
-@method_decorator(csrf_exempt, name="dispatch")
-class DeleteMyMarkingView(APIView):
-    """
-    Delete one of your own user-contributed catalog markings, OR delete any marking
-    in a region you are an editor for.
-    """
-    permission_classes = [IsAuthenticated]
-
-    def delete(self, request, pk):
-        try:
-            marking_id = int(pk)
-        except (TypeError, ValueError):
-            return Response({"detail": "Invalid marking ID."}, status=status.HTTP_400_BAD_REQUEST)
-        marking = Marking.objects.filter(pk=marking_id).first()
-        if not marking:
-            return Response({"detail": "Marking not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        user = request.user
-        before_snapshot = build_marking_snapshot(marking)
-
-        def _log_delete():
-            log_submission_transaction(
-                action=SubmissionTransaction.ACTION_RECORD_DELETE,
-                actor=user,
-                contribution=getattr(marking, "contribution", None),
-                marking=marking,
-                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-                before_payload=before_snapshot,
-                after_payload={},
-                extra_payload={"deleted_marking_id": marking_id},
-            )
-
-        def _purge_and_delete():
-            # DateSeen rows attached directly to this marking are not cascaded
-            # by the DB (polymorphic, no FK), so purge them in the same
-            # transaction as the marking delete.
-            with transaction.atomic():
-                DateSeen.objects.filter(
-                    subject_type=DateSeen.SUBJECT_MARKING,
-                    subject_id=marking_id,
-                ).delete()
-                marking.delete()
-
-        if user.is_superuser:
-            _log_delete()
-            _purge_and_delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-
-        # PostOffice.region resolves the current Region via post_office_regions
-        # (most-recent active link); None when the PO has no junction rows.
-        marking_region = marking.post_office.region if marking.post_office_id else None
-        region_id = marking_region.pk if marking_region else None
-        if region_id and _get_user_assigned_regions(user).filter(pk=region_id).exists():
-            _log_delete()
-            _purge_and_delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-
-        try:
-            is_own_contribution = marking.contribution.contributor_id == user.id
-        except Exception:
-            is_own_contribution = False
-        if not is_own_contribution:
-            return Response(
-                {"detail": "You can only delete catalog entries that you originally submitted."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        _log_delete()
-        _purge_and_delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
 ###################################################################################################
 ## Contribution viewset
 ###################################################################################################
@@ -1174,12 +1187,19 @@ def _get_editor_contribution_queryset(user):
 
 
 @method_decorator(csrf_exempt, name="dispatch")
-class ContributionViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet):
+class ContributionViewSet(
+    mixins.CreateModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.ReadOnlyModelViewSet,
+):
     """
     GET list / detail at /contributions/ and /contributions/<pk>/.
     POST /contributions/ delegates to ContributionSubmitView so authenticated
     contributors can submit new entries here. Approve / reject actions live on
     detail routes.
+    DELETE /contributions/<pk>/ hard-deletes a DRAFT owned by the requester
+    (true DELETE); see IsDraftOwner. Non-draft contributions cannot be
+    hard-deleted -- removing a promoted marking goes through the recycle bin.
     """
     permission_classes = [IsAuthenticated, CanReviewContribution]
     serializer_class = ContributionDetailSerializer
@@ -1194,7 +1214,34 @@ class ContributionViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet
         # GET (list/detail) and on the approve/reject detail actions.
         if self.action == "create":
             return [IsAuthenticated()]
+        # DELETE is the true-delete-for-drafts path: gated by IsDraftOwner,
+        # not the editor-review permission.
+        if self.action == "destroy":
+            return [IsAuthenticated(), IsDraftOwner()]
         return super().get_permissions()
+
+    def perform_destroy(self, instance):
+        # Reachable only for a draft owned by the requester (IsDraftOwner).
+        # A draft has no Marking yet, so this hard-delete has no downstream
+        # catalog impact. Record a tombstone transaction before deleting; the
+        # contribution FK is left null because the row is about to vanish
+        # (SubmissionTransaction.contribution is SET_NULL anyway).
+        log_submission_transaction(
+            action=SubmissionTransaction.ACTION_DRAFT_DELETED,
+            actor=self.request.user,
+            contribution=None,
+            marking=None,
+            source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
+            before_payload={
+                "contribution_id": instance.pk,
+                "status": instance.status,
+                "collection_id": instance.collection_id,
+                "submitted_data": instance.submitted_data,
+            },
+            after_payload={},
+            extra_payload={"deleted_contribution_id": instance.pk},
+        )
+        instance.delete()
 
     def create(self, request, *args, **kwargs):
         # Delegate to ContributionSubmitView.post so the submission logic stays
@@ -1418,7 +1465,7 @@ def _resolve_contribution_state_value(data) -> str:
         except (TypeError, ValueError):
             continue
         marking = (
-            Marking.objects.filter(pk=marking_id)
+            Marking.all_objects.filter(pk=marking_id)
             .select_related("post_office")
             .prefetch_related("post_office__post_office_regions__region")
             .first()

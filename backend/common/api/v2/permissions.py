@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
+from common.models import Contribution
+
 
 REVIEW_CONTRIBUTION_PERM = "common.review_contribution"
 APPROVE_IMAGE_PERM = "common.approve_image"
@@ -83,6 +85,32 @@ class CanReviewContribution(BasePermission):
         if not user.has_perm(REVIEW_CONTRIBUTION_PERM):
             return False
         return obj.collection_id in user_assigned_collection_ids(user)
+
+
+class IsDraftOwner(BasePermission):
+    """
+    Object-level: user may hard-DELETE this Contribution only if it is a draft
+    that they own. True DELETE is permitted exclusively for drafts
+    (status=draft); a non-draft contribution can never be hard-deleted through
+    this path, not even by a superuser (use the marking REMOVE flow instead).
+    For drafts, the owner (contributor or editor) may delete; superusers may
+    delete any draft.
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        # DELETE is for drafts only -- no exceptions, including superusers.
+        if getattr(obj, "status", None) != Contribution.STATUS_DRAFT:
+            return False
+        if user.is_superuser:
+            return True
+        return getattr(obj, "contributor_id", None) == user.id
 
 
 class CanManageReferenceWorks(BasePermission):

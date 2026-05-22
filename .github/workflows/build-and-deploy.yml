@@ -7,6 +7,12 @@ on:
     branches: [staging]
   workflow_dispatch:
 
+# Opt JS-based actions (e.g. actions/upload-artifact@v5, still declared as
+# node20 in its action.yml) into the node24 runtime ahead of GitHub's
+# forced flip on 2026-06-02. No-op once node24 becomes the default.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     runs-on: ubuntu-latest
