@@ -281,6 +281,11 @@ export interface MarkingRecord {
   citations: MarkingCitation[];
   isRemoved: boolean;
   canRemove: boolean;
+  // Contributor's "comment for editor" and the editor's review feedback, sourced
+  // from the marking's approved Contribution. The backend returns "" to anyone
+  // who is not that contributor or an editor, so a non-empty value is safe to show.
+  commentForEditor: string;
+  editorFeedback: string;
 }
 
 export interface MarkingChangelogEvent {
@@ -514,6 +519,8 @@ export function mapApiMarkingToRecord(raw: unknown): MarkingRecord {
     citations: mapCitationList(o.citations),
     isRemoved: Boolean((raw as { is_removed?: boolean }).is_removed),
     canRemove: Boolean((raw as { can_remove?: boolean }).can_remove),
+    commentForEditor: toStr(o.comment_for_editor),
+    editorFeedback: toStr(o.editor_feedback),
   };
 }
 

@@ -6,7 +6,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Loader2, CheckCircle, XCircle, MessageSquare, ExternalLink } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle, XCircle, MessageSquare, ExternalLink, Pencil, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { useToast } from "@/hooks/use-toast";
@@ -20,7 +30,7 @@ import CoverContributionDetail from "@/pages/CoverContributionDetail";
 import { buildMarkingFields } from "@/lib/markingFields";
 import { submittedDataToFieldInput } from "@/lib/contributionToFields";
 import { MarkingFieldsDisplay } from "@/components/MarkingFieldsDisplay";
-import { type Contribution, getContribution, decideContribution } from "@/services/contributions";
+import { type Contribution, getContribution, decideContribution, deleteDraftContribution } from "@/services/contributions";
 
 
 /** Shape of the per-image metadata blobs stored in a contribution's submitted_data. */
@@ -45,7 +55,10 @@ const ContributionDetail = () => {
   const [comment, setComment] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [resubmitting, setResubmitting] = useState(false);
+  // Draft delete (recycle) -- only a draft the contributor owns can be deleted;
+  // the backend enforces IsDraftOwner on DELETE /contributions/{id}/.
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   // Options to display names for lettering/framing/date format in Submitted data
   const [letteringOptions, setLetteringOptions] = useState<LetteringOption[]>([]);
   const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
@@ -122,6 +135,19 @@ const ContributionDetail = () => {
     };
   }, []);
 
+  // Approved submissions live on the entry detail page now (it carries the
+  // comment-for-editor / editor-feedback cards plus the edit/remove buttons), so
+  // send approved contributions there. Top-level effect (not in render body) to
+  // keep hook order stable; reads the contribution state directly.
+  useEffect(() => {
+    if (contribution?.status === "approved" && contribution.postmarkId != null) {
+      navigate(`/record/${contribution.postmarkId}`, {
+        replace: true,
+        state: { fromDashboard: true },
+      });
+    }
+  }, [contribution, navigate]);
+
 
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
     if (!contribution) return;
@@ -160,8 +186,32 @@ const ContributionDetail = () => {
     else navigate("/dashboard");
   };
 
+  const handleDeleteConfirm = async () => {
+    if (!contribution) return;
+    setDeleting(true);
+    try {
+      await deleteDraftContribution(contribution.id);
+      toast({ title: "Draft deleted" });
+      setDeleteOpen(false);
+      navigate("/dashboard");
+    } catch (err) {
+      toast({
+        title: "Could not delete",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
 
-  if (loading) {
+
+  // Approved submissions are being redirected to the entry page by the effect
+  // above; show the spinner rather than flashing the contribution view first.
+  const isRedirectingToRecord =
+    contribution?.status === "approved" && contribution.postmarkId != null;
+
+  if (loading || isRedirectingToRecord) {
     return (
       <div className="min-h-screen flex flex-col">
         <Navigation />
@@ -316,8 +366,15 @@ const ContributionDetail = () => {
   }
   const showEditorFeedbackCard =
     contribution.status !== "pending" || !!(contribution.reviewNotes && contribution.reviewNotes.trim());
-  const canContributorResubmit =
-    isContributor && (contribution.status === "rejected" || contribution.status === "needs_revision");
+  // Unified edit/remove buttons (mirror the entry detail page). Edit is offered
+  // for any still-editable status; Delete only for a draft the contributor owns
+  // (the only thing the backend permits removing).
+  const canContributorEdit =
+    isContributor &&
+    (contribution.status === "draft" ||
+      contribution.status === "needs_revision" ||
+      contribution.status === "rejected");
+  const canDeleteDraft = isContributor && contribution.status === "draft";
   const postmarkId = contribution.postmarkId;
 
   return (
@@ -339,6 +396,27 @@ const ContributionDetail = () => {
                     <ExternalLink className="mr-2 h-4 w-4" />
                     View record
                   </Link>
+                </Button>
+              )}
+              {canContributorEdit && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(`/contribute?edit=${contribution.id}`)}
+                >
+                  <Pencil className="mr-2 h-4 w-4" />
+                  Edit
+                </Button>
+              )}
+              {canDeleteDraft && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setDeleteOpen(true)}
+                  disabled={deleting}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
                 </Button>
               )}
             </div>
@@ -492,18 +570,6 @@ const ContributionDetail = () => {
                         {contribution.reviewNotes.trim()}
                       </p>
                     ) : null}
-                    {canContributorResubmit ? (
-                      <div className="flex flex-wrap gap-2 pt-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => navigate(`/contribute?edit=${contribution.id}`)}
-                          disabled={resubmitting}
-                        >
-                          Edit before resubmitting
-                        </Button>
-                      </div>
-                    ) : null}
                   </CardContent>
                 </Card>
               </div>
@@ -552,6 +618,31 @@ const ContributionDetail = () => {
 
         </div>
       </div>
+
+      <AlertDialog open={deleteOpen} onOpenChange={(open) => !deleting && setDeleteOpen(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete draft</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes this draft submission. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                handleDeleteConfirm();
+              }}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? "Deleting..." : "Delete draft"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Footer />
     </div>
   );

@@ -1333,6 +1333,11 @@ class ContributionViewSet(
                 contrib.status = Contribution.STATUS_APPROVED
                 contrib.reviewer = request.user
                 contrib.review_notes = review_notes
+                # Link the approved contribution to the marking it produced.
+                # apply_to_catalog() creates and returns the Marking but does not
+                # set this FK; without it marking_id stays NULL and the entry
+                # detail page can never find the contribution's feedback/comment.
+                contrib.marking = marking
                 contrib.save(update_fields=["status", "reviewer", "review_notes", "marking", "updated_at"])
                 after_snapshot = build_marking_snapshot(marking)
                 txn = log_submission_transaction(

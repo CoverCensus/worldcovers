@@ -41,6 +41,9 @@ export interface ContributionApiItem {
   postmarkId?: number | null;
   marking_id?: number | null;
   markingId?: number | null;
+  // ContributionDetailSerializer exposes the approved marking link as plain
+  // "marking" (the FK pk), distinct from the list serializer's "marking_id".
+  marking?: number | null;
   [k: string]: unknown;
 }
 
@@ -107,10 +110,12 @@ export function mapApiItemToContribution(item: ContributionApiItem): Contributio
     createdAt: String(item.created_at ?? item.createdAt ?? ""),
     submittedData,
     displayName: (item.display_name ?? item.displayName) as string | undefined,
+    // "marking" is what the detail serializer returns; without it the detail
+    // page sees a null marking id and the approved->record redirect never fires.
     postmarkId: toNumberOrNull(
-      firstDefined(item.postmark_id, item.postmarkId, item.postmark),
+      firstDefined(item.postmark_id, item.postmarkId, item.postmark, item.marking_id, item.markingId, item.marking),
     ),
-    markingId: toNumberOrNull(firstDefined(item.marking_id, item.markingId)),
+    markingId: toNumberOrNull(firstDefined(item.marking_id, item.markingId, item.marking)),
   };
 }
 

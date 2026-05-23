@@ -33,7 +33,7 @@ from common.models import (
     Shape,
 )
 
-from .permissions import _user_is_responsible_for_marking
+from .permissions import _user_is_responsible_for_marking, REVIEW_CONTRIBUTION_PERM
 
 
 User = get_user_model()
@@ -498,6 +498,33 @@ def _marking_state_abbrev(marking) -> str:
     return (region.abbrev or "") if region else ""
 
 
+def _viewer_may_see_contribution_notes(user, contribution) -> bool:
+    # contribution: Contribution | None. Returns True for any editor/admin/superuser
+    # or the contributor who made it. False for anon and unrelated users. This is
+    # intentionally NOT region-scoped (unlike _user_is_responsible_for_marking):
+    # any editor may see the comment-for-editor and editor feedback.
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+    if contribution is None:
+        return False
+    if user.is_superuser or user.has_perm(REVIEW_CONTRIBUTION_PERM):
+        return True
+    return getattr(contribution, "contributor_id", None) == user.id
+
+
+def _comment_for_editor_from(submitted_data) -> str:
+    # The contributor's "comment for editor" lives in Contribution.submitted_data.
+    # The submit form writes it under both contributor_comment and comment_for_editor;
+    # fall back to plain "comment" for older rows.
+    if not isinstance(submitted_data, dict):
+        return ""
+    for key in ("contributor_comment", "comment_for_editor", "comment"):
+        val = submitted_data.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
 class MarkingListSerializer(serializers.ModelSerializer):
     """
     Lightweight Marking row used by /api/v2/markings/ list/search.
@@ -622,6 +649,8 @@ class MarkingSerializer(serializers.ModelSerializer):
     modified_by = UserSerializer(read_only=True)
     is_removed = serializers.SerializerMethodField()
     can_remove = serializers.SerializerMethodField()
+    comment_for_editor = serializers.SerializerMethodField()
+    editor_feedback = serializers.SerializerMethodField()
 
     class Meta:
         model = Marking
@@ -662,6 +691,8 @@ class MarkingSerializer(serializers.ModelSerializer):
             "modified_by",
             "is_removed",
             "can_remove",
+            "comment_for_editor",
+            "editor_feedback",
         ]
         read_only_fields = ["id", "created_date", "modified_date"]
 
@@ -674,6 +705,22 @@ class MarkingSerializer(serializers.ModelSerializer):
         if user is None:
             return False
         return _user_is_responsible_for_marking(user, obj)
+
+    def get_editor_feedback(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        contribution = getattr(obj, "contribution", None)
+        if not _viewer_may_see_contribution_notes(user, contribution):
+            return ""
+        return (contribution.review_notes or "").strip()
+
+    def get_comment_for_editor(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        contribution = getattr(obj, "contribution", None)
+        if not _viewer_may_see_contribution_notes(user, contribution):
+            return ""
+        return _comment_for_editor_from(contribution.submitted_data)
 
     def get_state(self, obj):
         return _marking_state_name(obj)

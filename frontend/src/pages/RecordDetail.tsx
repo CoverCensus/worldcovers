@@ -57,7 +57,6 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { SUBMISSION_LABELS } from "@/labels/submission";
 import { useAuth } from "@/hooks/useAuth";
-import type { AuthUser } from "@/lib/auth";
 
 type GalleryImage = {
   imageUrl: string | null;
@@ -252,19 +251,6 @@ function historyActorDisplay(event: MarkingChangelogEvent): string {
   const actor = (event.actor ?? "").trim();
   if (actor) return actor;
   return "system";
-}
-
-function shouldShowEditorComment(params: {
-  user: AuthUser | null;
-  editorComment: string;
-}): boolean {
-  if (!params.editorComment.trim()) return false;
-  if (!params.user) return false;
-  return (
-    params.user.role === "editor" ||
-    params.user.role === "administrator" ||
-    params.user.is_superuser === true
-  );
 }
 
 function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
@@ -552,8 +538,11 @@ const RecordDetail = () => {
     );
   }
 
-  const editorComment = record.desc?.trim() ?? "";
-  const showEditorComment = shouldShowEditorComment({ user, editorComment });
+  // Comment-for-editor and editor feedback come straight off the marking's
+  // approved Contribution. The backend returns "" unless the viewer is that
+  // contributor or an editor, so a non-empty string is already authorized to show.
+  const commentForEditor = record.commentForEditor?.trim() ?? "";
+  const editorFeedback = record.editorFeedback?.trim() ?? "";
   const galleryImages = buildGalleryImages(record);
   const typeLabel = markingTypeLabel(record.type) || "Townmark";
 
@@ -784,8 +773,13 @@ const RecordDetail = () => {
                   ) : (
                     <div className="flex gap-3 overflow-x-auto pb-1">
                       {galleryImages.map((img, idx) => {
+                        // A removed marking is read-only: no image reordering
+                        // either, only Restore.
                         const canReorder =
-                          isStaff && img.imageId != null && galleryImages.length > 1;
+                          isStaff &&
+                          !record.isRemoved &&
+                          img.imageId != null &&
+                          galleryImages.length > 1;
                         return (
                           <div
                             key={`${img.imageId ?? img.originalFilename ?? "img"}-${idx}`}
@@ -944,10 +938,13 @@ const RecordDetail = () => {
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
                     <CardTitle className="font-heading text-lg">Record Details</CardTitle>
-                    <Button variant="outline" size="sm" onClick={goEdit}>
-                      <Pencil className="mr-2 h-4 w-4" />
-                      {SUBMISSION_LABELS.action.submitEditToMarking}
-                    </Button>
+                    {/* A removed marking is read-only: no edits until it is restored. */}
+                    {!record.isRemoved && (
+                      <Button variant="outline" size="sm" onClick={goEdit}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        {SUBMISSION_LABELS.action.submitEditToMarking}
+                      </Button>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -961,14 +958,17 @@ const RecordDetail = () => {
                     <CardTitle className="font-heading text-lg">
                       Associated Covers ({coverCount})
                     </CardTitle>
-                    <Button
-                      size="sm"
-                      onClick={openNewCoverDialog}
-                      className="bg-green-800 hover:bg-green-900 text-white"
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      {SUBMISSION_LABELS.action.submitNewCover}
-                    </Button>
+                    {/* No new covers can be attached to a removed marking. */}
+                    {!record.isRemoved && (
+                      <Button
+                        size="sm"
+                        onClick={openNewCoverDialog}
+                        className="bg-green-800 hover:bg-green-900 text-white"
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        {SUBMISSION_LABELS.action.submitNewCover}
+                      </Button>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4 pt-0">
@@ -1073,7 +1073,20 @@ const RecordDetail = () => {
                 </Card>
               )}
 
-              {showEditorComment && (
+              {commentForEditor && (
+                <Card className="shadow-archival-md">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">Comment for editor</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="rounded-md border border-border bg-muted/40 px-3 py-2">
+                      <p className="text-sm text-foreground whitespace-pre-line">{commentForEditor}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {editorFeedback && (
                 <Card className="shadow-archival-md border-amber-500/20 bg-amber-500/5">
                   <CardHeader>
                     <CardTitle className="font-heading text-lg flex items-center gap-2">
@@ -1082,7 +1095,7 @@ const RecordDetail = () => {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">{editorComment}</p>
+                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">{editorFeedback}</p>
                   </CardContent>
                 </Card>
               )}

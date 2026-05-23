@@ -1581,6 +1581,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               const statusNorm = String(submission.status || "").toLowerCase();
                               if (statusNorm === "draft") {
                                 navigate(`/contribute?edit=${submission.id}`);
+                              } else if (statusNorm === "approved" && submission.marking_id) {
+                                // Approved submissions live on the entry detail page now.
+                                navigate(`/record/${submission.marking_id}`, {
+                                  state: { fromDashboard: true },
+                                });
                               } else {
                                 navigate(`/contribution/${submission.id}`, {
                                   state: { fromDashboard: true },
@@ -2397,9 +2402,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           <div className="flex items-center gap-4 min-w-0 flex-1">
                             <button
                               type="button"
-                              onClick={() =>
-                                navigate(`/contribution/${item.id}`, { state: { fromDashboard: true } })
-                              }
+                              onClick={() => {
+                                // Approved entries open the catalog detail page; everything
+                                // else stays on the standalone contribution page.
+                                if (item.status === "approved" && item.marking_id) {
+                                  navigate(`/record/${item.marking_id}`, { state: { fromDashboard: true } });
+                                } else {
+                                  navigate(`/contribution/${item.id}`, { state: { fromDashboard: true } });
+                                }
+                              }}
                               className="w-16 h-16 shrink-0 p-0 border-0 bg-transparent cursor-pointer rounded overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring"
                               aria-label={`Open ${displayLabel}`}
                             >
