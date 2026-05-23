@@ -16,11 +16,32 @@ from __future__ import annotations
 
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
-from common.models import Contribution
+from common.models import Contribution, Region
 
 
 REVIEW_CONTRIBUTION_PERM = "common.review_contribution"
 APPROVE_IMAGE_PERM = "common.approve_image"
+
+
+def _get_user_assigned_regions(user):
+    if not user or not user.is_authenticated:
+        return Region.objects.none()
+    return Region.objects.filter(collection__editor_assignments__user=user).distinct()
+
+
+def _user_is_responsible_for_marking(user, marking):
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    if not user.has_perm(REVIEW_CONTRIBUTION_PERM):
+        return False
+    if not marking or not marking.post_office_id:
+        return False
+    region = marking.post_office.region
+    if region is None:
+        return False
+    return _get_user_assigned_regions(user).filter(pk=region.pk).exists()
 
 
 def user_assigned_collection_ids(user) -> set[int]:

@@ -13,7 +13,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star } from "lucide-react";
+import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Trash2 } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import type { FormEvent, MouseEvent } from "react";
 import { useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
@@ -25,7 +25,7 @@ import { getMarkingByIdRaw, normalizeImageUrl } from "@/services/markings";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
-import { getContribution, listContributions, createContribution } from "@/services/contributions";
+import { getContribution, listContributions, createContribution, deleteDraftContribution } from "@/services/contributions";
 import { ENTRY_LABELS } from "@/labels/entry";
 import { SUBMISSION_LABELS } from "@/labels/submission";
 import { useToast } from "@/hooks/use-toast";
@@ -391,6 +391,8 @@ const Contribute = () => {
   const [markingChangedSinceDraft, setMarkingChangedSinceDraft] = useState(false);
   // Whether the discard action is in flight (disables both banner buttons).
   const [discardingDraft, setDiscardingDraft] = useState(false);
+  // Whether the hard-delete-draft action is in flight (disables the button).
+  const [deletingDraft, setDeletingDraft] = useState(false);
   const [shape, setShape] = useState("");
   const [color, setColor] = useState("");
   const [widthMm, setWidthMm] = useState("");
@@ -2566,6 +2568,38 @@ const Contribute = () => {
                         {submitting ? "Submitting..." : copy.button}
                       </Button>
                     </div>
+                    {isResumingDraft && editContributionId != null && (
+                      <div className="pt-2 flex justify-end">
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          className="w-full sm:w-auto"
+                          disabled={submitting || deletingDraft}
+                          onClick={async () => {
+                            const ok = window.confirm(
+                              "Delete this draft? This can't be undone.",
+                            );
+                            if (!ok) return;
+                            setDeletingDraft(true);
+                            try {
+                              await deleteDraftContribution(editContributionId);
+                              toast({ title: "Draft deleted" });
+                              navigate("/dashboard");
+                            } catch (err: unknown) {
+                              toast({
+                                title: "Could not delete draft",
+                                description: err instanceof Error ? err.message : "Try again.",
+                                variant: "destructive",
+                              });
+                              setDeletingDraft(false);
+                            }
+                          }}
+                        >
+                          <Trash2 className="mr-1.5 h-4 w-4" />
+                          {deletingDraft ? "Deleting..." : "Delete Draft"}
+                        </Button>
+                      </div>
+                    )}
                   </form>
 
                   <p className="text-xs text-muted-foreground">

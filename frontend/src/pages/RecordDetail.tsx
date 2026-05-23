@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowUp, History, Loader2, MessageSquare, Pencil, Plus, Star } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, History, Info, Loader2, MessageSquare, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,9 @@ import {
   getMarkingChangelog,
   loadAssociatedCoversForMarking,
   normalizeImageUrl,
+  removeMarking,
   reorderImages,
+  restoreMarking,
   type AssociatedCover,
   type AssociatedDateSeen,
   type MarkingChangelogEvent,
@@ -33,6 +35,25 @@ import {
   type MarkingImage,
   type MarkingRecord,
 } from "@/services/markings";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { SUBMISSION_LABELS } from "@/labels/submission";
 import { useAuth } from "@/hooks/useAuth";
@@ -307,6 +328,13 @@ const RecordDetail = () => {
   // flight. Without this an editor can fire two overlapping reorders before
   // the first one resolves, producing inconsistent display_order values.
   const [reorderingImages, setReorderingImages] = useState(false);
+  // Remove/restore (recycle bin) controls -- only rendered when the backend
+  // reports record.canRemove (superuser or responsible editor).
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeReason, setRemoveReason] = useState("");
+  const [removing, setRemoving] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   const markingId = id ? parseInt(String(id).replace(/^api-/, ""), 10) : null;
 
@@ -538,6 +566,51 @@ const RecordDetail = () => {
         mode: "suggestion",
       },
     });
+
+  // Re-pull the marking after a remove/restore so the buttons toggle in place
+  // and the recycle-bin banner appears/disappears. Reuses the same loader the
+  // page mounts with and refreshes after image edits. The editor/superuser
+  // retrieve override (backend B1) keeps the page loadable once removed.
+  const refetchRecord = async () => {
+    if (markingId == null || Number.isNaN(markingId)) return;
+    const refreshed = await getMarkingById(markingId);
+    if (refreshed) setRecord(refreshed);
+  };
+
+  const handleRemoveConfirm = async () => {
+    if (!record) return;
+    setRemoving(true);
+    try {
+      const res = await removeMarking(record.id, removeReason.trim() || undefined);
+      if (res.ok) {
+        toast({ title: "Marking removed" });
+        setRemoveOpen(false);
+        setRemoveReason("");
+        await refetchRecord();
+      } else {
+        toast({ title: "Could not remove", description: res.message, variant: "destructive" });
+      }
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  const handleRestoreConfirm = async () => {
+    if (!record) return;
+    setRestoring(true);
+    try {
+      const res = await restoreMarking(record.id);
+      if (res.ok) {
+        toast({ title: "Marking restored" });
+        setRestoreOpen(false);
+        await refetchRecord();
+      } else {
+        toast({ title: "Could not restore", description: res.message, variant: "destructive" });
+      }
+    } finally {
+      setRestoring(false);
+    }
+  };
 
   const dimensionsValue = dimensionsDisplay(record) || EMPTY;
   const earliestValue = yearOnly(record.earliestSeen);
@@ -861,6 +934,12 @@ const RecordDetail = () => {
             </div>
 
             <div className="space-y-6">
+              {record.isRemoved && (
+                <div className="flex items-center gap-2 rounded-md border border-muted bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                  <Info className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>This entry has been marked for removal.</span>
+                </div>
+              )}
               <Card className="shadow-archival-md">
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
@@ -1119,8 +1198,82 @@ const RecordDetail = () => {
             </div>
           </div>
 
+          {record.canRemove && (
+            <div className="mt-8 flex justify-end">
+              {record.isRemoved ? (
+                <Button variant="outline" onClick={() => setRestoreOpen(true)}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Restore Marking
+                </Button>
+              ) : (
+                <Button variant="destructive" onClick={() => setRemoveOpen(true)}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Remove Marking
+                </Button>
+              )}
+            </div>
+          )}
+
         </div>
       </div>
+
+      <Dialog open={removeOpen} onOpenChange={(open) => !removing && setRemoveOpen(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove Marking</DialogTitle>
+            <DialogDescription>
+              This moves the marking to the recycle bin and hides it from the public catalog.
+              It can be restored later. Optionally record a reason.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            placeholder="Reason (optional)"
+            value={removeReason}
+            onChange={(e) => setRemoveReason(e.target.value)}
+            disabled={removing}
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRemoveOpen(false)}
+              disabled={removing}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleRemoveConfirm()}
+              disabled={removing}
+            >
+              {removing ? "Removing..." : "Remove Marking"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={restoreOpen} onOpenChange={(open) => !restoring && setRestoreOpen(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restore Marking</AlertDialogTitle>
+            <AlertDialogDescription>
+              This returns the marking to the public catalog.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restoring}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void handleRestoreConfirm();
+              }}
+              disabled={restoring}
+            >
+              {restoring ? "Restoring..." : "Restore Marking"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Footer />
     </div>
   );

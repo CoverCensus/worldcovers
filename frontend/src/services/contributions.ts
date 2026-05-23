@@ -252,3 +252,10 @@ export async function decideContribution(
     raw: o,
   };
 }
+
+// DELETE /contributions/{id}/  -- hard-deletes a draft; backend enforces IsDraftOwner
+// (status must be "draft" and requester must be owner or superuser). No response body.
+export async function deleteDraftContribution(contributionId: number): Promise<void> {
+  await ensureCsrfToken();
+  await apiClient.delete(`/contributions/${contributionId}/`);
+}

@@ -25,12 +25,15 @@ from common.models import (
     Image,
     Lettering,
     Marking,
+    MarkingRecycleBin,
     MarkingType,
     PostOffice,
     ReferenceWork,
     Region,
     Shape,
 )
+
+from .permissions import _user_is_responsible_for_marking
 
 
 User = get_user_model()
@@ -617,6 +620,8 @@ class MarkingSerializer(serializers.ModelSerializer):
     size_display = serializers.SerializerMethodField()
     created_by = UserSerializer(read_only=True)
     modified_by = UserSerializer(read_only=True)
+    is_removed = serializers.SerializerMethodField()
+    can_remove = serializers.SerializerMethodField()
 
     class Meta:
         model = Marking
@@ -655,8 +660,20 @@ class MarkingSerializer(serializers.ModelSerializer):
             "modified_date",
             "created_by",
             "modified_by",
+            "is_removed",
+            "can_remove",
         ]
         read_only_fields = ["id", "created_date", "modified_date"]
+
+    def get_is_removed(self, obj):
+        return MarkingRecycleBin.objects.filter(marking_id=obj.pk).exists()
+
+    def get_can_remove(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is None:
+            return False
+        return _user_is_responsible_for_marking(user, obj)
 
     def get_state(self, obj):
         return _marking_state_name(obj)

@@ -34,7 +34,7 @@ import { formatSizeFromSubmittedData } from "@/lib/dimensionsMm";
 import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { cn } from "@/lib/utils";
-import { normalizeImageUrl, getAssignedCatalogPage, type MarkingRecord } from "@/services/markings";
+import { normalizeImageUrl, getAssignedCatalogPage, getRecycleBinMarkings, type MarkingRecord } from "@/services/markings";
 import { listContributions, decideContribution } from "@/services/contributions";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
@@ -303,6 +303,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   // Editor tab: history of user suggestions (all contributions in assigned states), not full catalog
   const [editorHistoryItems, setEditorHistoryItems] = useState<PendingReviewItem[]>([]);
+  // Recycle-bin markings shown when editorHistoryStatusFilter === "removed".
+  // Kept separate from editorHistoryItems (contributions) because the rows are
+  // markings and navigate to /record/:id instead of /contribution/:id.
+  const [removedMarkings, setRemovedMarkings] = useState<MarkingRecord[]>([]);
   const [editorHistoryLoading, setEditorHistoryLoading] = useState(false);
   const [editorHistoryError, setEditorHistoryError] = useState<string | null>(null);
   const [editorHistoryStatusFilter, setEditorHistoryStatusFilter] = useState("all");
@@ -706,6 +710,23 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     if (!isEditor || activeTab !== "editor") return;
     setEditorHistoryError(null);
     setEditorHistoryLoading(true);
+    // "Removed" swaps the data source to the recycle bin (markings), not the
+    // contribution list. The endpoint is region-scoped server side, so the
+    // state filter is not sent here.
+    if (editorHistoryStatusFilter === "removed") {
+      getRecycleBinMarkings(editorHistoryPage, editorHistoryPageSize)
+        .then((result) => {
+          setRemovedMarkings(result.results);
+          setEditorHistoryTotal(result.count);
+        })
+        .catch((err) => {
+          setEditorHistoryError(err instanceof Error ? err.message : "Could not load recycle bin.");
+          setRemovedMarkings([]);
+          setEditorHistoryTotal(null);
+        })
+        .finally(() => setEditorHistoryLoading(false));
+      return;
+    }
     const historyStatus =
       editorHistoryStatusFilter !== "all" &&
       ["pending", "approved", "rejected", "needs_revision"].includes(editorHistoryStatusFilter)
@@ -1079,14 +1100,18 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       ? 0
       : Math.min((pendingReviewPage - 1) * pendingReviewPageSize + pendingReviewItems.length, pendingReviewTotalCount);
 
-  const editorHistoryTotalCount = editorHistoryTotal ?? editorHistoryItems.length;
+  // In "removed" mode the rows on the page come from removedMarkings, not the
+  // contribution list, so the page-end count must read that length instead.
+  const editorHistoryRowsOnPage =
+    editorHistoryStatusFilter === "removed" ? removedMarkings.length : editorHistoryItems.length;
+  const editorHistoryTotalCount = editorHistoryTotal ?? editorHistoryRowsOnPage;
   const editorHistoryTotalPages = Math.max(1, Math.ceil(editorHistoryTotalCount / editorHistoryPageSize));
   const editorHistoryPageStart =
     editorHistoryTotalCount === 0 ? 0 : (editorHistoryPage - 1) * editorHistoryPageSize + 1;
   const editorHistoryPageEnd =
     editorHistoryTotalCount === 0
       ? 0
-      : Math.min((editorHistoryPage - 1) * editorHistoryPageSize + editorHistoryItems.length, editorHistoryTotalCount);
+      : Math.min((editorHistoryPage - 1) * editorHistoryPageSize + editorHistoryRowsOnPage, editorHistoryTotalCount);
 
   const filteredAndSortedEditorHistoryItems = useMemo(() => {
     const filtered = editorHistoryItems.filter((item) => {
@@ -1841,6 +1866,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           <SelectItem value="approved">Approved</SelectItem>
                           <SelectItem value="rejected">Rejected</SelectItem>
                           <SelectItem value="needs_revision">Needs Revision</SelectItem>
+                          <SelectItem value="removed">Removed</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -1865,7 +1891,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         searchPlaceholder="Search states..."
                         emptyMessage="No state found."
                         aria-label="Filter editor data by state"
-                        disabled={editorHistoryLoading || pendingReviewLoading || isLoadingFilters}
+                        disabled={
+                          editorHistoryLoading ||
+                          pendingReviewLoading ||
+                          isLoadingFilters ||
+                          editorHistoryStatusFilter === "removed"
+                        }
                       />
                     </div>
                     <div className="space-y-2">
@@ -2270,6 +2301,65 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
                     <p>Loading history...</p>
                   </div>
+                ) : editorHistoryStatusFilter === "removed" ? (
+                  removedMarkings.length === 0 ? (
+                    <Card className="flex-1 flex items-center justify-center min-h-[200px]">
+                      <CardContent className="text-center">
+                        <p className="text-muted-foreground mb-1">
+                          No removed markings in your assigned regions.
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Markings you remove from the catalog appear here. Open one to restore it.
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <ul className="space-y-3">
+                      {removedMarkings.map((m) => {
+                        const title = [m.town, m.stateAbbrev || m.state].filter(Boolean).join(", ");
+                        const shapeStr = (m.shapeName || "").trim();
+                        const displayLabel =
+                          [title, shapeStr]
+                            .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
+                            .join(" - ") ||
+                          title ||
+                          `Marking #${m.id}`;
+                        return (
+                          <li
+                            key={m.id}
+                            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-card hover:shadow-archival-sm transition-shadow"
+                          >
+                            <div className="flex items-center gap-4 min-w-0 flex-1">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  navigate(`/record/${m.id}`, { state: { fromDashboard: true } })
+                                }
+                                className="w-16 h-16 shrink-0 p-0 border-0 bg-transparent cursor-pointer rounded overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring"
+                                aria-label={`Open ${displayLabel}`}
+                              >
+                                <ImageOrPlaceholder
+                                  src={m.mainImage?.imageUrl ?? null}
+                                  alt={displayLabel}
+                                  className="w-full h-full object-cover rounded border border-border hover:opacity-90 transition-opacity"
+                                />
+                              </button>
+                              <div className="min-w-0">
+                                <span className="font-medium text-foreground block truncate">
+                                  {displayLabel}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 shrink-0">
+                              <Badge className="rounded-full px-3 py-1 text-xs font-semibold shadow-sm bg-muted text-muted-foreground hover:bg-muted">
+                                Removed
+                              </Badge>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )
                 ) : filteredAndSortedEditorHistoryItems.length === 0 ? (
                   <Card className="flex-1 flex items-center justify-center min-h-[200px]">
                     <CardContent className="text-center">

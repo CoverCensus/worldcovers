@@ -17,6 +17,7 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, ProgrammingError, transaction
 from django.db.models import Min, Max, Q
 from django.db.models.functions import ExtractYear
+from django.http import Http404
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
@@ -45,7 +46,7 @@ from common.audit import (
     log_submission_transaction,
     restore_marking_from_snapshot,
 )
-from common.filters import MarkingListFilter
+from common.filters import CoverMarkingFilter, MarkingListFilter
 from common.models import (
     Citation,
     Collection,
@@ -75,6 +76,8 @@ from .permissions import (
     CanManageReferenceWorks,
     CanReviewContribution,
     IsDraftOwner,
+    _get_user_assigned_regions,
+    _user_is_responsible_for_marking,
     user_assigned_collection_ids,
 )
 from .serializers import (
@@ -106,25 +109,9 @@ User = get_user_model()
 ###################################################################################################
 ## Helpers
 ###################################################################################################
-def _get_user_assigned_regions(user):
-    if not user or not user.is_authenticated:
-        return Region.objects.none()
-    return Region.objects.filter(collection__editor_assignments__user=user).distinct()
-
-
-def _user_is_responsible_for_marking(user, marking):
-    if not user or not user.is_authenticated:
-        return False
-    if user.is_superuser:
-        return True
-    if not user.has_perm(REVIEW_CONTRIBUTION_PERM):
-        return False
-    if not marking or not marking.post_office_id:
-        return False
-    region = marking.post_office.region
-    if region is None:
-        return False
-    return _get_user_assigned_regions(user).filter(pk=region.pk).exists()
+# _get_user_assigned_regions and _user_is_responsible_for_marking now live in
+# .permissions (imported above) so serializers.py can reuse them without a
+# circular import back into views.py.
 
 
 class IsResponsibleForRegion(BasePermission):
@@ -459,7 +446,7 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
     serializer_class = CoverMarkingSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ["cover", "marking", "is_backstamp", "placement", "review_status"]
+    filterset_class = CoverMarkingFilter
     ordering_fields = ["id", "created_date", "reviewed_at"]
     ordering = ["id"]
     # DELETE is intentionally not exposed. Unlinking a cover from a marking has
@@ -767,6 +754,29 @@ class MarkingViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return _marking_list_queryset()
+
+    def get_object(self):
+        try:
+            return super().get_object()
+        except Http404:
+            # The default manager hides removed markings. Allow ONLY the editor
+            # responsible for this marking's region (or a superuser) to load a
+            # removed marking on the detail page so they can restore it. Detail
+            # (retrieve) reads only; every other caller keeps getting 404.
+            if self.action != "retrieve":
+                raise
+            marking = (
+                Marking.all_objects
+                .select_related("post_office", "shape", "lettering", "color")
+                .prefetch_related("post_office__post_office_regions__region")
+                .with_date_range()
+                .filter(pk=self.kwargs[self.lookup_field])
+                .first()
+            )
+            if marking and _user_is_responsible_for_marking(self.request.user, marking):
+                self.check_object_permissions(self.request, marking)
+                return marking
+            raise
 
     def get_serializer_class(self):
         if self.action == "list":

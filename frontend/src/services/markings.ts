@@ -21,7 +21,9 @@ import {
  *   GET    /markings/{id}/                  detail
  *   GET    /markings/{id}/changelog/        version history
  *   POST   /markings/{id}/restore-version/  restore prior version
- *   DELETE /markings/{id}/delete-mine/      contributor self-delete
+ *   POST   /markings/{id}/remove/           soft-remove into recycle bin
+ *   POST   /markings/{id}/restore/          restore from recycle bin
+ *   GET    /markings/recycle-bin/           removed markings (editor-scoped)
  *   GET    /markings/my-assigned/           editor's assigned-region rows
  *   GET    /markings-range/                 catalog earliest/latest year
  *   GET    /images/?subject_type=MARKING&subject_id=<id>  marking images
@@ -277,6 +279,8 @@ export interface MarkingRecord {
   secondImage: MarkingImage | null;
   images: MarkingImage[];
   citations: MarkingCitation[];
+  isRemoved: boolean;
+  canRemove: boolean;
 }
 
 export interface MarkingChangelogEvent {
@@ -508,6 +512,8 @@ export function mapApiMarkingToRecord(raw: unknown): MarkingRecord {
     secondImage,
     images,
     citations: mapCitationList(o.citations),
+    isRemoved: Boolean((raw as { is_removed?: boolean }).is_removed),
+    canRemove: Boolean((raw as { can_remove?: boolean }).can_remove),
   };
 }
 
@@ -1230,6 +1236,65 @@ export async function postCoverMarkingReview(
 export async function postCoverMarkingResubmit(coverMarkingId: number): Promise<void> {
   await ensureCsrfToken();
   await apiClient.post(`/cover-markings/${coverMarkingId}/resubmit/`);
+}
+
+/**
+ * Editor: POST /markings/{id}/remove/ - soft-remove the marking into the
+ * recycle bin (reversible). Optional reason is recorded in the changelog.
+ * Backend gates on the responsible editor/superuser.
+ */
+export async function removeMarking(
+  markingId: number,
+  reason?: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  await ensureCsrfToken();
+  try {
+    await apiClient.post(`/markings/${markingId}/remove/`, { reason: reason ?? "" });
+    return { ok: true };
+  } catch (err: unknown) {
+    const ax = err as { response?: { data?: { detail?: string } } };
+    const d = ax.response?.data?.detail;
+    return { ok: false, message: typeof d === "string" ? d : "Could not remove marking." };
+  }
+}
+
+/** Editor: POST /markings/{id}/restore/ - restore a removed marking from the recycle bin. */
+export async function restoreMarking(
+  markingId: number,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  await ensureCsrfToken();
+  try {
+    await apiClient.post(`/markings/${markingId}/restore/`, {});
+    return { ok: true };
+  } catch (err: unknown) {
+    const ax = err as { response?: { data?: { detail?: string } } };
+    const d = ax.response?.data?.detail;
+    return { ok: false, message: typeof d === "string" ? d : "Could not restore marking." };
+  }
+}
+
+/**
+ * Editor: GET /markings/recycle-bin/ - removed markings, region-scoped server
+ * side. Same return shape as getMarkingsPage; uses MarkingListSerializer +
+ * pagination, so isRemoved/canRemove default to false on these rows.
+ */
+export async function getRecycleBinMarkings(
+  page: number = 1,
+  pageSize: number = 10,
+): Promise<GetMarkingsPageResult> {
+  const params: Record<string, string> = { page: String(page), page_size: String(pageSize) };
+  const res = await apiClient.get<MarkingApiResponse>("/markings/recycle-bin/", { params });
+  const data = res.data;
+  if (!Array.isArray(data.results)) {
+    throw new Error("Recycle bin API: invalid response (missing results array)");
+  }
+  return {
+    results: data.results.map(mapApiMarkingToRecord),
+    count: data.count,
+    next: data.next,
+    previous: data.previous,
+    count_capped: data.count_capped,
+  };
 }
 
 /** GET /markings/?page_size=1 - returns total marking count. */
