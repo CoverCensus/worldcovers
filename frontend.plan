@@ -1,0 +1,149 @@
+# Frontend plan: route cover edits through review + surface the edit diff
+
+## Context
+
+Rule: every catalog change (markings AND covers, NEW and EDIT) goes through the
+editorial review workflow (a Contribution an editor approves). Nothing in the UI
+writes to the catalog except via approval.
+
+Frontend defects:
+1. Cover edits bypass review -- CoverEdit.tsx edit-mode submit
+   (`handleSubmitCatalog`) writes straight to the catalog
+   (`updateCover` / `updateCoverMarking` / direct image+date+citation writes).
+2. The record-history card shows only the event header (action + actor + time),
+   not the field-level changes, so an approved edit does not visibly show what
+   changed even though the API returns the diff.
+
+Outcome: editing a published cover creates a pending Contribution (like markings);
+the history panel shows an approved edit with its field-level changes.
+
+Already done earlier (in the working tree): cover NEW submit routes through the
+contribution flow (CoverEdit.tsx `submitCoverContribution` + `handleFormSubmit`
+dispatcher); the cover review UI matches markings; Associated Covers shows only
+approved links (+ owner drafts). This plan builds on those.
+
+Dependency: the backend half (see backend.plan) must honor the edit markers and
+update in place on approval. Marking edits already submit through review, so they
+start updating in place once the backend lands; this plan adds NO marking-edit
+submission change (verify only).
+
+## submitted_data the frontend must send for a cover EDIT (contract with backend)
+
+In addition to the fields the cover NEW submission already sends, a cover edit
+must add:
+- `edit_cover_id` = the Cover pk (`coverRow.coverDetails.id`).
+- `edit_cover_marking_id` = the CoverMarking pk (`coverRow.id`).
+- `removed_existing_image_keys` = JSON array of removed existing image URLs.
+- `existing_image_tags` = JSON map { normalizeImageUrl(url): "tracing"|"photograph" }
+  over retained existing images.
+(Existing dates and reference works are already carried by the current form.)
+
+Image URL note: the backend matches a URL to an `Image` row by `storage_filename`
+tail; send the same URL the card shows via `normalizeImageUrl`.
+
+---
+
+## Phase F1 -- route cover edits through review (frontend/src/pages/CoverEdit.tsx)
+
+### F1a. Generalize `submitCoverContribution(asDraft)` for edit mode
+- Remove the `if (mode !== "create") return;` guard.
+- In edit mode, additionally append to the FormData:
+  - `edit_cover_id` = `String(coverRow.coverDetails.id)`.
+  - `edit_cover_marking_id` = `String(coverRow.id)`.
+  - `removed_existing_image_keys` = `JSON.stringify(removedExistingImageKeys)`
+    (new state, see F1d).
+  - `existing_image_tags` = JSON map over `existingImages` with `imageId > 0`:
+    `{ normalizeImageUrl(img.imageUrl): img.isTracing ? "tracing" : "photograph" }`.
+  - `cover_date` / `cover_granularity`: already sent from `coverDate` (prefilled
+    from `coverDetails.datesSeen[0]`) -- unchanged.
+  - reference works: already serialized from `selectedReferenceWorks` /
+    `referenceDetailsById` -- unchanged.
+  - new uploads: `cover_image` files + positional `cover_image_tags` -- unchanged.
+- Toast: "Cover edit submitted for review."; navigate
+  `"/dashboard", { state: { tab: "submissions" } }` (already done for create).
+
+### F1b. Dispatcher
+```tsx
+const handleFormSubmit = (e: FormEvent) => {
+  e.preventDefault();
+  void submitCoverContribution(false);   // create AND edit go through review
+};
+```
+
+### F1c. Delete the direct-write path (after verifying no other callers in-file)
+- Delete `handleSubmitCatalog`, `uploadAllCoverImagesOrThrow` (only called by it),
+  `syncCoverCitations` (only called by it).
+- Remove now-unused imports: `updateCover`, `updateCoverMarking`, `createCover`,
+  `createCoverMarking`, `createCoverDate`, `updateCoverDate`, `deleteCoverDate`,
+  `postCoverMarkingResubmit`, `type CoverWritePayload`, `type AssociatedDateSeen`.
+  KEEP symbols still used by the image rail / edit-load effect:
+  `listCitationsForSubject`, `getImagesForSubject`, `normalizeImageUrl`,
+  `reorderImages`, `createImageForSubject` (used by the upload helper -- remove
+  only if that helper is removed and it has no other user; verify per-symbol).
+- Drop the `needs_revision` -> `postCoverMarkingResubmit` call (edits now go
+  through the queue); keep the needs_revision banner UI.
+
+### F1d. Existing-image remove button (cover rail)
+Add a Trash2 remove action to the `existingImages` rail (it currently has
+move/default/tracing). For `imageId > 0`, push `normalizeImageUrl(img.imageUrl)`
+into a new `removedExistingImageKeys: string[]` state and drop the row from
+`existingImages`. Mirror Contribute.tsx `removeExistingImageAt` (near line 1408).
+
+---
+
+## Phase F2 -- render the edit diff in record history (frontend/src/components/entry-detail/EntryRecordHistoryCard.tsx)
+
+The changelog API already returns `events[].diff` (array of
+`{ field, before, after }`) and the type `MarkingChangelogEvent` already declares
+`diff` (frontend/src/services/markings.ts:308). The card currently renders only
+action label + actor + timestamp (lines 75-89). Add diff rendering.
+
+Per event, after the actor line, when it represents a content change:
+- Gate: render only when `event.diff.length > 0` AND it is NOT the initial create.
+  Use `event.version_no != null && event.version_no > 1` as the "not the first
+  version" test (the create approval is version 1 and would otherwise list every
+  field). Reject/return events have empty diffs anyway.
+- Render a compact list, one row per changed field:
+  `<humanized field>: <before> -> <after>`.
+  - Humanize the key: replace `_` with space (keys like `inscription_txt`,
+    `has_adhesive`, `color_id`, `type`, `width`, `height`).
+  - Format values: `null`/`undefined`/`""` -> `(empty)`; booleans -> `Yes`/`No`;
+    else `String(value)`.
+- Limit to the first 6 or so changed fields with a `+N more` suffix.
+- Use `->` (ASCII), muted styling consistent with the card.
+
+Shared by RecordDetail.tsx (markings) and CoverDetail.tsx (covers), so one change
+covers both record types.
+
+---
+
+## Phase F3 -- marking edit: verify only (frontend/src/pages/Contribute.tsx)
+
+No change. Marking edit already sends `edit_postmark_id`,
+`removed_existing_image_keys`, `existing_image_tags`. It begins working once the
+backend honors `edit_postmark_id` and persists retention on the fresh-edit path
+(backend.plan B1/B3). Verify a fresh marking edit-for-review (no
+`edit_contribution_id`) updates in place after backend lands.
+
+---
+
+## Verification
+
+From frontend/:
+- `npm run lint` (no NEW errors beyond the pre-existing ones in untouched files).
+- `npm run build` (vite type-checks TS; must pass).
+- `npm test` finds no frontend tests (repo baseline; not a failure).
+
+Manual (dev server + editor login, with backend.plan changes deployed):
+- Edit a published cover -> it does NOT change the catalog immediately; appears
+  under My Submissions + the editor pending-review queue; on approve the SAME
+  cover updates (no duplicate), and image add/remove/tracing changes are reflected.
+- Open the record history panel after approving an edit: it shows an "Approve"
+  event with the field-level changes (before -> after) and a new version; a
+  brand-new entry's first approval does NOT list every field.
+
+## Critical files
+- frontend/src/pages/CoverEdit.tsx (F1)
+- frontend/src/components/entry-detail/EntryRecordHistoryCard.tsx (F2)
+- frontend/src/pages/Contribute.tsx (F3 verify only)
+- frontend/src/services/markings.ts (type reference; `MarkingChangelogEvent.diff`)

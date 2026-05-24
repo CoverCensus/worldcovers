@@ -197,7 +197,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
       await decideContribution(contribution.id, kind, {
         reviewNotes: comment.trim() || undefined,
       });
-      const actionLabel = kind === "approve" ? "Approved" : kind === "reject" ? "Rejected" : "Revision requested";
+      const actionLabel = kind === "approve" ? "Approved" : kind === "reject" ? "Rejected" : "Submission returned";
       toast({ title: actionLabel, description: "Your comment was saved for the contributor." });
       if (kind === "approve" && parentMarkingId != null) {
         navigate(`/record/${parentMarkingId}`, { state: { fromDashboard: true } });
@@ -372,7 +372,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                     <CardHeader>
                       <CardTitle className="font-heading text-lg">Review this cover</CardTitle>
                       <p className="text-sm text-muted-foreground">
-                        Choose Approve, Reject, or Request revision.
+                        Choose Approve, Reject, or Return.
                       </p>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -418,7 +418,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                           disabled={submitting}
                         >
                           <MessageSquare className="mr-2 h-4 w-4" />
-                          Request revision
+                          Return
                         </Button>
                       </div>
                     </CardContent>

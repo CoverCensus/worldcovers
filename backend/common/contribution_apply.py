@@ -21,9 +21,22 @@ Scope:
     apply_cover_contribution_to_catalog for the exact shape. The approve
     view (common/api/v2/views.py ContributionViewSet.approve) branches on
     the return type.
-  * Marking edit flow (edit_postmark_id present in payload) is ignored: a
-    new Marking is always created. Approving an edit-draft today therefore
-    produces a duplicate row. Follow-up.
+  * Edit flow (update-in-place, no duplicate row):
+      - Marking edit: payload carries edit_postmark_id. The existing Marking
+        is re-resolved and overwritten; its Images and Citations are
+        reconciled against the FULL desired set in submitted_data.
+        apply_contribution_to_catalog returns that existing Marking.
+      - Cover edit: payload carries edit_cover_id (and usually
+        edit_cover_marking_id). The existing Cover is overwritten in place
+        (its code is kept), the existing CoverMarking link's positional fields
+        are updated, and the cover's DateSeen / Images / Citations / Valuation
+        are reconciled. apply_cover_contribution_to_catalog returns the same
+        dict shape as the create path, with the existing entities.
+
+Create vs edit share child reconcilers (_sync_images / _sync_citations /
+_sync_cover_date_seen / _sync_cover_valuation): on a freshly created subject
+the existing set is empty, so a _sync_* call behaves exactly like the old
+create-only path.
 
 The function reads contrib.submitted_data (a JSON blob written by the
 v2 ContributionSubmitView) under the caller's transaction.
@@ -99,6 +112,12 @@ def apply_contribution_to_catalog(contrib):
             "TOWNMARK/RATEMARK/AUXMARK; got {!r}.".format(sub_type)
         )
 
+    edit_marking_id = _parse_int(
+        payload.get("edit_postmark_id") or payload.get("editPostmarkId")
+    )
+    if edit_marking_id is not None:
+        return _apply_marking_edit(contrib, payload, actor, edit_marking_id)
+
     state = _required_str(payload, "state")
     town = _required_str(payload, "town")
     inscription = _required_str(payload, "inscription_txt")
@@ -166,8 +185,109 @@ def apply_contribution_to_catalog(contrib):
     marking.full_clean()
     marking.save()
 
-    _create_images(marking, payload, actor)
-    _create_citations(marking, payload, actor)
+    _sync_images(
+        Image.SUBJECT_MARKING,
+        marking.pk,
+        payload,
+        actor,
+        image_view="FULL",
+        metas_keys=("marking_image_metas", "image_metas"),
+        tags_key="marking_image_tags",
+    )
+    _sync_citations("MARKING", marking.pk, payload, actor)
+
+    return marking
+
+
+def _apply_marking_edit(contrib, payload: dict, actor, marking_id: int) -> Marking:
+    """
+    Apply an approved marking-EDIT contribution in place: re-resolve the
+    marking's scalar fields from submitted_data, overwrite the existing row
+    (no new Marking), then reconcile its Images and Citations against the FULL
+    desired set. Returns the updated Marking -- the same contract as the create
+    path.
+
+    Marking.all_objects is used so a pending edit still applies even if the
+    entry was recycle-binned after the edit was submitted; the removal sidecar
+    (MarkingRecycleBin) is left untouched, so the marking stays binned.
+
+    Caller owns transaction.atomic(); this does not open one.
+    """
+    try:
+        marking = Marking.all_objects.get(pk=marking_id)
+    except Marking.DoesNotExist:
+        raise ContributionApplyError(
+            "Unknown marking id for edit: {}".format(marking_id)
+        )
+
+    # Re-resolve scalars with the SAME helpers the create path uses, including
+    # the manuscript branch, so create and edit validate identically.
+    state = _required_str(payload, "state")
+    town = _required_str(payload, "town")
+    inscription = _required_str(payload, "inscription_txt")
+    is_manuscript = _coerce_required_bool(payload, "is_manuscript")
+    post_office = _resolve_post_office(state, town, actor)
+
+    if is_manuscript:
+        shape = None
+        lettering = None
+        is_irreg = None
+    else:
+        shape = _resolve_fk(Shape, payload, "shape_id", "shape")
+        if shape is None:
+            raise ContributionApplyError(
+                "shape is required for non-manuscript markings."
+            )
+        lettering = _resolve_lettering(payload)
+        is_irreg = _coerce_required_bool(payload, "is_irreg")
+
+    color = _resolve_fk(Color, payload, "color_id", "color")
+    width = _parse_decimal(payload.get("width_mm") or payload.get("widthMm"))
+    height = _parse_decimal(payload.get("height_mm") or payload.get("heightMm"))
+
+    desc_raw = (payload.get("desc") or payload.get("description") or "")
+    desc_raw = desc_raw.strip() if isinstance(desc_raw, str) else str(desc_raw).strip()
+
+    date_fmt = payload.get("date_fmt") or payload.get("dateFmt") or None
+    if isinstance(date_fmt, str):
+        date_fmt = date_fmt.strip() or None
+
+    impression = payload.get("impression") or None
+    if isinstance(impression, str):
+        impression = impression.strip() or None
+
+    # type was validated against _MARKING_TYPES by the dispatch before this ran.
+    marking.type = payload.get("type")
+    marking.inscription_txt = inscription
+    marking.desc = desc_raw or None
+    marking.is_manuscript = is_manuscript
+    marking.shape = shape
+    marking.lettering = lettering
+    marking.is_irreg = is_irreg
+    marking.width = width
+    marking.height = height
+    marking.date_fmt = date_fmt
+    marking.impression = impression
+    marking.rate_val = _parse_decimal(payload.get("rate_val"))
+    marking.post_office = post_office
+    # Keep the existing color when the submission does not resolve one (mirrors
+    # the create path, which only sets color when present).
+    if color is not None:
+        marking.color = color
+    marking.modified_by = actor
+    marking.full_clean()
+    marking.save()
+
+    _sync_images(
+        Image.SUBJECT_MARKING,
+        marking.pk,
+        payload,
+        actor,
+        image_view="FULL",
+        metas_keys=("marking_image_metas", "image_metas"),
+        tags_key="marking_image_tags",
+    )
+    _sync_citations("MARKING", marking.pk, payload, actor)
 
     return marking
 
@@ -216,6 +336,20 @@ def apply_cover_contribution_to_catalog(contrib) -> dict:
         parent_marking = Marking.all_objects.get(pk=parent_id)
     except Marking.DoesNotExist:
         raise ContributionApplyError("Unknown parent marking id: {}".format(parent_id))
+
+    edit_cover_id = _parse_int(payload.get("edit_cover_id") or payload.get("editCoverId"))
+    if edit_cover_id is not None:
+        return _apply_cover_edit(
+            contrib,
+            payload,
+            actor,
+            parent_marking,
+            edit_cover_id,
+            _parse_int(
+                payload.get("edit_cover_marking_id")
+                or payload.get("editCoverMarkingId")
+            ),
+        )
 
     cover_type = payload.get("type")
     if isinstance(cover_type, str):
@@ -269,10 +403,158 @@ def apply_cover_contribution_to_catalog(contrib) -> dict:
         ),
     )
 
-    _create_cover_date_seen(cover, payload, actor)
-    _create_cover_images(cover, payload, actor)
-    _create_cover_citations(cover, payload, actor)
-    _create_cover_valuation(cover, payload, actor)
+    _sync_cover_date_seen(cover.pk, payload, actor)
+    _sync_images(
+        Image.SUBJECT_COVER,
+        cover.pk,
+        payload,
+        actor,
+        image_view="FRONT",
+        metas_keys=("cover_image_metas", "image_metas"),
+        tags_key="cover_image_tags",
+    )
+    _sync_citations("COVER", cover.pk, payload, actor)
+    _sync_cover_valuation(cover.pk, payload, actor)
+
+    return {
+        "kind": "cover",
+        "cover": cover,
+        "cover_marking": cover_marking,
+        "parent_marking": parent_marking,
+    }
+
+
+def _apply_cover_edit(
+    contrib,
+    payload: dict,
+    actor,
+    parent_marking,
+    cover_id: int,
+    cover_marking_id,
+) -> dict:
+    """
+    Apply an approved cover-EDIT contribution in place: overwrite the existing
+    Cover's scalar fields (keeping its assigned code), update the existing
+    CoverMarking link's positional fields, and reconcile the cover's DateSeen /
+    Images / Citations / Valuation. Returns the SAME dict shape as the cover
+    create path, with the existing entities.
+
+    Cover.all_objects is used so a pending edit still applies even if the cover
+    was recycle-binned after submission; the removal sidecar (CoverRecycleBin)
+    is left untouched.
+
+    The CoverMarking review_status / reviewer / reviewed_at are deliberately
+    left alone here -- the approve view backfills reviewer / review_notes /
+    reviewed_at (B2c). Caller owns transaction.atomic(); this does not open one.
+
+    Scalar fields are updated only when the submission actually carries them, so
+    a partial cover-edit form (which today omits color / has_adhesive / width /
+    height / placement) does not wipe editor-entered values. Absent == keep
+    existing.
+    """
+    try:
+        cover = Cover.all_objects.get(pk=cover_id)
+    except Cover.DoesNotExist:
+        raise ContributionApplyError(
+            "Unknown cover id for edit: {}".format(cover_id)
+        )
+
+    raw_type = payload.get("type")
+    if isinstance(raw_type, str):
+        raw_type = raw_type.strip().upper() or None
+    if raw_type is not None:
+        if raw_type not in _COVER_TYPES:
+            raise ContributionApplyError(
+                "Cover type must be FC or FL; got {!r}.".format(raw_type)
+            )
+        cover.type = raw_type
+
+    color = _resolve_fk(Color, payload, "color_id", "color")
+    if color is not None:
+        cover.color = color
+    if "has_adhesive" in payload:
+        cover.has_adhesive = bool(
+            _coerce_optional_bool(payload, "has_adhesive", cover.has_adhesive)
+        )
+    if "is_institutional" in payload:
+        cover.is_institutional = _coerce_optional_bool(
+            payload, "is_institutional", cover.is_institutional
+        )
+    width = _parse_decimal(payload.get("width_mm") or payload.get("widthMm"))
+    if width is not None:
+        cover.width = width
+    height = _parse_decimal(payload.get("height_mm") or payload.get("heightMm"))
+    if height is not None:
+        cover.height = height
+
+    cover.modified_by = actor
+    # code is kept (already assigned on the existing row); exclude from validation.
+    cover.full_clean(exclude=["code"])
+    cover.save()
+
+    # Resolve the existing link. Prefer the explicit cover_marking_id, fall back
+    # to the (cover, parent_marking) pair. NOT get_or_create: a missing link is
+    # a real error for an edit, and creating one risks a second link.
+    cover_marking = None
+    if cover_marking_id is not None:
+        cover_marking = CoverMarking.objects.filter(pk=cover_marking_id).first()
+    if cover_marking is None:
+        cover_marking = CoverMarking.objects.filter(
+            cover=cover, marking=parent_marking
+        ).first()
+    if cover_marking is None:
+        raise ContributionApplyError(
+            "No CoverMarking link found for cover {} and marking {}.".format(
+                cover.pk, parent_marking.pk
+            )
+        )
+
+    cover_marking.is_backstamp = bool(
+        _coerce_optional_bool(payload, "is_backstamp", cover_marking.is_backstamp)
+    )
+    if "placement" in payload:
+        raw_placement = payload.get("placement")
+        cover_marking.placement = (
+            (raw_placement.strip() or None)
+            if isinstance(raw_placement, str)
+            else None
+        )
+    if "contributor_comment" in payload or "comment_for_editor" in payload:
+        comment_raw = (
+            payload.get("contributor_comment")
+            or payload.get("comment_for_editor")
+            or ""
+        )
+        comment = (
+            comment_raw.strip()
+            if isinstance(comment_raw, str)
+            else str(comment_raw).strip()
+        )
+        cover_marking.contributor_comment = comment or None
+    cover_marking.modified_by = actor
+    # Do NOT touch review_status / reviewer / reviewed_at / created_by here; the
+    # approve view backfills reviewer / review_notes / reviewed_at.
+    cover_marking.save(
+        update_fields=[
+            "is_backstamp",
+            "placement",
+            "contributor_comment",
+            "modified_by",
+        ]
+    )
+
+    _sync_cover_date_seen(cover.pk, payload, actor)
+    _sync_images(
+        Image.SUBJECT_COVER,
+        cover.pk,
+        payload,
+        actor,
+        image_view="FRONT",
+        metas_keys=("cover_image_metas", "image_metas"),
+        tags_key="cover_image_tags",
+    )
+    _sync_citations("COVER", cover.pk, payload, actor)
+    _sync_cover_valuation(cover.pk, payload, actor)
 
     return {
         "kind": "cover",
@@ -369,6 +651,17 @@ def _parse_decimal(value: Any) -> Decimal | None:
         except (InvalidOperation, ValueError):
             return None
     return None
+
+
+def _parse_int(value: Any) -> int | None:
+    """Tolerant int parser. Returns None for None/""/unparseable values so a
+    missing edit marker simply means "not an edit" rather than an error."""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _resolve_fk(model, payload: dict, id_key: str, name_key: str, *fallback_id_keys: str):
@@ -477,67 +770,198 @@ def _resolve_post_office(state_name: str, town_name: str, actor) -> PostOffice:
     return po
 
 
-def _create_images(marking, payload: dict, actor) -> None:
+def _normalize_storage(value: Any) -> str:
     """
-    Create Image rows for the new Marking. At least one image is
-    required; a submission with zero images is malformed.
+    Normalize a storage_filename or an image URL to a comparable tail. Strips a
+    leading slash and a legacy 'markings/' prefix so that a public image URL
+    (MEDIA_URL + storage_filename, built by ImageSerializer.get_image_url) and a
+    raw storage_filename reduce to forms that can be tail-matched.
     """
-    metas = payload.get("marking_image_metas")
+    s = str(value or "").lstrip("/")
+    if s.startswith("markings/"):
+        s = s[len("markings/"):]
+    return s
+
+
+def _parse_tag_list(raw: Any) -> list[str]:
+    """Positional tracing tags for newly uploaded files: a JSON string or a
+    list of strings like ["tracing", "photograph"]. Returns [] otherwise."""
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+        return [str(t) for t in parsed] if isinstance(parsed, list) else []
+    if isinstance(raw, list):
+        return [str(t) for t in raw]
+    return []
+
+
+def _parse_tag_map(raw: Any) -> dict[str, str]:
+    """existing_image_tags is a {url: "tracing"|"photograph"} map for kept
+    images. Tolerate a JSON string or a dict; returns {} otherwise."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+    if isinstance(raw, dict):
+        return {str(k): str(v) for k, v in raw.items()}
+    return {}
+
+
+def _existing_tag_for(sf: str, existing_tags: dict[str, str]) -> str | None:
+    """
+    Return the tag for a kept image whose URL key in existing_tags matches the
+    normalized storage_filename sf, or None when no key matches. URL keys are
+    public image URLs; match the normalized URL tail against sf (mirrors
+    _meta_was_removed in common/api/v2/views.py).
+    """
+    for url, tag in existing_tags.items():
+        urln = _normalize_storage(url)
+        if urln == sf or urln.endswith(sf):
+            return tag
+    return None
+
+
+def _meta_is_tracing(meta: dict) -> bool:
+    """Read a tracing flag baked into a meta record (B3 stores a 'tracing'
+    boolean on kept-image records; tolerate a 'tag' string too)."""
+    if not isinstance(meta, dict):
+        return False
+    val = meta.get("tracing")
+    if isinstance(val, bool):
+        return val
+    if val is not None:
+        return str(val).strip().lower() in _BOOL_TRUE
+    tag = meta.get("tag")
+    if isinstance(tag, str):
+        return tag.strip().lower() == "tracing"
+    return False
+
+
+def _sync_images(
+    subject_type,
+    subject_id,
+    payload: dict,
+    actor,
+    *,
+    image_view: str,
+    metas_keys: tuple[str, ...],
+    tags_key: str,
+) -> None:
+    """
+    Reconcile a subject's Image rows against the FULL desired set in
+    submitted_data. On a freshly created subject the existing set is empty, so
+    this behaves exactly like the old create-only path (every meta is a new
+    upload). On an edit, kept images are retained + reordered + retagged, new
+    uploads are created, and rows absent from the desired set are deleted.
+
+    subject_type: Image.SUBJECT_MARKING or Image.SUBJECT_COVER.
+    image_view:   "FULL" for markings, "FRONT" for covers (a marking's "FULL"
+                  is rejected by the DB check constraint for COVER).
+    metas_keys:   ordered keys to find the FULL desired meta list, first
+                  non-empty wins, e.g. ("marking_image_metas", "image_metas").
+    tags_key:     positional tracing tags for NEW uploads, e.g.
+                  "marking_image_tags".
+
+    Tag rule: kept rows take existing_image_tags keyed by URL-tail match (with a
+    fallback to a 'tracing' flag baked into the meta); new uploads take the
+    positional tags in tags_key, indexed over the new uploads only.
+
+    At least one image is required; an empty desired set is malformed.
+    """
+    metas = None
+    for k in metas_keys:
+        candidate = payload.get(k)
+        if isinstance(candidate, list) and len(candidate) > 0:
+            metas = candidate
+            break
     if not metas:
-        metas = payload.get("image_metas")
-    if not isinstance(metas, list) or len(metas) == 0:
         raise ContributionApplyError(
-            "Marking submission has no images; at least one image is required."
+            "Submission has no images; at least one image is required."
         )
 
-    tags_raw = payload.get("marking_image_tags")
-    tags: list[str] = []
-    if isinstance(tags_raw, str):
-        try:
-            parsed = json.loads(tags_raw)
-            if isinstance(parsed, list):
-                tags = [str(t) for t in parsed]
-        except (ValueError, TypeError):
-            tags = []
-    elif isinstance(tags_raw, list):
-        tags = [str(t) for t in tags_raw]
+    new_tags = _parse_tag_list(payload.get(tags_key))
+    existing_tags = _parse_tag_map(payload.get("existing_image_tags"))
 
+    current = {}
+    for row in Image.objects.filter(subject_type=subject_type, subject_id=subject_id):
+        current[_normalize_storage(row.storage_filename)] = row
+
+    desired: list[str] = []
+    new_index = 0
     for i, meta in enumerate(metas):
         if not isinstance(meta, dict):
             raise ContributionApplyError(
-                "marking_image_metas[{}] is not an object.".format(i)
+                "{}[{}] is not an object.".format(metas_keys[0], i)
             )
-        storage_filename = meta.get("storage_filename")
-        if not storage_filename:
+        raw_sf = meta.get("storage_filename")
+        if not raw_sf:
             raise ContributionApplyError(
-                "marking_image_metas[{}].storage_filename is required.".format(i)
+                "{}[{}].storage_filename is required.".format(metas_keys[0], i)
             )
-        is_tracing = i < len(tags) and tags[i] == "tracing"
-        Image.objects.create(
-            subject_type=Image.SUBJECT_MARKING,
-            subject_id=marking.pk,
-            original_filename=str(meta.get("original_filename", "") or ""),
-            storage_filename=str(storage_filename),
-            file_checksum=str(meta.get("file_checksum", "") or ""),
-            mime_type=str(meta.get("mime_type", "") or ""),
-            image_width=int(meta.get("image_width") or 0),
-            image_height=int(meta.get("image_height") or 0),
-            file_size_bytes=int(meta.get("file_size_bytes") or 0),
-            image_view="FULL",
-            image_description=str(meta.get("image_description", "") or ""),
-            is_tracing=is_tracing,
-            display_order=i,
-            uploaded_by=actor,
-            created_by=actor,
-            modified_by=actor,
-        )
+        sf = _normalize_storage(raw_sf)
+        desired.append(sf)
+        row = current.get(sf)
+        if row is not None:
+            # Kept image: tag from existing_image_tags by URL-tail; fall back to
+            # a flag baked into the meta record. Retain the row, update its
+            # order and tag.
+            tag = _existing_tag_for(sf, existing_tags)
+            if tag is not None:
+                is_tracing = tag == "tracing"
+            else:
+                is_tracing = _meta_is_tracing(meta)
+            row.is_tracing = is_tracing
+            row.display_order = i
+            row.modified_by = actor
+            row.save(
+                update_fields=["is_tracing", "display_order", "modified_by"]
+            )
+        else:
+            # New upload: positional tag over the new uploads only.
+            is_tracing = (
+                new_index < len(new_tags) and new_tags[new_index] == "tracing"
+            )
+            new_index += 1
+            Image.objects.create(
+                subject_type=subject_type,
+                subject_id=subject_id,
+                original_filename=str(meta.get("original_filename", "") or ""),
+                storage_filename=str(raw_sf),
+                file_checksum=str(meta.get("file_checksum", "") or ""),
+                mime_type=str(meta.get("mime_type", "") or ""),
+                image_width=int(meta.get("image_width") or 0),
+                image_height=int(meta.get("image_height") or 0),
+                file_size_bytes=int(meta.get("file_size_bytes") or 0),
+                image_view=image_view,
+                image_description=str(meta.get("image_description", "") or ""),
+                is_tracing=is_tracing,
+                display_order=i,
+                uploaded_by=actor,
+                created_by=actor,
+                modified_by=actor,
+            )
+
+    # Removals: any current row not in the desired set is dropped.
+    for sf, row in current.items():
+        if sf not in desired:
+            row.delete()
 
 
-def _create_citations(marking, payload: dict, actor) -> None:
+def _sync_citations(subject_type: str, subject_id, payload: dict, actor) -> None:
     """
-    Create Citation rows from reference_work_ids + reference_work_details.
-    Silently no-ops if no reference_work_ids are present.
+    Replace all Citation rows for (subject_type, subject_id) with the set built
+    from reference_work_ids + reference_work_details. Deletes the existing rows
+    first, then recreates; zero ids therefore clears citations. On a freshly
+    created subject the delete is a no-op, so this matches the old create-only
+    behavior. subject_type is the Citation subject string ("MARKING" | "COVER").
     """
+    Citation.objects.filter(
+        subject_type=subject_type, subject_id=subject_id
+    ).delete()
+
     ids_raw = payload.get("reference_work_ids")
     if ids_raw is None:
         ids_raw = payload.get("referenceWorkIds")
@@ -598,20 +1022,25 @@ def _create_citations(marking, payload: dict, actor) -> None:
             citation_detail = citation_detail[:500]
         Citation.objects.create(
             reference_work=rw,
-            subject_type="MARKING",
-            subject_id=marking.pk,
+            subject_type=subject_type,
+            subject_id=subject_id,
             citation_detail=citation_detail,
             created_by=actor,
             modified_by=actor,
         )
 
 
-def _create_cover_date_seen(cover, payload: dict, actor) -> None:
+def _sync_cover_date_seen(cover_id, payload: dict, actor) -> None:
     """
-    Create zero-or-one DateSeen (subject_type=COVER) from cover_date +
-    cover_granularity. Optional: covers without a recorded date are valid, so a
-    missing cover_date is a no-op. A present-but-unparseable date is an error.
+    Reconcile the cover's DateSeen to zero-or-one row from cover_date +
+    cover_granularity: delete the existing DateSeen(COVER, cover_id), then
+    recreate from the payload. On a freshly created cover the delete is a no-op.
+    A missing cover_date clears the date (so a contributor who clears the date
+    on edit removes it); a present-but-unparseable date is an error.
     """
+    DateSeen.objects.filter(
+        subject_type=DateSeen.SUBJECT_COVER, subject_id=cover_id
+    ).delete()
     raw = payload.get("cover_date") or payload.get("coverDate")
     if raw in (None, ""):
         return
@@ -625,7 +1054,7 @@ def _create_cover_date_seen(cover, payload: dict, actor) -> None:
         raise ContributionApplyError("Invalid cover_granularity: {!r}".format(granularity))
     DateSeen.objects.create(
         subject_type=DateSeen.SUBJECT_COVER,
-        subject_id=cover.pk,
+        subject_id=cover_id,
         date=parsed,
         granularity=granularity,
         created_by=actor,
@@ -633,151 +1062,29 @@ def _create_cover_date_seen(cover, payload: dict, actor) -> None:
     )
 
 
-def _create_cover_images(cover, payload: dict, actor) -> None:
+def _sync_cover_valuation(cover_id, payload: dict, actor) -> None:
     """
-    Create Image rows for the new Cover. At least one image is required; a
-    submission with zero images is malformed. Mirrors _create_images but writes
-    COVER-subject rows with a cover-valid image_view ("FRONT"); the marking
-    path's image_view="FULL" is rejected by the DB check constraint for COVER.
+    Reconcile the cover's CoverValuation from valuation_amt /
+    valuation_appraisal_date.
+
+    Valuation is NOT part of the current draft/edit form payload, so when
+    neither field is present this is a no-op that leaves any existing valuation
+    untouched -- a missing field must never wipe an editor-entered valuation.
+    When either field IS present, the existing valuations are replaced with the
+    submitted one (delete-then-create). On a freshly created cover the delete is
+    a no-op, so this matches the old create-only behavior.
     """
-    metas = payload.get("cover_image_metas")
-    if not metas:
-        metas = payload.get("image_metas")
-    if not isinstance(metas, list) or len(metas) == 0:
-        raise ContributionApplyError(
-            "Cover submission has no images; at least one image is required."
-        )
-
-    tags_raw = payload.get("cover_image_tags")
-    tags: list[str] = []
-    if isinstance(tags_raw, str):
-        try:
-            parsed = json.loads(tags_raw)
-            if isinstance(parsed, list):
-                tags = [str(t) for t in parsed]
-        except (ValueError, TypeError):
-            tags = []
-    elif isinstance(tags_raw, list):
-        tags = [str(t) for t in tags_raw]
-
-    for i, meta in enumerate(metas):
-        if not isinstance(meta, dict):
-            raise ContributionApplyError(
-                "cover_image_metas[{}] is not an object.".format(i)
-            )
-        storage_filename = meta.get("storage_filename")
-        if not storage_filename:
-            raise ContributionApplyError(
-                "cover_image_metas[{}].storage_filename is required.".format(i)
-            )
-        is_tracing = i < len(tags) and tags[i] == "tracing"
-        Image.objects.create(
-            subject_type=Image.SUBJECT_COVER,
-            subject_id=cover.pk,
-            original_filename=str(meta.get("original_filename", "") or ""),
-            storage_filename=str(storage_filename),
-            file_checksum=str(meta.get("file_checksum", "") or ""),
-            mime_type=str(meta.get("mime_type", "") or ""),
-            image_width=int(meta.get("image_width") or 0),
-            image_height=int(meta.get("image_height") or 0),
-            file_size_bytes=int(meta.get("file_size_bytes") or 0),
-            image_view="FRONT",
-            image_description=str(meta.get("image_description", "") or ""),
-            is_tracing=is_tracing,
-            display_order=i,
-            uploaded_by=actor,
-            created_by=actor,
-            modified_by=actor,
-        )
-
-
-def _create_cover_citations(cover, payload: dict, actor) -> None:
-    """
-    Create Citation rows (subject_type=COVER) from reference_work_ids +
-    reference_work_details. Silently no-ops if no reference_work_ids are present.
-    Mirrors _create_citations except for the COVER subject.
-    """
-    ids_raw = payload.get("reference_work_ids")
-    if ids_raw is None:
-        ids_raw = payload.get("referenceWorkIds")
-    if not ids_raw:
-        return
-    if not isinstance(ids_raw, (list, tuple)):
-        raise ContributionApplyError(
-            "reference_work_ids must be a list of ids."
-        )
-
-    details_raw = payload.get("reference_work_details")
-    if details_raw is None:
-        details_raw = payload.get("referenceWorkDetails")
-    details_list: list[dict] = []
-    if isinstance(details_raw, str):
-        try:
-            parsed = json.loads(details_raw)
-            if isinstance(parsed, list):
-                details_list = [d for d in parsed if isinstance(d, dict)]
-        except (ValueError, TypeError):
-            details_list = []
-    elif isinstance(details_raw, list):
-        details_list = [d for d in details_raw if isinstance(d, dict)]
-
-    detail_by_id: dict[int, dict] = {}
-    for entry in details_list:
-        try:
-            rwid = int(entry.get("reference_work_id"))
-        except (TypeError, ValueError):
-            continue
-        detail_by_id[rwid] = entry
-
-    for rid_raw in ids_raw:
-        try:
-            rwid = int(rid_raw)
-        except (TypeError, ValueError):
-            raise ContributionApplyError(
-                "Invalid reference work id: {!r}".format(rid_raw)
-            )
-        try:
-            rw = ReferenceWork.objects.get(pk=rwid)
-        except ReferenceWork.DoesNotExist:
-            raise ContributionApplyError(
-                "Unknown reference work id: {}".format(rwid)
-            )
-        detail = detail_by_id.get(rwid, {})
-        page_number = str(detail.get("page_number") or "").strip()
-        url = str(detail.get("url") or "").strip()
-        if page_number and url:
-            citation_detail = "p. {} - {}".format(page_number, url)
-        elif page_number:
-            citation_detail = "p. {}".format(page_number)
-        elif url:
-            citation_detail = url
-        else:
-            citation_detail = ""
-        if len(citation_detail) > 500:
-            citation_detail = citation_detail[:500]
-        Citation.objects.create(
-            reference_work=rw,
-            subject_type="COVER",
-            subject_id=cover.pk,
-            citation_detail=citation_detail,
-            created_by=actor,
-            modified_by=actor,
-        )
-
-
-def _create_cover_valuation(cover, payload: dict, actor) -> None:
-    """
-    Create zero-or-one CoverValuation from valuation_amt /
-    valuation_appraisal_date. Not part of the current draft form payload, so
-    this is a no-op unless either field is present.
-    """
-    amt = _parse_decimal(payload.get("valuation_amt") or payload.get("valuationAmt"))
+    amt_raw = payload.get("valuation_amt") or payload.get("valuationAmt")
     date_raw = payload.get("valuation_appraisal_date") or payload.get("valuationAppraisalDate")
+    if amt_raw in (None, "") and date_raw in (None, ""):
+        return
+    CoverValuation.objects.filter(cover_id=cover_id).delete()
+    amt = _parse_decimal(amt_raw)
     appraisal_date = parse_date(str(date_raw)[:10]) if date_raw else None
     if amt is None and appraisal_date is None:
         return
     CoverValuation.objects.create(
-        cover=cover,
+        cover_id=cover_id,
         amt=amt,
         appraisal_date=appraisal_date,
         created_by=actor,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { Info, Loader2, Pencil, Trash2 } from "lucide-react";
+import { CheckCircle, Info, Loader2, MessageSquare, Pencil, Trash2, XCircle } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
@@ -152,9 +152,8 @@ const CoverDetailPage = () => {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyExpanded, setHistoryExpanded] = useState(false);
-  const [coverReviewOpen, setCoverReviewOpen] = useState(false);
-  const [coverReviewKind, setCoverReviewKind] = useState<CoverMarkingReviewActionApi | null>(null);
   const [coverReviewNotes, setCoverReviewNotes] = useState("");
+  const [coverReviewError, setCoverReviewError] = useState<string | null>(null);
   const [coverReviewBusy, setCoverReviewBusy] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removeReason, setRemoveReason] = useState("");
@@ -195,28 +194,19 @@ const CoverDetailPage = () => {
     setCoverMarkingLink(link);
   }, [coverPk, markingId]);
 
-  const openCoverReview = (kind: CoverMarkingReviewActionApi) => {
-    setCoverReviewKind(kind);
-    setCoverReviewNotes("");
-    setCoverReviewOpen(true);
-  };
-
-  const submitCoverReview = async () => {
-    if (!coverMarkingLink || !coverReviewKind) return;
-    if (coverReviewKind === "request-revision" && !coverReviewNotes.trim()) {
-      toast({
-        title: "Comment required",
-        description: "Explain what should change before the contributor resubmits.",
-        variant: "destructive",
-      });
+  const submitCoverReview = async (kind: CoverMarkingReviewActionApi) => {
+    if (!coverMarkingLink) return;
+    if (kind !== "approve" && !coverReviewNotes.trim()) {
+      setCoverReviewError("A comment is required to reject or request revision.");
       return;
     }
+    setCoverReviewError(null);
     setCoverReviewBusy(true);
     try {
       const res = await postCoverMarkingReview(
         coverMarkingLink.id,
-        coverReviewKind,
-        coverReviewNotes,
+        kind,
+        coverReviewNotes.trim() || undefined,
       );
       if (!res.ok) {
         toast({
@@ -229,14 +219,12 @@ const CoverDetailPage = () => {
       toast({
         title: "Cover review saved",
         description:
-          coverReviewKind === "approve"
+          kind === "approve"
             ? "This cover link is now visible to everyone on the catalog record."
-            : coverReviewKind === "reject"
+            : kind === "reject"
               ? "The contributor will see this cover as rejected on the record."
               : "The contributor can edit the cover and resubmit it for review.",
       });
-      setCoverReviewOpen(false);
-      setCoverReviewKind(null);
       setCoverReviewNotes("");
       await refreshCoverMarkingLink();
     } finally {
@@ -630,25 +618,6 @@ const CoverDetailPage = () => {
                   institutionallyOwned={institutionalText}
                   backstamp={backstampText}
                 />
-                {canReviewCover && (
-                  <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-border">
-                    <Button type="button" size="sm" variant="default" onClick={() => openCoverReview("approve")}>
-                      Approve
-                    </Button>
-                    <Button type="button" size="sm" variant="secondary" onClick={() => openCoverReview("request-revision")}>
-                      Return for revision
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="text-destructive border-destructive/50 hover:bg-destructive/10"
-                      onClick={() => openCoverReview("reject")}
-                    >
-                      Reject
-                    </Button>
-                  </div>
-                )}
                 {cover.canRemove && (
                   <div className="mt-4 pt-4 border-t border-border flex justify-end">
                     {cover.isRemoved ? (
@@ -666,6 +635,66 @@ const CoverDetailPage = () => {
                 )}
               </CardContent>
             </Card>
+
+            {canReviewCover && (
+              <Card className="shadow-archival-lg border-primary/20">
+                <CardHeader>
+                  <CardTitle className="font-heading text-lg">Review this cover</CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Choose Approve, Reject, or Return.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="cover-detail-review-notes">Comment</Label>
+                    <Textarea
+                      id="cover-detail-review-notes"
+                      placeholder="Optional for approvals, required for rejection/revision."
+                      rows={4}
+                      value={coverReviewNotes}
+                      onChange={(e) => {
+                        setCoverReviewNotes(e.target.value);
+                        if (coverReviewError && e.target.value.trim()) setCoverReviewError(null);
+                      }}
+                      disabled={coverReviewBusy}
+                      className={`resize-none ${coverReviewError ? "border-destructive" : ""}`}
+                    />
+                    {coverReviewError ? (
+                      <p className="text-sm text-destructive">{coverReviewError}</p>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    <Button
+                      type="button"
+                      onClick={() => void submitCoverReview("approve")}
+                      disabled={coverReviewBusy}
+                      className="bg-green-600 hover:bg-green-700"
+                    >
+                      <CheckCircle className="mr-2 h-4 w-4" />
+                      {coverReviewBusy ? "Submitting..." : "Approve"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={() => void submitCoverReview("reject")}
+                      disabled={coverReviewBusy}
+                    >
+                      <XCircle className="mr-2 h-4 w-4" />
+                      Reject
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void submitCoverReview("request-revision")}
+                      disabled={coverReviewBusy}
+                    >
+                      <MessageSquare className="mr-2 h-4 w-4" />
+                      Return
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             <Card className="shadow-archival-md">
               <CardHeader>
@@ -703,74 +732,6 @@ const CoverDetailPage = () => {
           </>
         }
       />
-
-      <Dialog
-        open={coverReviewOpen}
-        onOpenChange={(open) => {
-          if (coverReviewBusy) return;
-          setCoverReviewOpen(open);
-          if (!open) {
-            setCoverReviewKind(null);
-            setCoverReviewNotes("");
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {coverReviewKind === "approve"
-                ? "Approve this cover link"
-                : coverReviewKind === "reject"
-                  ? "Reject this cover link"
-                  : "Return this cover for revision"}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2 py-2">
-            <Label htmlFor="cover-detail-review-notes">
-              Note to contributor{" "}
-              <span className="text-destructive">
-                {coverReviewKind === "request-revision" ? "(required)" : "(optional)"}
-              </span>
-            </Label>
-            <Textarea
-              id="cover-detail-review-notes"
-              rows={4}
-              value={coverReviewNotes}
-              onChange={(e) => setCoverReviewNotes(e.target.value)}
-              disabled={coverReviewBusy}
-              placeholder={
-                coverReviewKind === "request-revision"
-                  ? "Describe what needs to change before this cover can be approved."
-                  : "Optional context for the contributor."
-              }
-            />
-          </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setCoverReviewOpen(false)}
-              disabled={coverReviewBusy}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              onClick={() => void submitCoverReview()}
-              disabled={coverReviewBusy}
-            >
-              {coverReviewBusy ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving…
-                </>
-              ) : (
-                "Confirm"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={removeOpen} onOpenChange={(open) => !removing && setRemoveOpen(open)}>
         <DialogContent>

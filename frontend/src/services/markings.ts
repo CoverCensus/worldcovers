@@ -1180,13 +1180,15 @@ export async function loadAssociatedCoversForMarking(
 ): Promise<MarkingCoversResult> {
   const { covers, error } = await getMarkingCovers(markingId);
   const drafts = await getCoverContributionDraftsForMarking(markingId);
-  // Rejected and returned-for-revision links are not real associations, so they
-  // are hidden from the marking's Associated Covers panel (and its count).
-  // Approved and pending links (and pending drafts) stay visible. Resubmission
-  // of a returned/rejected cover happens via the Contribute edit flow reached
-  // from My Submissions, not from this panel.
-  const merged = [...covers, ...drafts].filter(
-    (c) => c.reviewStatus !== "rejected" && c.reviewStatus !== "needs_revision",
+  // A real cover-marking link is a public association only once an editor has
+  // approved it: covers still pending review (or rejected / returned-for-revision)
+  // are hidden from the marking's Associated Covers panel (and its count), mirroring
+  // how an unapproved marking contribution does not appear on the record. The
+  // contributor's own unsubmitted drafts (contributionDraftId != null) stay visible
+  // so they can resume editing; resubmission of a returned/rejected cover happens
+  // via the Contribute edit flow reached from My Submissions, not from this panel.
+  const merged = [...covers, ...drafts].filter((c) =>
+    c.contributionDraftId != null ? true : c.reviewStatus === "approved",
   );
   const enriched = await enrichAssociatedCoversWithDefaultImages(merged);
   return { covers: enriched, error };

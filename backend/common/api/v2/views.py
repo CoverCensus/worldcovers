@@ -38,6 +38,7 @@ from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
 
+from common.contribution_apply import _parse_int
 from common.audit import (
     build_cover_snapshot,
     build_marking_snapshot,
@@ -1693,6 +1694,30 @@ class ContributionViewSet(
         review_notes = serializer.validated_data.get("review_notes", "")
         try:
             with transaction.atomic():
+                # Capture the BEFORE snapshot for edits (the entity already
+                # exists and apply mutates it in place). build_*_snapshot read
+                # live DB state, so this must run BEFORE apply. CREATE leaves
+                # these empty, so the audit diff for a create stays before={}.
+                sd = contrib.submitted_data or {}
+                edit_marking_id = _parse_int(sd.get("edit_postmark_id"))
+                edit_cover_id = _parse_int(sd.get("edit_cover_id"))
+                before_marking_snapshot = {}
+                before_cover_snapshot = {}
+                if edit_cover_id:
+                    try:
+                        before_cover_snapshot = build_cover_snapshot(
+                            Cover.all_objects.get(pk=edit_cover_id)
+                        )
+                    except Cover.DoesNotExist:
+                        pass
+                elif edit_marking_id:
+                    try:
+                        before_marking_snapshot = build_marking_snapshot(
+                            Marking.all_objects.get(pk=edit_marking_id)
+                        )
+                    except Marking.DoesNotExist:
+                        pass
+
                 result = contrib.apply_to_catalog()
 
                 # apply_to_catalog returns a Marking for marking submissions and
@@ -1709,6 +1734,10 @@ class ContributionViewSet(
                     cover_marking.reviewer = request.user
                     cover_marking.review_notes = review_notes
                     cover_marking.modified_by = request.user
+                    # Stamp reviewed_at here for BOTH create and edit: the edit
+                    # apply path deliberately leaves the link's review fields
+                    # alone, so the approve view owns reviewed_at in both cases.
+                    cover_marking.reviewed_at = timezone.now()
                     cover_marking.save(
                         update_fields=["reviewer", "review_notes", "modified_by", "reviewed_at"]
                     )
@@ -1746,7 +1775,7 @@ class ContributionViewSet(
                         marking=parent_marking,
                         cover=cover,
                         source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-                        before_payload={},
+                        before_payload=before_cover_snapshot,
                         after_payload=after_snapshot,
                         extra_payload={
                             "review_notes": review_notes,
@@ -1779,7 +1808,7 @@ class ContributionViewSet(
                         contribution=contrib,
                         marking=marking,
                         source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-                        before_payload={},
+                        before_payload=before_marking_snapshot,
                         after_payload=after_snapshot,
                         extra_payload={"review_notes": review_notes},
                     )
@@ -2228,74 +2257,15 @@ class ContributionSubmitView(APIView):
                 return Response({"detail": detail}, status=status.HTTP_404_NOT_FOUND)
             existing_sd = dict(contrib.submitted_data or {})
 
-            # Honor contributor-side image removals. Frontend
-            # (Contribute.tsx -> removeExistingImageAt) sends a JSON list of
-            # the displayed URLs that the user removed from the edit form.
-            # We drop matching entries from marking_images (URL strings) and
-            # from any *_metas lists (matching by storage_filename tail) so
-            # the resubmission reflects what the contributor actually wants.
-            removed_keys_raw = data.get("removed_existing_image_keys")
-            removed_keys = []
-            if isinstance(removed_keys_raw, str):
-                try:
-                    parsed = json.loads(removed_keys_raw)
-                    if isinstance(parsed, list):
-                        removed_keys = [str(k) for k in parsed if k]
-                except (ValueError, TypeError):
-                    removed_keys = []
-            elif isinstance(removed_keys_raw, list):
-                removed_keys = [str(k) for k in removed_keys_raw if k]
-
-            if removed_keys:
-                removed_set = set(removed_keys)
-                # marking_images is a list of URL strings; drop direct hits.
-                existing_marking_images = existing_sd.get("marking_images")
-                if isinstance(existing_marking_images, list):
-                    existing_sd["marking_images"] = [
-                        u for u in existing_marking_images if u not in removed_set
-                    ]
-
-                def _meta_was_removed(meta):
-                    if not isinstance(meta, dict):
-                        return False
-                    sf = str(meta.get("storage_filename") or "").lstrip("/")
-                    if not sf:
-                        return False
-                    for k in removed_set:
-                        kn = str(k).lstrip("/")
-                        if kn == sf or kn.endswith(sf):
-                            return True
-                    return False
-
-                for meta_key in ("marking_image_metas", "cover_image_metas", "image_metas"):
-                    metas_list = existing_sd.get(meta_key)
-                    if isinstance(metas_list, list):
-                        existing_sd[meta_key] = [
-                            m for m in metas_list if not _meta_was_removed(m)
-                        ]
-
-                # image_meta is the catalog-default thumbnail pointer; if it
-                # was just removed, replace it with the next surviving meta
-                # (or None if none remain).
-                primary = existing_sd.get("image_meta")
-                if isinstance(primary, dict) and _meta_was_removed(primary):
-                    replacement = None
-                    for fallback_key in ("marking_image_metas", "image_metas", "cover_image_metas"):
-                        fallback_list = existing_sd.get(fallback_key)
-                        if isinstance(fallback_list, list) and fallback_list:
-                            replacement = fallback_list[0]
-                            break
-                    existing_sd["image_meta"] = replacement
-
-            if image_metas:
-                meta_key = "cover_image_metas" if is_cover_submission else "marking_image_metas"
-                prior = existing_sd.get(meta_key) or existing_sd.get("image_metas") or []
-                if not isinstance(prior, list):
-                    prior = []
-                merged_metas = list(prior) + image_metas
-                submitted_data[meta_key] = merged_metas
-                submitted_data["image_metas"] = merged_metas
-                submitted_data["image_meta"] = merged_metas[0] if merged_metas else existing_sd.get("image_meta")
+            # Honor contributor-side image removals and merge new uploads
+            # against the draft's prior submitted_data. Frontend
+            # (Contribute.tsx -> removeExistingImageAt) sends a JSON list of the
+            # displayed URLs the user removed from the edit form; the helper
+            # drops matching entries and merges any newly uploaded files.
+            image_updates = _apply_existing_image_reconciliation(
+                existing_sd, data, image_metas, is_cover_submission
+            )
+            submitted_data.update(image_updates)
             existing_sd.update(submitted_data)
             contrib.submitted_data = existing_sd
             contrib.collection = collection
@@ -2321,7 +2291,33 @@ class ContributionSubmitView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        if image_metas:
+        # Fresh submit (no edit_contribution_id). When an edit marker is present
+        # -- a PENDING edit submitted without first creating a draft -- rebuild
+        # the FULL desired image set server-side from the catalog entry's
+        # existing Image rows so approval-time apply reconciles correctly
+        # (existing-image removals are otherwise dropped on this branch).
+        # Otherwise this is a plain create: store the uploads as-is.
+        edit_marking_marker = _parse_int(submitted_data.get("edit_postmark_id"))
+        edit_cover_marker = _parse_int(submitted_data.get("edit_cover_id"))
+        if is_cover_submission and edit_cover_marker is not None:
+            _apply_fresh_edit_image_metas(
+                submitted_data,
+                data,
+                image_metas,
+                subject_type=Image.SUBJECT_COVER,
+                subject_id=edit_cover_marker,
+                meta_key="cover_image_metas",
+            )
+        elif (not is_cover_submission) and edit_marking_marker is not None:
+            _apply_fresh_edit_image_metas(
+                submitted_data,
+                data,
+                image_metas,
+                subject_type=Image.SUBJECT_MARKING,
+                subject_id=edit_marking_marker,
+                meta_key="marking_image_metas",
+            )
+        elif image_metas:
             submitted_data["marking_image_metas"] = image_metas
             if is_cover_submission:
                 submitted_data["cover_image_metas"] = image_metas
@@ -2400,6 +2396,170 @@ def _save_contribution_image(uploaded_file, region_abbrev):
         "original_filename": (getattr(uploaded_file, "name", "image") or "image")[:255],
         **metadata,
     }
+
+
+def _parse_removed_image_keys(raw):
+    """Parse removed_existing_image_keys (a JSON string or a list) into a list
+    of URL strings. Returns [] for anything else."""
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+        return [str(k) for k in parsed if k] if isinstance(parsed, list) else []
+    if isinstance(raw, list):
+        return [str(k) for k in raw if k]
+    return []
+
+
+def _storage_filename_removed(storage_filename, removed_set):
+    """True when storage_filename matches one of the removed URL keys. Mirrors
+    the _meta_was_removed matcher: normalize both (strip leading slash) and test
+    URL-tail against the storage_filename."""
+    sf = str(storage_filename or "").lstrip("/")
+    if not sf:
+        return False
+    for k in removed_set:
+        kn = str(k).lstrip("/")
+        if kn == sf or kn.endswith(sf):
+            return True
+    return False
+
+
+def _parse_existing_image_tags(raw):
+    """Parse existing_image_tags ({url: "tracing"|"photograph"}) from a JSON
+    string or dict into a {str: str} map. Returns {} otherwise."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+    if isinstance(raw, dict):
+        return {str(k): str(v) for k, v in raw.items()}
+    return {}
+
+
+def _existing_image_tag_value(storage_filename, existing_tags):
+    """Return the tag for an image whose URL key in existing_tags matches the
+    storage_filename (URL-tail match, legacy 'markings/' prefix stripped), or
+    None when no key matches."""
+    sfn = str(storage_filename or "").lstrip("/")
+    if sfn.startswith("markings/"):
+        sfn = sfn[len("markings/"):]
+    for url, tag in existing_tags.items():
+        urln = str(url or "").lstrip("/")
+        if urln.startswith("markings/"):
+            urln = urln[len("markings/"):]
+        if urln == sfn or urln.endswith(sfn):
+            return tag
+    return None
+
+
+def _apply_existing_image_reconciliation(existing_sd, data, image_metas, is_cover):
+    """
+    Draft-resume image reconciliation. Mutates existing_sd in place to honor
+    contributor-side removals (removed_existing_image_keys) against the draft's
+    prior submitted_data (marking_images URL list, the *_metas lists, and the
+    image_meta thumbnail pointer), then computes the merged meta set when there
+    are new uploads. Returns a dict of submitted_data updates (the *_metas /
+    image_metas / image_meta keys) for the caller to apply; an empty dict when
+    there are no new uploads.
+    """
+    removed_keys = _parse_removed_image_keys(data.get("removed_existing_image_keys"))
+    if removed_keys:
+        removed_set = set(removed_keys)
+        # marking_images is a list of URL strings; drop direct hits.
+        existing_marking_images = existing_sd.get("marking_images")
+        if isinstance(existing_marking_images, list):
+            existing_sd["marking_images"] = [
+                u for u in existing_marking_images if u not in removed_set
+            ]
+        for meta_key in ("marking_image_metas", "cover_image_metas", "image_metas"):
+            metas_list = existing_sd.get(meta_key)
+            if isinstance(metas_list, list):
+                existing_sd[meta_key] = [
+                    m
+                    for m in metas_list
+                    if not (
+                        isinstance(m, dict)
+                        and _storage_filename_removed(
+                            m.get("storage_filename"), removed_set
+                        )
+                    )
+                ]
+        # image_meta is the catalog-default thumbnail pointer; if it was just
+        # removed, replace it with the next surviving meta (or None if none).
+        primary = existing_sd.get("image_meta")
+        if isinstance(primary, dict) and _storage_filename_removed(
+            primary.get("storage_filename"), removed_set
+        ):
+            replacement = None
+            for fallback_key in ("marking_image_metas", "image_metas", "cover_image_metas"):
+                fallback_list = existing_sd.get(fallback_key)
+                if isinstance(fallback_list, list) and fallback_list:
+                    replacement = fallback_list[0]
+                    break
+            existing_sd["image_meta"] = replacement
+
+    updates = {}
+    if image_metas:
+        meta_key = "cover_image_metas" if is_cover else "marking_image_metas"
+        prior = existing_sd.get(meta_key) or existing_sd.get("image_metas") or []
+        if not isinstance(prior, list):
+            prior = []
+        merged_metas = list(prior) + image_metas
+        updates[meta_key] = merged_metas
+        updates["image_metas"] = merged_metas
+        updates["image_meta"] = (
+            merged_metas[0] if merged_metas else existing_sd.get("image_meta")
+        )
+    return updates
+
+
+def _apply_fresh_edit_image_metas(
+    submitted_data, data, image_metas, *, subject_type, subject_id, meta_key
+):
+    """
+    Build the FULL desired image set for a PENDING edit submitted fresh (no
+    draft, so edit_pk is None). The database is the source of truth for kept
+    images: query the edit target's existing Image rows, drop the ones the
+    contributor removed (removed_existing_image_keys), convert each kept row
+    into a submitted_data meta record (storage_filename + dimensions + a
+    'tracing' flag derived from existing_image_tags, else the DB is_tracing),
+    put the kept records first, then append the newly uploaded files' records.
+    Store the combined set under meta_key + image_metas + image_meta so
+    approval-time apply (_sync_images) reconciles correctly.
+    """
+    removed_set = set(_parse_removed_image_keys(data.get("removed_existing_image_keys")))
+    existing_tags = _parse_existing_image_tags(data.get("existing_image_tags"))
+
+    kept_records = []
+    rows = Image.objects.filter(
+        subject_type=subject_type, subject_id=subject_id
+    ).order_by("display_order", "id")
+    for row in rows:
+        if _storage_filename_removed(row.storage_filename, removed_set):
+            continue
+        tag = _existing_image_tag_value(row.storage_filename, existing_tags)
+        tracing = (tag == "tracing") if tag is not None else bool(row.is_tracing)
+        kept_records.append(
+            {
+                "storage_filename": row.storage_filename,
+                "original_filename": row.original_filename or "",
+                "file_checksum": row.file_checksum or "",
+                "mime_type": row.mime_type or "",
+                "image_width": row.image_width or 0,
+                "image_height": row.image_height or 0,
+                "file_size_bytes": row.file_size_bytes or 0,
+                "image_description": row.image_description or "",
+                "tracing": tracing,
+            }
+        )
+
+    combined = kept_records + list(image_metas or [])
+    submitted_data[meta_key] = combined
+    submitted_data["image_metas"] = combined
+    submitted_data["image_meta"] = combined[0] if combined else None
 
 
 ###################################################################################################

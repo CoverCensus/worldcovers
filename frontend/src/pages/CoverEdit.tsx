@@ -791,9 +791,20 @@ export default function CoverEdit() {
     }
   };
 
-  const handleSaveDraft = async () => {
+  // Save a cover draft (asDraft=true) or submit it for editor review (asDraft=false).
+  // Both create a Contribution via createContribution; only the save_as_draft flag and
+  // the post-success toast/navigation differ. A submitted cover goes through the same
+  // review queue as a marking, so it appears under My Submissions (contributor) and the
+  // editor pending-review queue -- not directly on the marking record. The backend sets
+  // status=pending when save_as_draft is absent and materializes the Cover + CoverMarking
+  // on approval (see backend ContributionViewSet.approve / contribution_apply.py).
+  const submitCoverContribution = async (asDraft: boolean) => {
     if (!user) {
-      toast({ title: "Sign in required", description: "Please sign in to save a draft.", variant: "destructive" });
+      toast({
+        title: "Sign in required",
+        description: asDraft ? "Please sign in to save a draft." : "Please sign in before submitting.",
+        variant: "destructive",
+      });
       return;
     }
     if (mode !== "create") return;
@@ -828,13 +839,13 @@ export default function CoverEdit() {
       });
       return;
     }
-    if (!validateForm(true)) return;
+    if (!validateForm(asDraft)) return;
 
     setSubmitting(true);
     try {
       const form = new FormData();
       form.append("submission_kind", "cover");
-      form.append("save_as_draft", "true");
+      if (asDraft) form.append("save_as_draft", "true");
       if (editContributionId != null) {
         form.append("edit_contribution_id", String(editContributionId));
       }
@@ -874,14 +885,23 @@ export default function CoverEdit() {
 
       await createContribution(form);
 
-      toast({
-        title: editContributionId != null ? "Cover draft updated" : "Cover draft saved",
-        description: "Your draft is listed under Associated Covers on this marking.",
-      });
-      navigate(`/record/${markingId}`);
+      if (asDraft) {
+        toast({
+          title: editContributionId != null ? "Cover draft updated" : "Cover draft saved",
+          description: "Your draft is listed under Associated Covers on this marking.",
+        });
+        navigate(`/record/${markingId}`);
+      } else {
+        toast({
+          title: "Cover submitted",
+          description:
+            "Your cover has been submitted for approval. It will appear on this marking after an editor approves it.",
+        });
+        navigate("/dashboard", { state: { tab: "submissions" } });
+      }
     } catch (err) {
       toast({
-        title: "Could not save draft",
+        title: asDraft ? "Could not save draft" : "Could not submit cover",
         description: formatAxiosError(err),
         variant: "destructive",
       });
@@ -890,6 +910,10 @@ export default function CoverEdit() {
     }
   };
 
+  // Edit-mode submit: writes changes straight to the catalog (and resubmits a
+  // needs_revision link). New covers do NOT reach this path -- handleFormSubmit
+  // routes create-mode submits through submitCoverContribution(false) so they go
+  // through the editor review queue like markings.
   const handleSubmitCatalog = async (e: FormEvent) => {
     e.preventDefault();
     if (submitting) return;
@@ -1048,6 +1072,17 @@ export default function CoverEdit() {
     }
   };
 
+  // Route the form's submit button: new covers go through the review queue, edits
+  // write through to the catalog.
+  const handleFormSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (mode === "create") {
+      void submitCoverContribution(false);
+      return;
+    }
+    void handleSubmitCatalog(e);
+  };
+
   if (loading || !draftLoadDone) {
     return (
       <div className="min-h-screen flex flex-col">
@@ -1132,7 +1167,7 @@ export default function CoverEdit() {
                     </div>
                   )}
 
-                  <form onSubmit={handleSubmitCatalog} className="space-y-6" noValidate>
+                  <form onSubmit={handleFormSubmit} className="space-y-6" noValidate>
                     <div className="space-y-2">
                       <Label htmlFor="cover-type">
                         Type <span className="text-destructive" aria-hidden="true">*</span>
@@ -1534,7 +1569,7 @@ export default function CoverEdit() {
                           variant="outline"
                           className="w-full sm:flex-1"
                           disabled={submitting || uploading}
-                          onClick={() => void handleSaveDraft()}
+                          onClick={() => void submitCoverContribution(true)}
                         >
                           Save as Draft
                         </Button>
