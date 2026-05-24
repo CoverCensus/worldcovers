@@ -497,6 +497,12 @@ class CoverAdmin(TimestampedModelAdmin):
     raw_id_fields = ['color']
     inlines = [CoverMarkingForCoverInline, CoverValuationInline]
 
+    def has_delete_permission(self, request, obj=None):
+        # Removing the unaudited hard-delete path (and its cascade to
+        # valuations / cover-markings). Cover removal goes through the audited,
+        # reversible recycle bin: POST /api/v2/covers/<pk>/remove/.
+        return False
+
 
 @admin.register(DateSeen)
 class DateSeenAdmin(TimestampedModelAdmin):

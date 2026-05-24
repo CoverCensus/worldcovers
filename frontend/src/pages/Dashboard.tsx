@@ -35,6 +35,7 @@ import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { cn } from "@/lib/utils";
 import { normalizeImageUrl, getAssignedCatalogPage, getRecycleBinMarkings, type MarkingRecord } from "@/services/markings";
+import { getRecycleBinCovers, type RecycleBinCover } from "@/services/covers";
 import { listContributions, decideContribution } from "@/services/contributions";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
@@ -307,6 +308,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Kept separate from editorHistoryItems (contributions) because the rows are
   // markings and navigate to /record/:id instead of /contribution/:id.
   const [removedMarkings, setRemovedMarkings] = useState<MarkingRecord[]>([]);
+  // Recycle-bin covers shown alongside removedMarkings when the filter is
+  // "removed". Loaded once (first page) and navigate to /covers/:id to restore.
+  const [removedCovers, setRemovedCovers] = useState<RecycleBinCover[]>([]);
   const [editorHistoryLoading, setEditorHistoryLoading] = useState(false);
   const [editorHistoryError, setEditorHistoryError] = useState<string | null>(null);
   const [editorHistoryStatusFilter, setEditorHistoryStatusFilter] = useState("all");
@@ -714,6 +718,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     // contribution list. The endpoint is region-scoped server side, so the
     // state filter is not sent here.
     if (editorHistoryStatusFilter === "removed") {
+      // Removed covers are loaded separately (first 50, no pagination); they
+      // navigate to /covers/:id where the Restore button lives. A failure here
+      // surfaces via the shared editor history error banner.
+      getRecycleBinCovers(1, 50)
+        .then((result) => setRemovedCovers(result.results))
+        .catch((err) => {
+          setEditorHistoryError(err instanceof Error ? err.message : "Could not load recycle bin.");
+          setRemovedCovers([]);
+        });
       getRecycleBinMarkings(editorHistoryPage, editorHistoryPageSize)
         .then((result) => {
           setRemovedMarkings(result.results);
@@ -727,6 +740,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         .finally(() => setEditorHistoryLoading(false));
       return;
     }
+    setRemovedCovers([]);
     const historyStatus =
       editorHistoryStatusFilter !== "all" &&
       ["pending", "approved", "rejected", "needs_revision"].includes(editorHistoryStatusFilter)
@@ -2307,64 +2321,115 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     <p>Loading history...</p>
                   </div>
                 ) : editorHistoryStatusFilter === "removed" ? (
-                  removedMarkings.length === 0 ? (
-                    <Card className="flex-1 flex items-center justify-center min-h-[200px]">
-                      <CardContent className="text-center">
-                        <p className="text-muted-foreground mb-1">
-                          No removed markings in your assigned regions.
+                  <div className="space-y-8">
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold text-foreground">Removed Markings</h3>
+                      {removedMarkings.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          No removed markings in your assigned regions. Markings you remove from
+                          the catalog appear here; open one to restore it.
                         </p>
-                        <p className="text-xs text-muted-foreground">
-                          Markings you remove from the catalog appear here. Open one to restore it.
-                        </p>
-                      </CardContent>
-                    </Card>
-                  ) : (
-                    <ul className="space-y-3">
-                      {removedMarkings.map((m) => {
-                        const title = [m.town, m.stateAbbrev || m.state].filter(Boolean).join(", ");
-                        const shapeStr = (m.shapeName || "").trim();
-                        const displayLabel =
-                          [title, shapeStr]
-                            .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
-                            .join(" - ") ||
-                          title ||
-                          `Marking #${m.id}`;
-                        return (
-                          <li
-                            key={m.id}
-                            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-card hover:shadow-archival-sm transition-shadow"
-                          >
-                            <div className="flex items-center gap-4 min-w-0 flex-1">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  navigate(`/record/${m.id}`, { state: { fromDashboard: true } })
-                                }
-                                className="w-16 h-16 shrink-0 p-0 border-0 bg-transparent cursor-pointer rounded overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring"
-                                aria-label={`Open ${displayLabel}`}
+                      ) : (
+                        <ul className="space-y-3">
+                          {removedMarkings.map((m) => {
+                            const title = [m.town, m.stateAbbrev || m.state].filter(Boolean).join(", ");
+                            const shapeStr = (m.shapeName || "").trim();
+                            const displayLabel =
+                              [title, shapeStr]
+                                .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
+                                .join(" - ") ||
+                              title ||
+                              `Marking #${m.id}`;
+                            return (
+                              <li
+                                key={m.id}
+                                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-card hover:shadow-archival-sm transition-shadow"
                               >
-                                <ImageOrPlaceholder
-                                  src={m.mainImage?.imageUrl ?? null}
-                                  alt={displayLabel}
-                                  className="w-full h-full object-cover rounded border border-border hover:opacity-90 transition-opacity"
-                                />
-                              </button>
-                              <div className="min-w-0">
-                                <span className="font-medium text-foreground block truncate">
-                                  {displayLabel}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2 shrink-0">
-                              <Badge className="rounded-full px-3 py-1 text-xs font-semibold shadow-sm bg-muted text-muted-foreground hover:bg-muted">
-                                Removed
-                              </Badge>
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )
+                                <div className="flex items-center gap-4 min-w-0 flex-1">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      navigate(`/record/${m.id}`, { state: { fromDashboard: true } })
+                                    }
+                                    className="w-16 h-16 shrink-0 p-0 border-0 bg-transparent cursor-pointer rounded overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring"
+                                    aria-label={`Open ${displayLabel}`}
+                                  >
+                                    <ImageOrPlaceholder
+                                      src={m.mainImage?.imageUrl ?? null}
+                                      alt={displayLabel}
+                                      className="w-full h-full object-cover rounded border border-border hover:opacity-90 transition-opacity"
+                                    />
+                                  </button>
+                                  <div className="min-w-0">
+                                    <span className="font-medium text-foreground block truncate">
+                                      {displayLabel}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                  <Badge className="rounded-full px-3 py-1 text-xs font-semibold shadow-sm bg-muted text-muted-foreground hover:bg-muted">
+                                    Removed
+                                  </Badge>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold text-foreground">Removed Covers</h3>
+                      {removedCovers.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          No removed covers in your assigned regions. Covers you remove from the
+                          catalog appear here; open one to restore it.
+                        </p>
+                      ) : (
+                        <ul className="space-y-3">
+                          {removedCovers.map((c) => {
+                            const coverLabel = c.code ?? `Cover #${c.id}`;
+                            const coverMeta = [
+                              c.colorName,
+                              c.type === "FC"
+                                ? "Folded Cover"
+                                : c.type === "FL"
+                                  ? "Folded Letter"
+                                  : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" - ");
+                            return (
+                              <li
+                                key={c.id}
+                                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-card hover:shadow-archival-sm transition-shadow"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => navigate(`/covers/${c.id}`)}
+                                  className="min-w-0 flex-1 text-left p-0 border-0 bg-transparent cursor-pointer rounded focus:outline-none focus:ring-2 focus:ring-ring"
+                                  aria-label={`Open ${coverLabel}`}
+                                >
+                                  <span className="font-medium text-foreground block truncate">
+                                    {coverLabel}
+                                  </span>
+                                  {coverMeta && (
+                                    <span className="text-xs text-muted-foreground block truncate">
+                                      {coverMeta}
+                                    </span>
+                                  )}
+                                </button>
+                                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                  <Badge className="rounded-full px-3 py-1 text-xs font-semibold shadow-sm bg-muted text-muted-foreground hover:bg-muted">
+                                    Removed
+                                  </Badge>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
                 ) : filteredAndSortedEditorHistoryItems.length === 0 ? (
                   <Card className="flex-1 flex items-center justify-center min-h-[200px]">
                     <CardContent className="text-center">

@@ -44,6 +44,35 @@ def _user_is_responsible_for_marking(user, marking):
     return _get_user_assigned_regions(user).filter(pk=region.pk).exists()
 
 
+def _user_is_responsible_for_cover(user, cover):
+    """
+    A cover has no region of its own; its regions are derived from the markings
+    linked to it (CoverMarking -> Marking -> post_office -> region). An editor
+    is responsible for the cover if any of those regions is in their assigned
+    regions. A cover with no linked markings has no region, so only a superuser
+    can act on it.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    if not user.has_perm(REVIEW_CONTRIBUTION_PERM):
+        return False
+    assigned = _get_user_assigned_regions(user)
+    if not assigned.exists():
+        return False
+    region_ids = set()
+    for cm in cover.cover_markings.select_related("marking__post_office").all():
+        post_office = cm.marking.post_office if cm.marking else None
+        # PostOffice.region is a property resolving the most-recent active region.
+        region = post_office.region if post_office else None
+        if region is not None:
+            region_ids.add(region.pk)
+    if not region_ids:
+        return False
+    return assigned.filter(pk__in=region_ids).exists()
+
+
 def user_assigned_collection_ids(user) -> set[int]:
     """Return the set of Collection IDs this user is assigned to as an Editor."""
     if not user or not user.is_authenticated:

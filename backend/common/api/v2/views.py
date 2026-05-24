@@ -39,11 +39,16 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
 
 from common.audit import (
+    build_cover_snapshot,
     build_marking_snapshot,
+    create_cover_version,
     create_marking_version,
+    log_cover_removed,
+    log_cover_restored,
     log_marking_removed,
     log_marking_restored,
     log_submission_transaction,
+    restore_cover_from_snapshot,
     restore_marking_from_snapshot,
 )
 from common.filters import CoverMarkingFilter, MarkingListFilter
@@ -55,7 +60,9 @@ from common.models import (
     Contribution,
     Cover,
     CoverMarking,
+    CoverRecycleBin,
     CoverValuation,
+    CoverVersion,
     DateSeen,
     FAQEntry,
     Image,
@@ -77,6 +84,7 @@ from .permissions import (
     CanReviewContribution,
     IsDraftOwner,
     _get_user_assigned_regions,
+    _user_is_responsible_for_cover,
     _user_is_responsible_for_marking,
     user_assigned_collection_ids,
 )
@@ -386,16 +394,319 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
     filterset_fields = ["color", "type", "has_adhesive", "is_institutional"]
     ordering_fields = ["id", "code", "created_date"]
     ordering = ["id"]
-    # DELETE is intentionally not exposed. Cover deletion has no sanctioned flow
-    # yet (no recycle bin, no audit); it will be designed in a later PR. Until
-    # then there is no unaudited hard-delete path for covers.
+    # No raw DELETE: removing a cover goes through the audited, reversible
+    # POST /covers/<pk>/remove/ (recycle bin) action instead. Custom POST
+    # actions (remove, restore, restore-version) are unaffected by this.
     http_method_names = ["get", "post", "put", "patch", "head", "options", "trace"]
 
+    def get_object(self):
+        try:
+            return super().get_object()
+        except Http404:
+            # The default manager hides removed covers. Allow ONLY the editor
+            # responsible for this cover (or a superuser) to load a removed
+            # cover on the detail page so they can restore it. Detail (retrieve)
+            # reads only; every other caller keeps getting 404.
+            if self.action != "retrieve":
+                raise
+            cover = (
+                Cover.all_objects
+                .select_related("color")
+                .filter(pk=self.kwargs[self.lookup_field])
+                .first()
+            )
+            if cover and _user_is_responsible_for_cover(self.request.user, cover):
+                self.check_object_permissions(self.request, cover)
+                return cover
+            raise
+
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        cover = serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        after_snapshot = build_cover_snapshot(cover)
+        txn = log_submission_transaction(
+            action=SubmissionTransaction.ACTION_RECORD_CREATE,
+            actor=self.request.user,
+            cover=cover,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload={},
+            after_payload=after_snapshot,
+        )
+        create_cover_version(cover, txn, self.request.user)
 
     def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
+        before_snapshot = build_cover_snapshot(serializer.instance)
+        cover = serializer.save(modified_by=self.request.user)
+        after_snapshot = build_cover_snapshot(cover)
+        txn = log_submission_transaction(
+            action=SubmissionTransaction.ACTION_RECORD_UPDATE,
+            actor=self.request.user,
+            cover=cover,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload=before_snapshot,
+            after_payload=after_snapshot,
+        )
+        create_cover_version(cover, txn, self.request.user)
+
+    @action(detail=True, methods=["post"], url_path="remove", permission_classes=[IsAuthenticated])
+    def remove(self, request, pk=None):
+        """
+        Soft-REMOVE this cover into the recycle bin. The Cover row is not
+        mutated or deleted; a CoverRecycleBin sidecar row is created, which
+        causes the default manager to hide it. Reversible via restore.
+        Permitted for the editor responsible for the cover (via its linked
+        markings' regions), or a superuser. Optional JSON body: {"reason": "..."}.
+        """
+        cover = Cover.all_objects.filter(pk=pk).select_related("color").first()
+        if not cover:
+            return Response({"detail": "Cover not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not _user_is_responsible_for_cover(request.user, cover):
+            return Response(
+                {"detail": "You are not allowed to remove this cover."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if CoverRecycleBin.objects.filter(cover=cover).exists():
+            return Response(
+                {"detail": "Cover is already in the recycle bin."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        reason = ""
+        if isinstance(request.data, dict):
+            reason = (request.data.get("reason") or "").strip()
+        with transaction.atomic():
+            log_cover_removed(cover, request.user, reason)
+            CoverRecycleBin.objects.create(
+                cover=cover, removed_by=request.user, reason=reason
+            )
+        return Response(
+            {"detail": "Cover removed.", "coverId": cover.pk},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"], url_path="restore", permission_classes=[IsAuthenticated])
+    def restore(self, request, pk=None):
+        """
+        Restore this cover from the recycle bin by deleting its CoverRecycleBin
+        sidecar row. Permitted for the editor responsible for the cover (via its
+        linked markings' regions), or a superuser.
+        """
+        cover = Cover.all_objects.filter(pk=pk).select_related("color").first()
+        if not cover:
+            return Response({"detail": "Cover not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not _user_is_responsible_for_cover(request.user, cover):
+            return Response(
+                {"detail": "You are not allowed to restore this cover."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        entry = CoverRecycleBin.objects.filter(cover=cover).first()
+        if not entry:
+            return Response(
+                {"detail": "Cover is not in the recycle bin."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        with transaction.atomic():
+            entry.delete()
+            log_cover_restored(cover, request.user)
+        return Response(
+            {"detail": "Cover restored.", "coverId": cover.pk},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=False, methods=["get"], url_path="recycle-bin", permission_classes=[IsAuthenticated])
+    def recycle_bin(self, request):
+        """
+        List covers currently in the recycle bin (removed), scoped to the
+        regions the editor is responsible for (derived from each cover's linked
+        markings); superusers see all. Uses Cover.all_objects since the default
+        manager hides removed rows.
+        """
+        user = request.user
+        if not (user.is_superuser or user.has_perm(REVIEW_CONTRIBUTION_PERM)):
+            return Response(
+                {"detail": "You are not allowed to view the recycle bin."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        qs = (
+            Cover.all_objects.filter(recycle_bin_entry__isnull=False)
+            .select_related("color")
+            .order_by("-recycle_bin_entry__removed_at")
+        )
+        if not user.is_superuser:
+            assigned_regions = _get_user_assigned_regions(user)
+            if assigned_regions.exists():
+                qs = qs.filter(
+                    cover_markings__marking__post_office__post_office_regions__region__in=assigned_regions
+                ).distinct()
+            else:
+                qs = qs.none()
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["get"], url_path="changelog", permission_classes=[IsAuthenticated])
+    def changelog(self, request, pk=None):
+        # Use all_objects so a removed (recycle-binned) cover's history stays
+        # viewable; the default manager would 404 it. Responsibility is checked
+        # explicitly below.
+        cover = Cover.all_objects.filter(pk=pk).first()
+        if not cover:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not _user_is_responsible_for_cover(request.user, cover):
+            return Response(
+                {"detail": "You are not allowed to view changelog for this record."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        def _summary(snap):
+            snap = snap if isinstance(snap, dict) else {}
+            return {
+                "code": snap.get("code") or "",
+                "type": snap.get("type") or "",
+                "has_adhesive": bool(snap.get("has_adhesive")),
+                "is_institutional": snap.get("is_institutional"),
+                "color_id": snap.get("color_id"),
+                "width": snap.get("width"),
+                "height": snap.get("height"),
+            }
+
+        # Covers have no contribution FK link, so filter on the cover FK only.
+        txns = list(
+            SubmissionTransaction.objects.filter(cover=cover)
+            .select_related("actor", "contribution")
+            .order_by("-created_at", "-id")
+            .distinct()
+        )
+        versions = list(
+            CoverVersion.objects.filter(cover=cover)
+            .select_related("created_by", "transaction")
+            .order_by("-version_no")
+        )
+        version_no_by_txn_id = {
+            v.transaction_id: v.version_no for v in versions if v.transaction_id is not None
+        }
+        txn_by_id = {txn.id: txn for txn in txns}
+        action_labels = dict(SubmissionTransaction.ACTION_CHOICES)
+
+        events = []
+        for txn in txns:
+            actor_name = None
+            actor_email = None
+            if txn.actor:
+                actor_email = (getattr(txn.actor, "email", "") or "").strip() or None
+                actor_name = (
+                    txn.actor.get_username()
+                    or actor_email
+                    or str(txn.actor.pk)
+                )
+            events.append(
+                {
+                    "event_id": txn.id,
+                    "transaction_uuid": str(txn.transaction_uuid),
+                    "timestamp": txn.created_at,
+                    "action": txn.action,
+                    "action_label": action_labels.get(txn.action, txn.action.replace("_", " ").title()),
+                    "actor": actor_name,
+                    "actor_email": actor_email,
+                    "source": txn.source,
+                    "contribution_id": txn.contribution_id,
+                    "version_no": version_no_by_txn_id.get(txn.id),
+                    "diff": txn.diff_payload or [],
+                    "summary": f"{action_labels.get(txn.action, txn.action)} by {actor_email or actor_name or 'system'}",
+                }
+            )
+
+        approved_actions = {
+            SubmissionTransaction.ACTION_APPROVE,
+            SubmissionTransaction.ACTION_CATALOG_DIRECT_EDIT,
+            SubmissionTransaction.ACTION_RESTORE_VERSION,
+        }
+        version_rows = []
+        approved_version_rows = []
+        for version in versions:
+            created_by_name = None
+            if version.created_by:
+                created_by_name = (
+                    version.created_by.get_username()
+                    or getattr(version.created_by, "email", "")
+                    or str(version.created_by.pk)
+                )
+            txn = txn_by_id.get(version.transaction_id) if version.transaction_id is not None else None
+            txn_action = txn.action if txn else None
+            row = {
+                "version_no": version.version_no,
+                "created_at": version.created_at,
+                "created_by": created_by_name,
+                "transaction_id": version.transaction_id,
+                "action": txn_action,
+                "action_label": (
+                    action_labels.get(txn_action, str(txn_action).replace("_", " ").title())
+                    if txn_action
+                    else None
+                ),
+                "snapshot": _summary(version.snapshot),
+            }
+            version_rows.append(row)
+            if txn_action in approved_actions:
+                approved_version_rows.append(row)
+
+        return Response(
+            {
+                "cover_id": cover.pk,
+                "events": events,
+                "versions": version_rows,
+                "approved_versions": approved_version_rows,
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="restore-version", permission_classes=[IsAuthenticated])
+    def restore_version(self, request, pk=None):
+        cover = self.get_object()
+        if not _user_is_responsible_for_cover(request.user, cover):
+            return Response(
+                {"detail": "You are not allowed to restore this record."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        raw_version_no = (request.data or {}).get("version_no")
+        try:
+            version_no = int(raw_version_no)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "version_no must be an integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        restore_from = CoverVersion.objects.filter(
+            cover=cover, version_no=version_no
+        ).first()
+        if not restore_from:
+            return Response(
+                {"detail": f"Version {version_no} not found for this record."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        before_snapshot = build_cover_snapshot(cover)
+        with transaction.atomic():
+            restore_cover_from_snapshot(cover, restore_from.snapshot or {}, request.user)
+            cover.refresh_from_db()
+            after_snapshot = build_cover_snapshot(cover)
+            txn = log_submission_transaction(
+                action=SubmissionTransaction.ACTION_RESTORE_VERSION,
+                actor=request.user,
+                cover=cover,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload=before_snapshot,
+                after_payload=after_snapshot,
+                extra_payload={"restored_from_version_no": restore_from.version_no},
+            )
+            new_version = create_cover_version(cover, txn, request.user)
+        return Response(
+            {
+                "detail": f"Record restored from version {restore_from.version_no}.",
+                "restored_from_version_no": restore_from.version_no,
+                "new_version_no": new_version.version_no,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class DateSeenViewSet(viewsets.ModelViewSet):
@@ -425,6 +736,10 @@ class CoverValuationViewSet(viewsets.ModelViewSet):
     filterset_fields = ["cover"]
     ordering_fields = ["appraisal_date", "amt"]
     ordering = ["-appraisal_date"]
+    # DELETE is intentionally not exposed; closing the unaudited hard-delete
+    # path. No sanctioned valuation-removal flow is in scope; valuations are
+    # edited rather than deleted.
+    http_method_names = ["get", "post", "put", "patch", "head", "options", "trace"]
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, modified_by=self.request.user)
@@ -459,6 +774,16 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
             .select_related("cover", "cover__color", "marking", "reviewer")
             .prefetch_related("marking__post_office__post_office_regions__region")
         )
+        # Hide links whose cover is in the recycle bin. select_related("cover")
+        # joins the Cover table directly, bypassing Cover's default manager (which
+        # hides removed rows), so a soft-removed cover would otherwise still show
+        # as associated on the marking detail / contribution review pages.
+        # EXCEPTION: when the caller asks for one specific cover's links
+        # (?cover=...), do not apply this filter -- the cover detail page must
+        # still show what a removed cover was associated with so an editor can
+        # restore it in context.
+        if not self.request.query_params.get("cover"):
+            qs = qs.filter(cover__recycle_bin_entry__isnull=True)
         user = self.request.user
         marking_param = self.request.query_params.get("marking")
 
@@ -526,6 +851,50 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         serializer.save(modified_by=self.request.user)
+
+    @action(detail=True, methods=["post"], url_path="remove", permission_classes=[IsAuthenticated])
+    def remove(self, request, pk=None):
+        """
+        Sanctioned unlink of a cover-marking association. A CoverMarking is a
+        pure junction with no standalone history table, so unlink is an audited
+        hard delete with a tombstone SubmissionTransaction (same shape as draft
+        deletion), not a soft sidecar. Permitted for the editor responsible for
+        the junction's marking region, or a superuser.
+        """
+        cm = (
+            CoverMarking.objects.filter(pk=pk)
+            .select_related("cover", "marking__post_office")
+            .first()
+        )
+        if not cm:
+            return Response({"detail": "Cover-marking not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not _user_is_responsible_for_marking(request.user, cm.marking):
+            return Response(
+                {"detail": "You are not allowed to unlink this cover-marking."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        with transaction.atomic():
+            log_submission_transaction(
+                action=SubmissionTransaction.ACTION_RECORD_DELETE,
+                actor=request.user,
+                cover=cm.cover,
+                marking=cm.marking,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload={
+                    "cover_id": cm.cover_id,
+                    "marking_id": cm.marking_id,
+                    "is_backstamp": cm.is_backstamp,
+                    "placement": cm.placement,
+                    "review_status": cm.review_status,
+                },
+                after_payload={},
+                extra_payload={"deleted_cover_marking_id": cm.pk},
+            )
+            cm.delete()
+        return Response(
+            {"detail": "Cover-marking unlinked.", "coverMarkingId": int(pk)},
+            status=status.HTTP_200_OK,
+        )
 
     def _editor_may_review(self, user, cover_marking):
         if not user or not user.is_authenticated:

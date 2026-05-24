@@ -150,16 +150,19 @@ class MarkingFilter(django_filters.FilterSet):
 class CoverMarkingFilter(django_filters.FilterSet):
     """Filters for CoverMarking list/detail.
 
-    `marking` is a plain id NumberFilter, NOT the ModelChoiceFilter that
-    `filterset_fields = ["marking", ...]` would auto-build. That auto-filter
-    scopes its choices to the default Marking.objects manager, which hides
-    recycle-binned (removed) markings; filtering the cover list by a removed
-    marking's id then fails validation with HTTP 400, breaking the Associated
-    Covers panel on a removed marking's record-detail page. Region/permission
-    scoping for this param lives in CoverMarkingViewSet.get_queryset.
+    `marking` and `cover` are plain id NumberFilters, NOT the ModelChoiceFilters
+    that `fields = ["marking", "cover", ...]` would auto-build. Those auto-filters
+    scope their choices to the default Marking.objects / Cover.objects managers,
+    which hide recycle-binned (removed) rows; filtering by a removed marking's or
+    removed cover's id then fails validation with HTTP 400. That breaks the
+    Associated Covers panel on a removed marking's record-detail page (marking),
+    and the Associated Markings panel on a removed cover's detail page (cover).
+    Region/permission scoping for these params lives in
+    CoverMarkingViewSet.get_queryset.
     """
 
     marking = django_filters.NumberFilter(field_name="marking_id")
+    cover = django_filters.NumberFilter(field_name="cover_id")
 
     class Meta:
         model = CoverMarking

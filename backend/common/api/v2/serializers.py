@@ -19,6 +19,7 @@ from common.models import (
     Contribution,
     Cover,
     CoverMarking,
+    CoverRecycleBin,
     CoverValuation,
     DateSeen,
     FAQEntry,
@@ -33,7 +34,11 @@ from common.models import (
     Shape,
 )
 
-from .permissions import _user_is_responsible_for_marking, REVIEW_CONTRIBUTION_PERM
+from .permissions import (
+    _user_is_responsible_for_cover,
+    _user_is_responsible_for_marking,
+    REVIEW_CONTRIBUTION_PERM,
+)
 
 
 User = get_user_model()
@@ -374,6 +379,8 @@ class CoverSerializer(serializers.ModelSerializer):
     # filtered to subject_type='COVER' and subject_id=cover.pk.
     color_name = serializers.CharField(source="color.name", read_only=True)
     dates_seen = serializers.SerializerMethodField()
+    is_removed = serializers.SerializerMethodField()
+    can_remove = serializers.SerializerMethodField()
 
     class Meta:
         model = Cover
@@ -388,6 +395,8 @@ class CoverSerializer(serializers.ModelSerializer):
             "is_institutional",
             "width",
             "dates_seen",
+            "is_removed",
+            "can_remove",
             "created_date",
             "modified_date",
         ]
@@ -400,12 +409,15 @@ class CoverSerializer(serializers.ModelSerializer):
         ).order_by("date")
         return DateSeenSerializer(qs, many=True).data
 
-    def get_dates_seen(self, obj):
-        qs = DateSeen.objects.filter(
-            subject_type=DateSeen.SUBJECT_COVER,
-            subject_id=obj.pk,
-        ).order_by("date")
-        return DateSeenSerializer(qs, many=True).data
+    def get_is_removed(self, obj):
+        return CoverRecycleBin.objects.filter(cover_id=obj.pk).exists()
+
+    def get_can_remove(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is None:
+            return False
+        return _user_is_responsible_for_cover(user, obj)
 
 
 class CoverValuationSerializer(serializers.ModelSerializer):
