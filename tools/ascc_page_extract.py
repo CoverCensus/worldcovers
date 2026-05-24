@@ -1,7 +1,7 @@
 """ascc_page_extract.py -- single-pass ASCC chunk extraction.
 
 Reads chunk PNGs at wip/in/<basename>/page-NNNN-MMMM.png, sends each to
-Gemini via OpenRouter, and writes a 4-column CSV
+Claude Sonnet via OpenRouter, and writes a 4-column CSV
 (Listing, Page, Images Above, Type) to wip/out/<basename>.csv for
 apmc_data_munger.ipynb to consume downstream.
 
@@ -261,6 +261,23 @@ class _Tee:
     def flush(self):
         for st in self.streams:
             st.flush()
+
+
+# Verbose log file handle, set by main() when --verbose is given. log_only()
+# writes a line here and nowhere else, so model-id detail stays in the log
+# without printing to the console. None (and a no-op) outside verbose runs.
+_LOG_FH = None
+
+
+def log_only(msg):
+    """Write one line to the verbose log file only -- never the console.
+
+    No-op when no log file is open (non-verbose runs), so the model id is
+    recorded in the log but kept off the console.
+    """
+    if _LOG_FH is not None:
+        _LOG_FH.write(msg + "\n")
+        _LOG_FH.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -698,7 +715,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description=("Single-pass ASCC chunk extraction. Reads chunk PNGs "
                      "from wip/in/<basename>/page-NNNN-MMMM.png, sends each "
-                     "to Gemini via OpenRouter, and writes "
+                     "to Claude Sonnet via OpenRouter, and writes "
                      "wip/out/<basename>.csv."),
     )
     parser.add_argument(
@@ -753,6 +770,7 @@ def main(argv=None):
     paths.cache_file.parent.mkdir(parents=True, exist_ok=True)
     paths.output_csv.parent.mkdir(parents=True, exist_ok=True)
 
+    global _LOG_FH
     log_fh = None
     saved_stdout = sys.stdout
     if args.verbose:
@@ -762,6 +780,7 @@ def main(argv=None):
         log_fh.write(f"\n========== {ts}  argv: {argv_str} ==========\n")
         log_fh.flush()
         sys.stdout = _Tee(saved_stdout, log_fh)
+        _LOG_FH = log_fh
 
     try:
         if args.verbose:
@@ -787,7 +806,7 @@ def main(argv=None):
                 )
 
         print(f"basename: {paths.basename}")
-        print(f"model:    {model}")
+        log_only(f"model:    {model}")
         if args.pages is not None:
             sample = ",".join(str(x) for x in sorted(args.pages)[:6])
             more = "..." if len(args.pages) > 6 else ""
@@ -835,6 +854,7 @@ def main(argv=None):
         if log_fh is not None:
             sys.stdout = saved_stdout
             log_fh.close()
+            _LOG_FH = None
 
 
 if __name__ == "__main__":

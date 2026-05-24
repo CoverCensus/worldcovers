@@ -1,21 +1,21 @@
 """ascc_page_processor.py -- merged ASCC catalog page processor.
 
 Replaces apmc_page_split.ipynb + halfpage_image_cutter.ipynb with one
-script that runs end-to-end on OpenRouter + Gemini (matches the call
-style of apmc_page_extract.ipynb).
+script that runs end-to-end on OpenRouter (matches the call style of
+apmc_page_extract.ipynb).
 
 Pipeline (three stages, gateable from the CLI):
 
     A. render  -- pdftoppm renders the PDF into wip/cache/<BASE>_full/
                   page-NNNN.png (NNNN is the PDF page index).
     B. halves  -- per page: deterministic vertical-rule detection +
-                  Gemini page-number call (header+footer strip) +
-                  Gemini single-column-confirm fallback when no rule;
+                  vision page-number call (header+footer strip) +
+                  vision single-column-confirm fallback when no rule;
                   crop to wip/cache/<BASE>_halves/page-NNNN-{L,R}.png
                   (or page-NNNN.png for single-column pages, where NNNN
                   is the catalog page number).
     C. chunks  -- per half: deterministic row-by-row dark/blank block
-                  detector inside the half + Gemini per-block classify
+                  detector inside the half + vision per-block classify
                   (illustration vs text) + cut at the top of every
                   illustration block; write slices into wip/out/<BASE>/
                   as page-NNNN-MMMM.png with MMMM running 1..N across
@@ -89,15 +89,15 @@ MIN_SLICE_HEIGHT_PX = 60
 
 # OpenRouter model id. Override per run with --model. Cache files invalidate
 # automatically whenever the model id (or prompt version) changes.
-DEFAULT_MODEL = "google/gemini-3-pro-image-preview"
+DEFAULT_MODEL = "anthropic/claude-sonnet-4.6"
 
 # Per-call prompt versions. Bump to invalidate the corresponding disk cache
 # without changing the model id.
-HALVES_PROMPT_VER = "g1"  # g1 = first OpenRouter+Gemini revision
-# Gemini 3 reasoning models can spend the entire token budget on hidden
-# reasoning before producing any visible output; if max_tokens is too tight
-# the visible response comes back empty with finish_reason='stop'. The
-# extract notebook uses 64000 to dodge this. Stay generous.
+HALVES_PROMPT_VER = "g1"  # g1 = first OpenRouter revision
+# A reasoning model can spend the entire token budget on hidden reasoning
+# before producing any visible output; if max_tokens is too tight the visible
+# response comes back empty with finish_reason='stop'. The extract notebook
+# uses 64000 to dodge this. Stay generous.
 HALVES_MAX_TOKENS = 4096
 
 BLOCKS_PROMPT_VER = "g1"
@@ -266,12 +266,12 @@ def _parse_strict_json(text):
     return json.loads(t)
 
 
-def _gemini_call(model, system_prompt, user_text, image_b64, max_tokens):
-    """Common OpenRouter+Gemini call; returns the raw assistant text.
+def _vision_call(model, system_prompt, user_text, image_b64, max_tokens):
+    """Common OpenRouter vision call; returns the raw assistant text.
 
-    Retries once on empty content, which Gemini occasionally returns with
-    finish_reason='stop' when reasoning tokens consume the budget before any
-    visible output is emitted.
+    Retries once on empty content, which a reasoning model occasionally
+    returns with finish_reason='stop' when reasoning tokens consume the
+    budget before any visible output is emitted.
     """
     last_finish = None
     for attempt in range(2):
@@ -353,6 +353,23 @@ class _Tee:
     def flush(self):
         for st in self.streams:
             st.flush()
+
+
+# Verbose log file handle, set by main() when --verbose is given. log_only()
+# writes a line here and nowhere else, so model-id detail stays in the log
+# without printing to the console. None (and a no-op) outside verbose runs.
+_LOG_FH = None
+
+
+def log_only(msg):
+    """Write one line to the verbose log file only -- never the console.
+
+    No-op when no log file is open (non-verbose runs), so the model id is
+    recorded in the log but kept off the console.
+    """
+    if _LOG_FH is not None:
+        _LOG_FH.write(msg + "\n")
+        _LOG_FH.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +475,7 @@ def build_header_footer_strip(im):
 def detect_page_number(strip_im, model):
     """Vision call: read the printed catalog page number from the strip."""
     img_b64 = _img_to_b64_png(strip_im)
-    raw = _gemini_call(
+    raw = _vision_call(
         model,
         PAGE_NUMBER_SYSTEM_PROMPT,
         "Read the printed catalog page number. Return JSON only.",
@@ -475,7 +492,7 @@ def confirm_single_column(im, model):
     """Vision call: confirm whether the page has two columns (used as a
     fallback when the deterministic rule detector returns None)."""
     img_b64 = _img_to_b64_png(im)
-    raw = _gemini_call(
+    raw = _vision_call(
         model,
         SINGLE_COL_SYSTEM_PROMPT,
         "Is this page laid out as two columns with a printed vertical rule? Return JSON only.",
@@ -536,8 +553,7 @@ def stage_halves(paths, model, full_pages, force, page_filter, verbose=False):
 
                 hf_strip = build_header_footer_strip(im)
                 if verbose:
-                    print(f"  {key}: calling {model} for page-number...",
-                          flush=True)
+                    log_only(f"  {key}: calling {model} for page-number...")
                 t0 = time.time()
                 pn = detect_page_number(hf_strip, model)
                 if verbose:
@@ -550,8 +566,8 @@ def stage_halves(paths, model, full_pages, force, page_filter, verbose=False):
                     rule_source = "deterministic"
                 else:
                     if verbose:
-                        print(f"  {key}: no rule found, calling {model} for "
-                              f"single-col confirm...", flush=True)
+                        log_only(f"  {key}: no rule found, calling {model} "
+                                 f"for single-col confirm...")
                     t0 = time.time()
                     htc = confirm_single_column(im, model)
                     if verbose:
@@ -727,10 +743,10 @@ def classify_block(block_im, blocks_cache, model, verbose=False, label=""):
 
     img_b64 = base64.standard_b64encode(png_bytes).decode()
     if verbose:
-        print(f"    {label} calling {model} ({len(png_bytes):,} bytes png)...",
-              flush=True)
+        log_only(f"    {label} calling {model} "
+                 f"({len(png_bytes):,} bytes png)...")
     t0 = time.time()
-    raw = _gemini_call(
+    raw = _vision_call(
         model,
         BLOCK_CLASSIFY_SYSTEM_PROMPT,
         "Classify this strip. Return JSON only.",
@@ -873,10 +889,10 @@ def review_slice(slice_im, review_cache, model, verbose=False, label=""):
     img_b64 = base64.standard_b64encode(png_bytes).decode()
     h = slice_im.size[1]
     if verbose:
-        print(f"    {label} review: calling {model} ({len(png_bytes):,} "
-              f"bytes png, h={h})...", flush=True)
+        log_only(f"    {label} review: calling {model} "
+                 f"({len(png_bytes):,} bytes png, h={h})...")
     t0 = time.time()
-    raw = _gemini_call(
+    raw = _vision_call(
         model,
         REVIEW_SLICE_SYSTEM_PROMPT,
         f"Image height: {h} px. Decide if this chunk is one entry or "
@@ -1317,6 +1333,7 @@ def main(argv=None):
 
     # In verbose mode, tee everything to a per-basename log file in the cache
     # dir so re-running just to re-read the log is unnecessary.
+    global _LOG_FH
     log_fh = None
     saved_stdout = sys.stdout
     if args.verbose:
@@ -1328,12 +1345,13 @@ def main(argv=None):
         log_fh.write(f"\n========== {ts}  argv: {argv_str} ==========\n")
         log_fh.flush()
         sys.stdout = _Tee(saved_stdout, log_fh)
+        _LOG_FH = log_fh
 
     try:
         if args.verbose:
             print(f"verbose log: tee-ing to {paths.run_log}")
         print(f"basename: {paths.basename}")
-        print(f"model:    {model}")
+        log_only(f"model:    {model}")
         print(f"stages:   {','.join(args.stages)}")
         if args.pages is not None:
             kind, ids = args.pages
@@ -1382,6 +1400,7 @@ def main(argv=None):
         if log_fh is not None:
             sys.stdout = saved_stdout
             log_fh.close()
+            _LOG_FH = None
 
 
 if __name__ == "__main__":

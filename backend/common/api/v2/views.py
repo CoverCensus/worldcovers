@@ -1693,42 +1693,104 @@ class ContributionViewSet(
         review_notes = serializer.validated_data.get("review_notes", "")
         try:
             with transaction.atomic():
-                marking = contrib.apply_to_catalog()
-                if not marking:
-                    return Response(
-                        {"detail": "Could not apply contribution. Check submitted_data."},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                result = contrib.apply_to_catalog()
+
+                # apply_to_catalog returns a Marking for marking submissions and
+                # a dict {"kind": "cover", ...} for cover submissions. Branch on
+                # the return type so each path does its own post-processing.
+                if isinstance(result, dict) and result.get("kind") == "cover":
+                    cover = result["cover"]
+                    cover_marking = result["cover_marking"]
+                    parent_marking = result["parent_marking"]
+
+                    # apply set review_status=APPROVED and reviewed_at; backfill
+                    # the approving editor's identity and notes on the link here
+                    # (apply has no access to request.user).
+                    cover_marking.reviewer = request.user
+                    cover_marking.review_notes = review_notes
+                    cover_marking.modified_by = request.user
+                    cover_marking.save(
+                        update_fields=["reviewer", "review_notes", "modified_by", "reviewed_at"]
                     )
-                contrib.status = Contribution.STATUS_APPROVED
-                contrib.reviewer = request.user
-                contrib.review_notes = review_notes
-                # Link the approved contribution to the marking it produced.
-                # apply_to_catalog() creates and returns the Marking but does not
-                # set this FK; without it marking_id stays NULL and the entry
-                # detail page can never find the contribution's feedback/comment.
-                contrib.marking = marking
-                contrib.save(update_fields=["status", "reviewer", "review_notes", "marking", "updated_at"])
-                after_snapshot = build_marking_snapshot(marking)
-                txn = log_submission_transaction(
-                    action=SubmissionTransaction.ACTION_APPROVE,
-                    actor=request.user,
-                    contribution=contrib,
-                    marking=marking,
-                    source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-                    before_payload={},
-                    after_payload=after_snapshot,
-                    extra_payload={"review_notes": review_notes},
-                )
-                create_marking_version(marking, txn, request.user)
+
+                    contrib.status = Contribution.STATUS_APPROVED
+                    contrib.reviewer = request.user
+                    contrib.review_notes = review_notes
+                    # Link the contribution to the marking it enriches so the
+                    # entry detail page can surface its feedback/comment. Cover
+                    # detection in the serializers is submitted_data-driven, not
+                    # FK-driven, so the cover label still renders correctly.
+                    contrib.marking = parent_marking
+                    # Stamp traceability so the frontend mapper treats this
+                    # contribution as materialized (no longer a pending draft).
+                    sd = dict(contrib.submitted_data or {})
+                    sd["cover_id"] = cover.pk
+                    sd["cover_marking_id"] = cover_marking.pk
+                    sd["materialized_cover_marking_id"] = cover_marking.pk
+                    contrib.submitted_data = sd
+                    contrib.save(
+                        update_fields=[
+                            "status",
+                            "reviewer",
+                            "review_notes",
+                            "marking",
+                            "submitted_data",
+                            "updated_at",
+                        ]
+                    )
+                    after_snapshot = build_cover_snapshot(cover)
+                    txn = log_submission_transaction(
+                        action=SubmissionTransaction.ACTION_APPROVE,
+                        actor=request.user,
+                        contribution=contrib,
+                        marking=parent_marking,
+                        cover=cover,
+                        source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                        before_payload={},
+                        after_payload=after_snapshot,
+                        extra_payload={
+                            "review_notes": review_notes,
+                            "cover_marking_id": cover_marking.pk,
+                        },
+                    )
+                    create_cover_version(cover, txn, request.user)
+                    approved_response = {"detail": "Contribution approved.", "coverId": cover.pk}
+                else:
+                    marking = result
+                    if not marking:
+                        return Response(
+                            {"detail": "Could not apply contribution. Check submitted_data."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        )
+                    contrib.status = Contribution.STATUS_APPROVED
+                    contrib.reviewer = request.user
+                    contrib.review_notes = review_notes
+                    # Link the approved contribution to the marking it produced.
+                    # apply_to_catalog() creates and returns the Marking but does
+                    # not set this FK; without it marking_id stays NULL and the
+                    # entry detail page can never find the contribution's
+                    # feedback/comment.
+                    contrib.marking = marking
+                    contrib.save(update_fields=["status", "reviewer", "review_notes", "marking", "updated_at"])
+                    after_snapshot = build_marking_snapshot(marking)
+                    txn = log_submission_transaction(
+                        action=SubmissionTransaction.ACTION_APPROVE,
+                        actor=request.user,
+                        contribution=contrib,
+                        marking=marking,
+                        source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                        before_payload={},
+                        after_payload=after_snapshot,
+                        extra_payload={"review_notes": review_notes},
+                    )
+                    create_marking_version(marking, txn, request.user)
+                    approved_response = {"detail": "Contribution approved.", "markingId": marking.pk}
         except NotImplementedError as exc:
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_501_NOT_IMPLEMENTED,
             )
-        return Response(
-            {"detail": "Contribution approved.", "markingId": marking.pk},
-            status=status.HTTP_200_OK,
-        )
+        return Response(approved_response, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="reject")
     def reject(self, request, pk=None):
