@@ -1,213 +1,45 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { SearchableSelect } from "@/components/ui/searchable-select";
-import { ArrowLeft, Loader2, CheckCircle, XCircle, MessageSquare, ExternalLink, Pencil } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle, XCircle, MessageSquare, ExternalLink, Pencil, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { getMarkingByIdRaw, normalizeImageUrl } from "@/services/markings";
-import apiClient from "@/lib/api";
+import { normalizeImageUrl } from "@/services/markings";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
-import { getFramings, type FramingOption } from "@/services/framings";
 import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
-import { sanitizeMmInput, submittedDataToWidthHeightStrings, validateMmPair } from "@/lib/dimensionsMm";
-import { getRegions } from "@/services/regions";
-import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
-import { getShapes, type ShapeOption } from "@/services/shapes";
-import { getColors, type ColorOption } from "@/services/colors";
 import { isCoverContributionData } from "@/lib/contributionDisplay";
 import CoverContributionDetail from "@/pages/CoverContributionDetail";
+import { buildMarkingFields } from "@/lib/markingFields";
+import { submittedDataToFieldInput } from "@/lib/contributionToFields";
+import { MarkingFieldsDisplay } from "@/components/MarkingFieldsDisplay";
+import { type Contribution, getContribution, decideContribution, deleteDraftContribution } from "@/services/contributions";
 
-const STATE_OTHER_VALUE = "__other__";
-const COLOR_OTHER_VALUE = "__other__";
-const MIN_YEAR = 1661;
-const CURRENT_YEAR = new Date().getFullYear();
 
-const IMPRESSION_OPTIONS = [
-  { value: "Normal", label: "Normal" },
-  { value: "Stencil", label: "Stencil" },
-  { value: "Negative", label: "Negative" },
-];
-
-const MARKING_TYPE_OPTIONS = [
-  { value: "Townmark", label: "Townmark" },
-  { value: "Ratemark", label: "Ratemark" },
-  { value: "Auxmark", label: "Auxmark" },
-];
-
-function isCircularType(raw: string) {
-  const s = (raw || "").toLowerCase();
-  return (
-    s.includes("circle") ||
-    s.includes("circular") ||
-    s.includes("cds") ||
-    s.includes("double circle") ||
-    s.includes("single circle")
-  );
-}
-
-function normalizeMasterImageType(raw: unknown): "mark" | "cover" | "tracing" {
-  const val = String(raw ?? "").trim().toLowerCase();
-  if (val === "cover") return "cover";
-  if (val === "tracing") return "tracing";
-  return "mark";
-}
-
-function normalizeMarkingTypeValue(raw: string): "Townmark" | "Ratemark" | "Auxmark" | "" {
-  const v = String(raw || "").trim().toLowerCase().replace(/[\s/_-]+/g, "");
-  if (v === "townmark") return "Townmark";
-  if (v === "ratemark") return "Ratemark";
-  if (v.includes("aux")) return "Auxmark";
-  return "";
-}
-
-function getYearError(value: string, opts: { required: boolean; label: string }): string | null {
-  const v = value.trim();
-  if (!v) {
-    return opts.required ? `${opts.label} is required` : null;
-  }
-  if (v.length !== 4) {
-    return `${opts.label} must be 4 digits`;
-  }
-  const n = Number(v);
-  if (Number.isNaN(n) || n < MIN_YEAR || n > CURRENT_YEAR) {
-    return `${opts.label} must be between ${MIN_YEAR} and ${CURRENT_YEAR}`;
-  }
-  return null;
-}
-
-type YearPair = { earliestYear: string; latestYear: string };
-
-function parseDatesObservedToYearPairs(raw: unknown): YearPair[] {
-  const s = String(raw ?? "").trim();
-  if (!s) return [];
-  return s
-    .split(",")
-    .map((tok) => {
-      const t = tok.trim();
-      if (!t) return null;
-      const spaced = t.split(/\s+[-–—]\s+/);
-      const parts = spaced.length >= 2 ? spaced : t.match(/^\s*(\d{4})\s*[-–—]\s*(\d{4})\s*$/)?.slice(1) ?? [t];
-      const first = String(parts[0] ?? "").trim().slice(0, 4);
-      const last = String(parts[1] ?? "").trim().slice(0, 4);
-      const earliestYear = /^\d{4}$/.test(first) ? first : "";
-      const latestYear = /^\d{4}$/.test(last) ? last : "";
-      if (!earliestYear && !latestYear) return null;
-      return { earliestYear, latestYear };
-    })
-    .filter((p): p is YearPair => p != null);
-}
-
-function buildDatesObservedFromYearPairs(pairs: YearPair[]): string {
-  return pairs
-    .map((p) => {
-      const a = p.earliestYear.trim();
-      const b = p.latestYear.trim();
-      if (!a || !b) return "";
-      return `${a}-${b}`;
-    })
-    .filter(Boolean)
-    .join(", ");
-}
-
-function getCsrfTokenFromCookie(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/(^|;\s*)csrftoken=([^;]+)/);
-  return match ? decodeURIComponent(match[2]) : null;
-}
-
-interface SubmittedData {
-  state?: string;
-  town?: string;
-  date_range?: string;
-  dateRange?: string;
-  first_seen?: string;
-  last_seen?: string;
-  firstSeen?: string;
-  lastSeen?: string;
-  shape?: string;
-  type?: string;
-  color?: string;
-  manuscript?: string;
-  dimensions?: string;
-  width_mm?: string | number;
-  height_mm?: string | number;
-  widthMm?: string | number;
-  heightMm?: string | number;
-  description?: string;
-  references?: string;
-  is_irreg?: boolean;
-  isIrreg?: boolean;
-  submitter_name?: string;
-  original_postmark_id?: string;
-  image_meta?: {
-    storage_filename?: string;
-    original_filename?: string;
-    /** API may return camelCase */
-    storageFilename?: string;
-    originalFilename?: string;
-  };
-  /** Multiple images; API may return as image_metas or imageMetas */
-  image_metas?: Array<{
-    storage_filename?: string;
-    original_filename?: string;
-    storageFilename?: string;
-    originalFilename?: string;
-  }>;
-  /** API may return camelCase */
-  imageMetas?: SubmittedData["image_metas"];
-  /** Categorized public image URLs returned by backend sanitization */
-  postmark_images?: string[];
-  ratemark_images?: string[];
-  auxmark_images?: string[];
-  /** API may return camelCase or PascalCase */
-  postmarkImages?: string[];
-  ratemarkImages?: string[];
-  auxmarkImages?: string[];
-  PostmarkImages?: string[];
-  RatemarkImages?: string[];
-  AuxmarkImages?: string[];
-  /** Contributor-provided; used when editor approves (editor only fills value + comment). */
-  lettering_style_id?: number;
-  framing_style_id?: number;
-  date_format_id?: number;
-  framing_style_ids?: number[];
-  date_format_ids?: number[];
-  /** API may return camelCase */
-  letteringStyleId?: number;
-  framingStyleId?: number;
-  dateFormatId?: number;
-  framingStyleIds?: number[];
-  dateFormatIds?: number[];
-  dates_observed?: string;
-  datesObserved?: string;
-}
-
-interface Contribution {
-  id: number;
-  /** Submitter user id (from API `contributor` FK) */
-  contributor_id?: number | null;
-  status: string;
-  contributor_username: string;
-  review_notes: string | null;
-  created_at: string;
-  submitted_data: SubmittedData;
-  /** Postmaker-style title from API: "Town, State — Type" or "Submission #id" */
-  display_name?: string;
-  postmark_id?: number | null;
-  /** When approved, FK to catalog postmark (API may return as postmark or postmark_id) */
-  postmark?: number | null;
-}
+/** Shape of the per-image metadata blobs stored in a contribution's submitted_data. */
+type ContributionImageMeta = {
+  storage_filename?: string;
+  original_filename?: string;
+  storageFilename?: string;
+  originalFilename?: string;
+};
 
 const ContributionDetail = () => {
   const navigate = useNavigate();
@@ -223,96 +55,16 @@ const ContributionDetail = () => {
   const [comment, setComment] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [resubmitting, setResubmitting] = useState(false);
+  // Draft delete (recycle) -- only a draft the contributor owns can be deleted;
+  // the backend enforces IsDraftOwner on DELETE /contributions/{id}/.
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   // Options to display names for lettering/framing/date format in Submitted data
   const [letteringOptions, setLetteringOptions] = useState<LetteringOption[]>([]);
-  const [framingOptions, setFramingOptions] = useState<FramingOption[]>([]);
   const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
   const [carouselApi, setCarouselApi] = useState<CarouselApi>();
   const [carouselCurrent, setCarouselCurrent] = useState(0);
   const [carouselCount, setCarouselCount] = useState(0);
-  const [masterListingImages, setMasterListingImages] = useState<Array<{
-    id: number;
-    imageUrl: string;
-    imageType: "mark" | "cover" | "tracing";
-    displayOrder: number;
-  }>>([]);
-  const [updatingDefaultImageId, setUpdatingDefaultImageId] = useState<number | null>(null);
-  const [deletingMasterListing, setDeletingMasterListing] = useState(false);
-  const [stateOptions, setStateOptions] = useState<{ value: string; label: string }[]>([]);
-  const [loadingStates, setLoadingStates] = useState(false);
-  const [stateOptionsError, setStateOptionsError] = useState<string | null>(null);
-  const [postOffices, setPostOffices] = useState<PostOfficeOption[]>([]);
-  const [loadingTowns, setLoadingTowns] = useState(false);
-  const [townOptionsError, setTownOptionsError] = useState<string | null>(null);
-  const [shapeOptions, setShapeOptions] = useState<ShapeOption[]>([]);
-  const [loadingShapes, setLoadingShapes] = useState(false);
-  const [shapeOptionsError, setShapeOptionsError] = useState<string | null>(null);
-  const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
-  const [catalogOptionsLoading, setCatalogOptionsLoading] = useState(false);
-  const [editorFieldErrors, setEditorFieldErrors] = useState<{
-    state?: string;
-    town?: string;
-    firstSeen?: string;
-    lastSeen?: string;
-    datePairs?: string;
-    shape?: string;
-    color?: string;
-    width_mm?: string;
-    height_mm?: string;
-    lettering?: string;
-    framing?: string;
-    dateFormat?: string;
-    inscription?: string;
-  }>({});
-
-  // Editor direct-edit: same field model as Edit Catalog Entry
-  const [editorEdits, setEditorEdits] = useState<{
-    type: string;
-    state: string;
-    stateOther: string;
-    town: string;
-    firstSeen: string;
-    lastSeen: string;
-    shape: string;
-    color: string;
-    colorOther: string;
-    width_mm: string;
-    height_mm: string;
-    manuscript: string;
-    inscription_txt: string;
-    rate_val: string;
-    description: string;
-    references: string;
-    impression: string;
-    is_irreg: boolean;
-    lettering_style_id: string;
-    framing_style_id: string;
-    date_format_id: string;
-  }>({
-    type: "",
-    state: "",
-    stateOther: "",
-    town: "",
-    firstSeen: "",
-    lastSeen: "",
-    shape: "",
-    color: "",
-    colorOther: "",
-    width_mm: "",
-    height_mm: "",
-    manuscript: "",
-    inscription_txt: "",
-    rate_val: "",
-    description: "",
-    references: "",
-    impression: "",
-    is_irreg: false,
-    lettering_style_id: "",
-    framing_style_id: "",
-    date_format_id: "",
-  });
-  const [additionalDatePairs, setAdditionalDatePairs] = useState<YearPair[]>([]);
   const fromDashboard = location.state?.fromDashboard === true;
   const isStateEditor =
     user?.role === "editor" || user?.role === "administrator" || user?.is_superuser;
@@ -320,9 +72,9 @@ const ContributionDetail = () => {
   const isContributor =
     !!user &&
     !!contribution &&
-    (contribution.contributor_id === user.id ||
-      contribution.contributor_username === user.username ||
-      contribution.contributor_username === user.email);
+    (contribution.contributorId === user.id ||
+      contribution.contributorUsername === user.username ||
+      contribution.contributorUsername === user.email);
 
   useEffect(() => {
     const contributionId = id ? parseInt(String(id), 10) : null;
@@ -332,43 +84,10 @@ const ContributionDetail = () => {
       return;
     }
 
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      setError("VITE_API_URL is not set.");
-      setLoading(false);
-      return;
-    }
-
     let cancelled = false;
-    fetch(`${apiBase}/contributions/${contributionId}/`, {
-      method: "GET",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(res.status === 404 ? "Contribution not found" : res.statusText);
-        return res.json();
-      })
-      .then((data: Record<string, unknown>) => {
+    getContribution(contributionId)
+      .then((normalized) => {
         if (cancelled) return;
-        // API returns camelCase (CamelCaseJSONRenderer); normalize so component can use snake_case
-        const normalized: Contribution = {
-          id: data.id as number,
-          contributor_id:
-            typeof data.contributor === "number"
-              ? data.contributor
-              : typeof (data as { contributorId?: number }).contributorId === "number"
-                ? (data as { contributorId: number }).contributorId
-                : null,
-          status: (data.status as string) ?? "pending",
-          contributor_username: (data.contributor_username ?? data.contributorUsername) as string,
-          review_notes: (data.review_notes ?? data.reviewNotes) as string | null,
-          created_at: (data.created_at ?? data.createdAt) as string,
-          submitted_data: (data.submitted_data ?? data.submittedData) as SubmittedData,
-          display_name: (data.display_name ?? data.displayName) as string | undefined,
-          postmark_id: (data.postmark_id ?? data.postmarkId ?? data.postmark) as number | null | undefined,
-          postmark: (data.postmark ?? data.postmark_id ?? data.postmarkId) as number | null | undefined,
-        };
         setContribution(normalized);
       })
       .catch((err) => {
@@ -394,465 +113,41 @@ const ContributionDetail = () => {
     };
   }, [carouselApi]);
 
-  // Lettering / framing / date format + colors (catalog options)
+  // Lettering / date format lookups -- needed to resolve numeric ids /
+  // codes stored on a contribution's submitted_data to human-readable names.
   useEffect(() => {
     let cancelled = false;
-    setCatalogOptionsLoading(true);
-    Promise.all([
-      getLetterings(),
-      getFramings(),
-      getDateFormats(),
-      getColors().catch(() => [] as ColorOption[]),
-    ])
-      .then(([lettering, framing, dateFormat, colors]) => {
+    Promise.all([getLetterings(), getDateFormats()])
+      .then(([lettering, dateFormat]) => {
         if (!cancelled) {
           setLetteringOptions(lettering);
-          setFramingOptions(framing);
           setDateFormatOptions(dateFormat);
-          setColorOptions(colors.length ? colors : [{ id: 0, name: "Black", value: "" }]);
         }
       })
       .catch(() => {
         if (!cancelled) {
           setLetteringOptions([]);
-          setFramingOptions([]);
           setDateFormatOptions([]);
-          setColorOptions([{ id: 0, name: "Black", value: "" }]);
         }
-      })
-      .finally(() => {
-        if (!cancelled) setCatalogOptionsLoading(false);
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // States (assigned only — same as Edit Catalog Entry for editors)
+  // Approved submissions live on the entry detail page now (it carries the
+  // comment-for-editor / editor-feedback cards plus the edit/remove buttons), so
+  // send approved contributions there. Top-level effect (not in render body) to
+  // keep hook order stable; reads the contribution state directly.
   useEffect(() => {
-    let cancelled = false;
-    setLoadingStates(true);
-    setStateOptionsError(null);
-    getRegions(true)
-      .then((opts) => {
-        if (!cancelled) setStateOptions(opts);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setStateOptionsError(err instanceof Error ? err.message : "Failed to load states");
-          setStateOptions([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingStates(false);
+    if (contribution?.status === "approved" && contribution.postmarkId != null) {
+      navigate(`/record/${contribution.postmarkId}`, {
+        replace: true,
+        state: { fromDashboard: true },
       });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Towns / postal facilities
-  useEffect(() => {
-    let cancelled = false;
-    setLoadingTowns(true);
-    setTownOptionsError(null);
-    getPostOffices()
-      .then((rows) => {
-        if (!cancelled) setPostOffices(rows);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setTownOptionsError(err instanceof Error ? err.message : "Failed to load towns");
-          setPostOffices([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingTowns(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Postmark shapes
-  useEffect(() => {
-    let cancelled = false;
-    setLoadingShapes(true);
-    setShapeOptionsError(null);
-    getShapes()
-      .then((rows) => {
-        if (!cancelled) setShapeOptions(rows);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setShapeOptionsError(err instanceof Error ? err.message : "Failed to load shapes");
-          setShapeOptions([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingShapes(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Sync editor form from submitted_data when contribution loads (and when color options arrive for "Other" mapping)
-  useEffect(() => {
-    if (!contribution?.submitted_data) return;
-    const sd = contribution.submitted_data as Record<string, unknown>;
-    const dr = String(sd.date_range ?? sd.dateRange ?? "").trim();
-    const drParts = dr ? dr.split(/\s*[-–—]\s*/).map((s) => s.trim()) : [];
-    const firstSeenRaw = String(sd.first_seen ?? sd.firstSeen ?? drParts[0] ?? "").trim();
-    const lastSeenRaw = String(sd.last_seen ?? sd.lastSeen ?? drParts[1] ?? "").trim();
-    const firstSeen = /^\d{4}/.test(firstSeenRaw) ? firstSeenRaw.slice(0, 4) : "";
-    const lastSeen = /^\d{4}/.test(lastSeenRaw) ? lastSeenRaw.slice(0, 4) : "";
-    const wh = submittedDataToWidthHeightStrings(sd);
-    const rawType = String(sd.type ?? "").trim();
-    const rawShape = String(sd.shape ?? "").trim();
-    const rawColor = String(sd.color ?? "").trim();
-    const shapeIdRaw = sd.shape_id ?? sd.shapeId;
-    const colorIdRaw = sd.color_id ?? sd.colorId;
-    const shapeFromId = shapeOptions.find((opt) => String(opt.id) === String(shapeIdRaw ?? rawShape));
-    const colorFromId = colorOptions.find((opt) => String(opt.id) === String(colorIdRaw ?? rawColor));
-    const resolvedShape = shapeFromId?.name ?? rawShape;
-    const resolvedColor = colorFromId?.name ?? rawColor;
-    let colorSel = resolvedColor;
-    let colorOth = "";
-    if (colorOptions.length > 0 && resolvedColor && !colorOptions.some((c) => c.name === resolvedColor)) {
-      colorSel = COLOR_OTHER_VALUE;
-      colorOth = resolvedColor;
     }
-    const letteringStyleIdRaw =
-      sd.lettering_style_id ??
-      sd.letteringStyleId ??
-      (sd.lettering_style as { lettering_style_id?: number; letteringStyleId?: number } | undefined)
-        ?.lettering_style_id ??
-      (sd.lettering_style as { lettering_style_id?: number; letteringStyleId?: number } | undefined)
-        ?.letteringStyleId ??
-      (sd.letteringStyle as { lettering_style_id?: number; letteringStyleId?: number } | undefined)
-        ?.lettering_style_id ??
-      (sd.letteringStyle as { lettering_style_id?: number; letteringStyleId?: number } | undefined)
-        ?.letteringStyleId;
-    const framingStyleIdRaw =
-      sd.framing_style_id ??
-      sd.framingStyleId ??
-      (Array.isArray(sd.framing_style_ids) ? sd.framing_style_ids[0] : undefined) ??
-      (Array.isArray(sd.framingStyleIds) ? sd.framingStyleIds[0] : undefined) ??
-      (sd.framing_style as { framing_style_id?: number; framingStyleId?: number } | undefined)
-        ?.framing_style_id ??
-      (sd.framing_style as { framing_style_id?: number; framingStyleId?: number } | undefined)
-        ?.framingStyleId ??
-      (sd.framingStyle as { framing_style_id?: number; framingStyleId?: number } | undefined)
-        ?.framing_style_id ??
-      (sd.framingStyle as { framing_style_id?: number; framingStyleId?: number } | undefined)
-        ?.framingStyleId;
-    const framingNameRaw = String(
-      sd.framing_name ??
-      sd.framingName ??
-      sd.framing ??
-      "",
-    ).trim();
-    const dateFormatIdRaw =
-      sd.date_format_id ??
-      sd.dateFormatId ??
-      (Array.isArray(sd.date_format_ids) ? sd.date_format_ids[0] : undefined) ??
-      (Array.isArray(sd.dateFormatIds) ? sd.dateFormatIds[0] : undefined) ??
-      (sd.date_format as { date_format_id?: number; dateFormatId?: number } | undefined)
-        ?.date_format_id ??
-      (sd.date_format as { date_format_id?: number; dateFormatId?: number } | undefined)
-        ?.dateFormatId ??
-      (sd.dateFormat as { date_format_id?: number; dateFormatId?: number } | undefined)
-        ?.date_format_id ??
-      (sd.dateFormat as { date_format_id?: number; dateFormatId?: number } | undefined)
-        ?.dateFormatId ??
-      sd.date_fmt ??
-      sd.dateFmt;
-    const letteringNameRaw = String(
-      sd.lettering_style_name ??
-      sd.letteringStyleName ??
-      "",
-    ).trim();
-    const resolvedLetteringId =
-      letteringStyleIdRaw != null
-        ? String(letteringStyleIdRaw)
-        : letteringNameRaw
-          ? String(
-              letteringOptions.find((opt) => opt.name.trim().toLowerCase() === letteringNameRaw.toLowerCase())?.id ?? ""
-            )
-          : "";
-    const dateFmtRaw = String(sd.date_fmt ?? sd.dateFmt ?? "").trim();
-    const resolvedDateFormatId = dateFormatIdRaw != null
-      ? String(dateFormatIdRaw)
-      : dateFmtRaw
-        ? String(
-            dateFormatOptions.find((opt) => {
-              const byName = String(opt.name ?? "").trim().toLowerCase() === dateFmtRaw.toLowerCase();
-              const byCode = String(opt.description ?? "").trim().toLowerCase() === dateFmtRaw.toLowerCase();
-              return byName || byCode;
-            })?.id ?? ""
-          )
-        : "";
-    const normalizedType = normalizeMarkingTypeValue(rawType);
-    const fallbackType =
-      normalizeMarkingTypeValue(String(sd.marking_type ?? sd.markingType ?? "")) ||
-      (String(sd.rate_val ?? sd.rateVal ?? "").trim() ? "Ratemark" : "") ||
-      (String(sd.type ?? "").toLowerCase().includes("aux") ? "Auxmark" : "");
-    const resolvedType = normalizedType || fallbackType || "Townmark";
-    const resolvedFramingId =
-      framingStyleIdRaw != null
-        ? String(framingStyleIdRaw)
-        : framingNameRaw
-          ? String(
-              framingOptions.find((opt) => opt.name.trim().toLowerCase() === framingNameRaw.toLowerCase())?.id ?? ""
-            )
-          : "";
-    setEditorEdits({
-      type: resolvedType,
-      state: String(sd.state ?? "").trim(),
-      stateOther: "",
-      town: String(sd.town ?? "").trim(),
-      firstSeen: firstSeen || "",
-      lastSeen: lastSeen || "",
-      shape: resolvedShape,
-      color: colorSel,
-      colorOther: colorOth,
-      width_mm: wh.width,
-      height_mm: wh.height,
-      manuscript: Boolean(sd.is_manuscript ?? sd.isManuscript)
-        ? "Yes"
-        : (String(sd.manuscript ?? "No").trim() || "No"),
-      inscription_txt: String(sd.inscription_txt ?? sd.inscriptionTxt ?? "").trim(),
-      rate_val: String(sd.rate_val ?? sd.rateVal ?? "").trim(),
-      description: String(sd.description ?? "").trim(),
-      references: String(sd.references ?? "").trim(),
-      impression: String(sd.impression ?? "Normal").trim() || "Normal",
-      is_irreg: Boolean(sd.is_irreg ?? sd.isIrreg ?? sd.isIrregular),
-      lettering_style_id: resolvedLetteringId,
-      framing_style_id: resolvedFramingId,
-      date_format_id: resolvedDateFormatId,
-    });
-    setAdditionalDatePairs(parseDatesObservedToYearPairs(sd.dates_observed ?? sd.datesObserved));
-    setEditorFieldErrors({});
-  }, [contribution?.id, contribution?.submitted_data, shapeOptions, colorOptions, letteringOptions, dateFormatOptions]);
+  }, [contribution, navigate]);
 
-  const effectiveStateKey = useMemo(() => {
-    return editorEdits.state === STATE_OTHER_VALUE
-      ? editorEdits.stateOther.trim().toLowerCase()
-      : editorEdits.state.trim().toLowerCase();
-  }, [editorEdits.state, editorEdits.stateOther]);
-
-  const townOptions = useMemo(() => {
-    if (!effectiveStateKey) return [];
-    const seen = new Set<string>();
-    const towns: { value: string; label: string }[] = [];
-    for (const facility of postOffices) {
-      const facilityState = (facility.state || "").trim().toLowerCase();
-      const facilityTown = (facility.town || facility.name || "").trim();
-      if (!facilityTown || facilityState !== effectiveStateKey) continue;
-      const key = facilityTown.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      towns.push({ value: facilityTown, label: facilityTown });
-    }
-    towns.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
-    return towns;
-  }, [postOffices, effectiveStateKey]);
-
-  const stateSelectOptions = useMemo(() => {
-    const base = [...stateOptions, { value: STATE_OTHER_VALUE, label: "Other (type below)" }];
-    const s = editorEdits.state.trim();
-    if (s && s !== STATE_OTHER_VALUE && !base.some((o) => o.value === s)) {
-      return [{ value: s, label: s }, ...base];
-    }
-    return base;
-  }, [stateOptions, editorEdits.state]);
-
-  const townSelectOptions = useMemo(() => {
-    const t = editorEdits.town.trim();
-    const base = townOptions;
-    if (t && !base.some((o) => o.value === t)) {
-      return [{ value: t, label: `${t} (from submission)` }, ...base];
-    }
-    return base;
-  }, [townOptions, editorEdits.town]);
-
-  const shapeSelectOptions = useMemo(() => {
-    const base = shapeOptions.map((t) => ({ value: t.name, label: t.name }));
-    const submittedShape = editorEdits.shape.trim();
-    if (submittedShape && !base.some((o) => o.value === submittedShape)) {
-      return [{ value: submittedShape, label: `${submittedShape} (from submission)` }, ...base];
-    }
-    return base;
-  }, [shapeOptions, editorEdits.shape]);
-
-  const normalizedMarkingType = normalizeMarkingTypeValue(editorEdits.type);
-  const isTownmark = normalizedMarkingType === "Townmark";
-  const isRatemark = normalizedMarkingType === "Ratemark";
-  const isAuxmark = normalizedMarkingType === "Auxmark";
-  const isHandstamped = editorEdits.manuscript !== "Yes";
-  const showShapeField = isHandstamped;
-  const showDateFormatField = isHandstamped && isTownmark;
-  const showRateValueField = isRatemark;
-  const showAnythingElseSection = isHandstamped && (isTownmark || isRatemark || isAuxmark);
-  const isCircularShape = isCircularType(editorEdits.shape);
-  const inscriptionLabel = isRatemark ? "Ratemark Text" : isAuxmark ? "Auxmark Text" : "Townmark Text";
-
-  /** Validate editor fields (same rules as Edit Catalog Entry) and build PATCH body; returns null if invalid. */
-  const buildValidatedEditorPatch = (): Record<string, unknown> | null => {
-    const stateVal =
-      editorEdits.state === STATE_OTHER_VALUE ? editorEdits.stateOther.trim() : editorEdits.state.trim();
-    const townVal = editorEdits.town.trim();
-    const shapeVal = editorEdits.shape.trim();
-    const colorVal =
-      editorEdits.color === COLOR_OTHER_VALUE ? editorEdits.colorOther.trim() : editorEdits.color.trim();
-    const shapeIdVal = shapeOptions.find(
-      (opt) => String(opt.name).trim().toLowerCase() === shapeVal.toLowerCase()
-    )?.id;
-    const colorIdVal = colorOptions.find(
-      (opt) => String(opt.name).trim().toLowerCase() === colorVal.toLowerCase()
-    )?.id;
-    const manuscriptVal = editorEdits.manuscript.trim();
-
-    const errors: typeof editorFieldErrors = {};
-    if (!stateVal) errors.state = "State is required";
-    if (!townVal) errors.town = "Town/City is required";
-    if (!editorEdits.inscription_txt.trim()) {
-      errors.inscription = `${inscriptionLabel} is required`;
-    }
-    const fe = getYearError(editorEdits.firstSeen, { required: true, label: ENTRY_LABELS.datesObserved.earliest });
-    if (fe) errors.firstSeen = fe;
-    const le = getYearError(editorEdits.lastSeen, { required: false, label: ENTRY_LABELS.datesObserved.latest });
-    if (le) errors.lastSeen = le;
-    if (manuscriptVal === "No" && !shapeVal) {
-      errors.shape = "Shape is required when Manuscript is No";
-    }
-    if (!colorVal) errors.color = "Color is required";
-    if (showAnythingElseSection && !editorEdits.lettering_style_id) errors.lettering = "Lettering style is required";
-    if (showAnythingElseSection && !editorEdits.framing_style_id) errors.framing = "Framing style is required";
-    if (showDateFormatField && !editorEdits.date_format_id) errors.dateFormat = "Date format is required";
-    const effectiveHeight = isCircularShape ? editorEdits.width_mm : editorEdits.height_mm;
-    const mmErr = validateMmPair(editorEdits.width_mm, effectiveHeight);
-    if (mmErr.width) errors.width_mm = mmErr.width;
-    if (mmErr.height && !isCircularShape) errors.height_mm = mmErr.height;
-
-    for (const pair of additionalDatePairs) {
-      const a = pair.earliestYear.trim();
-      const b = pair.latestYear.trim();
-      if (!a || !b) {
-        errors.datePairs = "Each additional pair requires both Earliest Year and Latest Year.";
-        break;
-      }
-      const aErr = getYearError(a, { required: true, label: "Earliest Year" });
-      const bErr = getYearError(b, { required: true, label: "Latest Year" });
-      if (aErr || bErr) {
-        errors.datePairs = aErr || bErr || "Invalid additional date pair.";
-        break;
-      }
-      if (Number(a) > Number(b)) {
-        errors.datePairs = "Earliest Year must be less than or equal to Latest Year in each pair.";
-        break;
-      }
-    }
-
-    if (Object.keys(errors).length > 0) {
-      setEditorFieldErrors(errors);
-      return null;
-    }
-    setEditorFieldErrors({});
-
-    const first = editorEdits.firstSeen.trim();
-    const last = editorEdits.lastSeen.trim();
-
-    const datesObservedStr = buildDatesObservedFromYearPairs(additionalDatePairs);
-
-    return {
-      state: stateVal,
-      town: townVal,
-      first_seen: first,
-      last_seen: last,
-      dates_observed: datesObservedStr || undefined,
-      type: normalizedMarkingType || undefined,
-      shape: manuscriptVal === "Yes" ? null : shapeVal,
-      shape_id: manuscriptVal === "Yes" ? null : shapeIdVal ?? undefined,
-      color: colorVal,
-      color_id: colorIdVal ?? undefined,
-      width_mm: editorEdits.width_mm.trim() || undefined,
-      height_mm: (isCircularShape ? editorEdits.width_mm : editorEdits.height_mm).trim() || undefined,
-      manuscript: editorEdits.manuscript.trim() || undefined,
-      inscription_txt: editorEdits.inscription_txt.trim() || undefined,
-      rate_val: showRateValueField ? editorEdits.rate_val.trim() || undefined : undefined,
-      description: editorEdits.description.trim() || undefined,
-      references: editorEdits.references.trim() || undefined,
-      impression: manuscriptVal === "Yes" ? null : editorEdits.impression.trim() || undefined,
-      is_irreg: manuscriptVal === "Yes" ? null : editorEdits.is_irreg,
-      lettering_style_id: manuscriptVal === "Yes"
-        ? null
-        : editorEdits.lettering_style_id
-        ? parseInt(editorEdits.lettering_style_id, 10)
-        : undefined,
-      framing_style_id: editorEdits.framing_style_id
-        ? parseInt(editorEdits.framing_style_id, 10)
-        : undefined,
-      date_format_id: editorEdits.date_format_id ? parseInt(editorEdits.date_format_id, 10) : undefined,
-    };
-  };
-
-  /** Persists editor submission-data changes to the server (required before approve applies them). */
-  const persistEditorEdits = async (apiBase: string): Promise<boolean> => {
-    if (!contribution) return false;
-    const patch = buildValidatedEditorPatch();
-    if (!patch) {
-      toast({
-        title: "Fix form errors",
-        description: "Correct the highlighted fields before saving or approving.",
-        variant: "destructive",
-      });
-      return false;
-    }
-    const csrfToken = getCsrfTokenFromCookie();
-    const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
-    if (csrfToken) headers["X-CSRFToken"] = csrfToken;
-    try {
-      const res = await fetch(`${apiBase}/contributions/${contribution.id}/editor-edit/`, {
-        method: "PATCH",
-        credentials: "include",
-        headers,
-        body: JSON.stringify(patch),
-      });
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody?.detail ?? res.statusText);
-      }
-      const data = await res.json();
-      const normalized: Contribution = {
-        id: data.id,
-        contributor_id:
-          typeof data.contributor === "number"
-            ? data.contributor
-            : typeof (data as { contributorId?: number }).contributorId === "number"
-              ? (data as { contributorId: number }).contributorId
-              : contribution.contributor_id,
-        status: data.status ?? "pending",
-        contributor_username: (data.contributor_username ?? data.contributorUsername) ?? "",
-        review_notes: data.review_notes ?? data.reviewNotes ?? null,
-        created_at: data.created_at ?? data.createdAt ?? "",
-        submitted_data: (data.submitted_data ?? data.submittedData) ?? contribution.submitted_data,
-        display_name: data.display_name ?? data.displayName,
-        postmark_id: data.postmark_id ?? data.postmarkId ?? data.postmark ?? null,
-        postmark: data.postmark ?? data.postmark_id ?? data.postmarkId ?? null,
-      };
-      setContribution(normalized);
-      return true;
-    } catch (err) {
-      toast({
-        title: "Could not save submission edits",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant: "destructive",
-      });
-      return false;
-    }
-  };
 
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
     if (!contribution) return;
@@ -862,53 +157,16 @@ const ContributionDetail = () => {
     }
     setCommentError(null);
 
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      toast({ title: "Configuration error", description: "VITE_API_URL is not set.", variant: "destructive" });
-      return;
-    }
-
-    const actionPath = kind === "approve" ? "approve" : kind === "reject" ? "reject" : "request-revision";
-    const body: Record<string, unknown> = {};
-    if (comment.trim()) {
-      body.review_notes = comment.trim();
-    }
-    // lettering_style_id, framing_style_id, date_format_id come from contribution's submitted_data (required on form)
-
     setSubmitting(true);
-    // Persist any editor changes onto the pending contribution before approval.
-    if (kind === "approve") {
-      const persisted = await persistEditorEdits(apiBase);
-      if (!persisted) {
-        setSubmitting(false);
-        return;
-      }
-    }
-    const csrfToken = getCsrfTokenFromCookie();
-    const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
-    if (csrfToken) headers["X-CSRFToken"] = csrfToken;
-
     try {
-      const res = await fetch(`${apiBase}/contributions/${contribution.id}/${actionPath}/`, {
-        method: "POST",
-        credentials: "include",
-        headers,
-        body: JSON.stringify(body),
+      const result = await decideContribution(contribution.id, kind, {
+        reviewNotes: comment.trim() || undefined,
       });
-      if (!res.ok) {
-        const resBody = await res.json().catch(() => ({}));
-        const msg = resBody?.review_notes?.[0] ?? resBody?.detail ?? res.statusText;
-        throw new Error(typeof msg === "string" ? msg : "Request failed");
-      }
       const actionLabel = kind === "approve" ? "Approved" : kind === "reject" ? "Rejected" : "Submission returned";
       toast({ title: actionLabel, description: "Your comment was saved for the contributor." });
-      if (kind === "approve") {
-        const data = await res.json();
-        const postmarkId = data?.postmark_id ?? data?.postmarkId;
-        if (postmarkId != null) {
-          navigate(`/record/${postmarkId}`, { state: { fromDashboard: true } });
-          return;
-        }
+      if (kind === "approve" && result.postmarkId != null) {
+        navigate(`/record/${result.postmarkId}`, { state: { fromDashboard: true } });
+        return;
       }
       navigate("/dashboard", { state: { tab: "editor" } });
     } catch (err) {
@@ -922,141 +180,38 @@ const ContributionDetail = () => {
     }
   };
 
-  const handleSetDefaultMasterImage = async (
-    postmarkId: number,
-    imageId: number,
-    imageType: "mark" | "cover" | "tracing"
-  ) => {
-    try {
-      setUpdatingDefaultImageId(imageId);
-      const csrfToken = getCsrfTokenFromCookie();
-      const headers = csrfToken ? { "X-CSRFToken": csrfToken } : undefined;
-      const sameType = masterListingImages.filter((img) => img.imageType === imageType);
-      await Promise.all(
-        sameType.map((img) =>
-          apiClient.patch(
-            `/images/${img.id}/`,
-            { display_order: img.id === imageId ? 0 : 1 },
-            headers ? { headers } : undefined
-          )
-        )
-      );
-      const refreshed = await getMarkingByIdRaw(postmarkId);
-      const rows = Array.isArray(refreshed?.images) ? (refreshed.images as unknown[]) : [];
-      const parsed = rows
-        .map((img: any) => {
-          const imageUrl = normalizeImageUrl(img?.image_url ?? img?.url ?? null);
-          const idRaw = img?.image_id ?? img?.id;
-          const id = Number(idRaw);
-          if (!imageUrl || Number.isNaN(id)) return null;
-          return {
-            id,
-            imageUrl,
-            imageType: normalizeMasterImageType(
-              img?.image_tag ?? img?.imageTag ?? img?.image_type ?? img?.imageType ?? img?.imageView ?? "mark"
-            ),
-            displayOrder: Number(img?.displayOrder ?? img?.display_order ?? 999),
-          };
-        })
-        .filter((row): row is { id: number; imageUrl: string; imageType: "mark" | "cover" | "tracing"; displayOrder: number } => !!row);
-      setMasterListingImages(parsed);
-      toast({
-        title: "Default image updated",
-        description: `Default ${imageType} image has been set.`,
-      });
-    } catch (err) {
-      toast({
-        title: "Could not set default image",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setUpdatingDefaultImageId(null);
-    }
-  };
-
-  const handleDeleteMasterListing = async (postmarkId: number) => {
-    const confirmed = window.confirm(
-      "Remove this Marking? This action is audit-tracked and intended for cleanup cases."
-    );
-    if (!confirmed) return;
-    try {
-      setDeletingMasterListing(true);
-      const csrfToken = getCsrfTokenFromCookie();
-      const headers = csrfToken ? { "X-CSRFToken": csrfToken } : undefined;
-      await apiClient.delete(`/markings/${postmarkId}/delete-mine/`, headers ? { headers } : undefined);
-      toast({
-        title: "Master entry removed",
-        description: "Removal was recorded in audit history.",
-      });
-      navigate("/dashboard", { state: { tab: "editor" } });
-    } catch (err) {
-      toast({
-        title: "Could not remove master entry",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setDeletingMasterListing(false);
-    }
-  };
 
   const handleBack = () => {
     if (fromDashboard) navigate("/dashboard", { state: { tab: "editor" } });
     else navigate("/dashboard");
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    const isPendingReview = contribution?.status === "pending";
-    const canReviewCurrent = isStateEditor && isPendingReview && !!user;
-    const postmarkIdRaw =
-      contribution?.postmark_id ??
-      contribution?.postmark ??
-      (contribution as unknown as Record<string, unknown> | null)?.postmarkId ??
-      null;
-    const resolvedPostmarkId =
-      typeof postmarkIdRaw === "number"
-        ? postmarkIdRaw
-        : postmarkIdRaw != null && String(postmarkIdRaw).trim() !== ""
-          ? parseInt(String(postmarkIdRaw), 10)
-          : null;
-
-    if (!canReviewCurrent || resolvedPostmarkId == null || Number.isNaN(resolvedPostmarkId)) {
-      setMasterListingImages([]);
-      return;
-    }
-    getMarkingByIdRaw(resolvedPostmarkId)
-      .then((data) => {
-        if (cancelled || !data) return;
-        const rows = Array.isArray(data.images) ? (data.images as unknown[]) : [];
-        const parsed = rows
-          .map((img: any) => {
-            const imageUrl = normalizeImageUrl(img?.imageUrl ?? img?.image_url ?? img?.url ?? null);
-            const imageIdRaw = img?.postmarkImageId ?? img?.postmark_image_id ?? img?.id;
-            const imageId = Number(imageIdRaw);
-            if (!imageUrl || Number.isNaN(imageId)) return null;
-            return {
-              id: imageId,
-              imageUrl,
-              imageType: normalizeMasterImageType(
-                img?.image_tag ?? img?.imageTag ?? img?.image_type ?? img?.imageType ?? img?.imageView ?? "mark"
-              ),
-              displayOrder: Number(img?.displayOrder ?? img?.display_order ?? 999),
-            };
-          })
-          .filter((row): row is { id: number; imageUrl: string; imageType: "mark" | "cover" | "tracing"; displayOrder: number } => !!row);
-        setMasterListingImages(parsed);
-      })
-      .catch(() => {
-        if (!cancelled) setMasterListingImages([]);
+  const handleDeleteConfirm = async () => {
+    if (!contribution) return;
+    setDeleting(true);
+    try {
+      await deleteDraftContribution(contribution.id);
+      toast({ title: "Draft deleted" });
+      setDeleteOpen(false);
+      navigate("/dashboard");
+    } catch (err) {
+      toast({
+        title: "Could not delete",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [contribution, isStateEditor, user]);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
-  if (loading) {
+
+  // Approved submissions are being redirected to the entry page by the effect
+  // above; show the spinner rather than flashing the contribution view first.
+  const isRedirectingToRecord =
+    contribution?.status === "approved" && contribution.postmarkId != null;
+
+  if (loading || isRedirectingToRecord) {
     return (
       <div className="min-h-screen flex flex-col">
         <Navigation />
@@ -1083,10 +238,7 @@ const ContributionDetail = () => {
     );
   }
 
-  const rawSubmitted =
-    contribution.submitted_data ??
-    (contribution as unknown as Record<string, unknown>).submittedData ??
-    {};
+  const rawSubmitted = contribution.submittedData;
   const sd: Record<string, unknown> =
     typeof rawSubmitted === "object" && rawSubmitted !== null
       ? (rawSubmitted as Record<string, unknown>)
@@ -1094,16 +246,7 @@ const ContributionDetail = () => {
   if (isCoverContributionData(sd)) {
     return (
       <CoverContributionDetail
-        initialContribution={{
-          id: contribution.id,
-          contributor_id: contribution.contributor_id ?? null,
-          status: contribution.status,
-          contributor_username: contribution.contributor_username,
-          review_notes: contribution.review_notes,
-          created_at: contribution.created_at,
-          submitted_data: sd,
-          display_name: contribution.display_name,
-        }}
+        initialContribution={{ ...contribution, submittedData: sd }}
       />
     );
   }
@@ -1122,16 +265,14 @@ const ContributionDetail = () => {
       sd.comment ??
       ""
   ).trim();
-  const manuscript = String(sd.manuscript ?? "").trim();
-  const isIrregular = Boolean(sd.is_irreg ?? sd.isIrreg);
   const title = [town, state].filter(Boolean).join(", ") || `Submission #${contribution.id}`;
   const displayName = [title, shape].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") || title;
   const baseImageUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
   const imageRoot = baseImageUrl || "/media";
   const resolveStorageImageUrl = (storageFilename: string) =>
-    normalizeImageUrl(`${imageRoot}/markings/${storageFilename.replace(/^\/+/, "")}`);
-  const imageMetasRaw = (sd.image_metas ?? sd.imageMetas) as SubmittedData["image_metas"] | undefined;
-  const imageMetaSingle = sd.image_meta as SubmittedData["image_meta"] | undefined;
+    normalizeImageUrl(`${imageRoot}/${storageFilename.replace(/^\/+/, "")}`);
+  const imageMetasRaw = (sd.image_metas ?? sd.imageMetas) as ContributionImageMeta[] | undefined;
+  const imageMetaSingle = sd.image_meta as ContributionImageMeta | undefined;
   const imageMetaList: Array<{ imageUrl: string; originalFilename?: string }> = [];
   const asImageUrlArray = (raw: unknown): string[] => {
     if (!Array.isArray(raw)) return [];
@@ -1207,24 +348,34 @@ const ContributionDetail = () => {
           ? "rounded-full border border-orange-600 bg-orange-500 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-orange-500"
           : "rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500";
   const canReview = isStateEditor && isPending && !!user;
-  const showSubmittedData = !canReview;
-  const showPeerReviewNotice = false;
+
+  // Build the canonical field-row list from submitted_data. Both editors
+  // and contributors now see this read-only view; editors act on it via
+  // Approve / Reject / Return rather than inline edits.
+  let fieldRows: ReturnType<typeof buildMarkingFields> | null = null;
+  let fieldRowsError: string | null = null;
+  try {
+    const fieldInput = submittedDataToFieldInput(
+      sd,
+      { letteringOptions, dateFormatOptions },
+      { contributionId: contribution.id },
+    );
+    fieldRows = buildMarkingFields(fieldInput, { isStaff: !!isStateEditor });
+  } catch (err) {
+    fieldRowsError = err instanceof Error ? err.message : String(err);
+  }
   const showEditorFeedbackCard =
-    contribution.status !== "pending" || !!(contribution.review_notes && contribution.review_notes.trim());
-  const canContributorResubmit =
-    isContributor && (contribution.status === "rejected" || contribution.status === "needs_revision");
-  const postmarkIdRaw =
-    contribution.postmark_id ?? contribution.postmark ?? (contribution as unknown as Record<string, unknown>).postmarkId ?? null;
-  const postmarkId =
-    typeof postmarkIdRaw === "number"
-      ? postmarkIdRaw
-      : postmarkIdRaw != null && String(postmarkIdRaw).trim() !== ""
-        ? parseInt(String(postmarkIdRaw), 10)
-        : null;
-  const hasValue = (v: unknown) => {
-    const s = v != null ? String(v).trim() : "";
-    return s !== "" && s.toLowerCase() !== "unknown";
-  };
+    contribution.status !== "pending" || !!(contribution.reviewNotes && contribution.reviewNotes.trim());
+  // Unified edit/remove buttons (mirror the entry detail page). Edit is offered
+  // for any still-editable status; Delete only for a draft the contributor owns
+  // (the only thing the backend permits removing).
+  const canContributorEdit =
+    isContributor &&
+    (contribution.status === "draft" ||
+      contribution.status === "needs_revision" ||
+      contribution.status === "rejected");
+  const canDeleteDraft = isContributor && contribution.status === "draft";
+  const postmarkId = contribution.postmarkId;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -1245,6 +396,27 @@ const ContributionDetail = () => {
                     <ExternalLink className="mr-2 h-4 w-4" />
                     View record
                   </Link>
+                </Button>
+              )}
+              {canContributorEdit && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(`/contribute?edit=${contribution.id}`)}
+                >
+                  <Pencil className="mr-2 h-4 w-4" />
+                  Edit
+                </Button>
+              )}
+              {canDeleteDraft && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setDeleteOpen(true)}
+                  disabled={deleting}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
                 </Button>
               )}
             </div>
@@ -1393,28 +565,10 @@ const ContributionDetail = () => {
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    {contribution.status !== "pending" && (
-                      <p className="text-sm font-medium text-foreground">
-                        Outcome:{" "}
-                        <Badge className={statusBadgeClassName}>{statusLabel}</Badge>
-                      </p>
-                    )}
-                    {contribution.review_notes?.trim() ? (
+                    {contribution.reviewNotes?.trim() ? (
                       <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
-                        {contribution.review_notes.trim()}
+                        {contribution.reviewNotes.trim()}
                       </p>
-                    ) : null}
-                    {canContributorResubmit ? (
-                      <div className="flex flex-wrap gap-2 pt-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => navigate(`/contribute?edit=${contribution.id}`)}
-                          disabled={resubmitting}
-                        >
-                          Edit before resubmitting
-                        </Button>
-                      </div>
                     ) : null}
                   </CardContent>
                 </Card>
@@ -1425,814 +579,70 @@ const ContributionDetail = () => {
             <div className="order-2 min-w-0 space-y-6 lg:order-none lg:col-start-2 lg:row-start-1">
               <div>
                 <h1 className="font-heading text-3xl font-bold text-foreground mb-2">{displayName}</h1>
-                <div className="flex flex-wrap gap-2">
-                  {hasValue(shape) ? <Badge variant="secondary">{shape}</Badge> : null}
-                  {hasValue(color) ? <Badge variant="secondary">{color}</Badge> : null}
-                  <Badge variant="outline">Irregular: {isIrregular ? "Yes" : "No"}</Badge>
-                </div>
               </div>
 
-              {/* Read-only submitted fields; editors see this for new postmarks (suggestions use "Edit submission data" instead). */}
-              {canReview && contributorComment && (
-                <Card className="shadow-archival-md border-primary/15">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg flex items-center gap-2">
-                      <MessageSquare className="h-5 w-5" />
-                      Contributor comment
-                    </CardTitle>
-                    <p className="text-sm text-muted-foreground">
-                      Note from the contributor attached to this suggestion.
+              <Card className="shadow-archival-md border-primary/10">
+                <CardHeader>
+                  <CardTitle className="font-heading text-lg">Contribution details</CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    {canReview
+                      ? "Read-only view of the contributor's submission. Use Return for revision if changes are needed."
+                      : isContributor
+                        ? "What you submitted. An editor will review this."
+                        : "Snapshot of fields stored on this contribution."}
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  {fieldRowsError ? (
+                    <p className="text-sm text-destructive rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2">
+                      Failed to render submitted data: {fieldRowsError}
                     </p>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
-                      {contributorComment}
+                  ) : fieldRows && fieldRows.length > 0 ? (
+                    <MarkingFieldsDisplay rows={fieldRows} mode="contribution" />
+                  ) : (
+                    <p className="text-sm text-muted-foreground py-2">
+                      No submitted data returned for this contribution.
                     </p>
-                  </CardContent>
-                </Card>
-              )}
-
-              {showSubmittedData && (
-                <Card className="shadow-archival-md border-primary/10">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg">Submitted data</CardTitle>
-                    <p className="text-sm text-muted-foreground">
-                      {canReview
-                        ? "Contributor submission (read-only). Use Review this submission to add a comment and decide."
-                        : isContributor
-                          ? "What you submitted. An editor will review this and add a catalog value and comment."
-                          : "Snapshot of fields stored on this contribution."}
-                    </p>
-                  </CardHeader>
-                  <CardContent>
-                    {Object.keys(sd).length === 0 ? (
-                      <p className="text-sm text-muted-foreground py-2">
-                        No submitted data returned for this contribution. If you expect to see it, the record may have been created before this field was stored, or there may be an API issue.
-                      </p>
-                    ) : (
-                      <dl className="space-y-0 text-sm">
-                        {contributorComment ? (
-                          <div className="flex justify-between py-2 border-b border-border gap-4">
-                            <dt className="text-muted-foreground font-medium shrink-0">Comment for editor</dt>
-                            <dd className="text-foreground whitespace-pre-line text-right">{contributorComment}</dd>
-                          </div>
-                        ) : null}
-                        {Object.entries(sd)
-                          .filter(([k]) => {
-                            if (
-                              k === "contributor_comment" ||
-                              k === "contributorComment" ||
-                              k === "comment_for_editor" ||
-                              k === "commentForEditor" ||
-                              k === "review_notes" ||
-                              k === "reviewNotes" ||
-                              k === "comment"
-                            ) {
-                              return false;
-                            }
-                            if (k === "image_meta") return false;
-                            if (k === "image_metas" || k === "imageMetas") return false;
-                            if (
-                              k === "postmark_images" ||
-                              k === "ratemark_images" ||
-                              k === "auxmark_images" ||
-                              k === "postmarkImages" ||
-                              k === "ratemarkImages" ||
-                              k === "auxmarkImages" ||
-                              k === "PostmarkImages" ||
-                              k === "RatemarkImages" ||
-                              k === "AuxmarkImages"
-                            ) {
-                              return false;
-                            }
-                            const hasMm =
-                              String(sd.width_mm ?? sd.widthMm ?? "").trim() !== "" ||
-                              String(sd.height_mm ?? sd.heightMm ?? "").trim() !== "";
-                            if (k === "dimensions" && hasMm) return false;
-                            if (k === "original_postmark_id" || k === "originalPostmarkId") return false;
-                            return true;
-                          })
-                          .map(([key, val]) => {
-                            const label = key
-                              .replace(/_/g, " ")
-                              .replace(/\b\w/g, (c) => c.toUpperCase())
-                              .replace(/Id\b/, "")
-                              .replace(/\s+/g, " ")
-                              .trim();
-                            let display: React.ReactNode = val == null ? "—" : String(val);
-                            if (key === "image_meta" && val != null && typeof val === "object") {
-                              const meta = val as { storage_filename?: string; original_filename?: string };
-                              display = (
-                                <span className="text-muted-foreground">
-                                  {meta.original_filename ?? meta.storage_filename ?? "—"}
-                                </span>
-                              );
-                            } else if (key === "lettering_style_id" || key === "letteringStyleId") {
-                              const numVal = typeof val === "number" ? val : typeof val === "string" ? parseInt(val, 10) : NaN;
-                              if (!Number.isNaN(numVal)) {
-                                const opt = letteringOptions.find((o) => o.id === numVal);
-                                display = opt ? opt.name : String(val);
-                              }
-                            } else if (key === "framing_style_id" || key === "framingStyleId") {
-                              const idsFromArray = (
-                                Array.isArray(sd.framing_style_ids)
-                                  ? sd.framing_style_ids
-                                  : Array.isArray(sd.framingStyleIds)
-                                    ? sd.framingStyleIds
-                                    : []
-                              )
-                                .map((x) => (typeof x === "number" ? x : typeof x === "string" ? parseInt(x, 10) : NaN))
-                                .filter((x): x is number => !Number.isNaN(x));
-                              if (idsFromArray.length > 0) {
-                                const names = idsFromArray.map(
-                                  (id) => framingOptions.find((o) => o.id === id)?.name ?? String(id)
-                                );
-                                display = names.join(", ");
-                              } else {
-                                const numVal = typeof val === "number" ? val : typeof val === "string" ? parseInt(val, 10) : NaN;
-                                if (!Number.isNaN(numVal)) {
-                                  const opt = framingOptions.find((o) => o.id === numVal);
-                                  display = opt ? opt.name : String(val);
-                                }
-                              }
-                            } else if (key === "framing_style_ids" || key === "framingStyleIds") {
-                              const ids = Array.isArray(val)
-                                ? val
-                                    .map((x) => (typeof x === "number" ? x : typeof x === "string" ? parseInt(x, 10) : NaN))
-                                    .filter((x): x is number => !Number.isNaN(x))
-                                : [];
-                              if (ids.length > 0) {
-                                const names = ids.map((id) => framingOptions.find((o) => o.id === id)?.name ?? String(id));
-                                display = names.join(", ");
-                              } else {
-                                display = "—";
-                              }
-                            } else if (key === "date_format_id" || key === "dateFormatId") {
-                              const numVal = typeof val === "number" ? val : typeof val === "string" ? parseInt(val, 10) : NaN;
-                              if (!Number.isNaN(numVal)) {
-                                const opt = dateFormatOptions.find((o) => o.id === numVal);
-                                display = opt ? opt.name : String(val);
-                              }
-                            } else if (key === "date_format_ids" || key === "dateFormatIds") {
-                              const ids = Array.isArray(val)
-                                ? val
-                                    .map((x) => (typeof x === "number" ? x : typeof x === "string" ? parseInt(x, 10) : NaN))
-                                    .filter((x): x is number => !Number.isNaN(x))
-                                : [];
-                              if (ids.length > 0) {
-                                const names = ids.map((id) => dateFormatOptions.find((o) => o.id === id)?.name ?? String(id));
-                                display = names.join(", ");
-                              } else {
-                                display = "—";
-                              }
-                            } else if (typeof val === "object" && val !== null) {
-                              display = JSON.stringify(val);
-                            }
-                            return (
-                              <div
-                                key={key}
-                                className="flex justify-between py-2 border-b border-border last:border-0 gap-4"
-                              >
-                                <dt className="text-muted-foreground font-medium shrink-0">{label}</dt>
-                                <dd className="text-foreground break-all text-right">{display}</dd>
-                              </div>
-                            );
-                          })}
-                      </dl>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Editor: catalog suggestions only — new postmark submissions stay read-only above */}
-              {canReview && (
-                <Card className="shadow-archival-md border-primary/15">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg flex items-center gap-2">
-                      <Pencil className="h-5 w-5" />
-                      Review Submission
-                    </CardTitle>
-                    <p className="text-sm text-muted-foreground">
-                      Single submission form with prefilled values. Any change goes through approval workflow; master entry updates only after approval.
-                    </p>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    {postmarkId != null && (
-                      <div className="space-y-2">
-                        <Label>Existing master entry images (context)</Label>
-                        {masterListingImages.length > 0 ? (
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                            {masterListingImages.map((img, idx) => (
-                              <div key={`${img.id}-${idx}`} className="rounded border border-border overflow-hidden bg-muted p-1">
-                                <img src={img.imageUrl} alt={`Master entry ${idx + 1}`} className="h-24 w-full object-cover rounded" />
-                                <div className="mt-1 flex items-center justify-between gap-2">
-                                  <span className="text-[10px] uppercase text-muted-foreground">{img.imageType}</span>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant={img.displayOrder === 0 ? "secondary" : "outline"}
-                                    className="h-6 px-2 text-[10px]"
-                                    disabled={updatingDefaultImageId != null}
-                                    onClick={() => handleSetDefaultMasterImage(postmarkId, img.id, img.imageType)}
-                                  >
-                                    {updatingDefaultImageId === img.id
-                                      ? "Saving..."
-                                      : img.displayOrder === 0
-                                        ? "Default"
-                                        : "Set default"}
-                                  </Button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-xs text-muted-foreground">No existing master entry images found.</p>
-                        )}
-                        <p className="text-xs text-muted-foreground">
-                          Editors can directly set one default image per type: mark, cover, tracing.
-                        </p>
-                      </div>
-                    )}
-                    {postmarkId != null && (
-                      <div className="rounded-md border border-destructive/30 p-3 bg-destructive/5 space-y-2">
-                        <p className="text-xs text-muted-foreground">
-                          Direct editor action allowed: remove master entry (audit-tracked), mainly for cleanup tasks such as multi-color corrections.
-                        </p>
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          size="sm"
-                          disabled={deletingMasterListing}
-                          onClick={() => handleDeleteMasterListing(postmarkId)}
-                        >
-                          {deletingMasterListing ? "Removing..." : "Remove Marking"}
-                        </Button>
-                      </div>
-                    )}
-                    <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-type">Marking Type</Label>
-                      <Select
-                        value={editorEdits.type}
-                        onValueChange={(v) => setEditorEdits((p) => ({ ...p, type: v }))}
-                        disabled={submitting}
-                      >
-                        <SelectTrigger id="contrib-edit-type">
-                          <SelectValue placeholder="Select marking type..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {MARKING_TYPE_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                  )}
+                  {contributorComment ? (
+                    <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Comment for editor</p>
+                      <p className="text-sm text-foreground whitespace-pre-line">{contributorComment}</p>
                     </div>
+                  ) : null}
+                </CardContent>
+              </Card>
 
-                    <div className="flex items-center gap-2">
-                      <input
-                        id="contrib-edit-manuscript"
-                        type="checkbox"
-                        className="h-4 w-4 accent-primary"
-                        checked={editorEdits.manuscript === "Yes"}
-                        disabled={submitting}
-                        onChange={(e) => {
-                          const next = e.target.checked ? "Yes" : "No";
-                          setEditorEdits((p) => ({
-                            ...p,
-                            manuscript: next,
-                            ...(next === "Yes"
-                              ? { shape: "", lettering_style_id: "", impression: "Normal", is_irreg: false }
-                              : {}),
-                          }));
-                          if (next === "Yes") {
-                            setEditorFieldErrors((prev) => ({ ...prev, shape: undefined }));
-                          }
-                        }}
-                      />
-                      <Label htmlFor="contrib-edit-manuscript">Manuscript</Label>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-state">
-                        State <span className="text-destructive">*</span>
-                      </Label>
-                      <SearchableSelect
-                        id="contrib-edit-state"
-                        value={editorEdits.state}
-                        onValueChange={(v) => {
-                          setEditorEdits((p) => ({ ...p, state: v }));
-                          setEditorFieldErrors((prev) => ({ ...prev, state: undefined }));
-                        }}
-                        placeholder="Select state..."
-                        options={stateSelectOptions}
-                        loading={loadingStates}
-                        error={!!stateOptionsError}
-                        errorMessage={stateOptionsError ?? "Failed to load states"}
-                        searchPlaceholder="Search states..."
-                        emptyMessage="No state found."
-                        aria-label="State"
-                        disabled={submitting}
-                        triggerClassName={editorFieldErrors.state ? "border-destructive" : ""}
-                      />
-                      {editorFieldErrors.state && (
-                        <p className="text-sm text-destructive">{editorFieldErrors.state}</p>
-                      )}
-                      {editorEdits.state === STATE_OTHER_VALUE && (
-                        <Input
-                          id="contrib-edit-state-other"
-                          placeholder="e.g. Virginia Territory"
-                          value={editorEdits.stateOther}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, stateOther: e.target.value }))}
-                          className="mt-2"
-                          disabled={submitting}
-                          aria-label="State (other)"
-                        />
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-town">
-                        Town/City <span className="text-destructive">*</span>
-                      </Label>
-                      <Input
-                        id="contrib-edit-town"
-                        type="text"
-                        value={editorEdits.town}
-                        onChange={(e) => {
-                          const sanitized = e.target.value.replace(/[^a-zA-Z\s\-']/g, "");
-                          setEditorEdits((p) => ({ ...p, town: sanitized }));
-                          setEditorFieldErrors((prev) => ({ ...prev, town: undefined }));
-                        }}
-                        placeholder="Enter town/city..."
-                        list="contrib-edit-town-options"
-                        aria-label="Town or city"
-                        disabled={submitting}
-                        className={editorFieldErrors.town ? "border-destructive" : ""}
-                      />
-                      <datalist id="contrib-edit-town-options">
-                        {townSelectOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value} />
-                        ))}
-                      </datalist>
-                      {loadingTowns && (effectiveStateKey || editorEdits.state === STATE_OTHER_VALUE) ? (
-                        <p className="text-xs text-muted-foreground">Loading town suggestions...</p>
-                      ) : null}
-                      {townOptionsError && (effectiveStateKey || editorEdits.state === STATE_OTHER_VALUE) ? (
-                        <p className="text-xs text-destructive">{townOptionsError}</p>
-                      ) : null}
-                      {editorFieldErrors.town && (
-                        <p className="text-sm text-destructive">{editorFieldErrors.town}</p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-inscription">{inscriptionLabel}</Label>
-                      <Textarea
-                        id="contrib-edit-inscription"
-                        value={editorEdits.inscription_txt}
-                        onChange={(e) => {
-                          setEditorEdits((p) => ({ ...p, inscription_txt: e.target.value }));
-                          if (editorFieldErrors.inscription) {
-                            setEditorFieldErrors((prev) => ({ ...prev, inscription: undefined }));
-                          }
-                        }}
-                        placeholder="Exact text inscribed on the marking device."
-                        rows={3}
-                        disabled={submitting}
-                      />
-                      {editorFieldErrors.inscription && (
-                        <p className="text-sm text-destructive">{editorFieldErrors.inscription}</p>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="contrib-edit-firstSeen">
-                          {ENTRY_LABELS.datesObserved.earliest} <span className="text-destructive">*</span>
-                        </Label>
-                        <Input
-                          id="contrib-edit-firstSeen"
-                          type="text"
-                          inputMode="numeric"
-                          placeholder=""
-                          value={editorEdits.firstSeen}
-                          onChange={(e) => {
-                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                            setEditorEdits((p) => ({ ...p, firstSeen: v }));
-                            const err = getYearError(v, { required: true, label: ENTRY_LABELS.datesObserved.earliest });
-                            setEditorFieldErrors((prev) => ({ ...prev, firstSeen: err || undefined }));
-                          }}
-                          maxLength={5}
-                          disabled={submitting}
-                          className={editorFieldErrors.firstSeen ? "border-destructive" : ""}
-                        />
-                        {editorFieldErrors.firstSeen && (
-                          <p className="text-sm text-destructive">{editorFieldErrors.firstSeen}</p>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="contrib-edit-lastSeen">{ENTRY_LABELS.datesObserved.latest}</Label>
-                        <Input
-                          id="contrib-edit-lastSeen"
-                          type="text"
-                          inputMode="numeric"
-                          placeholder=""
-                          value={editorEdits.lastSeen}
-                          onChange={(e) => {
-                            const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                            setEditorEdits((p) => ({ ...p, lastSeen: v }));
-                            const err = getYearError(v, { required: false, label: ENTRY_LABELS.datesObserved.latest });
-                            setEditorFieldErrors((prev) => ({ ...prev, lastSeen: err || undefined }));
-                          }}
-                          maxLength={5}
-                          disabled={submitting}
-                          className={editorFieldErrors.lastSeen ? "border-destructive" : ""}
-                        />
-                        {editorFieldErrors.lastSeen && (
-                          <p className="text-sm text-destructive">{editorFieldErrors.lastSeen}</p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <Label>Additional Earliest/Latest pairs</Label>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={submitting}
-                          onClick={() =>
-                            setAdditionalDatePairs((prev) => [
-                              ...prev,
-                              { earliestYear: "", latestYear: "" },
-                            ])
-                          }
-                        >
-                          Add date
-                        </Button>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Add extra year ranges observed for this postmark.
-                      </p>
-                      <div className="space-y-2">
-                        {additionalDatePairs.map((pair, idx) => (
-                          <div key={idx} className="space-y-2 rounded-md border border-border p-3">
-                            <div className="flex items-center justify-between">
-                              <p className="text-xs font-medium text-muted-foreground">Pair {idx + 1}</p>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                disabled={submitting}
-                                onClick={() =>
-                                  setAdditionalDatePairs((prev) => prev.filter((_, i) => i !== idx))
-                                }
-                              >
-                                Remove
-                              </Button>
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
-                              <div className="space-y-1">
-                                <Label className="text-xs text-muted-foreground">Earliest Year</Label>
-                                <Input
-                                  type="text"
-                                  inputMode="numeric"
-                                  placeholder="YYYY"
-                                  value={pair.earliestYear}
-                                  disabled={submitting}
-                                  onChange={(e) => {
-                                    const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                                    setAdditionalDatePairs((prev) =>
-                                      prev.map((p, i) => (i === idx ? { ...p, earliestYear: v } : p))
-                                    );
-                                    if (editorFieldErrors.datePairs) {
-                                      setEditorFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
-                                    }
-                                  }}
-                                  maxLength={5}
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <Label className="text-xs text-muted-foreground">Latest Year</Label>
-                                <Input
-                                  type="text"
-                                  inputMode="numeric"
-                                  placeholder="YYYY"
-                                  value={pair.latestYear}
-                                  disabled={submitting}
-                                  onChange={(e) => {
-                                    const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                                    setAdditionalDatePairs((prev) =>
-                                      prev.map((p, i) => (i === idx ? { ...p, latestYear: v } : p))
-                                    );
-                                    if (editorFieldErrors.datePairs) {
-                                      setEditorFieldErrors((prev) => ({ ...prev, datePairs: undefined }));
-                                    }
-                                  }}
-                                  maxLength={5}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      {editorFieldErrors.datePairs && (
-                        <p className="text-sm text-destructive">{editorFieldErrors.datePairs}</p>
-                      )}
-                    </div>
-
-                    {showShapeField && (
-                    <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-shape">
-                        Shape <span className="text-destructive">*</span>
-                      </Label>
-                      <SearchableSelect
-                        id="contrib-edit-shape"
-                        value={editorEdits.shape}
-                        onValueChange={(v) => {
-                          setEditorEdits((p) => ({ ...p, shape: v }));
-                          setEditorFieldErrors((prev) => ({ ...prev, shape: undefined }));
-                        }}
-                        placeholder="Select shape..."
-                        options={shapeSelectOptions}
-                        loading={loadingShapes}
-                        error={!!shapeOptionsError}
-                        errorMessage={shapeOptionsError ?? "Failed to load marking shapes"}
-                        searchPlaceholder="Search shapes..."
-                        emptyMessage="No shape found."
-                        aria-label="Marking shape"
-                        disabled={submitting}
-                        triggerClassName={editorFieldErrors.shape ? "border-destructive" : ""}
-                      />
-                      {editorFieldErrors.shape && (
-                        <p className="text-sm text-destructive">{editorFieldErrors.shape}</p>
-                      )}
-                    </div>
-                    )}
-
-                    {showRateValueField && <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-rate-value">Rate Value</Label>
-                      <Input
-                        id="contrib-edit-rate-value"
-                        type="text"
-                        value={editorEdits.rate_val}
-                        onChange={(e) => setEditorEdits((p) => ({ ...p, rate_val: e.target.value }))}
-                        placeholder="e.g. 5"
-                        disabled={submitting}
-                      />
-                    </div>}
-
-                    {showAnythingElseSection && <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-impression">Impression</Label>
-                      <Select
-                        value={editorEdits.impression}
-                        onValueChange={(v) => setEditorEdits((p) => ({ ...p, impression: v }))}
-                        disabled={submitting}
-                      >
-                        <SelectTrigger id="contrib-edit-impression">
-                          <SelectValue placeholder="Select impression..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {IMPRESSION_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>}
-
-                    {showAnythingElseSection && <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-is-irregular">Is Irregular</Label>
-                      <Select
-                        value={editorEdits.is_irreg ? "yes" : "no"}
-                        onValueChange={(v) => setEditorEdits((p) => ({ ...p, is_irreg: v === "yes" }))}
-                        disabled={submitting}
-                      >
-                        <SelectTrigger id="contrib-edit-is-irregular">
-                          <SelectValue placeholder="Select..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="yes">Yes</SelectItem>
-                          <SelectItem value="no">No</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>}
-
-                    <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-color">
-                        Color <span className="text-destructive">*</span>
-                      </Label>
-                      <Select
-                        value={editorEdits.color}
-                        onValueChange={(v) => {
-                          setEditorEdits((p) => ({ ...p, color: v }));
-                          setEditorFieldErrors((prev) => ({ ...prev, color: undefined }));
-                        }}
-                        disabled={submitting}
-                      >
-                        <SelectTrigger
-                          id="contrib-edit-color"
-                          className={editorFieldErrors.color ? "border-destructive" : ""}
-                        >
-                          <SelectValue placeholder="Select color..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {colorOptions.map((c) => (
-                            <SelectItem key={c.id} value={c.name}>
-                              {c.name}
-                            </SelectItem>
-                          ))}
-                          <SelectItem value={COLOR_OTHER_VALUE}>Other (type below)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      {editorFieldErrors.color && (
-                        <p className="text-sm text-destructive">{editorFieldErrors.color}</p>
-                      )}
-                      {editorEdits.color === COLOR_OTHER_VALUE && (
-                        <Input
-                          id="contrib-edit-color-other"
-                          placeholder="e.g. Sepia"
-                          value={editorEdits.colorOther}
-                          onChange={(e) => setEditorEdits((p) => ({ ...p, colorOther: e.target.value }))}
-                          className="mt-2"
-                          disabled={submitting}
-                          aria-label="Color (other)"
-                        />
-                      )}
-                    </div>
-
-                    {showAnythingElseSection && <div className="space-y-2">
-                      <Label>
-                        Lettering style <span className="text-destructive">*</span>
-                      </Label>
-                      <Select
-                        value={editorEdits.lettering_style_id}
-                        onValueChange={(v) => {
-                          setEditorEdits((p) => ({ ...p, lettering_style_id: v }));
-                          setEditorFieldErrors((prev) => ({ ...prev, lettering: undefined }));
-                        }}
-                        disabled={submitting || catalogOptionsLoading}
-                      >
-                        <SelectTrigger className={editorFieldErrors.lettering ? "border-destructive" : ""}>
-                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select lettering style"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {letteringOptions.map((opt) => (
-                            <SelectItem key={opt.id} value={String(opt.id)}>
-                              {opt.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {editorFieldErrors.lettering && (
-                        <p className="text-sm text-destructive">{editorFieldErrors.lettering}</p>
-                      )}
-                    </div>}
-                    {showAnythingElseSection && <div className="space-y-2">
-                      <Label>
-                        Framing style <span className="text-destructive">*</span>
-                      </Label>
-                      <Select
-                        value={editorEdits.framing_style_id}
-                        onValueChange={(v) => {
-                          setEditorEdits((p) => ({ ...p, framing_style_id: v }));
-                          setEditorFieldErrors((prev) => ({ ...prev, framing: undefined }));
-                        }}
-                        disabled={submitting || catalogOptionsLoading}
-                      >
-                        <SelectTrigger className={editorFieldErrors.framing ? "border-destructive" : ""}>
-                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select framing style"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {framingOptions.map((opt) => (
-                            <SelectItem key={opt.id} value={String(opt.id)}>
-                              {opt.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {editorFieldErrors.framing && (
-                        <p className="text-sm text-destructive">{editorFieldErrors.framing}</p>
-                      )}
-                    </div>}
-                    {showDateFormatField && <div className="space-y-2">
-                      <Label>
-                        Date format <span className="text-destructive">*</span>
-                      </Label>
-                      <Select
-                        value={editorEdits.date_format_id}
-                        onValueChange={(v) => {
-                          setEditorEdits((p) => ({ ...p, date_format_id: v }));
-                          setEditorFieldErrors((prev) => ({ ...prev, dateFormat: undefined }));
-                        }}
-                        disabled={submitting || catalogOptionsLoading}
-                      >
-                        <SelectTrigger className={editorFieldErrors.dateFormat ? "border-destructive" : ""}>
-                          <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select date format"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {dateFormatOptions.map((opt) => (
-                            <SelectItem key={opt.id} value={String(opt.id)}>
-                              {opt.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {editorFieldErrors.dateFormat && (
-                        <p className="text-sm text-destructive">{editorFieldErrors.dateFormat}</p>
-                      )}
-                    </div>}
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="contrib-edit-width-mm">Width (mm)</Label>
-                        <Input
-                          id="contrib-edit-width-mm"
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="e.g. 34"
-                          value={editorEdits.width_mm}
-                          onChange={(e) => {
-                            setEditorEdits((p) => ({ ...p, width_mm: sanitizeMmInput(e.target.value) }));
-                            setEditorFieldErrors((prev) => ({
-                              ...prev,
-                              width_mm: undefined,
-                              height_mm: undefined,
-                            }));
-                          }}
-                          disabled={submitting}
-                          className={editorFieldErrors.width_mm ? "border-destructive" : ""}
-                        />
-                        {editorFieldErrors.width_mm && (
-                          <p className="text-sm text-destructive">{editorFieldErrors.width_mm}</p>
-                        )}
-                      </div>
-                      {!isCircularShape && <div className="space-y-2">
-                        <Label htmlFor="contrib-edit-height-mm">Height (mm)</Label>
-                        <Input
-                          id="contrib-edit-height-mm"
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="e.g. 28"
-                          value={editorEdits.height_mm}
-                          onChange={(e) => {
-                            setEditorEdits((p) => ({ ...p, height_mm: sanitizeMmInput(e.target.value) }));
-                            setEditorFieldErrors((prev) => ({
-                              ...prev,
-                              width_mm: undefined,
-                              height_mm: undefined,
-                            }));
-                          }}
-                          disabled={submitting}
-                          className={editorFieldErrors.height_mm ? "border-destructive" : ""}
-                        />
-                        {editorFieldErrors.height_mm && (
-                          <p className="text-sm text-destructive">{editorFieldErrors.height_mm}</p>
-                        )}
-                      </div>}
-                    </div>
-                    <p className="text-xs text-muted-foreground -mt-2">
-                      Optional. If circular shape is selected, height is auto-saved as width.
-                    </p>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-description">Description</Label>
-                      <Textarea
-                        id="contrib-edit-description"
-                        value={editorEdits.description}
-                        onChange={(e) => setEditorEdits((p) => ({ ...p, description: e.target.value }))}
-                        placeholder="Details about the postmark..."
-                        rows={4}
-                        disabled={submitting}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="contrib-edit-references">Citation references</Label>
-                      <Textarea
-                        id="contrib-edit-references"
-                        value={editorEdits.references}
-                        onChange={(e) => setEditorEdits((p) => ({ ...p, references: e.target.value }))}
-                        placeholder="Catalog numbers, publications..."
-                        rows={3}
-                        disabled={submitting}
-                      />
-                    </div>
-
-                  </CardContent>
-                </Card>
-              )}
             </div>
           </div>
 
-          {isPending && !isStateEditor && (
-            <p className="text-sm text-red-600">This submission is pending review by an editor.</p>
-          )}
         </div>
       </div>
+
+      <AlertDialog open={deleteOpen} onOpenChange={(open) => !deleting && setDeleteOpen(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete draft</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes this draft submission. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                handleDeleteConfirm();
+              }}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? "Deleting..." : "Delete draft"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Footer />
     </div>
   );

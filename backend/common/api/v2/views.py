@@ -8,6 +8,7 @@
 ###################################################################################################
 from __future__ import annotations
 
+import json
 import os
 import uuid
 
@@ -16,6 +17,7 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, ProgrammingError, transaction
 from django.db.models import Min, Max, Q
 from django.db.models.functions import ExtractYear
+from django.http import Http404
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
@@ -37,12 +39,19 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
 
 from common.audit import (
+    build_cover_snapshot,
     build_marking_snapshot,
+    create_cover_version,
     create_marking_version,
+    log_cover_removed,
+    log_cover_restored,
+    log_marking_removed,
+    log_marking_restored,
     log_submission_transaction,
+    restore_cover_from_snapshot,
     restore_marking_from_snapshot,
 )
-from common.filters import MarkingListFilter
+from common.filters import CoverMarkingFilter, MarkingListFilter
 from common.models import (
     Citation,
     Collection,
@@ -51,12 +60,15 @@ from common.models import (
     Contribution,
     Cover,
     CoverMarking,
+    CoverRecycleBin,
     CoverValuation,
+    CoverVersion,
     DateSeen,
     FAQEntry,
     Image,
     Lettering,
     Marking,
+    MarkingRecycleBin,
     MarkingVersion,
     PostOffice,
     ReferenceWork,
@@ -70,6 +82,10 @@ from .permissions import (
     REVIEW_CONTRIBUTION_PERM,
     CanManageReferenceWorks,
     CanReviewContribution,
+    IsDraftOwner,
+    _get_user_assigned_regions,
+    _user_is_responsible_for_cover,
+    _user_is_responsible_for_marking,
     user_assigned_collection_ids,
 )
 from .serializers import (
@@ -101,25 +117,9 @@ User = get_user_model()
 ###################################################################################################
 ## Helpers
 ###################################################################################################
-def _get_user_assigned_regions(user):
-    if not user or not user.is_authenticated:
-        return Region.objects.none()
-    return Region.objects.filter(collection__editor_assignments__user=user).distinct()
-
-
-def _user_is_responsible_for_marking(user, marking):
-    if not user or not user.is_authenticated:
-        return False
-    if user.is_superuser:
-        return True
-    if not user.has_perm(REVIEW_CONTRIBUTION_PERM):
-        return False
-    if not marking or not marking.post_office_id:
-        return False
-    region = marking.post_office.region
-    if region is None:
-        return False
-    return _get_user_assigned_regions(user).filter(pk=region.pk).exists()
+# _get_user_assigned_regions and _user_is_responsible_for_marking now live in
+# .permissions (imported above) so serializers.py can reuse them without a
+# circular import back into views.py.
 
 
 class IsResponsibleForRegion(BasePermission):
@@ -340,6 +340,28 @@ class ImageViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         serializer.save(modified_by=self.request.user)
 
+    def perform_destroy(self, instance):
+        # "Default image" is implicit: for a given (subject_type, subject_id),
+        # the main image is whichever row has the lowest (display_order,
+        # image_id) -- see MarkingSerializer.get_main_image. Tracings live in
+        # the same set, they are not a separate subject. After deleting an
+        # image, if no row in that subject still has display_order=0, promote
+        # the next-lowest row so a stable default exists.
+        subject_type = instance.subject_type
+        subject_id = instance.subject_id
+        with transaction.atomic():
+            super().perform_destroy(instance)
+            siblings = Image.objects.filter(
+                subject_type=subject_type,
+                subject_id=subject_id,
+            ).order_by("display_order", "image_id")
+            if not siblings.filter(display_order=0).exists():
+                next_default = siblings.first()
+                if next_default is not None:
+                    next_default.display_order = 0
+                    next_default.modified_by = self.request.user
+                    next_default.save(update_fields=["display_order", "modified_by", "modified_date"])
+
 
 ###################################################################################################
 ## Citation (subject_type COVER | MARKING)
@@ -372,25 +394,319 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
     filterset_fields = ["color", "type", "has_adhesive", "is_institutional"]
     ordering_fields = ["id", "code", "created_date"]
     ordering = ["id"]
+    # No raw DELETE: removing a cover goes through the audited, reversible
+    # POST /covers/<pk>/remove/ (recycle bin) action instead. Custom POST
+    # actions (remove, restore, restore-version) are unaffected by this.
+    http_method_names = ["get", "post", "put", "patch", "head", "options", "trace"]
+
+    def get_object(self):
+        try:
+            return super().get_object()
+        except Http404:
+            # The default manager hides removed covers. Allow ONLY the editor
+            # responsible for this cover (or a superuser) to load a removed
+            # cover on the detail page so they can restore it. Detail (retrieve)
+            # reads only; every other caller keeps getting 404.
+            if self.action != "retrieve":
+                raise
+            cover = (
+                Cover.all_objects
+                .select_related("color")
+                .filter(pk=self.kwargs[self.lookup_field])
+                .first()
+            )
+            if cover and _user_is_responsible_for_cover(self.request.user, cover):
+                self.check_object_permissions(self.request, cover)
+                return cover
+            raise
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        cover = serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        after_snapshot = build_cover_snapshot(cover)
+        txn = log_submission_transaction(
+            action=SubmissionTransaction.ACTION_RECORD_CREATE,
+            actor=self.request.user,
+            cover=cover,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload={},
+            after_payload=after_snapshot,
+        )
+        create_cover_version(cover, txn, self.request.user)
 
     def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
+        before_snapshot = build_cover_snapshot(serializer.instance)
+        cover = serializer.save(modified_by=self.request.user)
+        after_snapshot = build_cover_snapshot(cover)
+        txn = log_submission_transaction(
+            action=SubmissionTransaction.ACTION_RECORD_UPDATE,
+            actor=self.request.user,
+            cover=cover,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload=before_snapshot,
+            after_payload=after_snapshot,
+        )
+        create_cover_version(cover, txn, self.request.user)
 
-    def perform_destroy(self, instance):
-        # DateSeen is polymorphic and has no FK to Cover, so DB cascade does
-        # not apply. Purge any cover-scoped DateSeen rows that reference this
-        # Cover before deleting it, so DELETE /covers/<id>/ stays equivalent
-        # to the old (pre-polymorphic) cascade. Done in the same transaction
-        # as the Cover delete to avoid orphan rows on partial failure.
+    @action(detail=True, methods=["post"], url_path="remove", permission_classes=[IsAuthenticated])
+    def remove(self, request, pk=None):
+        """
+        Soft-REMOVE this cover into the recycle bin. The Cover row is not
+        mutated or deleted; a CoverRecycleBin sidecar row is created, which
+        causes the default manager to hide it. Reversible via restore.
+        Permitted for the editor responsible for the cover (via its linked
+        markings' regions), or a superuser. Optional JSON body: {"reason": "..."}.
+        """
+        cover = Cover.all_objects.filter(pk=pk).select_related("color").first()
+        if not cover:
+            return Response({"detail": "Cover not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not _user_is_responsible_for_cover(request.user, cover):
+            return Response(
+                {"detail": "You are not allowed to remove this cover."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if CoverRecycleBin.objects.filter(cover=cover).exists():
+            return Response(
+                {"detail": "Cover is already in the recycle bin."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        reason = ""
+        if isinstance(request.data, dict):
+            reason = (request.data.get("reason") or "").strip()
         with transaction.atomic():
-            DateSeen.objects.filter(
-                subject_type=DateSeen.SUBJECT_COVER,
-                subject_id=instance.pk,
-            ).delete()
-            instance.delete()
+            log_cover_removed(cover, request.user, reason)
+            CoverRecycleBin.objects.create(
+                cover=cover, removed_by=request.user, reason=reason
+            )
+        return Response(
+            {"detail": "Cover removed.", "coverId": cover.pk},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"], url_path="restore", permission_classes=[IsAuthenticated])
+    def restore(self, request, pk=None):
+        """
+        Restore this cover from the recycle bin by deleting its CoverRecycleBin
+        sidecar row. Permitted for the editor responsible for the cover (via its
+        linked markings' regions), or a superuser.
+        """
+        cover = Cover.all_objects.filter(pk=pk).select_related("color").first()
+        if not cover:
+            return Response({"detail": "Cover not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not _user_is_responsible_for_cover(request.user, cover):
+            return Response(
+                {"detail": "You are not allowed to restore this cover."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        entry = CoverRecycleBin.objects.filter(cover=cover).first()
+        if not entry:
+            return Response(
+                {"detail": "Cover is not in the recycle bin."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        with transaction.atomic():
+            entry.delete()
+            log_cover_restored(cover, request.user)
+        return Response(
+            {"detail": "Cover restored.", "coverId": cover.pk},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=False, methods=["get"], url_path="recycle-bin", permission_classes=[IsAuthenticated])
+    def recycle_bin(self, request):
+        """
+        List covers currently in the recycle bin (removed), scoped to the
+        regions the editor is responsible for (derived from each cover's linked
+        markings); superusers see all. Uses Cover.all_objects since the default
+        manager hides removed rows.
+        """
+        user = request.user
+        if not (user.is_superuser or user.has_perm(REVIEW_CONTRIBUTION_PERM)):
+            return Response(
+                {"detail": "You are not allowed to view the recycle bin."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        qs = (
+            Cover.all_objects.filter(recycle_bin_entry__isnull=False)
+            .select_related("color")
+            .order_by("-recycle_bin_entry__removed_at")
+        )
+        if not user.is_superuser:
+            assigned_regions = _get_user_assigned_regions(user)
+            if assigned_regions.exists():
+                qs = qs.filter(
+                    cover_markings__marking__post_office__post_office_regions__region__in=assigned_regions
+                ).distinct()
+            else:
+                qs = qs.none()
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["get"], url_path="changelog", permission_classes=[IsAuthenticated])
+    def changelog(self, request, pk=None):
+        # Use all_objects so a removed (recycle-binned) cover's history stays
+        # viewable; the default manager would 404 it. Responsibility is checked
+        # explicitly below.
+        cover = Cover.all_objects.filter(pk=pk).first()
+        if not cover:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not _user_is_responsible_for_cover(request.user, cover):
+            return Response(
+                {"detail": "You are not allowed to view changelog for this record."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        def _summary(snap):
+            snap = snap if isinstance(snap, dict) else {}
+            return {
+                "code": snap.get("code") or "",
+                "type": snap.get("type") or "",
+                "has_adhesive": bool(snap.get("has_adhesive")),
+                "is_institutional": snap.get("is_institutional"),
+                "color_id": snap.get("color_id"),
+                "width": snap.get("width"),
+                "height": snap.get("height"),
+            }
+
+        # Covers have no contribution FK link, so filter on the cover FK only.
+        txns = list(
+            SubmissionTransaction.objects.filter(cover=cover)
+            .select_related("actor", "contribution")
+            .order_by("-created_at", "-id")
+            .distinct()
+        )
+        versions = list(
+            CoverVersion.objects.filter(cover=cover)
+            .select_related("created_by", "transaction")
+            .order_by("-version_no")
+        )
+        version_no_by_txn_id = {
+            v.transaction_id: v.version_no for v in versions if v.transaction_id is not None
+        }
+        txn_by_id = {txn.id: txn for txn in txns}
+        action_labels = dict(SubmissionTransaction.ACTION_CHOICES)
+
+        events = []
+        for txn in txns:
+            actor_name = None
+            actor_email = None
+            if txn.actor:
+                actor_email = (getattr(txn.actor, "email", "") or "").strip() or None
+                actor_name = (
+                    txn.actor.get_username()
+                    or actor_email
+                    or str(txn.actor.pk)
+                )
+            events.append(
+                {
+                    "event_id": txn.id,
+                    "transaction_uuid": str(txn.transaction_uuid),
+                    "timestamp": txn.created_at,
+                    "action": txn.action,
+                    "action_label": action_labels.get(txn.action, txn.action.replace("_", " ").title()),
+                    "actor": actor_name,
+                    "actor_email": actor_email,
+                    "source": txn.source,
+                    "contribution_id": txn.contribution_id,
+                    "version_no": version_no_by_txn_id.get(txn.id),
+                    "diff": txn.diff_payload or [],
+                    "summary": f"{action_labels.get(txn.action, txn.action)} by {actor_email or actor_name or 'system'}",
+                }
+            )
+
+        approved_actions = {
+            SubmissionTransaction.ACTION_APPROVE,
+            SubmissionTransaction.ACTION_CATALOG_DIRECT_EDIT,
+            SubmissionTransaction.ACTION_RESTORE_VERSION,
+        }
+        version_rows = []
+        approved_version_rows = []
+        for version in versions:
+            created_by_name = None
+            if version.created_by:
+                created_by_name = (
+                    version.created_by.get_username()
+                    or getattr(version.created_by, "email", "")
+                    or str(version.created_by.pk)
+                )
+            txn = txn_by_id.get(version.transaction_id) if version.transaction_id is not None else None
+            txn_action = txn.action if txn else None
+            row = {
+                "version_no": version.version_no,
+                "created_at": version.created_at,
+                "created_by": created_by_name,
+                "transaction_id": version.transaction_id,
+                "action": txn_action,
+                "action_label": (
+                    action_labels.get(txn_action, str(txn_action).replace("_", " ").title())
+                    if txn_action
+                    else None
+                ),
+                "snapshot": _summary(version.snapshot),
+            }
+            version_rows.append(row)
+            if txn_action in approved_actions:
+                approved_version_rows.append(row)
+
+        return Response(
+            {
+                "cover_id": cover.pk,
+                "events": events,
+                "versions": version_rows,
+                "approved_versions": approved_version_rows,
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="restore-version", permission_classes=[IsAuthenticated])
+    def restore_version(self, request, pk=None):
+        cover = self.get_object()
+        if not _user_is_responsible_for_cover(request.user, cover):
+            return Response(
+                {"detail": "You are not allowed to restore this record."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        raw_version_no = (request.data or {}).get("version_no")
+        try:
+            version_no = int(raw_version_no)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "version_no must be an integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        restore_from = CoverVersion.objects.filter(
+            cover=cover, version_no=version_no
+        ).first()
+        if not restore_from:
+            return Response(
+                {"detail": f"Version {version_no} not found for this record."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        before_snapshot = build_cover_snapshot(cover)
+        with transaction.atomic():
+            restore_cover_from_snapshot(cover, restore_from.snapshot or {}, request.user)
+            cover.refresh_from_db()
+            after_snapshot = build_cover_snapshot(cover)
+            txn = log_submission_transaction(
+                action=SubmissionTransaction.ACTION_RESTORE_VERSION,
+                actor=request.user,
+                cover=cover,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload=before_snapshot,
+                after_payload=after_snapshot,
+                extra_payload={"restored_from_version_no": restore_from.version_no},
+            )
+            new_version = create_cover_version(cover, txn, request.user)
+        return Response(
+            {
+                "detail": f"Record restored from version {restore_from.version_no}.",
+                "restored_from_version_no": restore_from.version_no,
+                "new_version_no": new_version.version_no,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class DateSeenViewSet(viewsets.ModelViewSet):
@@ -420,6 +736,10 @@ class CoverValuationViewSet(viewsets.ModelViewSet):
     filterset_fields = ["cover"]
     ordering_fields = ["appraisal_date", "amt"]
     ordering = ["-appraisal_date"]
+    # DELETE is intentionally not exposed; closing the unaudited hard-delete
+    # path. No sanctioned valuation-removal flow is in scope; valuations are
+    # edited rather than deleted.
+    http_method_names = ["get", "post", "put", "patch", "head", "options", "trace"]
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, modified_by=self.request.user)
@@ -441,9 +761,12 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
     serializer_class = CoverMarkingSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ["cover", "marking", "is_backstamp", "placement", "review_status"]
+    filterset_class = CoverMarkingFilter
     ordering_fields = ["id", "created_date", "reviewed_at"]
     ordering = ["id"]
+    # DELETE is intentionally not exposed. Unlinking a cover from a marking has
+    # no sanctioned flow yet; deferred to the same later PR as cover deletion.
+    http_method_names = ["get", "post", "put", "patch", "head", "options", "trace"]
 
     def get_queryset(self):
         qs = (
@@ -451,6 +774,16 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
             .select_related("cover", "cover__color", "marking", "reviewer")
             .prefetch_related("marking__post_office__post_office_regions__region")
         )
+        # Hide links whose cover is in the recycle bin. select_related("cover")
+        # joins the Cover table directly, bypassing Cover's default manager (which
+        # hides removed rows), so a soft-removed cover would otherwise still show
+        # as associated on the marking detail / contribution review pages.
+        # EXCEPTION: when the caller asks for one specific cover's links
+        # (?cover=...), do not apply this filter -- the cover detail page must
+        # still show what a removed cover was associated with so an editor can
+        # restore it in context.
+        if not self.request.query_params.get("cover"):
+            qs = qs.filter(cover__recycle_bin_entry__isnull=True)
         user = self.request.user
         marking_param = self.request.query_params.get("marking")
 
@@ -518,6 +851,50 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         serializer.save(modified_by=self.request.user)
+
+    @action(detail=True, methods=["post"], url_path="remove", permission_classes=[IsAuthenticated])
+    def remove(self, request, pk=None):
+        """
+        Sanctioned unlink of a cover-marking association. A CoverMarking is a
+        pure junction with no standalone history table, so unlink is an audited
+        hard delete with a tombstone SubmissionTransaction (same shape as draft
+        deletion), not a soft sidecar. Permitted for the editor responsible for
+        the junction's marking region, or a superuser.
+        """
+        cm = (
+            CoverMarking.objects.filter(pk=pk)
+            .select_related("cover", "marking__post_office")
+            .first()
+        )
+        if not cm:
+            return Response({"detail": "Cover-marking not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not _user_is_responsible_for_marking(request.user, cm.marking):
+            return Response(
+                {"detail": "You are not allowed to unlink this cover-marking."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        with transaction.atomic():
+            log_submission_transaction(
+                action=SubmissionTransaction.ACTION_RECORD_DELETE,
+                actor=request.user,
+                cover=cm.cover,
+                marking=cm.marking,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload={
+                    "cover_id": cm.cover_id,
+                    "marking_id": cm.marking_id,
+                    "is_backstamp": cm.is_backstamp,
+                    "placement": cm.placement,
+                    "review_status": cm.review_status,
+                },
+                after_payload={},
+                extra_payload={"deleted_cover_marking_id": cm.pk},
+            )
+            cm.delete()
+        return Response(
+            {"detail": "Cover-marking unlinked.", "coverMarkingId": int(pk)},
+            status=status.HTTP_200_OK,
+        )
 
     def _editor_may_review(self, user, cover_marking):
         if not user or not user.is_authenticated:
@@ -704,6 +1081,10 @@ class MarkingViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly, IsResponsibleForRegion]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = MarkingListFilter
+    # No raw DELETE: removing a marking goes through the audited, reversible
+    # POST /markings/<pk>/remove/ (recycle bin) action instead. Custom POST
+    # actions (remove, restore) are unaffected by this restriction.
+    http_method_names = ["get", "post", "put", "patch", "head", "options", "trace"]
     search_fields = [
         "code",
         "catalog_txt",
@@ -743,6 +1124,29 @@ class MarkingViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return _marking_list_queryset()
 
+    def get_object(self):
+        try:
+            return super().get_object()
+        except Http404:
+            # The default manager hides removed markings. Allow ONLY the editor
+            # responsible for this marking's region (or a superuser) to load a
+            # removed marking on the detail page so they can restore it. Detail
+            # (retrieve) reads only; every other caller keeps getting 404.
+            if self.action != "retrieve":
+                raise
+            marking = (
+                Marking.all_objects
+                .select_related("post_office", "shape", "lettering", "color")
+                .prefetch_related("post_office__post_office_regions__region")
+                .with_date_range()
+                .filter(pk=self.kwargs[self.lookup_field])
+                .first()
+            )
+            if marking and _user_is_responsible_for_marking(self.request.user, marking):
+                self.check_object_permissions(self.request, marking)
+                return marking
+            raise
+
     def get_serializer_class(self):
         if self.action == "list":
             return MarkingListSerializer
@@ -777,26 +1181,111 @@ class MarkingViewSet(viewsets.ModelViewSet):
         )
         create_marking_version(marking, txn, self.request.user)
 
-    def perform_destroy(self, instance):
-        before_snapshot = build_marking_snapshot(instance)
-        log_submission_transaction(
-            action=SubmissionTransaction.ACTION_RECORD_DELETE,
-            actor=self.request.user,
-            contribution=getattr(instance, "contribution", None),
-            marking=instance,
-            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-            before_payload=before_snapshot,
-            after_payload={},
-            extra_payload={"deleted_marking_id": instance.pk},
+    @action(detail=True, methods=["post"], url_path="remove", permission_classes=[IsAuthenticated])
+    def remove(self, request, pk=None):
+        """
+        Soft-REMOVE this marking into the recycle bin. The Marking row is not
+        mutated or deleted; a MarkingRecycleBin sidecar row is created, which
+        causes the default manager to hide it. Reversible via restore.
+        Permitted for the editor responsible for the marking's region, or a
+        superuser. Optional JSON body: {"reason": "..."}.
+        """
+        marking = (
+            Marking.all_objects.filter(pk=pk).select_related("post_office").first()
         )
-        # DateSeen is polymorphic; marking-scoped rows have no FK and must be
-        # purged explicitly so a marking delete does not leave orphan dates.
+        if not marking:
+            return Response({"detail": "Marking not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not _user_is_responsible_for_marking(request.user, marking):
+            return Response(
+                {"detail": "You are not allowed to remove this marking."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if MarkingRecycleBin.objects.filter(marking=marking).exists():
+            return Response(
+                {"detail": "Marking is already in the recycle bin."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        reason = ""
+        if isinstance(request.data, dict):
+            reason = (request.data.get("reason") or "").strip()
         with transaction.atomic():
-            DateSeen.objects.filter(
-                subject_type=DateSeen.SUBJECT_MARKING,
-                subject_id=instance.pk,
-            ).delete()
-            super().perform_destroy(instance)
+            log_marking_removed(marking, request.user, reason)
+            MarkingRecycleBin.objects.create(
+                marking=marking, removed_by=request.user, reason=reason
+            )
+        return Response(
+            {"detail": "Marking removed.", "markingId": marking.pk},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"], url_path="restore", permission_classes=[IsAuthenticated])
+    def restore(self, request, pk=None):
+        """
+        Restore this marking from the recycle bin by deleting its
+        MarkingRecycleBin sidecar row. Permitted for the editor responsible for
+        the marking's region, or a superuser.
+        """
+        marking = (
+            Marking.all_objects.filter(pk=pk).select_related("post_office").first()
+        )
+        if not marking:
+            return Response({"detail": "Marking not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not _user_is_responsible_for_marking(request.user, marking):
+            return Response(
+                {"detail": "You are not allowed to restore this marking."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        entry = MarkingRecycleBin.objects.filter(marking=marking).first()
+        if not entry:
+            return Response(
+                {"detail": "Marking is not in the recycle bin."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        with transaction.atomic():
+            entry.delete()
+            log_marking_restored(marking, request.user)
+        return Response(
+            {"detail": "Marking restored.", "markingId": marking.pk},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=False, methods=["get"], url_path="recycle-bin", permission_classes=[IsAuthenticated])
+    def recycle_bin(self, request):
+        """
+        List markings currently in the recycle bin (removed), scoped to the
+        regions the editor is responsible for; superusers see all. Uses
+        Marking.all_objects since the default manager hides removed rows.
+        Returns the same list shape as the main marking list so the dashboard
+        can render the rows with its existing card. Per-row removal metadata
+        (who/when/why) lives in the marking changelog.
+        """
+        user = request.user
+        if not (user.is_superuser or user.has_perm(REVIEW_CONTRIBUTION_PERM)):
+            return Response(
+                {"detail": "You are not allowed to view the recycle bin."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        qs = (
+            Marking.all_objects.filter(recycle_bin_entry__isnull=False)
+            .select_related("post_office", "shape", "lettering", "color")
+            .prefetch_related("post_office__post_office_regions__region")
+            .with_date_range()
+            .order_by("-recycle_bin_entry__removed_at")
+        )
+        if not user.is_superuser:
+            assigned_regions = _get_user_assigned_regions(user)
+            if assigned_regions.exists():
+                qs = qs.filter(
+                    post_office__post_office_regions__region__in=assigned_regions
+                ).distinct()
+            else:
+                qs = qs.none()
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = MarkingListSerializer(page, many=True, context=self.get_serializer_context())
+            return self.get_paginated_response(serializer.data)
+        serializer = MarkingListSerializer(qs, many=True, context=self.get_serializer_context())
+        return Response(serializer.data)
 
     @action(detail=False, methods=["get"], url_path="my-assigned", permission_classes=[IsAuthenticated])
     def my_assigned(self, request):
@@ -838,7 +1327,12 @@ class MarkingViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"], url_path="changelog", permission_classes=[IsAuthenticated])
     def changelog(self, request, pk=None):
-        marking = self.get_object()
+        # Use all_objects so a removed (recycle-binned) marking's history stays
+        # viewable; the default manager would 404 it. Responsibility is checked
+        # explicitly below.
+        marking = Marking.all_objects.filter(pk=pk).first()
+        if not marking:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         if not _user_is_responsible_for_marking(request.user, marking):
             return Response(
                 {"detail": "You are not allowed to view changelog for this record."},
@@ -1057,85 +1551,6 @@ class MarkingDateRangeView(APIView):
         return Response({"earliest_year": earliest, "latest_year": latest})
 
 
-@extend_schema(
-    responses={
-        204: OpenApiResponse(description="Marking deleted"),
-        400: OpenApiResponse(description="Invalid marking ID"),
-        403: OpenApiResponse(description="Not permitted to delete this marking"),
-        404: OpenApiResponse(description="Marking not found"),
-    }
-)
-@method_decorator(csrf_exempt, name="dispatch")
-class DeleteMyMarkingView(APIView):
-    """
-    Delete one of your own user-contributed catalog markings, OR delete any marking
-    in a region you are an editor for.
-    """
-    permission_classes = [IsAuthenticated]
-
-    def delete(self, request, pk):
-        try:
-            marking_id = int(pk)
-        except (TypeError, ValueError):
-            return Response({"detail": "Invalid marking ID."}, status=status.HTTP_400_BAD_REQUEST)
-        marking = Marking.objects.filter(pk=marking_id).first()
-        if not marking:
-            return Response({"detail": "Marking not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        user = request.user
-        before_snapshot = build_marking_snapshot(marking)
-
-        def _log_delete():
-            log_submission_transaction(
-                action=SubmissionTransaction.ACTION_RECORD_DELETE,
-                actor=user,
-                contribution=getattr(marking, "contribution", None),
-                marking=marking,
-                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-                before_payload=before_snapshot,
-                after_payload={},
-                extra_payload={"deleted_marking_id": marking_id},
-            )
-
-        def _purge_and_delete():
-            # DateSeen rows attached directly to this marking are not cascaded
-            # by the DB (polymorphic, no FK), so purge them in the same
-            # transaction as the marking delete.
-            with transaction.atomic():
-                DateSeen.objects.filter(
-                    subject_type=DateSeen.SUBJECT_MARKING,
-                    subject_id=marking_id,
-                ).delete()
-                marking.delete()
-
-        if user.is_superuser:
-            _log_delete()
-            _purge_and_delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-
-        # PostOffice.region resolves the current Region via post_office_regions
-        # (most-recent active link); None when the PO has no junction rows.
-        marking_region = marking.post_office.region if marking.post_office_id else None
-        region_id = marking_region.pk if marking_region else None
-        if region_id and _get_user_assigned_regions(user).filter(pk=region_id).exists():
-            _log_delete()
-            _purge_and_delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-
-        try:
-            is_own_contribution = marking.contribution.contributor_id == user.id
-        except Exception:
-            is_own_contribution = False
-        if not is_own_contribution:
-            return Response(
-                {"detail": "You can only delete catalog entries that you originally submitted."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        _log_delete()
-        _purge_and_delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
 ###################################################################################################
 ## Contribution viewset
 ###################################################################################################
@@ -1151,12 +1566,19 @@ def _get_editor_contribution_queryset(user):
 
 
 @method_decorator(csrf_exempt, name="dispatch")
-class ContributionViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet):
+class ContributionViewSet(
+    mixins.CreateModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.ReadOnlyModelViewSet,
+):
     """
     GET list / detail at /contributions/ and /contributions/<pk>/.
     POST /contributions/ delegates to ContributionSubmitView so authenticated
     contributors can submit new entries here. Approve / reject actions live on
     detail routes.
+    DELETE /contributions/<pk>/ hard-deletes a DRAFT owned by the requester
+    (true DELETE); see IsDraftOwner. Non-draft contributions cannot be
+    hard-deleted -- removing a promoted marking goes through the recycle bin.
     """
     permission_classes = [IsAuthenticated, CanReviewContribution]
     serializer_class = ContributionDetailSerializer
@@ -1171,7 +1593,34 @@ class ContributionViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet
         # GET (list/detail) and on the approve/reject detail actions.
         if self.action == "create":
             return [IsAuthenticated()]
+        # DELETE is the true-delete-for-drafts path: gated by IsDraftOwner,
+        # not the editor-review permission.
+        if self.action == "destroy":
+            return [IsAuthenticated(), IsDraftOwner()]
         return super().get_permissions()
+
+    def perform_destroy(self, instance):
+        # Reachable only for a draft owned by the requester (IsDraftOwner).
+        # A draft has no Marking yet, so this hard-delete has no downstream
+        # catalog impact. Record a tombstone transaction before deleting; the
+        # contribution FK is left null because the row is about to vanish
+        # (SubmissionTransaction.contribution is SET_NULL anyway).
+        log_submission_transaction(
+            action=SubmissionTransaction.ACTION_DRAFT_DELETED,
+            actor=self.request.user,
+            contribution=None,
+            marking=None,
+            source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
+            before_payload={
+                "contribution_id": instance.pk,
+                "status": instance.status,
+                "collection_id": instance.collection_id,
+                "submitted_data": instance.submitted_data,
+            },
+            after_payload={},
+            extra_payload={"deleted_contribution_id": instance.pk},
+        )
+        instance.delete()
 
     def create(self, request, *args, **kwargs):
         # Delegate to ContributionSubmitView.post so the submission logic stays
@@ -1184,67 +1633,52 @@ class ContributionViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet
         return submit_view.post(request)
 
     def get_queryset(self):
+        # Visibility rules:
+        #   list (default)          -> "My Contributions": only rows where the
+        #                              logged-in user is the contributor. This
+        #                              applies to everyone including editors
+        #                              and superusers, so the dashboard's
+        #                              My Contributions tab never leaks other
+        #                              users' work.
+        #   list ?mode=editor       -> editor review queue: contributions on
+        #                              collections the user is assigned to.
+        #                              Requires the review permission;
+        #                              superusers see everything.
+        #   retrieve (detail) and
+        #   action endpoints        -> union of "mine" and "editor view" so
+        #                              opening a single contribution from
+        #                              either tab works without the caller
+        #                              having to know which lens it came
+        #                              from. Approve/reject/request-revision
+        #                              additionally enforce the review
+        #                              permission via the decorator on each
+        #                              action.
         user = self.request.user
         base_qs = Contribution.objects.select_related(
             "contributor", "reviewer", "marking", "collection", "collection__region"
         )
-        if user.is_superuser:
-            return base_qs
-        if user.has_perm(REVIEW_CONTRIBUTION_PERM):
-            return _get_editor_contribution_queryset(user)
+        if self.action != "list":
+            if user.is_superuser:
+                return base_qs
+            mine = Q(contributor=user)
+            if user.has_perm(REVIEW_CONTRIBUTION_PERM):
+                assigned_ids = user_assigned_collection_ids(user)
+                if assigned_ids:
+                    return base_qs.filter(mine | Q(collection_id__in=assigned_ids)).distinct()
+            return base_qs.filter(mine).distinct()
+        mode = (self.request.query_params.get("mode") or "").strip().lower()
+        if mode == "editor":
+            if user.is_superuser:
+                return base_qs
+            if user.has_perm(REVIEW_CONTRIBUTION_PERM):
+                return _get_editor_contribution_queryset(user)
+            return base_qs.none()
         return base_qs.filter(contributor=user).distinct()
 
     def get_serializer_class(self):
         if self.action == "list":
             return ContributionListSerializer
         return ContributionDetailSerializer
-
-    @action(detail=True, methods=["patch"], url_path="editor-edit")
-    def editor_edit(self, request, pk=None):
-        """
-        Editor-side merge of submitted_data prior to approve.
-
-        Frontend (ContributionDetail.tsx -> persistEditorEdits) PATCHes a JSON
-        object whose keys mirror the contribute payload (state, town, type,
-        width_mm, height_mm, lettering_style_id, ...). The values are merged
-        into `Contribution.submitted_data`; explicit `null` clears a field,
-        omitted keys leave existing values untouched. Approve later reads from
-        the merged submitted_data when applying to the catalog.
-        """
-        contrib = self.get_object()
-        if contrib.status != Contribution.STATUS_PENDING:
-            return Response(
-                {"detail": f"Contribution is not pending (status: {contrib.status})."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        payload = request.data
-        if not isinstance(payload, dict):
-            return Response(
-                {"detail": "Request body must be a JSON object of submission fields."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        before_submission = dict(contrib.submitted_data or {})
-        merged = dict(before_submission)
-        for key, value in payload.items():
-            merged[key] = value
-
-        with transaction.atomic():
-            contrib.submitted_data = merged
-            contrib.save(update_fields=["submitted_data", "updated_at"])
-            log_submission_transaction(
-                action=SubmissionTransaction.ACTION_EDITOR_EDIT,
-                actor=request.user,
-                contribution=contrib,
-                marking=contrib.marking,
-                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-                before_payload=before_submission,
-                after_payload=merged,
-                extra_payload={"changed_keys": sorted(payload.keys())},
-            )
-
-        serializer = ContributionDetailSerializer(contrib, context={"request": request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="approve")
     def approve(self, request, pk=None):
@@ -1259,37 +1693,104 @@ class ContributionViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet
         review_notes = serializer.validated_data.get("review_notes", "")
         try:
             with transaction.atomic():
-                marking = contrib.apply_to_catalog()
-                if not marking:
-                    return Response(
-                        {"detail": "Could not apply contribution. Check submitted_data."},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                result = contrib.apply_to_catalog()
+
+                # apply_to_catalog returns a Marking for marking submissions and
+                # a dict {"kind": "cover", ...} for cover submissions. Branch on
+                # the return type so each path does its own post-processing.
+                if isinstance(result, dict) and result.get("kind") == "cover":
+                    cover = result["cover"]
+                    cover_marking = result["cover_marking"]
+                    parent_marking = result["parent_marking"]
+
+                    # apply set review_status=APPROVED and reviewed_at; backfill
+                    # the approving editor's identity and notes on the link here
+                    # (apply has no access to request.user).
+                    cover_marking.reviewer = request.user
+                    cover_marking.review_notes = review_notes
+                    cover_marking.modified_by = request.user
+                    cover_marking.save(
+                        update_fields=["reviewer", "review_notes", "modified_by", "reviewed_at"]
                     )
-                contrib.status = Contribution.STATUS_APPROVED
-                contrib.reviewer = request.user
-                contrib.review_notes = review_notes
-                contrib.save(update_fields=["status", "reviewer", "review_notes", "marking", "updated_at"])
-                after_snapshot = build_marking_snapshot(marking)
-                txn = log_submission_transaction(
-                    action=SubmissionTransaction.ACTION_APPROVE,
-                    actor=request.user,
-                    contribution=contrib,
-                    marking=marking,
-                    source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-                    before_payload={},
-                    after_payload=after_snapshot,
-                    extra_payload={"review_notes": review_notes},
-                )
-                create_marking_version(marking, txn, request.user)
+
+                    contrib.status = Contribution.STATUS_APPROVED
+                    contrib.reviewer = request.user
+                    contrib.review_notes = review_notes
+                    # Link the contribution to the marking it enriches so the
+                    # entry detail page can surface its feedback/comment. Cover
+                    # detection in the serializers is submitted_data-driven, not
+                    # FK-driven, so the cover label still renders correctly.
+                    contrib.marking = parent_marking
+                    # Stamp traceability so the frontend mapper treats this
+                    # contribution as materialized (no longer a pending draft).
+                    sd = dict(contrib.submitted_data or {})
+                    sd["cover_id"] = cover.pk
+                    sd["cover_marking_id"] = cover_marking.pk
+                    sd["materialized_cover_marking_id"] = cover_marking.pk
+                    contrib.submitted_data = sd
+                    contrib.save(
+                        update_fields=[
+                            "status",
+                            "reviewer",
+                            "review_notes",
+                            "marking",
+                            "submitted_data",
+                            "updated_at",
+                        ]
+                    )
+                    after_snapshot = build_cover_snapshot(cover)
+                    txn = log_submission_transaction(
+                        action=SubmissionTransaction.ACTION_APPROVE,
+                        actor=request.user,
+                        contribution=contrib,
+                        marking=parent_marking,
+                        cover=cover,
+                        source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                        before_payload={},
+                        after_payload=after_snapshot,
+                        extra_payload={
+                            "review_notes": review_notes,
+                            "cover_marking_id": cover_marking.pk,
+                        },
+                    )
+                    create_cover_version(cover, txn, request.user)
+                    approved_response = {"detail": "Contribution approved.", "coverId": cover.pk}
+                else:
+                    marking = result
+                    if not marking:
+                        return Response(
+                            {"detail": "Could not apply contribution. Check submitted_data."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        )
+                    contrib.status = Contribution.STATUS_APPROVED
+                    contrib.reviewer = request.user
+                    contrib.review_notes = review_notes
+                    # Link the approved contribution to the marking it produced.
+                    # apply_to_catalog() creates and returns the Marking but does
+                    # not set this FK; without it marking_id stays NULL and the
+                    # entry detail page can never find the contribution's
+                    # feedback/comment.
+                    contrib.marking = marking
+                    contrib.save(update_fields=["status", "reviewer", "review_notes", "marking", "updated_at"])
+                    after_snapshot = build_marking_snapshot(marking)
+                    txn = log_submission_transaction(
+                        action=SubmissionTransaction.ACTION_APPROVE,
+                        actor=request.user,
+                        contribution=contrib,
+                        marking=marking,
+                        source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                        before_payload={},
+                        after_payload=after_snapshot,
+                        extra_payload={"review_notes": review_notes},
+                    )
+                    create_marking_version(marking, txn, request.user)
+                    approved_response = {"detail": "Contribution approved.", "markingId": marking.pk}
         except NotImplementedError as exc:
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_501_NOT_IMPLEMENTED,
             )
-        return Response(
-            {"detail": "Contribution approved.", "markingId": marking.pk},
-            status=status.HTTP_200_OK,
-        )
+        return Response(approved_response, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="reject")
     def reject(self, request, pk=None):
@@ -1318,6 +1819,42 @@ class ContributionViewSet(mixins.CreateModelMixin, viewsets.ReadOnlyModelViewSet
             extra_payload={"review_notes": review_notes},
         )
         return Response({"detail": "Contribution rejected."}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="request-revision")
+    def request_revision(self, request, pk=None):
+        contrib = self.get_object()
+        if contrib.status != Contribution.STATUS_PENDING:
+            return Response(
+                {"detail": f"Contribution is not pending (status: {contrib.status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        review_notes = (serializer.validated_data.get("review_notes") or "").strip()
+        if not review_notes:
+            return Response(
+                {"detail": "review_notes is required when requesting revision."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        before_submission = dict(contrib.submitted_data or {})
+        contrib.status = Contribution.STATUS_NEEDS_REVISION
+        contrib.reviewer = request.user
+        contrib.review_notes = review_notes
+        contrib.save(update_fields=["status", "reviewer", "review_notes", "updated_at"])
+        log_submission_transaction(
+            action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
+            actor=request.user,
+            contribution=contrib,
+            marking=contrib.marking,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload=before_submission,
+            after_payload=before_submission,
+            extra_payload={"review_notes": review_notes},
+        )
+        return Response(
+            {"detail": "Contribution returned for revision.", "status": contrib.status},
+            status=status.HTTP_200_OK,
+        )
 
 
 @extend_schema(
@@ -1374,7 +1911,7 @@ def _resolve_contribution_state_value(data) -> str:
         except (TypeError, ValueError):
             continue
         marking = (
-            Marking.objects.filter(pk=marking_id)
+            Marking.all_objects.filter(pk=marking_id)
             .select_related("post_office")
             .prefetch_related("post_office__post_office_regions__region")
             .first()
@@ -1510,9 +2047,12 @@ class ContributionSubmitView(APIView):
                     {"detail": "Draft not found or not editable."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
-            if not _submitted_data_is_cover(contrib.submitted_data or {}):
+            sd = contrib.submitted_data or {}
+            is_cover_draft = _submitted_data_is_cover(sd)
+            is_marking_edit_draft = bool(sd.get("edit_postmark_id"))
+            if not (is_cover_draft or is_marking_edit_draft):
                 return Response(
-                    {"detail": "Not a cover draft."},
+                    {"detail": "This draft type cannot be abandoned via this endpoint."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             contrib.delete()
@@ -1590,6 +2130,13 @@ class ContributionSubmitView(APIView):
             "cover_image",
             "edit_contribution_id",
             "editContributionId",
+            "removed_existing_image_keys",
+            # Submit-mode controls -- consumed by _is_save_as_draft_submission
+            # above; should not be persisted into the JSON submitted_data
+            # payload that the review UI renders as field rows.
+            "save_as_draft",
+            "saveAsDraft",
+            "status",
         }
         for key in data:
             if key in skip_keys:
@@ -1613,26 +2160,133 @@ class ContributionSubmitView(APIView):
         if routing_deferred:
             submitted_data["routing_deferred"] = True
 
-        if edit_pk is not None:
-            if not is_draft:
-                return Response(
-                    {
-                        "detail": "Use save_as_draft to update a draft, or abandon_draft to discard it after catalog submit."
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
+        # Collapse duplicate marking-edit drafts. When a contributor saves a
+        # draft against an existing marking (edit_postmark_id) without already
+        # targeting a specific draft (no edit_contribution_id), look for an
+        # open draft of theirs against the same marking and route the save
+        # through the update branch below. Closes the race where two tabs (or
+        # a fast click before the frontend dedupe GET resolves) would each
+        # create a parallel draft row. Form-posted values arrive as strings;
+        # the JSON branch posts ints. Query both to cover legacy rows.
+        if edit_pk is None and is_draft:
+            edit_postmark_id_raw = submitted_data.get("edit_postmark_id")
+            if edit_postmark_id_raw not in (None, ""):
+                try:
+                    epi_int = int(edit_postmark_id_raw)
+                except (TypeError, ValueError):
+                    epi_int = None
+                epi_str = str(edit_postmark_id_raw)
+                value_filter = Q(submitted_data__edit_postmark_id=epi_str)
+                if epi_int is not None:
+                    value_filter |= Q(submitted_data__edit_postmark_id=epi_int)
+                existing_draft = (
+                    Contribution.objects.filter(
+                        contributor=request.user,
+                        status=Contribution.STATUS_DRAFT,
+                    )
+                    .filter(value_filter)
+                    .order_by("-updated_at")
+                    .first()
                 )
+                if existing_draft is not None:
+                    edit_pk = existing_draft.pk
+
+        if edit_pk is not None:
+            if is_draft:
+                # Allow save-as-draft against either an actual draft or a
+                # needs_revision row (contributor saving partial edits before
+                # they are ready to resubmit). The needs_revision row keeps
+                # its status so it stays in the editor's history and the
+                # original review_notes remain visible.
+                target_statuses = [
+                    Contribution.STATUS_DRAFT,
+                    Contribution.STATUS_NEEDS_REVISION,
+                ]
+                transition_to_pending = False
+            else:
+                # Non-draft submit with edit_pk: contributor either resubmitting
+                # after the editor returned the contribution for revision OR
+                # promoting one of their own drafts to pending review for the
+                # first time. Both transition the row to pending.
+                target_statuses = [
+                    Contribution.STATUS_DRAFT,
+                    Contribution.STATUS_NEEDS_REVISION,
+                ]
+                transition_to_pending = True
 
             contrib = Contribution.objects.filter(
                 pk=edit_pk,
                 contributor=request.user,
-                status=Contribution.STATUS_DRAFT,
+                status__in=target_statuses,
             ).first()
             if not contrib:
-                return Response(
-                    {"detail": "Draft not found or not editable."},
-                    status=status.HTTP_404_NOT_FOUND,
+                detail = (
+                    "Contribution not found, not owned by you, or not in a submittable status (draft / needs_revision)."
+                    if transition_to_pending
+                    else "Draft or returned contribution not found or not editable."
                 )
+                return Response({"detail": detail}, status=status.HTTP_404_NOT_FOUND)
             existing_sd = dict(contrib.submitted_data or {})
+
+            # Honor contributor-side image removals. Frontend
+            # (Contribute.tsx -> removeExistingImageAt) sends a JSON list of
+            # the displayed URLs that the user removed from the edit form.
+            # We drop matching entries from marking_images (URL strings) and
+            # from any *_metas lists (matching by storage_filename tail) so
+            # the resubmission reflects what the contributor actually wants.
+            removed_keys_raw = data.get("removed_existing_image_keys")
+            removed_keys = []
+            if isinstance(removed_keys_raw, str):
+                try:
+                    parsed = json.loads(removed_keys_raw)
+                    if isinstance(parsed, list):
+                        removed_keys = [str(k) for k in parsed if k]
+                except (ValueError, TypeError):
+                    removed_keys = []
+            elif isinstance(removed_keys_raw, list):
+                removed_keys = [str(k) for k in removed_keys_raw if k]
+
+            if removed_keys:
+                removed_set = set(removed_keys)
+                # marking_images is a list of URL strings; drop direct hits.
+                existing_marking_images = existing_sd.get("marking_images")
+                if isinstance(existing_marking_images, list):
+                    existing_sd["marking_images"] = [
+                        u for u in existing_marking_images if u not in removed_set
+                    ]
+
+                def _meta_was_removed(meta):
+                    if not isinstance(meta, dict):
+                        return False
+                    sf = str(meta.get("storage_filename") or "").lstrip("/")
+                    if not sf:
+                        return False
+                    for k in removed_set:
+                        kn = str(k).lstrip("/")
+                        if kn == sf or kn.endswith(sf):
+                            return True
+                    return False
+
+                for meta_key in ("marking_image_metas", "cover_image_metas", "image_metas"):
+                    metas_list = existing_sd.get(meta_key)
+                    if isinstance(metas_list, list):
+                        existing_sd[meta_key] = [
+                            m for m in metas_list if not _meta_was_removed(m)
+                        ]
+
+                # image_meta is the catalog-default thumbnail pointer; if it
+                # was just removed, replace it with the next surviving meta
+                # (or None if none remain).
+                primary = existing_sd.get("image_meta")
+                if isinstance(primary, dict) and _meta_was_removed(primary):
+                    replacement = None
+                    for fallback_key in ("marking_image_metas", "image_metas", "cover_image_metas"):
+                        fallback_list = existing_sd.get(fallback_key)
+                        if isinstance(fallback_list, list) and fallback_list:
+                            replacement = fallback_list[0]
+                            break
+                    existing_sd["image_meta"] = replacement
+
             if image_metas:
                 meta_key = "cover_image_metas" if is_cover_submission else "marking_image_metas"
                 prior = existing_sd.get(meta_key) or existing_sd.get("image_metas") or []
@@ -1645,7 +2299,13 @@ class ContributionSubmitView(APIView):
             existing_sd.update(submitted_data)
             contrib.submitted_data = existing_sd
             contrib.collection = collection
-            contrib.save(update_fields=["submitted_data", "collection", "updated_at"])
+            update_fields = ["submitted_data", "collection", "updated_at"]
+            if transition_to_pending:
+                contrib.status = Contribution.STATUS_PENDING
+                contrib.reviewer = None
+                contrib.review_notes = ""
+                update_fields += ["status", "reviewer", "review_notes"]
+            contrib.save(update_fields=update_fields)
             log_submission_transaction(
                 action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
                 actor=request.user,
@@ -1654,6 +2314,7 @@ class ContributionSubmitView(APIView):
                 source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
                 before_payload={},
                 after_payload=existing_sd,
+                extra_payload={"resubmitted": transition_to_pending},
             )
             return Response(
                 ContributionDetailSerializer(contrib, context={"request": request}).data,

@@ -60,7 +60,7 @@ woco collectstatic --noinput
 
 ### 6. Start the dev server
 
-For day-to-day development with frontend hot-reload, use `./run.sh` from the repo root (see [the launcher section](#launcher) below). To run just Django manually:
+For day-to-day development with frontend hot-reload, use `woco dev` from the repo root (see [the launcher section](#launcher) below). To run just Django manually:
 
 ```sh
 woco runserver
@@ -70,7 +70,7 @@ The built SPA is served at `/`. The API lives under `/api/` and the admin at `/a
 
 ### Launcher
 
-`./run.sh` is the one-command dev launcher. It reads Django's `DEBUG` setting and picks the right mode:
+`woco dev` is the one-command dev launcher. It reads Django's `DEBUG` setting and picks the right mode:
 
 - `DEBUG=True` (default): starts the Vite dev server on :8080 (with HMR) and Django on :8000 in the same terminal. Open `http://localhost:8080` -- API/admin/static requests are proxied to Django. Edit any frontend or backend file and the change shows up immediately. Ctrl+C kills both processes.
 - `DEBUG=False`: runs `npm run build` then `woco runserver`. Open `http://127.0.0.1:8000`. Use this to sanity-check the production bundle before pushing.

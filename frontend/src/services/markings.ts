@@ -1,4 +1,5 @@
 import apiClient, { ensureCsrfToken } from "@/lib/api";
+import { listContributions } from "@/services/contributions";
 import {
   coverContributionDisplayName,
   isCoverContributionData,
@@ -20,7 +21,9 @@ import {
  *   GET    /markings/{id}/                  detail
  *   GET    /markings/{id}/changelog/        version history
  *   POST   /markings/{id}/restore-version/  restore prior version
- *   DELETE /markings/{id}/delete-mine/      contributor self-delete
+ *   POST   /markings/{id}/remove/           soft-remove into recycle bin
+ *   POST   /markings/{id}/restore/          restore from recycle bin
+ *   GET    /markings/recycle-bin/           removed markings (editor-scoped)
  *   GET    /markings/my-assigned/           editor's assigned-region rows
  *   GET    /markings-range/                 catalog earliest/latest year
  *   GET    /images/?subject_type=MARKING&subject_id=<id>  marking images
@@ -276,6 +279,13 @@ export interface MarkingRecord {
   secondImage: MarkingImage | null;
   images: MarkingImage[];
   citations: MarkingCitation[];
+  isRemoved: boolean;
+  canRemove: boolean;
+  // Contributor's "comment for editor" and the editor's review feedback, sourced
+  // from the marking's approved Contribution. The backend returns "" to anyone
+  // who is not that contributor or an editor, so a non-empty value is safe to show.
+  commentForEditor: string;
+  editorFeedback: string;
 }
 
 export interface MarkingChangelogEvent {
@@ -507,6 +517,10 @@ export function mapApiMarkingToRecord(raw: unknown): MarkingRecord {
     secondImage,
     images,
     citations: mapCitationList(o.citations),
+    isRemoved: Boolean((raw as { is_removed?: boolean }).is_removed),
+    canRemove: Boolean((raw as { can_remove?: boolean }).can_remove),
+    commentForEditor: toStr(o.comment_for_editor),
+    editorFeedback: toStr(o.editor_feedback),
   };
 }
 
@@ -1089,8 +1103,9 @@ function mapCoverContributionToAssociatedCover(
     sd.coverMarkingId;
   if (sdMaterialized != null && String(sdMaterialized).trim() !== "") return null;
 
-  const reviewStatus: CoverMarkingReviewStatus =
-    status === "needs_revision" ? "needs_revision" : "pending";
+  // Only "draft" rows reach this point (guarded above), so a draft cover is
+  // always surfaced as "pending" review.
+  const reviewStatus: CoverMarkingReviewStatus = "pending";
 
   const widthRaw = sd.width_mm ?? sd.widthMm ?? sd.width;
   const heightRaw = sd.height_mm ?? sd.heightMm ?? sd.height;
@@ -1143,35 +1158,15 @@ function mapCoverContributionToAssociatedCover(
   };
 }
 
-/** Discard a cover Contribution draft after the cover was submitted via the catalog API. */
-export async function abandonCoverContributionDraft(contributionId: number): Promise<void> {
-  await ensureCsrfToken();
-  const form = new FormData();
-  form.append("submission_kind", "cover");
-  form.append("abandon_draft", "true");
-  form.append("edit_contribution_id", String(contributionId));
-  await apiClient.post("/contributions/", form);
-}
-
 /** Cover contribution drafts for a marking (not yet materialized as CoverMarking rows). */
 export async function getCoverContributionDraftsForMarking(
   markingId: number,
 ): Promise<AssociatedCover[]> {
   try {
-    const res = await apiClient.get<{ results?: unknown[] } | unknown[]>("/contributions/", {
-      withCredentials: true,
-    });
-    const data = res.data;
-    const list = Array.isArray(data)
-      ? data
-      : Array.isArray((data as { results?: unknown[] })?.results)
-        ? (data as { results: unknown[] }).results
-        : [];
-    return list
+    const { rawItems } = await listContributions();
+    return rawItems
       .map((row) =>
-        row && typeof row === "object"
-          ? mapCoverContributionToAssociatedCover(row as Record<string, unknown>, markingId)
-          : null,
+        mapCoverContributionToAssociatedCover(row as Record<string, unknown>, markingId),
       )
       .filter((x): x is AssociatedCover => x !== null);
   } catch {
@@ -1185,7 +1180,14 @@ export async function loadAssociatedCoversForMarking(
 ): Promise<MarkingCoversResult> {
   const { covers, error } = await getMarkingCovers(markingId);
   const drafts = await getCoverContributionDraftsForMarking(markingId);
-  const merged = [...covers, ...drafts];
+  // Rejected and returned-for-revision links are not real associations, so they
+  // are hidden from the marking's Associated Covers panel (and its count).
+  // Approved and pending links (and pending drafts) stay visible. Resubmission
+  // of a returned/rejected cover happens via the Contribute edit flow reached
+  // from My Submissions, not from this panel.
+  const merged = [...covers, ...drafts].filter(
+    (c) => c.reviewStatus !== "rejected" && c.reviewStatus !== "needs_revision",
+  );
   const enriched = await enrichAssociatedCoversWithDefaultImages(merged);
   return { covers: enriched, error };
 }
@@ -1248,6 +1250,65 @@ export async function postCoverMarkingReview(
 export async function postCoverMarkingResubmit(coverMarkingId: number): Promise<void> {
   await ensureCsrfToken();
   await apiClient.post(`/cover-markings/${coverMarkingId}/resubmit/`);
+}
+
+/**
+ * Editor: POST /markings/{id}/remove/ - soft-remove the marking into the
+ * recycle bin (reversible). Optional reason is recorded in the changelog.
+ * Backend gates on the responsible editor/superuser.
+ */
+export async function removeMarking(
+  markingId: number,
+  reason?: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  await ensureCsrfToken();
+  try {
+    await apiClient.post(`/markings/${markingId}/remove/`, { reason: reason ?? "" });
+    return { ok: true };
+  } catch (err: unknown) {
+    const ax = err as { response?: { data?: { detail?: string } } };
+    const d = ax.response?.data?.detail;
+    return { ok: false, message: typeof d === "string" ? d : "Could not remove marking." };
+  }
+}
+
+/** Editor: POST /markings/{id}/restore/ - restore a removed marking from the recycle bin. */
+export async function restoreMarking(
+  markingId: number,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  await ensureCsrfToken();
+  try {
+    await apiClient.post(`/markings/${markingId}/restore/`, {});
+    return { ok: true };
+  } catch (err: unknown) {
+    const ax = err as { response?: { data?: { detail?: string } } };
+    const d = ax.response?.data?.detail;
+    return { ok: false, message: typeof d === "string" ? d : "Could not restore marking." };
+  }
+}
+
+/**
+ * Editor: GET /markings/recycle-bin/ - removed markings, region-scoped server
+ * side. Same return shape as getMarkingsPage; uses MarkingListSerializer +
+ * pagination, so isRemoved/canRemove default to false on these rows.
+ */
+export async function getRecycleBinMarkings(
+  page: number = 1,
+  pageSize: number = 10,
+): Promise<GetMarkingsPageResult> {
+  const params: Record<string, string> = { page: String(page), page_size: String(pageSize) };
+  const res = await apiClient.get<MarkingApiResponse>("/markings/recycle-bin/", { params });
+  const data = res.data;
+  if (!Array.isArray(data.results)) {
+    throw new Error("Recycle bin API: invalid response (missing results array)");
+  }
+  return {
+    results: data.results.map(mapApiMarkingToRecord),
+    count: data.count,
+    next: data.next,
+    previous: data.previous,
+    count_capped: data.count_capped,
+  };
 }
 
 /** GET /markings/?page_size=1 - returns total marking count. */

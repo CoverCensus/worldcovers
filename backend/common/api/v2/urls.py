@@ -58,12 +58,11 @@ urlpatterns = [
     path("change-password/", csrf_exempt(ChangePasswordApiView.as_view()), name="change-password"),
     path("help-docs/", HelpDocsView.as_view(), name="help-docs"),
 
-    # Custom non-router endpoints
-    path(
-        "markings/<int:pk>/delete-mine/",
-        views.DeleteMyMarkingView.as_view(),
-        name="marking-delete-mine",
-    ),
+    # Custom non-router endpoints.
+    # Marking removal/restore are router-generated detail actions on
+    # MarkingViewSet (POST /markings/<pk>/remove/ and .../restore/), not
+    # standalone paths. The old DELETE /markings/<pk>/delete-mine/ endpoint
+    # was retired in favor of the recycle-bin flow.
     path(
         "markings-range/",
         views.MarkingDateRangeView.as_view(),

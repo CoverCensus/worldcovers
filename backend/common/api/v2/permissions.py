@@ -16,9 +16,61 @@ from __future__ import annotations
 
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
+from common.models import Contribution, Region
+
 
 REVIEW_CONTRIBUTION_PERM = "common.review_contribution"
 APPROVE_IMAGE_PERM = "common.approve_image"
+
+
+def _get_user_assigned_regions(user):
+    if not user or not user.is_authenticated:
+        return Region.objects.none()
+    return Region.objects.filter(collection__editor_assignments__user=user).distinct()
+
+
+def _user_is_responsible_for_marking(user, marking):
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    if not user.has_perm(REVIEW_CONTRIBUTION_PERM):
+        return False
+    if not marking or not marking.post_office_id:
+        return False
+    region = marking.post_office.region
+    if region is None:
+        return False
+    return _get_user_assigned_regions(user).filter(pk=region.pk).exists()
+
+
+def _user_is_responsible_for_cover(user, cover):
+    """
+    A cover has no region of its own; its regions are derived from the markings
+    linked to it (CoverMarking -> Marking -> post_office -> region). An editor
+    is responsible for the cover if any of those regions is in their assigned
+    regions. A cover with no linked markings has no region, so only a superuser
+    can act on it.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    if not user.has_perm(REVIEW_CONTRIBUTION_PERM):
+        return False
+    assigned = _get_user_assigned_regions(user)
+    if not assigned.exists():
+        return False
+    region_ids = set()
+    for cm in cover.cover_markings.select_related("marking__post_office").all():
+        post_office = cm.marking.post_office if cm.marking else None
+        # PostOffice.region is a property resolving the most-recent active region.
+        region = post_office.region if post_office else None
+        if region is not None:
+            region_ids.add(region.pk)
+    if not region_ids:
+        return False
+    return assigned.filter(pk__in=region_ids).exists()
 
 
 def user_assigned_collection_ids(user) -> set[int]:
@@ -83,6 +135,32 @@ class CanReviewContribution(BasePermission):
         if not user.has_perm(REVIEW_CONTRIBUTION_PERM):
             return False
         return obj.collection_id in user_assigned_collection_ids(user)
+
+
+class IsDraftOwner(BasePermission):
+    """
+    Object-level: user may hard-DELETE this Contribution only if it is a draft
+    that they own. True DELETE is permitted exclusively for drafts
+    (status=draft); a non-draft contribution can never be hard-deleted through
+    this path, not even by a superuser (use the marking REMOVE flow instead).
+    For drafts, the owner (contributor or editor) may delete; superusers may
+    delete any draft.
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        # DELETE is for drafts only -- no exceptions, including superusers.
+        if getattr(obj, "status", None) != Contribution.STATUS_DRAFT:
+            return False
+        if user.is_superuser:
+            return True
+        return getattr(obj, "contributor_id", None) == user.id
 
 
 class CanManageReferenceWorks(BasePermission):

@@ -19,17 +19,25 @@ from common.models import (
     Contribution,
     Cover,
     CoverMarking,
+    CoverRecycleBin,
     CoverValuation,
     DateSeen,
     FAQEntry,
     Image,
     Lettering,
     Marking,
+    MarkingRecycleBin,
     MarkingType,
     PostOffice,
     ReferenceWork,
     Region,
     Shape,
+)
+
+from .permissions import (
+    _user_is_responsible_for_cover,
+    _user_is_responsible_for_marking,
+    REVIEW_CONTRIBUTION_PERM,
 )
 
 
@@ -371,6 +379,8 @@ class CoverSerializer(serializers.ModelSerializer):
     # filtered to subject_type='COVER' and subject_id=cover.pk.
     color_name = serializers.CharField(source="color.name", read_only=True)
     dates_seen = serializers.SerializerMethodField()
+    is_removed = serializers.SerializerMethodField()
+    can_remove = serializers.SerializerMethodField()
 
     class Meta:
         model = Cover
@@ -385,6 +395,8 @@ class CoverSerializer(serializers.ModelSerializer):
             "is_institutional",
             "width",
             "dates_seen",
+            "is_removed",
+            "can_remove",
             "created_date",
             "modified_date",
         ]
@@ -397,12 +409,15 @@ class CoverSerializer(serializers.ModelSerializer):
         ).order_by("date")
         return DateSeenSerializer(qs, many=True).data
 
-    def get_dates_seen(self, obj):
-        qs = DateSeen.objects.filter(
-            subject_type=DateSeen.SUBJECT_COVER,
-            subject_id=obj.pk,
-        ).order_by("date")
-        return DateSeenSerializer(qs, many=True).data
+    def get_is_removed(self, obj):
+        return CoverRecycleBin.objects.filter(cover_id=obj.pk).exists()
+
+    def get_can_remove(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is None:
+            return False
+        return _user_is_responsible_for_cover(user, obj)
 
 
 class CoverValuationSerializer(serializers.ModelSerializer):
@@ -493,6 +508,33 @@ def _marking_state_name(marking) -> str:
 def _marking_state_abbrev(marking) -> str:
     region = _marking_resolved_region(marking)
     return (region.abbrev or "") if region else ""
+
+
+def _viewer_may_see_contribution_notes(user, contribution) -> bool:
+    # contribution: Contribution | None. Returns True for any editor/admin/superuser
+    # or the contributor who made it. False for anon and unrelated users. This is
+    # intentionally NOT region-scoped (unlike _user_is_responsible_for_marking):
+    # any editor may see the comment-for-editor and editor feedback.
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+    if contribution is None:
+        return False
+    if user.is_superuser or user.has_perm(REVIEW_CONTRIBUTION_PERM):
+        return True
+    return getattr(contribution, "contributor_id", None) == user.id
+
+
+def _comment_for_editor_from(submitted_data) -> str:
+    # The contributor's "comment for editor" lives in Contribution.submitted_data.
+    # The submit form writes it under both contributor_comment and comment_for_editor;
+    # fall back to plain "comment" for older rows.
+    if not isinstance(submitted_data, dict):
+        return ""
+    for key in ("contributor_comment", "comment_for_editor", "comment"):
+        val = submitted_data.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
 
 
 class MarkingListSerializer(serializers.ModelSerializer):
@@ -617,6 +659,10 @@ class MarkingSerializer(serializers.ModelSerializer):
     size_display = serializers.SerializerMethodField()
     created_by = UserSerializer(read_only=True)
     modified_by = UserSerializer(read_only=True)
+    is_removed = serializers.SerializerMethodField()
+    can_remove = serializers.SerializerMethodField()
+    comment_for_editor = serializers.SerializerMethodField()
+    editor_feedback = serializers.SerializerMethodField()
 
     class Meta:
         model = Marking
@@ -655,8 +701,38 @@ class MarkingSerializer(serializers.ModelSerializer):
             "modified_date",
             "created_by",
             "modified_by",
+            "is_removed",
+            "can_remove",
+            "comment_for_editor",
+            "editor_feedback",
         ]
         read_only_fields = ["id", "created_date", "modified_date"]
+
+    def get_is_removed(self, obj):
+        return MarkingRecycleBin.objects.filter(marking_id=obj.pk).exists()
+
+    def get_can_remove(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is None:
+            return False
+        return _user_is_responsible_for_marking(user, obj)
+
+    def get_editor_feedback(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        contribution = getattr(obj, "contribution", None)
+        if not _viewer_may_see_contribution_notes(user, contribution):
+            return ""
+        return (contribution.review_notes or "").strip()
+
+    def get_comment_for_editor(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        contribution = getattr(obj, "contribution", None)
+        if not _viewer_may_see_contribution_notes(user, contribution):
+            return ""
+        return _comment_for_editor_from(contribution.submitted_data)
 
     def get_state(self, obj):
         return _marking_state_name(obj)

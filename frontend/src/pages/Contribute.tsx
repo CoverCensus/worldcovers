@@ -7,25 +7,25 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Upload, CheckCircle, XCircle, Clock, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Plus } from "lucide-react";
+import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Trash2 } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import type { FormEvent, MouseEvent } from "react";
 import { useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
 import { getShapes, type ShapeOption } from "@/services/shapes";
 import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
+import { getRegions } from "@/services/regions";
 import { getMarkingByIdRaw, normalizeImageUrl } from "@/services/markings";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
-import { getFramings, type FramingOption } from "@/services/framings";
 import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
+import { getContribution, listContributions, createContribution, deleteDraftContribution } from "@/services/contributions";
 import { ENTRY_LABELS } from "@/labels/entry";
 import { SUBMISSION_LABELS } from "@/labels/submission";
 import { useToast } from "@/hooks/use-toast";
@@ -35,31 +35,6 @@ import {
   validateMmPair,
   submittedDataToWidthHeightStrings,
 } from "@/lib/dimensionsMm";
-
-/** Base URL for Django API (contributions, etc.) */
-function getApiBaseUrl(): string | null {
-  const env = import.meta.env.VITE_API_URL;
-  if (!env || typeof env !== "string" || env.trim() === "") return null;
-  return env.trim().replace(/\/+$/, "");
-}
-
-function getCsrfTokenFromCookie(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/(^|;\s*)csrftoken=([^;]+)/);
-  return match ? decodeURIComponent(match[2]) : null;
-}
-
-async function ensureCsrfToken(apiBase: string): Promise<string | null> {
-  const existing = getCsrfTokenFromCookie();
-  if (existing) return existing;
-  // Trigger Django CSRF middleware to set csrftoken cookie for session-auth writes.
-  await fetch(`${apiBase}/me/`, {
-    method: "GET",
-    credentials: "include",
-    headers: { Accept: "application/json" },
-  }).catch(() => undefined);
-  return getCsrfTokenFromCookie();
-}
 
 const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 100;
@@ -151,6 +126,7 @@ const FIELD_ERROR_SCROLL_TARGETS: Array<[string, string]> = [
   ["widthMm", "width-mm"],
   ["heightMm", "height-mm"],
   ["lettering", "lettering"],
+  ["rateValue", "rate-value"],
   ["images", "postmark-images-input"],
 ];
 
@@ -292,24 +268,6 @@ function parseReferenceWorkDetails(raw: unknown): Record<number, ReferenceDetail
   return out;
 }
 
-function formatReferenceWorkForReferences(
-  work: ReferenceWorkRecord,
-  detail?: ReferenceDetailInput,
-): string {
-  const parts: string[] = [];
-  if (work.title?.trim()) parts.push(`Title: ${work.title.trim()}`);
-  if (work.authorship?.trim()) parts.push(`Authorship: ${work.authorship.trim()}`);
-  if (work.publisher?.trim()) parts.push(`Publisher: ${work.publisher.trim()}`);
-  if (work.publicationYear != null) parts.push(`Publication year: ${work.publicationYear}`);
-  if (work.edition?.trim()) parts.push(`Edition: ${work.edition.trim()}`);
-  if (work.volume?.trim()) parts.push(`Volume: ${work.volume.trim()}`);
-  if (work.isbn?.trim()) parts.push(`Isbn: ${work.isbn.trim()}`);
-  if (work.url?.trim()) parts.push(`Url: ${work.url.trim()}`);
-  if (detail?.pageNumber?.trim()) parts.push(`Page number: ${detail.pageNumber.trim()}`);
-  if (detail?.citationUrl?.trim()) parts.push(`Citation url: ${detail.citationUrl.trim()}`);
-  return parts.join("\n");
-}
-
 const Contribute = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -341,10 +299,57 @@ const Contribute = () => {
         : "new";
   const isEditContribution = mode === "edit-contribution";
   const isEditMarking = mode === "edit-marking";
-  const isEditMode = isEditContribution || isEditMarking;
-  const copy = MODE_COPY[mode];
   const [editLoadDone, setEditLoadDone] = useState(!editContributionId);
   const [editLoadError, setEditLoadError] = useState<string | null>(null);
+  // Status of the contribution we are editing (draft / needs_revision /
+  // rejected / pending / approved). Only meaningful when mode is
+  // "edit-contribution"; drives the header copy so a draft does not display
+  // "use the editor feedback" wording.
+  const [loadedContributionStatus, setLoadedContributionStatus] = useState<string | null>(null);
+  // When resuming an edit-contribution draft that targets an existing
+  // marking, this holds that marking's id. Drives both the staleness
+  // banner and the page copy ("Submit edit to Marking" vs "Submit new
+  // Marking"). Null for new-marking drafts.
+  const [resumedEditPostmarkId, setResumedEditPostmarkId] = useState<number | null>(null);
+  // Resolve page copy. For "edit-contribution" we further split on the
+  // loaded contribution's status so a draft does not show the
+  // "use the editor feedback" wording reserved for needs_revision /
+  // rejected resubmissions, and further on whether the draft targets an
+  // existing marking (edit-marking draft) vs a brand-new marking.
+  const baseCopy = MODE_COPY[mode];
+  // The "Resubmit" / "Edit and resubmit" / "use the editor feedback" wording
+  // baked into MODE_COPY["edit-contribution"] only fits the
+  // needs_revision / rejected resubmission flow. Drafts (and the brief
+  // window before status loads) get a draft-style header + Submit button
+  // instead. Status check is an explicit allowlist so a future status
+  // value never silently falls back to "Resubmit".
+  const isResubmissionStatus =
+    loadedContributionStatus === "needs_revision" ||
+    loadedContributionStatus === "rejected";
+  const isResumingDraft = isEditContribution && !isResubmissionStatus;
+  const isResumingMarkingEditDraft = isResumingDraft && resumedEditPostmarkId != null;
+  const copy = isResumingDraft
+    ? isResumingMarkingEditDraft
+      ? {
+          ...baseCopy,
+          h1: "Continue your draft",
+          intro: "Pick up where you left off. Keep saving as a draft or submit your edit when you are ready for editor review.",
+          card: "Edit draft",
+          button: SUBMISSION_LABELS.action.submitEditToMarking,
+          toastTitle: "Submitted for review",
+          toastBody: "Changes to published Marking fields are submitted for editor approval and do not update the catalog directly.",
+        }
+      : {
+          ...baseCopy,
+          h1: "Continue your draft",
+          intro: "Pick up where you left off. Keep saving as a draft or submit when you are ready for editor review.",
+          card: "Edit draft",
+          button: SUBMISSION_LABELS.action.submitNewMarking,
+          toastTitle: SUBMISSION_LABELS.toast.received,
+          toastBody:
+            "Your Marking has been submitted for approval. It will appear in Search after an editor approves it.",
+        }
+    : baseCopy;
   const [loadingRecord, setLoadingRecord] = useState(isEditMarking);
   const [recordError, setRecordError] = useState<string | null>(null);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
@@ -364,7 +369,6 @@ const Contribute = () => {
   const [town, setTown] = useState("");
   const [markingType, setMarkingType] = useState("");
   const [rateValue, setRateValue] = useState("");
-  const [rateText, setRateText] = useState("");
   const [description, setDescription] = useState("");
   const [contributorComment, setContributorComment] = useState("");
   // Existing images on the loaded Marking (edit-marking mode). Each entry is
@@ -378,11 +382,22 @@ const Contribute = () => {
   // not via a contribution round-trip.
   const [existingImages, setExistingImages] = useState<Array<{ url: string; tracing: boolean }>>([]);
   const [removedExistingImageKeys, setRemovedExistingImageKeys] = useState<string[]>([]);
+  // Timestamp of the marking record as observed when this edit session loaded
+  // (Marking.modified_date). Stamped into save-as-draft payloads so a later
+  // resume can detect upstream edits and warn the user before they overwrite.
+  const [markingModifiedAtBaseline, setMarkingModifiedAtBaseline] = useState<string | null>(null);
+  // True when resume detected that the marking was modified after the
+  // baseline -- drives the staleness banner. Reset on every load.
+  const [markingChangedSinceDraft, setMarkingChangedSinceDraft] = useState(false);
+  // Whether the discard action is in flight (disables both banner buttons).
+  const [discardingDraft, setDiscardingDraft] = useState(false);
+  // Whether the hard-delete-draft action is in flight (disables the button).
+  const [deletingDraft, setDeletingDraft] = useState(false);
   const [shape, setShape] = useState("");
   const [color, setColor] = useState("");
   const [widthMm, setWidthMm] = useState("");
   const [heightMm, setHeightMm] = useState("");
-  const [manuscript, setManuscript] = useState("No");
+  const [isManuscript, setIsManuscript] = useState(false);
   const [isIrregular, setIsIrregular] = useState(false);
   const [impression, setImpression] = useState("Normal");
   const [inscriptionText, setInscriptionText] = useState("");
@@ -393,7 +408,6 @@ const Contribute = () => {
   const [markingImagePreviews, setMarkingImagePreviews] = useState<string[]>([]);
   const [markingImageTags, setMarkingImageTags] = useState<string[]>([]);
   const [letteringId, setLetteringId] = useState("");
-  const [framingIds, setFramingIds] = useState<string[]>([]);
   const [dateFormatIds, setDateFormatIds] = useState<string[]>([]);
   const [fieldErrors, setFieldErrors] = useState<{
     markingType?: string;
@@ -408,11 +422,11 @@ const Contribute = () => {
     lettering?: string;
     dateFormat?: string;
     inscriptionText?: string;
+    rateValue?: string;
   }>({});
 
   // Contributor: lettering, framing, date format (loaded for all)
   const [letteringOptions, setLetteringOptions] = useState<LetteringOption[]>([]);
-  const [framingOptions, setFramingOptions] = useState<FramingOption[]>([]);
   const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
   const [catalogOptionsLoading, setCatalogOptionsLoading] = useState(false);
   const [referenceWorks, setReferenceWorks] = useState<ReferenceWorkRecord[]>([]);
@@ -449,21 +463,39 @@ const Contribute = () => {
       .finally(() => setLoadingTowns(false));
   }, []);
 
+  // State options for the Contribute form come from the Regions endpoint
+  // (same source as Catalog Search), not from the post-office town-options
+  // payload. Deriving states from post offices silently filtered the
+  // dropdown down to whichever states currently have post_office_regions
+  // links populated (commonly just Virginia in dev fixtures), even though
+  // the contributor may have authorization to submit for any state.
   useEffect(() => {
-    const seen = new Set<string>();
-    const options = postOffices
-      .map((facility) => (facility.state || "").trim())
-      .filter((name) => {
-        if (!name) return false;
-        const key = name.toLowerCase();
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
+    let cancelled = false;
+    getRegions(false)
+      .then((regions) => {
+        if (cancelled) return;
+        const seen = new Set<string>();
+        const options = regions
+          .map((r) => ({ value: String(r.value || "").trim(), label: String(r.label || "").trim() }))
+          .filter((opt) => {
+            if (!opt.value) return false;
+            const key = opt.value.toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+          .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+        setStateOptions(options);
       })
-      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
-      .map((name) => ({ value: name, label: name }));
-    setStateOptions(options);
-  }, [postOffices]);
+      .catch((err) => {
+        if (cancelled) return;
+        setTownOptionsError(err instanceof Error ? err.message : "Failed to load states");
+        setStateOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     setLoadingShapes(true);
@@ -495,7 +527,7 @@ const Contribute = () => {
    */
   useEffect(() => {
     if (loadingShapes || shapeOptions.length === 0) return;
-    if (manuscript === "Yes") return;
+    if (isManuscript) return;
     if (shape.trim()) return;
     const t = normalizeMarkingTypeValue(markingType);
     if (t !== "RATEMARK" && t !== "AUXMARK") return;
@@ -510,35 +542,29 @@ const Contribute = () => {
         String(opt.name).trim().toLowerCase().includes("straight line"),
       );
     if (slOption) setShape(slOption.name);
-  }, [markingType, manuscript, shape, shapeOptions, loadingShapes]);
+  }, [markingType, isManuscript, shape, shapeOptions, loadingShapes]);
 
   useEffect(() => {
     setCatalogOptionsLoading(true);
-    Promise.all([getLetterings(), getFramings(), getDateFormats()])
-      .then(([lettering, framing, dateFmt]) => {
+    Promise.all([getLetterings(), getDateFormats()])
+      .then(([lettering, dateFmt]) => {
         setLetteringOptions(lettering);
-        setFramingOptions(framing);
         setDateFormatOptions(dateFmt);
 
-        // Defaults (when creating a new submission): Lettering = Normal, Framing = None.
+        // Default Lettering = Normal when creating a new submission.
         if (!editContributionId) {
           if (!letteringId) {
             const normal = lettering.find((o) => String(o.name || "").trim().toLowerCase() === "normal");
             if (normal) setLetteringId(String(normal.id));
           }
-          if (framingIds.length === 0) {
-            const none = framing.find((o) => String(o.name || "").trim().toLowerCase() === "none");
-            if (none) setFramingIds([String(none.id)]);
-          }
         }
       })
       .catch(() => {
         setLetteringOptions([]);
-        setFramingOptions([]);
         setDateFormatOptions([]);
       })
       .finally(() => setCatalogOptionsLoading(false));
-  }, [editContributionId, letteringId, framingIds.length]);
+  }, [editContributionId, letteringId]);
 
   useEffect(() => {
     if (referenceWorksFetched || referenceWorksLoading) return;
@@ -581,25 +607,12 @@ const Contribute = () => {
       setEditLoadDone(true);
       return;
     }
-    const apiBase = getApiBaseUrl();
-    if (!apiBase) {
-      setEditLoadError("VITE_API_URL is not set.");
-      setEditLoadDone(true);
-      return;
-    }
     let cancelled = false;
-    fetch(`${apiBase}/contributions/${editContributionId}/`, {
-      method: "GET",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(res.status === 404 ? "Contribution not found" : res.statusText);
-        return res.json();
-      })
-      .then((data: Record<string, unknown>) => {
+    getContribution(editContributionId)
+      .then((contribution) => {
         if (cancelled) return;
-        const sd = (data.submitted_data ?? data.submittedData) as Record<string, unknown> | undefined;
+        setLoadedContributionStatus(String(contribution.status ?? "").toLowerCase() || null);
+        const sd = contribution.submittedData as Record<string, unknown> | undefined;
         if (!sd || typeof sd !== "object") {
           setEditLoadDone(true);
           return;
@@ -619,13 +632,13 @@ const Contribute = () => {
         const wh = submittedDataToWidthHeightStrings(sd as Record<string, unknown>);
         setWidthMm(wh.width);
         setHeightMm(wh.height);
-        const loadedManuscript = getStr(sd.manuscript);
-        setManuscript(loadedManuscript === "Yes" ? "Yes" : "No");
+        setIsManuscript(sd.is_manuscript === true);
         const loadedImpression = getStr(sd.impression);
         setImpression(loadedImpression || "Normal");
         setIsIrregular(Boolean(sd.is_irreg));
         setInscriptionText(getStr(sd.inscription_txt));
         setDescription(getStr(sd.desc));
+        setRateValue(getStr((sd as Record<string, unknown>).rate_val));
         const referenceWorkIds = parseReferenceWorkIds(
           (sd as Record<string, unknown>).reference_work_ids
         );
@@ -639,39 +652,103 @@ const Contribute = () => {
         }
         const lid = sd.lettering_id ?? sd.lettering_style_id;
         setLetteringId(lid != null ? String(lid) : "");
-        const fids = sd.framing_style_ids as unknown;
-        const normalizedFramingIds = Array.isArray(fids)
-          ? fids.map((x) => String(x)).filter(Boolean)
-          : [];
-        setFramingIds(normalizedFramingIds);
-        const dids = sd.date_format_ids as unknown;
-        const normalizedDateFormatIds = Array.isArray(dids)
-          ? dids.map((x) => String(x)).filter(Boolean)
-          : [];
-        setDateFormatIds(normalizedDateFormatIds);
+        const dateFmtCode = getStr(sd.date_fmt ?? sd.dateFmt);
+        if (dateFmtCode) {
+          // dateFormatOptions is loaded by a separate effect; resolve once
+          // the options arrive. For draft-rehydrate we look up by description
+          // (the actual MD/YMD/... code) and fall back to no selection.
+          const tryResolve = () => {
+            const opt = dateFormatOptions.find(
+              (o) =>
+                String(o.description ?? "").trim().toLowerCase() === dateFmtCode.toLowerCase() ||
+                String(o.name ?? "").trim().toLowerCase() === dateFmtCode.toLowerCase(),
+            );
+            setDateFormatIds(opt ? [String(opt.id)] : []);
+          };
+          tryResolve();
+        } else {
+          setDateFormatIds([]);
+        }
+        // Route existing images through `existingImages` (same path used by
+        // the edit-marking flow) so the dedicated remove button records
+        // removals in `removedExistingImageKeys`. Mixing prior URLs into
+        // `markingImagePreviews` breaks the index alignment with
+        // `markingImageFiles` and silently drops removals on submit.
         const submittedMarkingImages = Array.isArray(sd.marking_images)
           ? (sd.marking_images as unknown[])
               .map((v) => (typeof v === "string" ? v.trim() : ""))
               .filter((v) => v.length > 0)
           : [];
-        if (submittedMarkingImages.length > 0) {
-          setMarkingImagePreviews(submittedMarkingImages);
-        } else {
+        let existingUrls: string[] = submittedMarkingImages;
+        if (existingUrls.length === 0) {
           const metas = Array.isArray(sd.marking_image_metas)
             ? (sd.marking_image_metas as Array<{ storage_filename?: string }>)
             : [];
-          const baseUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
-          if (baseUrl && metas.length > 0) {
-            const urls: string[] = [];
-            metas.forEach((m) => {
+          const baseUrl =
+            (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "") || "/media";
+          existingUrls = metas
+            .map((m) => {
               const sf = m?.storage_filename;
-              if (sf) urls.push(`${baseUrl}/${sf.replace(/^\/+/, "")}`);
-            });
-            if (urls.length > 0) setMarkingImagePreviews(urls);
-          }
+              return sf ? `${baseUrl}/${sf.replace(/^\/+/, "")}` : "";
+            })
+            .filter((u) => u.length > 0);
+        }
+        if (existingUrls.length > 0) {
+          setExistingImages(existingUrls.map((url) => ({ url, tracing: false })));
+          setRemovedExistingImageKeys([]);
         }
         setEditLoadError(null);
         setEditLoadDone(true);
+
+        // Marking-edit draft rehydration: if the draft targets an existing
+        // marking, fetch the marking so (a) the existing-image rail shows
+        // the marking's current images (the draft only snapshots field
+        // edits, not images) and (b) we can compare its modified_date to
+        // the baseline stamped in submitted_data and flag a stale draft.
+        const editPostmarkIdRaw = (sd as Record<string, unknown>).edit_postmark_id;
+        const editPostmarkIdNum =
+          typeof editPostmarkIdRaw === "number"
+            ? editPostmarkIdRaw
+            : typeof editPostmarkIdRaw === "string" && editPostmarkIdRaw.trim() !== ""
+              ? Number(editPostmarkIdRaw)
+              : NaN;
+        if (Number.isFinite(editPostmarkIdNum) && editPostmarkIdNum > 0) {
+          setResumedEditPostmarkId(editPostmarkIdNum);
+          const baselineRaw = (sd as Record<string, unknown>).marking_modified_at_baseline;
+          const baseline = typeof baselineRaw === "string" ? baselineRaw : null;
+          const removedRaw = (sd as Record<string, unknown>).removed_existing_image_keys;
+          if (Array.isArray(removedRaw)) {
+            setRemovedExistingImageKeys(removedRaw.map((k) => String(k)));
+          }
+          getMarkingByIdRaw(editPostmarkIdNum)
+            .then((m) => {
+              if (cancelled || !m) return;
+              if (existingUrls.length === 0 && Array.isArray(m.images)) {
+                const rows = (m.images as unknown[])
+                  .map((img) => {
+                    const o = img as Record<string, unknown>;
+                    const url = normalizeImageUrl(
+                      typeof o.image_url === "string" ? o.image_url : null,
+                    );
+                    if (!url) return null;
+                    const tracing = Boolean(o.is_tracing);
+                    return { url, tracing };
+                  })
+                  .filter(
+                    (row): row is { url: string; tracing: boolean } => row !== null,
+                  );
+                if (rows.length > 0) setExistingImages(rows);
+              }
+              const modified = typeof m.modified_date === "string" ? m.modified_date : null;
+              if (baseline && modified && modified > baseline) {
+                setMarkingChangedSinceDraft(true);
+              }
+            })
+            .catch(() => {
+              // Non-fatal: the form is still usable, just without the
+              // marking's existing images and without the staleness check.
+            });
+        }
       })
       .catch((err) => {
         if (!cancelled) {
@@ -682,15 +759,30 @@ const Contribute = () => {
     return () => {
       cancelled = true;
     };
-  }, [editContributionId]); // shapeOptions/colorOptions may not be loaded yet; we set shape/color as strings
+    // shapeOptions/colorOptions may not be loaded yet; we set shape/color as
+    // strings. dateFormatOptions is read inside the closure for code -> id
+    // resolution; adding it to deps would refire the entire fetch every
+    // time options load, so we accept the snapshot at fetch time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editContributionId]);
 
   // Load Marking record for edit-marking mode (from /edit/:id).
+  //
+  // Before loading, dedupe against any existing open draft this user has
+  // for the same marking. If one is found, redirect to its resume URL so
+  // we never fork a parallel draft. The backend also enforces this in
+  // ContributionSubmitView.post (collapse-on-create) -- this fetch is a
+  // UX optimization so the user is not put through "fresh form, then
+  // suddenly redirected" once they start typing.
   useEffect(() => {
     if (!isEditMarking || editMarkingId == null) return;
     let cancelled = false;
     setLoadingRecord(true);
     setRecordError(null);
-    getMarkingByIdRaw(editMarkingId)
+
+    const loadMarking = () => {
+      if (cancelled) return;
+      getMarkingByIdRaw(editMarkingId)
       .then((data) => {
         if (cancelled) return;
         if (!data) {
@@ -714,6 +806,10 @@ const Contribute = () => {
         setExistingImages(existingRows);
         setRemovedExistingImageKeys([]);
 
+        const modifiedDate = typeof data.modified_date === "string" ? data.modified_date : null;
+        setMarkingModifiedAtBaseline(modifiedDate);
+        setMarkingChangedSinceDraft(false);
+
         const typeRaw = String(data.type ?? "").trim().toUpperCase();
         if (typeRaw === "RATEMARK") setMarkingType("RATEMARK");
         else if (typeRaw === "AUXMARK") setMarkingType("AUXMARK");
@@ -734,7 +830,7 @@ const Contribute = () => {
         setColor(typeof data.color_name === "string" ? data.color_name : "");
         setWidthMm(String(data.width ?? "").replace(/[^0-9.]/g, ""));
         setHeightMm(String(data.height ?? "").replace(/[^0-9.]/g, ""));
-        setManuscript(data.is_manuscript ? "Yes" : "No");
+        setIsManuscript(Boolean(data.is_manuscript));
         setIsIrregular(Boolean(data.is_irreg));
         const impressionRaw = String(data.impression ?? "").trim();
         const normalizedImpression = impressionRaw
@@ -763,10 +859,32 @@ const Contribute = () => {
       .finally(() => {
         if (!cancelled) setLoadingRecord(false);
       });
+    };
+
+    listContributions({ status: "draft", ordering: "-created_at" })
+      .then(({ rawItems }) => {
+        if (cancelled) return;
+        const match = rawItems.find((r) => {
+          const sd = (r.submitted_data ?? r.submittedData) as
+            | Record<string, unknown>
+            | undefined;
+          const epi = sd?.edit_postmark_id;
+          if (epi == null || epi === "") return false;
+          return Number(epi) === Number(editMarkingId);
+        });
+        if (match && match.id != null) {
+          navigate(`/contribute?edit=${match.id}`, { replace: true });
+          return;
+        }
+        loadMarking();
+      })
+      .catch(() => {
+        if (!cancelled) loadMarking();
+      });
     return () => {
       cancelled = true;
     };
-  }, [isEditMarking, editMarkingId, dateFormatOptions, shapeOptions]);
+  }, [isEditMarking, editMarkingId, dateFormatOptions, shapeOptions, navigate]);
 
   const noAssignedStates = false;
 
@@ -812,20 +930,12 @@ const Contribute = () => {
   const isTownmark = normalizedMarkingType === "TOWNMARK";
   const isRatemark = normalizedMarkingType === "RATEMARK";
   const isAuxmark = normalizedMarkingType === "AUXMARK";
-  const isHandstamped = manuscript !== "Yes";
+  const isHandstamped = !isManuscript;
   const showShapeField = isHandstamped;
   const showDateFormatField = isHandstamped && isTownmark;
   const showRateValueField = isRatemark;
   const showAnythingElseSection = isHandstamped && (isTownmark || isRatemark || isAuxmark);
 
-  const selectedFramingSummary = useMemo(() => {
-    if (framingIds.length === 0) return "Select one or more framing styles";
-    const selectedNames = framingOptions
-      .filter((opt) => framingIds.includes(String(opt.id)))
-      .map((opt) => opt.name);
-    if (selectedNames.length <= 2) return selectedNames.join(", ");
-    return `${selectedNames.slice(0, 2).join(", ")} +${selectedNames.length - 2} more`;
-  }, [framingIds, framingOptions]);
   const selectedDateFormatSummary = useMemo(() => {
     if (dateFormatIds.length === 0) return "Select one or more date formats";
     const selectedCodes = dateFormatOptions
@@ -933,7 +1043,7 @@ const Contribute = () => {
 
     const stateVal = state.trim();
     const townVal = town.trim();
-    const isManuscriptSelected = manuscript === "Yes";
+    const isManuscriptSelected = isManuscript;
     const shapeVal = isManuscriptSelected ? "" : shape.trim();
     const typeVal = normalizeMarkingTypeValue(markingType.trim()) || markingType.trim();
     const shapeIdVal = shapeOptions.find(
@@ -964,6 +1074,9 @@ const Contribute = () => {
       if (!inscriptionText.trim()) {
         errors.inscriptionText = `${inscriptionLabel} is required`;
       }
+      if (isRatemark && !rateValue.trim()) {
+        errors.rateValue = "Rate Value is required for Ratemarks";
+      }
 
       // At least one image must accompany every entry.
       // - "new":               at least one freshly-uploaded file.
@@ -975,6 +1088,13 @@ const Contribute = () => {
       } else if (
         mode === "edit-marking" &&
         existingImages.length === 0 &&
+        markingImageFiles.length === 0
+      ) {
+        errors.images = "At least one image is required";
+      } else if (
+        mode === "edit-contribution" &&
+        existingImages.length === 0 &&
+        markingImagePreviews.length === 0 &&
         markingImageFiles.length === 0
       ) {
         errors.images = "At least one image is required";
@@ -1046,10 +1166,6 @@ const Contribute = () => {
       return;
     }
 
-    const referencesToSend = selectedReferenceWorks
-      .map((work) => formatReferenceWorkForReferences(work, referenceDetailsById[work.id]))
-      .filter(Boolean)
-      .join("\n\n");
     const referenceWorkIdsToSend = selectedReferenceWorks.map((work) => work.id);
     const referenceWorkDetailsToSend: ReferenceDetailPayload[] = selectedReferenceWorks.map((work) => {
       const detail = referenceDetailsById[work.id];
@@ -1059,16 +1175,6 @@ const Contribute = () => {
         url: detail?.citationUrl?.trim() || undefined,
       };
     });
-    const apiBase = getApiBaseUrl();
-    if (!apiBase) {
-      toast({
-        title: "Configuration error",
-        description: "VITE_API_URL is not set. Cannot submit Marking.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     const allImageFiles = markingImageFiles;
     // The Tracing checkbox replaces the old mark/cover/tracing dropdown, so
     // every entry in markingImageTags now defaults to "photograph"; there is
@@ -1086,16 +1192,19 @@ const Contribute = () => {
 
     setSubmitting(true);
     try {
-      const submitterName = user?.username || user?.email || undefined;
-
-      let body: string | FormData;
+      let body: FormData | Record<string, unknown>;
 
       const derivedIsCircular = isCircularType(shapeVal);
-      const derivedDimensions = (() => {
-        const w = widthMm.trim();
-        const h = derivedIsCircular ? w : heightMm.trim();
-        if (w && h) return `${w}×${h} mm`;
-        return "";
+      const widthToSend = widthMm.trim();
+      const heightToSend = (derivedIsCircular ? widthMm : heightMm).trim();
+      // Resolve the active date_fmt code (e.g. "MD", "YMD") from the
+      // multi-select state. The picker stores DateFormatOption.id; the
+      // backend wants the string code, which lives on .description.
+      const dateFmtCode = (() => {
+        const id = dateFormatIds[0];
+        if (!id) return "";
+        const opt = dateFormatOptions.find((o) => String(o.id) === String(id));
+        return opt ? String(opt.description ?? "").trim() : "";
       })();
       const inscriptionToSend = inscriptionText.trim();
 
@@ -1109,6 +1218,9 @@ const Contribute = () => {
         }
         if (saveAsDraft) {
           form.append("save_as_draft", "true");
+          if (isEditMarking && markingModifiedAtBaseline) {
+            form.append("marking_modified_at_baseline", markingModifiedAtBaseline);
+          }
         }
         if (selectedPostOfficeId != null) form.append("post_office_id", String(selectedPostOfficeId));
         form.append("state", stateVal);
@@ -1118,8 +1230,8 @@ const Contribute = () => {
         if (!isManuscriptSelected && shapeIdVal != null) form.append("shape_id", String(shapeIdVal));
         if (colorIdVal != null) form.append("color_id", String(colorIdVal));
         form.append("color", colorVal);
-        if (derivedDimensions) form.append("dimensions", derivedDimensions);
-        if (manuscript.trim()) form.append("manuscript", manuscript.trim());
+        if (widthToSend) form.append("width_mm", widthToSend);
+        if (heightToSend) form.append("height_mm", heightToSend);
         form.append("is_manuscript", String(isManuscriptSelected));
         if (!isManuscriptSelected) {
           form.append("is_irreg", String(isIrregular));
@@ -1130,23 +1242,13 @@ const Contribute = () => {
           form.append("desc", description.trim());
         }
         if (inscriptionToSend) form.append("inscription_txt", inscriptionToSend);
-        if (referencesToSend) form.append("references", referencesToSend);
         referenceWorkIdsToSend.forEach((id) => form.append("reference_work_ids[]", String(id)));
         if (referenceWorkDetailsToSend.length > 0) {
           form.append("reference_work_details", JSON.stringify(referenceWorkDetailsToSend));
         }
-        if (submitterName) form.append("submitter_name", submitterName);
         if (!isManuscriptSelected && letteringId) form.append("lettering_style_id", letteringId);
         if (!isManuscriptSelected && letteringId) form.append("lettering_id", letteringId);
-        if (framingIds.length > 0) {
-          form.append("framing_style_id", framingIds[0]);
-          framingIds.forEach((id) => form.append("framing_style_ids[]", id));
-        }
-        if (dateFormatIds.length > 0) {
-          form.append("date_format_id", dateFormatIds[0]);
-          if (showDateFormatField) form.append("date_fmt", dateFormatIds[0]);
-          dateFormatIds.forEach((id) => form.append("date_format_ids[]", id));
-        }
+        if (showDateFormatField && dateFmtCode) form.append("date_fmt", dateFmtCode);
         for (const file of markingImageFiles) {
           form.append("marking_image", file, file.name);
         }
@@ -1156,10 +1258,10 @@ const Contribute = () => {
           form.append("contributor_comment", trimmedComment);
           form.append("comment_for_editor", trimmedComment);
         }
+        if ((isEditMarking || isEditContribution) && removedExistingImageKeys.length > 0) {
+          form.append("removed_existing_image_keys", JSON.stringify(removedExistingImageKeys));
+        }
         if (isEditMarking) {
-          if (removedExistingImageKeys.length > 0) {
-            form.append("removed_existing_image_keys", JSON.stringify(removedExistingImageKeys));
-          }
           // existing_image_tags is a {url: "tracing"|"photograph"} map. We
           // emit it for every image (not just tracings) so an editor who
           // *unchecks* Tracing on a previously-tagged row can still flip
@@ -1181,7 +1283,7 @@ const Contribute = () => {
         for (const img of existingImages) {
           existingTagMap[img.url] = tracingToTag(img.tracing);
         }
-        body = JSON.stringify({
+        body = {
           ...(isEditContribution && editContributionId != null
             ? { edit_contribution_id: editContributionId }
             : {}),
@@ -1196,65 +1298,37 @@ const Contribute = () => {
           shape_id: isManuscriptSelected ? null : shapeIdVal ?? null,
           color_id: colorIdVal ?? undefined,
           color: colorVal,
-          dimensions: derivedDimensions || undefined,
-          manuscript: manuscript.trim() || undefined,
+          width_mm: widthToSend || undefined,
+          height_mm: heightToSend || undefined,
           is_manuscript: isManuscriptSelected,
           is_irreg: isManuscriptSelected ? null : isIrregular,
           impression: isManuscriptSelected ? null : impression.trim() || undefined,
           rate_val: showRateValueField ? rateValue.trim() || undefined : undefined,
           desc: description.trim() || undefined,
           inscription_txt: inscriptionToSend || undefined,
-          references: referencesToSend || undefined,
           reference_work_ids: referenceWorkIdsToSend.length > 0 ? referenceWorkIdsToSend : undefined,
           reference_work_details: referenceWorkDetailsToSend.length > 0 ? referenceWorkDetailsToSend : undefined,
-          submitter_name: submitterName || undefined,
           lettering_style_id: isManuscriptSelected ? null : letteringId ? Number(letteringId) : undefined,
           lettering_id: isManuscriptSelected ? null : letteringId ? Number(letteringId) : undefined,
-          framing_style_id: framingIds[0] ? Number(framingIds[0]) : undefined,
-          framing_style_ids: framingIds.length > 0 ? framingIds.map((id) => Number(id)) : undefined,
-          date_format_id: dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
-          date_fmt: showDateFormatField && dateFormatIds[0] ? Number(dateFormatIds[0]) : undefined,
-          date_format_ids: dateFormatIds.length > 0 ? dateFormatIds.map((id) => Number(id)) : undefined,
+          date_fmt: showDateFormatField && dateFmtCode ? dateFmtCode : undefined,
           marking_image_tags: markingImageTags,
           ...(trimmedComment
             ? { contributor_comment: trimmedComment, comment_for_editor: trimmedComment }
             : {}),
-          ...(isEditMarking && removedExistingImageKeys.length > 0
+          ...((isEditMarking || isEditContribution) && removedExistingImageKeys.length > 0
             ? { removed_existing_image_keys: removedExistingImageKeys }
             : {}),
           ...(isEditMarking && Object.keys(existingTagMap).length > 0
             ? { existing_image_tags: existingTagMap }
             : {}),
           ...(saveAsDraft ? { save_as_draft: true } : {}),
-        });
+          ...(saveAsDraft && isEditMarking && markingModifiedAtBaseline
+            ? { marking_modified_at_baseline: markingModifiedAtBaseline }
+            : {}),
+        };
       }
 
-      const csrfToken = await ensureCsrfToken(apiBase);
-      const headers: Record<string, string> = typeof body === "string" ? { "Content-Type": "application/json" } : {};
-      if (csrfToken) headers["X-CSRFToken"] = csrfToken;
-
-      const res = await fetch(`${apiBase}/contributions/`, {
-        method: "POST",
-        credentials: "include",
-        headers,
-        body,
-      });
-
-      if (!res.ok) {
-        if (res.status === 413) {
-          toast({
-            title: "Image too large",
-            description: `The image file is too large for the server to accept. Please use an image under ${MAX_IMAGE_SIZE_MB}MB. If your image is already under ${MAX_IMAGE_SIZE_MB}MB, the server may have a lower limit—try a smaller file.`,
-            variant: "destructive",
-          });
-          return;
-        }
-        const errBody = await res.json().catch(() => ({}));
-        const msg = errBody?.detail || res.statusText || "Could not submit.";
-        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
-      }
-
-      const resData = (await res.json().catch(() => ({}))) as { contributionId?: number; detail?: string };
+      const result = await createContribution(body);
 
       toast({
         title: saveAsDraft ? "Draft saved" : copy.toastTitle,
@@ -1268,9 +1342,12 @@ const Contribute = () => {
         return;
       }
 
-      if (isEditContribution && resData?.contributionId != null) {
-        navigate(`/contribution/${resData.contributionId}`, { state: { fromDashboard: true } });
-        return;
+      if (isEditContribution) {
+        const returnedId = result.contributionId ?? editContributionId;
+        if (returnedId != null) {
+          navigate(`/contribution/${returnedId}`, { state: { fromDashboard: true } });
+          return;
+        }
       }
 
       if (isEditMarking) {
@@ -1278,8 +1355,8 @@ const Contribute = () => {
         const fromDashboardDirect = (location.state as Record<string, unknown> | null)?.fromDashboardDirect;
         const fromDashboardViaDetail = (location.state as Record<string, unknown> | null)?.fromDashboardViaDetail;
         const fromSearch = (location.state as Record<string, unknown> | null)?.fromSearch;
-        if (resData?.contributionId != null) {
-          navigate(`/contribution/${resData.contributionId}`, { state: { fromDashboard: true } });
+        if (result.contributionId != null) {
+          navigate(`/contribution/${result.contributionId}`, { state: { fromDashboard: true } });
         } else if (fromDashboardDirect || fromDashboard || fromDashboardViaDetail) {
           navigate("/dashboard");
         } else if (fromSearch) {
@@ -1290,33 +1367,30 @@ const Contribute = () => {
         return;
       }
 
-      setState("");
-      setTown("");
-      setMarkingType("");
-      setRateValue("");
-      setRateText("");
-      setDescription("");
-      setShape("");
-      setColor("");
-      setWidthMm("");
-      setHeightMm("");
-      setManuscript("No");
-      setIsIrregular(false);
-      setImpression("Normal");
-      setInscriptionText("");
-      setContributorComment("");
-      setPendingReferenceWorkIds([]);
-      setSelectedReferenceWorks([]);
-      setReferenceDetailsById({});
-      setReferenceDetailErrorsById({});
-      setMarkingImageFiles([]);
-      setMarkingImagePreviews([]);
-      setMarkingImageTags([]);
-      setLetteringId("");
-      setFramingIds([]);
-      setDateFormatIds([]);
-      if (markingFileInputRef.current) markingFileInputRef.current.value = "";
+      // New-marking submit: return the user to wherever they came from
+      // (Dashboard, Search, Index, etc.) so the post-submit landing is the
+      // page that launched the contribute flow rather than an empty form.
+      // Fall back to /dashboard when there is no prior history entry
+      // (e.g. user opened /contribute directly).
+      const navState = (location.state || {}) as Record<string, unknown>;
+      const fromPath = typeof navState.from === "string" ? (navState.from as string) : "";
+      if (fromPath) {
+        navigate(fromPath);
+      } else if (window.history.length > 1) {
+        navigate(-1);
+      } else {
+        navigate("/dashboard");
+      }
+      return;
     } catch (err: unknown) {
+      if ((err as { status?: number })?.status === 413) {
+        toast({
+          title: "Image too large",
+          description: `The image file is too large for the server to accept. Please use an image under ${MAX_IMAGE_SIZE_MB}MB. If your image is already under ${MAX_IMAGE_SIZE_MB}MB, the server may have a lower limit-try a smaller file.`,
+          variant: "destructive",
+        });
+        return;
+      }
       toast({
         title: "Submission failed",
         description: err instanceof Error ? err.message : "Could not submit. Try again.",
@@ -1742,6 +1816,60 @@ const Contribute = () => {
                     </div>
                   )}
 
+                  {markingChangedSinceDraft && resumedEditPostmarkId != null && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-4 text-sm text-amber-800 dark:text-amber-200 space-y-3">
+                      <p className="leading-relaxed">
+                        This marking has been updated since you saved this draft.
+                        Review your changes before submitting -- your edits will overwrite the current values.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/40"
+                          onClick={() => {
+                            window.open(`/record/${resumedEditPostmarkId}`, "_blank", "noopener,noreferrer");
+                          }}
+                        >
+                          View current marking
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/40"
+                          disabled={discardingDraft || editContributionId == null}
+                          onClick={async () => {
+                            if (editContributionId == null || resumedEditPostmarkId == null) return;
+                            const ok = window.confirm(
+                              "Discard this draft and start over from the current marking? Your saved draft will be deleted.",
+                            );
+                            if (!ok) return;
+                            setDiscardingDraft(true);
+                            try {
+                              await createContribution({
+                                edit_contribution_id: editContributionId,
+                                abandon_draft: "true",
+                              });
+                              navigate(`/contribute/edit/${resumedEditPostmarkId}`, { replace: true });
+                            } catch (err: unknown) {
+                              toast({
+                                title: "Could not discard draft",
+                                description: err instanceof Error ? err.message : "Try again.",
+                                variant: "destructive",
+                              });
+                            } finally {
+                              setDiscardingDraft(false);
+                            }
+                          }}
+                        >
+                          Discard this draft and start fresh
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
                     <form
                       onSubmit={(e) => {
                         handleSubmit(e, false);
@@ -1786,11 +1914,11 @@ const Contribute = () => {
                         id="manuscript"
                         type="checkbox"
                         className="h-4 w-4 accent-primary"
-                        checked={manuscript === "Yes"}
+                        checked={isManuscript}
                         onChange={(e) => {
-                          const next = e.target.checked ? "Yes" : "No";
-                          setManuscript(next);
-                          if (next === "Yes") {
+                          const next = e.target.checked;
+                          setIsManuscript(next);
+                          if (next) {
                             setShape("");
                             setLetteringId("");
                             setImpression("");
@@ -1941,7 +2069,7 @@ const Contribute = () => {
                     {showShapeField && <div className="space-y-2">
                       <Label htmlFor="shape">
                         Shape
-                        {manuscript === "No" ? (
+                        {!isManuscript ? (
                           <span className="text-destructive" aria-hidden="true">*</span>
                         ) : null}
                       </Label>
@@ -2054,14 +2182,25 @@ const Contribute = () => {
                     </div>
 
                     {showRateValueField && <div className="space-y-2">
-                      <Label htmlFor="rate-value">Rate Value</Label>
+                      <Label htmlFor="rate-value">
+                        Rate Value <span className="text-destructive" aria-hidden="true">*</span>
+                      </Label>
                       <Input
                         id="rate-value"
                         type="text"
                         placeholder="e.g. 5"
                         value={rateValue}
-                        onChange={(e) => setRateValue(e.target.value)}
+                        onChange={(e) => {
+                          setRateValue(e.target.value);
+                          if (fieldErrors.rateValue) {
+                            setFieldErrors((prev) => ({ ...prev, rateValue: undefined }));
+                          }
+                        }}
+                        className={fieldErrors.rateValue ? "border-destructive" : ""}
                       />
+                      {fieldErrors.rateValue && (
+                        <p className="text-sm text-destructive">{fieldErrors.rateValue}</p>
+                      )}
                     </div>}
 
                     {isHandstamped && (
@@ -2410,19 +2549,17 @@ const Contribute = () => {
                     </div>
 
                     <div className="flex flex-col sm:flex-row gap-3">
-                      {!isEditMarking && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="w-full sm:flex-1"
-                          disabled={submitting || noAssignedStates}
-                          onClick={(e) => {
-                            handleSubmit(e, true);
-                          }}
-                        >
-                          Save as Draft
-                        </Button>
-                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full sm:flex-1"
+                        disabled={submitting || noAssignedStates}
+                        onClick={(e) => {
+                          handleSubmit(e, true);
+                        }}
+                      >
+                        Save as Draft
+                      </Button>
                       <Button
                         type="submit"
                         className="w-full sm:flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
@@ -2431,6 +2568,38 @@ const Contribute = () => {
                         {submitting ? "Submitting..." : copy.button}
                       </Button>
                     </div>
+                    {isResumingDraft && editContributionId != null && (
+                      <div className="pt-2 flex justify-end">
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          className="w-full sm:w-auto"
+                          disabled={submitting || deletingDraft}
+                          onClick={async () => {
+                            const ok = window.confirm(
+                              "Delete this draft? This can't be undone.",
+                            );
+                            if (!ok) return;
+                            setDeletingDraft(true);
+                            try {
+                              await deleteDraftContribution(editContributionId);
+                              toast({ title: "Draft deleted" });
+                              navigate("/dashboard");
+                            } catch (err: unknown) {
+                              toast({
+                                title: "Could not delete draft",
+                                description: err instanceof Error ? err.message : "Try again.",
+                                variant: "destructive",
+                              });
+                              setDeletingDraft(false);
+                            }
+                          }}
+                        >
+                          <Trash2 className="mr-1.5 h-4 w-4" />
+                          {deletingDraft ? "Deleting..." : "Delete Draft"}
+                        </Button>
+                      </div>
+                    )}
                   </form>
 
                   <p className="text-xs text-muted-foreground">

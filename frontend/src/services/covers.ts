@@ -122,11 +122,9 @@ export async function updateCover(
   return res.data;
 }
 
-/** DELETE /covers/{id}/ — destroy a Cover (cascades to dates + valuations). */
-export async function deleteCover(id: number): Promise<void> {
-  await ensureCsrfToken();
-  await apiClient.delete(`/covers/${id}/`);
-}
+/* Note: there is no raw DELETE for covers. CoverV2ViewSet rejects DELETE with
+ * 405; removing a cover goes through the audited, reversible recycle bin via
+ * removeCover() / restoreCover() below. */
 
 /** Body shape accepted by both POST and PATCH for /cover-markings/. */
 export interface CoverMarkingWritePayload {
@@ -168,12 +166,6 @@ export async function updateCoverMarking(
     payload,
   );
   return res.data;
-}
-
-/** DELETE /cover-markings/{id}/ — drop only the link, keep the Cover row. */
-export async function deleteCoverMarking(id: number): Promise<void> {
-  await ensureCsrfToken();
-  await apiClient.delete(`/cover-markings/${id}/`);
 }
 
 /** Granularity matches DateSeen.GRANULARITY_CHOICES on the backend. */
@@ -310,6 +302,10 @@ export interface CoverDetail {
   width: string | null;
   height: string | null;
   datesSeen: CoverDateSeenItem[];
+  /** True when this cover is in the recycle bin (soft-removed). */
+  isRemoved: boolean;
+  /** True when the current user may remove/restore this cover. */
+  canRemove: boolean;
   createdDate: string;
   modifiedDate: string;
 }
@@ -338,6 +334,8 @@ function mapCoverDetail(data: unknown): CoverDetail | null {
     width: decimalToString(o.width),
     height: decimalToString(o.height),
     datesSeen,
+    isRemoved: Boolean((o as { is_removed?: boolean }).is_removed),
+    canRemove: Boolean((o as { can_remove?: boolean }).can_remove),
     createdDate:
       typeof o.created_date === "string" ? o.created_date : "",
     modifiedDate:
@@ -353,4 +351,87 @@ export async function getCoverById(coverId: number): Promise<CoverDetail | null>
   } catch {
     return null;
   }
+}
+
+/* -------------------------------------------------------------------------
+ * Recycle bin (editor soft-remove / restore)
+ *
+ * Mirrors removeMarking/restoreMarking/getRecycleBinMarkings in
+ * services/markings.ts. Removing a cover moves it to the recycle bin (hidden
+ * from the public catalog) and is reversible by restore. Both are editor-only
+ * on the backend (responsible editor for the cover's region, or superuser).
+ * ----------------------------------------------------------------------- */
+
+/** Editor: POST /covers/{id}/remove/ -- soft-remove into recycle bin. */
+export async function removeCover(
+  coverId: number,
+  reason?: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  await ensureCsrfToken();
+  try {
+    await apiClient.post(`/covers/${coverId}/remove/`, { reason: reason ?? "" });
+    return { ok: true };
+  } catch (err: unknown) {
+    const ax = err as { response?: { data?: { detail?: string } } };
+    const d = ax.response?.data?.detail;
+    return { ok: false, message: typeof d === "string" ? d : "Could not remove cover." };
+  }
+}
+
+/** Editor: POST /covers/{id}/restore/ -- restore from recycle bin. */
+export async function restoreCover(
+  coverId: number,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  await ensureCsrfToken();
+  try {
+    await apiClient.post(`/covers/${coverId}/restore/`, {});
+    return { ok: true };
+  } catch (err: unknown) {
+    const ax = err as { response?: { data?: { detail?: string } } };
+    const d = ax.response?.data?.detail;
+    return { ok: false, message: typeof d === "string" ? d : "Could not restore cover." };
+  }
+}
+
+/** One removed cover row from GET /covers/recycle-bin/ (CoverSerializer shape). */
+export interface RecycleBinCover {
+  id: number;
+  code: string | null;
+  colorName: string;
+  type: string | null;
+}
+
+export interface GetRecycleBinCoversResult {
+  results: RecycleBinCover[];
+  count: number;
+  next: string | null;
+  previous: string | null;
+}
+
+/** Editor: GET /covers/recycle-bin/ -- removed covers (region-scoped). */
+export async function getRecycleBinCovers(
+  page: number = 1,
+  pageSize: number = 10,
+): Promise<GetRecycleBinCoversResult> {
+  const params = { page: String(page), page_size: String(pageSize) };
+  const res = await apiClient.get<{
+    count: number;
+    next: string | null;
+    previous: string | null;
+    results: unknown[];
+  }>("/covers/recycle-bin/", { params });
+  const data = res.data;
+  if (!Array.isArray(data.results)) {
+    throw new Error("Cover recycle bin API: invalid response (missing results array)");
+  }
+  const results: RecycleBinCover[] = data.results.map((raw) => {
+    const o = raw as Record<string, unknown>;
+    return {
+      id: Number(o.id),
+      code: typeof o.code === "string" && o.code ? o.code : null,
+      colorName: typeof o.color_name === "string" ? o.color_name : "",
+      type: typeof o.type === "string" && o.type ? o.type : null,
+    };
+  });
+  return { results, count: data.count, next: data.next, previous: data.previous };
 }

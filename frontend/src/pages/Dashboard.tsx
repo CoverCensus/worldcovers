@@ -34,23 +34,11 @@ import { formatSizeFromSubmittedData } from "@/lib/dimensionsMm";
 import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { cn } from "@/lib/utils";
-import { normalizeImageUrl, getAssignedCatalogPage, type MarkingRecord } from "@/services/markings";
+import { normalizeImageUrl, getAssignedCatalogPage, getRecycleBinMarkings, type MarkingRecord } from "@/services/markings";
+import { getRecycleBinCovers, type RecycleBinCover } from "@/services/covers";
+import { listContributions, decideContribution } from "@/services/contributions";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
-
-function getMarkingsApiUrl(): string | null {
-  const env = import.meta.env.VITE_API_URL;
-  if (!env || typeof env !== "string" || env.trim() === "") return null;
-  const base = env.trim().replace(/\/+$/, "");
-  if (base.endsWith((import.meta.env.VITE_API_BASE_URL || '/api/v2') + "/markings")) return base;
-  return `${base}/markings`;
-}
-
-function getCsrfTokenFromCookie(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/(^|;\\s*)csrftoken=([^;]+)/);
-  return match ? decodeURIComponent(match[2]) : null;
-}
 
 const noImageClassName = "w-full h-full min-w-0 min-h-0 object-cover bg-muted";
 
@@ -92,12 +80,13 @@ function resolveSubmissionImageUrl(
   }
 
   const baseImageUrl = (import.meta.env.VITE_IMAGE_URL as string | undefined) ?? "";
+  const imageRoot = baseImageUrl.replace(/\/+$/, "") || "/media";
   const fromMeta = (meta: unknown): string | null => {
     if (!meta || typeof meta !== "object") return null;
     const obj = meta as Record<string, unknown>;
     const sf = obj.storage_filename ?? obj.storageFilename;
-    if (typeof sf !== "string" || !sf || !baseImageUrl) return null;
-    return normalizeImageUrl(`${baseImageUrl.replace(/\/+$/, "")}/${sf.replace(/^\/+/, "")}`);
+    if (typeof sf !== "string" || !sf) return null;
+    return normalizeImageUrl(`${imageRoot}/${sf.replace(/^\/+/, "")}`);
   };
   const metas = submittedData.image_metas ?? submittedData.imageMetas;
   if (Array.isArray(metas)) {
@@ -206,13 +195,6 @@ function SortableLabel<F extends string>({
   );
 }
 
-type PaginatedResponse<T> = {
-  count: number;
-  page: number;
-  page_size: number;
-  results: T[];
-};
-
 /** Build compact page numbers for pagination (shared with Catalog Search) */
 function getPaginationPages(currentPage: number, totalPages: number): (number | "ellipsis")[] {
   const delta = 2;
@@ -284,8 +266,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [loading, setLoading] = useState(true);
   const [submissionsRefetchKey, setSubmissionsRefetchKey] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [goToPageInput, setGoToPageInput] = useState("");
   const itemsPerPage = 10;
@@ -297,7 +277,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [suggestionsGoToInput, setSuggestionsGoToInput] = useState("");
   const suggestionsPageSize = 10;
 
-  // User Submissions (state editor): catalog entries for assigned states – view, edit, delete
+  // User Submissions (state editor): catalog entries for assigned states -- view, edit
   const [assignedCatalogItems, setAssignedCatalogItems] = useState<AssignedCatalogEntry[]>([]);
   const [assignedCatalogPage, setAssignedCatalogPage] = useState(1);
   const [assignedCatalogTotal, setAssignedCatalogTotal] = useState<number | null>(null);
@@ -324,6 +304,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   // Editor tab: history of user suggestions (all contributions in assigned states), not full catalog
   const [editorHistoryItems, setEditorHistoryItems] = useState<PendingReviewItem[]>([]);
+  // Recycle-bin markings shown when editorHistoryStatusFilter === "removed".
+  // Kept separate from editorHistoryItems (contributions) because the rows are
+  // markings and navigate to /record/:id instead of /contribution/:id.
+  const [removedMarkings, setRemovedMarkings] = useState<MarkingRecord[]>([]);
+  // Recycle-bin covers shown alongside removedMarkings when the filter is
+  // "removed". Loaded once (first page) and navigate to /covers/:id to restore.
+  const [removedCovers, setRemovedCovers] = useState<RecycleBinCover[]>([]);
   const [editorHistoryLoading, setEditorHistoryLoading] = useState(false);
   const [editorHistoryError, setEditorHistoryError] = useState<string | null>(null);
   const [editorHistoryStatusFilter, setEditorHistoryStatusFilter] = useState("all");
@@ -338,13 +325,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     { field: "submitted", dir: "desc" },
   ]);
   const toggleEditorHistorySort = (field: EditorHistorySortField, dir: SortDir) => {
+    // Single-column sort: clicking an arrow replaces the sort. Clicking the
+    // already-active direction clears the sort (returns to API order). The
+    // previous "stack" behavior left "submitted desc" pinned as the primary
+    // key, so secondary fields never affected order because created_at is
+    // unique per row.
     setSubmissionQueueSort((prev) => {
-      const idx = prev.findIndex((e) => e.field === field);
-      if (idx === -1) return [...prev, { field, dir }];
-      if (prev[idx].dir === dir) return prev.filter((_, i) => i !== idx);
-      const next = prev.slice();
-      next[idx] = { field, dir };
-      return next;
+      const current = prev[0];
+      if (current && current.field === field && current.dir === dir) return [];
+      return [{ field, dir }];
     });
   };
   const [editorHistoryPage, setEditorHistoryPage] = useState(1);
@@ -354,7 +343,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   // Filter states (mirror Catalog Search)
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("pending");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
   const [townFilter, setTownFilter] = useState("");
   const [shapeFilter, setShapeFilter] = useState("all");
@@ -363,13 +352,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     { field: "submitted", dir: "desc" },
   ]);
   const toggleMySubmissionsSort = (field: MySubmissionsSortField, dir: SortDir) => {
+    // See toggleEditorHistorySort for the single-column rationale.
     setMySubmissionsSort((prev) => {
-      const idx = prev.findIndex((e) => e.field === field);
-      if (idx === -1) return [...prev, { field, dir }];
-      if (prev[idx].dir === dir) return prev.filter((_, i) => i !== idx);
-      const next = prev.slice();
-      next[idx] = { field, dir };
-      return next;
+      const current = prev[0];
+      if (current && current.field === field && current.dir === dir) return [];
+      return [{ field, dir }];
     });
   };
   const [dateFrom, setDateFrom] = useState("");
@@ -415,37 +402,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     const fetchSubmissions = async () => {
       setLoading(true);
       try {
-        const apiEnv = import.meta.env.VITE_API_URL;
-        const apiBase =
-          apiEnv && typeof apiEnv === "string" && apiEnv.trim() !== ""
-            ? apiEnv.trim().replace(/\/+$/, "")
-            : null;
-
-        if (!apiBase) {
-          toast({
-            title: "Configuration error",
-            description: "VITE_API_URL is not set, cannot load submissions.",
-            variant: "destructive",
-          });
-          setSubmissions([]);
-          return;
-        }
-
-        // Fetch all contributions (new submissions + suggestions) so both appear in My Submissions
-        const res = await fetch(`${apiBase}/contributions/`, {
-          method: "GET",
-          credentials: "include",
-          headers: { Accept: "application/json" },
-        });
-        if (!res.ok) {
-          throw new Error(`API error: ${res.status} ${res.statusText}`);
-        }
-        const data: any = await res.json();
-        const list: any[] = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.results)
-            ? data.results
-            : [];
+        // Fetch all contributions (new submissions + suggestions) so both appear in My Submissions.
+        // rawItems carry dynamic camelCase-or-snake_case display fields the mapper reads positionally.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const list = (await listContributions()).rawItems as any[];
         if (!list.length) {
           setSubmissions([]);
           return;
@@ -549,13 +509,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   // Fetch suggestions (corrections) for the current user
   useEffect(() => {
-    const apiEnv = import.meta.env.VITE_API_URL;
-    const apiBase =
-      apiEnv && typeof apiEnv === "string" && apiEnv.trim() !== ""
-        ? apiEnv.trim().replace(/\/+$/, "")
-        : null;
-
-    if (!apiBase || !user) {
+    if (!user) {
       setSuggestions([]);
       setSuggestionsLoading(false);
       return;
@@ -568,20 +522,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
       setSuggestionsLoading(true);
       try {
-        const res = await fetch(`${apiBase}/contributions/?kind=suggestion`, {
-          method: "GET",
-          credentials: "include",
-          headers: { Accept: "application/json" },
-        });
-        if (!res.ok) {
-          throw new Error(`API error: ${res.status} ${res.statusText}`);
-        }
-        const data: any = await res.json();
-        const list: any[] = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.results)
-            ? data.results
-            : [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const list = (await listContributions({ kind: "suggestion" })).rawItems as any[];
         if (!list.length) {
           setSuggestions([]);
           return;
@@ -713,40 +655,19 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Load pending contributions for editor review (approve/reject/request revision)
   useEffect(() => {
     if (!isEditor || activeTab !== "editor") return;
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      setPendingReviewError("VITE_API_URL is not set.");
-      setPendingReviewItems([]);
-      setPendingReviewTotal(null);
-      return;
-    }
     setPendingReviewError(null);
     setPendingReviewLoading(true);
-    const stateParam = editorStateFilter !== "all" ? `&state=${encodeURIComponent(editorStateFilter)}` : "";
-    fetch(
-      `${apiBase}/contributions/?mode=editor&status=pending${stateParam}&page=${pendingReviewPage}&page_size=${pendingReviewPageSize}`,
-      {
-      method: "GET",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-      },
-    )
-      .then((res) => {
-        if (!res.ok) throw new Error(res.statusText || "Failed to load pending submissions");
-        return res.json();
-      })
-      .then((data: any[] | PaginatedResponse<any>) => {
-        const list = Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : null;
-        const total = Array.isArray(data)
-          ? data.length
-          : typeof (data as PaginatedResponse<any>)?.count === "number"
-            ? (data as PaginatedResponse<any>).count
-            : null;
-        setPendingReviewTotal(total);
-        if (!Array.isArray(list)) {
-          setPendingReviewItems([]);
-          return;
-        }
+    listContributions({
+      mode: "editor",
+      status: "pending",
+      state: editorStateFilter !== "all" ? editorStateFilter : undefined,
+      page: pendingReviewPage,
+      pageSize: pendingReviewPageSize,
+    })
+      .then(({ rawItems, count }) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const list = rawItems as any[];
+        setPendingReviewTotal(count);
         setPendingReviewItems(
           list.map((c) => {
             const submittedData = (c as { submitted_data?: Record<string, unknown>; submittedData?: Record<string, unknown> }).submitted_data
@@ -791,45 +712,51 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Load editor history (all user suggestions in assigned states) for the Editor tab
   useEffect(() => {
     if (!isEditor || activeTab !== "editor") return;
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      setEditorHistoryError("VITE_API_URL is not set.");
-      setEditorHistoryItems([]);
-      setEditorHistoryTotal(null);
-      return;
-    }
     setEditorHistoryError(null);
     setEditorHistoryLoading(true);
-    const statusParam =
+    // "Removed" swaps the data source to the recycle bin (markings), not the
+    // contribution list. The endpoint is region-scoped server side, so the
+    // state filter is not sent here.
+    if (editorHistoryStatusFilter === "removed") {
+      // Removed covers are loaded separately (first 50, no pagination); they
+      // navigate to /covers/:id where the Restore button lives. A failure here
+      // surfaces via the shared editor history error banner.
+      getRecycleBinCovers(1, 50)
+        .then((result) => setRemovedCovers(result.results))
+        .catch((err) => {
+          setEditorHistoryError(err instanceof Error ? err.message : "Could not load recycle bin.");
+          setRemovedCovers([]);
+        });
+      getRecycleBinMarkings(editorHistoryPage, editorHistoryPageSize)
+        .then((result) => {
+          setRemovedMarkings(result.results);
+          setEditorHistoryTotal(result.count);
+        })
+        .catch((err) => {
+          setEditorHistoryError(err instanceof Error ? err.message : "Could not load recycle bin.");
+          setRemovedMarkings([]);
+          setEditorHistoryTotal(null);
+        })
+        .finally(() => setEditorHistoryLoading(false));
+      return;
+    }
+    setRemovedCovers([]);
+    const historyStatus =
       editorHistoryStatusFilter !== "all" &&
       ["pending", "approved", "rejected", "needs_revision"].includes(editorHistoryStatusFilter)
-        ? `&status=${editorHistoryStatusFilter}`
-        : "";
-    const stateParam = editorStateFilter !== "all" ? `&state=${encodeURIComponent(editorStateFilter)}` : "";
-    fetch(
-      `${apiBase}/contributions/?mode=editor${statusParam}${stateParam}&page=${editorHistoryPage}&page_size=${editorHistoryPageSize}`,
-      {
-      method: "GET",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-      },
-    )
-      .then((res) => {
-        if (!res.ok) throw new Error(res.statusText || "Failed to load history");
-        return res.json();
-      })
-      .then((data: any[] | PaginatedResponse<any>) => {
-        const list = Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : null;
-        const total = Array.isArray(data)
-          ? data.length
-          : typeof (data as PaginatedResponse<any>)?.count === "number"
-            ? (data as PaginatedResponse<any>).count
-            : null;
-        setEditorHistoryTotal(total);
-        if (!Array.isArray(list)) {
-          setEditorHistoryItems([]);
-          return;
-        }
+        ? editorHistoryStatusFilter
+        : undefined;
+    listContributions({
+      mode: "editor",
+      status: historyStatus,
+      state: editorStateFilter !== "all" ? editorStateFilter : undefined,
+      page: editorHistoryPage,
+      pageSize: editorHistoryPageSize,
+    })
+      .then(({ rawItems, count }) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const list = rawItems as any[];
+        setEditorHistoryTotal(count);
         let mapped = list.map((c) => {
           const submittedData = (c as { submitted_data?: Record<string, unknown>; submittedData?: Record<string, unknown> }).submitted_data
             ?? (c as { submittedData?: Record<string, unknown> }).submittedData
@@ -908,33 +835,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         return;
       }
     }
-    const apiBase = import.meta.env.VITE_API_URL?.trim?.()?.replace(/\/+$/, "");
-    if (!apiBase) {
-      toast({ title: "Configuration error", description: "VITE_API_URL is not set.", variant: "destructive" });
-      return;
-    }
-    const actionPath =
-      statusDecisionKind === "approve" ? "approve" : statusDecisionKind === "reject" ? "reject" : "request-revision";
-    const body: Record<string, unknown> = { review_notes: statusComment.trim() };
-    if (statusDecisionKind === "approve") {
-      body.estimated_value = parseFloat(approveValue);
-    }
     setStatusSubmitting(true);
-    const csrfToken = getCsrfTokenFromCookie();
-    const headers: HeadersInit = { "Content-Type": "application/json", Accept: "application/json" };
-    if (csrfToken) headers["X-CSRFToken"] = csrfToken;
     try {
-      const res = await fetch(`${apiBase}/contributions/${statusDecisionTarget.id}/${actionPath}/`, {
-        method: "POST",
-        credentials: "include",
-        headers,
-        body: JSON.stringify(body),
+      await decideContribution(statusDecisionTarget.id, statusDecisionKind, {
+        reviewNotes: statusComment.trim(),
+        estimatedValue: statusDecisionKind === "approve" ? parseFloat(approveValue) : undefined,
       });
-      if (!res.ok) {
-        const resBody = await res.json().catch(() => ({}));
-        const msg = resBody?.review_notes?.[0] ?? resBody?.detail ?? res.statusText;
-        throw new Error(typeof msg === "string" ? msg : "Request failed");
-      }
       const actionLabel =
         statusDecisionKind === "approve" ? "Approved" : statusDecisionKind === "reject" ? "Rejected" : "Revision requested";
       toast({ title: actionLabel, description: "Your comment was saved for the contributor." });
@@ -951,60 +857,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       });
     } finally {
       setStatusSubmitting(false);
-    }
-  };
-
-  const handleDeleteSubmission = async () => {
-    if (!deleteTarget) return;
-    const markingId = (deleteTarget as { marking_id?: number }).marking_id ?? (deleteTarget as { id?: number }).id;
-    if (markingId == null) return;
-
-    const apiUrl = getMarkingsApiUrl();
-    if (!apiUrl) {
-      toast({
-        title: "Configuration error",
-        description: "VITE_API_URL is not set, cannot delete catalog entry.",
-        variant: "destructive",
-      });
-      return;
-    }
-    const base = apiUrl.replace(/\/+$/, "");
-    const url = `${base}/${markingId}/delete-mine/`;
-    const csrfToken = getCsrfTokenFromCookie();
-    const headers: HeadersInit = {};
-    if (csrfToken) {
-      headers["X-CSRFToken"] = csrfToken;
-    }
-    try {
-      setDeletingId(markingId);
-      const res = await fetch(url, {
-        method: "DELETE",
-        credentials: "include",
-        headers,
-      });
-      if (!res.ok) {
-        throw new Error(`Delete failed: ${res.status} ${res.statusText}`);
-      }
-      // Remove from the visible list (submissions or assigned catalog)
-      const targetId = (deleteTarget as { id?: number }).id ?? (deleteTarget as { marking_id?: number }).marking_id;
-      setSubmissions(prev => prev.filter((s) => s.id !== targetId && s.marking_id !== markingId));
-      setAssignedCatalogItems(prev => prev.filter((e) => e.id !== markingId));
-      setAssignedCatalogTotal((prev) => (prev != null && prev > 0 ? prev - 1 : null));
-      setDeleteTarget(null);
-      // Refetch catalog so total and list stay in sync with server
-      setAssignedCatalogRefetchKey((k) => k + 1);
-      toast({
-        title: "Catalog entry deleted",
-        description: "The catalog entry linked to this submission has been removed.",
-      });
-    } catch (error: unknown) {
-      toast({
-        title: "Could not delete catalog entry",
-        description: error instanceof Error ? error.message : "Please try again or contact an admin.",
-        variant: "destructive",
-      });
-    } finally {
-      setDeletingId(null);
     }
   };
 
@@ -1262,14 +1114,18 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       ? 0
       : Math.min((pendingReviewPage - 1) * pendingReviewPageSize + pendingReviewItems.length, pendingReviewTotalCount);
 
-  const editorHistoryTotalCount = editorHistoryTotal ?? editorHistoryItems.length;
+  // In "removed" mode the rows on the page come from removedMarkings, not the
+  // contribution list, so the page-end count must read that length instead.
+  const editorHistoryRowsOnPage =
+    editorHistoryStatusFilter === "removed" ? removedMarkings.length : editorHistoryItems.length;
+  const editorHistoryTotalCount = editorHistoryTotal ?? editorHistoryRowsOnPage;
   const editorHistoryTotalPages = Math.max(1, Math.ceil(editorHistoryTotalCount / editorHistoryPageSize));
   const editorHistoryPageStart =
     editorHistoryTotalCount === 0 ? 0 : (editorHistoryPage - 1) * editorHistoryPageSize + 1;
   const editorHistoryPageEnd =
     editorHistoryTotalCount === 0
       ? 0
-      : Math.min((editorHistoryPage - 1) * editorHistoryPageSize + editorHistoryItems.length, editorHistoryTotalCount);
+      : Math.min((editorHistoryPage - 1) * editorHistoryPageSize + editorHistoryRowsOnPage, editorHistoryTotalCount);
 
   const filteredAndSortedEditorHistoryItems = useMemo(() => {
     const filtered = editorHistoryItems.filter((item) => {
@@ -1699,7 +1555,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 <div className="flex items-center gap-2">
                   <Button
                     size="sm"
-                    onClick={() => navigate("/contribute")}
+                    onClick={() => navigate("/contribute", { state: { from: "/dashboard" } })}
                     className="shrink-0 bg-green-800 hover:bg-green-900 text-white"
                   >
                     <Plus className="mr-2 h-4 w-4" />
@@ -1739,6 +1595,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               const statusNorm = String(submission.status || "").toLowerCase();
                               if (statusNorm === "draft") {
                                 navigate(`/contribute?edit=${submission.id}`);
+                              } else if (statusNorm === "approved" && submission.marking_id) {
+                                // Approved submissions live on the entry detail page now.
+                                navigate(`/record/${submission.marking_id}`, {
+                                  state: { fromDashboard: true },
+                                });
                               } else {
                                 navigate(`/contribution/${submission.id}`, {
                                   state: { fromDashboard: true },
@@ -1844,15 +1705,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                   >
                                     Edit
                                   </Button>
-                                  {isSuperuser && (
-                                    <Button
-                                      variant="destructive"
-                                      size="sm"
-                                      onClick={() => setDeleteTarget(submission)}
-                                    >
-                                      Delete
-                                    </Button>
-                                  )}
                                 </>
                               )}
                             </div>
@@ -2033,6 +1885,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           <SelectItem value="approved">Approved</SelectItem>
                           <SelectItem value="rejected">Rejected</SelectItem>
                           <SelectItem value="needs_revision">Needs Revision</SelectItem>
+                          <SelectItem value="removed">Removed</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -2057,7 +1910,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         searchPlaceholder="Search states..."
                         emptyMessage="No state found."
                         aria-label="Filter editor data by state"
-                        disabled={editorHistoryLoading || pendingReviewLoading || isLoadingFilters}
+                        disabled={
+                          editorHistoryLoading ||
+                          pendingReviewLoading ||
+                          isLoadingFilters ||
+                          editorHistoryStatusFilter === "removed"
+                        }
                       />
                     </div>
                     <div className="space-y-2">
@@ -2462,6 +2320,116 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
                     <p>Loading history...</p>
                   </div>
+                ) : editorHistoryStatusFilter === "removed" ? (
+                  <div className="space-y-8">
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold text-foreground">Removed Markings</h3>
+                      {removedMarkings.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          No removed markings in your assigned regions. Markings you remove from
+                          the catalog appear here; open one to restore it.
+                        </p>
+                      ) : (
+                        <ul className="space-y-3">
+                          {removedMarkings.map((m) => {
+                            const title = [m.town, m.stateAbbrev || m.state].filter(Boolean).join(", ");
+                            const shapeStr = (m.shapeName || "").trim();
+                            const displayLabel =
+                              [title, shapeStr]
+                                .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
+                                .join(" - ") ||
+                              title ||
+                              `Marking #${m.id}`;
+                            return (
+                              <li
+                                key={m.id}
+                                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-card hover:shadow-archival-sm transition-shadow"
+                              >
+                                <div className="flex items-center gap-4 min-w-0 flex-1">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      navigate(`/record/${m.id}`, { state: { fromDashboard: true } })
+                                    }
+                                    className="w-16 h-16 shrink-0 p-0 border-0 bg-transparent cursor-pointer rounded overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring"
+                                    aria-label={`Open ${displayLabel}`}
+                                  >
+                                    <ImageOrPlaceholder
+                                      src={m.mainImage?.imageUrl ?? null}
+                                      alt={displayLabel}
+                                      className="w-full h-full object-cover rounded border border-border hover:opacity-90 transition-opacity"
+                                    />
+                                  </button>
+                                  <div className="min-w-0">
+                                    <span className="font-medium text-foreground block truncate">
+                                      {displayLabel}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                  <Badge className="rounded-full px-3 py-1 text-xs font-semibold shadow-sm bg-muted text-muted-foreground hover:bg-muted">
+                                    Removed
+                                  </Badge>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold text-foreground">Removed Covers</h3>
+                      {removedCovers.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          No removed covers in your assigned regions. Covers you remove from the
+                          catalog appear here; open one to restore it.
+                        </p>
+                      ) : (
+                        <ul className="space-y-3">
+                          {removedCovers.map((c) => {
+                            const coverLabel = c.code ?? `Cover #${c.id}`;
+                            const coverMeta = [
+                              c.colorName,
+                              c.type === "FC"
+                                ? "Folded Cover"
+                                : c.type === "FL"
+                                  ? "Folded Letter"
+                                  : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" - ");
+                            return (
+                              <li
+                                key={c.id}
+                                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-card hover:shadow-archival-sm transition-shadow"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => navigate(`/covers/${c.id}`)}
+                                  className="min-w-0 flex-1 text-left p-0 border-0 bg-transparent cursor-pointer rounded focus:outline-none focus:ring-2 focus:ring-ring"
+                                  aria-label={`Open ${coverLabel}`}
+                                >
+                                  <span className="font-medium text-foreground block truncate">
+                                    {coverLabel}
+                                  </span>
+                                  {coverMeta && (
+                                    <span className="text-xs text-muted-foreground block truncate">
+                                      {coverMeta}
+                                    </span>
+                                  )}
+                                </button>
+                                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                  <Badge className="rounded-full px-3 py-1 text-xs font-semibold shadow-sm bg-muted text-muted-foreground hover:bg-muted">
+                                    Removed
+                                  </Badge>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
                 ) : filteredAndSortedEditorHistoryItems.length === 0 ? (
                   <Card className="flex-1 flex items-center justify-center min-h-[200px]">
                     <CardContent className="text-center">
@@ -2499,9 +2467,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           <div className="flex items-center gap-4 min-w-0 flex-1">
                             <button
                               type="button"
-                              onClick={() =>
-                                navigate(`/contribution/${item.id}`, { state: { fromDashboard: true } })
-                              }
+                              onClick={() => {
+                                // Approved entries open the catalog detail page; everything
+                                // else stays on the standalone contribution page.
+                                if (item.status === "approved" && item.marking_id) {
+                                  navigate(`/record/${item.marking_id}`, { state: { fromDashboard: true } });
+                                } else {
+                                  navigate(`/contribution/${item.id}`, { state: { fromDashboard: true } });
+                                }
+                              }}
                               className="w-16 h-16 shrink-0 p-0 border-0 bg-transparent cursor-pointer rounded overflow-hidden focus:outline-none focus:ring-2 focus:ring-ring"
                               aria-label={`Open ${displayLabel}`}
                             >
@@ -2646,38 +2620,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           )}
       </div>
       <Footer />
-
-      <AlertDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => {
-          if (!open && !deletingId) {
-            setDeleteTarget(null);
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this submission?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently remove{" "}
-              <span className="font-medium text-foreground">
-                {deleteTarget?.name ?? "this catalog entry"}
-              </span>{" "}
-              from your submissions. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={!!deletingId}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteSubmission}
-              disabled={!!deletingId}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {deletingId ? "Deleting..." : "Delete"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       {/* Status decision (approve / reject / request revision) — comment required; approve requires value (lettering/framing/date from submission) */}
       <AlertDialog

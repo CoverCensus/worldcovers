@@ -98,6 +98,20 @@ class MarkingQuerySet(models.QuerySet):
         )
 
 
+class MarkingManager(models.Manager.from_queryset(MarkingQuerySet)):
+    """
+    Default manager for Marking. Hides rows that are in the recycle bin
+    (i.e. that have a related MarkingRecycleBin row). A marking is "removed"
+    by creating its recycle-bin sidecar row, not by mutating the Marking
+    itself -- see MarkingRecycleBin. Code that must see removed markings
+    (recycle-bin endpoints, restore, audit) uses Marking.all_objects.
+
+    Keeps the MarkingQuerySet methods (e.g. with_date_range) via from_queryset.
+    """
+    def get_queryset(self):
+        return super().get_queryset().filter(recycle_bin_entry__isnull=True)
+
+
 MARKING_DATE_FMT_CHOICES = [('MD', 'MD'), ('MDD', 'MDD'), ('YD', 'YD'), ('YMD', 'YMD'), ('YMDD', 'YMDD')]
 MARKING_IMPRESSION_CHOICES = [('Normal', 'Normal'), ('Stencil', 'Stencil'), ('Negative', 'Negative')]
 
@@ -131,13 +145,20 @@ class Marking(TimestampedModel):
     rate_val = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Non-negative rate amount; most common on RATEMARK and integrated-rate TOWNMARK rows')
     post_office = models.ForeignKey('PostOffice', on_delete=models.PROTECT, related_name='markings')
 
-    objects = MarkingQuerySet.as_manager()
+    # objects: default manager, EXCLUDES recycle-binned markings.
+    # all_objects: unfiltered, INCLUDES recycle-binned markings.
+    # base_manager_name='all_objects' makes Django's related/FK access
+    # (contribution.marking, cover_marking.marking, etc.) resolve via the
+    # unfiltered manager so structural references never break on a removed row.
+    objects = MarkingManager()
+    all_objects = MarkingQuerySet.as_manager()
 
     class Meta:
         db_table = 'Markings'
         verbose_name = 'Marking'
         verbose_name_plural = 'Markings'
         ordering = ['id']
+        base_manager_name = 'all_objects'
         constraints = [
             models.CheckConstraint(
                 check=Q(type__in=[c[0] for c in MarkingType.choices]),
@@ -244,6 +265,8 @@ class SubmissionTransaction(models.Model):
     """Immutable audit events for submission and moderation workflows."""
     ACTION_SUBMIT = "submit"
     ACTION_EDIT_SUBMISSION = "edit_submission"
+    # Retained for historical log rows; no longer written after the
+    # editor inline-edit form was removed from ContributionDetail.
     ACTION_EDITOR_EDIT = "editor_edit"
     ACTION_APPROVE = "approve"
     ACTION_REJECT = "reject"
@@ -252,6 +275,19 @@ class SubmissionTransaction(models.Model):
     ACTION_RECORD_CREATE = "record_create"
     ACTION_RECORD_UPDATE = "record_update"
     ACTION_RECORD_DELETE = "record_delete"
+    # New deletion-model actions (see MarkingRecycleBin):
+    #   DRAFT_DELETED   -- a contributor/editor hard-deleted their own draft
+    #   MARKING_REMOVED -- a marking was soft-removed into the recycle bin
+    #   MARKING_RESTORED-- a marking was restored from the recycle bin
+    ACTION_DRAFT_DELETED = "draft_deleted"
+    ACTION_MARKING_REMOVED = "marking_removed"
+    ACTION_MARKING_RESTORED = "marking_restored"
+    # Cover deletion-model actions, mirroring the marking recycle bin
+    # (see CoverRecycleBin):
+    #   COVER_REMOVED  -- a cover was soft-removed into the recycle bin
+    #   COVER_RESTORED -- a cover was restored from the recycle bin
+    ACTION_COVER_REMOVED = "cover_removed"
+    ACTION_COVER_RESTORED = "cover_restored"
     ACTION_CHOICES = [
         (ACTION_SUBMIT, "Submit"),
         (ACTION_EDIT_SUBMISSION, "Edit submission"),
@@ -263,6 +299,11 @@ class SubmissionTransaction(models.Model):
         (ACTION_RECORD_CREATE, "Record create"),
         (ACTION_RECORD_UPDATE, "Record update"),
         (ACTION_RECORD_DELETE, "Record delete"),
+        (ACTION_DRAFT_DELETED, "Draft deleted"),
+        (ACTION_MARKING_REMOVED, "Marking removed"),
+        (ACTION_MARKING_RESTORED, "Marking restored"),
+        (ACTION_COVER_REMOVED, "Cover removed"),
+        (ACTION_COVER_RESTORED, "Cover restored"),
     ]
 
     SOURCE_CONTRIBUTOR_PORTAL = "contributor_portal"
@@ -298,6 +339,15 @@ class SubmissionTransaction(models.Model):
         blank=True,
         related_name="transactions",
     )
+    # Cover is defined later in this module, so reference it by name. Nullable
+    # like `marking`: most transactions are not cover-scoped.
+    cover = models.ForeignKey(
+        'Cover',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transactions",
+    )
     source = models.CharField(max_length=30, choices=SOURCE_CHOICES, default=SOURCE_SYSTEM)
     before_payload = models.JSONField(default=dict, blank=True)
     after_payload = models.JSONField(default=dict, blank=True)
@@ -312,6 +362,7 @@ class SubmissionTransaction(models.Model):
         ordering = ["-created_at", "-id"]
         indexes = [
             models.Index(fields=["marking", "created_at"]),
+            models.Index(fields=["cover", "created_at"]),
             models.Index(fields=["contribution", "created_at"]),
             models.Index(fields=["actor", "created_at"]),
             models.Index(fields=["action", "created_at"]),
@@ -356,6 +407,82 @@ class MarkingVersion(models.Model):
 
     def __str__(self):
         return f"Marking #{self.marking_id} v{self.version_no}"
+
+
+class CoverVersion(models.Model):
+    """Snapshot history for recoverable cover states. Mirrors MarkingVersion."""
+    id = models.AutoField(primary_key=True)
+    # Cover is defined later in this module, so reference it by name.
+    cover = models.ForeignKey('Cover', on_delete=models.CASCADE, related_name="versions")
+    version_no = models.PositiveIntegerField()
+    snapshot = models.JSONField(default=dict, blank=True)
+    transaction = models.ForeignKey(
+        SubmissionTransaction,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="cover_versions",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="cover_versions_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "CoverVersions"
+        verbose_name = "Cover Version"
+        verbose_name_plural = "Cover Versions"
+        ordering = ["-version_no", "-id"]
+        unique_together = [["cover", "version_no"]]
+        indexes = [
+            models.Index(fields=["cover", "version_no"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        return f"Cover #{self.cover_id} v{self.version_no}"
+
+
+class MarkingRecycleBin(models.Model):
+    """
+    Soft-delete sidecar for Marking. The presence of a row here means the
+    referenced Marking is "removed" (in the recycle bin). The Marking row
+    itself never moves and is never mutated, so all FKs, versions, cover
+    links, dates, images and citations stay intact -- complete history is
+    preserved. Restoring a marking is just deleting its row here.
+
+    The default Marking manager (MarkingManager) excludes any Marking that
+    has a row in this table; Marking.all_objects includes them.
+    """
+    marking = models.OneToOneField(
+        Marking,
+        on_delete=models.CASCADE,
+        primary_key=True,
+        related_name="recycle_bin_entry",
+    )
+    removed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="markings_removed",
+    )
+    removed_at = models.DateTimeField(auto_now_add=True)
+    reason = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "marking_recycle_bin"
+        verbose_name = "Recycle-binned Marking"
+        verbose_name_plural = "Recycle-binned Markings"
+        ordering = ["-removed_at"]
+        indexes = [
+            models.Index(fields=["removed_at"]),
+        ]
+
+    def __str__(self):
+        return f"Marking #{self.marking_id} removed at {self.removed_at}"
 
 
 IMAGE_MARKING_VIEW_CHOICES = ['FULL', 'DETAIL']
@@ -677,6 +804,28 @@ class Shape(TimestampedModel):
     def __str__(self):
         return self.name
 
+
+class CoverQuerySet(models.QuerySet):
+    """
+    Base queryset for Cover. No custom methods yet; defined so all_objects can
+    grow query helpers later and to mirror the MarkingQuerySet/MarkingManager
+    shape that the recycle-bin pattern relies on.
+    """
+    pass
+
+
+class CoverManager(models.Manager.from_queryset(CoverQuerySet)):
+    """
+    Default manager for Cover. Hides rows that are in the recycle bin (i.e.
+    that have a related CoverRecycleBin row). A cover is "removed" by creating
+    its recycle-bin sidecar row, not by mutating the Cover itself -- see
+    CoverRecycleBin. Code that must see removed covers (recycle-bin endpoints,
+    restore, audit) uses Cover.all_objects.
+    """
+    def get_queryset(self):
+        return super().get_queryset().filter(recycle_bin_entry__isnull=True)
+
+
 class Cover(TimestampedModel):
     """
     A physical postal cover with recorded postal markings.
@@ -692,10 +841,19 @@ class Cover(TimestampedModel):
     is_institutional = models.BooleanField(null=True, blank=True, help_text='Institutionally owned (museum, society, etc.)')
     width = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, help_text='Horizontal dimension in millimeters')
 
+    # objects: default manager, EXCLUDES recycle-binned covers.
+    # all_objects: unfiltered, INCLUDES recycle-binned covers.
+    # base_manager_name='all_objects' makes Django's related/FK access
+    # (cover_marking.cover, cover_valuation.cover, snapshots) resolve via the
+    # unfiltered manager so structural references never break on a removed row.
+    objects = CoverManager()
+    all_objects = CoverQuerySet.as_manager()
+
     class Meta:
         verbose_name = 'Cover'
         verbose_name_plural = 'Covers'
         ordering = ['id']
+        base_manager_name = 'all_objects'
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
@@ -705,16 +863,57 @@ class Cover(TimestampedModel):
         base = f"C-{pk}"
         candidate = base
         suffix = 0
-        while Cover.objects.filter(code=candidate).exclude(pk=pk).exists():
+        # all_objects so a removed cover's code cannot be silently reused.
+        while Cover.all_objects.filter(code=candidate).exclude(pk=pk).exists():
             suffix += 1
             candidate = f"{base}-{suffix}"
-        Cover.objects.filter(pk=pk).update(code=candidate)
+        Cover.all_objects.filter(pk=pk).update(code=candidate)
         self.code = candidate
 
     def __str__(self):
         if self.code:
             return f'Cover {self.code}'
         return f'Cover #{self.pk}'
+
+
+class CoverRecycleBin(models.Model):
+    """
+    Soft-delete sidecar for Cover, mirroring MarkingRecycleBin. The presence of
+    a row here means the referenced Cover is "removed" (in the recycle bin).
+    The Cover row itself never moves and is never mutated, so all FKs, versions,
+    cover-marking links, valuations, dates, images and citations stay intact --
+    complete history is preserved. Restoring a cover is just deleting its row
+    here.
+
+    The default Cover manager (CoverManager) excludes any Cover that has a row
+    in this table; Cover.all_objects includes them.
+    """
+    cover = models.OneToOneField(
+        Cover,
+        on_delete=models.CASCADE,
+        primary_key=True,
+        related_name="recycle_bin_entry",
+    )
+    removed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="covers_removed",
+    )
+    removed_at = models.DateTimeField(auto_now_add=True)
+    reason = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "cover_recycle_bin"
+        verbose_name = "Recycle-binned Cover"
+        verbose_name_plural = "Recycle-binned Covers"
+        ordering = ["-removed_at"]
+        indexes = [
+            models.Index(fields=["removed_at"]),
+        ]
+
+    def __str__(self):
+        return f"Cover #{self.cover_id} removed at {self.removed_at}"
+
 
 class DateSeen(TimestampedModel):
     """

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { Loader2, Pencil } from "lucide-react";
+import { Info, Loader2, Pencil, Trash2 } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
@@ -36,13 +36,30 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { getCoverById, type CoverDetail, type CoverDateSeenItem } from "@/services/covers";
+import {
+  getCoverById,
+  removeCover,
+  restoreCover,
+  type CoverDetail,
+  type CoverDateSeenItem,
+} from "@/services/covers";
 import { listCitationsForSubject } from "@/services/citations";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
 import { SUBMISSION_LABELS } from "@/labels/submission";
@@ -139,6 +156,11 @@ const CoverDetailPage = () => {
   const [coverReviewKind, setCoverReviewKind] = useState<CoverMarkingReviewActionApi | null>(null);
   const [coverReviewNotes, setCoverReviewNotes] = useState("");
   const [coverReviewBusy, setCoverReviewBusy] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeReason, setRemoveReason] = useState("");
+  const [removing, setRemoving] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   const isStaff =
     !!user &&
@@ -155,8 +177,13 @@ const CoverDetailPage = () => {
     );
   }, [user]);
 
+  // A removed (recycle-binned) cover is hidden from the catalog, so its link is
+  // no longer reviewable: hide approve/reject/return until it is restored.
   const canReviewCover =
-    isStaff && coverMarkingLink != null && coverMarkingLink.reviewStatus === "pending";
+    isStaff &&
+    !cover?.isRemoved &&
+    coverMarkingLink != null &&
+    coverMarkingLink.reviewStatus === "pending";
 
   const refreshCoverMarkingLink = useCallback(async () => {
     if (coverPk == null) return;
@@ -194,7 +221,7 @@ const CoverDetailPage = () => {
       if (!res.ok) {
         toast({
           title: "Could not update cover",
-          description: res.message,
+          description: "message" in res ? res.message : "Request failed.",
           variant: "destructive",
         });
         return;
@@ -214,6 +241,49 @@ const CoverDetailPage = () => {
       await refreshCoverMarkingLink();
     } finally {
       setCoverReviewBusy(false);
+    }
+  };
+
+  // Re-fetch just the cover row so its is_removed/can_remove flags refresh after
+  // a remove/restore action (the full page load is heavier than we need here).
+  const reloadCover = useCallback(async () => {
+    if (coverPk == null) return;
+    const detail = await getCoverById(coverPk);
+    if (detail) setCover(detail);
+  }, [coverPk]);
+
+  const handleRemoveConfirm = async () => {
+    if (cover == null) return;
+    setRemoving(true);
+    try {
+      const res = await removeCover(cover.id, removeReason.trim() || undefined);
+      if (res.ok) {
+        toast({ title: "Cover removed" });
+        setRemoveOpen(false);
+        setRemoveReason("");
+        await reloadCover();
+      } else {
+        toast({ title: "Could not remove", description: res.message, variant: "destructive" });
+      }
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  const handleRestoreConfirm = async () => {
+    if (cover == null) return;
+    setRestoring(true);
+    try {
+      const res = await restoreCover(cover.id);
+      if (res.ok) {
+        toast({ title: "Cover restored" });
+        setRestoreOpen(false);
+        await reloadCover();
+      } else {
+        toast({ title: "Could not restore", description: res.message, variant: "destructive" });
+      }
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -447,7 +517,10 @@ const CoverDetailPage = () => {
   }
 
   const galleryImages = buildCoverGalleryImages(images);
-  const canSubmitEdit = user != null && markingId != null && coverPk != null;
+  // A removed (recycle-binned) cover is read-only: no edits until it is restored
+  // (mirrors the marking record UI).
+  const canSubmitEdit =
+    user != null && markingId != null && coverPk != null && !cover.isRemoved;
 
   const datesText =
     cover.datesSeen.length > 0
@@ -463,9 +536,9 @@ const CoverDetailPage = () => {
 
   const backstampText = coverMarkingLink?.isBackstamp ? "Yes" : "No";
 
-  const ratemarkCount = associatedMarkings.filter(
-    (row) => row.marking.type === "RATEMARK",
-  ).length;
+  // Count every associated marking, not just ratemarks: the header is labeled
+  // "Associated Markings" and the list below renders all of them.
+  const associatedMarkingCount = associatedMarkings.length;
 
   return (
     <>
@@ -485,7 +558,7 @@ const CoverDetailPage = () => {
               carouselApi={api}
               currentIndex={current}
               emptyMessage="No images linked to this cover yet."
-              canReorder={isStaff}
+              canReorder={isStaff && !cover.isRemoved}
               reorderingImages={reorderingImages}
               onMoveBy={moveImageBy}
               onSetDefault={setImageAsDefault}
@@ -508,6 +581,12 @@ const CoverDetailPage = () => {
         }
         rightColumn={
           <>
+            {cover.isRemoved && (
+              <div className="flex items-center gap-2 rounded-md border border-muted bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                <Info className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>This cover has been marked for removal.</span>
+              </div>
+            )}
             <Card className="shadow-archival-md">
               <CardHeader>
                 <div className="flex items-center justify-between gap-3">
@@ -570,13 +649,28 @@ const CoverDetailPage = () => {
                     </Button>
                   </div>
                 )}
+                {cover.canRemove && (
+                  <div className="mt-4 pt-4 border-t border-border flex justify-end">
+                    {cover.isRemoved ? (
+                      <Button variant="outline" size="sm" onClick={() => setRestoreOpen(true)}>
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Restore Cover
+                      </Button>
+                    ) : (
+                      <Button variant="destructive" size="sm" onClick={() => setRemoveOpen(true)}>
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Remove Cover
+                      </Button>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
             <Card className="shadow-archival-md">
               <CardHeader>
                 <CardTitle className="font-heading text-lg">
-                  Associated Markings ({ratemarkCount})
+                  Associated Markings ({associatedMarkingCount})
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4 pt-0">
@@ -677,6 +771,63 @@ const CoverDetailPage = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={removeOpen} onOpenChange={(open) => !removing && setRemoveOpen(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove Cover</DialogTitle>
+            <DialogDescription>
+              This moves the cover to the recycle bin and hides it from the public catalog.
+              It can be restored later. Optionally record a reason.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            placeholder="Reason (optional)"
+            value={removeReason}
+            onChange={(e) => setRemoveReason(e.target.value)}
+            disabled={removing}
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRemoveOpen(false)}
+              disabled={removing}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleRemoveConfirm()}
+              disabled={removing}
+            >
+              {removing ? "Removing..." : "Remove Cover"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={restoreOpen} onOpenChange={(open) => !restoring && setRestoreOpen(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restore Cover</AlertDialogTitle>
+            <AlertDialogDescription>
+              This returns the cover to the public catalog.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restoring}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void handleRestoreConfirm();
+              }}
+              disabled={restoring}
+            >
+              {restoring ? "Restoring..." : "Restore Cover"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 };

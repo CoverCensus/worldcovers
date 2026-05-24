@@ -3,21 +3,30 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-router-dom";
-import { useEffect, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, type ReactNode } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { Spinner } from "@/components/ui/spinner";
 import Index from "./pages/Index";
 import Search from "./pages/Search";
-import EntryDetail from "./pages/EntryDetail";
 import ContributionDetail from "./pages/ContributionDetail";
 import Contribute from "./pages/Contribute";
-import CoverEdit from "./pages/CoverEdit";
-import Dashboard from "./pages/Dashboard";
-import MySuggestions from "./pages/MySuggestions";
 import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
 import Help from "./pages/Help";
 import Collections from "./pages/Collections";
 import NotFound from "./pages/NotFound";
+
+// Lazy-loaded routes: heavier pages that are not on the common
+// landing path. EntryDetail is reused across /record/:id, /covers/:coverId,
+// and /record/:id/cover/:coverId -- React.lazy caches the chunk after the
+// first load so the second hit is free.
+const CoverEdit = lazy(() => import("./pages/CoverEdit"));
+const EntryDetail = lazy(() => import("./pages/EntryDetail"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+// MySuggestions is a thin wrapper around Dashboard; lazy-loading it
+// alongside Dashboard keeps both in the same chunk (preventing rollup
+// from pulling Dashboard back into the eager bundle via the wrapper).
+const MySuggestions = lazy(() => import("./pages/MySuggestions"));
 
 const queryClient = new QueryClient();
 // Scroll to top on every route change so pages open at the top.
@@ -57,6 +66,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <ScrollToTop>
+          <Suspense fallback={<Spinner fullScreen />}>
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/search" element={<Search />} />
@@ -134,6 +144,7 @@ const App = () => (
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </Suspense>
         </ScrollToTop>
       </BrowserRouter>
     </TooltipProvider>

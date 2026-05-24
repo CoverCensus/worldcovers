@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowUp, History, Loader2, MessageSquare, Pencil, Plus, Star, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, History, Info, Loader2, MessageSquare, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
@@ -17,12 +17,16 @@ import {
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { ImageOrPlaceholder } from "@/components/ImageOrPlaceholder";
 import { formatCatalogDate, markingTypeLabel } from "@/lib/catalogRecordDisplay";
+import { buildMarkingFields } from "@/lib/markingFields";
+import { MarkingFieldsDisplay } from "@/components/MarkingFieldsDisplay";
 import {
   getMarkingById,
   getMarkingChangelog,
   loadAssociatedCoversForMarking,
   normalizeImageUrl,
+  removeMarking,
   reorderImages,
+  restoreMarking,
   type AssociatedCover,
   type AssociatedDateSeen,
   type MarkingChangelogEvent,
@@ -30,12 +34,29 @@ import {
   type MarkingCitationReferenceWork,
   type MarkingImage,
   type MarkingRecord,
-  type MarkingTypeValue,
 } from "@/services/markings";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { SUBMISSION_LABELS } from "@/labels/submission";
 import { useAuth } from "@/hooks/useAuth";
-import type { AuthUser } from "@/lib/auth";
 
 type GalleryImage = {
   imageUrl: string | null;
@@ -202,12 +223,6 @@ function citationByline(rw: MarkingCitationReferenceWork | null): string {
   return "";
 }
 
-function inscriptionLabel(type: MarkingTypeValue): string {
-  if (type === "RATEMARK") return "Ratemark Text";
-  if (type === "AUXMARK") return "Auxmark Text";
-  return "Townmark Text";
-}
-
 /**
  * Format a server-side ISO timestamp (e.g. "2026-04-12T19:34:51.123Z") for
  * the Record History row. We render in the viewer's locale so timestamps
@@ -238,24 +253,6 @@ function historyActorDisplay(event: MarkingChangelogEvent): string {
   return "system";
 }
 
-function shouldShowEditorComment(params: {
-  user: AuthUser | null;
-  editorComment: string;
-}): boolean {
-  if (!params.editorComment.trim()) return false;
-  if (!params.user) return false;
-  return (
-    params.user.role === "editor" ||
-    params.user.role === "administrator" ||
-    params.user.is_superuser === true
-  );
-}
-
-function hasDisplayValue(v: unknown): boolean {
-  const s = String(v ?? "").trim();
-  return s !== "" && s !== "-" && s.toLowerCase() !== "unknown";
-}
-
 function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
   const typeLabel = markingTypeLabel(record.type) || "Marking";
   return record.images.map((img: MarkingImage) => ({
@@ -269,25 +266,6 @@ function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
     isTracing: img.subjectType === "MARKING" && img.isTracing,
     imageId: img.imageId > 0 ? img.imageId : null,
   }));
-}
-
-function DetailRow({
-  label,
-  value,
-  last,
-}: {
-  label: string;
-  value: string;
-  last: boolean;
-}) {
-  return (
-    <div
-      className={`flex justify-between py-2 ${last ? "" : "border-b border-border"}`}
-    >
-      <dt className="text-muted-foreground font-medium">{label}</dt>
-      <dd className="text-foreground whitespace-pre-line text-right">{value}</dd>
-    </div>
-  );
 }
 
 function coverLinkReviewBadgeLabel(cover: AssociatedCover): string {
@@ -336,6 +314,13 @@ const RecordDetail = () => {
   // flight. Without this an editor can fire two overlapping reorders before
   // the first one resolves, producing inconsistent display_order values.
   const [reorderingImages, setReorderingImages] = useState(false);
+  // Remove/restore (recycle bin) controls -- only rendered when the backend
+  // reports record.canRemove (superuser or responsible editor).
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeReason, setRemoveReason] = useState("");
+  const [removing, setRemoving] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   const markingId = id ? parseInt(String(id).replace(/^api-/, ""), 10) : null;
 
@@ -553,8 +538,11 @@ const RecordDetail = () => {
     );
   }
 
-  const editorComment = record.desc?.trim() ?? "";
-  const showEditorComment = shouldShowEditorComment({ user, editorComment });
+  // Comment-for-editor and editor feedback come straight off the marking's
+  // approved Contribution. The backend returns "" unless the viewer is that
+  // contributor or an editor, so a non-empty string is already authorized to show.
+  const commentForEditor = record.commentForEditor?.trim() ?? "";
+  const editorFeedback = record.editorFeedback?.trim() ?? "";
   const galleryImages = buildGalleryImages(record);
   const typeLabel = markingTypeLabel(record.type) || "Townmark";
 
@@ -568,6 +556,51 @@ const RecordDetail = () => {
       },
     });
 
+  // Re-pull the marking after a remove/restore so the buttons toggle in place
+  // and the recycle-bin banner appears/disappears. Reuses the same loader the
+  // page mounts with and refreshes after image edits. The editor/superuser
+  // retrieve override (backend B1) keeps the page loadable once removed.
+  const refetchRecord = async () => {
+    if (markingId == null || Number.isNaN(markingId)) return;
+    const refreshed = await getMarkingById(markingId);
+    if (refreshed) setRecord(refreshed);
+  };
+
+  const handleRemoveConfirm = async () => {
+    if (!record) return;
+    setRemoving(true);
+    try {
+      const res = await removeMarking(record.id, removeReason.trim() || undefined);
+      if (res.ok) {
+        toast({ title: "Marking removed" });
+        setRemoveOpen(false);
+        setRemoveReason("");
+        await refetchRecord();
+      } else {
+        toast({ title: "Could not remove", description: res.message, variant: "destructive" });
+      }
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  const handleRestoreConfirm = async () => {
+    if (!record) return;
+    setRestoring(true);
+    try {
+      const res = await restoreMarking(record.id);
+      if (res.ok) {
+        toast({ title: "Marking restored" });
+        setRestoreOpen(false);
+        await refetchRecord();
+      } else {
+        toast({ title: "Could not restore", description: res.message, variant: "destructive" });
+      }
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   const dimensionsValue = dimensionsDisplay(record) || EMPTY;
   const earliestValue = yearOnly(record.earliestSeen);
   const latestValue = yearOnly(record.latestSeen);
@@ -575,7 +608,6 @@ const RecordDetail = () => {
     record.impression && record.impression.trim().toLowerCase() !== "normal"
       ? record.impression
       : "";
-  const isIrregValue = record.isIrreg === true ? "Yes" : "";
   const isStaff =
     !!user &&
     (user.role === "editor" ||
@@ -597,48 +629,29 @@ const RecordDetail = () => {
     historyEvents.length - HISTORY_EXPANDED_LIMIT,
   );
 
-  // Field order mirrors the contribute/edit form. Town and State/Territory show
-  // for every mark type (Townmark, Ratemark, Auxmark), not just Townmarks.
-  //
-  // Shape / Lettering / Dimensions:
-  //   - Manuscripts have no shape/lettering/dimensions by data model, so we
-  //     always hide these rows for manuscript markings.
-  //   - Townmarks always include them (subject to the standard
-  //     alwaysShow=false + hasDisplayValue filter that hides blanks).
-  //   - Ratemark / Auxmark also include them with the same blank-filter, so
-  //     real values still show on the record detail page; the Search card
-  //     (CatalogRecordFields.tsx, variant="search") intentionally hides them
-  //     for non-Townmarks to avoid cluttering result rows.
-  const showPhysicalDetailFields = record.isManuscript !== true;
-  const details = [
-    { label: "Type", value: typeLabel, alwaysShow: false },
-    { label: "Manuscript", value: record.isManuscript ? "Yes" : "No", alwaysShow: false },
-    { label: "State/Territory", value: record.state, alwaysShow: false },
-    { label: "Town", value: record.town, alwaysShow: false },
-    { label: inscriptionLabel(record.type), value: record.inscriptionTxt, alwaysShow: false },
-    { label: "Earliest Seen", value: earliestValue, alwaysShow: true },
-    { label: "Latest Seen", value: latestValue, alwaysShow: true },
-    ...(showPhysicalDetailFields ? [{ label: "Shape", value: record.shapeName, alwaysShow: false }] : []),
-    // Rate Value: always shown for Ratemarks (even when blank), shown for
-    // Auxmarks only when populated, never shown for Townmarks.
-    ...(record.type === "RATEMARK"
-      ? [{ label: "Rate Value", value: formatRateValue(record.rateVal), alwaysShow: true }]
-      : record.type === "AUXMARK"
-        ? [{ label: "Rate Value", value: formatRateValue(record.rateVal), alwaysShow: false }]
-        : []),
-    { label: "Date Format", value: record.dateFmt, alwaysShow: false },
-    { label: "Impression", value: impressionValue, alwaysShow: false },
-    { label: "Is Irregular", value: isIrregValue, alwaysShow: false },
-    { label: "Color", value: record.colorName, alwaysShow: false },
-    ...(showPhysicalDetailFields ? [{ label: "Lettering", value: record.letteringName, alwaysShow: false }] : []),
-    ...(showPhysicalDetailFields ? [{ label: "Dimensions", value: dimensionsValue, alwaysShow: false }] : []),
-    ...(isStaff
-      ? [{ label: "Catalog text", value: record.catalogTxt, alwaysShow: false }]
-      : []),
-    { label: "Catalog code", value: record.code, alwaysShow: false },
-  ];
-  const visibleDetails = details.filter(
-    (row) => row.alwaysShow || hasDisplayValue(row.value),
+  // Field order and visibility rules live in buildMarkingFields so
+  // ContributionDetail renders the same sequence.
+  const detailRows = buildMarkingFields(
+    {
+      type: record.type,
+      isManuscript: record.isManuscript,
+      state: record.state,
+      town: record.town,
+      inscriptionTxt: record.inscriptionTxt,
+      earliestSeen: earliestValue,
+      latestSeen: latestValue,
+      shapeName: record.shapeName,
+      rateValFormatted: formatRateValue(record.rateVal),
+      dateFmt: record.dateFmt,
+      impression: impressionValue,
+      isIrreg: record.isIrreg,
+      colorName: record.colorName,
+      letteringName: record.letteringName,
+      dimensions: dimensionsValue,
+      catalogTxt: record.catalogTxt,
+      code: record.code,
+    },
+    { isStaff },
   );
 
   const coverCount = associatedCovers.length;
@@ -697,6 +710,7 @@ const RecordDetail = () => {
                               subjectLabel: typeLabel,
                               isDefault: false,
                               isTracing: false,
+                              imageId: null,
                             } satisfies GalleryImage,
                           ]
                       ).map((img, index) => {
@@ -759,8 +773,13 @@ const RecordDetail = () => {
                   ) : (
                     <div className="flex gap-3 overflow-x-auto pb-1">
                       {galleryImages.map((img, idx) => {
+                        // A removed marking is read-only: no image reordering
+                        // either, only Restore.
                         const canReorder =
-                          isStaff && img.imageId != null && galleryImages.length > 1;
+                          isStaff &&
+                          !record.isRemoved &&
+                          img.imageId != null &&
+                          galleryImages.length > 1;
                         return (
                           <div
                             key={`${img.imageId ?? img.originalFilename ?? "img"}-${idx}`}
@@ -909,27 +928,27 @@ const RecordDetail = () => {
             </div>
 
             <div className="space-y-6">
+              {record.isRemoved && (
+                <div className="flex items-center gap-2 rounded-md border border-muted bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                  <Info className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>This entry has been marked for removal.</span>
+                </div>
+              )}
               <Card className="shadow-archival-md">
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
                     <CardTitle className="font-heading text-lg">Record Details</CardTitle>
-                    <Button variant="outline" size="sm" onClick={goEdit}>
-                      <Pencil className="mr-2 h-4 w-4" />
-                      {SUBMISSION_LABELS.action.submitEditToMarking}
-                    </Button>
+                    {/* A removed marking is read-only: no edits until it is restored. */}
+                    {!record.isRemoved && (
+                      <Button variant="outline" size="sm" onClick={goEdit}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        {SUBMISSION_LABELS.action.submitEditToMarking}
+                      </Button>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <dl className="space-y-0 text-sm">
-                    {visibleDetails.map((row, idx) => (
-                      <DetailRow
-                        key={row.label}
-                        label={row.label}
-                        value={String(row.value || EMPTY)}
-                        last={idx === visibleDetails.length - 1}
-                      />
-                    ))}
-                  </dl>
+                  <MarkingFieldsDisplay rows={detailRows} mode="record" />
                 </CardContent>
               </Card>
 
@@ -939,14 +958,17 @@ const RecordDetail = () => {
                     <CardTitle className="font-heading text-lg">
                       Associated Covers ({coverCount})
                     </CardTitle>
-                    <Button
-                      size="sm"
-                      onClick={openNewCoverDialog}
-                      className="bg-green-800 hover:bg-green-900 text-white"
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      {SUBMISSION_LABELS.action.submitNewCover}
-                    </Button>
+                    {/* No new covers can be attached to a removed marking. */}
+                    {!record.isRemoved && (
+                      <Button
+                        size="sm"
+                        onClick={openNewCoverDialog}
+                        className="bg-green-800 hover:bg-green-900 text-white"
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        {SUBMISSION_LABELS.action.submitNewCover}
+                      </Button>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4 pt-0">
@@ -1051,7 +1073,20 @@ const RecordDetail = () => {
                 </Card>
               )}
 
-              {showEditorComment && (
+              {commentForEditor && (
+                <Card className="shadow-archival-md">
+                  <CardHeader>
+                    <CardTitle className="font-heading text-lg">Comment for editor</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="rounded-md border border-border bg-muted/40 px-3 py-2">
+                      <p className="text-sm text-foreground whitespace-pre-line">{commentForEditor}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {editorFeedback && (
                 <Card className="shadow-archival-md border-amber-500/20 bg-amber-500/5">
                   <CardHeader>
                     <CardTitle className="font-heading text-lg flex items-center gap-2">
@@ -1060,7 +1095,7 @@ const RecordDetail = () => {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">{editorComment}</p>
+                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">{editorFeedback}</p>
                   </CardContent>
                 </Card>
               )}
@@ -1176,16 +1211,82 @@ const RecordDetail = () => {
             </div>
           </div>
 
-          {isStaff && (
-            <div className="mt-10 flex flex-wrap justify-end gap-3">
-              <Button size="sm" variant="destructive">
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete Marking
-              </Button>
+          {record.canRemove && (
+            <div className="mt-8 flex justify-end">
+              {record.isRemoved ? (
+                <Button variant="outline" onClick={() => setRestoreOpen(true)}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Restore Marking
+                </Button>
+              ) : (
+                <Button variant="destructive" onClick={() => setRemoveOpen(true)}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Remove Marking
+                </Button>
+              )}
             </div>
           )}
+
         </div>
       </div>
+
+      <Dialog open={removeOpen} onOpenChange={(open) => !removing && setRemoveOpen(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove Marking</DialogTitle>
+            <DialogDescription>
+              This moves the marking to the recycle bin and hides it from the public catalog.
+              It can be restored later. Optionally record a reason.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            placeholder="Reason (optional)"
+            value={removeReason}
+            onChange={(e) => setRemoveReason(e.target.value)}
+            disabled={removing}
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRemoveOpen(false)}
+              disabled={removing}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleRemoveConfirm()}
+              disabled={removing}
+            >
+              {removing ? "Removing..." : "Remove Marking"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={restoreOpen} onOpenChange={(open) => !restoring && setRestoreOpen(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restore Marking</AlertDialogTitle>
+            <AlertDialogDescription>
+              This returns the marking to the public catalog.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restoring}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void handleRestoreConfirm();
+              }}
+              disabled={restoring}
+            >
+              {restoring ? "Restoring..." : "Restore Marking"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Footer />
     </div>
   );

@@ -5,7 +5,7 @@
 import django_filters
 from django.db.models import Q
 
-from .models import Marking, MarkingType
+from .models import CoverMarking, Marking, MarkingType
 
 
 class MarkingListFilter(django_filters.FilterSet):
@@ -145,6 +145,28 @@ class MarkingFilter(django_filters.FilterSet):
         if value:
             return queryset.filter(pk__in=marking_ids_with_images)
         return queryset.exclude(pk__in=marking_ids_with_images)
+
+
+class CoverMarkingFilter(django_filters.FilterSet):
+    """Filters for CoverMarking list/detail.
+
+    `marking` and `cover` are plain id NumberFilters, NOT the ModelChoiceFilters
+    that `fields = ["marking", "cover", ...]` would auto-build. Those auto-filters
+    scope their choices to the default Marking.objects / Cover.objects managers,
+    which hide recycle-binned (removed) rows; filtering by a removed marking's or
+    removed cover's id then fails validation with HTTP 400. That breaks the
+    Associated Covers panel on a removed marking's record-detail page (marking),
+    and the Associated Markings panel on a removed cover's detail page (cover).
+    Region/permission scoping for these params lives in
+    CoverMarkingViewSet.get_queryset.
+    """
+
+    marking = django_filters.NumberFilter(field_name="marking_id")
+    cover = django_filters.NumberFilter(field_name="cover_id")
+
+    class Meta:
+        model = CoverMarking
+        fields = ["cover", "marking", "is_backstamp", "placement", "review_status"]
 
 
 ###################################################################################################
