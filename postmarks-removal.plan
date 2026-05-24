@@ -1,0 +1,172 @@
+# Plan: Remove the v1 `postmarks` app via a full `common` migration history reset
+
+## Context
+
+The legacy v1 Django app `backend/postmarks/` is dead weight that actively breaks
+the project: its migration graph cannot be rendered (`InvalidBasesError`), so a
+normal `manage.py test` / fresh `migrate` / test-DB build fails. The only current
+workaround is `backend/woco/test_settings_nomig.py`, which skips migrations.
+
+Why it's broken: `postmarks/migrations/0001_initial` (+0002/0003) create PROXY
+models (`Listing`, `Location`, `CatalogRequest`, ...) whose bases
+(`common.postmark`, `common.administrativeunit`, ...) were deleted during the
+v1->v2 unification, leaving dangling bases in the final migration state. The cruft
+is not isolated to `postmarks`: six `common` migrations have OPERATION-level
+references to postmarks proxies (`to='postmarks.location'`), and `common`'s own
+77-migration history is full of v1 junk.
+
+Decision (confirmed): **full history reset** of `common` into a single fresh
+`0001_initial` generated from current v2 models, plus deletion of the `postmarks`
+app. Dev and staging both have the history applied and are reconciled with
+`--fake-initial`.
+
+User constraints (confirmed):
+- No backups needed.
+- Data is brought in fresh via an existing import pipeline; that pipeline MUST
+  keep working.
+- User auth/role data is saved separately, so seed-data migrations do NOT need to
+  be ported.
+
+Why the import pipeline is safe: this reset is SCHEMA-NEUTRAL. It deletes/rewrites
+only migration-history records (`django_migrations` rows + the migration .py
+files); it never alters, drops, or recreates a live table during the in-place
+reconcile (`--fake-initial`). The Phase 2 schema-diff gate proves the regenerated
+`0001_initial` produces a byte-identical schema, so anything reading/writing the
+tables (the import pipeline included) is unaffected.
+
+Outcome: clean migration history, zero v1 cruft; `manage.py migrate`,
+`makemigrations --check`, and `manage.py test common.tests` all work with no
+workaround; `postmarks` and `test_settings_nomig.py` are gone.
+
+## Key facts established during research
+
+- `postmarks` creates ZERO real tables (all proxies). Entire DB footprint = 8 rows
+  in `django_migrations`; no tables, no `django_content_type` rows.
+- Six `common` migrations reference postmarks. Operation-level (the reason a
+  surgical excise fails): `0012`, `0013`, `0034` (`to='postmarks.location'`).
+  Dependency/RunSQL-only: `0038`, `0044`, `0045`.
+- No Python imports `postmarks`; all frontend "postmarks" hits are the domain word.
+  Only `common` is entangled; no other app depends on postmarks.
+- Live dev DB has ORPHAN CamelCase tables `AdministrativeUnits`,
+  `AdministrativeUnitIdentities`, `AdministrativeUnitResponsibilities`: `0045`'s
+  `DROP TABLE IF EXISTS common_administrativeunit*` used the wrong (snake_case)
+  names and no-op'd. Not in v2 models -> drop them.
+- No migration seeds `Color` id=1 (the `Marking.color default=1` assumes it as
+  data). Not ported (comes from the import pipeline). See "Known test assumption".
+
+## Environment / commands reference
+
+- Repo root: `/Users/mpc/Documents/Code/worldcovers`
+- Backend cwd for all `manage.py`: `/Users/mpc/Documents/Code/worldcovers/backend`
+- venv python: `/Users/mpc/.local/share/virtualenvs/backend-ybeWD4PD/bin/python`
+- MySQL option file: `/Users/mpc/Documents/Code/worldcovers/mysql.cnf`
+- Dev DB: `worldcovers`. mysql:
+  `mysql --defaults-extra-file=/Users/mpc/Documents/Code/worldcovers/mysql.cnf <db> -e "<sql>"`
+- INDEPENDENT of the uncommitted backend.plan changes
+  (`common/contribution_apply.py`, `common/api/v2/views.py`) -- commit separately.
+  `test_settings_nomig.py` deletion belongs to THIS task.
+
+---
+
+## Phase 1 -- File/code changes
+
+1. Delete every file under `backend/common/migrations/` EXCEPT `__init__.py`.
+2. Delete the entire `backend/postmarks/` directory.
+3. `backend/woco/settings.py`: remove the `"postmarks.apps.PostmarksConfig"`
+   INSTALLED_APPS entry and its explanatory comment (lines ~72-75).
+4. Delete `backend/woco/test_settings_nomig.py`.
+
+## Phase 2 -- Generate the fresh history + prove it is schema-neutral
+
+5. From backend cwd: `python manage.py makemigrations common`
+   -> clean `common/migrations/0001_initial.py` (one, or a small few, generated
+   files) from current v2 models. The broken graph is gone, so this succeeds.
+   Confirm NO `postmarks` reference and none of the deleted v1 models
+   (`Postmark`, `AdministrativeUnit*`, `Location*`, `Listing*`). (`Postcover` IS a
+   current model -- expected.)
+6. Capture the live schema reference (structure only) for the diff gate:
+   `mysqldump --defaults-extra-file=.../mysql.cnf --no-data --skip-comments worldcovers > /tmp/schema_dev_before.sql`
+   (and have the user produce `/tmp/schema_staging_before.sql` -- dev/staging may
+   have drifted differently).
+7. Build a SCRATCH DB purely from the new migrations and verify it renders:
+   `mysql ... -e "DROP DATABASE IF EXISTS wc_scratch; CREATE DATABASE wc_scratch;"`
+   then `DB_NAME=wc_scratch python manage.py migrate` (must finish with NO
+   `InvalidBasesError`).
+8. Dump scratch schema `--no-data` and diff vs `/tmp/schema_dev_before.sql` (and
+   the staging snapshot). Normalize (sort, strip AUTO_INCREMENT/comments) first.
+   - Expected legitimate diff: live DBs have the 3 orphan `AdministrativeUnit*`
+     tables not present in the scratch schema -> Phase 3 drop targets.
+   - ANY other structural difference is real drift: fix the new initial or add a
+     corrective migration BEFORE faking. Do not proceed to Phase 3 until the only
+     diffs are the known orphan tables. This gate is what guarantees the import
+     pipeline still sees an identical schema.
+   - Drop `wc_scratch` when satisfied.
+
+## Phase 3 -- Reconcile dev, then staging (in-place, non-destructive to data)
+
+9. Dev: clear old recorded history for the reset apps only, then fake the new one:
+   - `mysql ... worldcovers -e "DELETE FROM django_migrations WHERE app IN ('common','postmarks');"`
+   - `python manage.py migrate common --fake-initial`
+   - confirm `python manage.py showmigrations common` shows `0001_initial [X]`.
+10. Drop the orphan v1 tables surfaced in Phase 2 (adjust set to the diff result):
+    ``mysql ... worldcovers -e "DROP TABLE IF EXISTS `AdministrativeUnitIdentities`,`AdministrativeUnitResponsibilities`,`AdministrativeUnits`;"``
+11. Staging (user runs same recipe): run the Phase 2 diff against the staging
+    snapshot to confirm its orphan set, then `DELETE FROM django_migrations ...`,
+    `migrate common --fake-initial`, and drop staging's confirmed orphan tables.
+    (Alternative, since data is re-imported fresh: drop+`migrate`+re-import instead
+    of `--fake-initial`. Either yields the same clean state.)
+
+## Phase 4 -- End-to-end verification (no workaround)
+
+12. From backend cwd, dev DB:
+    - `python manage.py check` -> 0 issues.
+    - `python manage.py makemigrations --check --dry-run` -> exit 0 (new initial
+      fully captures current models).
+    - `python manage.py migrate` -> "No migrations to apply."
+    - Fresh test-DB build via the NORMAL command (no `--settings` workaround):
+      `python manage.py test common.tests -v 2`.
+
+### Known test assumption (Color id=1)
+The test DB is built from the schema-only new initial, so it has no `Color` rows.
+`test_marking_dispatch_still_returns_marking` relies on `Marking.color default=1`
+=> needs a `Color` id=1 (a pre-existing data assumption, not introduced by this
+reset; it is also absent on any bare DB today). Resolve at execution by the lightest
+option: if the suite must be green on a bare DB, seed `Color` id=1 in that test's
+fixture/`setUp`; otherwise leave it -- the import pipeline supplies colors on real
+DBs. Do NOT add a seed migration (per user: auth/data come from the pipeline).
+
+## Phase 5 -- Team / CI / cross-branch coordination (flag, not code)
+
+13. Other active branches carry the OLD `common` migrations + the `postmarks` app
+    and must rebase onto the reset; any CI job that builds a DB from migrations
+    should be re-run. Note in the PR description.
+
+## Critical files
+
+- `backend/postmarks/` (delete entire dir)
+- `backend/common/migrations/*` (delete all except `__init__.py`; regenerate)
+- `backend/woco/settings.py` (remove postmarks from INSTALLED_APPS)
+- `backend/woco/test_settings_nomig.py` (delete)
+- `backend/common/models.py` (read-only reference for the generated initial)
+
+## Risks and mitigations
+
+- Hidden schema drift faked over: mitigated by the Phase 2 scratch-DB schema-diff
+  gate (do not fake until only the known orphan-table diffs remain), run against
+  BOTH dev and staging snapshots. This is also the import-pipeline safety guarantee.
+- Orphan-table drops: target only v1 tables absent from v2 models, confirmed by the
+  diff -- no live v2 data touched.
+- No backups by request: acceptable because the in-place reconcile is fake-only
+  (no schema mutation) and data is re-importable.
+- Cross-environment/branch mismatch: dev+staging reconciled here; branches/CI
+  flagged in Phase 5.
+
+## Verification summary (acceptance)
+
+From `/Users/mpc/Documents/Code/worldcovers/backend` with the venv:
+`python manage.py check`,
+`python manage.py makemigrations --check --dry-run` (exit 0),
+`python manage.py migrate` (no-op),
+`python manage.py test common.tests -v 2` (normal command, no workaround),
+plus a scratch-DB `migrate` succeeding with no `InvalidBasesError` and a
+schema diff showing only the known orphan tables.

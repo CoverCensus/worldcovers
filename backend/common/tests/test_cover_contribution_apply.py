@@ -231,6 +231,15 @@ class CoverContributionApplyFunctionTests(TestCase):
             created_by=self.user,
             modified_by=self.user,
         )
+        # Supply an explicit color. Marking.color is a non-nullable FK with
+        # default=1; without an explicit color_id the apply path falls back to
+        # that default, which assumes a Color with PK=1 exists. That assumption
+        # is not deterministic under TestCase (InnoDB does not roll back the
+        # AUTO_INCREMENT counter, so the fixture color's id drifts above 1), so
+        # this test must pass a real color rather than rely on the default.
+        color = Color.objects.create(
+            name="MarkingColor", created_by=self.user, modified_by=self.user
+        )
         sd = {
             "submission_kind": "marking",
             "type": "TOWNMARK",
@@ -238,6 +247,7 @@ class CoverContributionApplyFunctionTests(TestCase):
             "town": "Baltimore",
             "inscription_txt": "BALTIMORE MD",
             "is_manuscript": "true",
+            "color_id": color.pk,
             "marking_image_metas": [{"storage_filename": "md/x.jpg"}],
         }
         contrib = _make_cover_contribution(self.user, sd, self.collection)

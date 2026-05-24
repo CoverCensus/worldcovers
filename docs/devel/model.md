@@ -66,10 +66,23 @@ Value table of ink or cover material colors.
 * name \- Display name of the color.  
 * pantone\_code (nullable) \- Pantone reference code for precise color matching.
 
+*Seed values:*
+
+* BLACK  
+* BLUE  
+* RED  
+* GREEN  
+* BROWN  
+* ORANGE  
+* PURPLE  
+* MAGENTA  
+* VIOLET
+
 *Invariants:*
 
 * name is unique across all rows in colors.  
-* hex\_val defaults to "000000".
+* hex\_val defaults to "#FFFFFF".  
+* BLACK is seeded as id 1 and is the default for markings.color\_id; the canonical color rows are supplied by the import pipeline, so a bare database has none.
 
 *Relationships:*
 
@@ -91,7 +104,7 @@ A physical postal cover bearing one or more recorded markings. A cover is concep
 
 *Invariants:*
 
-* color\_id references exactly one row in colors, defaults to 0\.  
+* color\_id references zero or one row in colors; it is nullable with no default.  
 * width and height are decimals in millimeters.  
 * has\_adhesive defaults to false.  
 * type, if set, is one of: "FC \- FOLDED COVER", or "FL \- FOLDED LETTER".

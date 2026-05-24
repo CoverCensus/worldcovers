@@ -19,7 +19,17 @@ class TimestampedModel(models.Model):
         abstract = True
 
 class Color(TimestampedModel):
-    """Colors used in markings"""
+    """
+    Value table of ink or cover material colors.
+
+    model.md domain type: Color
+    Seed values: BLACK, BLUE, RED, GREEN, BROWN, ORANGE, PURPLE, MAGENTA,
+    VIOLET (plus catalog compounds such as BROWN-RED and RED-ORANGE). BLACK is
+    seeded as id 1 and is the Marking.color default (see the field below); the
+    canonical color rows are supplied by the import pipeline, so a bare database
+    (e.g. a fresh test DB) has none and callers that create a marking must
+    supply an explicit color rather than rely on the default=1.
+    """
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=50, unique=True)
     hex_val = ColorField(default='#FFFFFF')
