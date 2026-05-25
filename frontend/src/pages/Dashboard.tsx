@@ -31,6 +31,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { formatSizeFromSubmittedData } from "@/lib/dimensionsMm";
+import { isCoverContributionData, parentMarkingIdFromContribution } from "@/lib/contributionDisplay";
 import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { cn } from "@/lib/utils";
@@ -116,6 +117,10 @@ interface DashboardItem {
   marking_id?: number | null;
   /** True when this is a suggested edit to an existing catalog entry (not a new submission). */
   isSuggestion?: boolean;
+  /** True when this contribution is a cover (vs a marking); routes editing to CoverEdit. */
+  isCover?: boolean;
+  /** Parent marking id for a cover contribution; needed to build the CoverEdit route. */
+  cover_parent_marking_id?: number | null;
 }
 
 /** Catalog entry for User Submissions (state editor): postmarks in assigned states. */
@@ -252,6 +257,21 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const location = useLocation();
   const { toast } = useToast();
   const user = useAuth();
+
+  // Resume a draft submission. Cover drafts edit through CoverEdit; marking drafts
+  // through the Contribute form. A cover draft with no resolvable parent marking
+  // falls back to the marking form rather than building a broken /record route.
+  const goEditDraft = (s: DashboardItem) => {
+    if (s.isCover && s.cover_parent_marking_id != null) {
+      // Pass `from` so CoverEdit returns here (the dashboard) on save/back,
+      // instead of dumping the user on the parent marking record.
+      navigate(`/record/${s.cover_parent_marking_id}/cover/new?edit=${s.id}`, {
+        state: { from: "/dashboard" },
+      });
+      return;
+    }
+    navigate(`/contribute?edit=${s.id}`);
+  };
   const [activeTab, setActiveTab] = useState<DashboardTab>(initialTab);
 
   // When returning from contribution detail, switch to editor tab if requested
@@ -456,6 +476,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             c.is_suggestion === true ||
             !!(markingId || submittedData.original_marking_id || submittedData.originalMarkingId || c.original_marking_id);
 
+          // Cover contributions edit through CoverEdit (/record/:markingId/cover/new),
+          // not the marking Contribute form. Detect by submitted_data and capture
+          // the parent marking id needed to build that route.
+          const sd = submittedData as Record<string, unknown>;
+          const isCover = isCoverContributionData(sd);
+          const coverParentMarkingId = isCover ? parentMarkingIdFromContribution(sd) : null;
+
           return {
             id: c.id,
             name: displayName,
@@ -476,6 +503,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             image_url: imageUrl,
             marking_id: markingId ?? null,
             isSuggestion,
+            isCover,
+            cover_parent_marking_id: coverParentMarkingId,
           } as DashboardItem;
         });
         setSubmissions(mapped);
@@ -1594,7 +1623,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             onClick={() => {
                               const statusNorm = String(submission.status || "").toLowerCase();
                               if (statusNorm === "draft") {
-                                navigate(`/contribute?edit=${submission.id}`);
+                                goEditDraft(submission);
                               } else if (statusNorm === "approved" && submission.marking_id) {
                                 // Approved submissions live on the entry detail page now.
                                 navigate(`/record/${submission.marking_id}`, {
@@ -1686,7 +1715,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                   variant="secondary"
                                   size="sm"
                                   className="font-medium"
-                                  onClick={() => navigate(`/contribute?edit=${submission.id}`)}
+                                  onClick={() => goEditDraft(submission)}
                                 >
                                   <Pencil className="mr-1.5 h-4 w-4" />
                                   Edit Draft

@@ -2150,6 +2150,13 @@ class ContributionSubmitView(APIView):
             if meta:
                 image_metas.append(meta)
 
+        # Contributor-chosen final image order: a list of tokens, one per
+        # displayed image, where "__new__" is a freshly-uploaded file (consumed
+        # FIFO from image_metas) and any other token is an existing image's
+        # URL/storage_filename tail. Applied at submit time so the saved metas
+        # list -- and thus display_order at approval -- matches the UI order.
+        image_order = _parse_removed_image_keys(data.get("image_order"))
+
         # Strip multi-value form keys to plain values for the JSONField payload.
         # Skip raw file objects: they are not JSON-serializable and we have already
         # captured them in image_metas above.
@@ -2160,6 +2167,9 @@ class ContributionSubmitView(APIView):
             "edit_contribution_id",
             "editContributionId",
             "removed_existing_image_keys",
+            # Image-ordering control consumed by the *_image_metas builders;
+            # not a display field for the review UI.
+            "image_order",
             # Submit-mode controls -- consumed by _is_save_as_draft_submission
             # above; should not be persisted into the JSON submitted_data
             # payload that the review UI renders as field rows.
@@ -2263,7 +2273,7 @@ class ContributionSubmitView(APIView):
             # displayed URLs the user removed from the edit form; the helper
             # drops matching entries and merges any newly uploaded files.
             image_updates = _apply_existing_image_reconciliation(
-                existing_sd, data, image_metas, is_cover_submission
+                existing_sd, data, image_metas, is_cover_submission, image_order
             )
             submitted_data.update(image_updates)
             existing_sd.update(submitted_data)
@@ -2307,6 +2317,7 @@ class ContributionSubmitView(APIView):
                 subject_type=Image.SUBJECT_COVER,
                 subject_id=edit_cover_marker,
                 meta_key="cover_image_metas",
+                image_order=image_order,
             )
         elif (not is_cover_submission) and edit_marking_marker is not None:
             _apply_fresh_edit_image_metas(
@@ -2316,6 +2327,7 @@ class ContributionSubmitView(APIView):
                 subject_type=Image.SUBJECT_MARKING,
                 subject_id=edit_marking_marker,
                 meta_key="marking_image_metas",
+                image_order=image_order,
             )
         elif image_metas:
             submitted_data["marking_image_metas"] = image_metas
@@ -2455,7 +2467,70 @@ def _existing_image_tag_value(storage_filename, existing_tags):
     return None
 
 
-def _apply_existing_image_reconciliation(existing_sd, data, image_metas, is_cover):
+def _normalize_order_key(value):
+    """Normalize a storage_filename or image URL for tail-matching: strip a
+    leading slash and the legacy 'markings/' prefix. Mirrors the normalization
+    used by _existing_image_tag_value / _storage_filename_removed."""
+    s = str(value or "").lstrip("/")
+    if s.startswith("markings/"):
+        s = s[len("markings/"):]
+    return s
+
+
+def _reorder_metas_by_image_order(combined, new_metas, image_order):
+    """Return `combined` reordered to match the contributor-chosen `image_order`.
+
+    image_order is a list of string tokens, one per displayed image, in the
+    desired order. Each token is either the literal "__new__" (a newly-uploaded
+    file, consumed FIFO from new_metas) or an existing image's key (its media
+    URL / storage_filename tail, matched against each kept meta's
+    storage_filename with the same tail-match used elsewhere).
+
+    `combined` is the full meta list (kept metas + new_metas) in its current
+    order; `new_metas` is this submit's newly-uploaded metas (a subset of
+    `combined`, matched by identity). When image_order is missing, empty, or not
+    a list, `combined` is returned unchanged. Any meta not consumed by a token is
+    appended at the end (preserving `combined` order) so nothing is ever dropped.
+    """
+    if not isinstance(image_order, list) or not image_order:
+        return combined
+    new_ids = {id(m) for m in new_metas}
+    kept = [m for m in combined if id(m) not in new_ids and isinstance(m, dict)]
+    new_queue = [m for m in combined if id(m) in new_ids]
+
+    used = set()
+    result = []
+    for token in image_order:
+        tok = str(token)
+        if tok == "__new__":
+            if new_queue:
+                m = new_queue.pop(0)
+                result.append(m)
+                used.add(id(m))
+            continue
+        tkey = _normalize_order_key(tok)
+        if not tkey:
+            continue
+        for m in kept:
+            if id(m) in used:
+                continue
+            mkey = _normalize_order_key(m.get("storage_filename"))
+            if mkey and (mkey == tkey or tkey.endswith(mkey) or mkey.endswith(tkey)):
+                result.append(m)
+                used.add(id(m))
+                break
+
+    # Safety: append anything the tokens did not account for, in original order.
+    for m in combined:
+        if id(m) not in used:
+            result.append(m)
+            used.add(id(m))
+    return result
+
+
+def _apply_existing_image_reconciliation(
+    existing_sd, data, image_metas, is_cover, image_order=None
+):
     """
     Draft-resume image reconciliation. Mutates existing_sd in place to honor
     contributor-side removals (removed_existing_image_keys) against the draft's
@@ -2502,12 +2577,19 @@ def _apply_existing_image_reconciliation(existing_sd, data, image_metas, is_cove
             existing_sd["image_meta"] = replacement
 
     updates = {}
-    if image_metas:
+    # When the contributor only reordered prior images (no new uploads),
+    # image_metas is empty but image_order still needs to be applied to the
+    # prior list so the new order persists on the draft.
+    if image_metas or image_order:
         meta_key = "cover_image_metas" if is_cover else "marking_image_metas"
         prior = existing_sd.get(meta_key) or existing_sd.get("image_metas") or []
         if not isinstance(prior, list):
             prior = []
-        merged_metas = list(prior) + image_metas
+        new_metas = list(image_metas or [])
+        merged_metas = list(prior) + new_metas
+        merged_metas = _reorder_metas_by_image_order(
+            merged_metas, new_metas, image_order
+        )
         updates[meta_key] = merged_metas
         updates["image_metas"] = merged_metas
         updates["image_meta"] = (
@@ -2517,7 +2599,8 @@ def _apply_existing_image_reconciliation(existing_sd, data, image_metas, is_cove
 
 
 def _apply_fresh_edit_image_metas(
-    submitted_data, data, image_metas, *, subject_type, subject_id, meta_key
+    submitted_data, data, image_metas, *, subject_type, subject_id, meta_key,
+    image_order=None,
 ):
     """
     Build the FULL desired image set for a PENDING edit submitted fresh (no
@@ -2527,8 +2610,11 @@ def _apply_fresh_edit_image_metas(
     into a submitted_data meta record (storage_filename + dimensions + a
     'tracing' flag derived from existing_image_tags, else the DB is_tracing),
     put the kept records first, then append the newly uploaded files' records.
-    Store the combined set under meta_key + image_metas + image_meta so
-    approval-time apply (_sync_images) reconciles correctly.
+    When image_order is supplied, reorder the combined set to the
+    contributor-chosen sequence (kept images and new uploads may interleave, and
+    any image may become the default at index 0). Store the combined set under
+    meta_key + image_metas + image_meta so approval-time apply (_sync_images)
+    reconciles correctly.
     """
     removed_set = set(_parse_removed_image_keys(data.get("removed_existing_image_keys")))
     existing_tags = _parse_existing_image_tags(data.get("existing_image_tags"))
@@ -2556,7 +2642,9 @@ def _apply_fresh_edit_image_metas(
             }
         )
 
-    combined = kept_records + list(image_metas or [])
+    new_metas = list(image_metas or [])
+    combined = kept_records + new_metas
+    combined = _reorder_metas_by_image_order(combined, new_metas, image_order)
     submitted_data[meta_key] = combined
     submitted_data["image_metas"] = combined
     submitted_data["image_meta"] = combined[0] if combined else None

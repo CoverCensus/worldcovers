@@ -10,7 +10,7 @@ import {
   Upload,
 } from "lucide-react";
 import axios from "axios";
-import { getContribution, createContribution, abandonCoverContributionDraft } from "@/services/contributions";
+import { getContribution, createContribution } from "@/services/contributions";
 
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
@@ -33,41 +33,19 @@ import { cn } from "@/lib/utils";
 import { isCoverContributionData } from "@/lib/contributionDisplay";
 import {
   contributionImageMetasFromSubmittedData,
-  fileFromContributionDraftImage,
-  isDraftContributionImage,
   markingImagesFromContributionMetas,
 } from "@/lib/contributionImages";
 
+import { type CoverDateGranularity } from "@/services/covers";
+import { listCitationsForSubject } from "@/services/citations";
 import {
-  createCover,
-  createCoverDate,
-  createCoverMarking,
-  deleteCoverDate,
-  updateCover,
-  updateCoverDate,
-  updateCoverMarking,
-  type CoverDateGranularity,
-  type CoverWritePayload,
-} from "@/services/covers";
-import {
-  createCitationSubject,
-  deleteCitationSubject,
-  listCitationsForSubject,
-  updateCitationSubject,
-} from "@/services/citations";
-import {
-  createImageForSubject,
   getImagesForSubject,
   getMarkingById,
   getMarkingCovers,
   normalizeImageUrl,
   resolveMarkingRoutingState,
   routingStateFromMarkingRecord,
-  postCoverMarkingResubmit,
-  reorderImages,
-  updateImage,
   type AssociatedCover,
-  type AssociatedDateSeen,
   type MarkingImage,
   type MarkingRecord,
 } from "@/services/markings";
@@ -86,6 +64,13 @@ type PendingUpload = {
   tracing: boolean;
   previewUrl: string;
 };
+
+// One entry in the combined image gallery. "existing" wraps an already-saved
+// catalog or draft image; "pending" wraps a newly-picked file. Reorder and
+// set-default operate across both kinds in a single ordered list.
+type GalleryItem =
+  | { kind: "existing"; key: string; img: MarkingImage }
+  | { kind: "pending"; key: string; upload: PendingUpload };
 
 type ReferenceDetailInput = {
   pageNumber: string;
@@ -162,29 +147,6 @@ function buildEditState(cover: AssociatedCover | null | undefined) {
 
 function fileKey(file: File) {
   return `${file.name}-${file.size}-${file.lastModified}`;
-}
-
-function formatReferenceWorkForReferences(
-  work: ReferenceWorkRecord,
-  detail?: ReferenceDetailInput,
-): string {
-  const parts: string[] = [];
-  if (work.title?.trim()) parts.push(`Title: ${work.title.trim()}`);
-  if (work.authorship?.trim()) parts.push(`Authorship: ${work.authorship.trim()}`);
-  if (work.publisher?.trim()) parts.push(`Publisher: ${work.publisher.trim()}`);
-  if (work.publicationYear != null) parts.push(`Publication year: ${work.publicationYear}`);
-  if (work.edition?.trim()) parts.push(`Edition: ${work.edition.trim()}`);
-  if (work.volume?.trim()) parts.push(`Volume: ${work.volume.trim()}`);
-  if (work.isbn?.trim()) parts.push(`Isbn: ${work.isbn.trim()}`);
-  if (work.url?.trim()) parts.push(`Url: ${work.url.trim()}`);
-  if (detail?.pageNumber?.trim()) parts.push(`Page number: ${detail.pageNumber.trim()}`);
-  if (detail?.citationUrl?.trim()) parts.push(`Citation url: ${detail.citationUrl.trim()}`);
-  return parts.join("\n");
-}
-
-function citationDetailForApi(work: ReferenceWorkRecord, detail?: ReferenceDetailInput): string {
-  const raw = formatReferenceWorkForReferences(work, detail);
-  return raw.length <= 500 ? raw : `${raw.slice(0, 497)}...`;
 }
 
 function parseCitationDetailBlob(text: string): ReferenceDetailInput {
@@ -273,13 +235,18 @@ export default function CoverEdit() {
   const [submitting, setSubmitting] = useState(false);
 
   const coverId = coverRow?.coverDetails?.id ?? null;
-  const [existingImages, setExistingImages] = useState<MarkingImage[]>([]);
+  // Single ordered gallery: already-saved images interleaved with new uploads.
+  // Reorder + set-default operate across the whole list; the chosen order is sent
+  // as image_order and applied at approval (see backend
+  // _reorder_metas_by_image_order in common/api/v2/views.py). The edit form never
+  // writes to the catalog directly.
+  const [gallery, setGallery] = useState<GalleryItem[]>([]);
   const [imagesLoading, setImagesLoading] = useState(false);
-  const [reorderingImages, setReorderingImages] = useState(false);
+  // Catalog image URLs the contributor removed during this edit session. Sent as
+  // removed_existing_image_keys so the catalog image is dropped on approval.
+  const [removedExistingImageKeys, setRemovedExistingImageKeys] = useState<string[]>([]);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
-  const [uploading, setUploading] = useState(false);
   const [dropActive, setDropActive] = useState(false);
 
   const [referenceWorks, setReferenceWorks] = useState<ReferenceWorkRecord[]>([]);
@@ -348,10 +315,11 @@ export default function CoverEdit() {
           } else if (Array.isArray(tagsRaw)) {
             tags = tagsRaw.map((t) => String(t));
           }
-          setExistingImages(
+          setGallery(
             draftImages.map((img, i) => ({
-              ...img,
-              isTracing: tags[i] === "tracing",
+              kind: "existing" as const,
+              key: normalizeImageUrl(img.imageUrl),
+              img: { ...img, isTracing: tags[i] === "tracing" },
             })),
           );
         }
@@ -494,7 +462,13 @@ export default function CoverEdit() {
     setImagesLoading(true);
     try {
       const imgs = await getImagesForSubject({ subjectType: "COVER", subjectId: coverId });
-      setExistingImages(imgs);
+      setGallery(
+        imgs.map((img) => ({
+          kind: "existing" as const,
+          key: normalizeImageUrl(img.imageUrl),
+          img,
+        })),
+      );
     } finally {
       setImagesLoading(false);
     }
@@ -521,20 +495,20 @@ export default function CoverEdit() {
   const mergePickedFiles = (files: FileList | File[] | null) => {
     if (!files || (Array.isArray(files) && files.length === 0)) return;
     const list = Array.isArray(files) ? files : Array.from(files);
-    const next: PendingUpload[] = [];
+    const next: GalleryItem[] = [];
     for (const file of list) {
       const mime = (file.type || "").toLowerCase();
       if (!ALLOWED_IMAGE_TYPES.includes(mime)) continue;
       if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) continue;
+      const key = fileKey(file);
       next.push({
-        key: fileKey(file),
-        file,
-        tracing: false,
-        previewUrl: URL.createObjectURL(file),
+        kind: "pending",
+        key,
+        upload: { key, file, tracing: false, previewUrl: URL.createObjectURL(file) },
       });
     }
     if (next.length === 0) return;
-    setPendingUploads((prev) => {
+    setGallery((prev) => {
       const seen = new Set(prev.map((p) => p.key));
       const additions = next.filter((p) => !seen.has(p.key));
       return [...prev, ...additions];
@@ -543,17 +517,31 @@ export default function CoverEdit() {
     if (inputRef.current) inputRef.current.value = "";
   };
 
-  const removePendingAt = (index: number) => {
-    setPendingUploads((prev) => {
-      const row = prev[index];
-      if (row) URL.revokeObjectURL(row.previewUrl);
+  // Reorder + set-default + tracing + remove all act on the single combined
+  // gallery, so they work uniformly across already-saved and newly-picked images.
+  const removeGalleryAt = (index: number) => {
+    setGallery((prev) => {
+      const item = prev[index];
+      if (!item) return prev;
+      if (item.kind === "pending") {
+        URL.revokeObjectURL(item.upload.previewUrl);
+      } else {
+        // Both catalog images and draft previews carry a media URL whose tail is
+        // the storage_filename; the backend tail-matches removed keys against it,
+        // so the same key works for a published-cover edit and a draft resume.
+        const key = normalizeImageUrl(item.img.imageUrl);
+        if (key) {
+          setRemovedExistingImageKeys((keys) => (keys.includes(key) ? keys : [...keys, key]));
+        }
+      }
       return prev.filter((_, i) => i !== index);
     });
+    setFieldErrors((prev) => ({ ...prev, images: undefined }));
   };
 
-  const movePendingBy = (index: number, delta: -1 | 1) => {
+  const moveGalleryBy = (index: number, delta: -1 | 1) => {
     const target = index + delta;
-    setPendingUploads((prev) => {
+    setGallery((prev) => {
       if (target < 0 || target >= prev.length) return prev;
       const next = prev.slice();
       [next[index], next[target]] = [next[target], next[index]];
@@ -561,9 +549,10 @@ export default function CoverEdit() {
     });
   };
 
-  const setPendingAsDefault = (index: number) => {
+  const setGalleryDefault = (index: number) => {
     if (index <= 0) return;
-    setPendingUploads((prev) => {
+    setGallery((prev) => {
+      if (index >= prev.length) return prev;
       const next = prev.slice();
       const [picked] = next.splice(index, 1);
       next.unshift(picked);
@@ -571,124 +560,15 @@ export default function CoverEdit() {
     });
   };
 
-  const setPendingTracingAt = (index: number, tracing: boolean) => {
-    setPendingUploads((prev) => prev.map((row, i) => (i === index ? { ...row, tracing } : row)));
-  };
-
-  const applyExistingImageOrder = async (newImages: MarkingImage[]) => {
-    if (reorderingImages) return;
-    const ids = newImages.map((img) => img.imageId).filter((id) => id > 0);
-    if (ids.length === 0) {
-      setExistingImages(newImages.map((img, idx) => ({ ...img, displayOrder: idx })));
-      return;
-    }
-    setReorderingImages(true);
-    setExistingImages(newImages.map((img, idx) => ({ ...img, displayOrder: idx })));
-    try {
-      const ok = await reorderImages(ids);
-      if (!ok) {
-        toast({
-          title: "Reorder failed",
-          description: "Could not save the new image order. Refreshing from the server.",
-          variant: "destructive",
-        });
-      }
-      await refreshImages();
-    } finally {
-      setReorderingImages(false);
-    }
-  };
-
-  const moveExistingImageBy = (index: number, delta: -1 | 1) => {
-    const target = index + delta;
-    if (target < 0 || target >= existingImages.length) return;
-    const next = existingImages.slice();
-    [next[index], next[target]] = [next[target], next[index]];
-    void applyExistingImageOrder(next);
-  };
-
-  const setExistingAsDefault = (index: number) => {
-    if (index <= 0) return;
-    const next = existingImages.slice();
-    const [picked] = next.splice(index, 1);
-    next.unshift(picked);
-    void applyExistingImageOrder(next);
-  };
-
-  const toggleExistingTracing = async (index: number, tracing: boolean) => {
-    const img = existingImages[index];
-    if (!img) return;
-    if (isDraftContributionImage(img.imageId)) {
-      setExistingImages((prev) => prev.map((row, i) => (i === index ? { ...row, isTracing: tracing } : row)));
-      return;
-    }
-    const ok = await updateImage(img.imageId, { isTracing: tracing });
-    if (!ok) {
-      toast({
-        title: "Could not update image",
-        description: "Please try again.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setExistingImages((prev) => prev.map((row, i) => (i === index ? { ...row, isTracing: tracing } : row)));
-  };
-
-  /** Materialize draft contribution previews and new picks onto the Cover row. */
-  const uploadAllCoverImagesOrThrow = async (targetCoverId: number) => {
-    if (uploading) return;
-    const draftImages = existingImages
-      .filter((img) => isDraftContributionImage(img.imageId))
-      .sort((a, b) => a.displayOrder - b.displayOrder);
-    if (draftImages.length === 0 && pendingUploads.length === 0) return;
-
-    setUploading(true);
-    try {
-      let displayOrder = existingImages.filter((img) => img.imageId > 0).length;
-      const created: Array<MarkingImage | null> = [];
-
-      for (const img of draftImages) {
-        const file = await fileFromContributionDraftImage(img);
-        const row = await createImageForSubject({
-          file,
-          subjectType: "COVER",
-          subjectId: targetCoverId,
-          imageView: "FRONT",
-          isTracing: img.isTracing === true,
-          displayOrder,
-        });
-        created.push(row);
-        if (row) displayOrder += 1;
-      }
-
-      for (let i = 0; i < pendingUploads.length; i += 1) {
-        const row = pendingUploads[i];
-        const img = await createImageForSubject({
-          file: row.file,
-          subjectType: "COVER",
-          subjectId: targetCoverId,
-          imageView: "FRONT",
-          isTracing: row.tracing,
-          displayOrder: displayOrder + i,
-        });
-        created.push(img);
-      }
-
-      const okCount = created.filter(Boolean).length;
-      const expected = draftImages.length + pendingUploads.length;
-      if (expected > 0 && okCount === 0) {
-        throw new Error("Could not upload cover images. Check format (PNG, JPG, TIFF) and try again.");
-      }
-      if (okCount < expected) {
-        throw new Error("Some cover images could not be uploaded. Please try again.");
-      }
-
-      pendingUploads.forEach((p) => URL.revokeObjectURL(p.previewUrl));
-      setPendingUploads([]);
-      setExistingImages((prev) => prev.filter((img) => !isDraftContributionImage(img.imageId)));
-    } finally {
-      setUploading(false);
-    }
+  const setGalleryTracingAt = (index: number, tracing: boolean) => {
+    setGallery((prev) =>
+      prev.map((item, i) => {
+        if (i !== index) return item;
+        return item.kind === "pending"
+          ? { ...item, upload: { ...item.upload, tracing } }
+          : { ...item, img: { ...item.img, isTracing: tracing } };
+      }),
+    );
   };
 
   const validateForm = (saveAsDraft: boolean): boolean => {
@@ -709,7 +589,7 @@ export default function CoverEdit() {
     } else if (!deriveGranularityFromIso(trimmedDate)) {
       errors.date = "Enter a complete calendar date.";
     }
-    const imageCount = existingImages.length + pendingUploads.length;
+    const imageCount = gallery.length;
     if (imageCount < 1) {
       errors.images = "At least one cover image is required.";
     }
@@ -760,37 +640,6 @@ export default function CoverEdit() {
     return true;
   };
 
-  const syncCoverCitations = async (savedCoverPk: number) => {
-    const existing = await listCitationsForSubject({ subjectType: "COVER", subjectId: savedCoverPk });
-    const byRef = new Map(existing.map((r) => [r.referenceWorkId, r]));
-    const selectedIds = new Set(selectedReferenceWorks.map((w) => w.id));
-
-    for (const row of existing) {
-      if (!selectedIds.has(row.referenceWorkId)) {
-        const ok = await deleteCitationSubject(row.id);
-        if (!ok) throw new Error("Could not update reference citations.");
-      }
-    }
-    for (const work of selectedReferenceWorks) {
-      const text = citationDetailForApi(work, referenceDetailsById[work.id]);
-      const prev = byRef.get(work.id);
-      if (prev) {
-        if (prev.citationDetail !== text) {
-          const ok = await updateCitationSubject(prev.id, text);
-          if (!ok) throw new Error("Could not update reference citations.");
-        }
-      } else {
-        const created = await createCitationSubject({
-          referenceWorkId: work.id,
-          subjectType: "COVER",
-          subjectId: savedCoverPk,
-          citationDetail: text,
-        });
-        if (!created) throw new Error("Could not create reference citations.");
-      }
-    }
-  };
-
   // Save a cover draft (asDraft=true) or submit it for editor review (asDraft=false).
   // Both create a Contribution via createContribution; only the save_as_draft flag and
   // the post-success toast/navigation differ. A submitted cover goes through the same
@@ -807,7 +656,6 @@ export default function CoverEdit() {
       });
       return;
     }
-    if (mode !== "create") return;
     if (!Number.isFinite(markingId) || markingId <= 0) {
       toast({
         title: "Invalid marking",
@@ -830,7 +678,9 @@ export default function CoverEdit() {
     if (!stateRoute) {
       stateRoute = await resolveMarkingRoutingState(markingId);
     }
-    const oversized = pendingUploads.filter((p) => p.file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
+    const oversized = gallery.filter(
+      (item) => item.kind === "pending" && item.upload.file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024,
+    );
     if (oversized.length) {
       toast({
         title: "Image too large",
@@ -877,10 +727,52 @@ export default function CoverEdit() {
         }));
         form.append("reference_work_details", JSON.stringify(payload));
       }
-      const tracingTags = pendingUploads.map((p) => (p.tracing ? "tracing" : "photograph"));
+      // Walk the combined gallery in display order: append each new-upload file
+      // with its positional tracing tag, and emit an image_order token per image
+      // (the existing image's key, or "__new__" for a new upload). The backend
+      // rebuilds the saved metas list in this order so display_order at approval
+      // matches the on-screen order (and index 0 becomes the catalog default).
+      const tracingTags: string[] = [];
+      const imageOrder: string[] = [];
+      for (const item of gallery) {
+        if (item.kind === "pending") {
+          form.append("cover_image", item.upload.file, item.upload.file.name);
+          tracingTags.push(item.upload.tracing ? "tracing" : "photograph");
+          imageOrder.push("__new__");
+        } else {
+          imageOrder.push(item.key);
+        }
+      }
       form.append("cover_image_tags", JSON.stringify(tracingTags));
-      for (const row of pendingUploads) {
-        form.append("cover_image", row.file, row.file.name);
+      form.append("image_order", JSON.stringify(imageOrder));
+
+      // Existing-image removals apply on approval in both flows: the fresh
+      // published-cover edit (edit_cover_id) and the draft-resume merge
+      // (edit_contribution_id). Harmless no-op for a brand-new cover (empty list).
+      if (removedExistingImageKeys.length > 0) {
+        form.append("removed_existing_image_keys", JSON.stringify(removedExistingImageKeys));
+      }
+
+      if (mode === "edit" && coverRow?.coverDetails) {
+        // Edit markers: the backend updates the existing Cover/CoverMarking in
+        // place on approval (no duplicate) -- see backend/common/api/v2/views.py
+        // _apply_fresh_edit_image_metas and contribution_apply.py _apply_cover_edit.
+        form.append("edit_cover_id", String(coverRow.coverDetails.id));
+        form.append("edit_cover_marking_id", String(coverRow.id));
+        // existing_image_tags: {url: "tracing"|"photograph"} over retained catalog
+        // images (imageId > 0). Emit every kept image (not just tracings) so
+        // unchecking Tracing flips the value back to photograph; the backend
+        // tail-matches each URL against Image.storage_filename.
+        const existingTagMap: Record<string, string> = {};
+        for (const item of gallery) {
+          if (item.kind === "existing" && item.img.imageId > 0) {
+            existingTagMap[normalizeImageUrl(item.img.imageUrl)] =
+              item.img.isTracing ? "tracing" : "photograph";
+          }
+        }
+        if (Object.keys(existingTagMap).length > 0) {
+          form.append("existing_image_tags", JSON.stringify(existingTagMap));
+        }
       }
 
       await createContribution(form);
@@ -888,14 +780,19 @@ export default function CoverEdit() {
       if (asDraft) {
         toast({
           title: editContributionId != null ? "Cover draft updated" : "Cover draft saved",
-          description: "Your draft is listed under Associated Covers on this marking.",
+          description: "Your draft is saved and available in your Dashboard under My Submissions.",
         });
-        navigate(`/record/${markingId}`);
+        // Return to wherever the editor opened this form from (dashboard, record,
+        // or contribution detail); returnPath honors location.state.from and
+        // falls back to the parent marking record.
+        navigate(returnPath());
       } else {
         toast({
-          title: "Cover submitted",
+          title: mode === "edit" ? "Cover edit submitted for review" : "Cover submitted",
           description:
-            "Your cover has been submitted for approval. It will appear on this marking after an editor approves it.",
+            mode === "edit"
+              ? "Your changes have been submitted for approval. The published cover updates after an editor approves them."
+              : "Your cover has been submitted for approval. It will appear on this marking after an editor approves it.",
         });
         navigate("/dashboard", { state: { tab: "submissions" } });
       }
@@ -910,177 +807,12 @@ export default function CoverEdit() {
     }
   };
 
-  // Edit-mode submit: writes changes straight to the catalog (and resubmits a
-  // needs_revision link). New covers do NOT reach this path -- handleFormSubmit
-  // routes create-mode submits through submitCoverContribution(false) so they go
-  // through the editor review queue like markings.
-  const handleSubmitCatalog = async (e: FormEvent) => {
-    e.preventDefault();
-    if (submitting) return;
-    if (!user) {
-      toast({ title: "Sign in required", description: "Please sign in before submitting.", variant: "destructive" });
-      return;
-    }
-    if (!validateForm(false)) return;
-
-    const trimmedDate = coverDate.date.trim();
-    const derived = deriveGranularityFromIso(trimmedDate);
-    if (!derived) return;
-
-    const { granularity, normalizedDate } = derived;
-
-    const coverType = normalizeCoverType(type);
-    const coverPayload: CoverWritePayload = {
-      type: coverType,
-      color: null,
-      has_adhesive: false,
-      is_institutional: isInstitutional,
-      width: null,
-      height: null,
-    };
-
-    const trimmedComment = contributorComment.trim();
-
-    const oversized = pendingUploads.filter((p) => p.file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
-    if (oversized.length) {
-      toast({
-        title: "Image too large",
-        description: `Use images under ${MAX_IMAGE_SIZE_MB}MB.`,
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      let savedCoverId: number;
-      let coverMarkingPk: number;
-      let originalDates: AssociatedDateSeen[] = [];
-
-      if (mode === "create") {
-        const created = await createCover(coverPayload);
-        savedCoverId = created.id;
-        const link = await createCoverMarking({
-          cover: savedCoverId,
-          marking: markingId,
-          is_backstamp: isBackstamp,
-          placement: null,
-          contributor_comment: trimmedComment,
-        });
-        coverMarkingPk = link.id;
-      } else {
-        if (!coverRow || !coverRow.coverDetails) {
-          throw new Error("Cannot edit cover: missing cover details.");
-        }
-        savedCoverId = coverRow.coverDetails.id;
-        coverMarkingPk = coverRow.id;
-        originalDates = coverRow.coverDetails.datesSeen;
-
-        await updateCover(savedCoverId, coverPayload);
-        await updateCoverMarking(coverMarkingPk, {
-          is_backstamp: isBackstamp,
-          placement: null,
-          contributor_comment: trimmedComment,
-        });
-      }
-
-      const keepId = coverDate.existingId ?? null;
-      const deleteOps = originalDates.filter((d) => d.id !== keepId).map((d) => deleteCoverDate(d.id));
-
-      if (keepId != null) {
-        await Promise.all([
-          ...deleteOps,
-          updateCoverDate(keepId, { date: normalizedDate, granularity }),
-        ]);
-      } else {
-        await Promise.all([
-          ...deleteOps,
-          createCoverDate({
-            cover: savedCoverId,
-            date: normalizedDate,
-            granularity,
-          }),
-        ]);
-      }
-
-      await syncCoverCitations(savedCoverId);
-
-      await uploadAllCoverImagesOrThrow(savedCoverId);
-
-      if (mode === "create") {
-        const { covers } = await getMarkingCovers(markingId);
-        const found = covers.find((c) => c.id === coverMarkingPk) ?? null;
-        setCoverRow(found);
-        if (found?.coverDetails?.id) {
-          setImagesLoading(true);
-          try {
-            const imgs = await getImagesForSubject({
-              subjectType: "COVER",
-              subjectId: found.coverDetails.id,
-            });
-            setExistingImages(imgs);
-          } finally {
-            setImagesLoading(false);
-          }
-        }
-      } else if (coverId != null) {
-        await refreshImages();
-      }
-
-      if (mode === "edit" && coverRow?.reviewStatus === "needs_revision") {
-        try {
-          await postCoverMarkingResubmit(coverMarkingPk);
-        } catch (re) {
-          toast({
-            title: "Could not resubmit for review",
-            description: re instanceof Error ? re.message : "Your edits were saved.",
-            variant: "destructive",
-          });
-        }
-      }
-
-      if (editContributionId != null && mode === "create") {
-        try {
-          await abandonCoverContributionDraft(editContributionId);
-        } catch {
-          toast({
-            title: "Could not remove draft entry",
-            description:
-              "Your cover was submitted for review, but the saved draft may still appear on the record until it is cleared.",
-            variant: "destructive",
-          });
-        }
-      }
-
-      toast({
-        title: mode === "create" ? "Cover submitted" : "Cover updated",
-        description:
-          mode === "create"
-            ? "Your cover is linked to this marking and will appear after editor review."
-            : "Your changes have been saved.",
-      });
-
-      navigate(returnPath());
-    } catch (err) {
-      toast({
-        title: mode === "create" ? "Could not submit cover" : "Could not save cover",
-        description: formatAxiosError(err),
-        variant: "destructive",
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  // Route the form's submit button: new covers go through the review queue, edits
-  // write through to the catalog.
+  // Route the form's submit button. Both new covers and edits go through the
+  // editor review queue (submitCoverContribution); nothing writes to the catalog
+  // directly -- approval applies the change (and updates edits in place).
   const handleFormSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (mode === "create") {
-      void submitCoverContribution(false);
-      return;
-    }
-    void handleSubmitCatalog(e);
+    void submitCoverContribution(false);
   };
 
   if (loading || !draftLoadDone) {
@@ -1180,7 +912,7 @@ export default function CoverEdit() {
                         }}
                       >
                         <SelectTrigger id="cover-type" className={cn(fieldErrors.type && "border-destructive")}>
-                          <SelectValue placeholder="Select cover type…" />
+                          <SelectValue placeholder="Select cover type..." />
                         </SelectTrigger>
                         <SelectContent>
                           {COVER_TYPE_OPTIONS.map((opt) => (
@@ -1259,31 +991,43 @@ export default function CoverEdit() {
                         <div className="pointer-events-none flex flex-col items-center gap-2 text-center select-none">
                           <Upload className="h-10 w-10 text-muted-foreground" aria-hidden />
                           <p className="text-sm text-muted-foreground">
-                            Click or drag images here (PNG, JPG, TIFF — max {MAX_IMAGE_SIZE_MB}MB each).
+                            Click or drag images here (PNG, JPG, TIFF -- max {MAX_IMAGE_SIZE_MB}MB each).
                           </p>
                         </div>
 
                         {imagesLoading ? (
                           <div className="pointer-events-none flex items-center gap-2 text-sm text-muted-foreground mt-4 justify-center">
                             <Loader2 className="h-4 w-4 animate-spin" />
-                            Loading images…
+                            Loading images...
                           </div>
                         ) : (
-                          (existingImages.length > 0 || pendingUploads.length > 0) && (
+                          gallery.length > 0 && (
                             <div
                               className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-6 pointer-events-auto"
                               onClick={(ev) => ev.stopPropagation()}
                             >
-                              {existingImages.map((img, idx) => {
-                                const url = normalizeImageUrl(img.imageUrl);
-                                const isDefault = img.displayOrder === 0;
+                              {gallery.map((item, idx) => {
+                                const isDefault = idx === 0;
+                                const url =
+                                  item.kind === "existing"
+                                    ? normalizeImageUrl(item.img.imageUrl)
+                                    : item.upload.previewUrl;
+                                const tracing =
+                                  item.kind === "existing"
+                                    ? item.img.isTracing === true
+                                    : item.upload.tracing;
                                 return (
-                                  <div key={img.imageId} className="flex flex-col items-center gap-2 rounded border border-border p-3">
-                                    <div className="h-36 w-36 rounded overflow-hidden bg-muted shrink-0 flex items-center justify-center border border-border">
+                                  <div key={item.key} className="flex flex-col items-center gap-2 rounded border border-border p-3">
+                                    <div className="relative h-36 w-36 rounded overflow-hidden bg-muted shrink-0 flex items-center justify-center border border-border">
                                       {url ? (
                                         <img src={url} alt="" className="max-h-full max-w-full object-contain" />
                                       ) : (
                                         <span className="text-xs text-muted-foreground text-center px-2">No preview</span>
+                                      )}
+                                      {isDefault && (
+                                        <span className="absolute top-1 left-1 rounded bg-primary px-1.5 py-0.5 text-[10px] font-semibold uppercase text-primary-foreground">
+                                          Default
+                                        </span>
                                       )}
                                     </div>
                                     <div className="flex items-center justify-center gap-1">
@@ -1293,8 +1037,8 @@ export default function CoverEdit() {
                                         size="icon"
                                         className="h-8 w-8"
                                         aria-label="Move left"
-                                        disabled={reorderingImages || idx === 0}
-                                        onClick={() => moveExistingImageBy(idx, -1)}
+                                        disabled={idx === 0 || submitting}
+                                        onClick={() => moveGalleryBy(idx, -1)}
                                       >
                                         <ArrowLeft className="h-4 w-4" />
                                       </Button>
@@ -1304,8 +1048,8 @@ export default function CoverEdit() {
                                         size="icon"
                                         className="h-8 w-8"
                                         aria-label="Move right"
-                                        disabled={reorderingImages || idx === existingImages.length - 1}
-                                        onClick={() => moveExistingImageBy(idx, 1)}
+                                        disabled={idx === gallery.length - 1 || submitting}
+                                        onClick={() => moveGalleryBy(idx, 1)}
                                       >
                                         <ArrowRight className="h-4 w-4" />
                                       </Button>
@@ -1315,62 +1059,9 @@ export default function CoverEdit() {
                                         size="icon"
                                         className="h-8 w-8"
                                         aria-label="Set as default"
-                                        disabled={reorderingImages || isDefault}
-                                        onClick={() => setExistingAsDefault(idx)}
-                                      >
-                                        <Star className={cn("h-4 w-4", isDefault && "fill-current")} />
-                                      </Button>
-                                    </div>
-                                    <label className="flex items-center gap-2 text-sm">
-                                      <Checkbox
-                                        checked={img.isTracing === true}
-                                        onCheckedChange={(v) => void toggleExistingTracing(idx, v === true)}
-                                        disabled={submitting}
-                                      />
-                                      Tracing
-                                    </label>
-                                  </div>
-                                );
-                              })}
-
-                              {pendingUploads.map((row, idx) => {
-                                const isDefault = idx === 0 && existingImages.length === 0;
-                                return (
-                                  <div key={row.key} className="flex flex-col items-center gap-2 rounded border border-border p-3">
-                                    <div className="h-36 w-36 rounded overflow-hidden bg-muted shrink-0 flex items-center justify-center border border-border">
-                                      <img src={row.previewUrl} alt="" className="max-h-full max-w-full object-contain" />
-                                    </div>
-                                    <div className="flex items-center justify-center gap-1">
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        aria-label="Move left"
-                                        disabled={idx === 0}
-                                        onClick={() => movePendingBy(idx, -1)}
-                                      >
-                                        <ArrowLeft className="h-4 w-4" />
-                                      </Button>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        aria-label="Move right"
-                                        disabled={idx === pendingUploads.length - 1}
-                                        onClick={() => movePendingBy(idx, 1)}
-                                      >
-                                        <ArrowRight className="h-4 w-4" />
-                                      </Button>
-                                      <Button
-                                        type="button"
-                                        variant={isDefault ? "secondary" : "ghost"}
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        aria-label="Set as default"
-                                        disabled={isDefault}
-                                        onClick={() => setPendingAsDefault(idx)}
+                                        title="Set as default catalog thumbnail"
+                                        disabled={isDefault || submitting}
+                                        onClick={() => setGalleryDefault(idx)}
                                       >
                                         <Star className={cn("h-4 w-4", isDefault && "fill-current")} />
                                       </Button>
@@ -1380,19 +1071,23 @@ export default function CoverEdit() {
                                         size="icon"
                                         className="h-8 w-8"
                                         aria-label="Remove"
-                                        onClick={() => removePendingAt(idx)}
+                                        disabled={submitting}
+                                        onClick={() => removeGalleryAt(idx)}
                                       >
                                         <Trash2 className="h-4 w-4" />
                                       </Button>
                                     </div>
                                     <label className="flex items-center gap-2 text-sm">
                                       <Checkbox
-                                        checked={row.tracing}
-                                        onCheckedChange={(v) => setPendingTracingAt(idx, v === true)}
+                                        checked={tracing}
+                                        onCheckedChange={(v) => setGalleryTracingAt(idx, v === true)}
+                                        disabled={submitting}
                                       />
                                       Tracing
                                     </label>
-                                    <p className="text-xs text-muted-foreground truncate max-w-[200px]">{row.file.name}</p>
+                                    {item.kind === "pending" && (
+                                      <p className="text-xs text-muted-foreground truncate max-w-[200px]">{item.upload.file.name}</p>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -1400,6 +1095,12 @@ export default function CoverEdit() {
                           )
                         )}
                       </div>
+                      {gallery.length > 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          The first image becomes the Catalog Search thumbnail. Use the arrows to reorder or
+                          the star to set the default; check Tracing on hand-traced or computer-traced diagrams.
+                        </p>
+                      )}
                       {fieldErrors.images && <p className="text-sm text-destructive">{fieldErrors.images}</p>}
                     </div>
 
@@ -1426,7 +1127,7 @@ export default function CoverEdit() {
                             <Button type="button" variant="outline" className="w-full justify-between" disabled={referenceWorksLoading}>
                               <span>
                                 {referenceWorksLoading
-                                  ? "Loading reference works…"
+                                  ? "Loading reference works..."
                                   : selectedReferenceWorks.length > 0
                                     ? `${selectedReferenceWorks.length} selected`
                                     : "Select reference works"}
@@ -1568,14 +1269,14 @@ export default function CoverEdit() {
                           type="button"
                           variant="outline"
                           className="w-full sm:flex-1"
-                          disabled={submitting || uploading}
+                          disabled={submitting}
                           onClick={() => void submitCoverContribution(true)}
                         >
                           Save as Draft
                         </Button>
                       )}
-                      <Button type="submit" className="w-full sm:flex-1" disabled={submitting || uploading}>
-                        {submitting ? "Saving…" : mode === "create" ? "Submit Cover" : "Save changes"}
+                      <Button type="submit" className="w-full sm:flex-1" disabled={submitting}>
+                        {submitting ? "Saving..." : mode === "create" ? "Submit Cover" : "Submit changes for review"}
                       </Button>
                     </div>
                   </form>
@@ -1599,7 +1300,7 @@ export default function CoverEdit() {
                     <strong className="text-foreground">Reference works:</strong> Include references when available to help verification.
                   </p>
                   <p className="leading-relaxed">
-                    <strong className="text-foreground">Review Time:</strong> Most submissions are reviewed within 1–3 business days.
+                    <strong className="text-foreground">Review Time:</strong> Most submissions are reviewed within 1-3 business days.
                   </p>
                 </CardContent>
               </Card>

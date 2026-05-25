@@ -1174,23 +1174,19 @@ export async function getCoverContributionDraftsForMarking(
   }
 }
 
-/** Cover-marking rows plus saved cover contribution drafts for a marking. */
+/** Approved cover-marking rows for a marking (record-detail Associated Covers). */
 export async function loadAssociatedCoversForMarking(
   markingId: number,
 ): Promise<MarkingCoversResult> {
   const { covers, error } = await getMarkingCovers(markingId);
-  const drafts = await getCoverContributionDraftsForMarking(markingId);
-  // A real cover-marking link is a public association only once an editor has
-  // approved it: covers still pending review (or rejected / returned-for-revision)
-  // are hidden from the marking's Associated Covers panel (and its count), mirroring
-  // how an unapproved marking contribution does not appear on the record. The
-  // contributor's own unsubmitted drafts (contributionDraftId != null) stay visible
-  // so they can resume editing; resubmission of a returned/rejected cover happens
-  // via the Contribute edit flow reached from My Submissions, not from this panel.
-  const merged = [...covers, ...drafts].filter((c) =>
-    c.contributionDraftId != null ? true : c.reviewStatus === "approved",
-  );
-  const enriched = await enrichAssociatedCoversWithDefaultImages(merged);
+  // Only editor-approved cover-marking links appear on the record's Associated
+  // Covers panel (and its count). Covers still pending review (or rejected /
+  // returned-for-revision) are hidden, mirroring how an unapproved marking
+  // contribution does not appear on the record. The contributor's own cover
+  // drafts -- pending, returned, or unsubmitted -- are reached from Dashboard /
+  // My Submissions, NOT from this panel.
+  const approved = covers.filter((c) => c.reviewStatus === "approved");
+  const enriched = await enrichAssociatedCoversWithDefaultImages(approved);
   return { covers: enriched, error };
 }
 

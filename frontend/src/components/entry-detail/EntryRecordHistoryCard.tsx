@@ -5,6 +5,18 @@ import type { MarkingChangelogEvent } from "@/services/markings";
 
 const HISTORY_COLLAPSED_LIMIT = 1;
 const HISTORY_EXPANDED_LIMIT = 10;
+// Cap the per-event field-change list so a large edit does not flood the card.
+const DIFF_FIELD_LIMIT = 6;
+
+function humanizeFieldKey(key: string): string {
+  return key.replace(/_/g, " ");
+}
+
+function formatDiffValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "(empty)";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
 
 function formatHistoryTimestamp(raw: string | null | undefined): string {
   if (!raw) return "";
@@ -85,6 +97,22 @@ export function EntryRecordHistoryCard({
                   <div className="mt-1 text-xs text-muted-foreground break-all">
                     {historyActorDisplay(event)}
                   </div>
+                  {/* Field-level changes. Gate on version_no > 1 so the initial
+                      create approval (version 1, before == empty) does not list
+                      every field; reject/return events carry empty diffs. */}
+                  {event.diff.length > 0 && event.version_no != null && event.version_no > 1 && (
+                    <ul className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+                      {event.diff.slice(0, DIFF_FIELD_LIMIT).map((change) => (
+                        <li key={change.field} className="break-all">
+                          <span className="font-medium text-foreground">{humanizeFieldKey(change.field)}</span>
+                          {`: ${formatDiffValue(change.before)} -> ${formatDiffValue(change.after)}`}
+                        </li>
+                      ))}
+                      {event.diff.length > DIFF_FIELD_LIMIT && (
+                        <li className="italic">+{event.diff.length - DIFF_FIELD_LIMIT} more</li>
+                      )}
+                    </ul>
+                  )}
                 </li>
               ))}
             </ul>
