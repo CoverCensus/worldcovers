@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Pagination,
@@ -16,16 +15,6 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { ArrowDown, ArrowUp, Calendar, Loader2, Pencil, Plus, Search as SearchIcon, SlidersHorizontal } from "lucide-react";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -35,9 +24,9 @@ import { isCoverContributionData, parentMarkingIdFromContribution } from "@/lib/
 import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { cn } from "@/lib/utils";
-import { normalizeImageUrl, getAssignedCatalogPage, getRecycleBinMarkings, type MarkingRecord } from "@/services/markings";
+import { normalizeImageUrl, getRecycleBinMarkings, type MarkingRecord } from "@/services/markings";
 import { getRecycleBinCovers, type RecycleBinCover } from "@/services/covers";
-import { listContributions, decideContribution } from "@/services/contributions";
+import { listContributions } from "@/services/contributions";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
 
@@ -123,11 +112,8 @@ interface DashboardItem {
   cover_parent_marking_id?: number | null;
 }
 
-/** Catalog entry for User Submissions (state editor): postmarks in assigned states. */
-type AssignedCatalogEntry = MarkingRecord;
-
-/** Pending contribution for editor review (approve / reject / request revision). */
-interface PendingReviewItem {
+/** Contribution row shown in the editor dashboard history list. */
+interface EditorHistoryItem {
   id: number;
   contributor_username: string;
   display_name: string;
@@ -297,33 +283,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [suggestionsGoToInput, setSuggestionsGoToInput] = useState("");
   const suggestionsPageSize = 10;
 
-  // User Submissions (state editor): catalog entries for assigned states -- view, edit
-  const [assignedCatalogItems, setAssignedCatalogItems] = useState<AssignedCatalogEntry[]>([]);
-  const [assignedCatalogPage, setAssignedCatalogPage] = useState(1);
-  const [assignedCatalogTotal, setAssignedCatalogTotal] = useState<number | null>(null);
-  const [assignedCatalogLoading, setAssignedCatalogLoading] = useState(false);
-  const [assignedCatalogError, setAssignedCatalogError] = useState<string | null>(null);
-  const [assignedCatalogRefetchKey, setAssignedCatalogRefetchKey] = useState(0);
-  const assignedCatalogPageSize = 10;
-  const [editorGoToPageInput, setEditorGoToPageInput] = useState("");
-
-  // Pending review (state editor): contributions awaiting approve/reject/revision – comment required
-  const [pendingReviewItems, setPendingReviewItems] = useState<PendingReviewItem[]>([]);
-  const [pendingReviewLoading, setPendingReviewLoading] = useState(false);
-  const [pendingReviewError, setPendingReviewError] = useState<string | null>(null);
-  const [pendingReviewPage, setPendingReviewPage] = useState(1);
-  const [pendingReviewTotal, setPendingReviewTotal] = useState<number | null>(null);
-  const [pendingReviewGoToInput, setPendingReviewGoToInput] = useState("");
-  const pendingReviewPageSize = 10;
-  const [statusDecisionTarget, setStatusDecisionTarget] = useState<PendingReviewItem | null>(null);
-  const [statusDecisionKind, setStatusDecisionKind] = useState<"approve" | "reject" | "revision">("approve");
-  const [statusComment, setStatusComment] = useState("");
-  const [statusSubmitting, setStatusSubmitting] = useState(false);
-  // Editor-required when approving: Value and Comment (lettering/framing/date format come from contribution's submitted_data)
-  const [approveValue, setApproveValue] = useState("");
-
   // Editor tab: history of user suggestions (all contributions in assigned states), not full catalog
-  const [editorHistoryItems, setEditorHistoryItems] = useState<PendingReviewItem[]>([]);
+  const [editorHistoryItems, setEditorHistoryItems] = useState<EditorHistoryItem[]>([]);
   // Recycle-bin markings shown when editorHistoryStatusFilter === "removed".
   // Kept separate from editorHistoryItems (contributions) because the rows are
   // markings and navigate to /record/:id instead of /contribution/:id.
@@ -636,108 +597,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     load();
   }, [user, toast]);
 
-  // Load assigned-state catalog (not used on editor tab — editor sees history of suggestions instead)
-  useEffect(() => {
-    if (!isEditor || activeTab !== "editor") return;
-    // Editor tab shows history of user suggestions, not catalog; skip catalog fetch
-    if (activeTab === "editor") return;
-    let cancelled = false;
-    setAssignedCatalogError(null);
-    setAssignedCatalogLoading(true);
-    getAssignedCatalogPage(assignedCatalogPage, assignedCatalogPageSize, {
-      filters: {
-        state: stateFilter !== "all" ? stateFilter : undefined,
-        town: townFilter.trim() || undefined,
-        shape: shapeFilter !== "all" ? shapeFilter : undefined,
-        color: colorFilter !== "all" ? colorFilter : undefined,
-        search: searchQuery.trim() || undefined,
-      },
-    })
-      .then(({ results, count }) => {
-        if (!cancelled) {
-          setAssignedCatalogItems(results);
-          setAssignedCatalogTotal(count ?? results.length);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setAssignedCatalogError(err instanceof Error ? err.message : "Could not load catalog.");
-          setAssignedCatalogItems([]);
-          setAssignedCatalogTotal(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setAssignedCatalogLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isEditor, activeTab, assignedCatalogPage, stateFilter, townFilter, shapeFilter, colorFilter, searchQuery, assignedCatalogRefetchKey]);
-
-  // Reset User Submissions pagination when filters change
-  useEffect(() => {
-    if (activeTab === "editor" && isEditor) {
-      setAssignedCatalogPage(1);
-    }
-  }, [activeTab, isEditor, stateFilter, townFilter, shapeFilter, colorFilter, searchQuery]);
-
-  // Load pending contributions for editor review (approve/reject/request revision)
-  useEffect(() => {
-    if (!isEditor || activeTab !== "editor") return;
-    setPendingReviewError(null);
-    setPendingReviewLoading(true);
-    listContributions({
-      mode: "editor",
-      status: "pending",
-      state: editorStateFilter !== "all" ? editorStateFilter : undefined,
-      page: pendingReviewPage,
-      pageSize: pendingReviewPageSize,
-    })
-      .then(({ rawItems, count }) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const list = rawItems as any[];
-        setPendingReviewTotal(count);
-        setPendingReviewItems(
-          list.map((c) => {
-            const submittedData = (c as { submitted_data?: Record<string, unknown>; submittedData?: Record<string, unknown> }).submitted_data
-              ?? (c as { submittedData?: Record<string, unknown> }).submittedData
-              ?? {};
-            return {
-              id: c.id,
-              contributor_username: c.contributor_username ?? (c as { contributorUsername?: string }).contributorUsername ?? "",
-              display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
-              state_display: c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "",
-              town_display: c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "",
-              shape_display:
-                c.shape_display ??
-                (c as { shapeDisplay?: string }).shapeDisplay ??
-                c.type_display ??
-                (c as { typeDisplay?: string }).typeDisplay ??
-                "",
-              color_display: String(
-                c.color_display
-                  ?? (c as { colorDisplay?: string }).colorDisplay
-                  ?? c.color
-                  ?? (submittedData as { color?: string }).color
-                  ?? "",
-              ),
-              marking_id: c.marking_id ?? (c as { markingId?: number | null }).markingId ?? null,
-              status: String(c.status ?? "pending"),
-              created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
-              review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
-              image_url: resolveSubmissionImageUrl(c as Record<string, unknown>, submittedData as Record<string, unknown>),
-            };
-          }),
-        );
-      })
-      .catch((err) => {
-        setPendingReviewError(err instanceof Error ? err.message : "Could not load pending submissions.");
-        setPendingReviewItems([]);
-        setPendingReviewTotal(null);
-      })
-      .finally(() => setPendingReviewLoading(false));
-  }, [isEditor, activeTab, pendingReviewPage, editorStateFilter]);
-
   // Load editor history (all user suggestions in assigned states) for the Editor tab
   useEffect(() => {
     if (!isEditor || activeTab !== "editor") return;
@@ -849,45 +708,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     editorDateTo,
     submissionQueueSort,
   ]);
-
-  useEffect(() => {
-    if (!isEditor || activeTab !== "editor") return;
-    setPendingReviewPage(1);
-  }, [isEditor, activeTab, editorStateFilter]);
-
-  const submitStatusDecision = async () => {
-    if (!statusDecisionTarget || !statusComment.trim()) return;
-    if (statusDecisionKind === "approve") {
-      const valueNum = approveValue.trim() === "" ? NaN : parseFloat(approveValue);
-      if (Number.isNaN(valueNum) || valueNum < 0) {
-        toast({ title: "Missing required fields", description: "Please fill Value (number ≥ 0) before approving.", variant: "destructive" });
-        return;
-      }
-    }
-    setStatusSubmitting(true);
-    try {
-      await decideContribution(statusDecisionTarget.id, statusDecisionKind, {
-        reviewNotes: statusComment.trim(),
-        estimatedValue: statusDecisionKind === "approve" ? parseFloat(approveValue) : undefined,
-      });
-      const actionLabel =
-        statusDecisionKind === "approve" ? "Approved" : statusDecisionKind === "reject" ? "Rejected" : "Revision requested";
-      toast({ title: actionLabel, description: "Your comment was saved for the contributor." });
-      setPendingReviewItems((prev) => prev.filter((i) => i.id !== statusDecisionTarget.id));
-      setStatusDecisionTarget(null);
-      setStatusComment("");
-      setApproveValue("");
-      setSubmissionsRefetchKey((k) => k + 1);
-    } catch (err) {
-      toast({
-        title: "Could not submit",
-        description: err instanceof Error ? err.message : "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setStatusSubmitting(false);
-    }
-  };
 
   // Apply filters (mirror Catalog Search semantics on client side)
   const filteredSubmissions = useMemo(() => {
@@ -1129,20 +949,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     setSuggestionsPage(1);
   }, [searchQuery, statusFilter, stateFilter, townFilter, shapeFilter, colorFilter, dateFrom, dateTo]);
 
-  const assignedCatalogTotalPages = Math.max(
-    1,
-    Math.ceil((assignedCatalogTotal ?? 0) / assignedCatalogPageSize),
-  );
-
-  const pendingReviewTotalCount = pendingReviewTotal ?? pendingReviewItems.length;
-  const pendingReviewTotalPages = Math.max(1, Math.ceil(pendingReviewTotalCount / pendingReviewPageSize));
-  const pendingReviewPageStart =
-    pendingReviewTotalCount === 0 ? 0 : (pendingReviewPage - 1) * pendingReviewPageSize + 1;
-  const pendingReviewPageEnd =
-    pendingReviewTotalCount === 0
-      ? 0
-      : Math.min((pendingReviewPage - 1) * pendingReviewPageSize + pendingReviewItems.length, pendingReviewTotalCount);
-
   // In "removed" mode the rows on the page come from removedMarkings, not the
   // contribution list, so the page-end count must read that length instead.
   const editorHistoryRowsOnPage =
@@ -1196,7 +1002,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     });
 
     const sorted = [...filtered];
-    const valueFor = (item: PendingReviewItem, field: EditorHistorySortField): string | number => {
+    const valueFor = (item: EditorHistoryItem, field: EditorHistorySortField): string | number => {
       switch (field) {
         case "status":
           return String(item.status || "").toLowerCase();
@@ -1941,7 +1747,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         aria-label="Filter editor data by state"
                         disabled={
                           editorHistoryLoading ||
-                          pendingReviewLoading ||
                           isLoadingFilters ||
                           editorHistoryStatusFilter === "removed"
                         }
@@ -2124,188 +1929,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               </aside>
 
               <div className="flex-1 flex flex-col gap-6">
-                {/* Pending submissions to review — approve / reject / request revision with required comment */}
-                {/* Pending review section temporarily disabled.
-                {(pendingReviewLoading || pendingReviewItems.length > 0) && (
-                  <Card className="shadow-archival-md">
-                    <CardContent className="pt-6">
-                      <h2 className="font-heading text-lg font-semibold text-foreground mb-2">
-                        Pending review
-                      </h2>
-                      {!pendingReviewLoading && !pendingReviewError && (
-                        <p className="text-sm text-muted-foreground mb-3">
-                          {pendingReviewTotalCount === 0 ? (
-                            "0 results"
-                          ) : (
-                            <>
-                              Showing{" "}
-                              <span className="font-semibold text-foreground">
-                                {pendingReviewPageStart.toLocaleString()}-{pendingReviewPageEnd.toLocaleString()}
-                              </span>{" "}
-                              of{" "}
-                              <span className="font-semibold text-foreground">
-                                {pendingReviewTotalCount.toLocaleString()}
-                              </span>{" "}
-                              results
-                            </>
-                          )}
-                        </p>
-                      )}
-                      {pendingReviewLoading ? (
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          <span>Loading pending submissions...</span>
-                        </div>
-                      ) : pendingReviewError ? (
-                        <p className="text-sm text-destructive">{pendingReviewError}</p>
-                      ) : (
-                        <>
-                          <ul className="space-y-3">
-                            {pendingReviewItems.map((item) => {
-                              const title = [item.town_display, item.state_display].filter(Boolean).join(", ");
-                              const shapeStr = (item.shape_display || "").trim();
-                              const fallbackName =
-                                [title, shapeStr].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") ||
-                                title ||
-                                `Submission #${item.id}`;
-                              const displayLabel = item.display_name || fallbackName;
-                              return (
-                              <li
-                                key={item.id}
-                                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4 bg-muted/30"
-                              >
-                                <div>
-                                  <span className="font-medium text-foreground">
-                                    {displayLabel}
-                                  </span>
-                                  <span className="text-muted-foreground text-sm ml-2">
-                                    by {item.contributor_username}
-                                  </span>
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                  <Button
-                                    variant="default"
-                                    size="sm"
-                                    onClick={() =>
-                                      navigate(`/contribution/${item.id}`, { state: { fromDashboard: true } })
-                                    }
-                                  >
-                                    View
-                                  </Button>
-                                </div>
-                              </li>
-                              );
-                            })}
-                          </ul>
-
-                          {pendingReviewTotalPages > 1 && (
-                            <div className="mt-5 flex flex-col items-center gap-4">
-                              <Pagination>
-                                <PaginationContent>
-                                  <PaginationItem>
-                                    <PaginationPrevious
-                                      onClick={() => {
-                                        setPendingReviewPage((p) => Math.max(1, p - 1));
-                                        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                                      }}
-                                      className={pendingReviewPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
-                                    />
-                                  </PaginationItem>
-
-                                  {getPaginationPages(pendingReviewPage, pendingReviewTotalPages).map((p, i) =>
-                                    p === "ellipsis" ? (
-                                      <PaginationItem key={`ellipsis-pending-${i}`}>
-                                        <PaginationEllipsis />
-                                      </PaginationItem>
-                                    ) : (
-                                      <PaginationItem key={`pending-${p}`}>
-                                        <PaginationLink
-                                          onClick={() => {
-                                            setPendingReviewPage(p);
-                                            window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                                          }}
-                                          isActive={pendingReviewPage === p}
-                                          className="cursor-pointer"
-                                        >
-                                          {p}
-                                        </PaginationLink>
-                                      </PaginationItem>
-                                    ),
-                                  )}
-
-                                  <PaginationItem>
-                                    <PaginationNext
-                                      onClick={() => {
-                                        setPendingReviewPage((p) => Math.min(pendingReviewTotalPages, p + 1));
-                                        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                                      }}
-                                      className={
-                                        pendingReviewPage === pendingReviewTotalPages ? "pointer-events-none opacity-50" : "cursor-pointer"
-                                      }
-                                    />
-                                  </PaginationItem>
-                                </PaginationContent>
-                              </Pagination>
-
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm text-muted-foreground">Go to page</span>
-                                <Input
-                                  type="number"
-                                  min={1}
-                                  max={pendingReviewTotalPages}
-                                  placeholder="Page"
-                                  value={pendingReviewGoToInput}
-                                  onChange={(e) => {
-                                    const raw = e.target.value;
-                                    if (raw === "") {
-                                      setPendingReviewGoToInput("");
-                                      return;
-                                    }
-                                    const n = parseInt(raw, 10);
-                                    if (Number.isNaN(n)) return;
-                                    const clamped = Math.max(1, Math.min(pendingReviewTotalPages, n));
-                                    setPendingReviewGoToInput(String(clamped));
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                      e.preventDefault();
-                                      const n = parseInt(pendingReviewGoToInput, 10);
-                                      if (!Number.isNaN(n)) {
-                                        setPendingReviewPage(Math.max(1, Math.min(pendingReviewTotalPages, n)));
-                                        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                                        setPendingReviewGoToInput("");
-                                      }
-                                    }
-                                  }}
-                                  className="h-9 w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                  aria-label="Go to pending review page number"
-                                />
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-9"
-                                  onClick={() => {
-                                    const n = parseInt(pendingReviewGoToInput, 10);
-                                    if (!Number.isNaN(n)) {
-                                      setPendingReviewPage(Math.max(1, Math.min(pendingReviewTotalPages, n)));
-                                      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-                                      setPendingReviewGoToInput("");
-                                    }
-                                  }}
-                                >
-                                  Go
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </CardContent>
-                  </Card>
-                )}
-                */}
-
               <main className="flex-1 space-y-4">
                 {/* History of user suggestions (contributions in assigned states) */}
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
@@ -2649,101 +2272,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           )}
       </div>
       <Footer />
-
-      {/* Status decision (approve / reject / request revision) — comment required; approve requires value (lettering/framing/date from submission) */}
-      <AlertDialog
-        open={!!statusDecisionTarget}
-        onOpenChange={(open) => {
-          if (!open && !statusSubmitting) {
-            setStatusDecisionTarget(null);
-            setStatusComment("");
-            setApproveValue("");
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {statusDecisionKind === "approve"
-                ? "Approve submission"
-                : statusDecisionKind === "reject"
-                  ? "Reject submission"
-                  : "Request revision"}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {statusDecisionKind === "approve"
-                ? "Add value and a comment. Lettering style, framing style, and date format come from the submission."
-                : statusDecisionKind === "reject"
-                  ? "Add a comment so the contributor knows why it was rejected and can improve."
-                  : "Add a comment explaining what to fix so the contributor can resubmit."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="space-y-2 py-2">
-            {statusDecisionKind === "approve" && (
-              <div className="space-y-1.5">
-                <Label htmlFor="approve-value">Value (of this postmark) <span className="text-destructive">*</span></Label>
-                <Input
-                  id="approve-value"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  placeholder="e.g. 0 or 12.50"
-                  value={approveValue}
-                  onChange={(e) => setApproveValue(e.target.value)}
-                  disabled={statusSubmitting}
-                />
-              </div>
-            )}
-            <div className="space-y-2">
-              <Label htmlFor="status-comment">
-                Comment <span className="text-destructive">(required)</span>
-              </Label>
-              <Textarea
-                id="status-comment"
-                value={statusComment}
-                onChange={(e) => setStatusComment(e.target.value)}
-                rows={4}
-                placeholder={
-                  statusDecisionKind === "approve"
-                    ? "e.g. Good quality image and details."
-                    : statusDecisionKind === "reject"
-                      ? "e.g. Image too blurry; please resubmit with a clearer scan."
-                      : "e.g. Please add the date range and correct the town name."
-                }
-                disabled={statusSubmitting}
-                className="resize-none"
-              />
-            </div>
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={statusSubmitting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              type="button"
-              disabled={
-                statusSubmitting ||
-                !statusComment.trim() ||
-                (statusDecisionKind === "approve" &&
-                  (approveValue.trim() === "" ||
-                    Number.isNaN(parseFloat(approveValue)) ||
-                    parseFloat(approveValue) < 0))
-              }
-              onClick={(e) => {
-                e.preventDefault();
-                submitStatusDecision();
-              }}
-            >
-              {statusSubmitting
-                ? "Submitting..."
-                : statusDecisionKind === "approve"
-                  ? "Approve"
-                  : statusDecisionKind === "reject"
-                    ? "Reject"
-                    : "Request revision"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
     </div>
   </div>
   );
