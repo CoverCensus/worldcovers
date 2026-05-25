@@ -437,6 +437,8 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   ).trim();
   const typeCode = String(sd.type ?? "").trim().toUpperCase();
   const showReviewNotes = !!contribution.reviewNotes?.trim();
+  const showEditorFeedbackCard =
+    contribution.status !== "pending" || !!(contribution.reviewNotes && contribution.reviewNotes.trim());
   const associatedMarkingCount = parentMarkingId != null ? 1 : 0;
 
   const openParentMarking = () => {
@@ -464,66 +466,10 @@ export default function CoverContributionDetail({ initialContribution = null }: 
             currentIndex={carouselCurrent}
             emptyMessage="No images linked to this cover submission yet."
           />
-        </>
-      )}
-      rightColumn={(
-        <>
-          <Card className="shadow-archival-md">
-            <CardHeader>
-              <div className="flex items-center justify-between gap-3">
-                <CardTitle className="font-heading text-lg">Record Details</CardTitle>
-                {canContributorResubmit && parentMarkingId != null && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      navigate(`/record/${parentMarkingId}/cover/new?edit=${contribution.id}`, {
-                        state: { from: location.pathname + location.search },
-                      })
-                    }
-                    disabled={submitting}
-                  >
-                    <Pencil className="mr-2 h-4 w-4" />
-                    Edit before resubmitting
-                  </Button>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground">{displayName}</p>
-            </CardHeader>
-            <CardContent>
-              <div className="mb-4 flex flex-wrap items-center gap-2">
-                <Badge className={statusBadgeClassName}>{statusLabel}</Badge>
-                <Badge variant="outline">Cover submission</Badge>
-              </div>
-              {showReviewNotes && (
-                <p className="mb-4 whitespace-pre-wrap border-l-2 border-border pl-2 text-sm text-muted-foreground">
-                  <span className="font-medium text-foreground">Editor note: </span>
-                  {contribution.reviewNotes?.trim()}
-                </p>
-              )}
-              <CoverRecordDetailFields
-                type={coverTypeLabel(typeCode)}
-                date={formatCoverDate(sd)}
-                institutionallyOwned={boolLabel(sd.is_institutional ?? sd.isInstitutional)}
-                backstamp={boolLabel(sd.is_backstamp ?? sd.isBackstamp)}
-              />
-              {contributorComment && (
-                <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Comment for editor</p>
-                  <p className="text-sm text-foreground whitespace-pre-line">{contributorComment}</p>
-                </div>
-              )}
-              <p className="mt-4 text-sm text-muted-foreground">
-                Submitted {new Date(contribution.createdAt).toLocaleString()}
-                {contribution.contributorUsername ? ` by ${contribution.contributorUsername}` : ""}
-              </p>
-            </CardContent>
-          </Card>
-
           {canReview && (
             <Card className="shadow-archival-lg border-primary/20">
               <CardHeader>
-                <CardTitle className="font-heading text-lg">Review this cover</CardTitle>
+                <CardTitle className="font-heading text-lg">Review this submission</CardTitle>
                 <p className="text-sm text-muted-foreground">
                   Choose Approve, Reject, or Return.
                 </p>
@@ -577,6 +523,81 @@ export default function CoverContributionDetail({ initialContribution = null }: 
               </CardContent>
             </Card>
           )}
+          {showEditorFeedbackCard ? (
+            <Card className="shadow-archival-md border-amber-500/20 bg-amber-500/5">
+              <CardHeader>
+                <CardTitle className="font-heading text-lg flex items-center gap-2">
+                  <MessageSquare className="h-5 w-5 text-amber-600" />
+                  Editor feedback
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  {contribution.status === "approved"
+                    ? "Your submission was approved and added to the catalog. If the editor left a comment below, use it as guidance for future submissions."
+                    : contribution.status === "rejected"
+                      ? "Your submission was not accepted. See the comment below for details."
+                      : contribution.status === "needs_revision"
+                        ? "The editor requested changes. Please update this submission and resubmit."
+                        : "The reviewer left a comment for you. Use this feedback to improve your submission or add a new cover if requested."}
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {showReviewNotes ? (
+                  <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
+                    {contribution.reviewNotes?.trim()}
+                  </p>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
+        </>
+      )}
+      rightColumn={(
+        <>
+          <Card className="shadow-archival-md">
+            <CardHeader>
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle className="font-heading text-lg">Record Details</CardTitle>
+                {canContributorResubmit && parentMarkingId != null && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      navigate(`/record/${parentMarkingId}/cover/new?edit=${contribution.id}`, {
+                        state: { from: location.pathname + location.search },
+                      })
+                    }
+                    disabled={submitting}
+                  >
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Edit before resubmitting
+                  </Button>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground">{displayName}</p>
+            </CardHeader>
+            <CardContent>
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <Badge className={statusBadgeClassName}>{statusLabel}</Badge>
+                <Badge variant="outline">Cover submission</Badge>
+              </div>
+              <CoverRecordDetailFields
+                type={coverTypeLabel(typeCode)}
+                date={formatCoverDate(sd)}
+                institutionallyOwned={boolLabel(sd.is_institutional ?? sd.isInstitutional)}
+                backstamp={boolLabel(sd.is_backstamp ?? sd.isBackstamp)}
+              />
+              {contributorComment && (
+                <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Comment for editor</p>
+                  <p className="text-sm text-foreground whitespace-pre-line">{contributorComment}</p>
+                </div>
+              )}
+              <p className="mt-4 text-sm text-muted-foreground">
+                Submitted {new Date(contribution.createdAt).toLocaleString()}
+                {contribution.contributorUsername ? ` by ${contribution.contributorUsername}` : ""}
+              </p>
+            </CardContent>
+          </Card>
 
           <Card className="shadow-archival-md">
             <CardHeader>
