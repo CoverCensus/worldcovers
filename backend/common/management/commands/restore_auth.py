@@ -12,26 +12,32 @@ from common.auth_resources import (
     UserResource,
     GroupResource,
     EmailAddressResource,
+    CollectionResource,
+    CollectionAssignmentResource,
 )
 
 
 
 class Command(BaseCommand):
     help = (
-        "Import users (required), and optionally groups and email addresses, "
-        "using django-import-export resources.\n\n"
+        "Import users (required), and optionally groups, email addresses, "
+        "state collections, and collection assignments, using "
+        "django-import-export resources.\n\n"
         "Usage (positional):\n"
-        "  restore_auth_ie users.csv [groups.csv] [emails.csv]\n"
+        "  restore_auth users.csv [groups.csv] [emails.csv] [collections.csv] [assignments.csv]\n"
         "Or with explicit paths:\n"
-        "  restore_auth_ie users.csv --emails-file emails.csv\n"
+        "  restore_auth users.csv --emails-file emails.csv --assignments-file assignments.csv\n"
     )
 
     def add_arguments(self, parser):
-        # 1–3 positional paths: users [groups] [emails]
+        # 1-5 positional paths: users [groups] [emails] [collections] [assignments]
         parser.add_argument(
             "paths",
             nargs="+",
-            help="One to three paths: users_file [groups_file] [emails_file]",
+            help=(
+                "One to five paths: users_file [groups_file] [emails_file] "
+                "[collections_file] [assignments_file]"
+            ),
         )
 
         # Optional explicit overrides
@@ -49,6 +55,19 @@ class Command(BaseCommand):
             "--emails-file",
             dest="emails_file",
             help="Explicit email addresses import path (overrides third positional)",
+        )
+        parser.add_argument(
+            "--collections-file",
+            dest="collections_file",
+            help="Explicit state collections import path (overrides fourth positional)",
+        )
+        parser.add_argument(
+            "--assignments-file",
+            dest="assignments_file",
+            help=(
+                "Explicit collection assignments import path "
+                "(overrides fifth positional)"
+            ),
         )
 
         parser.add_argument(
@@ -73,6 +92,8 @@ class Command(BaseCommand):
         users_path = options.get("users_file") or (paths[0] if len(paths) >= 1 else None)
         groups_path = options.get("groups_file") or (paths[1] if len(paths) >= 2 else None)
         emails_path = options.get("emails_file") or (paths[2] if len(paths) >= 3 else None)
+        collections_path = options.get("collections_file") or (paths[3] if len(paths) >= 4 else None)
+        assignments_path = options.get("assignments_file") or (paths[4] if len(paths) >= 5 else None)
 
         if not users_path:
             raise SystemExit("You must provide at least a users import path.")
@@ -80,6 +101,8 @@ class Command(BaseCommand):
         user_res = UserResource()
         group_res = GroupResource()
         email_res = EmailAddressResource()
+        collection_res = CollectionResource()
+        assignment_res = CollectionAssignmentResource()
 
         # --- Groups first (if any), so user->group relations can resolve ---
         if groups_path:
@@ -99,6 +122,38 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f"Groups imported from {groups_path}"))
         else:
             self.stdout.write("Groups import skipped (no groups path provided).")
+
+        # --- State Collections (optional; before Users so assignments can
+        # resolve; Regions must already exist on the destination) ---
+        if collections_path:
+            with open(collections_path, "r", encoding="utf-8") as f:
+                collection_raw = f.read()
+            collection_dataset = Dataset().load(collection_raw, format=fmt)
+            collection_result = collection_res.import_data(
+                collection_dataset, dry_run=dry_run
+            )
+
+            if collection_result.has_errors():
+                self.stdout.write(
+                    self.style.ERROR("Errors importing state collections:")
+                )
+                self.stdout.write(str(collection_result.row_errors()))
+                if dry_run:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            "Dry run aborted due to state collection errors."
+                        )
+                    )
+                    return
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"State collections imported from {collections_path}"
+                )
+            )
+        else:
+            self.stdout.write(
+                "State collections import skipped (no collections path provided)."
+            )
 
         # --- Users (required) ---
         with open(users_path, "r", encoding="utf-8") as f:
@@ -139,6 +194,39 @@ class Command(BaseCommand):
         else:
             self.stdout.write(
                 "Email address import skipped (no emails path provided)."
+            )
+
+        # --- Collection Assignments (optional; must come after both Users
+        # and Collections, since each row references both) ---
+        if assignments_path:
+            with open(assignments_path, "r", encoding="utf-8") as f:
+                assignment_raw = f.read()
+            assignment_dataset = Dataset().load(assignment_raw, format=fmt)
+            assignment_result = assignment_res.import_data(
+                assignment_dataset, dry_run=dry_run
+            )
+
+            if assignment_result.has_errors():
+                self.stdout.write(
+                    self.style.ERROR("Errors importing collection assignments:")
+                )
+                self.stdout.write(str(assignment_result.row_errors()))
+                if dry_run:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            "Dry run aborted due to collection assignment errors."
+                        )
+                    )
+                    return
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Collection assignments imported from {assignments_path}"
+                )
+            )
+        else:
+            self.stdout.write(
+                "Collection assignments import skipped "
+                "(no assignments path provided)."
             )
 
         if dry_run:
