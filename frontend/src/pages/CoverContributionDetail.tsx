@@ -425,7 +425,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
             : "rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500";
 
   const isPending = normalizedStatus === "pending";
-  const canReview = isStateEditor && isPending && !!user && !isContributor;
+  const canReview = isStateEditor && isPending && !!user;
   const canContributorResubmit =
     isContributor && (normalizedStatus === "rejected" || normalizedStatus === "needs_revision");
   const contributorComment = String(
