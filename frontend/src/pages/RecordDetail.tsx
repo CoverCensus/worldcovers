@@ -1211,7 +1211,7 @@ const RecordDetail = () => {
             </div>
           </div>
 
-          {record.canRemove && (
+          {isStaff && record.canRemove && (
             <div className="mt-8 flex justify-end">
               {record.isRemoved ? (
                 <Button variant="outline" onClick={() => setRestoreOpen(true)}>
