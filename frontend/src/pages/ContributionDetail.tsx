@@ -27,9 +27,15 @@ import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getDateFormats, type DateFormatOption } from "@/constants/postmarkEnums";
 import { isCoverContributionData } from "@/lib/contributionDisplay";
 import CoverContributionDetail from "@/pages/CoverContributionDetail";
-import { buildMarkingFields } from "@/lib/markingFields";
+import { CatalogRecordFields } from "@/components/CatalogRecordFields";
+import {
+  buildCatalogSearchTitleFromParts,
+  displayCatalogField,
+  markingTypeLabel,
+  type CatalogFieldValues,
+} from "@/lib/catalogRecordDisplay";
 import { submittedDataToFieldInput } from "@/lib/contributionToFields";
-import { MarkingFieldsDisplay } from "@/components/MarkingFieldsDisplay";
+import type { MarkingFieldInput } from "@/lib/markingFields";
 import { type Contribution, getContribution, decideContribution, deleteDraftContribution } from "@/services/contributions";
 
 
@@ -40,6 +46,25 @@ type ContributionImageMeta = {
   storageFilename?: string;
   originalFilename?: string;
 };
+
+function buildContributionCatalogFields(input: MarkingFieldInput): CatalogFieldValues {
+  return {
+    type: displayCatalogField(markingTypeLabel(input.type) || ""),
+    town: displayCatalogField(input.town),
+    state: displayCatalogField(input.state),
+    regionAbbrev: displayCatalogField(input.state),
+    manuscript: displayCatalogField(input.isManuscript ? "Yes" : "No"),
+    desc: displayCatalogField(input.catalogTxt),
+    postmarkTextLines: [],
+    postmarkTextSingle: displayCatalogField(input.inscriptionTxt),
+    shape: displayCatalogField(input.shapeName),
+    lettering: displayCatalogField(input.letteringName),
+    dimensions: displayCatalogField(input.dimensions),
+    color: displayCatalogField(input.colorName),
+    earliestSeen: displayCatalogField(input.earliestSeen),
+    latestSeen: displayCatalogField(input.latestSeen),
+  };
+}
 
 const ContributionDetail = () => {
   const navigate = useNavigate();
@@ -251,10 +276,6 @@ const ContributionDetail = () => {
     );
   }
 
-  const state = String(sd.state ?? "").trim();
-  const town = String(sd.town ?? "").trim();
-  const shape = String(sd.shape ?? sd.type ?? "").trim();
-  const color = String(sd.color ?? "").trim();
   const contributorComment = String(
     sd.contributor_comment ??
       sd.contributorComment ??
@@ -265,8 +286,6 @@ const ContributionDetail = () => {
       sd.comment ??
       ""
   ).trim();
-  const title = [town, state].filter(Boolean).join(", ") || `Submission #${contribution.id}`;
-  const displayName = [title, shape].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" — ") || title;
   const baseImageUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
   const imageRoot = baseImageUrl || "/media";
   const resolveStorageImageUrl = (storageFilename: string) =>
@@ -349,10 +368,11 @@ const ContributionDetail = () => {
           : "rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500";
   const canReview = isStateEditor && isPending && !!user;
 
-  // Build the canonical field-row list from submitted_data. Both editors
-  // and contributors now see this read-only view; editors act on it via
-  // Approve / Reject / Return rather than inline edits.
-  let fieldRows: ReturnType<typeof buildMarkingFields> | null = null;
+  // Build the catalog-search-style field block from submitted_data. The review
+  // header/details intentionally mirror Catalog Search cards so the same entry
+  // is recognizable before and after approval.
+  let contributionCatalogFields: CatalogFieldValues | null = null;
+  let displayName = `Submission #${contribution.id}`;
   let fieldRowsError: string | null = null;
   try {
     const fieldInput = submittedDataToFieldInput(
@@ -360,7 +380,13 @@ const ContributionDetail = () => {
       { letteringOptions, dateFormatOptions },
       { contributionId: contribution.id },
     );
-    fieldRows = buildMarkingFields(fieldInput, { isStaff: !!isStateEditor });
+    contributionCatalogFields = buildContributionCatalogFields(fieldInput);
+    displayName = buildCatalogSearchTitleFromParts({
+      town: fieldInput.town,
+      region: fieldInput.state,
+      inscription: fieldInput.inscriptionTxt,
+      code: fieldInput.code,
+    });
   } catch (err) {
     fieldRowsError = err instanceof Error ? err.message : String(err);
   }
@@ -432,17 +458,28 @@ const ContributionDetail = () => {
                   <Carousel setApi={setCarouselApi} className="w-full">
                     <CarouselContent>
                       {images.length > 0 ? (
-                        images.map((img, index) => (
-                          <CarouselItem key={index}>
-                            <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
-                              <img
-                                src={img.imageUrl}
-                                alt={img.originalFilename || `Submission image ${index + 1}`}
-                                className="w-full h-full object-contain"
-                              />
-                            </div>
-                          </CarouselItem>
-                        ))
+                        images.map((img, index) => {
+                          const alt = img.originalFilename || `Submission image ${index + 1}`;
+                          return (
+                            <CarouselItem key={index}>
+                              <a
+                                href={img.imageUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label={`Open ${alt} in new tab`}
+                                className="block"
+                              >
+                                <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
+                                  <img
+                                    src={img.imageUrl}
+                                    alt={alt}
+                                    className="w-full h-full object-contain"
+                                  />
+                                </div>
+                              </a>
+                            </CarouselItem>
+                          );
+                        })
                       ) : (
                         <CarouselItem>
                           <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
@@ -467,6 +504,7 @@ const ContributionDetail = () => {
                       {images.map((_, index) => (
                         <button
                           key={index}
+                          type="button"
                           onClick={() => carouselApi?.scrollTo(index)}
                           className={`h-2 rounded-full transition-all ${
                             index === carouselCurrent
@@ -597,8 +635,8 @@ const ContributionDetail = () => {
                     <p className="text-sm text-destructive rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2">
                       Failed to render submitted data: {fieldRowsError}
                     </p>
-                  ) : fieldRows && fieldRows.length > 0 ? (
-                    <MarkingFieldsDisplay rows={fieldRows} mode="contribution" />
+                  ) : contributionCatalogFields ? (
+                    <CatalogRecordFields row={contributionCatalogFields} variant="search" />
                   ) : (
                     <p className="text-sm text-muted-foreground py-2">
                       No submitted data returned for this contribution.

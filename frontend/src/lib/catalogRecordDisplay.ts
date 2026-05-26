@@ -134,27 +134,45 @@ export type CatalogSearchRowDisplay = CatalogFieldValues & {
   image2: string | null;
 };
 
+export function buildCatalogSearchTitleFromParts({
+  town,
+  region,
+  inscription,
+  code,
+}: {
+  town?: string | null;
+  region?: string | null;
+  inscription?: string | null;
+  code?: string | null;
+}): string {
+  const townPart = town?.trim() ?? "";
+  const regionPart = region?.trim() ?? "";
+  const inscriptionPartRaw = inscription?.trim() ?? "";
+  let location = "";
+  if (townPart && regionPart) location = `${townPart}, ${regionPart}`;
+  else if (townPart) location = townPart;
+  else if (regionPart) location = regionPart;
+
+  const inscriptionPart = inscriptionPartRaw ? `"${inscriptionPartRaw}"` : "";
+
+  if (location && inscriptionPart) return `${location} - ${inscriptionPart}`;
+  if (location) return location;
+  if (inscriptionPart) return inscriptionPart;
+  return code?.trim() || CATALOG_FIELD_EMPTY;
+}
+
 /**
  * Build the search-listing title.
  * Format: `<post office>, <region abbrev> - "<inscription>"`.
  * Example: `Williamsburg, VA - "Wmsburg/VA"`.
  */
 function buildSearchTitle(record: MarkingRecord): string {
-  const town = record.postOfficeName?.trim() ?? "";
-  const region = record.stateAbbrev?.trim() ?? "";
-  const inscription = record.inscriptionTxt?.trim() ?? "";
-
-  let location = "";
-  if (town && region) location = `${town}, ${region}`;
-  else if (town) location = town;
-  else if (region) location = region;
-
-  const inscriptionPart = inscription ? `"${inscription}"` : "";
-
-  if (location && inscriptionPart) return `${location} - ${inscriptionPart}`;
-  if (location) return location;
-  if (inscriptionPart) return inscriptionPart;
-  return record.code?.trim() || CATALOG_FIELD_EMPTY;
+  return buildCatalogSearchTitleFromParts({
+    town: record.postOfficeName,
+    region: record.stateAbbrev,
+    inscription: record.inscriptionTxt,
+    code: record.code,
+  });
 }
 
 export function buildCatalogSearchRow(record: MarkingRecord): CatalogSearchRowDisplay {

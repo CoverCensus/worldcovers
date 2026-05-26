@@ -25,8 +25,12 @@ export function CatalogRecordFields({
   record?: MarkingRecord;
   variant?: "search" | "detail";
 }) {
-  const isManuscript = record?.isManuscript === true;
-  const isNonTownmark = record ? record.type !== "TOWNMARK" : false;
+  const isManuscript =
+    record?.isManuscript === true ||
+    (!record && row.manuscript.trim().toLowerCase() === "yes");
+  const isNonTownmark = record
+    ? record.type !== "TOWNMARK"
+    : row.type.trim().toLowerCase() !== "townmark";
   const hidePhysicalFieldsOnSearch = variant === "search" && (isManuscript || isNonTownmark);
   const descForSearch = truncateWithEllipsis(row.desc === "-" ? "" : row.desc, 140);
 

@@ -1745,11 +1745,16 @@ class ContributionViewSet(
                     contrib.status = Contribution.STATUS_APPROVED
                     contrib.reviewer = request.user
                     contrib.review_notes = review_notes
-                    # Link the contribution to the marking it enriches so the
-                    # entry detail page can surface its feedback/comment. Cover
-                    # detection in the serializers is submitted_data-driven, not
-                    # FK-driven, so the cover label still renders correctly.
-                    contrib.marking = parent_marking
+                    update_fields = [
+                        "status",
+                        "reviewer",
+                        "review_notes",
+                        "submitted_data",
+                        "updated_at",
+                    ]
+                    if not Contribution.objects.filter(marking=parent_marking).exclude(pk=contrib.pk).exists():
+                        contrib.marking = parent_marking
+                        update_fields.append("marking")
                     # Stamp traceability so the frontend mapper treats this
                     # contribution as materialized (no longer a pending draft).
                     sd = dict(contrib.submitted_data or {})
@@ -1757,16 +1762,7 @@ class ContributionViewSet(
                     sd["cover_marking_id"] = cover_marking.pk
                     sd["materialized_cover_marking_id"] = cover_marking.pk
                     contrib.submitted_data = sd
-                    contrib.save(
-                        update_fields=[
-                            "status",
-                            "reviewer",
-                            "review_notes",
-                            "marking",
-                            "submitted_data",
-                            "updated_at",
-                        ]
-                    )
+                    contrib.save(update_fields=update_fields)
                     after_snapshot = build_cover_snapshot(cover)
                     txn = log_submission_transaction(
                         action=SubmissionTransaction.ACTION_APPROVE,
@@ -1794,13 +1790,11 @@ class ContributionViewSet(
                     contrib.status = Contribution.STATUS_APPROVED
                     contrib.reviewer = request.user
                     contrib.review_notes = review_notes
-                    # Link the approved contribution to the marking it produced.
-                    # apply_to_catalog() creates and returns the Marking but does
-                    # not set this FK; without it marking_id stays NULL and the
-                    # entry detail page can never find the contribution's
-                    # feedback/comment.
-                    contrib.marking = marking
-                    contrib.save(update_fields=["status", "reviewer", "review_notes", "marking", "updated_at"])
+                    update_fields = ["status", "reviewer", "review_notes", "updated_at"]
+                    if not Contribution.objects.filter(marking=marking).exclude(pk=contrib.pk).exists():
+                        contrib.marking = marking
+                        update_fields.append("marking")
+                    contrib.save(update_fields=update_fields)
                     after_snapshot = build_marking_snapshot(marking)
                     txn = log_submission_transaction(
                         action=SubmissionTransaction.ACTION_APPROVE,
@@ -1813,7 +1807,11 @@ class ContributionViewSet(
                         extra_payload={"review_notes": review_notes},
                     )
                     create_marking_version(marking, txn, request.user)
-                    approved_response = {"detail": "Contribution approved.", "markingId": marking.pk}
+                    approved_response = {
+                        "detail": "Contribution approved.",
+                        "markingId": marking.pk,
+                        "postmarkId": marking.pk,
+                    }
         except NotImplementedError as exc:
             return Response(
                 {"detail": str(exc)},
@@ -2622,7 +2620,7 @@ def _apply_fresh_edit_image_metas(
     kept_records = []
     rows = Image.objects.filter(
         subject_type=subject_type, subject_id=subject_id
-    ).order_by("display_order", "id")
+    ).order_by("display_order", "image_id")
     for row in rows:
         if _storage_filename_removed(row.storage_filename, removed_set):
             continue

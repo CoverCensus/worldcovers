@@ -88,6 +88,26 @@ function resolveSubmissionImageUrl(
   return fromMeta(submittedData.image_meta ?? submittedData.imageMeta);
 }
 
+function contributionTitleFromSubmittedData(
+  submittedData: Record<string, unknown>,
+  fallbackId: unknown,
+): string {
+  const town = String(submittedData.town ?? "").trim();
+  const state = String(submittedData.state ?? "").trim();
+  const inscription = String(
+    submittedData.inscription_txt ??
+      submittedData.inscriptionTxt ??
+      submittedData.postmark_text ??
+      submittedData.postmarkText ??
+      "",
+  ).trim();
+  const location = [town, state].filter(Boolean).join(", ");
+  if (location && inscription) return `${location} - "${inscription}"`;
+  if (location) return location;
+  if (inscription) return `"${inscription}"`;
+  return `Submission #${fallbackId}`;
+}
+
 type DashboardTab = "submissions" | "suggestions" | "editor";
 
 interface DashboardItem {
@@ -403,15 +423,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
           const imageUrl = resolveSubmissionImageUrl(c, submittedData);
 
-          const displayName =
-            (c.display_name || c.displayName || "").trim() ||
-            [
-              [town, state].filter(Boolean).join(", "),
-              c.shapeName || c.shapeDisplay || c.typeDisplay || c.shape || c.type || submittedData.shape || submittedData.type,
-            ]
-              .filter((x) => x && String(x).trim().toLowerCase() !== "unknown")
-              .join(" — ") ||
-            `Submission #${c.id}`;
+          // Cover contributions edit through CoverEdit (/record/:markingId/cover/new),
+          // not the marking Contribute form. Detect by submitted_data and capture
+          // the parent marking id needed to build that route.
+          const sd = submittedData as Record<string, unknown>;
+          const isCover = isCoverContributionData(sd);
+          const coverParentMarkingId = isCover ? parentMarkingIdFromContribution(sd) : null;
+          const displayName = isCover
+            ? String(c.display_name || c.displayName || "").trim() || `Cover submission #${c.id}`
+            : contributionTitleFromSubmittedData(submittedData, c.id);
 
           const dateRange =
             c.dateRange ||
@@ -436,13 +456,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           const isSuggestion =
             c.is_suggestion === true ||
             !!(markingId || submittedData.original_marking_id || submittedData.originalMarkingId || c.original_marking_id);
-
-          // Cover contributions edit through CoverEdit (/record/:markingId/cover/new),
-          // not the marking Contribute form. Detect by submitted_data and capture
-          // the parent marking id needed to build that route.
-          const sd = submittedData as Record<string, unknown>;
-          const isCover = isCoverContributionData(sd);
-          const coverParentMarkingId = isCover ? parentMarkingIdFromContribution(sd) : null;
 
           return {
             id: c.id,
@@ -1456,11 +1469,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                                 <h3 className="font-heading text-xl font-semibold text-foreground">
                                   {submission.name}
                                 </h3>
-                                {submission.isSuggestion && (
-                                  <Badge variant="outline" className="shrink-0 text-xs">
-                                    Suggestion
-                                  </Badge>
-                                )}
                               </div>
                               {getStatusBadge(submission.status)}
                             </div>

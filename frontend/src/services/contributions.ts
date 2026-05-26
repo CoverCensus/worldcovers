@@ -185,7 +185,7 @@ function mapWriteResult(raw: unknown): ContributionWriteResult {
     contributionId: toNumberOrNull(
       firstDefined(o.contributionId, o.contribution_id, o.id),
     ),
-    postmarkId: toNumberOrNull(firstDefined(o.postmark_id, o.postmarkId, o.postmark)),
+    postmarkId: toNumberOrNull(firstDefined(o.postmark_id, o.postmarkId, o.postmark, o.marking_id, o.markingId)),
     raw: o,
   };
 }
@@ -253,7 +253,7 @@ export async function decideContribution(
   const res = await apiClient.post(`/contributions/${id}/${actionPath}/`, body);
   const o = res.data && typeof res.data === "object" ? (res.data as Record<string, unknown>) : {};
   return {
-    postmarkId: toNumberOrNull(firstDefined(o.postmark_id, o.postmarkId, o.postmark)),
+    postmarkId: toNumberOrNull(firstDefined(o.postmark_id, o.postmarkId, o.postmark, o.marking_id, o.markingId)),
     raw: o,
   };
 }
