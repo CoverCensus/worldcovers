@@ -2,12 +2,14 @@
 ## WoCo Commons - Restore Auth objects from backup
 ## MPC: 2025/11/17
 ###################################################################################################
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from django.db import transaction
+from django.db.models import Q
 
 from tablib import Dataset
 
+from common.models import Collection, CollectionAssignment
 from common.auth_resources import (
     UserResource,
     GroupResource,
@@ -16,6 +18,76 @@ from common.auth_resources import (
     CollectionAssignmentResource,
 )
 
+
+def _load_dataset(path, fmt):
+    with open(path, "r", encoding="utf-8") as f:
+        raw = f.read()
+    return Dataset().load(raw, format=fmt)
+
+
+def _format_import_errors(result):
+    parts = []
+    if result.has_errors():
+        row_errors = result.row_errors()
+        parts.append(f"row errors: {row_errors[:20]}")
+        if len(row_errors) > 20:
+            parts.append(f"... {len(row_errors) - 20} additional row errors")
+    if result.has_validation_errors():
+        invalid_rows = result.invalid_rows
+        parts.append(f"validation errors: {invalid_rows[:20]}")
+        if len(invalid_rows) > 20:
+            parts.append(f"... {len(invalid_rows) - 20} additional validation errors")
+    return "\n".join(parts) or "unknown import error"
+
+
+def _import_or_raise(resource, dataset, label):
+    result = resource.import_data(dataset, dry_run=False)
+    if result.has_errors() or result.has_validation_errors():
+        raise CommandError(f"Errors importing {label}:\n{_format_import_errors(result)}")
+    return result
+
+
+def _assignment_keep_ids(dataset):
+    keep_filter = Q()
+    for row in dataset.dict:
+        username = (row.get("user") or "").strip()
+        collection_name = (row.get("collection") or "").strip()
+        if not username or not collection_name:
+            continue
+        keep_filter |= Q(user__username=username, collection__name=collection_name)
+
+    if not keep_filter:
+        return []
+
+    return list(
+        CollectionAssignment.objects.filter(keep_filter).values_list("pk", flat=True)
+    )
+
+
+def _missing_collection_names(dataset):
+    if dataset is None:
+        return set()
+
+    missing = set()
+    for row in dataset.dict:
+        name = (row.get("name") or "").strip()
+        if name and not Collection.objects.filter(name=name).exists():
+            missing.add(name)
+    return missing
+
+
+def _without_skipped_collection_assignments(dataset, skipped_collection_names):
+    if not skipped_collection_names:
+        return dataset, 0
+
+    filtered = Dataset(headers=dataset.headers)
+    skipped = 0
+    for row in dataset.dict:
+        if (row.get("collection") or "").strip() in skipped_collection_names:
+            skipped += 1
+            continue
+        filtered.append([row.get(header) for header in dataset.headers])
+    return filtered, skipped
 
 
 class Command(BaseCommand):
@@ -103,91 +175,30 @@ class Command(BaseCommand):
         email_res = EmailAddressResource()
         collection_res = CollectionResource()
         assignment_res = CollectionAssignmentResource()
+        collection_dataset = None
+        skipped_collection_names = set()
+
+        # Dry-run validation still performs writes inside this outer transaction
+        # so later files can resolve rows imported by earlier files. The whole
+        # transaction is rolled back at the end when dry_run is true.
 
         # --- Groups first (if any), so user->group relations can resolve ---
         if groups_path:
-            with open(groups_path, "r", encoding="utf-8") as f:
-                group_raw = f.read()
-            group_dataset = Dataset().load(group_raw, format=fmt)
-            group_result = group_res.import_data(group_dataset, dry_run=dry_run)
-
-            if group_result.has_errors():
-                self.stdout.write(self.style.ERROR("Errors importing groups:"))
-                self.stdout.write(str(group_result.row_errors()))
-                if dry_run:
-                    self.stdout.write(
-                        self.style.WARNING("Dry run aborted due to group errors.")
-                    )
-                    return
+            group_dataset = _load_dataset(groups_path, fmt)
+            _import_or_raise(group_res, group_dataset, "groups")
             self.stdout.write(self.style.SUCCESS(f"Groups imported from {groups_path}"))
         else:
             self.stdout.write("Groups import skipped (no groups path provided).")
 
-        # --- State Collections (optional; before Users so assignments can
-        # resolve; Regions must already exist on the destination) ---
-        if collections_path:
-            with open(collections_path, "r", encoding="utf-8") as f:
-                collection_raw = f.read()
-            collection_dataset = Dataset().load(collection_raw, format=fmt)
-            collection_result = collection_res.import_data(
-                collection_dataset, dry_run=dry_run
-            )
-
-            if collection_result.has_errors():
-                self.stdout.write(
-                    self.style.ERROR("Errors importing state collections:")
-                )
-                self.stdout.write(str(collection_result.row_errors()))
-                if dry_run:
-                    self.stdout.write(
-                        self.style.WARNING(
-                            "Dry run aborted due to state collection errors."
-                        )
-                    )
-                    return
-            self.stdout.write(
-                self.style.SUCCESS(
-                    f"State collections imported from {collections_path}"
-                )
-            )
-        else:
-            self.stdout.write(
-                "State collections import skipped (no collections path provided)."
-            )
-
         # --- Users (required) ---
-        with open(users_path, "r", encoding="utf-8") as f:
-            user_raw = f.read()
-        user_dataset = Dataset().load(user_raw, format=fmt)
-        user_result = user_res.import_data(user_dataset, dry_run=dry_run)
-
-        if user_result.has_errors():
-            self.stdout.write(self.style.ERROR("Errors importing users:"))
-            self.stdout.write(str(user_result.row_errors()))
-            if dry_run:
-                self.stdout.write(
-                    self.style.WARNING("Dry run aborted due to user errors.")
-                )
-                return
+        user_dataset = _load_dataset(users_path, fmt)
+        _import_or_raise(user_res, user_dataset, "users")
         self.stdout.write(self.style.SUCCESS(f"Users imported from {users_path}"))
 
         # --- Email addresses (optional; must come after users) ---
         if emails_path:
-            with open(emails_path, "r", encoding="utf-8") as f:
-                email_raw = f.read()
-            email_dataset = Dataset().load(email_raw, format=fmt)
-            email_result = email_res.import_data(email_dataset, dry_run=dry_run)
-
-            if email_result.has_errors():
-                self.stdout.write(self.style.ERROR("Errors importing email addresses:"))
-                self.stdout.write(str(email_result.row_errors()))
-                if dry_run:
-                    self.stdout.write(
-                        self.style.WARNING(
-                            "Dry run aborted due to email address errors."
-                        )
-                    )
-                    return
+            email_dataset = _load_dataset(emails_path, fmt)
+            _import_or_raise(email_res, email_dataset, "email addresses")
             self.stdout.write(
                 self.style.SUCCESS(f"Email addresses imported from {emails_path}")
             )
@@ -196,31 +207,68 @@ class Command(BaseCommand):
                 "Email address import skipped (no emails path provided)."
             )
 
+        # --- State Collections (optional; after Users so audit fields can be
+        # populated when a row needs to be created. Regions must already exist
+        # on the destination.) ---
+        if collections_path:
+            collection_dataset = _load_dataset(collections_path, fmt)
+            _import_or_raise(
+                collection_res,
+                collection_dataset,
+                "state collections",
+            )
+            skipped_collection_names = _missing_collection_names(collection_dataset)
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"State collections imported from {collections_path}"
+                )
+            )
+            if skipped_collection_names:
+                self.stdout.write(
+                    self.style.WARNING(
+                        "Skipped collection rows that conflict with local "
+                        "Region ownership: "
+                        + ", ".join(sorted(skipped_collection_names))
+                    )
+                )
+        else:
+            self.stdout.write(
+                "State collections import skipped (no collections path provided)."
+            )
+
         # --- Collection Assignments (optional; must come after both Users
         # and Collections, since each row references both) ---
         if assignments_path:
-            with open(assignments_path, "r", encoding="utf-8") as f:
-                assignment_raw = f.read()
-            assignment_dataset = Dataset().load(assignment_raw, format=fmt)
-            assignment_result = assignment_res.import_data(
-                assignment_dataset, dry_run=dry_run
-            )
-
-            if assignment_result.has_errors():
-                self.stdout.write(
-                    self.style.ERROR("Errors importing collection assignments:")
+            assignment_dataset = _load_dataset(assignments_path, fmt)
+            assignment_dataset, skipped_assignments = (
+                _without_skipped_collection_assignments(
+                    assignment_dataset,
+                    skipped_collection_names,
                 )
-                self.stdout.write(str(assignment_result.row_errors()))
-                if dry_run:
-                    self.stdout.write(
-                        self.style.WARNING(
-                            "Dry run aborted due to collection assignment errors."
-                        )
-                    )
-                    return
+            )
+            _import_or_raise(
+                assignment_res,
+                assignment_dataset,
+                "collection assignments",
+            )
+            keep_ids = _assignment_keep_ids(assignment_dataset)
+            deleted, _ = CollectionAssignment.objects.exclude(pk__in=keep_ids).delete()
             self.stdout.write(
                 self.style.SUCCESS(
                     f"Collection assignments imported from {assignments_path}"
+                )
+            )
+            if skipped_assignments:
+                self.stdout.write(
+                    self.style.WARNING(
+                        "Skipped "
+                        f"{skipped_assignments} assignment row(s) for skipped "
+                        "collection rows."
+                    )
+                )
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Collection assignments mirrored; removed {deleted} stale rows."
                 )
             )
         else:
@@ -230,6 +278,7 @@ class Command(BaseCommand):
             )
 
         if dry_run:
+            transaction.set_rollback(True)
             self.stdout.write(
                 self.style.SUCCESS("Dry run completed; no data committed.")
             )

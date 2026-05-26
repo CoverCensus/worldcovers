@@ -4,6 +4,7 @@
 ###################################################################################################
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
+from django.utils import timezone
 
 from import_export import resources, fields
 from import_export.widgets import ForeignKeyWidget, ManyToManyWidget
@@ -17,7 +18,43 @@ from common.models import Collection, CollectionAssignment, Region
 User = get_user_model()
 
 
-class UserResource(resources.ModelResource):
+def _fallback_audit_user():
+    return (
+        User.objects.filter(is_superuser=True).order_by("pk").first()
+        or User.objects.order_by("pk").first()
+    )
+
+
+class ExportOnlyIdMixin:
+    id = fields.Field(column_name="id", attribute="id", readonly=True)
+
+    def before_import_row(self, row, **kwargs):
+        row.pop("id", None)
+        super().before_import_row(row, **kwargs)
+
+
+class TimestampedRestoreMixin:
+    def before_save_instance(self, instance, row, **kwargs):
+        now = timezone.now()
+        actor = _fallback_audit_user()
+        if actor is None:
+            raise ValueError(
+                f"Cannot restore {instance.__class__.__name__}: no user exists "
+                "for required audit fields."
+            )
+
+        if getattr(instance, "created_date", None) is None:
+            instance.created_date = now
+        instance.modified_date = now
+
+        if getattr(instance, "created_by_id", None) is None:
+            instance.created_by = actor
+        instance.modified_by = actor
+
+        super().before_save_instance(instance, row, **kwargs)
+
+
+class UserResource(ExportOnlyIdMixin, resources.ModelResource):
     groups = fields.Field(
         column_name="groups",
         attribute="groups",
@@ -46,10 +83,10 @@ class UserResource(resources.ModelResource):
             "groups",
             "user_permissions",
         )
-        import_id_fields = ("id", "username")
+        import_id_fields = ("username",)
 
 
-class GroupResource(resources.ModelResource):
+class GroupResource(ExportOnlyIdMixin, resources.ModelResource):
     permissions = fields.Field(
         column_name="permissions",
         attribute="permissions",
@@ -63,11 +100,11 @@ class GroupResource(resources.ModelResource):
     class Meta:
         model = Group
         fields = ("id", "name", "permissions")
-        import_id_fields = ("id", "name")
+        import_id_fields = ("name",)
 
 
 
-class EmailAddressResource(resources.ModelResource):
+class EmailAddressResource(ExportOnlyIdMixin, resources.ModelResource):
     """
     Backup/restore for django-allauth email addresses.
     We link to users by username for portability.
@@ -88,10 +125,10 @@ class EmailAddressResource(resources.ModelResource):
             "verified",
             "primary",
         )
-        import_id_fields = ("id", "email")
+        import_id_fields = ("user", "email")
 
 
-class CollectionResource(resources.ModelResource):
+class CollectionResource(TimestampedRestoreMixin, ExportOnlyIdMixin, resources.ModelResource):
     """
     Backup/restore for state Collections. Region is linked by name for
     portability across environments. Regions are core seed data and are
@@ -107,10 +144,34 @@ class CollectionResource(resources.ModelResource):
     class Meta:
         model = Collection
         fields = ("id", "name", "description", "region", "is_active")
-        import_id_fields = ("id", "name")
+        import_id_fields = ("name",)
+
+    def before_save_instance(self, instance, row, **kwargs):
+        if instance.pk:
+            existing = Collection.objects.only("region_id").get(pk=instance.pk)
+            instance.region_id = existing.region_id
+        super().before_save_instance(instance, row, **kwargs)
+
+    def skip_row(self, instance, original, row, import_validation_errors=None):
+        if (
+            instance.pk is None
+            and getattr(instance, "region_id", None)
+            and Collection.objects.filter(region_id=instance.region_id).exists()
+        ):
+            return True
+        return super().skip_row(
+            instance,
+            original,
+            row,
+            import_validation_errors=import_validation_errors,
+        )
 
 
-class CollectionAssignmentResource(resources.ModelResource):
+class CollectionAssignmentResource(
+    TimestampedRestoreMixin,
+    ExportOnlyIdMixin,
+    resources.ModelResource,
+):
     """
     Backup/restore for editor -> Collection assignments. We link users by
     username and Collections by name so the file is portable across

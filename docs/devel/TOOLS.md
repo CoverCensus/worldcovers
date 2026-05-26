@@ -247,14 +247,14 @@ Then upload `dateformat_import.csv` at `/admin/postmarks/dateformat/import/`.
 
 ### `backup_auth` and `restore_auth` — user account backup
 
-Export and restore user accounts, groups, and email addresses using django-import-export resources.
+Export and restore user accounts, groups, email addresses, state collections, and editor collection assignments using django-import-export resources.
 
 ```sh
-woco backup_auth users.csv groups.csv emails.csv
-woco restore_auth users.csv groups.csv emails.csv
+woco backup_auth users.csv groups.csv emails.csv collections.csv assignments.csv
+woco restore_auth users.csv groups.csv emails.csv collections.csv assignments.csv
 ```
 
-Run `backup_auth` before destructive DB operations. `restore_auth` is idempotent — safe to re-run.
+Run `backup_auth` before destructive DB operations. `restore_auth` is idempotent and assignment restore is an exact mirror when `assignments.csv` is provided.
 
 ---
 
