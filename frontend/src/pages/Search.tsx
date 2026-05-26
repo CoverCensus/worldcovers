@@ -896,11 +896,13 @@ const Search = () => {
                       >
                         <CardContent className="p-4">
                           <div className="flex gap-6 md:flex-row flex-col">
-                            <ImageOrPlaceholder
-                              src={row.image}
-                              alt={row.title}
-                              className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border"
-                            />
+                            <div className="md:w-32 md:h-32 w-full h-48 shrink-0 rounded border border-border bg-muted p-2 overflow-hidden">
+                              <ImageOrPlaceholder
+                                src={row.image}
+                                alt={row.title}
+                                className="h-full w-full object-contain"
+                              />
+                            </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-start justify-between gap-3 mb-2">
                                 <h3 className="font-heading text-xl font-semibold text-foreground">
