@@ -42,9 +42,12 @@ const categoryLabel: Record<DocCategory, string> = {
   other: "More Docs",
 };
 
-const Help = () => {
+const Help = ({ singleDocSlug }: { singleDocSlug?: string }) => {
   const navigate = useNavigate();
   const { docSlug } = useParams<{ docSlug?: string }>();
+  // When rendered as a single static doc (e.g. /acknowledgements), pin to
+  // this slug and hide the sidebar; otherwise behave as the normal Help page.
+  const effectiveSlug = singleDocSlug ?? docSlug;
   const [docs, setDocs] = useState<HelpDoc[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
@@ -114,8 +117,8 @@ const Help = () => {
       return;
     }
 
-    if (docSlug && orderedDocs.some((doc) => doc.slug === docSlug)) {
-      setSelectedSlug(docSlug);
+    if (effectiveSlug && orderedDocs.some((doc) => doc.slug === effectiveSlug)) {
+      setSelectedSlug(effectiveSlug);
       return;
     }
 
@@ -123,7 +126,7 @@ const Help = () => {
       if (current && orderedDocs.some((doc) => doc.slug === current)) return current;
       return orderedDocs[0].slug;
     });
-  }, [docSlug, orderedDocs]);
+  }, [effectiveSlug, orderedDocs]);
 
   const selectedDoc = useMemo(
     () => orderedDocs.find((doc) => doc.slug === selectedSlug) ?? null,
@@ -138,11 +141,13 @@ const Help = () => {
         <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12 md:py-16">
           <header className="mb-10">
             <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-3">
-              Help
+              {singleDocSlug ? (selectedDoc?.title ?? "Acknowledgements") : "Help"}
             </h1>
-            <p className="text-muted-foreground">
-              Read public documentation, including the system glossary and frequently asked questions.
-            </p>
+            {!singleDocSlug && (
+              <p className="text-muted-foreground">
+                Read public documentation, including the system glossary and frequently asked questions.
+              </p>
+            )}
           </header>
 
           {isLoading ? (
@@ -154,7 +159,8 @@ const Help = () => {
               No help documents found.
             </div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
+            <div className={singleDocSlug ? "" : "grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8"}>
+              {!singleDocSlug && (
               <aside className="lg:col-span-4 xl:col-span-3">
                 <div className="rounded-lg border border-border bg-card p-3 md:p-4">
                   <div className="relative mb-4">
@@ -225,13 +231,16 @@ const Help = () => {
                   </div>
                 </div>
               </aside>
+              )}
 
-              <article className="lg:col-span-8 xl:col-span-9 rounded-lg border border-border bg-card p-6 md:p-8">
+              <article className={`rounded-lg border border-border bg-card p-6 md:p-8 ${singleDocSlug ? "" : "lg:col-span-8 xl:col-span-9"}`}>
                 {selectedDoc ? (
                   <>
-                    <h2 className="font-heading text-2xl font-semibold text-foreground mb-4">
-                      {selectedDoc.title}
-                    </h2>
+                    {!singleDocSlug && (
+                      <h2 className="font-heading text-2xl font-semibold text-foreground mb-4">
+                        {selectedDoc.title}
+                      </h2>
+                    )}
                     <div className="w-full overflow-x-auto">
                       <div
                         className="prose prose-slate max-w-none dark:prose-invert break-words [&_p]:my-4 [&_p]:leading-7 [&_li]:my-1.5 [&_li]:leading-7 [&_h1]:mb-5 [&_h1]:mt-8 [&_h2]:mb-4 [&_h2]:mt-8 [&_h3]:mb-3 [&_h3]:mt-6 [&_hr]:my-8 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:text-sm [&_table]:border [&_table]:border-border [&_table]:border-collapse [&_th]:whitespace-normal [&_th]:border [&_th]:border-border [&_th]:bg-muted/60 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_td]:whitespace-normal [&_td]:break-words [&_td]:align-top [&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-words"

@@ -26,6 +26,11 @@ export const Footer = () => {
                   Catalog
                 </Link>
               </li>
+              <li>
+                <Link to="/acknowledgements" className="hover:text-foreground transition-colors">
+                  Acknowledgements
+                </Link>
+              </li>
               {user && (
                 <li>
                 <Link to="/contribute" className="hover:text-foreground transition-colors">

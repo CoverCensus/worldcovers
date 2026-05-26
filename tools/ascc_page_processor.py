@@ -69,6 +69,10 @@ RULE_BAND_TOP_FRAC     = 0.20   # ignore top 20% of page (header)
 RULE_BAND_BOTTOM_FRAC  = 0.85   # ignore bottom 15% of page (footer)
 RULE_DARK_THRESHOLD    = 128    # pixel value below which we count as 'dark'
 RULE_MIN_DARK_FRACTION = 0.70   # column must be dark for >=70% of band height
+# Used only after vision has confirmed a page is two-column. Some scans have a
+# real printed rule that is broken/faint enough to miss the strict pass, but
+# still clearly dominates the center search band.
+RULE_WEAK_MIN_DARK_FRACTION = 0.50
 RULE_CENTER_TOLERANCE  = 0.05   # rule must lie within +/- 5% of width//2
 
 # Pass-1 vision strip sizes (300 DPI -> 1 inch = 300 px).
@@ -428,7 +432,7 @@ def stage_render(paths, force):
 # Stage B -- halves (rule detection + page number + L/R crop)
 # ---------------------------------------------------------------------------
 
-def detect_rule_x(im):
+def detect_rule_x(im, min_dark_fraction=RULE_MIN_DARK_FRACTION):
     """Locate the printed vertical rule between the two text columns.
 
     Returns x in full-page coords, or None if no column qualifies.
@@ -447,7 +451,7 @@ def detect_rule_x(im):
     x_hi = min(w, cx + half_search)
 
     col_dark = (band[:, x_lo:x_hi] < RULE_DARK_THRESHOLD).sum(axis=0)
-    min_dark = int(band_h * RULE_MIN_DARK_FRACTION)
+    min_dark = int(band_h * min_dark_fraction)
     qualifying = np.where(col_dark >= min_dark)[0]
 
     if qualifying.size == 0:
@@ -548,6 +552,21 @@ def stage_halves(paths, model, full_pages, force, page_filter, verbose=False):
             iw, ih = im.size
             if key in responses:
                 rec = responses[key]
+                if (
+                    rec.get("has_two_columns")
+                    and rec.get("rule_source") == "vision_single_col_failed"
+                    and rec.get("rule_x") == rec.get("image_width", iw) // 2
+                ):
+                    weak_rule_x = detect_rule_x(
+                        im,
+                        min_dark_fraction=RULE_WEAK_MIN_DARK_FRACTION,
+                    )
+                    if weak_rule_x is not None:
+                        rec = dict(rec)
+                        rec["rule_x"] = weak_rule_x
+                        rec["rule_source"] = "vision_confirmed_weak_rule"
+                        responses[key] = rec
+                        save_cache(paths.halves_cache, halves_cache)
             else:
                 rule_x = detect_rule_x(im)
 
@@ -575,9 +594,17 @@ def stage_halves(paths, model, full_pages, force, page_filter, verbose=False):
                               f"has_two_columns={htc}", flush=True)
                     calls += 1
                     if htc:
-                        rule_x = iw // 2
-                        rule_source = "vision_single_col_failed"
-                        rule_failures.append((key, pn))
+                        weak_rule_x = detect_rule_x(
+                            im,
+                            min_dark_fraction=RULE_WEAK_MIN_DARK_FRACTION,
+                        )
+                        if weak_rule_x is not None:
+                            rule_x = weak_rule_x
+                            rule_source = "vision_confirmed_weak_rule"
+                        else:
+                            rule_x = iw // 2
+                            rule_source = "vision_single_col_failed"
+                            rule_failures.append((key, pn))
                     else:
                         rule_x = -1
                         rule_source = "vision_single_col"
@@ -606,7 +633,8 @@ def stage_halves(paths, model, full_pages, force, page_filter, verbose=False):
         print("=== WARNING: deterministic rule detector failed on these two-column pages ===")
         for key, pn in rule_failures:
             print(f"  {key} catalog {pn}")
-        print(f"rule_x has been set to image_width//2 as a fallback; inspect the")
+        print(f"no weak rule candidate was found; rule_x has been set to")
+        print(f"image_width//2 as a fallback. Inspect the")
         print(f"halves output and hand-edit {paths.halves_cache} if the split is off.")
 
     # Duplicate-page-number guard runs BEFORE any writes.

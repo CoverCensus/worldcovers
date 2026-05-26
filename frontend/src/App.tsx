@@ -133,6 +133,7 @@ const App = () => (
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/help" element={<Help />} />
             <Route path="/help/:docSlug" element={<Help />} />
+            <Route path="/acknowledgements" element={<Help singleDocSlug="acknowledgements" />} />
             <Route
               path="/admin/collections"
               element={(
