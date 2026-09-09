@@ -50,6 +50,110 @@ def _get_user_assigned_collections(user):
     )
 
 
+def _support_email():
+    """Address to send a blocked user to. LOGIN_REQUEST_ADMIN_EMAIL is optional."""
+    return getattr(settings, "LOGIN_REQUEST_ADMIN_EMAIL", "") or "info@worldcovers.org"
+
+
+def _resolve_login_identifier(identifier):
+    """The single User matching this username-or-email, else None.
+
+    Diagnostic only -- this NEVER grants access, it only decides which error
+    string the caller returns, which is why __iexact is acceptable here.
+    Username first, then email, mirroring ModelBackend running first in
+    settings.AUTHENTICATION_BACKENDS.
+
+    An ambiguous identifier resolves to None rather than raising: nothing
+    enforces email uniqueness on User, so .get() here would 500 the way
+    ForgotPasswordApiView still does. Two matches means we cannot say which
+    account the caller meant, so they get the generic answer.
+    """
+    User = get_user_model()
+    for lookup in ("username__iexact", "email__iexact"):
+        if lookup.startswith("email") and "@" not in identifier:
+            continue
+        matches = list(User.objects.filter(**{lookup: identifier})[:2])
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            return None
+    return None
+
+
+def _account_state_response(account, password_setup_flow=False):
+    """403 explaining why this account cannot sign in, or None if nothing blocks it.
+
+    Pass password_setup_flow=True from forgot-password / reset-password. Those
+    flows must NOT block an active account that simply has no password yet --
+    setting one is exactly what they are for, and the message below tells the
+    user to go there. Blocking it would send them in a circle.
+
+    Shared by login, forgot-password and reset-password so that a user who
+    disbelieves one endpoint and tries another reads the SAME sentence rather
+    than two different stories. That repetition is the point: issue #150 was
+    reported as a password failure precisely because every endpoint described
+    the problem differently.
+
+    ⛔ Do NOT gate these messages on a correct password ("only tell them if
+    they'd otherwise have logged in"). It is the natural review suggestion and
+    it is a null fix here: LoginRequestView calls set_unusable_password(), so
+    check_password() returns False for every possible input and 100% of pending
+    users would still get "Invalid credentials." That ships the bug unchanged
+    while looking like a fix.
+
+    On disclosure: this reveals that an account exists and cannot sign in. The
+    codebase already concedes far more from unauthenticated endpoints -- see
+    LoginRequestSerializer.validate_email ("A user with this email already
+    exists.") and ForgotPasswordApiView's "No account found for that email
+    address." Both are complete membership oracles. This adds one bit about
+    accounts that cannot be logged into at all, so it shortens no password
+    search.
+    """
+    if not account.is_active:
+        # last_login, NOT has_usable_password(), is the discriminator. A user
+        # who already walked the issue #150 loop completed a password reset, so
+        # they are inactive WITH a usable password -- keying on the password
+        # would hand that exact person the "deactivated" copy, which is a
+        # second wrong answer to the same member. login() is the only writer of
+        # last_login, and they have never reached it.
+        if account.last_login is None:
+            return Response(
+                {
+                    "detail": (
+                        "This account is waiting for approval, so it cannot sign in yet. "
+                        "This is not a password problem - resetting your password will not "
+                        f"change it. Email {_support_email()} if you would like it looked at."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return Response(
+            {
+                "detail": (
+                    "This account has been deactivated and cannot sign in. "
+                    f"Email {_support_email()} to have access restored."
+                )
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    if not account.has_usable_password() and not password_setup_flow:
+        # Activated by hand without a password being set -- the admin checkbox
+        # flips is_active and nothing else, while signals.py mails the user
+        # "you can now sign in". Forgot Password genuinely works for them
+        # (they are active, so the block below does not apply), but prod mail
+        # is currently dead, hence both halves of the instruction.
+        return Response(
+            {
+                "detail": (
+                    "This account does not have a password set yet. Use 'Forgot password' "
+                    f"to set one. If no email arrives, contact {_support_email()}."
+                )
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
+
 def _build_user_payload(user):
     role = _get_user_role(user)
     payload = {
@@ -94,8 +198,13 @@ def _build_user_payload(user):
             },
         ),
         400: OpenApiResponse(description="Username and password required"),
-        401: OpenApiResponse(description="Invalid credentials"),
-        403: OpenApiResponse(description="Account is disabled"),
+        401: OpenApiResponse(description="Invalid credentials, or no such account"),
+        403: OpenApiResponse(
+            description=(
+                "The account exists but cannot sign in: awaiting approval, "
+                "deactivated, or activated without a password being set."
+            )
+        ),
     },
 )
 @method_decorator(csrf_exempt, name="dispatch")
@@ -121,14 +230,33 @@ class LoginView(APIView):
             except (User.DoesNotExist, User.MultipleObjectsReturned):
                 pass
         if user is None:
+            # authenticate() returns None for BOTH "wrong password" and "account
+            # cannot authenticate" -- ModelBackend.user_can_authenticate rejects
+            # inactive users inside authenticate(), and allauth's backend stashes
+            # them rather than returning them. So the real account state has to be
+            # looked up here, on the failure path only, to tell those cases apart.
+            # Everything above this line is deliberately untouched: the email ->
+            # username fallback is the only thing making username != email accounts
+            # work, and it is load-bearing for every editor on the site.
+            account = _resolve_login_identifier(username)
+            if account is not None:
+                blocked = _account_state_response(account)
+                if blocked is not None:
+                    return blocked
             return Response(
                 {"detail": "Invalid credentials."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
         if not user.is_active:
-            return Response(
-                {"detail": "Account is disabled."},
-                status=status.HTTP_403_FORBIDDEN,
+            # Unreachable with the backends in settings.AUTHENTICATION_BACKENDS
+            # today -- both ModelBackend and allauth's AuthenticationBackend
+            # return None for is_active=False, which is why the real handling
+            # lives in the branch above. Kept as an invariant guard: never
+            # login() an inactive user, whatever backend list a future settings
+            # change grows. Costs one boolean on the success path.
+            return _account_state_response(user) or Response(
+                {"detail": "Invalid credentials."},
+                status=status.HTTP_401_UNAUTHORIZED,
             )
         login(request, user)
         return Response({"user": _build_user_payload(user)})
@@ -217,8 +345,19 @@ class LoginRequestView(APIView):
         )
         user.set_unusable_password()
         user.save()
+        # Promises nothing the system can actually deliver. The previous copy
+        # ("An admin will provide your username and password") described a
+        # notification that does not exist, for a step nobody owns (issue #151),
+        # over mail that currently cannot send at all (issue #152) -- so users
+        # waited silently instead of asking.
         return Response(
-            {"detail": "Request submitted. An admin will provide your username and password."},
+            {
+                "detail": (
+                    "Request received. Each request is reviewed by an editor by hand, so it "
+                    "is not instant. You will not get an automatic confirmation email - if "
+                    f"you have not heard back within a week, email {_support_email()}."
+                )
+            },
             status=status.HTTP_201_CREATED,
         )
 
@@ -249,6 +388,15 @@ class ForgotPasswordApiView(APIView):
                 {"detail": "No account found for that email address."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # Before minting anything. A reset cannot fix a blocked account, so
+        # issuing a working link here is what closed the issue #150 loop: the
+        # user reset their password, still could not sign in, and reasonably
+        # concluded the password was the problem. Same sentence as /login/ --
+        # sharing the helper is what stops the two endpoints drifting apart.
+        blocked = _account_state_response(user, password_setup_flow=True)
+        if blocked is not None:
+            return blocked
 
         uid = urlsafe_base64_encode(force_bytes(user.pk))
         token = _password_reset_token_generator.make_token(user)
@@ -331,12 +479,26 @@ class ResetPasswordApiView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Deliberately AFTER check_token: uid is just a base64-encoded pk, so
+        # checking account state before the token would turn this endpoint into
+        # a standalone account-state oracle for any pk. And deliberately BEFORE
+        # set_password: blocking only the forgot-password request would leave a
+        # live token working for up to PASSWORD_RESET_TIMEOUT (3 days by
+        # default) in the inbox of exactly the user who reported issue #150.
+        blocked = _account_state_response(user, password_setup_flow=True)
+        if blocked is not None:
+            return blocked
+
         if len(password) < 4:
             return Response(
                 {"detail": "Password must be at least 4 characters long."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # ⛔ is_active is deliberately NOT set here. Activation is an editorial
+        # membership decision (issue #151), not proof of email ownership --
+        # auto-activating on reset would let anyone who can receive mail at the
+        # address bypass approval entirely.
         user.set_password(password)
         user.save()
 

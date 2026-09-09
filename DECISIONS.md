@@ -1,5 +1,67 @@
 # Decisions
 
+## 2026-09-08 — A password reset never activates an account, and account state is one shared answer (#150)
+
+**What was decided.** Three calls inside the #150 fix:
+
+1. **A completed password reset does NOT set `is_active`.** Inactive accounts are blocked from
+   forgot-password *and* reset-password instead.
+2. **One helper, `_account_state_response()`, answers for login, forgot-password and reset-password**
+   — the same account state returns the same status and the same sentence from all three.
+3. **Pending and deactivated get different copy**, discriminated on **`last_login is None`**, not on
+   `has_usable_password()`.
+
+**Why.**
+
+*(1)* This was the fork the issue left open ("either block the reset, or have a completed reset
+activate"). Activating on reset is one line and looks like the friendlier option, but it converts
+**proof of email ownership into membership approval**. Anyone who can receive mail at an address they
+typed into a public form would self-approve, and per #151 there is currently no owner of the approval
+step who would notice. Blocking also has to cover `reset-password` itself, not just the request:
+Django's default `PASSWORD_RESET_TIMEOUT` is 3 days, so the member who reported this may still hold a
+live token, and blocking only the request would leave a working bypass in their inbox.
+
+*(2)* The defect was never one bad string — it was **three endpoints telling one user three different
+stories**, which is why a member read a pending approval as a wrong password. Sharing the helper is
+what makes the repetition structural instead of a convention someone breaks later; the test asserts
+the login and forgot-password `detail` are **string-equal**, not merely similar.
+⚠ The one exception is deliberate: `password_setup_flow=True` stops forgot/reset blocking an *active*
+account that simply has no password yet, because that flow is precisely its remedy. The first draft
+lacked this and was circular — it told the user to use Forgot Password, from Forgot Password.
+
+*(3)* `has_usable_password()` is the intuitive discriminator and it is wrong for exactly the person
+who filed the bug. They already walked the loop — they completed a reset — so their row is
+`is_active=False` **with** a usable password, and a password-based test would have served them the
+"your account was deactivated" copy: a second wrong answer, to the same member, in the fix. Nothing
+but `login()` writes `last_login`, and they have never reached it.
+
+**Rejected, and recorded so it is not re-proposed:** gating the messages on a correct password.
+`LoginRequestView` calls `set_unusable_password()`, so `check_password()` is `False` for every input
+— the gate would return "Invalid credentials." to **100%** of pending users, shipping the bug
+unchanged while appearing to fix it. This is in a code comment as well as here.
+
+**On disclosure.** The fix reveals that an account exists and cannot sign in. That is strictly
+narrower than two oracles the codebase already ships from unauthenticated endpoints
+(`LoginRequestSerializer.validate_email` and forgot-password's "No account found"), and it concerns
+accounts that cannot be logged into at all, so it shortens no password search. Those two
+contradictions were **deliberately left alone** and filed as #159 rather than changed in passing.
+
+**Source or evidence.** `ModelBackend.user_can_authenticate` and
+`allauth/account/auth_backends.py:103-112` both return `None` for inactive users — which is why the
+old `if not user.is_active` branch was unreachable. `backend/common/tests/test_auth_account_state.py`
+(7 cases). Backend 389 · frontend 223 · lint · typecheck · build, all under Node 22.
+
+**Date.** 2026-09-08
+
+---
+
+## 2026-09-08 — Date observations keep a DELETE verb, and cannot be moved between records (#128)
+
+> ⚠ Recorded on branch `reese/datesseen-scoping-128` (PR 140). If that PR merges after this one,
+> this heading will appear twice — keep the fuller version.
+
+---
+
 ## 2026-08-28 — A postmaster's term of service is derived for display, never stored (#125, #93)
 
 **What was decided.** `PostmasterTenure` continues to hold one row per appointment **event** and
