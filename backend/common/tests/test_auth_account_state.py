@@ -9,6 +9,9 @@ only self-service remedy could not succeed.
 These are the first tests for this endpoint family, so they target that loop
 rather than the permutation space.
 """
+from smtplib import SMTPSenderRefused
+from unittest import mock
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import mail
@@ -144,3 +147,68 @@ class AuthAccountStateTests(TestCase):
         wrong = self._login("editor3", "WrongPassword1!")
         self.assertEqual(wrong.status_code, 401, wrong.data)
         self.assertIn("Invalid credentials", wrong.data["detail"])
+
+    # --- mail transport failures (issue #162) --------------------------------
+
+    def test_forgot_password_does_not_500_when_the_relay_refuses_the_sender(self):
+        """The exact production failure: SMTP authenticates, then rejects the FROM.
+
+        This is not a rare edge case on prod -- issue #152 means the relay
+        refuses every sender we have, so this path is EVERY reset for all 26
+        accounts. Uncaught, it was a 500: no message for the user, no signal to
+        an admin, and issue #150's own advice ("Use 'Forgot password' to set
+        one") dead-ended on an error page.
+        """
+        User.objects.create_user(
+            username="editor4", email="editor4@example.com", password="CorrectHorse1!"
+        )
+
+        with mock.patch(
+            "common.api.auth.send_mail",
+            side_effect=SMTPSenderRefused(
+                554, b"5.1.0 The sender's address was not allowed.", "no-reply@example.com"
+            ),
+        ):
+            response = self.client.post(
+                FORGOT_URL, {"email": "editor4@example.com"}, format="json"
+            )
+
+        self.assertEqual(response.status_code, 503, response.data)
+        # ⛔ Never 200 here. Claiming "a reset link has been sent" when the send
+        # raised is the same lie as the silent activation mail in signals.py.
+        self.assertNotIn("has been sent", response.data["detail"])
+        self.assertIn("could not send", response.data["detail"].lower())
+        # The user must be given a human to contact, not just a failure.
+        self.assertIn("@", response.data["detail"])
+
+    def test_forgot_password_logs_the_failed_address_at_error(self):
+        """A silent failure is how #152 went unnoticed. Someone must be able to see it."""
+        User.objects.create_user(
+            username="editor5", email="editor5@example.com", password="CorrectHorse1!"
+        )
+
+        with mock.patch(
+            "common.api.auth.send_mail", side_effect=OSError("connection refused")
+        ):
+            with self.assertLogs("common.api.auth", level="ERROR") as captured:
+                self.client.post(
+                    FORGOT_URL, {"email": "editor5@example.com"}, format="json"
+                )
+
+        self.assertTrue(
+            any("editor5@example.com" in line for line in captured.output),
+            f"the attempted address must be in the log: {captured.output}",
+        )
+
+    def test_forgot_password_still_returns_200_when_mail_works(self):
+        """The positive control -- the new handler must not swallow the happy path."""
+        User.objects.create_user(
+            username="editor6", email="editor6@example.com", password="CorrectHorse1!"
+        )
+
+        response = self.client.post(
+            FORGOT_URL, {"email": "editor6@example.com"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(mail.outbox), 1)
