@@ -482,6 +482,25 @@ class DateSeenSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        # A PATCH that changes subject_type/subject_id relocates the row, and
+        # DRF only ever shows has_object_permission the *old* object -- so an
+        # editor could move a date they own onto a marking they do not
+        # (issue #128). Delete-and-recreate is exactly equivalent and is fully
+        # audited, and it keeps one row hanging off one parent, so the audit
+        # trail never has to fork across two. The ORM path used by the admin,
+        # the importers and contribution_apply is untouched.
+        if self.instance is not None:
+            for key in ("subject_type", "subject_id"):
+                if key in attrs and attrs[key] != getattr(self.instance, key):
+                    raise serializers.ValidationError(
+                        {
+                            key: [
+                                "A date cannot be moved to a different record. "
+                                "Delete it and add it to the other record instead."
+                            ]
+                        }
+                    )
+
         component_keys = {"date_year", "date_month", "date_day"}
         has_component_input = any(key in attrs for key in component_keys)
         has_legacy_date_input = "date" in attrs
@@ -515,6 +534,39 @@ class DateSeenSerializer(serializers.ModelSerializer):
             if hasattr(exc, "message_dict"):
                 raise serializers.ValidationError(exc.message_dict)
             raise serializers.ValidationError(exc.messages)
+
+        # The API used to happily create dates pointing at nothing. It also
+        # leaves the audit trail with no parent to hang a transaction on.
+        subject_exists = (
+            Marking.all_objects.filter(pk=values["subject_id"]).exists()
+            if values["subject_type"] == DateSeen.SUBJECT_MARKING
+            else Cover.all_objects.filter(pk=values["subject_id"]).exists()
+        )
+        if not subject_exists:
+            raise serializers.ValidationError(
+                {"subject_id": ["No such record."]}
+            )
+
+        # dates_seen_subject_parts_unique (models.py) otherwise surfaces as a
+        # raw IntegrityError -- a 500 where the client should see a 400. This
+        # cannot be a UniqueTogetherValidator: date_key is editable=False, so
+        # ModelSerializer never generates one and DRF skips the constraint.
+        # normalize_date_parts() above is what puts date_key on `row`, so this
+        # is the first point in the request where the check is possible.
+        # Field tuple deliberately mirrors the constraint's, even though
+        # granularity is functionally determined by date_key.
+        duplicates = DateSeen.objects.filter(
+            subject_type=values["subject_type"],
+            subject_id=values["subject_id"],
+            granularity=row.granularity,
+            date_key=row.date_key,
+        )
+        if self.instance is not None:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        if duplicates.exists():
+            raise serializers.ValidationError(
+                {"non_field_errors": ["This date is already recorded for this record."]}
+            )
 
         attrs["date"] = row.date
         attrs["granularity"] = row.granularity

@@ -1,5 +1,53 @@
 # Decisions
 
+## 2026-09-08 — Date observations keep a DELETE verb, and cannot be moved between records (#128)
+
+**What was decided.** Three calls, all inside the #128 scoping/audit fix:
+
+1. **`DateSeenViewSet` keeps DELETE**, made audited via `perform_destroy`, rather than closing the
+   verb through `http_method_names` the way `CoverValuationViewSet` and `CoverMarkingViewSet` did.
+2. **A PATCH can no longer change `subject_type`/`subject_id`** — a move is now a 400, and the
+   sanctioned path is delete-then-create.
+3. **A COVER-subject date change is logged against the cover only**, never fanned out to the linked
+   markings.
+
+**Why.**
+
+*(1)* The sibling precedent reads as a general rule but isn't one. Those two viewsets closed DELETE
+because the entity had *no sanctioned removal flow*. Dates do: `contribution_apply.py` deletes every
+`DateSeen` row for a subject on each apply, `signals.py` carries a handler written specifically for
+the delete path, and `test_date_range_cache.py` asserts that an **API** DELETE maintains the
+denormalized `earliest_seen`/`latest_seen` columns. Declaring date deletion unsanctioned at the API
+while the apply pipeline does it wholesale would be incoherent, and #107's editable Dates Seen UI
+needs row removal. A date is an observation, not an entity — deleting a mis-transcribed one is the
+normal correction, and a `DateSeenRecycleBin` for a five-field child row is over-engineering.
+
+*(2)* DRF only ever shows `has_object_permission` the **old** object. Without this, a VA editor
+could PATCH `subject_id` and land a row they own onto a marking they don't — reintroducing exactly
+the hole the issue is about, through the one verb that looked scoped. No caller does it
+(`covers.ts` sends only `date` and `granularity`), delete-and-create is equivalent and fully
+audited, and forbidding it keeps one row hanging off one parent so the audit trail never forks.
+The ORM move path (`signals.py`'s `stash_previous_date_seen_subject`) is untouched.
+
+*(3)* `SubmissionTransaction.marking` is a single FK. With N linked markings there is no
+non-arbitrary one to pick, and writing N transactions would misrepresent one edit as many. The
+linked markings' cached ranges still move; only the changelog placement differs.
+
+**Consequence to watch.** Each write now emits one transaction and one version row. That is right
+per-edit and matches `MarkingViewSet`, but if #107 ships **bulk** date editing, N rows submitted
+together become N versions on one changelog. The answer then is a batch endpoint writing one
+transaction and one version per submit — **not** per-row version suppression. Recorded in the
+viewset docstring so it is found at the point of change.
+
+**Source or evidence.** `contribution_apply.py` `_sync_cover_date_seen` / `_sync_marking_date_seen`;
+`signals.py` `refresh_date_range_on_date_seen_delete`; `test_date_range_cache.py`
+`test_api_date_seen_crud_maintains_columns` (passes untouched — the regression gate);
+`backend/common/tests/test_date_seen_permissions.py`. Full backend suite 389 passing.
+
+**Date.** 2026-09-08
+
+---
+
 ## 2026-08-28 — A postmaster's term of service is derived for display, never stored (#125, #93)
 
 **What was decided.** `PostmasterTenure` continues to hold one row per appointment **event** and
