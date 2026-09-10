@@ -1,5 +1,51 @@
 # Decisions
 
+## 2026-09-10 — Reset uses the change-password rule; AUTH_PASSWORD_VALIDATORS stays a floor, not the source of truth (#157)
+
+**What was decided.** Two calls:
+
+1. **`ResetPasswordApiView` now calls `_validate_password_strength()`** — the same helper
+   `ChangePasswordApiView` uses — instead of its own `len(password) < 4`.
+2. **`AUTH_PASSWORD_VALIDATORS` was raised from `min_length: 4` to `8`, and deliberately NOT made
+   the single source of truth** for the API's password rules.
+
+**Why.**
+
+*(1)* The two endpoints enforced different rules, so Forgot Password was a **route around the strong
+policy**: reset accepted 4 characters where change-password demands 8 + upper + lower + digit +
+special. Proven, not inferred — running the new tests against the pre-fix code returns **200 "Your
+password has been reset"** for the password `abcd`.
+
+⭐ **This was a server-only hole, and that is why it survived.** `ResetPassword.tsx` already enforces
+all five rules client-side, so the SPA never sent a weak password and nothing user-facing changes.
+The form's own validation hid the missing server check — the classic shape. Only a non-SPA client, or
+anyone who obtained a reset link and posted to the API directly, could reach it.
+
+The test asserts the two endpoints return the **same message**, not merely the same status. That is
+what stops a future edit re-forking the rules: they share one helper, and the test fails the moment
+they stop.
+
+*(2)* Making the validator list authoritative is the obvious tidy-up and was rejected, for three
+reasons:
+- Expressing the current rule through `AUTH_PASSWORD_VALIDATORS` needs **four custom validator
+  classes** (upper, lower, digit, special). That is more surface than the hole being closed.
+- `validate_password()` raises `ValidationError` carrying a **list** of messages, while every
+  endpoint here returns a single `detail` string. Adopting it is an **API response-shape change**,
+  not a drop-in — the SPA renders `detail`.
+- Django's stock extras (`CommonPasswordValidator`, `UserAttributeSimilarityValidator`) would reject
+  passwords that are legal today. That is a **policy** change nobody has asked for, and it belongs to
+  Ian, not to a bug fix.
+
+⚠ **Nothing in this project calls `validate_password()`** — the list only reaches the Django admin's
+password forms and allauth. Leaving it at 4 stated a floor the product does not honour anywhere, so
+it was raised to 8 to agree with the app. It remains **only a floor**, and the comment in
+`settings.py` says so, so the next reader does not mistake it for the real rule.
+
+**Consequence to watch.** The Django admin and allauth now refuse passwords under 8 characters where
+they previously allowed 4. That is intended. ⚠ It does **not** make the admin enforce the full
+five-part rule — an admin can still set `abcdefgh`. Closing that gap is the custom-validator work
+above, deliberately deferred.
+
 ## 2026-09-08 — Date observations keep a DELETE verb, and cannot be moved between records (#128)
 
 **What was decided.** Three calls, all inside the #128 scoping/audit fix:
