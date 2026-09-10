@@ -72,9 +72,15 @@ export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) 
         return;
       }
 
+      // Prefer the server's copy, the way the error branch above and the
+      // sibling auth forms already do. This screen used to hard-code its own
+      // success line, so the backend's wording never reached anyone -- and the
+      // hard-coded version promised a follow-up nobody owns (issue #151).
       toast({
         title: "Request submitted!",
-        description: "We'll review your request and get back to you soon.",
+        description:
+          (data as { detail?: string }).detail ||
+          "We'll review your request and get back to you soon.",
       });
 
       resetForm();

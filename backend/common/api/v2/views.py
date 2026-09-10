@@ -29,6 +29,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from rest_framework import filters, mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import (
     AllowAny,
@@ -117,14 +118,22 @@ from .permissions import (
     CanReviewContribution,
     IsOwnDeletableContribution,
     IsEditorOrAdminWrite,
+    IsResponsibleForDateSeenSubject,
     IsResponsibleForImageSubject,
     _get_user_assigned_regions,
     _user_is_responsible_for_cover,
     _user_is_responsible_for_marking,
     user_assigned_collection_ids,
     user_can_review_contributions,
+    user_is_responsible_for_subject,
 )
 from .serializers import (
+    # Private by name, shared by intent: the queue's parent-marking prefetch
+    # (issue #135) has to pick the same marking the serializer will render, and
+    # a second copy of the parent_marking_id/marking_id fallback here would be a
+    # silent way for the two to disagree.
+    _contribution_submitted_data_is_cover,
+    _contribution_target_marking_id,
     CitationSerializer,
     CollectionSerializer,
     ColorSerializer,
@@ -1312,22 +1321,206 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
 
 
 class DateSeenViewSet(viewsets.ModelViewSet):
-    # DateSeen is polymorphic. Clients filter by `subject_type=COVER|MARKING`
-    # plus `subject_id=<pk>` to retrieve the date observations for a given
-    # cover or marking.
+    """Date observations for a Cover or a Marking.
+
+    DateSeen is polymorphic. Clients filter by `subject_type=COVER|MARKING`
+    plus `subject_id=<pk>` to retrieve the date observations for a given
+    cover or marking.
+
+    Writes are region-scoped to the subject and fully audited (issue #128).
+    Reads stay open: `dates_seen` is already public through
+    CoverSerializer.get_dates_seen and the marking serializers, so narrowing
+    the queryset here would be a user-visible change unrelated to the fix.
+
+    Three things a future caller should know:
+
+    * A COVER-subject date change is logged against the cover only.
+      SubmissionTransaction.marking is a single FK, so with N linked markings
+      there is no non-arbitrary one to pick. The linked markings' cached date
+      ranges still move (signals.py); the event just shows up in the cover's
+      changelog rather than each marking's.
+    * Each write emits one transaction and one version row, matching
+      MarkingViewSet. If issue #107 ships bulk date editing, N rows submitted
+      together would mean N versions on one changelog -- the answer then is a
+      batch endpoint writing one transaction and one version per submit, not
+      per-row suppression here.
+    * Version snapshots *capture* dates_seen (audit.py:69-78) but
+      restore_marking_from_snapshot does not replay them, so restoring a
+      version leaves the current date rows in place. Deliberate and tracked
+      separately -- the same gap covers images, and fixing dates alone would
+      make restore half-correct in a less obvious way.
+    """
+
     queryset = DateSeen.objects.all()
     serializer_class = DateSeenSerializer
-    permission_classes = [IsEditorOrAdminWrite]
+    permission_classes = [IsEditorOrAdminWrite, IsResponsibleForDateSeenSubject]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ["subject_type", "subject_id", "granularity"]
     ordering_fields = ["date", "date_year", "date_month", "date_day", "created_date"]
     ordering = ["subject_type", "subject_id", "date", "date_year", "date_month", "date_day"]
 
+    def _resolve_subject(self, subject_type, subject_id):
+        """The parent Marking or Cover, or None if the row is orphaned.
+
+        There is no cascade from Marking/Cover down to DateSeen, so a row can
+        outlive its subject. `all_objects` keeps recycle-binned parents visible.
+        """
+        if subject_type == DateSeen.SUBJECT_MARKING:
+            return Marking.all_objects.filter(pk=subject_id).first()
+        if subject_type == DateSeen.SUBJECT_COVER:
+            return Cover.all_objects.filter(pk=subject_id).first()
+        return None
+
+    def _assert_responsible(self, subject_type, subject_id):
+        """Region check for CREATE, which has no object for DRF to check.
+
+        IsResponsibleForDateSeenSubject covers PUT/PATCH/DELETE via
+        has_object_permission; DRF never calls it on create, so the same
+        predicate is applied here against validated_data.
+        """
+        if user_is_responsible_for_subject(self.request.user, subject_type, subject_id):
+            return
+        # A cover with no linked markings has no region at all, so
+        # _user_is_responsible_for_cover denies everyone but a superuser. That
+        # reads as an inexplicable 403 unless we say so. Issue #107 should
+        # order its UI so the marking link comes first.
+        if subject_type == DateSeen.SUBJECT_COVER:
+            cover = Cover.all_objects.filter(pk=subject_id).first()
+            if cover is not None and not cover.cover_markings.exists():
+                raise PermissionDenied(
+                    "This cover has no linked markings yet, so it has no region. "
+                    "Link a marking before adding dates."
+                )
+        raise PermissionDenied(
+            "You are not assigned to the region this record belongs to."
+        )
+
+    def _log(self, *, action_name, subject, subject_type, before, after, extra):
+        """Write the transaction and version row for one date mutation.
+
+        An orphaned subject gets a transaction with no parent FK -- the row
+        identity lives in extra_payload -- and no version row, since
+        MarkingVersion.marking / CoverVersion.cover are both required.
+        """
+        is_marking = subject_type == DateSeen.SUBJECT_MARKING
+        txn = log_submission_transaction(
+            action=action_name,
+            actor=self.request.user,
+            marking=subject if is_marking else None,
+            cover=None if is_marking else subject,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload=before,
+            after_payload=after,
+            extra_payload=extra,
+        )
+        if subject is None:
+            return
+        if is_marking:
+            create_marking_version(subject, txn, self.request.user)
+        else:
+            create_cover_version(subject, txn, self.request.user)
+
+    def _snapshot(self, subject, subject_type):
+        if subject is None:
+            return {}
+        if subject_type == DateSeen.SUBJECT_MARKING:
+            return build_marking_snapshot(subject)
+        return build_cover_snapshot(subject)
+
+    # The duplicate check lives in DateSeenSerializer.validate() and returns a
+    # 400 with a message. These two are the race backstop for the window
+    # between that check and the INSERT -- without them a concurrent duplicate
+    # is a 500. The catch has to sit outside perform_*'s atomic block: a
+    # broken transaction cannot be recovered from inside one.
+    #
+    # Matched on the constraint name, NOT bare `except IntegrityError`. The
+    # atomic block also writes a MarkingVersion/CoverVersion, and
+    # create_*_version reads max(version_no) then inserts against a
+    # unique_together -- so two concurrent edits to the same subject raise
+    # IntegrityError from the *version* row. Swallowing that as "duplicate
+    # date" would report a failure that did not happen and hide one that did.
+    def _duplicate_date_response(self, exc):
+        if "dates_seen_subject_parts_unique" not in str(exc):
+            raise exc
+        return Response(
+            {"detail": "This date is already recorded for this record."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except IntegrityError as exc:
+            return self._duplicate_date_response(exc)
+
+    def update(self, request, *args, **kwargs):
+        try:
+            return super().update(request, *args, **kwargs)
+        except IntegrityError as exc:
+            return self._duplicate_date_response(exc)
+
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        subject_type = serializer.validated_data["subject_type"]
+        subject_id = serializer.validated_data["subject_id"]
+        self._assert_responsible(subject_type, subject_id)
+        with transaction.atomic():
+            row = serializer.save(
+                created_by=self.request.user, modified_by=self.request.user
+            )
+            subject = self._resolve_subject(subject_type, subject_id)
+            self._log(
+                action_name=SubmissionTransaction.ACTION_RECORD_CREATE,
+                subject=subject,
+                subject_type=subject_type,
+                before={},
+                after=self._snapshot(subject, subject_type),
+                extra={
+                    "date_seen_id": row.pk,
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                },
+            )
 
     def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
+        # The serializer refuses subject changes, so before and after hang off
+        # the same parent and one snapshot pair tells the whole story.
+        subject_type = serializer.instance.subject_type
+        subject_id = serializer.instance.subject_id
+        with transaction.atomic():
+            # Resolved once: the subject row itself is untouched by a date
+            # edit, and the snapshot builders re-query the child collections.
+            subject = self._resolve_subject(subject_type, subject_id)
+            before = self._snapshot(subject, subject_type)
+            row = serializer.save(modified_by=self.request.user)
+            self._log(
+                action_name=SubmissionTransaction.ACTION_RECORD_UPDATE,
+                subject=subject,
+                subject_type=subject_type,
+                before=before,
+                after=self._snapshot(subject, subject_type),
+                extra={"date_seen_id": row.pk},
+            )
+
+    def perform_destroy(self, instance):
+        subject_type = instance.subject_type
+        subject_id = instance.subject_id
+        deleted_id = instance.pk
+        with transaction.atomic():
+            subject = self._resolve_subject(subject_type, subject_id)
+            before = self._snapshot(subject, subject_type)
+            instance.delete()
+            self._log(
+                action_name=SubmissionTransaction.ACTION_RECORD_DELETE,
+                subject=subject,
+                subject_type=subject_type,
+                before=before,
+                after=self._snapshot(subject, subject_type),
+                extra={
+                    "deleted_date_seen_id": deleted_id,
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                },
+            )
 
 
 class CoverValuationViewSet(viewsets.ModelViewSet):
@@ -2240,6 +2433,73 @@ def _annotate_contribution_sort_keys(queryset):
     )
 
 
+def _contribution_parent_locations(instances):
+    """{marking_id: (town, state)} for the cover drafts on one page (#135/#137).
+
+    A cover contribution has no town in its submitted_data -- the town belongs
+    to the marking the cover was filed against -- so the dashboard could not
+    name the record an editor was looking at. Resolving that per row is an N+1
+    on the busiest editor screen, and the queue is 2,440+ rows, so every parent
+    on the page is fetched together and handed to the serializer via context.
+
+    Two queries, whatever the page size, and none at all when the page holds no
+    cover drafts.
+
+    The second query is not a convenience. It reproduces PostOffice.region --
+    same SUBREGION_TIERS exclusion, same ordering -- rather than reading the
+    property, because the property issues its own query per post office, which
+    is the N+1 this exists to avoid. The exclusion is the load-bearing part:
+    since the VPHC ingest a VA/WV town is linked to its county as well as its
+    state (issue #103), and the county link is the one that reads as a state if
+    you take the first row you are given. That mistake is measured elsewhere in
+    this file -- 1,553 of 7,305 rows offered a county as the state.
+    """
+    marking_ids = set()
+    for obj in instances or ():
+        # Only cover drafts need this; _contribution_target_marking_id returns
+        # the parent for those and the edited marking for everything else, and
+        # a marking contribution already carries its own town.
+        if not _contribution_submitted_data_is_cover(obj.submitted_data or {}):
+            continue
+        marking_id = _contribution_target_marking_id(obj)
+        if marking_id is not None:
+            marking_ids.add(marking_id)
+    if not marking_ids:
+        return {}
+
+    markings = Marking.objects.filter(id__in=marking_ids).select_related("post_office")
+    post_office_by_marking = {m.id: m.post_office for m in markings}
+
+    states_by_post_office = {}
+    post_office_ids = {po.id for po in post_office_by_marking.values() if po is not None}
+    if post_office_ids:
+        links = (
+            PostOfficeRegion.objects.filter(post_office_id__in=post_office_ids)
+            .exclude(region__region_tier__in=Region.SUBREGION_TIERS)
+            .select_related("region")
+            .order_by(
+                F("region__defunct_date").desc(nulls_first=True),
+                F("region__established_date").desc(nulls_last=True),
+            )
+        )
+        for link in links:
+            # Ordered active-first, so the first link seen for a post office is
+            # the one PostOffice.region would have picked.
+            states_by_post_office.setdefault(
+                link.post_office_id, link.region.abbrev or link.region.name or ""
+            )
+
+    locations = {}
+    for marking_id, post_office in post_office_by_marking.items():
+        if post_office is None:
+            continue
+        locations[marking_id] = (
+            post_office.name or "",
+            states_by_post_office.get(post_office.id, ""),
+        )
+    return locations
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class ContributionViewSet(
     mixins.CreateModelMixin,
@@ -2426,6 +2686,21 @@ class ContributionViewSet(
         if self.action == "list":
             return ContributionListSerializer
         return ContributionDetailSerializer
+
+    def get_serializer(self, *args, **kwargs):
+        # Issue #135/#137: hand the list serializer the town and state of every
+        # cover draft's parent marking, resolved for the whole page in one go.
+        #
+        # This hook rather than list(): it sees the page DRF actually serializes
+        # whether or not pagination is in play, and it is the one place both
+        # branches of ListModelMixin.list pass through. Only the list action
+        # needs it -- ContributionDetailSerializer does not render a display
+        # name -- so nothing else pays for the lookup.
+        if self.action == "list" and args:
+            context = kwargs.get("context") or self.get_serializer_context()
+            context["parent_marking_locations"] = _contribution_parent_locations(args[0])
+            kwargs["context"] = context
+        return super().get_serializer(*args, **kwargs)
 
     @action(detail=True, methods=["post"], url_path="approve")
     def approve(self, request, pk=None):

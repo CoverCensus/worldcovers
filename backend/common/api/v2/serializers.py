@@ -482,6 +482,25 @@ class DateSeenSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        # A PATCH that changes subject_type/subject_id relocates the row, and
+        # DRF only ever shows has_object_permission the *old* object -- so an
+        # editor could move a date they own onto a marking they do not
+        # (issue #128). Delete-and-recreate is exactly equivalent and is fully
+        # audited, and it keeps one row hanging off one parent, so the audit
+        # trail never has to fork across two. The ORM path used by the admin,
+        # the importers and contribution_apply is untouched.
+        if self.instance is not None:
+            for key in ("subject_type", "subject_id"):
+                if key in attrs and attrs[key] != getattr(self.instance, key):
+                    raise serializers.ValidationError(
+                        {
+                            key: [
+                                "A date cannot be moved to a different record. "
+                                "Delete it and add it to the other record instead."
+                            ]
+                        }
+                    )
+
         component_keys = {"date_year", "date_month", "date_day"}
         has_component_input = any(key in attrs for key in component_keys)
         has_legacy_date_input = "date" in attrs
@@ -515,6 +534,39 @@ class DateSeenSerializer(serializers.ModelSerializer):
             if hasattr(exc, "message_dict"):
                 raise serializers.ValidationError(exc.message_dict)
             raise serializers.ValidationError(exc.messages)
+
+        # The API used to happily create dates pointing at nothing. It also
+        # leaves the audit trail with no parent to hang a transaction on.
+        subject_exists = (
+            Marking.all_objects.filter(pk=values["subject_id"]).exists()
+            if values["subject_type"] == DateSeen.SUBJECT_MARKING
+            else Cover.all_objects.filter(pk=values["subject_id"]).exists()
+        )
+        if not subject_exists:
+            raise serializers.ValidationError(
+                {"subject_id": ["No such record."]}
+            )
+
+        # dates_seen_subject_parts_unique (models.py) otherwise surfaces as a
+        # raw IntegrityError -- a 500 where the client should see a 400. This
+        # cannot be a UniqueTogetherValidator: date_key is editable=False, so
+        # ModelSerializer never generates one and DRF skips the constraint.
+        # normalize_date_parts() above is what puts date_key on `row`, so this
+        # is the first point in the request where the check is possible.
+        # Field tuple deliberately mirrors the constraint's, even though
+        # granularity is functionally determined by date_key.
+        duplicates = DateSeen.objects.filter(
+            subject_type=values["subject_type"],
+            subject_id=values["subject_id"],
+            granularity=row.granularity,
+            date_key=row.date_key,
+        )
+        if self.instance is not None:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        if duplicates.exists():
+            raise serializers.ValidationError(
+                {"non_field_errors": ["This date is already recorded for this record."]}
+            )
 
         attrs["date"] = row.date
         attrs["granularity"] = row.granularity
@@ -1323,11 +1375,43 @@ class ContributionListSerializer(serializers.ModelSerializer):
     def get_cover_id(self, obj):
         return _contribution_target_cover_id(obj)
 
+    def _parent_location(self, obj):
+        """(town, state) inherited from a cover draft's parent marking.
+
+        Issue #135/#137. A cover contribution carries no town of its own --
+        CoverEdit never sends one, and it must not:
+        _contribution_submitted_data_is_cover keys "this is a cover" partly on
+        the ABSENCE of a town, so denormalizing one into submitted_data would
+        reclassify every cover draft as a marking. The town lives on the parent
+        marking and has to be looked up.
+
+        The map is built once per page by the viewset
+        (_contribution_parent_locations) and arrives through context, so this is
+        a dict hit rather than a query per row. An empty pair is the honest
+        answer when the map is absent (a serializer used outside the list view)
+        or the parent cannot be resolved -- callers degrade, never fail.
+        """
+        marking_id = _contribution_target_marking_id(obj)
+        if marking_id is None:
+            return "", ""
+        locations = (self.context or {}).get("parent_marking_locations") or {}
+        return locations.get(marking_id, ("", ""))
+
     def get_state_display(self, obj):
-        return (obj.submitted_data or {}).get("state", "-")
+        sd = obj.submitted_data or {}
+        if _contribution_submitted_data_is_cover(sd) and not str(sd.get("state") or "").strip():
+            _, state = self._parent_location(obj)
+            if state:
+                return state
+        return sd.get("state", "-")
 
     def get_town_display(self, obj):
-        return (obj.submitted_data or {}).get("town", "-")
+        sd = obj.submitted_data or {}
+        if _contribution_submitted_data_is_cover(sd) and not str(sd.get("town") or "").strip():
+            town, _ = self._parent_location(obj)
+            if town:
+                return town
+        return sd.get("town", "-")
 
     def get_type_display(self, obj):
         return (obj.submitted_data or {}).get("type", "-")
@@ -1341,7 +1425,20 @@ class ContributionListSerializer(serializers.ModelSerializer):
             type_label = cover_types.get(type_code, type_code or "Cover")
             date = _submitted_cover_date_label(sd)
             parent = sd.get("parent_marking_id") or sd.get("marking_id")
-            parts = ["Cover draft", type_label]
+            # Issue #137: the identifying facts lead and the record type trails,
+            # so an editor scanning the dashboard reads "which town" before
+            # "which kind of record". Issue #135 is the same complaint: the town
+            # was not there at all. Both come from the parent marking. The draft
+            # keeps priority where it does carry a state (CoverEdit sends one
+            # when the route names it) -- that is what the submitter chose.
+            parent_town, parent_state = self._parent_location(obj)
+            town = str(sd.get("town") or "").strip() or parent_town
+            state = str(sd.get("state") or "").strip() or parent_state
+            location = ", ".join([x for x in [town, state] if x])
+            # An unresolvable parent leaves location empty and the label falls
+            # back to the type-first form it had before #137. A draft whose
+            # marking was deleted still has to render.
+            parts = [location, "Cover draft", type_label]
             if date:
                 parts.append(date)
             if parent not in (None, ""):

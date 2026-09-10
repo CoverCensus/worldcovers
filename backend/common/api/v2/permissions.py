@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
-from common.models import Contribution, Image, Region
+from common.models import Contribution, Region
 
 
 REVIEW_CONTRIBUTION_PERM = "common.review_contribution"
@@ -135,32 +135,54 @@ class IsEditorOrAdminWrite(IsEditor):
         return super().has_permission(request, view)
 
 
-def user_is_responsible_for_image(user, image):
-    """Whether ``user`` may act on ``image``, via the subject it hangs off.
+def user_is_responsible_for_subject(user, subject_type, subject_id):
+    """Whether ``user`` may act on the (subject_type, subject_id) a row hangs off.
 
-    Image is polymorphic on (subject_type, subject_id) with no FK, so the
-    subject has to be looked up before the ordinary marking/cover checks apply.
+    The polymorphic children -- Image, DateSeen -- carry no FK to their parent,
+    so the subject has to be looked up before the ordinary marking/cover checks
+    apply. They share the same 'COVER'/'MARKING' subject_type values, so this
+    takes the pair rather than a row: object-level permission checks have an
+    instance to read it off, but CREATE does not, and has to pass the values
+    straight out of validated_data.
+
     A row pointing at a subject that no longer exists is superuser-only: there
     is no region to reason about. (Deleting a Marking or Cover orphans its
-    Image rows silently -- there is no cascade.)
+    child rows silently -- there is no cascade.) `all_objects` is deliberate:
+    a recycle-binned subject still resolves to its region.
     """
     if not user or not user.is_authenticated:
         return False
     if user.is_superuser:
         return True
-    if image is None:
-        return False
     from common.models import Cover, Marking
 
-    if image.subject_type == Image.SUBJECT_MARKING:
-        marking = Marking.all_objects.filter(pk=image.subject_id).first()
+    # Literals rather than Image.SUBJECT_* / DateSeen.SUBJECT_*: this is
+    # generic over the polymorphic children, and keying it on one model's
+    # constants would read as though the others were being coerced to it.
+    # The two models define the same values (models.py, Image and DateSeen).
+    if subject_type == "MARKING":
+        marking = Marking.all_objects.filter(pk=subject_id).first()
         return _user_is_responsible_for_marking(user, marking)
-    if image.subject_type == Image.SUBJECT_COVER:
-        cover = Cover.all_objects.filter(pk=image.subject_id).first()
+    if subject_type == "COVER":
+        cover = Cover.all_objects.filter(pk=subject_id).first()
         if cover is None:
             return False
         return _user_is_responsible_for_cover(user, cover)
     return False
+
+
+def user_is_responsible_for_image(user, image):
+    """Whether ``user`` may act on ``image``, via the subject it hangs off."""
+    if not user or not user.is_authenticated:
+        return False
+    # Superuser short-circuits ahead of the None check, so a superuser passes
+    # even for a row we could not load. Preserved from the pre-extraction
+    # version deliberately -- callers depend on it.
+    if user.is_superuser:
+        return True
+    if image is None:
+        return False
+    return user_is_responsible_for_subject(user, image.subject_type, image.subject_id)
 
 
 class IsResponsibleForImageSubject(BasePermission):
@@ -188,6 +210,36 @@ class IsResponsibleForImageSubject(BasePermission):
         if request.method in SAFE_METHODS:
             return True
         return user_is_responsible_for_image(request.user, obj)
+
+
+class IsResponsibleForDateSeenSubject(BasePermission):
+    """
+    Object-level write check for DateSeen rows, scoped to the subject's region.
+
+    DateSeenViewSet carried only the role check (IsEditorOrAdminWrite), so any
+    editor could alter or delete any marking's dates in any state (issue #128).
+
+    This covers PUT/PATCH/DELETE only -- DRF does not call
+    has_object_permission on create, so DateSeenViewSet.perform_create runs the
+    same check by hand against validated_data.
+    """
+
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and (user.is_superuser or user_can_review_contributions(user))
+        )
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in SAFE_METHODS:
+            return True
+        return user_is_responsible_for_subject(
+            request.user, obj.subject_type, obj.subject_id
+        )
 
 
 class CanReviewContribution(BasePermission):
