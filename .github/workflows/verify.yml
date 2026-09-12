@@ -1,0 +1,125 @@
+# The single definition of "is this tree good?".
+#
+# Called by pr-checks.yml (every pull request) and by both deploy workflows, so
+# a PR and a deploy can never disagree about what was checked. That drift is not
+# hypothetical: `npm audit --audit-level=moderate` was tightened in 3a0da7f and
+# merged green, because no pull_request workflow ran npm at all -- the failure
+# only appeared at deploy time and blocked four finished PRs (issues.md #155).
+#
+# Keep this the only place the verification steps are written down. If a step
+# belongs on a deploy, it belongs on a PR too.
+name: Verify
+
+on:
+  workflow_call:
+
+# Opt JS-based actions into the node24 runtime ahead of GitHub's forced flip.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Malware fingerprint scan
+        run: bash tools/fingerprint.sh
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Verify frontend
+        run: |
+          cd frontend
+          npm ci
+          npm audit --audit-level=moderate
+          npm run lint
+          npm run typecheck
+          npm test -- --runInBand
+          npm run build
+
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+
+    services:
+      # Matches production, which runs MariaDB 10.11.14 -- not MySQL. The
+      # backend suite needs a real server: settings.py pins the mysql engine
+      # and there is no sqlite fallback.
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: ci-root-not-a-real-secret
+          MARIADB_DATABASE: worldcovers
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: "0.11.2"
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync --no-dev --frozen
+
+      - name: Write mysql.cnf
+        run: |
+          # mysql.cnf is gitignored (.gitignore:252), so CI has to generate it.
+          # settings.py:132 loads it via OPTIONS.read_default_file. host/port
+          # are required here and absent from mysql.cnf.example: the service
+          # container is reachable over TCP only, with no unix socket on the
+          # runner, so the example's socket default would fail to connect.
+          cat > mysql.cnf <<'CNF'
+          [client]
+          host = 127.0.0.1
+          port = 3306
+          user = root
+          password = ci-root-not-a-real-secret
+          default-character-set = utf8mb4
+          CNF
+
+      - name: Verify tools
+        run: |
+          cd tools
+          # pytest, not unittest: several tools/tests files are pytest-style
+          # (plain classes, parametrize, tmp_path). unittest only collects
+          # TestCase subclasses, so it imported those files and ran none of
+          # their assertions -- 283 collected where pytest finds 304.
+          uv run python -m pytest tests
+
+      - name: Django system checks
+        env:
+          DJANGO_SECRET_KEY: ci-dummy-not-a-real-secret-do-not-use-anywhere
+        run: uv run python backend/manage.py check
+
+      - name: Backend tests
+        env:
+          DJANGO_SECRET_KEY: ci-dummy-not-a-real-secret-do-not-use-anywhere
+        # ~402 tests, ~2.5 min. Until this step existed the backend suite ran
+        # only when a developer remembered to run it by hand (issues.md #161) --
+        # both #128 and #150 shipped behaviour changes to production with no
+        # automated gate behind them at all.
+        run: uv run python backend/manage.py test common

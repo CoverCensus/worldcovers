@@ -12,60 +12,10 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  # The verification steps live in verify.yml so that this deploy and every
+  # pull request check exactly the same things. Do not inline steps here.
   build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Malware fingerprint scan
-        run: bash tools/fingerprint.sh
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v8.2.0
-        with:
-          version: "0.11.2"
-          enable-cache: true
-
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install Python dependencies
-        run: uv sync --no-dev --frozen
-
-      - name: Verify frontend
-        run: |
-          cd frontend
-          npm ci
-          npm audit --audit-level=moderate
-          npm run lint
-          npm run typecheck
-          npm test -- --runInBand
-          npm run build
-
-      - name: Verify tools
-        run: |
-          cd tools
-          # pytest, not unittest: several tools/tests files are pytest-style
-          # (plain classes, parametrize, tmp_path). unittest only collects
-          # TestCase subclasses, so it imported those files and ran none of
-          # their assertions -- 283 collected where pytest finds 304.
-          uv run python -m pytest tests
-
-      - name: Django system checks
-        env:
-          DJANGO_SECRET_KEY: ci-dummy-not-a-real-secret-do-not-use-anywhere
-        run: uv run python backend/manage.py check
-
-      - name: Upload frontend build
-        uses: actions/upload-artifact@v7
-        with:
-          name: frontend-dist
-          path: frontend/dist/
+    uses: ./.github/workflows/verify.yml
 
   deploy:
     needs: build
