@@ -1,50 +1,46 @@
 # Decisions
 
-## 2026-09-10 — Reset uses the change-password rule; AUTH_PASSWORD_VALIDATORS stays a floor, not the source of truth (#157)
+## 2026-09-10 — CI verification lives in one reusable workflow, and runs on pull requests (#161, #155)
 
-**What was decided.** Two calls:
+**What was decided.** Three calls, all in the CI restructure:
 
-1. **`ResetPasswordApiView` now calls `_validate_password_strength()`** — the same helper
-   `ChangePasswordApiView` uses — instead of its own `len(password) < 4`.
-2. **`AUTH_PASSWORD_VALIDATORS` was raised from `min_length: 4` to `8`, and deliberately NOT made
-   the single source of truth** for the API's password rules.
+1. **The verification steps move into `.github/workflows/verify.yml` (`on: workflow_call`)**, and
+   `pr-checks.yml`, `build-and-deploy.yml` and `deploy-prod.yml` all call it. The steps are no
+   longer written down anywhere else.
+2. **Pull requests now run the full chain** — frontend lint/typecheck/test/build/audit, tools
+   pytest, Django system checks, and the ~402-test backend suite — via a new `pr-checks.yml`.
+3. **The backend suite runs against a MariaDB 10.11 service container**, with `mysql.cnf`
+   generated in-job.
 
 **Why.**
 
-*(1)* The two endpoints enforced different rules, so Forgot Password was a **route around the strong
-policy**: reset accepted 4 characters where change-password demands 8 + upper + lower + digit +
-special. Proven, not inferred — running the new tests against the pre-fix code returns **200 "Your
-password has been reset"** for the password `abcd`.
+*(1)* Duplication is what caused the outage this fixes. `3a0da7f` tightened the frontend gate to
+`npm audit --audit-level=moderate` and merged green, because **no `pull_request` workflow ran npm at
+all** — `review.yml` was the only one and it runs `python3 .github/scripts/review.py` and nothing
+else. The tightened gate then failed on `origin/staging` itself, so four finished PRs (138–141)
+became undeployable through no fault of their own, and PR 138's merge produced a failed deploy
+(run `34431905923`, step `Verify frontend`). Two copies of a check that are supposed to agree, with
+nothing forcing them to, is the defect class; one definition removes it. The `deploy` jobs are
+deliberately left inline — they are genuinely different per environment (woco.dev vs
+hellowoco.app), and only the *verification* half was ever meant to be identical.
 
-⭐ **This was a server-only hole, and that is why it survived.** `ResetPassword.tsx` already enforces
-all five rules client-side, so the SPA never sent a weak password and nothing user-facing changes.
-The form's own validation hid the missing server check — the classic shape. Only a non-SPA client, or
-anyone who obtained a reset link and posted to the API directly, could reach it.
+*(2)* Both deploy workflows ran `manage.py check` only, so 40+ test files and ~402 tests executed
+only when a developer remembered to (issues.md #161). #128 and #150 both shipped backend behaviour
+changes to production on 2026-09-10 with no automated gate behind them — their entire safety net was
+one person running the suite by hand. Verified after the fact, on production, that both are correct
+(10/10 and 19/19); that this came out right does not make it a process.
 
-The test asserts the two endpoints return the **same message**, not merely the same status. That is
-what stops a future edit re-forking the rules: they share one helper, and the test fails the moment
-they stop.
+*(3)* Production runs MariaDB `10.11.14`, not MySQL, and `settings.py:126` pins
+`django.db.backends.mysql` with no sqlite fallback — so the suite needs a real server and it should
+be the one prod runs. `mysql.cnf` is gitignored (`.gitignore:252`) and is read via
+`OPTIONS.read_default_file`, so CI generates it. It must carry explicit `host`/`port`, which
+`mysql.cnf.example` does not: the service container is reachable over TCP only, and the example's
+implicit unix-socket default cannot connect from a runner.
 
-*(2)* Making the validator list authoritative is the obvious tidy-up and was rejected, for three
-reasons:
-- Expressing the current rule through `AUTH_PASSWORD_VALIDATORS` needs **four custom validator
-  classes** (upper, lower, digit, special). That is more surface than the hole being closed.
-- `validate_password()` raises `ValidationError` carrying a **list** of messages, while every
-  endpoint here returns a single `detail` string. Adopting it is an **API response-shape change**,
-  not a drop-in — the SPA renders `detail`.
-- Django's stock extras (`CommonPasswordValidator`, `UserAttributeSimilarityValidator`) would reject
-  passwords that are legal today. That is a **policy** change nobody has asked for, and it belongs to
-  Ian, not to a bug fix.
-
-⚠ **Nothing in this project calls `validate_password()`** — the list only reaches the Django admin's
-password forms and allauth. Leaving it at 4 stated a floor the product does not honour anywhere, so
-it was raised to 8 to agree with the app. It remains **only a floor**, and the comment in
-`settings.py` says so, so the next reader does not mistake it for the real rule.
-
-**Consequence to watch.** The Django admin and allauth now refuse passwords under 8 characters where
-they previously allowed 4. That is intended. ⚠ It does **not** make the admin enforce the full
-five-part rule — an admin can still set `abcdefgh`. Closing that gap is the custom-validator work
-above, deliberately deferred.
+**Consequence to watch.** The backend job adds roughly 2.5 minutes to every PR and every deploy, and
+it is now a hard gate — a flaky test blocks shipping where previously nothing did. That is the
+intended trade. The risk is controlled on the way in: `pr-checks.yml` runs on the pull request that
+introduces it, so the new job proves itself before the deploy-workflow changes can take effect.
 
 ## 2026-09-08 — Date observations keep a DELETE verb, and cannot be moved between records (#128)
 

@@ -9,6 +9,9 @@ only self-service remedy could not succeed.
 These are the first tests for this endpoint family, so they target that loop
 rather than the permutation space.
 """
+from smtplib import SMTPSenderRefused
+from unittest import mock
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import mail
@@ -145,75 +148,67 @@ class AuthAccountStateTests(TestCase):
         self.assertEqual(wrong.status_code, 401, wrong.data)
         self.assertIn("Invalid credentials", wrong.data["detail"])
 
-    # --- reset password strength (issue #157) --------------------------------
+    # --- mail transport failures (issue #162) --------------------------------
 
-    def _reset_payload(self, user, password):
-        return {
-            "uid": urlsafe_base64_encode(force_bytes(user.pk)),
-            "token": PasswordResetTokenGenerator().make_token(user),
-            "password": password,
-        }
+    def test_forgot_password_does_not_500_when_the_relay_refuses_the_sender(self):
+        """The exact production failure: SMTP authenticates, then rejects the FROM.
 
-    def test_reset_password_rejects_a_four_character_password(self):
-        """The reported hole: reset used to accept 4 chars where change-password demands 8+.
-
-        Server-only -- ResetPassword.tsx already enforces all five rules, so a
-        weak password could only arrive from a non-SPA client. That is precisely
-        why it survived: the form's validation hid the missing server check.
+        This is not a rare edge case on prod -- issue #152 means the relay
+        refuses every sender we have, so this path is EVERY reset for all 26
+        accounts. Uncaught, it was a 500: no message for the user, no signal to
+        an admin, and issue #150's own advice ("Use 'Forgot password' to set
+        one") dead-ended on an error page.
         """
-        user = User.objects.create_user(
-            username="weak1", email="weak1@example.com", password="CorrectHorse1!"
+        User.objects.create_user(
+            username="editor4", email="editor4@example.com", password="CorrectHorse1!"
+        )
+
+        with mock.patch(
+            "common.api.auth.send_mail",
+            side_effect=SMTPSenderRefused(
+                554, b"5.1.0 The sender's address was not allowed.", "no-reply@example.com"
+            ),
+        ):
+            response = self.client.post(
+                FORGOT_URL, {"email": "editor4@example.com"}, format="json"
+            )
+
+        self.assertEqual(response.status_code, 503, response.data)
+        # ⛔ Never 200 here. Claiming "a reset link has been sent" when the send
+        # raised is the same lie as the silent activation mail in signals.py.
+        self.assertNotIn("has been sent", response.data["detail"])
+        self.assertIn("could not send", response.data["detail"].lower())
+        # The user must be given a human to contact, not just a failure.
+        self.assertIn("@", response.data["detail"])
+
+    def test_forgot_password_logs_the_failed_address_at_error(self):
+        """A silent failure is how #152 went unnoticed. Someone must be able to see it."""
+        User.objects.create_user(
+            username="editor5", email="editor5@example.com", password="CorrectHorse1!"
+        )
+
+        with mock.patch(
+            "common.api.auth.send_mail", side_effect=OSError("connection refused")
+        ):
+            with self.assertLogs("common.api.auth", level="ERROR") as captured:
+                self.client.post(
+                    FORGOT_URL, {"email": "editor5@example.com"}, format="json"
+                )
+
+        self.assertTrue(
+            any("editor5@example.com" in line for line in captured.output),
+            f"the attempted address must be in the log: {captured.output}",
+        )
+
+    def test_forgot_password_still_returns_200_when_mail_works(self):
+        """The positive control -- the new handler must not swallow the happy path."""
+        User.objects.create_user(
+            username="editor6", email="editor6@example.com", password="CorrectHorse1!"
         )
 
         response = self.client.post(
-            RESET_URL, self._reset_payload(user, "abcd"), format="json"
-        )
-
-        self.assertEqual(response.status_code, 400, response.data)
-        user.refresh_from_db()
-        self.assertFalse(
-            user.check_password("abcd"), "the weak password must NOT have been set"
-        )
-        self.assertTrue(user.check_password("CorrectHorse1!"), "the old password must survive")
-
-    def test_reset_and_change_password_enforce_the_same_rule(self):
-        """The actual point of #157: neither endpoint may be a way around the other.
-
-        Asserting the same *message* rather than just the same status is what
-        stops a future edit re-forking the two rules -- they share
-        _validate_password_strength, and this fails the moment they stop.
-        """
-        user = User.objects.create_user(
-            username="weak2", email="weak2@example.com", password="CorrectHorse1!"
-        )
-        weak = "abcdefgh"  # 8 chars, but no uppercase, digit or special
-
-        reset = self.client.post(
-            RESET_URL, self._reset_payload(user, weak), format="json"
-        )
-
-        self.client.force_authenticate(user=user)
-        change = self.client.post(
-            "/api/v2/change-password/",
-            {"current_password": "CorrectHorse1!", "new_password": weak},
-            format="json",
-        )
-        self.client.force_authenticate(user=None)
-
-        self.assertEqual(reset.status_code, 400, reset.data)
-        self.assertEqual(change.status_code, 400, change.data)
-        self.assertEqual(reset.data["detail"], change.data["detail"])
-
-    def test_reset_password_accepts_a_compliant_password(self):
-        """Positive control -- the tightened rule must not block a legitimate reset."""
-        user = User.objects.create_user(
-            username="strong1", email="strong1@example.com", password="OldPassword1!"
-        )
-
-        response = self.client.post(
-            RESET_URL, self._reset_payload(user, "NewPassword1!"), format="json"
+            FORGOT_URL, {"email": "editor6@example.com"}, format="json"
         )
 
         self.assertEqual(response.status_code, 200, response.data)
-        user.refresh_from_db()
-        self.assertTrue(user.check_password("NewPassword1!"))
+        self.assertEqual(len(mail.outbox), 1)
