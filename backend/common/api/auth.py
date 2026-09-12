@@ -527,11 +527,19 @@ class ResetPasswordApiView(APIView):
         if blocked is not None:
             return blocked
 
-        if len(password) < 4:
-            return Response(
-                {"detail": "Password must be at least 4 characters long."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # The SAME rule change-password uses (issue #157). This endpoint used to
+        # accept 4 characters, which made Forgot Password a route around the
+        # strong policy: an attacker who could read one reset link, or any
+        # non-SPA client, could set a weaker password than the product allows
+        # anywhere else.
+        #
+        # ⭐ Note this was a server-only hole. ResetPassword.tsx already enforces
+        # all five rules client-side, so the SPA never sent a weak password and
+        # nothing user-facing changes here -- which is exactly why it survived:
+        # the form's own validation hid the missing server check.
+        err = _validate_password_strength(password)
+        if err:
+            return Response({"detail": err}, status=status.HTTP_400_BAD_REQUEST)
 
         # ⛔ is_active is deliberately NOT set here. Activation is an editorial
         # membership decision (issue #151), not proof of email ownership --
