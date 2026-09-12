@@ -1,59 +1,46 @@
 # Decisions
 
-## 2026-09-10 — A mail-transport failure returns 503, and the reset token is not revoked (#162)
+## 2026-09-10 — CI verification lives in one reusable workflow, and runs on pull requests (#161, #155)
 
-**What was decided.** Three calls in the `ForgotPasswordApiView` fix:
+**What was decided.** Three calls, all in the CI restructure:
 
-1. **A failed send returns `503 Service Unavailable`**, not the previous uncaught 500 and not a
-   reassuring 200.
-2. **The reset token is left valid**, even though the email carrying it never arrived.
-3. **`except Exception`**, not `except SMTPException`, around the single `send_mail` call.
+1. **The verification steps move into `.github/workflows/verify.yml` (`on: workflow_call`)**, and
+   `pr-checks.yml`, `build-and-deploy.yml` and `deploy-prod.yml` all call it. The steps are no
+   longer written down anywhere else.
+2. **Pull requests now run the full chain** — frontend lint/typecheck/test/build/audit, tools
+   pytest, Django system checks, and the ~402-test backend suite — via a new `pr-checks.yml`.
+3. **The backend suite runs against a MariaDB 10.11 service container**, with `mysql.cnf`
+   generated in-job.
 
 **Why.**
 
-*(1)* On production this path is not an edge case — it is **every** reset. The relay authenticates
-and then refuses the sender address (#152), so `send_mail` raises `SMTPSenderRefused` for all 26
-accounts. Uncaught, that was a 500: nothing for the user, nothing for an admin, and it dead-ended
-#150's own advice, which tells a passwordless account *"Use 'Forgot password' to set one."*
+*(1)* Duplication is what caused the outage this fixes. `3a0da7f` tightened the frontend gate to
+`npm audit --audit-level=moderate` and merged green, because **no `pull_request` workflow ran npm at
+all** — `review.yml` was the only one and it runs `python3 .github/scripts/review.py` and nothing
+else. The tightened gate then failed on `origin/staging` itself, so four finished PRs (138–141)
+became undeployable through no fault of their own, and PR 138's merge produced a failed deploy
+(run `34431905923`, step `Verify frontend`). Two copies of a check that are supposed to agree, with
+nothing forcing them to, is the defect class; one definition removes it. The `deploy` jobs are
+deliberately left inline — they are genuinely different per environment (woco.dev vs
+hellowoco.app), and only the *verification* half was ever meant to be identical.
 
-A 200 was the tempting alternative, since the endpoint already answers *"If an account exists for
-that email, a reset link has been sent."* ⛔ **Rejected: it would claim a link was sent when the send
-raised.** That is the same class of defect as the activation mail in `signals.py`, which reports
-success while sending nothing — the very thing that let #152 sit unnoticed. 503 is also the honest
-signal for monitoring: a dependency is down, and the request becomes retryable the moment #152 is
-fixed. The response names `_support_email()` so the user has a human, not just a failure.
+*(2)* Both deploy workflows ran `manage.py check` only, so 40+ test files and ~402 tests executed
+only when a developer remembered to (issues.md #161). #128 and #150 both shipped backend behaviour
+changes to production on 2026-09-10 with no automated gate behind them — their entire safety net was
+one person running the suite by hand. Verified after the fact, on production, that both are correct
+(10/10 and 19/19); that this came out right does not make it a process.
 
-⚠ **Enumeration posture was matched, not widened.** The endpoint still returns 400 *"No account
-found for that email address."* for unknown addresses, so the 503 leaks nothing a caller could not
-already learn. That self-contradiction is real and is tracked as **#159** — deliberately not changed
-in passing, same rule #150 followed.
+*(3)* Production runs MariaDB `10.11.14`, not MySQL, and `settings.py:126` pins
+`django.db.backends.mysql` with no sqlite fallback — so the suite needs a real server and it should
+be the one prod runs. `mysql.cnf` is gitignored (`.gitignore:252`) and is read via
+`OPTIONS.read_default_file`, so CI generates it. It must carry explicit `host`/`port`, which
+`mysql.cnf.example` does not: the service container is reachable over TCP only, and the example's
+implicit unix-socket default cannot connect from a runner.
 
-*(2)* `PasswordResetTokenGenerator` is **stateless** — the token is derived from the user's password
-hash, `last_login` and a timestamp, and nothing is persisted. So there is no record to revoke, and
-"issuing" it is not an event. It stays valid for `PASSWORD_RESET_TIMEOUT` (3 days) despite never
-being delivered, which is harmless precisely because it was never transmitted: no one holds it.
-
-The alternative — invalidating it by touching `user.password` — was rejected twice over. It turns a
-failed notification into a **write** on the user record, and because the generator keys on the
-password hash it would also silently break any *earlier*, legitimately-delivered token the user might
-still be acting on.
-
-*(3)* A mail backend can fail with `OSError`, `ConnectionRefusedError` or a backend-specific type;
-`SMTPException` alone would let those through as 500s and reintroduce the bug for a different
-transport fault. The breadth costs no diagnosability here because the `try` wraps **exactly one
-call**, with the message already built above it — so nothing of ours can throw inside the block and
-be mistaken for a transport failure. This is the same shape `signals.py` already uses.
-
-**Audit of the other mail paths, which #162 asked for.** The backend has exactly **two** `send_mail`
-call sites. `signals.py:111` (activation) was **already** wrapped in `try/except Exception` with
-`logger.exception`, so it cannot 500 — no change needed. `ResetPasswordApiView` and
-`LoginRequestView` send **no mail at all**. ⚠ One item found and deliberately left: the
-`_mail_backend_configured()` skip in `signals.py:102-107` logs at **info**, which is the silent path
-that hid #152. Raising it belongs to **#152**, not here.
-
-**Consequence to watch.** woco.dev runs the **console** backend, where `send_mail` always succeeds —
-so this branch never fires there and dev still answers 200 while sending nothing. The 503 is only
-observable against a real relay. Do not read a green dev run as evidence this works.
+**Consequence to watch.** The backend job adds roughly 2.5 minutes to every PR and every deploy, and
+it is now a hard gate — a flaky test blocks shipping where previously nothing did. That is the
+intended trade. The risk is controlled on the way in: `pr-checks.yml` runs on the pull request that
+introduces it, so the new job proves itself before the deploy-workflow changes can take effect.
 
 ## 2026-09-08 — Date observations keep a DELETE verb, and cannot be moved between records (#128)
 

@@ -1,0 +1,23 @@
+# Runs the full verification on every pull request.
+#
+# Before this existed, review.yml was the ONLY pull_request workflow and it ran
+# no npm and no python at all -- so a PR was never linted, typechecked, tested,
+# built or audited until after it merged. That is how a tightened `npm audit`
+# gate that fails on its own branch reached staging (issues.md #155), and why
+# the ~402-test backend suite was effectively optional (issues.md #161).
+#
+# Deliberately no deploy job: this proves the tree, nothing more.
+name: PR checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# A force-push should cancel the superseded run rather than race it.
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    uses: ./.github/workflows/verify.yml
