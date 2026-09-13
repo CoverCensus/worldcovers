@@ -1,25 +1,36 @@
 # WorldCovers / APMC -- Consolidated Issues
 
-**Single source of truth for engineering work on WorldCovers (WoCo) / APMC.**
-This file merges every WoCo issue we currently track, from all sources, into one
-list so there is exactly one place to look.
+This file tracks the original beta-feedback issues and the MD/MI review
+batch. It is not the full current engineering queue. Later work also appears
+in GitHub PRs and Reese's workspace-local `docs/issues.md`.
 
-| Source | What it was | Folded in here as |
-|---|---|---|
-| `06-09-emails.md` (Ian Gibson-Smith, Greg Stone) | Raw beta feedback + change requests | Issues **1-27** |
-| Reese's working queue (`docs/issues.md`) | Pipeline milestones M1-M3 | Tagged **[R1]-[R8]** inline |
-| `docs/DECISIONS.md`, `docs/mi-edge-cases.md`, `docs/michigan-report-for-michael.md` | Michigan E2E status + open calls | Status + Issues **28-34** |
-| Ian email, **18 Jun 2026 12:54** (Reese's `docs/issues.md` queue) | MD/MI editor-review feature + catalog-fix asks | **Top-priority block below**, own **#22-#38** namespace |
+**Last correction review:** 2026-09-13, against repo commit `f333cb4` and merged
+PRs. This was a source and PR review, not a new audit of the live datasets.
+Entries without new evidence retain their prior status. Use PRs for change
+history; an implemented fix, a data load, and editor acceptance are separate
+results.
 
-Issues are numbered **1-34**, no prefixes. The earlier `ISSUES.md` /
-`trello_cards_based_on_issues.md` pass and the Trello board are being retired in
-favor of this file.
+| Source | Scope in this file |
+|---|---|
+| `06-09-emails.md` (Ian Gibson-Smith, Greg Stone) | Original Issues 1-27 |
+| Reese's `docs/issues.md` | Pipeline milestones [R1]-[R8] and the separate MD/MI batch |
+| `docs/DECISIONS.md`, `docs/mi-edge-cases.md`, `docs/michigan-report-for-michael.md` | Original Issues 28-34 and Michigan E2E notes |
+| Ian's email of 18 Jun 2026, 12:54 PM | MD/MI batch #22-#38 |
 
-**Plus the MD/MI editor-review batch** from Ian's 18 Jun 2026 email is tracked at
-the **top** of this file under its **own #22-#38 numbering** (Reese's working
-`docs/issues.md` scheme). **Those #22-#38 are a separate namespace -- they are NOT
-the Issues 22-34 further down.** Self-contained here because `docs/issues.md` is
-Reese's workspace-local queue, not part of this repo.
+**Reference names:** `Issue N` means an original issue in this file.
+`Batch #N` means an MD/MI review item. `Reese queue #N` means an item in his
+workspace-local queue. `PR #N` means a GitHub pull request. Keep the existing
+numbers; always include the label when referring to them outside their table.
+The older `ISSUES.md`, Trello export, and Trello board are historical sources.
+
+**Note for collaborators and agents:** referenced workspace files can be absent
+from a checkout because Reese kept them gitignored in his branch's workspace
+or removed them before committing. That is expected; it does not mean the
+checkout is incomplete or an import failed. Do not recreate those files just
+to satisfy a reference. If available in Reese's workspace, use them as source
+context; otherwise use the linked PRs and current code. This applies to the
+source paths above and other local paths cited below, including
+`ASCC Data/regions.csv` and `worldcovers-v1/`.
 
 **Scope:** WorldCovers / APMC only. IanThom.org and ChinaOverprints (and the
 Bluehost/Porkbun account admin) are a separate, lower-precedence track and are
@@ -35,88 +46,64 @@ v1 = the legacy ColdFusion/MSSQL system behind worldcovers.org (`worldcovers-v1/
 
 ---
 
-# TOP PRIORITY -- MD/MI editor-review batch (Ian email, 18 Jun 2026)
+# MD/MI editor-review batch (Ian email, 18 Jun 2026)
 
-**Source:** Ian's email of **18 Jun 2026, 12:54 PM** -- 17 feature + catalog-fix
-asks, tracked as **#22-#38** in Reese's `docs/issues.md`. Per Reese (18 Jun 2026)
-this batch **supersedes all other open work**, including the state-expansion
-pipeline queue and the M2/M3 items in "Issues 1-34" below.
+The batch contains 17 asks from Ian's 18 Jun 2026 email. Reese gave it priority
+over state expansion at that time. The remaining actions are listed below;
+do not read the June priority note as a new instruction to repeat completed
+work.
 
-**WARNING -- numbering:** these **#22-#38** are this batch's **own namespace**.
-They are **not** the "Issue 22-34" entries further down (different content, older
-email source). Read them as "**batch #NN**".
+## Crosswalk -- Ian's email asks -> batch item -> status
 
-**Near-term goal (gated by batch #31):** finish the remaining batch fixes,
-**re-run Maryland and Michigan** with them applied, then **invite the state
-editors to review the dev site** (`woco.dev`).
-
-## Crosswalk -- Ian's email asks -> batch issue -> status
-
-| Ian's ask (18 Jun email) | Batch # | Status |
+| Ian's ask | Batch item | Status |
 |---|---|---|
-| State-editor approval workflow (reviewed/confirmed flag + filter) | #22 | **done** (merged to `staging` in PR #60) |
-| Rate-vs-Aux rule (number->Rate else Aux) + description + lettering field | #23 | **done** (merged to `staging` in PR #61; decision closed in Issue 21) |
-| Multi-territory support (town in MI **+** MI Territory; scale to Vol 2/3) | #24 | **display/search done** (merged to `staging` in PR #59); import half -> #36 |
-| Date parser: "Dates Seen" label; Amelia no-date; VA `(1)` -> apply to WV | #25 | open *(data side re-run-gated by #31)* |
-| Decade-level date ("1850s") -> leave date blank, put in note | #26 | open |
-| Date field on new markings, **state editors only** | #27 | **done** (merged to `staging` in PR #67) |
-| Territory/state tags -- display on detail **and searchable** | #28 | **done** (detail tags + search via PR #59; broader territory alias question remains old Issue 31) |
-| Ensure "Institutional" designation appears properly | #29 | open *(same mechanism as #37)* |
-| Move "Clear Filter" button to top of UI | #30 | open *(quick UX win)* |
-| Notify Ian before each new state; invite editors after MD/MI re-run | #31 | open *(standing process gate)* |
-| **MD:** Anna/Polis backstamp not caught by Town Marks parser | #32 | open *(MD re-run)* |
-| **MD:** capture catalog "S"/"D" notation in notes (Annaps.md) | #33 | open *(MD re-run)* |
-| **MD:** Barry/md not manuscript; "congressional frank" -> notes | #34 | open *(MD re-run)* |
-| **MD:** Ann.MD and B M House not in catalog (remove/flag?) | #35 | open *(MD re-run)* |
-| **MI:** Adamsville is two listings -> merge to one (ERD 2/14/1834, LRD 12/11/1834) | #36 | open *(MI re-run)* |
-| **MI:** listings with `*` should be flagged Institutional but aren't | #37 | open *(MI re-run; relates #29)* |
-| **MI:** ADA.MI townmark shows as SL, should be circular | #38 | open *(MI re-run)* |
+| State-editor approval flag and filter | Batch #22 | **done** - [PR #60](https://github.com/CoverCensus/worldcovers/pull/60) |
+| Rate-vs-Aux guidance, description, and lettering help | Batch #23 | **done** - [PR #61](https://github.com/CoverCensus/worldcovers/pull/61); decision in Issue 21 |
+| Multi-territory support | Batch #24 | **done for requested display/search and Adamsville merge** - [PR #59](https://github.com/CoverCensus/worldcovers/pull/59), [PR #71](https://github.com/CoverCensus/worldcovers/pull/71); broader search policy remains Issue 31 |
+| Dates Seen, Amelia no-date handling, and VA `(1)` rule for WV | Batch #25 | **partial** - Amelia parser fix in PR #71; remaining checks below |
+| Decade dates: blank date and note | Batch #26 | **done** - PR #71 |
+| Editor-only dates on new markings | Batch #27 | **done** - [PR #67](https://github.com/CoverCensus/worldcovers/pull/67) |
+| Territory/state detail tags and search | Batch #28 | **done** - PR #59; broader alias policy remains Issue 31 |
+| Institutional designation | Batch #29 | **code implemented; data verification open** - [PR #66](https://github.com/CoverCensus/worldcovers/pull/66) and current starred-listing import |
+| Clear Filters at the top | Batch #30 | **done** - [PR #64](https://github.com/CoverCensus/worldcovers/pull/64) |
+| Per-state notification and editor review | Batch #31 | **open for confirmation** - staging re-import reported in PR #71; invitations and acceptance not confirmed here |
+| MD: Anna/Polis backstamp | Batch #32 | **done** - PR #71 |
+| MD: S/D notation in notes | Batch #33 | **done** - PR #71 |
+| MD: Barry manuscript and congressional-frank note | Batch #34 | **done** - PR #71 |
+| MD: Ann.MD and B M House source entries | Batch #35 | **open** - investigate source match and decide handling |
+| MI: merge Adamsville date variants | Batch #36 | **done** - PR #71 |
+| MI: institutional flag for leading-star listings | Batch #37 | **code implemented; data verification open** - remaining checks below |
+| MI: ADA.MI circular shape | Batch #38 | **done** - PR #71 |
 
-*Email item "implement changes from last week's list" = the prior UI/feature batch,
-already shipped (see Issue 21-family work / `docs/DECISIONS.md`).*
+PR #71 reports a data-only staging re-import and live verification of its
+fixes. These completed engineering items do not require another implementation
+pass. The PR does not establish production rollout or final editor acceptance.
 
-## Open items -- detail (self-contained; full bodies in Reese's `docs/issues.md`)
+## Remaining batch actions
 
-**General feature asks still open (un-gated unless noted):**
-- **#25 -- Date parser.** When multiple dates exist, label the description field
-  **"Dates Seen"** + the dates. Handle Amelia-style **no-date** rows (parser
-  currently mistakes circle size for a rate). VA condition `(1)` rule -> apply to
-  **WV** too. *Touches the munger/parser, so the data side is **re-run-gated by
-  #31**; a frontend-only "Dates Seen" label half may be do-able first.*
-- **#26 -- Decade dates.** Decade-level ("1850s") -> leave the date field **blank**,
-  move the value to the **note**.
-- **#29 -- "Institutional" designation** displays/applies correctly. Likely the
-  same underlying mechanism as MI #37.
-- **#30 -- Move "Clear Filter" to top** of the UI. Low-risk UX, fully un-gated --
-  good momentum item while re-run items wait on #31.
-
-**Process gate:**
-- **#31 -- Per-state notification + editor review.** Notify **Ian before running
-  any new state** so he documents that state's quirks/notation first. Once **MD and
-  MI are re-run** with this batch applied, invite the **state editors** to review
-  `woco.dev`. *Gates the MD/MI catalog fixes (#32-#38) and the data side of #25;
-  also re-prioritizes the state-expansion queue (no IA/CT/AL/TN/DC until documented).*
-
-**Maryland catalog fixes (do during the MD re-run -- need Michael/Ian per-state notes):**
-- **#32** Anna/Polis backstamp missed by the Town Marks parser.
-- **#33** Capture catalog "S" / "D" notation into notes (Annaps.md).
-- **#34** Barry/md not flagged manuscript; "congressional frank" should appear in notes.
-- **#35** Ann.MD and B M House not found in catalog -- investigate, remove or flag.
-
-**Michigan catalog fixes (do during the MI re-run):**
-- **#36** Adamsville -- two separate listings -> **one** (ERD **2/14/1834**, LRD
-  **12/11/1834**). This is the import-fragmentation half of #24.
-- **#37** Listings with `*` should be flagged **Institutional** but aren't (see #29).
-- **#38** ADA.MI townmark shows as **SL**, should be **circular**.
-
-**Done in this batch (merged to `staging`; verified locally):**
-- **#22** state-editor `is_reviewed` flag + filter (PR #60), **#23** Rate-vs-Aux
-  copy + lettering help (PR #61), **#24/#28** multi-territory display/search
-  (PR #59), and **#27** editor-only ERD/LRD date entry (PR #67). All are merged.
+- **Batch #25:** verify the requested multiple-date wording and the VA `(1)`
+  rule on WV data. The Amelia size-as-rate parser defect is fixed; any remaining
+  occurrence needs a named source row and target record (see Issue 3).
+- **Batch #29 and Batch #37:** verify the affected Michigan listings on the
+  target site. Institutional search shipped in PR #66. Current munger code also
+  creates institutional covers for leading-star listings, covered by
+  `test_munger_emits_institutional_covers_for_starred_townmark_variants` in
+  `tools/tests/test_v1_pipeline.py`. Record any missing flags with source rows
+  and target IDs before requesting another code change or data refresh.
+- **Batch #31:** retain the per-state notification requirement: notify Ian
+  before running a new state so he can provide its notation and quirks. Confirm
+  whether MD/MI editors were invited after the reported staging re-import and
+  record their acceptance or remaining corrections. Do not infer either from
+  a merge or repeat the re-import solely because the old checklist said open.
+- **Batch #35:** investigate Ann.MD and B M House against the catalog, then
+  record whether to retain, correct, remove, or flag each listing.
 
 ---
 
-## Status snapshot (as of 2026-07-03)
+## Historical status snapshot (2026-07-03)
+
+The counts and rollout notes in this section describe that date, not the
+current database. Use the corrected issue entries for remaining work.
 
 **State rollout order (Ian):** VA -> WV -> **Michigan** -> Maryland -> Florida -> Tennessee -> Alabama.
 
@@ -128,10 +115,10 @@ already shipped (see Issue 21-family work / `docs/DECISIONS.md`).*
 | M2 | Frontend gaps: user upload+verify, territory UI | **Partially shipped** -- reviewed filter (#60), multi-territory display/search (#59), editor-only ERD/LRD (#67), submitter-name opt-in, link-existing cover/marking (#84), and image order/move (#85) are in `staging`. Original Prospect Hill main-image flow and parser/re-run-gated items remain open. |
 | M3 | QoL: citation search, branding, opt-out | **Partially shipped** -- acknowledgements are done, Rate-vs-Aux convention/copy is resolved, and submitter withdrawal policy is resolved. Branding/APMC sign-off and per-state citation rollout remain open. |
 
-Recent merged work since the June snapshot:
-- **#46 / PR #83** user-safe refresh wrappers: `backup_user_markings` and `restore_user_markings`.
-- **#47 / PR #84** link existing covers and markings from detail pages.
-- **#48 / PR #85** move images between markings and covers in both directions.
+Related PRs from that snapshot:
+- **Reese queue #46 / PR #83** user-safe refresh wrappers: `backup_user_markings` and `restore_user_markings`.
+- **Reese queue #47 / PR #84** link existing covers and markings from detail pages.
+- **Reese queue #48 / PR #85** move images between markings and covers in both directions.
 - **PR #87** tooling, deploy-assets, and docs cleanup; added the feature-surface table below.
 
 **Highest-value finding (resolved):** the four "fresh-install schema drift" alarms
@@ -143,7 +130,9 @@ earlier broken-`main` migrate against the same DB. Migration-integrity alarm
 
 # Issues
 
-Status values: `open` - `in-progress` - `blocked` - `done`.
+Status values: `open` - `in-progress` - `blocked` - `done`. Where code is
+complete but a data check or decision remains, the status names that remaining
+action. Dependencies in this section refer to original Issues 1-34.
 
 ## Data & ingestion
 
@@ -164,13 +153,17 @@ Michigan territory-suffix residue, Issue 28.)
 - [ ] Records showing `Richmd` display as "Richmond"
 - [ ] Searching "Richmond, VA" returns those markings
 
-### Issue 3 -- Stampless parser: unknown year misread as rate (Amelia, VA)
-**Status:** open - **Depends on:** none - **Source:** Greg Stone
-When the catalog year is unknown (`--`), the parser uses the CDS/circle **size** as
-a rate marking. Systematic corruption of imported VA records.
-- [ ] Amelia, VA no longer shows the CDS size as a rate
-- [ ] Unknown-year (`--`) records import with no rate fabricated from size
-- [ ] Spot-check of other unknown-year VA entries confirms the fix
+### Issue 3 -- Verify remaining Amelia rate errors in deployed data
+**Status:** open (data verification only) - **Depends on:** none - **Source:** Greg Stone
+The unknown-date/size parser defect is fixed in
+[PR #71](https://github.com/CoverCensus/worldcovers/pull/71), with targeted
+coverage in `tools/tests/test_munger_field_classify.py`. Do not reimplement
+that fix. The PR reports an MD/MI/FL/DE staging re-import, not a fresh audit
+of all affected Virginia records.
+
+- [x] Parser distinguishes an unknown-date/size placeholder from a real diameter or rate
+- [ ] Verify Amelia and other affected VA records on the intended site
+- [ ] If an error remains, record its source row and target ID, then decide whether a data repair or new parser fix is needed
 
 ### Issue 4 -- Marking-shape parsing: circle imported as straight-line (New Glasgow)
 **Status:** open - **Depends on:** none - **Source:** Greg Stone
@@ -185,12 +178,20 @@ the rollout and the basis for beta testing and the VPHC comparison.
 - [ ] VA records from worldcovers.org present in the new system
 - [ ] Record counts reconcile between source and target
 
-### Issue 6 -- Compare and import VPHC Catalog (VA)
-**Status:** open - **Depends on:** 5
-Diff the VPHC Catalog against WoCo's VA data, then import VPHC VA entries.
-- [ ] Diff of VPHC vs. WoCo VA produced
-- [ ] VPHC entries imported with `VPHC Catalog 1st Edition` as reference work (Issue 13)
-- [ ] Duplicates reconciled, not double-listed
+### Issue 6 -- Finish VPHC data reconciliation and editor acceptance
+**Status:** open (remaining data and review work) - **Depends on:** Issue 5 data reconciliation
+VPHC reference and marking ingestion are implemented in
+[PR #106](https://github.com/CoverCensus/worldcovers/pull/106), with manuscript
+support in [PR #132](https://github.com/CoverCensus/worldcovers/pull/132).
+The workflow applies comparison-ledger actions, cites `VPHC1`, archives
+identified duplicates, and normally queues marking contributions for review.
+See [VPHC commands](docs/devel/TOOLS.md#vphc-commands).
+
+- [x] Reference import and marking-ledger application exist
+- [x] Imported contributions carry VPHC reference citations and provenance
+- [x] Duplicate archiving and manuscript support exist
+- [ ] Reconcile remaining source rows, skips, duplicates, and pending contributions for the intended release
+- [ ] Confirm target-site coverage and editor acceptance; implementation and PR rehearsal counts do not establish completeness
 
 ### Issue 7 -- Enter Michigan data -- [DONE] DONE
 **Status:** done (pipeline) - **Depends on:** none - **Assigned:** Reese [R2] - **PR #50**
@@ -200,7 +201,7 @@ validated live (Detroit -> 4 regions; Michigan Territory carries 292 POs incl.
 WI/IA/MN precursors). Architecture verdict: **config-only, no Michigan adapter** --
 everything state-specific was *data*, not *code*. Entry-process notes captured in
 `docs/devel/PIPELINE.md` for repeatability on later states.
-**Remaining tails -> Issues 28-32** (territory-suffix stripping, `#N` offices,
+**Remaining tails -> Issues 28-31** (territory-suffix stripping, `#N` offices,
 territory abbrevs, blessing region rows, territory search/UI).
 
 ### Issue 8 -- State rollout tracking
@@ -391,11 +392,16 @@ is largely **display + filter UI**, not a schema change. See Issue 31.
 Resolution note, 2026-07-03: detail display and region-filter links are merged
 via PR #59. Broader territory alias/search-design questions remain in Issue 31.
 
-### Issue 26 -- Submit a cover for additional markings
-**Status:** open - **Depends on:** none
-After a cover is submitted for one marking, allow associating it with another
-marking without re-uploading (many covers carry multiple markings).
-- [ ] From a submitted cover, user can associate it with another marking without re-uploading
+### Issue 26 -- Decide whether contributors may link existing covers and markings
+**Status:** open (permission decision) - **Depends on:** none
+[PR #84](https://github.com/CoverCensus/worldcovers/pull/84) added linking in
+both directions from the detail pages. Editors and administrators can repeat
+this action to associate one cover with several markings without uploading
+it again. Ordinary contributors do not have that write permission.
+
+- [x] Editors/admins can link existing covers and markings without another upload
+- [ ] Decide whether ordinary contributors should be allowed to create these links
+- [ ] If approved, define review and permission rules before extending the UI/API
 
 ### Issue 27 -- Submitter self-delete / withdrawal policy -- [DONE]
 **Status:** done (policy + implementation) - **Depends on:** none
@@ -409,11 +415,12 @@ through the record remove / recycle-bin flow.
 
 ---
 
-# Michigan E2E open tails (from PR #50)
+# Michigan E2E follow-ups (from PR #50)
 
-These are concrete follow-ups surfaced by the Michigan import. They were
-**cataloged, not fixed** (Reese/Michael agreement: log each, keep separate from the
-VA patches, get a handling call before changing code). Full evidence:
+These follow-ups were first recorded during the Michigan import. Issues 32
+and 34 now have corrected resolutions below. The other entries retain their
+recorded decisions or verification needs; their old counts are not a fresh
+live census. Source references (see the collaborator note above):
 `docs/mi-edge-cases.md`, `docs/michigan-report-for-michael.md`, `docs/DECISIONS.md`.
 
 ### Issue 28 -- Territory-suffix residue fragments post offices  * biggest MI data-quality item
@@ -423,7 +430,8 @@ Head parsing leaves `M.T` / `Mic.T` / `Mich.Ty or M.T` in town names, so **173 o
 != `ADRIAN`; Green Bay = 3 variants; only 37 merged cleanly). With section-driven
 regions, the suffix is now **redundant** -- stripping it in `parse_head` (same family
 as the VA trailing-year peel, `8be62ca`) fixes fragmentation and loses nothing.
-User-visible today ("Town: GREEN BAY M.T"). **Not touched pending decision.**
+Reported then as "Town: GREEN BAY M.T". Confirm the current affected rows
+and Michael's handling decision before changing or re-running this data.
 
 ### Issue 29 -- `#N` office numbers: Port Lawrence #1 / #2 (2 real markings excluded)
 **Status:** open (needs Michael's call) - **Depends on:** 7
@@ -458,12 +466,14 @@ for search. Also: region filtering is per **post office**, not per **marking** -
 town in two regions shows all its markings under either filter (correct per the
 junction, but a territory-UI design input). Feeds the M2 territory-filter work.
 
-### Issue 32 -- `parse_head` town-heading date patch (VA + MI)
-**Status:** proposed (commit `8be62ca` on PR #50) - **Depends on:** none - related **20**
-Strips bare trailing dates off town-table headings; required for both VA and MI to
-avoid digit-bearing PO-name aborts. Still a **proposal** for Michael. It currently
-**drops** the peeled year -- which conflicts with Issue 20 ("Years Seen") wanting
-years preserved. Long-term fix may capture the year into a date field instead.
+### Issue 32 -- Preserve dates peeled from town headings
+**Status:** done (parser implementation) - **Depends on:** none - related **Issue 20**
+The old proposal is implemented. `tools/munger/head.py` removes trailing dates
+from the town name and preserves them as `head_date_text`.
+`tools/ascc_data_munger.py` consumes that value in date parsing; regression
+cases are in `tools/tests/test_munger_head_dates.py`. The earlier statement
+that this always drops the peeled year is obsolete. Issue 20 retains the
+existing date-observation model, not a separate Years Seen field.
 
 ### Issue 33 -- Local backend test-DB privilege
 **Status:** done (infra) - **Depends on:** none
@@ -483,19 +493,26 @@ Expected exit code: 0.
 *(The four "migration drift" alarms from the VA write-up are
 **withdrawn** -- fresh installs are healthy; see DECISIONS.md.)*
 
-### Issue 34 -- VA + MI coexistence in one DB (ID offsetting)
-**Status:** open (tracked elsewhere) - **Depends on:** 5, 7
-The importer keys on raw PKs and the munger renumbers each state from 1, so MI went
-into a **fresh** DB for the E2E proof. Multi-state coexistence needs the
-ID-offsetting work (tracked as Ian's Issue #8 in the v2 backlog). Noted here only
-to confirm MI E2E does **not** attempt it.
+### Issue 34 -- Raw primary-key collision blocker for multi-state imports
+**Status:** done (obsolete blocker)
+The current importer uses names/codes as natural keys and lets Django assign
+primary keys. `MarkingResource` and `PostOfficeResource` use `code` for matching
+and foreign-key resolution. See
+[import_ascc_bundle.py](backend/common/management/commands/import_ascc_bundle.py)
+and [admin.py](backend/common/admin.py).
+
+Do not add ID offsetting to solve the old raw-PK import problem. This closes
+that architectural blocker, not every data-quality check on combined state
+loads. Track any current collision with the input bundle, natural key, and
+error; record per-state load results under Issue 8.
 
 ---
 
-# Completed staging fixes
+# Historical staging fixes (June 2026)
 
 These were found while debugging staging after the original 1-34 issue merge.
-They are recorded here so the next cleanup pass does not rediscover them.
+These are historical results, not instructions to repeat the cleanup. Use
+current backup and restore procedures in `docs/devel/RUNBOOK.md`.
 
 ## Staging orphan submissions pointing at missing records
 **Status:** done (staging data cleanup) - **Date:** 2026-06-14
@@ -535,7 +552,7 @@ Verified from `frontend/` with `npm run build`; expected exit code 0.
 
 ---
 
-# Review pass, 2026-06-15
+# Historical review pass, 2026-06-15
 
 Scope: `ISSUE.md` checked against the current repo state after marking Issues
 9, 10, 18, 22, and 33 resolved.
@@ -566,14 +583,15 @@ Findings:
 
 # Open decisions awaiting Ian / Michael / the board
 
-| # | Decision | Owner | Blocks |
+| Original issue | Decision | Owner | Blocks |
 |---|---|---|---|
-| 14 | Confirm the "year-and-month" date-format code (source listed YMDD twice) | Ian | 14 |
-| 23 | APMC branding / logo / Society links sign-off | Board | 23 |
-| 28 | Strip territory suffixes in `parse_head`? | Michael | 28 |
-| 29 | `#N` office-name handling (allow `#` or `NO. N`) | Michael | 29 |
-| 30 | Bless territory region rows into canonical `regions.csv` + DB; territory abbrevs | Michael | 30 |
-| 31 | Territory search behavior (parent under successor state?) | Michael | 31 |
+| Issue 14 | Confirm the "year-and-month" date-format code (source listed YMDD twice) | Ian | Issue 14 |
+| Issue 23 | APMC branding / logo / Society links sign-off | Board | Issue 23 |
+| Issue 26 | Allow ordinary contributors to link existing covers and markings? | Project team | Issue 26 |
+| Issue 28 | Strip territory suffixes in `parse_head`? | Michael | Issue 28 |
+| Issue 29 | `#N` office-name handling (allow `#` or `NO. N`) | Michael | Issue 29 |
+| Issue 30 | Bless territory region rows into canonical `regions.csv` + DB; territory abbrevs | Michael | Issue 30 |
+| Issue 31 | Territory search behavior (parent under successor state?) | Michael | Issue 31 |
 
 ---
 
@@ -586,7 +604,7 @@ Findings:
 
 ---
 
-# Feature implementation surfaces (current state, 2026-07-03)
+# Feature implementation surfaces (reviewed 2026-09-13)
 
 Where each `docs/devel/design.md` feature (F1-F11) is implemented today.
 The design doc is pure spec and points here for status. Routes are the ones
@@ -597,12 +615,12 @@ updating this table.
 |---------|-------------------|
 | F1 Authentication | SPA (`/auth`, `/reset-password`) |
 | F2 Collection Discovery | SPA (`/`, `/search`, `/record/:id`, `/covers/:coverId`) |
-| F3 Submission Workflow | SPA, all roles (see notes below) |
+| F3 Submission Workflow | SPA contribution and editor review flows, including bulk approval/rejection (see notes below) |
 | F4 Comment Workflow | Partial: comments to the Editor travel inside Submissions; no standalone Entry comments yet |
 | F5 Image Attachments | SPA (image upload inside contribution forms) |
 | F6 Reference Work Management | Django `/admin/` only; the SPA exposes reference works for citation but has no management UI |
 | F7 Collection Administration | SPA `/admin/collections` (superuser only) + Django `/admin/` |
-| F8 Audit Trail | Submission transactions in SPA (`/contribution/:id`); version history via django-reversion in Django `/admin/` |
+| F8 Audit Trail | SPA submission transactions and editor/admin record-history views; django-reversion history in Django `/admin/` |
 | F9 Documentation & Help | SPA (`/help`, `/help/:docSlug`) |
 | F10 System Maintenance | Not in the application yet; operator CLI only -- see `docs/devel/RUNBOOK.md` |
 | F11 Catalog Data Pipeline | Offline tooling only -- see `docs/devel/TOOLS.md` and `docs/devel/PIPELINE.md` |
@@ -613,9 +631,12 @@ Notes:
   submissions via `/edit/:id`, and see any submission's status at
   `/contribution/:id`. Editors review, approve, reject, and return
   submissions from `/dashboard` (Editor Dashboard) and `/contribution/:id`
-  (`ContributionDetail`). Django `/admin/` has a `ContributionAdmin` with
-  bulk approve/reject actions, but that is a secondary convenience for
-  administrators, not the primary Editor interface.
+  (`ContributionDetail`). The SPA Editor Dashboard also supports bulk approve
+  and reject, shipped in [PR #118](https://github.com/CoverCensus/worldcovers/pull/118).
+  Django `/admin/` has secondary bulk actions for administrators.
+- **F8**: Editors/admins can view record history on marking and cover detail
+  pages. This is separate from the full django-reversion interface in Django
+  `/admin/`; history is not limited to that admin interface.
 - **F4**: The standalone comment-on-Entry flow from the design is not
   implemented yet. What exists today is the contributor's
   comment-to-Editor, carried inside the submission payload and shown on

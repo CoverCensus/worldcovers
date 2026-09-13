@@ -2,9 +2,9 @@
 # Provision a fresh Ubuntu 24.04 LTS host into a WorldCovers app server.
 #
 # This reproduces the prod host layout documented in docs/devel/DEPLOY.md
-# (gunicorn under systemd behind nginx, MySQL 8, uv/Python 3.13, Node 22) so a
+# (gunicorn under systemd behind nginx, MariaDB 10.11, uv/Python 3.13, Node 22) so a
 # disposable staging box (e.g. woco.dev) matches hellowoco.app without cloning
-# its disk. It codifies the nginx / certbot / MySQL / user steps that previously
+# its disk. It codifies the nginx / certbot / MariaDB / user steps that previously
 # lived only on the prod box.
 #
 # PREREQUISITE: the repo must already be checked out at /srv/woco. Clone it as
@@ -49,16 +49,30 @@ if [[ ! -f "${ROOT}/pyproject.toml" || ! -d "${ROOT}/tools" ]]; then
   exit 1
 fi
 
+# Do not let apt replace an existing MySQL server and reuse its data directory.
+for package in mysql-server mysql-server-8.0 mysql-community-server; do
+  if [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)" == "install ok installed" ]]; then
+    echo "MySQL is installed. Migrate its data to MariaDB before provisioning." >&2
+    exit 1
+  fi
+done
+
 log "Installing system packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y --no-install-recommends \
   nginx certbot python3-certbot-nginx \
-  mysql-server \
+  mariadb-server mariadb-client \
   git curl ca-certificates \
   build-essential pkg-config python3-dev \
-  default-libmysqlclient-dev libjpeg-dev zlib1g-dev \
+  libmariadb-dev libmariadb-dev-compat libjpeg-dev zlib1g-dev \
   ufw
+
+systemctl enable --now mariadb
+case "$(mariadb --batch --skip-column-names -e 'SELECT VERSION()')" in
+  *MariaDB*) ;;
+  *) echo "Provisioning requires a MariaDB server." >&2; exit 1 ;;
+esac
 
 log "Installing Node ${NODE_MAJOR} (NodeSource)"
 if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | sed 's/v\([0-9]*\).*/\1/')" -lt $NODE_MAJOR ]]; then
@@ -88,10 +102,9 @@ log "Checking out ${REPO_REF}"
 sudo -u "$APP_USER" -H git -C "$ROOT" fetch origin --quiet || true
 sudo -u "$APP_USER" -H git -C "$ROOT" checkout "$REPO_REF" || true
 
-log "Setting up MySQL database, user, and grants"
-# Fresh MySQL 8 authenticates root via auth_socket, so `mysql` as root works
-# with no password. MySQL 8 does not auto-create users on GRANT, so CREATE USER
-# explicitly. Mirrors tools/setup_worldcovers_db.sql plus the user creation.
+log "Setting up MariaDB database, user, and grants"
+# MariaDB root uses local socket authentication on a fresh Ubuntu host.
+# Create the app user before granting database access.
 MYSQL_CNF="${ROOT}/mysql.cnf"
 if [[ -f "$MYSQL_CNF" && "$FORCE" != "1" ]]; then
   echo "mysql.cnf exists; reusing its password (WOCO_FORCE=1 to regenerate)."
@@ -99,7 +112,7 @@ if [[ -f "$MYSQL_CNF" && "$FORCE" != "1" ]]; then
 else
   DB_PASS="$(python3 -c 'import secrets,string; print("".join(secrets.choice(string.ascii_letters+string.digits) for _ in range(32)))')"
 fi
-mysql <<SQL
+mariadb <<SQL
 CREATE DATABASE IF NOT EXISTS worldcovers CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${APP_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
 ALTER USER '${APP_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';

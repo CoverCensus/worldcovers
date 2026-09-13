@@ -12,6 +12,11 @@ name: Verify
 
 on:
   workflow_call:
+    inputs:
+      mariadb-version:
+        description: MariaDB release series for the target environment
+        type: string
+        default: "10.11"
 
 # Opt JS-based actions into the node24 runtime ahead of GitHub's forced flip.
 env:
@@ -56,11 +61,10 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
-      # Matches production, which runs MariaDB 10.11.14 -- not MySQL. The
-      # backend suite needs a real server: settings.py pins the mysql engine
-      # and there is no sqlite fallback.
+      # The caller selects the target environment's MariaDB release series.
+      # Production stays on 10.11 until its separate upgrade.
       mariadb:
-        image: mariadb:10.11
+        image: mariadb:${{ inputs.mariadb-version }}
         env:
           MARIADB_ROOT_PASSWORD: ci-root-not-a-real-secret
           MARIADB_DATABASE: worldcovers

@@ -275,3 +275,5 @@ tools/wip/**/*.jpeg
 docs/data/
 docs/.project
 overview.md
+
+AGENTS.md

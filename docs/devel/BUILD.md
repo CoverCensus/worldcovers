@@ -8,7 +8,7 @@ successful command exits with code 0.
 
 `./woco setup dev` runs the whole sequence below for you. On a fresh clone it
 installs dependencies, writes `.env` with a generated secret key, prompts for
-local database settings, creates the MySQL database and app user, writes
+local database settings, creates the MariaDB database and app user, writes
 `mysql.cnf`, builds the frontend, runs migrations, and collects static files.
 It is idempotent, so re-running never clobbers an existing secret key or a
 valid `mysql.cnf`.
@@ -18,19 +18,19 @@ Interactive defaults:
 - Database name: `DB_NAME` from `.env`, then `worldcovers`.
 - App database user: `wocod`.
 - App database password: prompt; leave blank to generate a random password.
-- MySQL root access: passwordless `sudo mysql` when available; otherwise it
-  prompts for the MySQL root password. Leave that prompt blank to use
-  interactive `sudo mysql`.
+- MariaDB root access: passwordless `sudo mariadb` when available; otherwise it
+  prompts for the MariaDB root password. Leave that prompt blank to use
+  interactive `sudo mariadb`.
 
 For unattended setup:
 
 ```sh
 WOCO_DB_PASSWORD=<app-db-password> \
-WOCO_MYSQL_ROOT_PASSWORD=<mysql-root-password> \
+WOCO_MYSQL_ROOT_PASSWORD=<mariadb-root-password> \
 ./woco setup dev
 ```
 
-Omit `WOCO_MYSQL_ROOT_PASSWORD` when `sudo mysql` works locally.
+Omit `WOCO_MYSQL_ROOT_PASSWORD` when `sudo mariadb` works locally.
 
 Optional variables:
 
@@ -59,7 +59,18 @@ production build steps (`deploy/deploy.sh`); see [DEPLOY.md](DEPLOY.md).
 - Python 3.13 (installed automatically by `uv` from `.python-version`)
 - `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - Node.js and npm (for the frontend build)
-- MySQL 8, running locally
+- MariaDB, running locally, with the `mariadb` client on PATH
+
+Use MariaDB for local development, CI, staging, and production. Setup checks
+the connected server before database bootstrap or migrations and rejects MySQL.
+The Django backend name `django.db.backends.mysql`, the `mysqlclient` Python
+package, `mysql.cnf`, and `WOCO_MYSQL_ROOT_PASSWORD` remain compatibility names;
+they do not select a MySQL server.
+
+CI tests MariaDB 12.3 LTS for staging and 10.11 for production. Setup checks
+the server family, not a fixed release series. See
+[database versions](DEPLOY.md#database-versions) for the current configuration
+and planned changes.
 
 ## Steps
 
@@ -77,20 +88,20 @@ installed. On a server, use `uv sync --no-dev --frozen` to skip the dev group.
 `./woco setup dev` does this step automatically. If you are doing the setup
 by hand, edit `tools/setup_worldcovers_db.sql` first and replace the
 placeholder password on the `CREATE USER` line with one you choose. Then run
-it as MySQL root:
+it as MariaDB root:
 
 ```sh
-sudo mysql < tools/setup_worldcovers_db.sql
+sudo mariadb < tools/setup_worldcovers_db.sql
 # or, if root has a password:
-mysql -u root -p < tools/setup_worldcovers_db.sql
+mariadb -u root -p < tools/setup_worldcovers_db.sql
 ```
 
-This creates the `worldcovers` database and the `wocod` MySQL user with
+This creates the `worldcovers` database and the `wocod` MariaDB user with
 access to it (and to `test_worldcovers`, which Django uses for tests).
 
 ### 3. Configure database credentials
 
-`./woco setup dev` writes this file automatically after the MySQL bootstrap
+`./woco setup dev` writes this file automatically after the MariaDB bootstrap
 succeeds. For a manual setup, copy the example credentials file and fill in
 the user and password from step 2:
 
@@ -205,6 +216,40 @@ them; other docs link here.
 - `frontend/.env`: optional; sourced by `deploy/deploy.sh` before the
   frontend build to inject Vite build-time variables on servers. Local
   development does not need this file.
+
+## Verification
+
+Run these commands from the repo root after local setup:
+
+```sh
+uv sync --frozen
+bash tools/fingerprint.sh
+(cd tools && uv run python -m pytest tests)
+uv run python backend/manage.py check
+uv run python backend/manage.py test common
+(
+  cd frontend
+  npm ci
+  npm audit --audit-level=moderate
+  npm run lint
+  npm run typecheck
+  npm test -- --runInBand
+  npm run build
+)
+```
+
+Backend tests need a running MariaDB server and credentials in `mysql.cnf`.
+The database user needs permission to create and drop `test_worldcovers` (or
+`test_<DB_NAME>` for a custom database name). Local setup grants access to
+the test database. Run the tools suite with pytest; unittest does not collect
+all of its tests.
+
+[verify.yml](../../.github/workflows/verify.yml) defines the shared CI checks.
+Pull requests and both deploy workflows call it. CI uses Node 22, the pinned
+Python version, and a MariaDB service: 12.3 LTS for staging deploys and PRs
+targeting `staging`, and 10.11 for production deploys and other PRs. Deployment
+starts only after both the frontend and backend jobs pass. The frontend build
+is also uploaded as an artifact; the server deploy builds the frontend again.
 
 ## Seeding and ETL
 

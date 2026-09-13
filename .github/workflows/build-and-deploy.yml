@@ -16,6 +16,8 @@ jobs:
   # pull request check exactly the same things. Do not inline steps here.
   build:
     uses: ./.github/workflows/verify.yml
+    with:
+      mariadb-version: "12.3"
 
   deploy:
     needs: build

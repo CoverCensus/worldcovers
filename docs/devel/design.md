@@ -2,7 +2,7 @@
 
 ## Summary
 
-*WorldCovers* is a software system, not a single utility.  This document defines four user roles spanning capability from unauthenticated browsing through to system maintenance and administration. Forty-nine stories describe the system's user-facing capabilities. Thirty-two are mapped across eleven features: authentication, collection discovery, submission workflow, comment workflow, image attachments, reference work management, collection administration, audit trail, documentation & help, system maintenance, and catalog data pipeline. Seventeen additional stories are documented as backlog items for future iterations. The role model is cumulative - each tier inherits the capabilities of those below it. Collection Entries require Editor review before publication. Comments and submissions follow the same basic workflow. All submissions are logged as system transactions.
+*WorldCovers* is a software system, not a single utility.  This document defines four user roles spanning capability from unauthenticated browsing through to system maintenance and administration. Forty-nine stories describe the system's user-facing capabilities. Thirty-four are mapped across eleven features: authentication, collection discovery, submission workflow, comment workflow, image attachments, reference work management, collection administration, audit trail, documentation & help, system maintenance, and catalog data pipeline. Fifteen additional stories are documented as backlog items for future iterations. The role model is cumulative - each tier inherits the capabilities of those below it. Collection Entries require Editor review before publication. Comments and submissions follow the same basic workflow. All submissions are logged as system transactions.
 
 ## Roles
 
@@ -80,6 +80,10 @@
 
 **S32** - As an Administrator, I want to bundle transformed data for export, so that *prepared datasets can be distributed or archived outside the system.*
 
+**S35** - As an Editor, I want to approve multiple submissions in a single operation, so that *high-volume review periods can be processed efficiently.*
+
+**S41** - As a Guest, I want configurable pagination on result lists, so that I can *control page size and navigate results predictably.*
+
 ### Backlog Stories
 
 *The following stories are documented for future iterations. They are not mapped to Features and do not constrain the current design.*
@@ -87,8 +91,6 @@
 **S33** - As a Guest, I want tooltip help on textual elements throughout the interface, so that I can *get concise, context-sensitive guidance while working without leaving my current task.*
 
 **S34** - As an Administrator, I want to add and edit documentation articles, so that *the help library remains current and accurate as the system evolves.*
-
-**S35** - As an Editor, I want to approve multiple submissions in a single operation, so that *high-volume review periods can be processed efficiently.*
 
 **S36** - As a Contributor, I want to configure which notifications I receive and by what method (email, text, in-app), so that I am *informed of submission decisions, feedback, and system events without unwanted interruption.*
 
@@ -99,8 +101,6 @@
 **S39** - As a Contributor, I want to rate submission quality, contributor and editor profiles, and comment helpfulness, so that *the community can identify high-quality contributions and trusted community participants.*
 
 **S40** - As a Contributor, I want result lists to use infinite scrolling, so that I can *browse continuously without interacting with pagination controls.*
-
-**S41** - As a Guest, I want configurable pagination on result lists, so that I can *control page size and navigate results predictably.*
 
 **S42** - As a Contributor, I want to submit comments on a collection, so that I can *contribute observations or corrections scoped to the collection as a whole for expert review.*
 
@@ -121,7 +121,7 @@
 ## Technical Constraints
 
 * **API-First Architecture:** The REST API is the system's primary interface. The provided frontend application is an API client with no privileged access. All capabilities available through the frontend are equally available to any API consumer authenticated with the appropriate role.  
-* **Backend Server:** Python, Django, MySQL.   
+* **Backend Server:** Python, Django, MariaDB.
 * **Frontend Application:** TypeScript, React.   
 * **Data Science Tooling:** Jupyter notebooks, not exposed through the application interface.
 
@@ -129,9 +129,9 @@
 
 **F1** - *Authentication* (S1): System identity establishment for interactive and API access.
 
-**F2** - *Collection Discovery* (S2, S3, S4, S5): Browsing, searching, structured data access, and document/spreadsheet export across collections.
+**F2** - *Collection Discovery* (S2, S3, S4, S5, S41): Browsing, searching, configurable pagination, structured data access, and document/spreadsheet export across collections.
 
-**F3** - *Submission Workflow* (S6, S7, S8, S9, S10, S11, S12, S13, S14, S15): Contributor submissions, draft saving, Editor review cycle with feedback and revision requests, and queue filtering and sorting.
+**F3** - *Submission Workflow* (S6, S7, S8, S9, S10, S11, S12, S13, S14, S15, S35): Contributor submissions, draft saving, Editor review cycle with feedback and revision requests, bulk approval, and queue filtering and sorting.
 
 **F4** - *Comment Workflow* (S16, S17): Contributor comments on Entries, with Editor review.
 
@@ -192,13 +192,13 @@ not what is built. For the current implementation status of each feature
 | S32 | Bundle transformed data for export | F11 | Catalog Data Pipeline |
 | S33 | Tooltip help on textual elements | - | Backlog |
 | S34 | Add and edit documentation articles | - | Backlog |
-| S35 | Bulk approve submissions | - | Backlog |
+| S35 | Bulk approve submissions | F3 | Submission Workflow |
 | S36 | Configure notification methods and triggers | - | Backlog |
 | S37 | Escalate submission or contributor issue | - | Backlog |
 | S38 | Apply and search by flexible tags | - | Backlog |
 | S39 | Rate submissions, profiles, and comments | - | Backlog |
 | S40 | Infinite scrolling on result lists | - | Backlog |
-| S41 | Configurable pagination on result lists | - | Backlog |
+| S41 | Configurable pagination on result lists | F2 | Collection Discovery |
 | S42 | Submit comments on a collection | - | Backlog |
 | S43 | Export Entry sets as typeset documents ready for publication | - | Backlog |
 | S44 | Search collections by image | - | Backlog |

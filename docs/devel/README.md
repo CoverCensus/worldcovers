@@ -5,6 +5,7 @@ Start here. Pick the row that matches what you are trying to do.
 | I want to... | Read |
 |---|---|
 | Set up a local dev environment from scratch | [BUILD.md](BUILD.md) |
+| Run tests and understand CI checks | [BUILD.md](BUILD.md#verification) |
 | Understand what the product does and why | [../vision.md](../vision.md), [design.md](design.md) |
 | Learn the domain terms (markings, covers, regions) | [../glossary.md](../glossary.md) |
 | See which features live in the SPA vs Django admin | [../../ISSUE.md](../../ISSUE.md) (implementation surfaces) |
@@ -15,6 +16,7 @@ Start here. Pick the row that matches what you are trying to do.
 | Run day-to-day server operations | [RUNBOOK.md](RUNBOOK.md) |
 | Understand or change the deploy flow | [DEPLOY.md](DEPLOY.md) |
 | Provision a staging or production host | [DEPLOY.md](DEPLOY.md#provisioning-a-fresh-host) |
+| Check database versions and upgrade plans | [DEPLOY.md](DEPLOY.md#database-versions) |
 | Make sense of legacy v1 data (tblRawStateData etc.) | [v1/v1-legacy-summary.md](v1/v1-legacy-summary.md) |
 
 Reading order for a brand-new developer: [../vision.md](../vision.md) ->

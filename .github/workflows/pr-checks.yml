@@ -21,3 +21,5 @@ concurrency:
 jobs:
   verify:
     uses: ./.github/workflows/verify.yml
+    with:
+      mariadb-version: ${{ github.base_ref == 'staging' && '12.3' || '10.11' }}

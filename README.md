@@ -12,6 +12,20 @@ deployment is currently `hellowoco.app`.
 
 ## Project Overview
 
+The first catalog is the American Postal Markings Catalog (APMC), with
+software support for ASCC and VPHC source data. Visitors search markings and
+their associated covers. Contributors submit additions and corrections;
+editors review them for their assigned collections. Offline tools prepare
+catalog data for import. Available data and review progress vary by state
+and site.
+
+Start with the [vision](./docs/vision.md) for scope, the
+[model](./docs/devel/model.md) for domain records, and the
+[ASCC pipeline](./docs/devel/PIPELINE.md) or
+[VPHC commands](./docs/devel/TOOLS.md#vphc-commands) for data preparation.
+The [verification guide](./docs/devel/BUILD.md#verification) covers tests.
+New state editors should read [Getting Started](./docs/getting-started.md).
+
 WorldCovers has three main code areas:
 
 - [Common model](./backend/common): shared models, admin resources,
@@ -31,13 +45,14 @@ For design and scope details, see [docs/devel/design.md](./docs/devel/design.md)
 
 Prerequisites:
 
-- Local development has been tested on macOS. Linux should work with the same
-  commands when the prerequisites below are installed.
+- Local development has been tested on macOS & Ubuntu Linux via WSL2. Native Windows should work the same if the dependencies are properly installed.
 - Python 3.13, pinned by [.python-version](./.python-version)
 - `uv`, installed with `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - Node.js and npm for the frontend build
-- MySQL 8, running locally. `./woco setup dev` needs either `sudo mysql`
-  access or the MySQL root password to create the local database and app user.
+- MariaDB, running locally. CI tests MariaDB 12.3 LTS for staging and 10.11
+  for production.
+  `./woco setup dev` needs either `sudo mariadb`
+  access or the MariaDB root password to create the local database and app user.
 
 From the repo root, run the one-command setup:
 
@@ -46,7 +61,7 @@ From the repo root, run the one-command setup:
 ```
 
 On a fresh clone this installs dependencies, creates `.env` with a generated
-secret key, prompts for local database settings, creates the MySQL database
+secret key, prompts for local database settings, creates the MariaDB database
 and app user, writes `mysql.cnf`, builds the frontend, runs migrations, and
 collects static files. Press Enter at the app-password prompt to generate a
 random password. The command is idempotent -- safe to re-run any time.
@@ -55,12 +70,12 @@ For unattended setup, pass the values as environment variables:
 
 ```sh
 WOCO_DB_PASSWORD=<app-db-password> \
-WOCO_MYSQL_ROOT_PASSWORD=<mysql-root-password> \
+WOCO_MYSQL_ROOT_PASSWORD=<mariadb-root-password> \
 ./woco setup dev
 ```
 
 `WOCO_DB_NAME` and `WOCO_DB_USER` are optional; defaults are `worldcovers`
-and `wocod`. Omit `WOCO_MYSQL_ROOT_PASSWORD` when `sudo mysql` works locally.
+and `wocod`. Omit `WOCO_MYSQL_ROOT_PASSWORD` when `sudo mariadb` works locally.
 
 Then start the dev server:
 
@@ -73,7 +88,7 @@ The equivalent manual steps, if you prefer to run them yourself:
 ```sh
 uv sync
 # Edit the password in tools/setup_worldcovers_db.sql first, then:
-sudo mysql < tools/setup_worldcovers_db.sql
+sudo mariadb < tools/setup_worldcovers_db.sql
 cp mysql.cnf.example mysql.cnf   # then fill in the same user and password
 cp .env.example .env             # then set DJANGO_SECRET_KEY (see below)
 ./woco secretkey                 # prints a fresh secret key
@@ -112,14 +127,22 @@ admin, media, and static requests are proxied to Django.
 With `DEBUG=False`, `./woco dev` builds `frontend/dist/` and serves the built
 SPA through Django at `http://127.0.0.1:8000`.
 
+For local test commands and the checks required by GitHub Actions, see
+[BUILD.md](./docs/devel/BUILD.md#verification).
+
 ## Deployment And Operations
 
-Hosted deploys target Ubuntu 24.04 LTS servers with systemd, nginx, MySQL 8,
+Hosted deploys target Ubuntu 24.04 LTS servers with systemd, nginx, MariaDB,
 Node 22, uv, and Python 3.13. The checked-in provisioning script is written
-for that host profile.
+for that host profile. It installs MariaDB from the host's configured apt
+repositories; it does not pin a release series or migrate an existing MySQL
+server. See [database versions](./docs/devel/DEPLOY.md#database-versions)
+for the current configuration and planned changes.
 
 The deployment source of truth is:
 
+- [.github/workflows/verify.yml](./.github/workflows/verify.yml)
+- [.github/workflows/pr-checks.yml](./.github/workflows/pr-checks.yml)
 - [.github/workflows/build-and-deploy.yml](./.github/workflows/build-and-deploy.yml)
 - [.github/workflows/deploy-prod.yml](./.github/workflows/deploy-prod.yml)
 - [deploy/provision.sh](./deploy/provision.sh)
