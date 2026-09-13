@@ -2,7 +2,7 @@
 
 ## Summary
 
-*WorldCovers* is a software system, not a single utility.  This document defines four user roles spanning capability from unauthenticated browsing through to system maintenance and administration. Forty-nine stories describe the system's user-facing capabilities. Thirty-four are mapped across eleven features: authentication, collection discovery, submission workflow, comment workflow, image attachments, reference work management, collection administration, audit trail, documentation & help, system maintenance, and catalog data pipeline. Fifteen additional stories are documented as backlog items for future iterations. The role model is cumulative - each tier inherits the capabilities of those below it. Collection Entries require Editor review before publication. Comments and submissions follow the same basic workflow. All submissions are logged as system transactions.
+*WorldCovers* is a software system, not a single utility.  This document defines four user roles spanning capability from unauthenticated browsing through to system maintenance and administration. Forty-nine stories describe the system's user-facing capabilities. Thirty-six are mapped across eleven features: authentication, collection discovery, submission workflow, comment workflow, image attachments, reference work management, collection administration, audit trail, documentation & help, system maintenance, and catalog data pipeline. Thirteen additional stories are documented as backlog items for future iterations. The role model is cumulative - each tier inherits the capabilities of those below it. Collection Entries require Editor review before publication. Comments and submissions follow the same basic workflow. All submissions are logged as system transactions.
 
 ## Roles
 
@@ -80,6 +80,10 @@
 
 **S32** - As an Administrator, I want to bundle transformed data for export, so that *prepared datasets can be distributed or archived outside the system.*
 
+**S33** - As a Guest, I want tooltip help on textual elements throughout the interface, so that I can *get concise, context-sensitive guidance while working without leaving my current task.*
+
+**S34** - As an Administrator, I want to add and edit documentation articles, so that *the help library remains current and accurate as the system evolves.*
+
 **S35** - As an Editor, I want to approve multiple submissions in a single operation, so that *high-volume review periods can be processed efficiently.*
 
 **S41** - As a Guest, I want configurable pagination on result lists, so that I can *control page size and navigate results predictably.*
@@ -87,10 +91,6 @@
 ### Backlog Stories
 
 *The following stories are documented for future iterations. They are not mapped to Features and do not constrain the current design.*
-
-**S33** - As a Guest, I want tooltip help on textual elements throughout the interface, so that I can *get concise, context-sensitive guidance while working without leaving my current task.*
-
-**S34** - As an Administrator, I want to add and edit documentation articles, so that *the help library remains current and accurate as the system evolves.*
 
 **S36** - As a Contributor, I want to configure which notifications I receive and by what method (email, text, in-app), so that I am *informed of submission decisions, feedback, and system events without unwanted interruption.*
 
@@ -143,7 +143,7 @@
 
 **F8** - *Audit Trail* (S22, S23): Submission transaction logging and version history viewing.
 
-**F9** - *Documentation & Help* (S24): In-app documentation library, including system glossary and an FAQ.
+**F9** - *Documentation & Help* (S24, S33, S34): In-app documentation library, including system glossary and an FAQ, contextual tooltip help, and article authoring.
 
 **F10** - *System Maintenance* (S25, S26, S27): Administrator-facing backup, restore, and update operations exposed through the application interface.
 
@@ -190,8 +190,8 @@ not what is built. For the current implementation status of each feature
 | S30 | Transform catalog data from source formats | F11 | Catalog Data Pipeline |
 | S31 | Load transformed data into a running system | F11 | Catalog Data Pipeline |
 | S32 | Bundle transformed data for export | F11 | Catalog Data Pipeline |
-| S33 | Tooltip help on textual elements | - | Backlog |
-| S34 | Add and edit documentation articles | - | Backlog |
+| S33 | Tooltip help on textual elements | F9 | Documentation & Help |
+| S34 | Add and edit documentation articles | F9 | Documentation & Help |
 | S35 | Bulk approve submissions | F3 | Submission Workflow |
 | S36 | Configure notification methods and triggers | - | Backlog |
 | S37 | Escalate submission or contributor issue | - | Backlog |
