@@ -31,8 +31,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
+import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
 import { CoverReviewBanner } from "@/components/CoverReviewBanner";
 import { looksLikeWrongKind, measureImageFile } from "@/lib/imageShape";
+import { isBelowPreferredImageDpi, measureImageDpi } from "@/lib/imageResolution";
 import { COVER_SUBMISSION_GUIDELINES } from "@/labels/guidelines";
 import { isCoverContributionData } from "@/lib/contributionDisplay";
 import {
@@ -109,7 +111,7 @@ const DEFAULT_COVER_TYPE = "FL";
 const EMPTY_COVER_DATE: PartialDateInput = { unknown: false, year: "", month: "", day: "" };
 
 const MAX_IMAGE_SIZE_MB = 100;
-const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/tiff"];
+const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg"];
 const PAGE_NUMBER_RE = /^[A-Za-z0-9][A-Za-z0-9\s\-.,:;()/#]*$/;
 
 function formatAxiosError(err: unknown): string {
@@ -307,10 +309,14 @@ export default function CoverEdit() {
   // cover scan (issue #76). Keyed rather than flagged on the item so removing
   // an image drops it from the count for free.
   const [markingLikeImageKeys, setMarkingLikeImageKeys] = useState<string[]>([]);
-  const [wrongImageKindAcknowledged, setWrongImageKindAcknowledged] = useState(false);
+  const [lowResolutionImageKeys, setLowResolutionImageKeys] = useState<string[]>([]);
   const markingLikeImageCount = useMemo(
     () => gallery.filter((item) => markingLikeImageKeys.includes(item.key)).length,
     [gallery, markingLikeImageKeys],
+  );
+  const lowResolutionImageCount = useMemo(
+    () => gallery.filter((item) => lowResolutionImageKeys.includes(item.key)).length,
+    [gallery, lowResolutionImageKeys],
   );
 
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -618,6 +624,12 @@ export default function CoverEdit() {
           prev.includes(key) ? prev : [...prev, key],
         );
       });
+      void measureImageDpi(upload.file).then((dpi) => {
+        if (!isBelowPreferredImageDpi(dpi)) return;
+        setLowResolutionImageKeys((prev) =>
+          prev.includes(key) ? prev : [...prev, key],
+        );
+      });
     }
   };
 
@@ -723,12 +735,6 @@ export default function CoverEdit() {
     const imageCount = gallery.length;
     if (imageCount < 1 && !noCoverImage) {
       errors.images = "Add at least one cover image or confirm no image is available.";
-    } else if (markingLikeImageCount > 0 && !wrongImageKindAcknowledged) {
-      // Cleared by ticking the acknowledgement in WrongImageKindWarning or by
-      // removing the image -- never a hard block (issue #76). Unreachable when
-      // the gallery is empty, so the no-image opt-out above always wins.
-      errors.images =
-        "Confirm the highlighted image is correct, or remove it, before submitting.";
     }
 
     for (const work of selectedReferenceWorks) {
@@ -1206,7 +1212,7 @@ export default function CoverEdit() {
                         <div className="pointer-events-none flex flex-col items-center gap-2 text-center select-none">
                           <Upload className="h-10 w-10 text-muted-foreground" aria-hidden />
                           <p className="text-sm text-muted-foreground">
-                            Click or drag images here (PNG, JPG, TIFF -- max {MAX_IMAGE_SIZE_MB}MB each).
+                            Click or drag images here (PNG or JPG -- max {MAX_IMAGE_SIZE_MB}MB each).
                           </p>
                         </div>
 
@@ -1328,9 +1334,8 @@ export default function CoverEdit() {
                       <WrongImageKindWarning
                         expected="COVER"
                         count={markingLikeImageCount}
-                        acknowledged={wrongImageKindAcknowledged}
-                        onAcknowledgedChange={setWrongImageKindAcknowledged}
                       />
+                      <LowResolutionImageWarning count={lowResolutionImageCount} />
                     </div>
 
                     <div className="space-y-3 pt-1">

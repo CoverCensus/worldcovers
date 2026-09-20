@@ -3729,8 +3729,6 @@ def _save_contribution_image(uploaded_file, region_abbrev):
         return None
     if "png" in content_type:
         ext = "png"
-    elif "tiff" in content_type:
-        ext = "tiff"
     else:
         ext = "jpg"
     abbrev = (region_abbrev or "").strip().lower() or "unknown"

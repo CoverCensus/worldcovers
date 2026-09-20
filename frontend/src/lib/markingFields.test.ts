@@ -73,6 +73,18 @@ describe("buildMarkingFields - boundary date links", () => {
   });
 });
 
+describe("buildMarkingFields - catalog code", () => {
+  it("names the code as a Marking code for staff", () => {
+    const rows = buildMarkingFields(baseInput({ code: "APMC-VA-M0001" }), {
+      isStaff: true,
+    });
+
+    expect(rows.find((row) => row.value === "APMC-VA-M0001")?.label).toBe(
+      "Catalog Marking code",
+    );
+  });
+});
+
 describe("buildMarkingFields — State/Territory tags (issue #28)", () => {
   it("attaches region tags (search links) to the State/Territory row when supplied", () => {
     const rows = buildMarkingFields(

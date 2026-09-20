@@ -270,7 +270,10 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   const parentMarkingId = parentMarkingIdFromContribution(sd);
   const displayName =
     contribution?.displayName?.trim() ||
-    coverContributionDisplayName(sd, contribution?.id ?? 0, contribution?.status);
+    coverContributionDisplayName(sd, contribution?.id ?? 0, {
+      town: parentMarking?.town,
+      state: parentMarking?.state,
+    });
 
   useEffect(() => {
     let cancelled = false;
@@ -409,7 +412,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
       })
       .catch((err) => {
         if (!cancelled) {
-          setCatalogCodeError(err instanceof Error ? err.message : "Could not generate catalog code.");
+          setCatalogCodeError(err instanceof Error ? err.message : "Could not generate Catalog Cover code.");
         }
       })
       .finally(() => {
@@ -431,7 +434,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
       setCatalogCode(suggestion.catalogCode);
       return suggestion.catalogCode;
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not generate catalog code.";
+      const message = err instanceof Error ? err.message : "Could not generate Catalog Cover code.";
       setCatalogCodeError(message);
       throw err;
     } finally {
@@ -625,7 +628,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="cover-contribution-catalog-code">Catalog code</Label>
+                  <Label htmlFor="cover-contribution-catalog-code">Catalog Cover code</Label>
                   <Input
                     id="cover-contribution-catalog-code"
                     value={catalogCode}
@@ -636,7 +639,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                     onBlur={() => {
                       if (!catalogCode.trim()) void ensureCatalogCode();
                     }}
-                    placeholder={catalogCodeLoading ? "Generating..." : "Catalog code"}
+                    placeholder={catalogCodeLoading ? "Generating..." : "Catalog Cover code"}
                     disabled={submitting || catalogCodeLoading}
                   />
                   {catalogCodeError ? <p className="text-sm text-destructive">{catalogCodeError}</p> : null}

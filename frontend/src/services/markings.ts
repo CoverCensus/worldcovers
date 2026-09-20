@@ -1,7 +1,7 @@
 import apiClient, { ensureCsrfToken } from "@/lib/api";
 import { listContributions } from "@/services/contributions";
 import {
-  coverContributionDisplayName,
+  coverContributionDisplayLabel,
   isCoverContributionData,
   parentMarkingIdFromContribution,
 } from "@/lib/contributionDisplay";
@@ -1456,7 +1456,7 @@ function mapCoverContributionToAssociatedCover(
     id: -id,
     contributionDraftId: id,
     contributionStatus: status,
-    displayLabel: coverContributionDisplayName(sd, id),
+    displayLabel: coverContributionDisplayLabel(contrib, sd, id),
     reviewStatus,
     reviewNotes:
       typeof contrib.review_notes === "string"

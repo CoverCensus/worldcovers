@@ -2,7 +2,7 @@
 
 ## Summary
 
-*WorldCovers* is a software system, not a single utility.  This document defines four user roles spanning capability from unauthenticated browsing through to system maintenance and administration. Forty-nine stories describe the system's user-facing capabilities. Thirty-six are mapped across eleven features: authentication, collection discovery, submission workflow, comment workflow, image attachments, reference work management, collection administration, audit trail, documentation & help, system maintenance, and catalog data pipeline. Thirteen additional stories are documented as backlog items for future iterations. The role model is cumulative - each tier inherits the capabilities of those below it. Collection Entries require Editor review before publication. Comments and submissions follow the same basic workflow. All submissions are logged as system transactions.
+*WorldCovers* is a software system, not a single utility. This document defines four user roles spanning unauthenticated browsing through system administration. Of its forty-nine stories, thirty-three are active and sixteen are deferred. The feature map has thirteen identifiers, including shared engineering and project administration; F4 Comment Workflow is deferred. The role model is cumulative: each tier inherits the capabilities of those below it. Collection Entries require Editor review before publication. All submissions are logged as system transactions. Standalone Entry comments, their review, and Collection creation are in Backlog, confirmed by Michael on 2026-09-19.
 
 ## Roles
 
@@ -46,15 +46,9 @@
 
 **S15** - As an Editor, I want to request revisions on a submission with specific feedback, so that *contributors can correct issues and resubmit without starting over.*
 
-**S16** - As a Contributor, I want to submit comments on an Entry, so that I can *contribute observations or corrections for expert review.*
-
-**S17** - As an Editor, I want to approve or reject submitted comments, so that *published commentary maintains the same quality standards as Entry data.*
-
 **S18** - As a Contributor, I want to attach images to a submission, so that *visual evidence of each cover accompanies its cataloged data.*
 
 **S19** - As an Editor, I want to add and edit reference works, so that contributors can *cite established catalogs and publications when documenting Entries.*
-
-**S20** - As an Administrator, I want to create new Collections, so that *catalogs or regional datasets can be organized in the system.*
 
 **S21** - As an Administrator, I want to assign Editors to Collections, so that *subject-matter experts can curate the collections they're qualified for.*
 
@@ -68,7 +62,7 @@
 
 **S26** - As an Administrator, I want to restore the system from a backup through the application, so that I can *recover from data issues without requiring infrastructure access.*
 
-**S27** - As an Administrator, I want to apply system updates through the application, so that I can *keep the platform current without requiring infrastructure access.*
+**S27** - As an Administrator, I want to apply system updates through operator tools and deployment workflows, so that I can *keep the platform current through controlled deployment steps.* Operator access remains required, as confirmed by Michael on 2026-09-19. An application update interface is not required for this story.
 
 **S28** - As an Administrator, I want to invoke exploratory queries against catalog datasets, so that I can *assess data quality.*
 
@@ -90,7 +84,13 @@
 
 ### Backlog Stories
 
-*The following stories are documented for future iterations. They are not mapped to Features and do not constrain the current design.*
+*The following stories are deferred and do not constrain current implementation. Their feature associations below support visual grouping on Trello; they do not move these stories into active scope.*
+
+**S16** - As a Contributor, I want to submit comments on an Entry, so that I can *contribute observations or corrections for expert review.*
+
+**S17** - As an Editor, I want to approve or reject submitted comments, so that *published commentary maintains the same quality standards as Entry data.*
+
+**S20** - As an Administrator, I want to create new Collections, so that *catalogs or regional datasets can be organized in the system.*
 
 **S36** - As a Contributor, I want to configure which notifications I receive and by what method (email, text, in-app), so that I am *informed of submission decisions, feedback, and system events without unwanted interruption.*
 
@@ -133,21 +133,25 @@
 
 **F3** - *Submission Workflow* (S6, S7, S8, S9, S10, S11, S12, S13, S14, S15, S35): Contributor submissions, draft saving, Editor review cycle with feedback and revision requests, bulk approval, and queue filtering and sorting.
 
-**F4** - *Comment Workflow* (S16, S17): Contributor comments on Entries, with Editor review.
+**F4** - *Comment Workflow* (S16, S17; Backlog): Standalone Contributor comments on Entries, with Editor review. Deferred as of 2026-09-19; notes within Submissions remain part of F3.
 
 **F5** - *Image Attachments* (S18): Image attachment on Entries.
 
 **F6** - *Reference Work Management* (S19): Registry of citable sources available for citation linking.
 
-**F7** - *Collection Administration* (S20, S21): Collection lifecycle and Editor assignment.
+**F7** - *Collection Administration* (S21; S20 in Backlog): Collection lifecycle and Editor assignment.
 
 **F8** - *Audit Trail* (S22, S23): Submission transaction logging and version history viewing.
 
 **F9** - *Documentation & Help* (S24, S33, S34): In-app documentation library, including system glossary and an FAQ, contextual tooltip help, and article authoring.
 
-**F10** - *System Maintenance* (S25, S26, S27): Administrator-facing backup, restore, and update operations exposed through the application interface.
+**F10** - *System Maintenance* (S25, S26, S27): Application backup and restore (S25, S26), and system updates through operator tools and deployment workflows (S27).
 
 **F11** - *Catalog Data Pipeline* (S28, S29, S30, S31, S32): Offline tooling for exploratory analysis, normalization, format conversion, and import/export of catalog datasets.
+
+**F12** - *Engineering*: Shared developer documentation, testing, accessibility, internationalization, performance, and dependency compatibility. Use this for technical work that spans product features.
+
+**F13** - *Project Administration*: Project design, branding approval, planning, and board governance. This includes S0 and board setup; it does not change the S1-S49 product story count.
 
 This document is pure specification: it says what the system should do,
 not what is built. For the current implementation status of each feature
@@ -173,11 +177,11 @@ not what is built. For the current implementation status of each feature
 | S13 | Approve or reject a submission | F3 | Submission Workflow |
 | S14 | Provide feedback on submissions | F3 | Submission Workflow |
 | S15 | Request revisions on a submission | F3 | Submission Workflow |
-| S16 | Submit comments on an Entry | F4 | Comment Workflow |
-| S17 | Approve or reject submitted comments | F4 | Comment Workflow |
+| S16 | Submit comments on an Entry | F4 | Comment Workflow (Backlog) |
+| S17 | Approve or reject submitted comments | F4 | Comment Workflow (Backlog) |
 | S18 | Attach images to a submission | F5 | Image Attachments |
 | S19 | Add and edit reference works | F6 | Reference Work Management |
-| S20 | Create Collections | F7 | Collection Administration |
+| S20 | Create Collections | F7 | Collection Administration (Backlog) |
 | S21 | Assign Editors to Collections | F7 | Collection Administration |
 | S22 | Log submissions as system transactions | F8 | Audit Trail |
 | S23 | View version history for any Entry | F8 | Audit Trail |
@@ -193,17 +197,17 @@ not what is built. For the current implementation status of each feature
 | S33 | Tooltip help on textual elements | F9 | Documentation & Help |
 | S34 | Add and edit documentation articles | F9 | Documentation & Help |
 | S35 | Bulk approve submissions | F3 | Submission Workflow |
-| S36 | Configure notification methods and triggers | - | Backlog |
-| S37 | Escalate submission or contributor issue | - | Backlog |
-| S38 | Apply and search by flexible tags | - | Backlog |
-| S39 | Rate submissions, profiles, and comments | - | Backlog |
-| S40 | Infinite scrolling on result lists | - | Backlog |
+| S36 | Configure notification methods and triggers | F3 | Submission Workflow (Backlog) |
+| S37 | Escalate submission or contributor issue | F3 | Submission Workflow (Backlog) |
+| S38 | Apply and search by flexible tags | F2 | Collection Discovery (Backlog) |
+| S39 | Rate submissions, profiles, and comments | F3, F4 | Submission and Comment Workflows (Backlog) |
+| S40 | Infinite scrolling on result lists | F2 | Collection Discovery (Backlog) |
 | S41 | Configurable pagination on result lists | F2 | Collection Discovery |
-| S42 | Submit comments on a collection | - | Backlog |
-| S43 | Export Entry sets as typeset documents ready for publication | - | Backlog |
-| S44 | Search collections by image | - | Backlog |
-| S45 | Submit a bug report from within the app | - | Backlog |
-| S46 | Authenticate via SSO | - | Backlog |
-| S47 | Enable multi-factor authentication | - | Backlog |
-| S48 | Advanced search with boolean operations on selectable fields | - | Backlog |
-| S49 | Add and edit Entries in a Personal Collection | - | Backlog |
+| S42 | Submit comments on a collection | F4 | Comment Workflow (Backlog) |
+| S43 | Export Entry sets as typeset documents ready for publication | F2 | Collection Discovery (Backlog) |
+| S44 | Search collections by image | F2 | Collection Discovery (Backlog) |
+| S45 | Submit a bug report from within the app | F10 | System Maintenance (Backlog) |
+| S46 | Authenticate via SSO | F1 | Authentication (Backlog) |
+| S47 | Enable multi-factor authentication | F1 | Authentication (Backlog) |
+| S48 | Advanced search with boolean operations on selectable fields | F2 | Collection Discovery (Backlog) |
+| S49 | Add and edit Entries in a Personal Collection | F7 | Collection Administration (Backlog) |

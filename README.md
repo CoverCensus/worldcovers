@@ -35,9 +35,9 @@ WorldCovers has three main code areas:
 - [Web UI](./frontend): React SPA served by Django in production and by Vite
   during frontend development.
 
-Public Help content is served from Markdown files in [docs](./docs) by
-`backend/common/api/help.py`. Files under `docs/devel/` are internal
-developer and operator docs and are not exposed in the live Help page.
+Public Help content is served from explicitly allowlisted Markdown documents
+in [docs](./docs) by `backend/common/api/help.py`. Developer and operator
+material belongs under `docs/devel/`; adding a document does not publish it.
 
 For design and scope details, see [docs/devel/design.md](./docs/devel/design.md)
 

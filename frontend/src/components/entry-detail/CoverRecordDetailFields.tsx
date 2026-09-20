@@ -5,6 +5,8 @@ export function CoverRecordDetailFields({
   date,
   institutionallyOwned,
   backstamp,
+  catalogCode,
+  showCatalogCode = false,
   submittedBy,
   description,
 }: {
@@ -12,6 +14,9 @@ export function CoverRecordDetailFields({
   date: string;
   institutionallyOwned: string;
   backstamp: string;
+  /** Editor-only catalog reference code. */
+  catalogCode?: string | null;
+  showCatalogCode?: boolean;
   /** Submitter display name; shown only when the submitter opted in. */
   submittedBy?: string | null;
   /** Free-text cover description / notes; shown only when present. */
@@ -23,6 +28,9 @@ export function CoverRecordDetailFields({
     { label: "Institutionally Owned", value: institutionallyOwned || EMPTY },
     { label: "Backstamp", value: backstamp || EMPTY },
   ];
+  if (showCatalogCode && catalogCode?.trim()) {
+    rows.push({ label: "Catalog Cover code", value: catalogCode.trim() });
+  }
   if (submittedBy) {
     rows.push({ label: "Submitted by", value: submittedBy });
   }

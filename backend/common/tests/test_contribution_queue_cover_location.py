@@ -9,9 +9,9 @@ is a cover" partly on the ABSENCE of a town, so denormalizing one into the blob
 would reclassify every cover draft as a marking. The town belongs to the parent
 marking and has to be resolved.
 
-The rows therefore read "Cover draft - Folded Cover - 1850-06-01 - Marking #12":
-no town at all, and the record TYPE leading the line an editor scans. Marking
-contributions were never affected -- they already led with their location.
+The old rows omitted the town and led with redundant status and relationship
+text. Marking contributions were never affected because they already led with
+their location.
 
 ⭐ The query-count test is not hygiene, it is the acceptance criterion. Resolving
 a parent per row is an N+1 on the busiest editor screen against a queue that has
@@ -155,12 +155,9 @@ class CoverDraftLocationTests(TestCase):
             row["display_name"].startswith("Onancock, VA - "),
             "expected the location to lead the label, got {!r}".format(row["display_name"]),
         )
-        # #137 is specifically about ORDER: the record type has to trail. A
-        # label that merely contains the town somewhere still fails the ask.
-        self.assertLess(
-            row["display_name"].index("Onancock"),
-            row["display_name"].index("Cover draft"),
-            "town must precede the cover/draft label",
+        self.assertEqual(
+            row["display_name"],
+            "Onancock, VA - Folded Cover - 06/01/1850",
         )
         # #135: the row's own town field, which is what the dashboard sorts and
         # falls back to, must stop reporting "-".
@@ -190,7 +187,7 @@ class CoverDraftLocationTests(TestCase):
         self._cover_draft(999_999)
 
         row = self._rows()[0]
-        self.assertTrue(row["display_name"].startswith("Cover draft - "))
+        self.assertEqual(row["display_name"], "Folded Cover - 06/01/1850")
         self.assertEqual(row["town_display"], "-")
 
     def test_marking_contributions_are_untouched(self):

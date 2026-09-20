@@ -68,6 +68,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { parseMarkingIdInput } from "@/lib/recordLinking";
+import { moveImageAndRefresh } from "@/lib/imageMoveRefresh";
 import { listCitationsForSubject } from "@/services/citations";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
 import { SUBMISSION_LABELS } from "@/labels/submission";
@@ -544,19 +545,41 @@ const CoverDetailPage = () => {
     setMoveImageBusy(true);
     setMoveImageError(null);
     try {
-      const res = await moveImageSubject(image.imageId, "MARKING", targetId, moveImageView);
-      if (res.ok === false) {
-        setMoveImageError(res.message);
+      const links = associatedMarkings.map((row) => row.link);
+      const result = await moveImageAndRefresh(
+        () => moveImageSubject(image.imageId, "MARKING", targetId, moveImageView),
+        () => getImagesForSubject({ subjectType: "COVER", subjectId: coverPk }),
+        () => loadAssociatedMarkingsForCover(links),
+      );
+      if (result.moved === false) {
+        setMoveImageError(result.message);
         return;
       }
-      toast({ title: "Image moved", description: "Image reassigned to the marking." });
       setMoveImageIndex(null);
-      const refreshed = await getImagesForSubject({
-        subjectType: "COVER",
-        subjectId: coverPk,
+      let refreshFailed = false;
+      if (result.source.ok === true) {
+        const refreshed = result.source.value;
+        setImages(refreshed);
+        setCurrent((previous) =>
+          Math.max(0, Math.min(previous, refreshed.length - 1)),
+        );
+      } else {
+        refreshFailed = true;
+      }
+      if (result.destination.ok === true) {
+        setAssociatedMarkings(result.destination.value);
+        setMarkingsLoadError(null);
+      } else {
+        refreshFailed = true;
+        setMarkingsLoadError("The image moved, but the marking previews could not refresh.");
+      }
+      toast({
+        title: "Image moved",
+        description: refreshFailed
+          ? "The image moved, but the page could not fully refresh. Reload to see the latest thumbnails."
+          : "Image reassigned to the marking.",
+        variant: refreshFailed ? "destructive" : "default",
       });
-      setImages(refreshed);
-      setCurrent((prev) => Math.max(0, Math.min(prev, refreshed.length - 1)));
     } finally {
       setMoveImageBusy(false);
     }
@@ -683,13 +706,11 @@ const CoverDetailPage = () => {
     <>
       <EntryDetailLayout
         onBack={handleBack}
+        title="Cover"
         leftColumn={
           <>
             <EntryImageGalleryCard
               images={galleryImages}
-              // Issue #138: the marking screen labels its image "Marking"; this
-              // is the other half of telling the two screens apart.
-              title="Cover"
               showSubjectBadge={false}
               carouselApi={api}
               setCarouselApi={setApi}
@@ -791,6 +812,8 @@ const CoverDetailPage = () => {
                   date={datesText}
                   institutionallyOwned={institutionalText}
                   backstamp={backstampText}
+                  catalogCode={cover.code}
+                  showCatalogCode={isStaff}
                   submittedBy={cover.submitterName}
                   description={cover.description}
                 />

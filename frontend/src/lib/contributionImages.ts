@@ -133,6 +133,5 @@ export async function fileFromContributionDraftImage(img: {
 function guessMimeFromFilename(name: string): string {
   const lower = name.toLowerCase();
   if (lower.endsWith(".png")) return "image/png";
-  if (lower.endsWith(".tif") || lower.endsWith(".tiff")) return "image/tiff";
   return "image/jpeg";
 }

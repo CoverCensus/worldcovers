@@ -51,7 +51,9 @@ import {
   LETTERING_HELP,
 } from "@/labels/guidelines";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
+import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
 import { looksLikeWrongKind, measureImageFile } from "@/lib/imageShape";
+import { isBelowPreferredImageDpi, measureImageDpi } from "@/lib/imageResolution";
 import { useToast } from "@/hooks/use-toast";
 import { dashboardHref, dashboardHrefForTab } from "@/lib/dashboardParams";
 import { catalogHref } from "@/lib/catalogParams";
@@ -65,7 +67,7 @@ import { isTrueCircleShapeName, shapeCodeFromName } from "@/lib/shapeDisplay";
 
 const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 100;
-const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/tiff"];
+const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg"];
 
 
 const IMPRESSION_OPTIONS = [
@@ -601,7 +603,7 @@ const Contribute = () => {
   // marking closeup (issue #76). Held as keys rather than a flag on the item so
   // removing an image drops it from the count for free.
   const [coverLikeImageKeys, setCoverLikeImageKeys] = useState<string[]>([]);
-  const [wrongImageKindAcknowledged, setWrongImageKindAcknowledged] = useState(false);
+  const [lowResolutionImageKeys, setLowResolutionImageKeys] = useState<string[]>([]);
   // Timestamp of the marking record as observed when this edit session loaded
   // (Marking.modified_date). Stamped into save-as-draft payloads so a later
   // resume can detect upstream edits and warn the user before they overwrite.
@@ -854,7 +856,7 @@ const Contribute = () => {
       }
       return suggestion.catalogCode;
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not generate catalog code.";
+      const message = err instanceof Error ? err.message : "Could not generate Catalog Marking code.";
       setCatalogCodeError(message);
       throw err;
     } finally {
@@ -880,7 +882,7 @@ const Contribute = () => {
       })
       .catch((err) => {
         if (!cancelled) {
-          setCatalogCodeError(err instanceof Error ? err.message : "Could not generate catalog code.");
+          setCatalogCodeError(err instanceof Error ? err.message : "Could not generate Catalog Marking code.");
         }
       })
       .finally(() => {
@@ -1354,6 +1356,10 @@ const Contribute = () => {
     () => gallery.filter((item) => coverLikeImageKeys.includes(item.key)).length,
     [gallery, coverLikeImageKeys],
   );
+  const lowResolutionImageCount = useMemo(
+    () => gallery.filter((item) => lowResolutionImageKeys.includes(item.key)).length,
+    [gallery, lowResolutionImageKeys],
+  );
 
   const processImageFiles = (files: File[]) => {
     const toAdd: File[] = [];
@@ -1373,7 +1379,7 @@ const Contribute = () => {
     if (rejectedType.length) {
       toast({
         title: "Invalid file type",
-        description: `Only PNG, JPG, or TIFF are allowed. Skipped: ${rejectedType.join(", ")}`,
+        description: `Only PNG or JPG images are allowed. Skipped: ${rejectedType.join(", ")}`,
         variant: "destructive",
       });
     }
@@ -1414,10 +1420,16 @@ const Contribute = () => {
       reader.readAsDataURL(item.file);
       // Flag whole-cover scans dropped into the marking form (issue #76).
       // Measurement is best-effort and never gates the upload: an unreadable
-      // image (TIFF, say) simply resolves to null and is left alone.
+      // image simply resolves to null and is left alone.
       void measureImageFile(item.file).then((dimensions) => {
         if (!dimensions || !looksLikeWrongKind(dimensions, "MARKING")) return;
         setCoverLikeImageKeys((prev) =>
+          prev.includes(item.key) ? prev : [...prev, item.key],
+        );
+      });
+      void measureImageDpi(item.file).then((dpi) => {
+        if (!isBelowPreferredImageDpi(dpi)) return;
+        setLowResolutionImageKeys((prev) =>
           prev.includes(item.key) ? prev : [...prev, item.key],
         );
       });
@@ -1571,14 +1583,6 @@ const Contribute = () => {
       // check covers all modes (new / edit-marking / edit-contribution).
       if (gallery.length === 0 && !noMarkingImage) {
         errors.images = "Add at least one image or confirm no image is available";
-      } else if (coverLikeImageCount > 0 && !wrongImageKindAcknowledged) {
-        // Not a hard block: the contributor clears this by ticking the
-        // acknowledgement in WrongImageKindWarning, or by removing the image
-        // (issue #76). Drafts are exempt -- a draft is work in progress.
-        // Unreachable when the gallery is empty, so the no-image opt-out above
-        // always takes precedence.
-        errors.images =
-          "Confirm the highlighted image is correct, or remove it, before submitting.";
       }
 
       // Dimensions: only validated for handstamped markings. Manuscript markings
@@ -2191,9 +2195,8 @@ const Contribute = () => {
         <WrongImageKindWarning
           expected="MARKING"
           count={coverLikeImageCount}
-          acknowledged={wrongImageKindAcknowledged}
-          onAcknowledgedChange={setWrongImageKindAcknowledged}
         />
+        <LowResolutionImageWarning count={lowResolutionImageCount} />
       </div>
     );
   };
@@ -2769,7 +2772,7 @@ const Contribute = () => {
 
                     {canEditCatalogCode && (
                       <div className="space-y-2">
-                        <Label htmlFor="catalog-code">Catalog code</Label>
+                        <Label htmlFor="catalog-code">Catalog Marking code</Label>
                         <Input
                           id="catalog-code"
                           value={catalogCode}
@@ -3124,7 +3127,7 @@ const Contribute = () => {
 
                     {renderImageUploader(
                       "Marking Images",
-                      `PNG, JPG, or TIFF up to ${MAX_IMAGE_SIZE_MB}MB each`,
+                      `PNG or JPG up to ${MAX_IMAGE_SIZE_MB}MB each`,
                       true,
                     )}
 

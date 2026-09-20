@@ -235,7 +235,7 @@ const ContributionDetail = () => {
       })
       .catch((err) => {
         if (!cancelled) {
-          setCatalogCodeError(err instanceof Error ? err.message : "Could not generate catalog code.");
+          setCatalogCodeError(err instanceof Error ? err.message : "Could not generate Catalog Marking code.");
         }
       })
       .finally(() => {
@@ -257,7 +257,7 @@ const ContributionDetail = () => {
       setCatalogCode(suggestion.catalogCode);
       return suggestion.catalogCode;
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not generate catalog code.";
+      const message = err instanceof Error ? err.message : "Could not generate Catalog Marking code.";
       setCatalogCodeError(message);
       throw err;
     } finally {
@@ -645,7 +645,7 @@ const ContributionDetail = () => {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="contribution-catalog-code">Catalog code</Label>
+                      <Label htmlFor="contribution-catalog-code">Catalog Marking code</Label>
                       <Input
                         id="contribution-catalog-code"
                         value={catalogCode}
@@ -656,7 +656,7 @@ const ContributionDetail = () => {
                         onBlur={() => {
                           if (!catalogCode.trim()) void ensureCatalogCode();
                         }}
-                        placeholder={catalogCodeLoading ? "Generating..." : "Catalog code"}
+                        placeholder={catalogCodeLoading ? "Generating..." : "Catalog Marking code"}
                         disabled={submitting || catalogCodeLoading}
                       />
                       {catalogCodeError ? (

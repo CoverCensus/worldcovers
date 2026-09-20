@@ -149,7 +149,7 @@ export function buildMarkingFields(
   }
   if (opts.isStaff) {
     rows.push({ label: "Catalog text", value: i.catalogTxt, alwaysShow: false });
-    rows.push({ label: "Catalog code", value: i.code, alwaysShow: false });
+    rows.push({ label: "Catalog Marking code", value: i.code, alwaysShow: false });
   }
   return rows;
 }

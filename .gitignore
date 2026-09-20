@@ -235,6 +235,7 @@ worldcovers.code-workspace
 .cursorignore
 .cursorindexingignore
 .claude/
+.codex/
 
 # Marimo
 marimo/_static/

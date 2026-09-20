@@ -82,6 +82,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { createCoverMarking, getCoverById } from "@/services/covers";
 import { parseCoverIdInput } from "@/lib/recordLinking";
+import { moveImageAndRefresh } from "@/lib/imageMoveRefresh";
 import { readVphcProvenance } from "@/lib/vphcProvenance";
 import { VphcProvenanceCard } from "@/components/VphcProvenanceCard";
 import { getTenuresForPostOffice, type PostmasterTenure } from "@/services/postmasters";
@@ -919,7 +920,8 @@ const RecordDetail = () => {
   // is restricted to covers already linked to this marking so images can't
   // be scattered onto unrelated records from here.
   const handleMoveImageToCover = async () => {
-    if (!moveImageDialogImg?.imageId) return;
+    const imageId = moveImageDialogImg?.imageId;
+    if (!imageId) return;
     const coverId = parseInt(moveImageTargetCoverId, 10);
     if (!Number.isFinite(coverId) || coverId <= 0) {
       setMoveImageError("Select a target cover.");
@@ -928,22 +930,51 @@ const RecordDetail = () => {
     setMoveImageBusy(true);
     setMoveImageError(null);
     try {
-      const res = await moveImageSubject(
-        moveImageDialogImg.imageId,
-        "COVER",
-        coverId,
-        moveImageView,
+      if (markingId == null) return;
+      const result = await moveImageAndRefresh(
+        () =>
+          moveImageSubject(
+            imageId,
+            "COVER",
+            coverId,
+            moveImageView,
+          ),
+        async () => {
+          const refreshed = await getMarkingById(markingId);
+          if (!refreshed) throw new Error("Could not refresh the Marking.");
+          return refreshed;
+        },
+        () => loadAssociatedCoversForMarking(markingId),
       );
-      if (res.ok === false) {
-        setMoveImageError(res.message);
+      if (result.moved === false) {
+        setMoveImageError(result.message);
         return;
       }
-      toast({ title: "Image moved", description: "Image reassigned to the cover." });
       setMoveImageDialogImg(null);
-      if (markingId != null) {
-        const refreshed = await getMarkingById(markingId);
-        if (refreshed) setRecord(refreshed);
+      let refreshFailed = false;
+      if (result.source.ok === true) {
+        const refreshed = result.source.value;
+        setRecord(refreshed);
+        setCurrent((previous) =>
+          Math.max(0, Math.min(previous, refreshed.images.length - 1)),
+        );
+      } else {
+        refreshFailed = true;
       }
+      if (result.destination.ok === true) {
+        setAssociatedCovers(result.destination.value.covers);
+        setCoversLoadError(result.destination.value.error);
+        if (result.destination.value.error) refreshFailed = true;
+      } else {
+        refreshFailed = true;
+      }
+      toast({
+        title: "Image moved",
+        description: refreshFailed
+          ? "The image moved, but the page could not fully refresh. Reload to see the latest thumbnails."
+          : "Image reassigned to the cover.",
+        variant: refreshFailed ? "destructive" : "default",
+      });
     } finally {
       setMoveImageBusy(false);
     }
@@ -1051,27 +1082,23 @@ const RecordDetail = () => {
     <div className="min-h-screen flex flex-col">
       <Navigation />
       <div className="flex-1 bg-background">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="mb-6">
-            <Button variant="ghost" onClick={handleBack} className="-ml-4">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              {fromDashboard ? "Back to Dashboard" : "Back"}
-            </Button>
+        <div className="max-w-7xl mx-auto px-4 pb-8 pt-3 sm:px-6 lg:px-8">
+          <div className="mb-6 grid items-center gap-8 lg:grid-cols-2">
+            <div className="flex flex-col items-start gap-1">
+              <Button variant="ghost" onClick={handleBack} className="-ml-4">
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                {fromDashboard ? "Back to Dashboard" : "Back"}
+              </Button>
+              <h1 className="font-heading text-[2.35rem] font-semibold text-foreground">
+                Marking
+              </h1>
+            </div>
           </div>
 
           <div className="grid items-start lg:grid-cols-2 gap-8">
             <div className="space-y-6">
               <Card className="shadow-archival-lg">
-                {/*
-                  Issue #138: the marking and cover detail screens are laid out
-                  alike, and this card carried no heading at all, so the primary
-                  image was the one thing on the page that did not say what it
-                  was. Naming it is what tells you which screen you are on.
-                */}
-                <CardHeader>
-                  <CardTitle className="font-heading text-lg">Marking</CardTitle>
-                </CardHeader>
-                <CardContent className="p-6 pt-0">
+                <CardContent className="p-6">
                   <Carousel setApi={setApi} className="w-full">
                     <CarouselContent>
                       {(galleryImages.length
@@ -1218,13 +1245,9 @@ const RecordDetail = () => {
                               />
                             </button>
                             {canManageImage && (
-                              // Editor reorder strip. Each button issues a
-                              // PATCH /api/v2/images/{id}/ via applyImageOrder
-                              // (with optimistic UI). Star = move to position
-                              // 0 = becomes the Catalog Search thumbnail.
-                              <div className="flex items-center gap-0.5">
+                              <div className="flex flex-col items-center gap-0.5">
                                 {canReorder && (
-                                  <>
+                                  <div className="flex items-center justify-center gap-0.5">
                                     <Button
                                       type="button"
                                       variant="ghost"
@@ -1274,9 +1297,9 @@ const RecordDetail = () => {
                                         className={`h-3 w-3 ${img.isDefault ? "fill-amber-500 text-amber-500" : ""}`}
                                       />
                                     </Button>
-                                  </>
+                                  </div>
                                 )}
-                                {canManageImage && (
+                                <div className="flex items-center justify-center gap-0.5">
                                   <Button
                                     type="button"
                                     variant="ghost"
@@ -1293,7 +1316,6 @@ const RecordDetail = () => {
                                   >
                                     <Crop className="h-3 w-3" />
                                   </Button>
-                                )}
                                 {canMoveToCover && (
                                   <Button
                                     type="button"
@@ -1358,6 +1380,7 @@ const RecordDetail = () => {
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </Button>
+                                </div>
                               </div>
                             )}
                           </div>
@@ -1481,12 +1504,6 @@ const RecordDetail = () => {
                 </CardContent>
               </Card>
 
-              <PostmastersCard
-                tenures={postmasterTenures}
-                postOfficeId={recordPostOfficeId}
-                focusYear={postmasterFocusYear}
-              />
-
               <Card className="shadow-archival-md">
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
@@ -1542,7 +1559,7 @@ const RecordDetail = () => {
                             cover.displayLabel?.trim() ||
                             (isStaff ? c?.code?.trim() : "") ||
                             (cover.contributionDraftId != null
-                              ? `Cover draft #${cover.contributionDraftId}`
+                              ? `Submission #${cover.contributionDraftId}`
                               : `Cover #${c?.id ?? cover.id}`);
                           const rs = cover.reviewStatus;
                           const canOpenCover =
@@ -1615,6 +1632,12 @@ const RecordDetail = () => {
                   )}
                 </CardContent>
               </Card>
+
+              <PostmastersCard
+                tenures={postmasterTenures}
+                postOfficeId={recordPostOfficeId}
+                focusYear={postmasterFocusYear}
+              />
 
               {record.desc.trim() && (
                 <Card className="shadow-archival-md">
