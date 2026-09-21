@@ -66,22 +66,6 @@ function describe(
   };
 }
 
-export function describeMarkingTarget(marking: MarkingRecord): MoveTargetDescription {
-  const row = buildCatalogSearchRow(marking);
-  return describe(
-    marking.id,
-    marking.code,
-    "Marking",
-    detailLine([
-      row.type,
-      row.markingTextSingle,
-      row.shape,
-      row.dimensions,
-      row.color,
-    ]),
-    row.image,
-  );
-}
 
 export function describeCoverTarget(cover: AssociatedCover): MoveTargetDescription {
   const details = cover.coverDetails;

@@ -596,6 +596,12 @@ both directions from the detail pages. Editors and administrators can repeat
 this action to associate one cover with several markings without uploading
 it again. Ordinary contributors do not have that write permission.
 
+Narrowed 2026-09-21: "Link Existing Cover" was removed from the marking detail
+screen at Ian's request ("both of these are confusing and we need to come up
+with a better method"). The cover detail screen keeps its "Link Existing
+Marking" control, so linking still exists, but in one direction only. The open
+decision below is unchanged.
+
 - [x] Editors/admins can link existing covers and markings without another upload
 - [ ] Decide whether ordinary contributors should be allowed to create these links
 - [ ] If approved, define review and permission rules before extending the UI/API

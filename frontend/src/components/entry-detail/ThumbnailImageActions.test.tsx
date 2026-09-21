@@ -33,12 +33,10 @@ const renderActions = (
       reordering={false}
       deleting={false}
       canMoveToCover
-      canMoveToMarking
       onMoveBy={noop}
       onSetDefault={noop}
       onCrop={noop}
       onMoveToCover={noop}
-      onMoveToMarking={noop}
       onDelete={noop}
       {...overrides}
     />,
@@ -54,11 +52,6 @@ describe("ThumbnailImageActions", () => {
     expect(crop().hasAttribute("disabled")).toBe(true);
     expect(
       screen.getByRole("button", { name: "Move image to a cover entry" }).hasAttribute("disabled"),
-    ).toBe(true);
-    expect(
-      screen
-        .getByRole("button", { name: "Move image to another marking" })
-        .hasAttribute("disabled"),
     ).toBe(true);
   });
 
@@ -77,6 +70,15 @@ describe("ThumbnailImageActions", () => {
     expect(screen.queryByText(/has not been saved/i)).toBeNull();
   });
 
+  it("no longer offers to move an image to another marking", () => {
+    // Removed 2026-09-21. Ian asked twice -- editors did not understand what
+    // "move" meant, and the second request was unhedged. Pinned so it does not
+    // reappear with a rename.
+    renderActions(imageActionState({ imageId: 5869, isStaff: true, isRemoved: false }));
+
+    expect(screen.queryByRole("button", { name: /another marking/i })).toBeNull();
+  });
+
   it("renders nothing at all for a visitor without editor rights", () => {
     const { container } = renderActions(
       imageActionState({ imageId: 5869, isStaff: false, isRemoved: false }),
@@ -89,11 +91,9 @@ describe("ThumbnailImageActions", () => {
   it("hides a move action when there is nowhere to move to", () => {
     renderActions(imageActionState({ imageId: 5869, isStaff: true, isRemoved: false }), {
       canMoveToCover: false,
-      canMoveToMarking: false,
     });
 
     expect(screen.queryByRole("button", { name: "Move image to a cover entry" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Move image to another marking" })).toBeNull();
     // Crop is unconditional -- it needs no destination.
     expect(crop().hasAttribute("disabled")).toBe(false);
   });
