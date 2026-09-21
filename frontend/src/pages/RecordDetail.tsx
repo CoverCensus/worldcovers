@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowUp, Crop, History, Info, Loader2, MessageSquare, Pencil, Plus, Recycle, Replace, Star, Stamp, Trash2 } from "lucide-react";
+import { ArrowLeft, Crop, History, Info, Loader2, MessageSquare, Pencil, Plus, Recycle, Star, Trash2 } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,8 @@ import { buildMarkingFields } from "@/lib/markingFields";
 import { formatRateValue } from "@/lib/rateDisplay";
 import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
 import { MarkingFieldsDisplay } from "@/components/MarkingFieldsDisplay";
+import { ThumbnailImageActions } from "@/components/entry-detail/ThumbnailImageActions";
+import { imageActionState } from "@/lib/imageActionState";
 import {
   countyDisplay,
   getMarkingById,
@@ -1210,21 +1212,23 @@ const RecordDetail = () => {
                   ) : (
                     <div className="flex gap-3 overflow-x-auto pb-1">
                       {galleryImages.map((img, idx) => {
-                        // A removed marking is read-only: no image reordering
-                        // either, only Restore.
-                        const canManageImage =
-                          isStaff &&
-                          !record.isRemoved &&
-                          img.imageId != null;
-                        const canReorder = canManageImage && galleryImages.length > 1;
+                        // issues.md 166: permission and image state are separate
+                        // questions. A removed marking is read-only for everyone
+                        // (only Restore survives) and an unsaved image has
+                        // nothing to crop or move -- but both used to produce an
+                        // empty space rather than a stated reason.
+                        const actionState = imageActionState({
+                          imageId: img.imageId,
+                          isStaff,
+                          isRemoved: record.isRemoved,
+                        });
+                        const canReorder = actionState.showControls && galleryImages.length > 1;
                         const canMoveToCover =
-                          canManageImage &&
                           record.images[idx]?.subjectType === "MARKING" &&
                           associatedCovers.some((c) => c.coverDetails?.id != null);
                         // Hidden at a one-marking town rather than opening an
                         // empty dropdown (#104 / C3).
                         const canMoveToMarking =
-                          canManageImage &&
                           record.images[idx]?.subjectType === "MARKING" &&
                           moveMarkingCandidates.length > 0;
                         return (
@@ -1244,145 +1248,46 @@ const RecordDetail = () => {
                                 className="h-full w-full object-cover"
                               />
                             </button>
-                            {canManageImage && (
-                              <div className="flex flex-col items-center gap-0.5">
-                                {canReorder && (
-                                  <div className="flex items-center justify-center gap-0.5">
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-6 w-6"
-                                      aria-label="Move thumbnail left"
-                                      disabled={
-                                        reorderingImages || idx === 0
-                                      }
-                                      onClick={() => moveImageBy(idx, -1)}
-                                    >
-                                      <ArrowUp className="h-3 w-3 -rotate-90" />
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-6 w-6"
-                                      aria-label="Move thumbnail right"
-                                      disabled={
-                                        reorderingImages ||
-                                        idx === galleryImages.length - 1
-                                      }
-                                      onClick={() => moveImageBy(idx, 1)}
-                                    >
-                                      <ArrowDown className="h-3 w-3 -rotate-90" />
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      className={
-                                        img.isDefault
-                                          ? "h-6 w-6 text-amber-600 hover:text-amber-600 disabled:opacity-100"
-                                          : "h-6 w-6"
-                                      }
-                                      aria-label="Set as default catalog thumbnail"
-                                      title={
-                                        img.isDefault
-                                          ? "Default catalog thumbnail"
-                                          : "Set as default catalog thumbnail"
-                                      }
-                                      disabled={reorderingImages || img.isDefault}
-                                      onClick={() => setImageAsDefault(idx)}
-                                    >
-                                      <Star
-                                        className={`h-3 w-3 ${img.isDefault ? "fill-amber-500 text-amber-500" : ""}`}
-                                      />
-                                    </Button>
-                                  </div>
-                                )}
-                                <div className="flex items-center justify-center gap-0.5">
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    aria-label="Crop the marking out of this image"
-                                    title="Crop marking"
-                                    disabled={reorderingImages}
-                                    onClick={() => {
-                                      const rawImg = record.images[idx];
-                                      if (!rawImg?.imageId) return;
-                                      setCropImageTarget(rawImg);
-                                    }}
-                                  >
-                                    <Crop className="h-3 w-3" />
-                                  </Button>
-                                {canMoveToCover && (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    aria-label="Move image to a cover entry"
-                                    title="Move to cover"
-                                    disabled={reorderingImages}
-                                    onClick={() => {
-                                      const rawImg = record.images[idx];
-                                      if (!rawImg) return;
-                                      setMoveImageDialogImg(rawImg);
-                                      setMoveImageTargetCoverId(
-                                        String(
-                                          associatedCovers.find((c) => c.coverDetails?.id != null)
-                                            ?.coverDetails?.id ?? "",
-                                        ),
-                                      );
-                                      setMoveImageView("FRONT");
-                                      setMoveImageError(null);
-                                    }}
-                                  >
-                                    <Replace className="h-3 w-3" />
-                                  </Button>
-                                )}
-                                {canMoveToMarking && (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    aria-label="Move image to another marking"
-                                    title="Move to another marking"
-                                    disabled={reorderingImages}
-                                    onClick={() => {
-                                      const rawImg = record.images[idx];
-                                      if (!rawImg) return;
-                                      setMoveToMarkingImg(rawImg);
-                                      setMoveMarkingTargetId(
-                                        String(moveMarkingCandidates[0]?.id ?? ""),
-                                      );
-                                      setMoveMarkingView("FULL");
-                                      setMoveMarkingError(null);
-                                    }}
-                                  >
-                                    <Stamp className="h-3 w-3" />
-                                  </Button>
-                                )}
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 text-destructive hover:text-destructive"
-                                  aria-label="Delete image"
-                                  title="Delete image"
-                                  disabled={
-                                    reorderingImages ||
-                                    deletingImageId === img.imageId
-                                  }
-                                  onClick={() => handleDeleteImage(idx)}
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </Button>
-                                </div>
-                              </div>
-                            )}
+                            <ThumbnailImageActions
+                              state={actionState}
+                              canReorder={canReorder}
+                              isFirst={idx === 0}
+                              isLast={idx === galleryImages.length - 1}
+                              isDefault={img.isDefault}
+                              reordering={reorderingImages}
+                              deleting={deletingImageId === img.imageId}
+                              canMoveToCover={canMoveToCover}
+                              canMoveToMarking={canMoveToMarking}
+                              onMoveBy={(offset) => moveImageBy(idx, offset)}
+                              onSetDefault={() => setImageAsDefault(idx)}
+                              onCrop={() => {
+                                const rawImg = record.images[idx];
+                                if (!rawImg?.imageId) return;
+                                setCropImageTarget(rawImg);
+                              }}
+                              onMoveToCover={() => {
+                                const rawImg = record.images[idx];
+                                if (!rawImg) return;
+                                setMoveImageDialogImg(rawImg);
+                                setMoveImageTargetCoverId(
+                                  String(
+                                    associatedCovers.find((c) => c.coverDetails?.id != null)
+                                      ?.coverDetails?.id ?? "",
+                                  ),
+                                );
+                                setMoveImageView("FRONT");
+                                setMoveImageError(null);
+                              }}
+                              onMoveToMarking={() => {
+                                const rawImg = record.images[idx];
+                                if (!rawImg) return;
+                                setMoveToMarkingImg(rawImg);
+                                setMoveMarkingTargetId(String(moveMarkingCandidates[0]?.id ?? ""));
+                                setMoveMarkingView("FULL");
+                                setMoveMarkingError(null);
+                              }}
+                              onDelete={() => handleDeleteImage(idx)}
+                            />
                           </div>
                         );
                       })}
