@@ -1,11 +1,14 @@
-import { ArrowDown, ArrowUp, Crop, Replace, Stamp, Star, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Crop, Replace, Star, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { ImageActionState } from "@/lib/imageActionState";
 
 /**
  * The per-thumbnail action cluster on the marking detail screen: reorder, set
- * default, crop, move to a cover, move to another marking, delete.
+ * default, crop, create a cover from the image, delete.
+ *
+ * "Move to another marking" was removed on 2026-09-21: Ian asked twice, the
+ * second time unhedged -- editors did not understand what "move" meant.
  *
  * Lifted out of RecordDetail.tsx for issues.md 166. Two reasons, both load
  * bearing:
@@ -29,12 +32,10 @@ export function ThumbnailImageActions({
   reordering,
   deleting,
   canMoveToCover,
-  canMoveToMarking,
   onMoveBy,
   onSetDefault,
   onCrop,
   onMoveToCover,
-  onMoveToMarking,
   onDelete,
 }: {
   state: ImageActionState;
@@ -46,13 +47,10 @@ export function ThumbnailImageActions({
   deleting: boolean;
   /** A cover exists to move this image to. */
   canMoveToCover: boolean;
-  /** A sibling marking exists at this post office to move this image to. */
-  canMoveToMarking: boolean;
   onMoveBy: (offset: -1 | 1) => void;
   onSetDefault: () => void;
   onCrop: () => void;
   onMoveToCover: () => void;
-  onMoveToMarking: () => void;
   onDelete: () => void;
 }) {
   // A visitor without editor rights sees nothing at all. A disabled control
@@ -133,20 +131,6 @@ export function ThumbnailImageActions({
             onClick={onMoveToCover}
           >
             <Replace className="h-3 w-3" />
-          </Button>
-        )}
-        {canMoveToMarking && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            aria-label="Move image to another marking"
-            title="Move to another marking"
-            disabled={reordering || blocked}
-            onClick={onMoveToMarking}
-          >
-            <Stamp className="h-3 w-3" />
           </Button>
         )}
         <Button

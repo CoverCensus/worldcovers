@@ -1,47 +1,32 @@
 /**
- * issues.md 114 / Trello T38 -- the move-image pickers identified their targets
- * by catalog code alone.
+ * issues.md 114 / Trello T38 -- identifying a move destination by sight.
  *
- * Every candidate in the marking picker is a sibling at the SAME post office,
- * so the town never distinguishes them and the code is all the editor gets. At
- * Richmond (post office 11634) that is 147 entries reading `ASCC6-VA-M2110`,
- * `ASCC6-VA-M2147`, `ASCC6-VA-M2560`, in catalog order rather than code order.
- * `Marking.code` is also nullable, so some rows render as `Marking #31153`.
+ * The cover picker used to render a bare catalog code and nothing else, so an
+ * editor chose a destination from a string they could not verify. Rows now
+ * carry a thumbnail and an identifying line, and the list is filterable, which
+ * is T38's "find and select ... without knowing a code".
  *
- * Reese hit this hunting `ASCC6-VA-M2110` during the 2026-08-18 C3 rehearsal,
- * and it is the control all ~50 crop-and-move operations for issues.md 104 run
- * through. A mis-targeted move is silent damage to the catalog.
- *
- * T38's acceptance is "find and select both Cover and Marking destinations
- * without knowing a code", which is what the filter and the detail line serve.
+ * ⚠ `describeMarkingTarget` was deleted on 2026-09-21 along with the
+ * "Move to another marking" control it served (Ian asked twice). The marking
+ * picker is gone; the cover picker and the shared filter/sort remain, and they
+ * are what this file covers.
  */
 import {
   compareMarkingTargets,
   describeCoverTarget,
-  describeMarkingTarget,
   filterMoveTargets,
+  type MoveTargetDescription,
 } from "./moveTargetDisplay";
-import type { MarkingRecord } from "@/services/markings";
 import type { AssociatedCover } from "@/services/markings";
 
-/** Two real Richmond siblings differ by shape and size, not by town. */
-const richmond = (over: Partial<MarkingRecord> = {}): MarkingRecord =>
-  ({
-    id: 31108,
-    code: "ASCC6-VA-M2110",
-    type: "TOWNMARK",
-    inscriptionTxt: "RICHM'D/VA",
-    postOfficeName: "Richmond",
-    stateAbbrev: "VA",
-    shapeName: "Circle",
-    colorName: "Black",
-    sizeDisplay: "28x28",
-    width: "28",
-    height: "28",
-    isManuscript: false,
-    mainImage: { imageUrl: "/media/va/richmond-2110.png" },
-    ...over,
-  }) as unknown as MarkingRecord;
+/** Build a description directly: no producer function takes markings any more. */
+const target = (id: number, title: string, detail: string): MoveTargetDescription => ({
+  id,
+  title,
+  detail,
+  thumbnailUrl: null,
+  searchText: `${title} ${detail}`.toLowerCase(),
+});
 
 const cover = (over: Record<string, unknown> = {}): AssociatedCover =>
   ({
@@ -60,108 +45,6 @@ const cover = (over: Record<string, unknown> = {}): AssociatedCover =>
     },
   }) as unknown as AssociatedCover;
 
-describe("describeMarkingTarget", () => {
-  it("shows identifying detail alongside the code, not the code alone", () => {
-    const d = describeMarkingTarget(richmond());
-
-    expect(d.title).toBe("ASCC6-VA-M2110");
-    // The defect is "code only", so the detail line is the fix.
-    expect(d.detail).toContain("Townmark");
-    expect(d.detail).toContain("Circle");
-    expect(d.detail).toContain("Black");
-    expect(d.thumbnailUrl).toBe("/media/va/richmond-2110.png");
-  });
-
-  it("falls back to the record number when the catalog code is null", () => {
-    // Marking.code is a nullable column, so this row really does exist.
-    const d = describeMarkingTarget(richmond({ id: 31153, code: null as unknown as string }));
-
-    expect(d.title).toBe("Marking #31153");
-    expect(d.detail).toContain("Townmark");
-  });
-
-  it("separates two same-town siblings that differ only in shape and size", () => {
-    // The Richmond problem in one assertion: same town, same inscription,
-    // adjacent codes. Only shape and dimensions tell them apart.
-    const circle = describeMarkingTarget(richmond());
-    const straight = describeMarkingTarget(
-      richmond({
-        id: 31110,
-        code: "ASCC6-VA-M2147",
-        shapeName: "Straight Line",
-        sizeDisplay: "44x6",
-        width: "44",
-        height: "6",
-      }),
-    );
-
-    expect(circle.detail).not.toBe(straight.detail);
-    expect(straight.detail).toContain("Straight Line");
-  });
-
-  it("omits fields the record does not carry rather than printing placeholders", () => {
-    const d = describeMarkingTarget(
-      richmond({ shapeName: "", colorName: "", sizeDisplay: null, width: null, height: null }),
-    );
-
-    // "-" is the catalog's empty marker; a detail line of "- · - · -" is noise.
-    expect(d.detail).not.toContain("-");
-    expect(d.detail).toContain("Townmark");
-  });
-});
-
-describe("filterMoveTargets", () => {
-  const targets = [
-    describeMarkingTarget(richmond()),
-    describeMarkingTarget(
-      richmond({ id: 31110, code: "ASCC6-VA-M2147", inscriptionTxt: "PAID", shapeName: "Box" }),
-    ),
-  ];
-
-  it("finds a target by its inscription, so no code needs to be known", () => {
-    // This is T38's acceptance criterion stated directly.
-    const hits = filterMoveTargets(targets, "paid");
-    expect(hits.map((t) => t.id)).toEqual([31110]);
-  });
-
-  it("still finds a target by code for an editor who has one written down", () => {
-    expect(filterMoveTargets(targets, "M2110").map((t) => t.id)).toEqual([31108]);
-  });
-
-  it("returns everything for an empty query", () => {
-    expect(filterMoveTargets(targets, "   ")).toHaveLength(2);
-  });
-});
-
-describe("compareMarkingTargets", () => {
-  it("orders codes numerically so M2110 precedes M2147", () => {
-    const sorted = [
-      describeMarkingTarget(richmond({ id: 2, code: "ASCC6-VA-M2147" })),
-      describeMarkingTarget(richmond({ id: 1, code: "ASCC6-VA-M2110" })),
-    ].sort(compareMarkingTargets);
-
-    expect(sorted.map((t) => t.title)).toEqual(["ASCC6-VA-M2110", "ASCC6-VA-M2147"]);
-  });
-
-  it("does not sort M10 ahead of M9 the way a plain string compare would", () => {
-    const sorted = [
-      describeMarkingTarget(richmond({ id: 2, code: "M10" })),
-      describeMarkingTarget(richmond({ id: 1, code: "M9" })),
-    ].sort(compareMarkingTargets);
-
-    expect(sorted.map((t) => t.title)).toEqual(["M9", "M10"]);
-  });
-
-  it("puts codeless records last rather than first", () => {
-    const sorted = [
-      describeMarkingTarget(richmond({ id: 31153, code: null as unknown as string })),
-      describeMarkingTarget(richmond({ id: 1, code: "M9" })),
-    ].sort(compareMarkingTargets);
-
-    expect(sorted.map((t) => t.title)).toEqual(["M9", "Marking #31153"]);
-  });
-});
-
 describe("describeCoverTarget", () => {
   it("shows the cover's code, type and observed date", () => {
     const d = describeCoverTarget(cover());
@@ -173,6 +56,48 @@ describe("describeCoverTarget", () => {
   });
 
   it("falls back to the record number when the cover has no code", () => {
+    // Cover.code is nullable, so this row really does exist.
     expect(describeCoverTarget(cover({ coverDetails: { code: null } })).title).toBe("Cover #42");
+  });
+
+  it("omits fields the record does not carry rather than printing placeholders", () => {
+    const d = describeCoverTarget(
+      cover({ coverDetails: { type: null, colorName: "", width: null, height: null, datesSeen: [] } }),
+    );
+
+    // "-" is the catalog's empty marker; a detail line of "- · - · -" is noise.
+    expect(d.detail).not.toContain("-");
+  });
+});
+
+describe("filterMoveTargets", () => {
+  const targets = [
+    target(42, "C-42", "Folded Letter · Buff · AUG 3, 1847"),
+    target(43, "C-43", "Folded Cover · Blue · 1851"),
+  ];
+
+  it("finds a target by its detail, so no code needs to be known", () => {
+    // T38's acceptance criterion stated directly.
+    expect(filterMoveTargets(targets, "blue").map((t) => t.id)).toEqual([43]);
+  });
+
+  it("still finds a target by code for an editor who has one written down", () => {
+    expect(filterMoveTargets(targets, "C-42").map((t) => t.id)).toEqual([42]);
+  });
+
+  it("returns everything for an empty query", () => {
+    expect(filterMoveTargets(targets, "   ")).toHaveLength(2);
+  });
+});
+
+describe("compareMarkingTargets", () => {
+  it("does not sort C-10 ahead of C-9 the way a plain string compare would", () => {
+    const sorted = [target(2, "C-10", ""), target(1, "C-9", "")].sort(compareMarkingTargets);
+    expect(sorted.map((t) => t.title)).toEqual(["C-9", "C-10"]);
+  });
+
+  it("puts codeless records last rather than first", () => {
+    const sorted = [target(42, "Cover #42", ""), target(1, "C-9", "")].sort(compareMarkingTargets);
+    expect(sorted.map((t) => t.title)).toEqual(["C-9", "Cover #42"]);
   });
 });

@@ -43,14 +43,11 @@ import { type PartialDateInput } from "@/lib/partialDate";
 import {
   compareMarkingTargets,
   describeCoverTarget,
-  describeMarkingTarget,
 } from "@/lib/moveTargetDisplay";
 import { imageActionState } from "@/lib/imageActionState";
 import {
   countyDisplay,
   getMarkingById,
-  getMarkingsPage,
-  moveTargetCandidates,
   getMarkingChangelog,
   loadAssociatedCoversForMarking,
   moveImageSubject,
@@ -95,16 +92,13 @@ import { useToast } from "@/hooks/use-toast";
 import { ENTRY_LABELS } from "@/labels/entry";
 import { SUBMISSION_LABELS } from "@/labels/submission";
 import { useAuth } from "@/hooks/useAuth";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   createCover,
   createCoverDate,
   createCoverMarking,
-  getCoverById,
 } from "@/services/covers";
-import { parseCoverIdInput } from "@/lib/recordLinking";
 import { moveImageAndRefresh } from "@/lib/imageMoveRefresh";
 import { readVphcProvenance } from "@/lib/vphcProvenance";
 import { VphcProvenanceCard } from "@/components/VphcProvenanceCard";
@@ -355,11 +349,6 @@ const RecordDetail = () => {
   const [removing, setRemoving] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [linkCoverOpen, setLinkCoverOpen] = useState(false);
-  const [linkCoverInput, setLinkCoverInput] = useState("");
-  const [linkCoverIsBackstamp, setLinkCoverIsBackstamp] = useState(false);
-  const [linkCoverBusy, setLinkCoverBusy] = useState(false);
-  const [linkCoverError, setLinkCoverError] = useState<string | null>(null);
   const [moveImageDialogImg, setMoveImageDialogImg] = useState<MarkingImage | null>(null);
   // Image whose marking an editor is cropping out of a whole-cover scan (#77).
   const [cropImageTarget, setCropImageTarget] = useState<MarkingImage | null>(null);
@@ -369,8 +358,6 @@ const RecordDetail = () => {
   const [moveImageError, setMoveImageError] = useState<string | null>(null);
   // Move an image to another marking at the same town (#104 / C3): the second
   // half of the crop -> reattach workflow for scans that hold two devices.
-  const [moveToMarkingImg, setMoveToMarkingImg] = useState<MarkingImage | null>(null);
-  const [moveMarkingTargetId, setMoveMarkingTargetId] = useState<number | null>(null);
 
   // issues.md 167 / Trello T37: create a cover from a marking image.
   const [createCoverImg, setCreateCoverImg] = useState<MarkingImage | null>(null);
@@ -384,13 +371,9 @@ const RecordDetail = () => {
   const [createCoverView, setCreateCoverView] = useState("FRONT");
   const [createCoverBusy, setCreateCoverBusy] = useState(false);
   const [createCoverError, setCreateCoverError] = useState<string | null>(null);
-  const [moveMarkingView, setMoveMarkingView] = useState("FULL");
-  const [moveMarkingCandidates, setMoveMarkingCandidates] = useState<MarkingRecord[]>([]);
   // Own busy/error pair rather than sharing the move-to-cover one: they are
   // two independent dialogs, and shared state lets a failure in one surface
   // in the other.
-  const [moveMarkingBusy, setMoveMarkingBusy] = useState(false);
-  const [moveMarkingError, setMoveMarkingError] = useState<string | null>(null);
   const [savingReviewed, setSavingReviewed] = useState(false);
   const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
 
@@ -410,16 +393,6 @@ const RecordDetail = () => {
     );
   }, [user]);
 
-  // issues.md 114 / Trello T38. Both move pickers used to list bare catalog
-  // codes. Every marking candidate is a sibling at the SAME post office, so the
-  // town never tells them apart and adjacent codes do not either -- 147 of them
-  // at Richmond. These build the thumbnail and detail line each row shows, and
-  // sort by code the way a person reads it. No request: the candidates and
-  // their images are already in memory.
-  const markingMoveTargets = useMemo(
-    () => moveMarkingCandidates.map(describeMarkingTarget).sort(compareMarkingTargets),
-    [moveMarkingCandidates],
-  );
   const coverMoveTargets = useMemo(
     () =>
       associatedCovers
@@ -478,71 +451,21 @@ const RecordDetail = () => {
     };
   }, [markingId, user?.id, location.pathname, location.search]);
 
-  // Sibling markings at this post office -- the target list for "move image to
-  // another marking" (#104 / C3). Editor-only, matching the control's own
-  // gate; skipping it for everyone else keeps a public page view at its
-  // current request count. `post_office` is an exact-id filter -- `town` is
-  // name-contains server-side and would pull in other towns.
-  //
-  // The staff test is inlined rather than reusing the `isStaff` const below,
-  // which is declared after this component's early returns: a hook placed
-  // there would run conditionally.
+  // Editor-class test, hoisted above the component's early returns so the
+  // hooks below it never run conditionally. `isStaff` further down is an alias
+  // of this, so the two cannot drift.
   const userIsStaff =
     !!user &&
     (user.role === "editor" ||
       user.role === "administrator" ||
       user.is_superuser === true);
-  // Depend on the two primitives, not on `record` itself: the record is a
-  // fresh object on every refresh, and a successful move refreshes it, so
-  // depending on the object refetched the sibling list after every move.
-  const recordId = record?.id ?? null;
-  const recordPostOfficeId = record?.postOfficeId ?? null;
-  useEffect(() => {
-    if (!userIsStaff || recordId == null || recordPostOfficeId == null) {
-      setMoveMarkingCandidates([]);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        // A post office can hold more than one page of markings (max_page_size
-        // is 100 server-side), and a candidate missing from the list is an
-        // editor who cannot complete the move -- the exact failure this
-        // feature exists to prevent. So page until the API stops offering a
-        // next link. `count` is null under deferCount, so `next` is the only
-        // truncation signal available. The cap is a runaway guard, not a
-        // limit any real office reaches (production averages ~2.6 markings
-        // per office).
-        const MAX_PAGES = 20;
-        const collected: MarkingRecord[] = [];
-        for (let page = 1; page <= MAX_PAGES; page += 1) {
-          const res = await getMarkingsPage(page, 100, {
-            postOfficeId: recordPostOfficeId,
-            deferCount: true,
-          });
-          if (cancelled) return;
-          collected.push(...res.results);
-          if (!res.next) break;
-        }
-        setMoveMarkingCandidates(
-          moveTargetCandidates(collected, {
-            id: recordId,
-            postOfficeId: recordPostOfficeId,
-          }),
-        );
-      } catch {
-        // A failed lookup just hides the control; the page must still render.
-        if (!cancelled) setMoveMarkingCandidates([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [userIsStaff, recordId, recordPostOfficeId]);
 
-  // Postmasters who served this office (#125). Public, unlike the move-target
-  // lookup above, and it depends on the same primitive rather than on `record`
-  // for the same reason. There is no loading state on purpose: outside VA/WV
+  // Depend on the primitive, not on `record`: the record is a fresh object on
+  // every refresh, so depending on the object would refetch after each one.
+  const recordPostOfficeId = record?.postOfficeId ?? null;
+
+  // Postmasters who served this office (#125). Public, and it depends on the
+  // primitive rather than on `record` for the reason above. There is no loading state on purpose: outside VA/WV
   // no office has postmasters, so a spinner would flash and vanish on almost
   // every page view. Late-appearing content beats a phantom card.
   useEffect(() => {
@@ -1100,89 +1023,7 @@ const RecordDetail = () => {
     }
   };
 
-  // Reassign an image to another marking at the same post office (#104 / C3).
-  // This is the second half of the crop -> reattach workflow: crop saves the
-  // cut-out onto the SAME marking (it deliberately never relocates), and this
-  // sends it to the marking it actually belongs to. Scoped to one town so an
-  // image cannot be filed under an unrelated record from here.
-  const handleMoveImageToMarking = async () => {
-    if (!moveToMarkingImg?.imageId) return;
-    const targetId = moveMarkingTargetId;
-    if (targetId == null) {
-      setMoveMarkingError("Select a target marking.");
-      return;
-    }
-    setMoveMarkingBusy(true);
-    setMoveMarkingError(null);
-    try {
-      const res = await moveImageSubject(
-        moveToMarkingImg.imageId,
-        "MARKING",
-        targetId,
-        moveMarkingView,
-      );
-      if (res.ok === false) {
-        setMoveMarkingError(res.message);
-        return;
-      }
-      toast({ title: "Image moved", description: "Image reassigned to the marking." });
-      // Full teardown, so reopening for a different image cannot inherit the
-      // previous target.
-      setMoveToMarkingImg(null);
-      setMoveMarkingTargetId(null);
-      setMoveMarkingView("FULL");
-      if (markingId != null) {
-        const refreshed = await getMarkingById(markingId);
-        if (refreshed) setRecord(refreshed);
-      }
-    } finally {
-      setMoveMarkingBusy(false);
-    }
-  };
 
-  // Creates a CoverMarking junction row between this marking and an
-  // already-existing cover. The endpoint is editor/admin-gated
-  // (IsEditorOrAdminWrite), so the button only renders for isStaff.
-  const handleLinkExistingCover = async () => {
-    if (markingId == null) return;
-    const coverId = parseCoverIdInput(linkCoverInput);
-    if (coverId == null) {
-      setLinkCoverError("Enter a valid cover ID (e.g. 42 or C-42).");
-      return;
-    }
-    setLinkCoverBusy(true);
-    setLinkCoverError(null);
-    try {
-      const cover = await getCoverById(coverId);
-      if (!cover) {
-        setLinkCoverError(`Cover ${coverId} not found.`);
-        return;
-      }
-      await createCoverMarking({
-        cover: coverId,
-        marking: markingId,
-        is_backstamp: linkCoverIsBackstamp,
-      });
-      toast({
-        title: "Cover linked",
-        description: `Cover ${cover.code ?? coverId} is now linked to this marking.`,
-      });
-      setLinkCoverOpen(false);
-      setLinkCoverInput("");
-      setLinkCoverIsBackstamp(false);
-      const { covers: rows, error: coversErr } = await loadAssociatedCoversForMarking(markingId);
-      setCoversLoadError(coversErr);
-      setAssociatedCovers(rows);
-    } catch (err: unknown) {
-      const ax = err as { response?: { data?: { detail?: string; non_field_errors?: string[] } } };
-      const detail = ax.response?.data?.detail ?? ax.response?.data?.non_field_errors?.[0];
-      setLinkCoverError(
-        typeof detail === "string" ? detail : "Could not link cover. It may already be linked.",
-      );
-    } finally {
-      setLinkCoverBusy(false);
-    }
-  };
   const goCoverView = (cover: AssociatedCover) => {
     if (markingId == null) return;
     if (cover.contributionDraftId != null) {
@@ -1361,11 +1202,6 @@ const RecordDetail = () => {
                         const canMoveToCover =
                           record.images[idx]?.subjectType === "MARKING" &&
                           associatedCovers.some((c) => c.coverDetails?.id != null);
-                        // Hidden at a one-marking town rather than opening an
-                        // empty dropdown (#104 / C3).
-                        const canMoveToMarking =
-                          record.images[idx]?.subjectType === "MARKING" &&
-                          moveMarkingCandidates.length > 0;
                         return (
                           <div
                             key={`${img.imageId ?? img.originalFilename ?? "img"}-${idx}`}
@@ -1392,7 +1228,6 @@ const RecordDetail = () => {
                               reordering={reorderingImages}
                               deleting={deletingImageId === img.imageId}
                               canMoveToCover={canMoveToCover}
-                              canMoveToMarking={canMoveToMarking}
                               onMoveBy={(offset) => moveImageBy(idx, offset)}
                               onSetDefault={() => setImageAsDefault(idx)}
                               onCrop={() => {
@@ -1410,14 +1245,6 @@ const RecordDetail = () => {
                                 );
                                 setMoveImageView("FRONT");
                                 setMoveImageError(null);
-                              }}
-                              onMoveToMarking={() => {
-                                const rawImg = record.images[idx];
-                                if (!rawImg) return;
-                                setMoveToMarkingImg(rawImg);
-                                setMoveMarkingTargetId(moveMarkingCandidates[0]?.id ?? null);
-                                setMoveMarkingView("FULL");
-                                setMoveMarkingError(null);
                               }}
                               onDelete={() => handleDeleteImage(idx)}
                             />
@@ -1551,21 +1378,6 @@ const RecordDetail = () => {
                     {/* No new covers can be attached to a removed marking. */}
                     {!record.isRemoved && (
                       <div className="flex gap-2">
-                        {isStaff && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setLinkCoverInput("");
-                              setLinkCoverIsBackstamp(false);
-                              setLinkCoverError(null);
-                              setLinkCoverOpen(true);
-                            }}
-                          >
-                            <Plus className="mr-2 h-4 w-4" />
-                            Link Existing Cover
-                          </Button>
-                        )}
                         <Button
                           size="sm"
                           onClick={openNewCoverDialog}
@@ -2044,83 +1856,6 @@ const RecordDetail = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={moveToMarkingImg != null}
-        onOpenChange={(open) => {
-          if (moveMarkingBusy) return;
-          if (!open) setMoveToMarkingImg(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Move Image to Marking</DialogTitle>
-            <DialogDescription>
-              Reassign this image to another marking at the same town. Use this after
-              cropping a second device out of a scan that shows more than one.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1">
-              <MoveTargetPicker
-                targets={markingMoveTargets}
-                selectedId={moveMarkingTargetId}
-                onSelect={(id) => {
-                  setMoveMarkingTargetId(id);
-                  // Was setMoveImageError: a failed move-to-marking left its
-                  // own error on screen while the editor picked another
-                  // target. The two busy/error pairs are deliberately separate.
-                  setMoveMarkingError(null);
-                }}
-                disabled={moveMarkingBusy}
-                filterLabel="Target marking"
-                filterPlaceholder="Search by code, inscription, shape…"
-                emptyMessage="No markings match that search."
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="move-img-marking-view">Image view</Label>
-              {/* Marking subjects accept FULL/DETAIL only; the cover views
-                  (Front/Back/Interior) are rejected by the serializer. */}
-              <Select
-                value={moveMarkingView}
-                onValueChange={(v) => setMoveMarkingView(v)}
-                disabled={moveMarkingBusy}
-              >
-                <SelectTrigger id="move-img-marking-view">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="FULL">Full</SelectItem>
-                  <SelectItem value="DETAIL">Detail</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {moveMarkingError && <p className="text-sm text-destructive">{moveMarkingError}</p>}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setMoveToMarkingImg(null)}
-              disabled={moveMarkingBusy}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void handleMoveImageToMarking()}
-              disabled={moveMarkingBusy || moveMarkingTargetId == null}
-            >
-              {moveMarkingBusy ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Moving…
-                </>
-              ) : (
-                "Move Image"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <CropImageDialog
         open={cropImageTarget != null}
@@ -2142,72 +1877,6 @@ const RecordDetail = () => {
         }}
       />
 
-      <Dialog
-        open={linkCoverOpen}
-        onOpenChange={(open) => {
-          if (linkCoverBusy) return;
-          setLinkCoverOpen(open);
-          if (!open) {
-            setLinkCoverInput("");
-            setLinkCoverIsBackstamp(false);
-            setLinkCoverError(null);
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Link Existing Cover</DialogTitle>
-            <DialogDescription>
-              Enter the cover ID or code (e.g. 42 or C-42) to link it to this marking.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <Input
-              placeholder="Cover ID or code"
-              value={linkCoverInput}
-              onChange={(e) => {
-                setLinkCoverInput(e.target.value);
-                setLinkCoverError(null);
-              }}
-              disabled={linkCoverBusy}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void handleLinkExistingCover();
-                }
-              }}
-              autoFocus
-            />
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={linkCoverIsBackstamp}
-                onCheckedChange={(value) => setLinkCoverIsBackstamp(value === true)}
-                disabled={linkCoverBusy}
-              />
-              Backstamp
-            </label>
-            {linkCoverError && <p className="text-sm text-destructive">{linkCoverError}</p>}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setLinkCoverOpen(false)} disabled={linkCoverBusy}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void handleLinkExistingCover()}
-              disabled={linkCoverBusy || !linkCoverInput.trim()}
-            >
-              {linkCoverBusy ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Linking…
-                </>
-              ) : (
-                "Link Cover"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Footer />
     </div>
