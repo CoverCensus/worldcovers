@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Crop, Replace, Star, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Crop, ImagePlus, Star, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { ImageActionState } from "@/lib/imageActionState";
@@ -6,6 +6,11 @@ import type { ImageActionState } from "@/lib/imageActionState";
 /**
  * The per-thumbnail action cluster on the marking detail screen: reorder, set
  * default, crop, create a cover from the image, delete.
+ *
+ * "Move to cover" became "Create cover from this image" on 2026-09-21. It
+ * used to require a cover to already exist, so on a marking with none it was
+ * hidden -- the dead end an editor hit and lost a record to. Creating the
+ * destination is now the action, so it never needs a gate.
  *
  * "Move to another marking" was removed on 2026-09-21: Ian asked twice, the
  * second time unhedged -- editors did not understand what "move" meant.
@@ -31,11 +36,10 @@ export function ThumbnailImageActions({
   isDefault,
   reordering,
   deleting,
-  canMoveToCover,
   onMoveBy,
   onSetDefault,
   onCrop,
-  onMoveToCover,
+  onCreateCoverFromImage,
   onDelete,
 }: {
   state: ImageActionState;
@@ -45,12 +49,10 @@ export function ThumbnailImageActions({
   isDefault: boolean;
   reordering: boolean;
   deleting: boolean;
-  /** A cover exists to move this image to. */
-  canMoveToCover: boolean;
   onMoveBy: (offset: -1 | 1) => void;
   onSetDefault: () => void;
   onCrop: () => void;
-  onMoveToCover: () => void;
+  onCreateCoverFromImage: () => void;
   onDelete: () => void;
 }) {
   // A visitor without editor rights sees nothing at all. A disabled control
@@ -119,20 +121,18 @@ export function ThumbnailImageActions({
         >
           <Crop className="h-3 w-3" />
         </Button>
-        {canMoveToCover && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            aria-label="Move image to a cover entry"
-            title="Move to cover"
-            disabled={reordering || blocked}
-            onClick={onMoveToCover}
-          >
-            <Replace className="h-3 w-3" />
-          </Button>
-        )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          aria-label="Create a cover from this image"
+          title="Create cover from this image"
+          disabled={reordering || blocked}
+          onClick={onCreateCoverFromImage}
+        >
+          <ImagePlus className="h-3 w-3" />
+        </Button>
         <Button
           type="button"
           variant="ghost"

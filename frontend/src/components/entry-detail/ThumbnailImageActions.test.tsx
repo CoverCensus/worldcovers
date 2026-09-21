@@ -32,11 +32,10 @@ const renderActions = (
       isDefault={false}
       reordering={false}
       deleting={false}
-      canMoveToCover
       onMoveBy={noop}
       onSetDefault={noop}
       onCrop={noop}
-      onMoveToCover={noop}
+      onCreateCoverFromImage={noop}
       onDelete={noop}
       {...overrides}
     />,
@@ -51,7 +50,9 @@ describe("ThumbnailImageActions", () => {
     // Present, not absent -- this is the whole fix.
     expect(crop().hasAttribute("disabled")).toBe(true);
     expect(
-      screen.getByRole("button", { name: "Move image to a cover entry" }).hasAttribute("disabled"),
+      screen
+        .getByRole("button", { name: "Create a cover from this image" })
+        .hasAttribute("disabled"),
     ).toBe(true);
   });
 
@@ -88,13 +89,15 @@ describe("ThumbnailImageActions", () => {
     expect(container.innerHTML).toBe("");
   });
 
-  it("hides a move action when there is nowhere to move to", () => {
-    renderActions(imageActionState({ imageId: 5869, isStaff: true, isRemoved: false }), {
-      canMoveToCover: false,
-    });
+  it("offers to create a cover even when the marking has none yet", () => {
+    // The old "Move to cover" was hidden unless a cover already existed, which
+    // is precisely the dead end a Delaware editor hit and lost a record to.
+    // Creating the destination needs no destination.
+    renderActions(imageActionState({ imageId: 5869, isStaff: true, isRemoved: false }));
 
-    expect(screen.queryByRole("button", { name: "Move image to a cover entry" })).toBeNull();
-    // Crop is unconditional -- it needs no destination.
-    expect(crop().hasAttribute("disabled")).toBe(false);
+    expect(
+      screen.getByRole("button", { name: "Create a cover from this image" }).hasAttribute("disabled"),
+    ).toBe(false);
+    expect(screen.queryByRole("button", { name: /move image to a cover/i })).toBeNull();
   });
 });

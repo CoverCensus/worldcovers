@@ -6,18 +6,20 @@
  * carry a thumbnail and an identifying line, and the list is filterable, which
  * is T38's "find and select ... without knowing a code".
  *
- * ⚠ `describeMarkingTarget` was deleted on 2026-09-21 along with the
- * "Move to another marking" control it served (Ian asked twice). The marking
- * picker is gone; the cover picker and the shared filter/sort remain, and they
- * are what this file covers.
+ * ⚠ The MARKING screen's picker was removed on 2026-09-21 (Ian asked twice).
+ * `describeMarkingTarget` now serves the COVER screen's "Move Image to
+ * Marking" picker, which had the identical code-only defect and had simply not
+ * been reported yet -- `CoverDetail.tsx` rendered a bare
+ * `marking.code ?? \`Marking #${id}\`` in a Radix Select.
  */
 import {
   compareMarkingTargets,
   describeCoverTarget,
+  describeMarkingTarget,
   filterMoveTargets,
   type MoveTargetDescription,
 } from "./moveTargetDisplay";
-import type { AssociatedCover } from "@/services/markings";
+import type { AssociatedCover, MarkingRecord } from "@/services/markings";
 
 /** Build a description directly: no producer function takes markings any more. */
 const target = (id: number, title: string, detail: string): MoveTargetDescription => ({
@@ -44,6 +46,59 @@ const cover = (over: Record<string, unknown> = {}): AssociatedCover =>
       ...((over.coverDetails as Record<string, unknown>) ?? {}),
     },
   }) as unknown as AssociatedCover;
+
+/** Two real siblings differ by shape and size, not by town. */
+const richmond = (over: Partial<MarkingRecord> = {}): MarkingRecord =>
+  ({
+    id: 31108,
+    code: "ASCC6-VA-M2110",
+    type: "TOWNMARK",
+    inscriptionTxt: "RICHM'D/VA",
+    postOfficeName: "Richmond",
+    stateAbbrev: "VA",
+    shapeName: "Circle",
+    colorName: "Black",
+    sizeDisplay: "28x28",
+    width: "28",
+    height: "28",
+    isManuscript: false,
+    mainImage: { imageUrl: "/media/va/richmond-2110.png" },
+    ...over,
+  }) as unknown as MarkingRecord;
+
+describe("describeMarkingTarget", () => {
+  it("shows identifying detail alongside the code, not the code alone", () => {
+    const d = describeMarkingTarget(richmond());
+
+    expect(d.title).toBe("ASCC6-VA-M2110");
+    expect(d.detail).toContain("Townmark");
+    expect(d.detail).toContain("Circle");
+    expect(d.detail).toContain("Black");
+  });
+
+  it("falls back to the record number when the catalog code is null", () => {
+    // Marking.code is nullable, and on woco.dev every sampled row at post
+    // office 19104 had no code at all -- they were indistinguishable before.
+    const d = describeMarkingTarget(richmond({ id: 31153, code: null as unknown as string }));
+    expect(d.title).toBe("Marking #31153");
+  });
+
+  it("separates two siblings that differ only in shape and size", () => {
+    const circle = describeMarkingTarget(richmond());
+    const straight = describeMarkingTarget(
+      richmond({ shapeName: "Straight Line", sizeDisplay: "44x6", width: "44", height: "6" }),
+    );
+
+    expect(circle.detail).not.toBe(straight.detail);
+    expect(straight.detail).toContain("Straight Line");
+  });
+
+  it("prefers the caller's thumbnail when it has a better one", () => {
+    // The cover screen already loads a default thumbnail per linked marking.
+    const d = describeMarkingTarget(richmond(), "/media/va/from-cover.png");
+    expect(d.thumbnailUrl).toBe("/media/va/from-cover.png");
+  });
+});
 
 describe("describeCoverTarget", () => {
   it("shows the cover's code, type and observed date", () => {

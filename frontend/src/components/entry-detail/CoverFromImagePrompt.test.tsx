@@ -41,4 +41,18 @@ describe("CoverFromImagePrompt", () => {
 
     expect(onCreate).toHaveBeenCalledTimes(1);
   });
+  it("warns when moving the image would leave the marking with no picture", () => {
+    // The hazard survived the 2026-09-21 redesign: on approval the image is
+    // repointed to the cover, and the backend promotes the next sibling to
+    // display_order 0 -- but a marking with one image has no sibling.
+    render(<CoverFromImagePrompt count={1} isOnlyImage onCreate={() => {}} />);
+
+    expect(screen.getByText(/only image/i)).toBeTruthy();
+    expect(screen.getByText(/crop the marking out of it first/i)).toBeTruthy();
+  });
+
+  it("stays quiet about the last image when the marking has others", () => {
+    render(<CoverFromImagePrompt count={1} onCreate={() => {}} />);
+    expect(screen.queryByText(/only image/i)).toBeNull();
+  });
 });

@@ -1271,3 +1271,114 @@ class MarkingErdLrdApplyTests(TestCase):
 
         annotated = Marking.objects.get(pk=marking.pk)
         self.assertEqual(annotated.earliest_seen, date(1845, 6, 14))
+
+
+class CarriedOverMarkingImageTests(TestCase):
+    """
+    issues.md 167 / Trello T37 -- "Create cover from this image".
+
+    Ian, 2026-09-21: "it takes the cover image, opens Create New Cover and puts
+    the image in for the submitter to fill in the form and submit the cover -
+    it then deletes the cover image in the marking thumbnail".
+
+    The image is NOT re-uploaded: its bytes are already on the server, so the
+    submission names it by id and approval repoints that one row. One row, one
+    file, and the marking loses it for free -- which is the visible half of
+    what he asked for.
+    """
+
+    def setUp(self):
+        self.user = _make_user("carryover-editor")
+        self.collection = _make_collection(self.user)
+        self.parent = _make_parent_marking(self.user, self.collection.region)
+        self.image = Image.objects.create(
+            subject_type=Image.SUBJECT_MARKING,
+            subject_id=self.parent.pk,
+            original_filename="whole-cover.jpg",
+            storage_filename="va/whole-cover.jpg",
+            file_checksum="deadbeef",
+            mime_type="image/jpeg",
+            image_width=1600,
+            image_height=1200,
+            file_size_bytes=123456,
+            image_view="FULL",
+            display_order=0,
+            uploaded_by=self.user,
+            created_by=self.user,
+            modified_by=self.user,
+        )
+
+    def _approve(self, **extra):
+        sd = _cover_submitted_data(
+            self.parent,
+            cover_image_metas=[],
+            image_metas=[],
+            image_meta=None,
+            **extra,
+        )
+        contrib = _make_cover_contribution(self.user, sd, self.collection)
+        return apply_cover_contribution_to_catalog(contrib)["cover"]
+
+    def test_repoints_the_carried_over_image_onto_the_new_cover(self):
+        cover = self._approve(source_marking_image_id=str(self.image.pk))
+
+        self.image.refresh_from_db()
+        self.assertEqual(self.image.subject_type, Image.SUBJECT_COVER)
+        self.assertEqual(self.image.subject_id, cover.pk)
+        # A marking's "FULL" is rejected by the DB check constraint on COVER.
+        self.assertEqual(self.image.image_view, "FRONT")
+
+    def test_leaves_the_marking_without_that_image(self):
+        # This is Ian's "it then deletes the cover image in the marking
+        # thumbnail", achieved by repointing rather than destroying.
+        self._approve(source_marking_image_id=str(self.image.pk))
+
+        self.assertFalse(
+            Image.objects.filter(
+                subject_type=Image.SUBJECT_MARKING, subject_id=self.parent.pk
+            ).exists()
+        )
+
+    def test_creates_no_duplicate_row_or_file(self):
+        cover = self._approve(source_marking_image_id=str(self.image.pk))
+
+        rows = Image.objects.filter(
+            subject_type=Image.SUBJECT_COVER, subject_id=cover.pk
+        )
+        self.assertEqual(rows.count(), 1)
+        self.assertEqual(rows.first().pk, self.image.pk)
+        self.assertEqual(rows.first().storage_filename, "va/whole-cover.jpg")
+
+    def test_no_metas_without_a_carried_image_is_still_an_error(self):
+        # The "at least one image" rule must not be weakened generally: only a
+        # submission that names a carried-over image may omit uploads.
+        with self.assertRaises(ContributionApplyError):
+            self._approve()
+
+    def test_approval_survives_an_image_that_moved_away_first(self):
+        # Another editor cropped or moved it between submission and approval.
+        # Losing the whole submission would be far worse than a cover with no
+        # picture, which the editor can fix in seconds.
+        self.image.subject_type = Image.SUBJECT_COVER
+        self.image.subject_id = 999999
+        self.image.image_view = "FRONT"
+        self.image.save()
+
+        cover = self._approve(
+            source_marking_image_id=str(self.image.pk),
+            no_cover_image="true",
+        )
+
+        self.assertIsNotNone(cover.pk)
+        self.image.refresh_from_db()
+        self.assertEqual(self.image.subject_id, 999999)
+
+    def test_ignores_a_draft_preview_sentinel(self):
+        # Negative ids are frontend draft previews, not catalog rows.
+        cover = self._approve(source_marking_image_id="-1", no_cover_image="true")
+
+        self.assertFalse(
+            Image.objects.filter(
+                subject_type=Image.SUBJECT_COVER, subject_id=cover.pk
+            ).exists()
+        )
