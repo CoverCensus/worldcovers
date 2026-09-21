@@ -114,6 +114,31 @@ all developer and operator docs, see
 
 ## Development
 
+### Shared Agent Skills
+
+The repo keeps its shared sync skills in `.agents/skills`:
+
+- [worldcovers-sync-plan](.agents/skills/worldcovers-sync-plan/SKILL.md)
+  compares repo evidence, README.md, ISSUE.md, and live Trello.
+- [worldcovers-code-doc-sync](.agents/skills/worldcovers-code-doc-sync/SKILL.md)
+  checks code and tests against design, ISSUE.md, and DECISIONS.md.
+
+In your harness, invoke `$worldcovers-sync-plan` or `$worldcovers-code-doc-sync`.
+Other agents can read the linked SKILL.md files and follow their instructions.
+Maintain these repo copies as the source of truth for shared use.
+
+For a full sync, review Trello first, review code and docs next, apply approved
+local corrections, then check Trello against those changes. Keep each review
+limited to the affected work. Invoking a skill produces a plan; file and board
+updates need approval for that plan in the current task. Reuse approval already
+given for the same plan.
+
+The Trello review needs authenticated access to the WorldCovers board. Without
+it, continue the local review and report the board check as pending. Private
+workspace notes and archives are optional and are not part of these skills.
+
+### Local Development
+
 For day-to-day development, run:
 
 ```sh
