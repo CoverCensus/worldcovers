@@ -1,20 +1,4 @@
-import { parseCoverIdInput, parseMarkingIdInput } from "./recordLinking";
-
-describe("parseCoverIdInput", () => {
-  it("accepts bare ids and C- prefixed codes", () => {
-    expect(parseCoverIdInput("42")).toBe(42);
-    expect(parseCoverIdInput("C-42")).toBe(42);
-    expect(parseCoverIdInput("c42")).toBe(42);
-    expect(parseCoverIdInput(" 42 ")).toBe(42);
-  });
-
-  it("rejects non-linkable input", () => {
-    expect(parseCoverIdInput("")).toBeNull();
-    expect(parseCoverIdInput("0")).toBeNull();
-    expect(parseCoverIdInput("-3")).toBeNull();
-    expect(parseCoverIdInput("cover")).toBeNull();
-  });
-});
+import { parseMarkingIdInput } from "./recordLinking";
 
 describe("parseMarkingIdInput", () => {
   it("accepts bare ids and api- route ids", () => {

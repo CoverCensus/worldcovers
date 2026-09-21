@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowUp, Crop, History, Info, Loader2, MessageSquare, Pencil, Plus, Recycle, Replace, Star, Stamp, Trash2 } from "lucide-react";
+import { ArrowLeft, Crop, History, Info, Loader2, MessageSquare, Pencil, Plus, Recycle, Star, Trash2 } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
@@ -30,14 +30,20 @@ import { buildMarkingFields } from "@/lib/markingFields";
 import { formatRateValue } from "@/lib/rateDisplay";
 import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
 import { MarkingFieldsDisplay } from "@/components/MarkingFieldsDisplay";
+import { ThumbnailImageActions } from "@/components/entry-detail/ThumbnailImageActions";
+import { CoverFromImagePrompt } from "@/components/entry-detail/CoverFromImagePrompt";
+import {
+  coverLikeMarkingImages,
+  isLastMarkingImage,
+} from "@/lib/coverLikeMarkingImages";
+import {
+} from "@/lib/moveTargetDisplay";
+import { imageActionState } from "@/lib/imageActionState";
 import {
   countyDisplay,
   getMarkingById,
-  getMarkingsPage,
-  moveTargetCandidates,
   getMarkingChangelog,
   loadAssociatedCoversForMarking,
-  moveImageSubject,
   normalizeImageUrl,
   primaryRegions,
   regionsDisplay,
@@ -75,13 +81,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { ENTRY_LABELS } from "@/labels/entry";
 import { SUBMISSION_LABELS } from "@/labels/submission";
 import { useAuth } from "@/hooks/useAuth";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { createCoverMarking, getCoverById } from "@/services/covers";
-import { parseCoverIdInput } from "@/lib/recordLinking";
+import {
+} from "@/services/covers";
 import { readVphcProvenance } from "@/lib/vphcProvenance";
 import { VphcProvenanceCard } from "@/components/VphcProvenanceCard";
 import { getTenuresForPostOffice, type PostmasterTenure } from "@/services/postmasters";
@@ -331,29 +337,15 @@ const RecordDetail = () => {
   const [removing, setRemoving] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [linkCoverOpen, setLinkCoverOpen] = useState(false);
-  const [linkCoverInput, setLinkCoverInput] = useState("");
-  const [linkCoverIsBackstamp, setLinkCoverIsBackstamp] = useState(false);
-  const [linkCoverBusy, setLinkCoverBusy] = useState(false);
-  const [linkCoverError, setLinkCoverError] = useState<string | null>(null);
-  const [moveImageDialogImg, setMoveImageDialogImg] = useState<MarkingImage | null>(null);
   // Image whose marking an editor is cropping out of a whole-cover scan (#77).
   const [cropImageTarget, setCropImageTarget] = useState<MarkingImage | null>(null);
-  const [moveImageTargetCoverId, setMoveImageTargetCoverId] = useState("");
-  const [moveImageView, setMoveImageView] = useState("FRONT");
-  const [moveImageBusy, setMoveImageBusy] = useState(false);
-  const [moveImageError, setMoveImageError] = useState<string | null>(null);
   // Move an image to another marking at the same town (#104 / C3): the second
   // half of the crop -> reattach workflow for scans that hold two devices.
-  const [moveToMarkingImg, setMoveToMarkingImg] = useState<MarkingImage | null>(null);
-  const [moveMarkingTargetId, setMoveMarkingTargetId] = useState("");
-  const [moveMarkingView, setMoveMarkingView] = useState("FULL");
-  const [moveMarkingCandidates, setMoveMarkingCandidates] = useState<MarkingRecord[]>([]);
+
+  // issues.md 167 / Trello T37: create a cover from a marking image.
   // Own busy/error pair rather than sharing the move-to-cover one: they are
   // two independent dialogs, and shared state lets a failure in one surface
   // in the other.
-  const [moveMarkingBusy, setMoveMarkingBusy] = useState(false);
-  const [moveMarkingError, setMoveMarkingError] = useState<string | null>(null);
   const [savingReviewed, setSavingReviewed] = useState(false);
   const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
 
@@ -372,6 +364,7 @@ const RecordDetail = () => {
       user.is_superuser === true
     );
   }, [user]);
+
 
   useEffect(() => {
     if (markingId == null || Number.isNaN(markingId)) {
@@ -422,71 +415,21 @@ const RecordDetail = () => {
     };
   }, [markingId, user?.id, location.pathname, location.search]);
 
-  // Sibling markings at this post office -- the target list for "move image to
-  // another marking" (#104 / C3). Editor-only, matching the control's own
-  // gate; skipping it for everyone else keeps a public page view at its
-  // current request count. `post_office` is an exact-id filter -- `town` is
-  // name-contains server-side and would pull in other towns.
-  //
-  // The staff test is inlined rather than reusing the `isStaff` const below,
-  // which is declared after this component's early returns: a hook placed
-  // there would run conditionally.
+  // Editor-class test, hoisted above the component's early returns so the
+  // hooks below it never run conditionally. `isStaff` further down is an alias
+  // of this, so the two cannot drift.
   const userIsStaff =
     !!user &&
     (user.role === "editor" ||
       user.role === "administrator" ||
       user.is_superuser === true);
-  // Depend on the two primitives, not on `record` itself: the record is a
-  // fresh object on every refresh, and a successful move refreshes it, so
-  // depending on the object refetched the sibling list after every move.
-  const recordId = record?.id ?? null;
-  const recordPostOfficeId = record?.postOfficeId ?? null;
-  useEffect(() => {
-    if (!userIsStaff || recordId == null || recordPostOfficeId == null) {
-      setMoveMarkingCandidates([]);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        // A post office can hold more than one page of markings (max_page_size
-        // is 100 server-side), and a candidate missing from the list is an
-        // editor who cannot complete the move -- the exact failure this
-        // feature exists to prevent. So page until the API stops offering a
-        // next link. `count` is null under deferCount, so `next` is the only
-        // truncation signal available. The cap is a runaway guard, not a
-        // limit any real office reaches (production averages ~2.6 markings
-        // per office).
-        const MAX_PAGES = 20;
-        const collected: MarkingRecord[] = [];
-        for (let page = 1; page <= MAX_PAGES; page += 1) {
-          const res = await getMarkingsPage(page, 100, {
-            postOfficeId: recordPostOfficeId,
-            deferCount: true,
-          });
-          if (cancelled) return;
-          collected.push(...res.results);
-          if (!res.next) break;
-        }
-        setMoveMarkingCandidates(
-          moveTargetCandidates(collected, {
-            id: recordId,
-            postOfficeId: recordPostOfficeId,
-          }),
-        );
-      } catch {
-        // A failed lookup just hides the control; the page must still render.
-        if (!cancelled) setMoveMarkingCandidates([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [userIsStaff, recordId, recordPostOfficeId]);
 
-  // Postmasters who served this office (#125). Public, unlike the move-target
-  // lookup above, and it depends on the same primitive rather than on `record`
-  // for the same reason. There is no loading state on purpose: outside VA/WV
+  // Depend on the primitive, not on `record`: the record is a fresh object on
+  // every refresh, so depending on the object would refetch after each one.
+  const recordPostOfficeId = record?.postOfficeId ?? null;
+
+  // Postmasters who served this office (#125). Public, and it depends on the
+  // primitive rather than on `record` for the reason above. There is no loading state on purpose: outside VA/WV
   // no office has postmasters, so a spinner would flash and vanish on almost
   // every page view. Late-appearing content beats a phantom card.
   useEffect(() => {
@@ -839,6 +782,11 @@ const RecordDetail = () => {
   // -markings hook; aliased rather than recomputed so the two cannot drift.
   const isStaff = userIsStaff;
 
+  // Images on this marking whose shape reads as a whole cover. Reuses the
+  // upload-form classifier over stored dimensions rather than a second
+  // heuristic (issues.md 167 / Trello T37).
+  const coverLikeImages = coverLikeMarkingImages(record.images);
+
 
   // Record History display rule: collapsed by default we show the three most
   // recent events; when expanded we cap at the 10 newest events. Backend
@@ -907,6 +855,33 @@ const RecordDetail = () => {
     navigate("/auth", { state: { from: location } });
     return false;
   };
+  /**
+   * "Create cover from this image" -- Ian, 2026-09-21:
+   *
+   *   "change the 'move to cover' icon to 'Create cover from this image' then
+   *    it takes the cover image, opens Create New Cover and puts the image in
+   *    for the submitter to fill in the form and submit the cover"
+   *
+   * Reuses the ordinary Submit New Cover route rather than a bespoke dialog,
+   * so the cover goes through the same submission and review path as any
+   * other. The image travels in router state, and CoverEdit turns it back into
+   * an upload on arrival.
+   */
+  const openCreateCoverFromImage = (image: MarkingImage) => {
+    if (!requireAuth()) return;
+    navigate(`/record/${markingId}/cover/new`, {
+      state: {
+        from: location.pathname + location.search,
+        sourceMarkingImage: {
+          imageId: image.imageId,
+          imageUrl: image.imageUrl,
+          originalFilename: image.originalFilename,
+          storageFilename: image.storageFilename,
+        },
+      },
+    });
+  };
+
   const openNewCoverDialog = () => {
     if (!requireAuth()) return;
     navigate(`/record/${markingId}/cover/new`, {
@@ -914,124 +889,9 @@ const RecordDetail = () => {
     });
   };
 
-  // Reassigns an image from this marking to one of its associated covers
-  // (issue #48: v1 attached every cover upload to the marking). Target list
-  // is restricted to covers already linked to this marking so images can't
-  // be scattered onto unrelated records from here.
-  const handleMoveImageToCover = async () => {
-    if (!moveImageDialogImg?.imageId) return;
-    const coverId = parseInt(moveImageTargetCoverId, 10);
-    if (!Number.isFinite(coverId) || coverId <= 0) {
-      setMoveImageError("Select a target cover.");
-      return;
-    }
-    setMoveImageBusy(true);
-    setMoveImageError(null);
-    try {
-      const res = await moveImageSubject(
-        moveImageDialogImg.imageId,
-        "COVER",
-        coverId,
-        moveImageView,
-      );
-      if (res.ok === false) {
-        setMoveImageError(res.message);
-        return;
-      }
-      toast({ title: "Image moved", description: "Image reassigned to the cover." });
-      setMoveImageDialogImg(null);
-      if (markingId != null) {
-        const refreshed = await getMarkingById(markingId);
-        if (refreshed) setRecord(refreshed);
-      }
-    } finally {
-      setMoveImageBusy(false);
-    }
-  };
 
-  // Reassign an image to another marking at the same post office (#104 / C3).
-  // This is the second half of the crop -> reattach workflow: crop saves the
-  // cut-out onto the SAME marking (it deliberately never relocates), and this
-  // sends it to the marking it actually belongs to. Scoped to one town so an
-  // image cannot be filed under an unrelated record from here.
-  const handleMoveImageToMarking = async () => {
-    if (!moveToMarkingImg?.imageId) return;
-    const targetId = parseInt(moveMarkingTargetId, 10);
-    if (!Number.isFinite(targetId) || targetId <= 0) {
-      setMoveMarkingError("Select a target marking.");
-      return;
-    }
-    setMoveMarkingBusy(true);
-    setMoveMarkingError(null);
-    try {
-      const res = await moveImageSubject(
-        moveToMarkingImg.imageId,
-        "MARKING",
-        targetId,
-        moveMarkingView,
-      );
-      if (res.ok === false) {
-        setMoveMarkingError(res.message);
-        return;
-      }
-      toast({ title: "Image moved", description: "Image reassigned to the marking." });
-      // Full teardown, so reopening for a different image cannot inherit the
-      // previous target.
-      setMoveToMarkingImg(null);
-      setMoveMarkingTargetId("");
-      setMoveMarkingView("FULL");
-      if (markingId != null) {
-        const refreshed = await getMarkingById(markingId);
-        if (refreshed) setRecord(refreshed);
-      }
-    } finally {
-      setMoveMarkingBusy(false);
-    }
-  };
 
-  // Creates a CoverMarking junction row between this marking and an
-  // already-existing cover. The endpoint is editor/admin-gated
-  // (IsEditorOrAdminWrite), so the button only renders for isStaff.
-  const handleLinkExistingCover = async () => {
-    if (markingId == null) return;
-    const coverId = parseCoverIdInput(linkCoverInput);
-    if (coverId == null) {
-      setLinkCoverError("Enter a valid cover ID (e.g. 42 or C-42).");
-      return;
-    }
-    setLinkCoverBusy(true);
-    setLinkCoverError(null);
-    try {
-      const cover = await getCoverById(coverId);
-      if (!cover) {
-        setLinkCoverError(`Cover ${coverId} not found.`);
-        return;
-      }
-      await createCoverMarking({
-        cover: coverId,
-        marking: markingId,
-        is_backstamp: linkCoverIsBackstamp,
-      });
-      toast({
-        title: "Cover linked",
-        description: `Cover ${cover.code ?? coverId} is now linked to this marking.`,
-      });
-      setLinkCoverOpen(false);
-      setLinkCoverInput("");
-      setLinkCoverIsBackstamp(false);
-      const { covers: rows, error: coversErr } = await loadAssociatedCoversForMarking(markingId);
-      setCoversLoadError(coversErr);
-      setAssociatedCovers(rows);
-    } catch (err: unknown) {
-      const ax = err as { response?: { data?: { detail?: string; non_field_errors?: string[] } } };
-      const detail = ax.response?.data?.detail ?? ax.response?.data?.non_field_errors?.[0];
-      setLinkCoverError(
-        typeof detail === "string" ? detail : "Could not link cover. It may already be linked.",
-      );
-    } finally {
-      setLinkCoverBusy(false);
-    }
-  };
+
   const goCoverView = (cover: AssociatedCover) => {
     if (markingId == null) return;
     if (cover.contributionDraftId != null) {
@@ -1051,27 +911,23 @@ const RecordDetail = () => {
     <div className="min-h-screen flex flex-col">
       <Navigation />
       <div className="flex-1 bg-background">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="mb-6">
-            <Button variant="ghost" onClick={handleBack} className="-ml-4">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              {fromDashboard ? "Back to Dashboard" : "Back"}
-            </Button>
+        <div className="max-w-7xl mx-auto px-4 pb-8 pt-3 sm:px-6 lg:px-8">
+          <div className="mb-6 grid items-center gap-8 lg:grid-cols-2">
+            <div className="flex flex-col items-start gap-1">
+              <Button variant="ghost" onClick={handleBack} className="-ml-4">
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                {fromDashboard ? "Back to Dashboard" : "Back"}
+              </Button>
+              <h1 className="font-heading text-[2.35rem] font-semibold text-foreground">
+                Marking
+              </h1>
+            </div>
           </div>
 
           <div className="grid items-start lg:grid-cols-2 gap-8">
             <div className="space-y-6">
               <Card className="shadow-archival-lg">
-                {/*
-                  Issue #138: the marking and cover detail screens are laid out
-                  alike, and this card carried no heading at all, so the primary
-                  image was the one thing on the page that did not say what it
-                  was. Naming it is what tells you which screen you are on.
-                */}
-                <CardHeader>
-                  <CardTitle className="font-heading text-lg">Marking</CardTitle>
-                </CardHeader>
-                <CardContent className="p-6 pt-0">
+                <CardContent className="p-6">
                   <Carousel setApi={setApi} className="w-full">
                     <CarouselContent>
                       {(galleryImages.length
@@ -1174,32 +1030,42 @@ const RecordDetail = () => {
                 <CardHeader>
                   {/* Issue #138: names this screen, not the cover screen. */}
                   <CardTitle className="font-heading text-lg">
-                    Associated Marking Thumbnails
+                    {ENTRY_LABELS.associatedThumbnails.marking}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
+                  {/* issues.md 167 / Trello T37. Editor-only: every endpoint
+                      behind it is editor-gated server-side. */}
+                  {isStaff && !record.isRemoved && (
+                    <CoverFromImagePrompt
+                      count={coverLikeImages.length}
+                      isOnlyImage={
+                        coverLikeImages.length === 1 &&
+                        coverLikeImages[0].imageId != null &&
+                        isLastMarkingImage(record.images, coverLikeImages[0].imageId)
+                      }
+                      onCreate={() => {
+                        const first = coverLikeImages[0];
+                        if (first) openCreateCoverFromImage(first);
+                      }}
+                    />
+                  )}
                   {galleryImages.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No approved images linked to this marking.</p>
                   ) : (
                     <div className="flex gap-3 overflow-x-auto pb-1">
                       {galleryImages.map((img, idx) => {
-                        // A removed marking is read-only: no image reordering
-                        // either, only Restore.
-                        const canManageImage =
-                          isStaff &&
-                          !record.isRemoved &&
-                          img.imageId != null;
-                        const canReorder = canManageImage && galleryImages.length > 1;
-                        const canMoveToCover =
-                          canManageImage &&
-                          record.images[idx]?.subjectType === "MARKING" &&
-                          associatedCovers.some((c) => c.coverDetails?.id != null);
-                        // Hidden at a one-marking town rather than opening an
-                        // empty dropdown (#104 / C3).
-                        const canMoveToMarking =
-                          canManageImage &&
-                          record.images[idx]?.subjectType === "MARKING" &&
-                          moveMarkingCandidates.length > 0;
+                        // issues.md 166: permission and image state are separate
+                        // questions. A removed marking is read-only for everyone
+                        // (only Restore survives) and an unsaved image has
+                        // nothing to crop or move -- but both used to produce an
+                        // empty space rather than a stated reason.
+                        const actionState = imageActionState({
+                          imageId: img.imageId,
+                          isStaff,
+                          isRemoved: record.isRemoved,
+                        });
+                        const canReorder = actionState.showControls && galleryImages.length > 1;
                         return (
                           <div
                             key={`${img.imageId ?? img.originalFilename ?? "img"}-${idx}`}
@@ -1217,149 +1083,27 @@ const RecordDetail = () => {
                                 className="h-full w-full object-cover"
                               />
                             </button>
-                            {canManageImage && (
-                              // Editor reorder strip. Each button issues a
-                              // PATCH /api/v2/images/{id}/ via applyImageOrder
-                              // (with optimistic UI). Star = move to position
-                              // 0 = becomes the Catalog Search thumbnail.
-                              <div className="flex items-center gap-0.5">
-                                {canReorder && (
-                                  <>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-6 w-6"
-                                      aria-label="Move thumbnail left"
-                                      disabled={
-                                        reorderingImages || idx === 0
-                                      }
-                                      onClick={() => moveImageBy(idx, -1)}
-                                    >
-                                      <ArrowUp className="h-3 w-3 -rotate-90" />
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-6 w-6"
-                                      aria-label="Move thumbnail right"
-                                      disabled={
-                                        reorderingImages ||
-                                        idx === galleryImages.length - 1
-                                      }
-                                      onClick={() => moveImageBy(idx, 1)}
-                                    >
-                                      <ArrowDown className="h-3 w-3 -rotate-90" />
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      className={
-                                        img.isDefault
-                                          ? "h-6 w-6 text-amber-600 hover:text-amber-600 disabled:opacity-100"
-                                          : "h-6 w-6"
-                                      }
-                                      aria-label="Set as default catalog thumbnail"
-                                      title={
-                                        img.isDefault
-                                          ? "Default catalog thumbnail"
-                                          : "Set as default catalog thumbnail"
-                                      }
-                                      disabled={reorderingImages || img.isDefault}
-                                      onClick={() => setImageAsDefault(idx)}
-                                    >
-                                      <Star
-                                        className={`h-3 w-3 ${img.isDefault ? "fill-amber-500 text-amber-500" : ""}`}
-                                      />
-                                    </Button>
-                                  </>
-                                )}
-                                {canManageImage && (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    aria-label="Crop the marking out of this image"
-                                    title="Crop marking"
-                                    disabled={reorderingImages}
-                                    onClick={() => {
-                                      const rawImg = record.images[idx];
-                                      if (!rawImg?.imageId) return;
-                                      setCropImageTarget(rawImg);
-                                    }}
-                                  >
-                                    <Crop className="h-3 w-3" />
-                                  </Button>
-                                )}
-                                {canMoveToCover && (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    aria-label="Move image to a cover entry"
-                                    title="Move to cover"
-                                    disabled={reorderingImages}
-                                    onClick={() => {
-                                      const rawImg = record.images[idx];
-                                      if (!rawImg) return;
-                                      setMoveImageDialogImg(rawImg);
-                                      setMoveImageTargetCoverId(
-                                        String(
-                                          associatedCovers.find((c) => c.coverDetails?.id != null)
-                                            ?.coverDetails?.id ?? "",
-                                        ),
-                                      );
-                                      setMoveImageView("FRONT");
-                                      setMoveImageError(null);
-                                    }}
-                                  >
-                                    <Replace className="h-3 w-3" />
-                                  </Button>
-                                )}
-                                {canMoveToMarking && (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    aria-label="Move image to another marking"
-                                    title="Move to another marking"
-                                    disabled={reorderingImages}
-                                    onClick={() => {
-                                      const rawImg = record.images[idx];
-                                      if (!rawImg) return;
-                                      setMoveToMarkingImg(rawImg);
-                                      setMoveMarkingTargetId(
-                                        String(moveMarkingCandidates[0]?.id ?? ""),
-                                      );
-                                      setMoveMarkingView("FULL");
-                                      setMoveMarkingError(null);
-                                    }}
-                                  >
-                                    <Stamp className="h-3 w-3" />
-                                  </Button>
-                                )}
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 text-destructive hover:text-destructive"
-                                  aria-label="Delete image"
-                                  title="Delete image"
-                                  disabled={
-                                    reorderingImages ||
-                                    deletingImageId === img.imageId
-                                  }
-                                  onClick={() => handleDeleteImage(idx)}
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            )}
+                            <ThumbnailImageActions
+                              state={actionState}
+                              canReorder={canReorder}
+                              isFirst={idx === 0}
+                              isLast={idx === galleryImages.length - 1}
+                              isDefault={img.isDefault}
+                              reordering={reorderingImages}
+                              deleting={deletingImageId === img.imageId}
+                              onMoveBy={(offset) => moveImageBy(idx, offset)}
+                              onSetDefault={() => setImageAsDefault(idx)}
+                              onCrop={() => {
+                                const rawImg = record.images[idx];
+                                if (!rawImg?.imageId) return;
+                                setCropImageTarget(rawImg);
+                              }}
+                              onCreateCoverFromImage={() => {
+                                const rawImg = record.images[idx];
+                                if (rawImg) openCreateCoverFromImage(rawImg);
+                              }}
+                              onDelete={() => handleDeleteImage(idx)}
+                            />
                           </div>
                         );
                       })}
@@ -1481,12 +1225,6 @@ const RecordDetail = () => {
                 </CardContent>
               </Card>
 
-              <PostmastersCard
-                tenures={postmasterTenures}
-                postOfficeId={recordPostOfficeId}
-                focusYear={postmasterFocusYear}
-              />
-
               <Card className="shadow-archival-md">
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
@@ -1496,21 +1234,6 @@ const RecordDetail = () => {
                     {/* No new covers can be attached to a removed marking. */}
                     {!record.isRemoved && (
                       <div className="flex gap-2">
-                        {isStaff && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setLinkCoverInput("");
-                              setLinkCoverIsBackstamp(false);
-                              setLinkCoverError(null);
-                              setLinkCoverOpen(true);
-                            }}
-                          >
-                            <Plus className="mr-2 h-4 w-4" />
-                            Link Existing Cover
-                          </Button>
-                        )}
                         <Button
                           size="sm"
                           onClick={openNewCoverDialog}
@@ -1542,7 +1265,7 @@ const RecordDetail = () => {
                             cover.displayLabel?.trim() ||
                             (isStaff ? c?.code?.trim() : "") ||
                             (cover.contributionDraftId != null
-                              ? `Cover draft #${cover.contributionDraftId}`
+                              ? `Submission #${cover.contributionDraftId}`
                               : `Cover #${c?.id ?? cover.id}`);
                           const rs = cover.reviewStatus;
                           const canOpenCover =
@@ -1615,6 +1338,12 @@ const RecordDetail = () => {
                   )}
                 </CardContent>
               </Card>
+
+              <PostmastersCard
+                tenures={postmasterTenures}
+                postOfficeId={recordPostOfficeId}
+                focusYear={postmasterFocusYear}
+              />
 
               {record.desc.trim() && (
                 <Card className="shadow-archival-md">
@@ -1850,172 +1579,11 @@ const RecordDetail = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      <Dialog
-        open={moveImageDialogImg != null}
-        onOpenChange={(open) => {
-          if (moveImageBusy) return;
-          if (!open) setMoveImageDialogImg(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Move Image to Cover</DialogTitle>
-            <DialogDescription>
-              Reassign this image from the marking to one of its associated covers.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1">
-              <Label htmlFor="move-img-cover-id">Target cover</Label>
-              <Select
-                value={moveImageTargetCoverId}
-                onValueChange={(v) => {
-                  setMoveImageTargetCoverId(v);
-                  setMoveImageError(null);
-                }}
-                disabled={moveImageBusy}
-              >
-                <SelectTrigger id="move-img-cover-id">
-                  <SelectValue placeholder="Select a cover…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {associatedCovers
-                    .filter((c) => c.coverDetails?.id != null)
-                    .map((c) => (
-                      <SelectItem key={c.coverDetails!.id} value={String(c.coverDetails!.id)}>
-                        {c.coverDetails!.code ?? `Cover #${c.coverDetails!.id}`}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="move-img-view">Image view</Label>
-              <Select
-                value={moveImageView}
-                onValueChange={(v) => setMoveImageView(v)}
-                disabled={moveImageBusy}
-              >
-                <SelectTrigger id="move-img-view">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="FRONT">Front</SelectItem>
-                  <SelectItem value="BACK">Back</SelectItem>
-                  <SelectItem value="INTERIOR">Interior</SelectItem>
-                  <SelectItem value="DETAIL">Detail</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {moveImageError && <p className="text-sm text-destructive">{moveImageError}</p>}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setMoveImageDialogImg(null)}
-              disabled={moveImageBusy}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void handleMoveImageToCover()}
-              disabled={moveImageBusy || !moveImageTargetCoverId}
-            >
-              {moveImageBusy ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Moving…
-                </>
-              ) : (
-                "Move Image"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* issues.md 167 / Trello T37 -- create the destination that does not
+          exist yet. The fields live in CreateCoverFromImageForm so they can be
+          tested without driving this Radix overlay. */}
 
-      <Dialog
-        open={moveToMarkingImg != null}
-        onOpenChange={(open) => {
-          if (moveMarkingBusy) return;
-          if (!open) setMoveToMarkingImg(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Move Image to Marking</DialogTitle>
-            <DialogDescription>
-              Reassign this image to another marking at the same town. Use this after
-              cropping a second device out of a scan that shows more than one.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1">
-              <Label htmlFor="move-img-marking-id">Target marking</Label>
-              <Select
-                value={moveMarkingTargetId}
-                onValueChange={(v) => {
-                  setMoveMarkingTargetId(v);
-                  setMoveImageError(null);
-                }}
-                disabled={moveMarkingBusy}
-              >
-                <SelectTrigger id="move-img-marking-id">
-                  <SelectValue placeholder="Select a marking…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {moveMarkingCandidates.map((m) => (
-                    <SelectItem key={m.id} value={String(m.id)}>
-                      {m.code || `Marking #${m.id}`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="move-img-marking-view">Image view</Label>
-              {/* Marking subjects accept FULL/DETAIL only; the cover views
-                  (Front/Back/Interior) are rejected by the serializer. */}
-              <Select
-                value={moveMarkingView}
-                onValueChange={(v) => setMoveMarkingView(v)}
-                disabled={moveMarkingBusy}
-              >
-                <SelectTrigger id="move-img-marking-view">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="FULL">Full</SelectItem>
-                  <SelectItem value="DETAIL">Detail</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {moveMarkingError && <p className="text-sm text-destructive">{moveMarkingError}</p>}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setMoveToMarkingImg(null)}
-              disabled={moveMarkingBusy}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void handleMoveImageToMarking()}
-              disabled={moveMarkingBusy || !moveMarkingTargetId}
-            >
-              {moveMarkingBusy ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Moving…
-                </>
-              ) : (
-                "Move Image"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+
 
       <CropImageDialog
         open={cropImageTarget != null}
@@ -2037,72 +1605,6 @@ const RecordDetail = () => {
         }}
       />
 
-      <Dialog
-        open={linkCoverOpen}
-        onOpenChange={(open) => {
-          if (linkCoverBusy) return;
-          setLinkCoverOpen(open);
-          if (!open) {
-            setLinkCoverInput("");
-            setLinkCoverIsBackstamp(false);
-            setLinkCoverError(null);
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Link Existing Cover</DialogTitle>
-            <DialogDescription>
-              Enter the cover ID or code (e.g. 42 or C-42) to link it to this marking.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <Input
-              placeholder="Cover ID or code"
-              value={linkCoverInput}
-              onChange={(e) => {
-                setLinkCoverInput(e.target.value);
-                setLinkCoverError(null);
-              }}
-              disabled={linkCoverBusy}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void handleLinkExistingCover();
-                }
-              }}
-              autoFocus
-            />
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={linkCoverIsBackstamp}
-                onCheckedChange={(value) => setLinkCoverIsBackstamp(value === true)}
-                disabled={linkCoverBusy}
-              />
-              Backstamp
-            </label>
-            {linkCoverError && <p className="text-sm text-destructive">{linkCoverError}</p>}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setLinkCoverOpen(false)} disabled={linkCoverBusy}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void handleLinkExistingCover()}
-              disabled={linkCoverBusy || !linkCoverInput.trim()}
-            >
-              {linkCoverBusy ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Linking…
-                </>
-              ) : (
-                "Link Cover"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Footer />
     </div>

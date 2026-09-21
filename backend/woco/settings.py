@@ -141,10 +141,21 @@ SILENCED_SYSTEM_CHECKS = ["models.W036"]
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
+# ⚠ These validators are NOT what the API enforces. The SPA's password paths
+# (ResetPasswordApiView, ChangePasswordApiView) call _validate_password_strength
+# in common/api/auth.py -- 8 chars + upper + lower + digit + special -- and
+# nothing in this project calls django's validate_password(). This list only
+# reaches the Django admin's password forms and allauth.
+#
+# min_length was 4, which contradicted the policy the product advertises and
+# read as though 4 were acceptable somewhere (issue #157). Raised to 8 so the
+# floor here agrees with the app. It is deliberately only a floor, not the whole
+# rule -- see DECISIONS.md 2026-09-10 for why the validator list was NOT made
+# the single source of truth.
 AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
-        "OPTIONS": {"min_length": 4},
+        "OPTIONS": {"min_length": 8},
     }
 ]
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "WorldCovers Code and Docs Plan"
+  short_description: "Plan code, decision, and issue reconciliation"
+  default_prompt: "Use $worldcovers-code-doc-sync to review current WorldCovers code and design against ISSUE.md and DECISIONS.md, propose exact documentation corrections for my approval, and prepare a handoff for the final $worldcovers-sync-plan Trello review. Make no changes."

@@ -28,11 +28,12 @@ import { Archive, ArchiveRestore, ArrowDown, ArrowUp, Calendar, Loader2, Pencil,
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import { formatSizeFromSubmittedData } from "@/lib/dimensionsMm";
 import {
+  contributionCardPresentation,
   isCoverContributionData,
   materializedCoverIdFromContribution,
   parentMarkingIdFromContribution,
+  type ContributionCardPresentation,
 } from "@/lib/contributionDisplay";
 import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
@@ -129,37 +130,19 @@ function resolveSubmissionImageUrl(
   return fromMeta(submittedData.image_meta ?? submittedData.imageMeta);
 }
 
-function contributionTitleFromSubmittedData(
-  submittedData: Record<string, unknown>,
-  fallbackId: unknown,
-): string {
-  const town = String(submittedData.town ?? "").trim();
-  const state = String(submittedData.state ?? "").trim();
-  const inscription = String(
-    submittedData.inscription_txt ??
-      submittedData.inscriptionTxt ??
-      "",
-  ).trim();
-  const location = [town, state].filter(Boolean).join(", ");
-  if (location && inscription) return `${location} - "${inscription}"`;
-  if (location) return location;
-  if (inscription) return `"${inscription}"`;
-  return `Submission #${fallbackId}`;
-}
-
 type DashboardTab = "submissions" | "editor";
 
 interface DashboardItem {
   id: number;
   name: string;
+  presentation: ContributionCardPresentation;
   town: string;
   state: string;
-  dateRange?: string;
-  size?: string;
   shape?: string;
   color?: string;
   status: string;
   created_at: string;
+  updated_at: string;
   description?: string;
   image_url: string | null;
   marking_id?: number | null;
@@ -176,7 +159,7 @@ interface DashboardItem {
 interface EditorHistoryItem {
   id: number;
   contributor_username: string;
-  display_name: string;
+  presentation: ContributionCardPresentation;
   state_display: string;
   town_display: string;
   shape_display: string;
@@ -185,6 +168,7 @@ interface EditorHistoryItem {
   cover_id: number | null;
   status: string;
   created_at: string;
+  updated_at: string;
   review_notes: string | null;
   image_url: string | null;
   isCover?: boolean;
@@ -193,6 +177,44 @@ interface EditorHistoryItem {
   archived_at?: string | null;
   archived_by_username?: string | null;
   archive_reason?: string;
+}
+
+function dashboardDate(value: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString();
+}
+
+function ContributionSummaryFields({
+  presentation,
+  updatedAt,
+  compact = false,
+}: {
+  presentation: ContributionCardPresentation;
+  updatedAt: string;
+  compact?: boolean;
+}) {
+  const updated = dashboardDate(updatedAt);
+  const fields = updated
+    ? [...presentation.fields, { label: "Last updated", value: updated }]
+    : presentation.fields;
+  if (fields.length === 0) return null;
+
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-1 gap-x-6 gap-y-1",
+        compact ? "mt-1 text-xs sm:grid-cols-2" : "text-sm sm:grid-cols-2",
+      )}
+    >
+      {fields.map((field) => (
+        <div key={`${field.label}-${field.value}`}>
+          <span className="text-muted-foreground">{field.label}:</span>{" "}
+          <span className="text-foreground">{field.value}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 type SortDir = "asc" | "desc";
@@ -704,21 +726,22 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               : typeof c.coverId === "number"
                 ? c.coverId
                 : materializedCoverIdFromContribution(sd);
-          const displayName = isCover
-            ? String(c.display_name || c.displayName || "").trim() || `Cover submission #${c.id}`
-            : contributionTitleFromSubmittedData(submittedData, c.id);
-
-          const dateRange =
-            c.dateRange ||
-            c.date_range ||
-            submittedData.date_range ||
-            submittedData.dateRange ||
-            submittedData.first_seen ||
-            (submittedData.firstSeen
-              ? submittedData.lastSeen
-                ? `${submittedData.firstSeen}-${submittedData.lastSeen}`
-                : String(submittedData.firstSeen)
-              : "");
+          const typeValue =
+            c.typeDisplay || c.type_display || c.type || submittedData.type || "";
+          const shapeValue =
+            c.shapeName || c.shapeDisplay || c.shape_display || c.shape || submittedData.shape || "";
+          const colorValue = c.colorDisplay || c.color_display || c.color || submittedData.color || "";
+          const sizeValue = c.sizeDisplay || c.size || submittedData.dimensions || "";
+          const presentation = contributionCardPresentation({
+            id: c.id,
+            submittedData: sd,
+            town,
+            state,
+            type: typeValue,
+            shape: shapeValue,
+            color: colorValue,
+            size: sizeValue,
+          });
 
           const markingId =
             typeof c.marking_id === "number"
@@ -732,20 +755,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
           return {
             id: c.id,
-            name: displayName,
+            name: presentation.title,
+            presentation,
             town,
             state,
-            dateRange,
-            size:
-              c.sizeDisplay ||
-              c.size ||
-              formatSizeFromSubmittedData(submittedData as Record<string, unknown> | undefined) ||
-              (submittedData as { dimensions?: string } | undefined)?.dimensions ||
-              "",
-            shape: c.shapeName || c.shapeDisplay || c.typeDisplay || c.shape || c.type || submittedData.shape || submittedData.type || "",
-            color: c.colorDisplay || c.color || submittedData.color || "",
+            shape: String(shapeValue),
+            color: String(colorValue),
             status: String(c.status || "pending"),
             created_at: String(c.createdAt || c.created_at || ""),
+            updated_at: String(c.updatedAt || c.updated_at || c.createdAt || c.created_at || ""),
             description: c.description || submittedData.description || "",
             image_url: imageUrl,
             marking_id: markingId ?? null,
@@ -855,25 +873,42 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             ?? {};
           const sd = submittedData as Record<string, unknown>;
           const isCover = isCoverContributionData(sd);
+          const townDisplay = c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "";
+          const stateDisplay = c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "";
+          const typeDisplay =
+            c.type_display ??
+            (c as { typeDisplay?: string }).typeDisplay ??
+            sd.type ??
+            "";
+          const shapeDisplay =
+            c.shape_display ??
+            (c as { shapeDisplay?: string }).shapeDisplay ??
+            sd.shape ??
+            "";
+          const colorDisplay = String(
+            c.color_display ??
+              (c as { colorDisplay?: string }).colorDisplay ??
+              c.color ??
+              sd.color ??
+              "",
+          );
+          const presentation = contributionCardPresentation({
+            id: c.id,
+            submittedData: sd,
+            town: townDisplay,
+            state: stateDisplay,
+            type: typeDisplay,
+            shape: shapeDisplay,
+            color: colorDisplay,
+          });
           return {
             id: c.id,
             contributor_username: c.contributor_username ?? (c as { contributorUsername?: string }).contributorUsername ?? "",
-            display_name: String((c as { displayName?: string }).displayName ?? (c as { display_name?: string }).display_name ?? "").trim(),
-            state_display: c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "",
-            town_display: c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "",
-            shape_display:
-              c.shape_display ??
-              (c as { shapeDisplay?: string }).shapeDisplay ??
-              c.type_display ??
-              (c as { typeDisplay?: string }).typeDisplay ??
-              "",
-            color_display: String(
-              c.color_display
-                ?? (c as { colorDisplay?: string }).colorDisplay
-                ?? c.color
-                ?? (submittedData as { color?: string }).color
-                ?? "",
-            ),
+            presentation,
+            state_display: stateDisplay,
+            town_display: townDisplay,
+            shape_display: String(shapeDisplay),
+            color_display: colorDisplay,
             marking_id: c.marking_id ?? (c as { markingId?: number | null }).markingId ?? null,
             cover_id:
               c.cover_id ??
@@ -882,6 +917,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             isCover,
             status: String(c.status ?? "pending"),
             created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
+            updated_at: String(
+              c.updated_at ??
+                (c as { updatedAt?: string }).updatedAt ??
+                c.created_at ??
+                (c as { createdAt?: string }).createdAt ??
+                "",
+            ),
             review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
             image_url: resolveSubmissionImageUrl(c as Record<string, unknown>, submittedData as Record<string, unknown>),
             is_archived: Boolean(c.is_archived ?? (c as { isArchived?: boolean }).isArchived),
@@ -976,14 +1018,18 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Apply filters (mirror Catalog Search semantics on client side)
   const filteredSubmissions = useMemo(() => {
     return submissions.filter((submission) => {
-      // Text search (name + description, mirroring Catalog Search)
+      // Text search (title + displayed fields + description)
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
         const nameMatch = submission.name != null && String(submission.name).toLowerCase().includes(q);
+        const fieldMatch = submission.presentation.fields.some(
+          (field) =>
+            field.label.toLowerCase().includes(q) || field.value.toLowerCase().includes(q),
+        );
         const descriptionMatch =
           submission.description != null &&
           String(submission.description).toLowerCase().includes(q);
-        if (!nameMatch && !descriptionMatch) return false;
+        if (!nameMatch && !fieldMatch && !descriptionMatch) return false;
       }
 
       // Status filter (API uses "needs_revision"; filter value matches)
@@ -1660,55 +1706,19 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             <div className="flex items-start justify-between gap-2 mb-2">
                               <div className="flex items-center gap-2 flex-wrap min-w-0">
                                 <h3 className="font-heading text-xl font-semibold text-foreground">
-                                  {submission.name}
+                                  {submission.presentation.title}
                                 </h3>
+                                <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-xs">
+                                  {submission.presentation.entryKind}
+                                </Badge>
                               </div>
                               {getStatusBadge(submission.status)}
                             </div>
 
-                            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                            {submission.town && (
-                                <div>
-                                  <span className="text-muted-foreground">Town:</span>{" "}
-                                  <span className="text-foreground">{submission.town}</span>
-                                </div>
-                              )}
-                              {submission.state && (
-                                <div>
-                                  <span className="text-muted-foreground">State:</span>{" "}
-                                  <span className="text-foreground">{submission.state}</span>
-                                </div>
-                              )}
-                            </div>
-                            
-                            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                              {submission.dateRange && (
-                                <div>
-                                  <span className="text-muted-foreground">Date Seen:</span>{" "}
-                                  <span className="text-foreground">{submission.dateRange}</span>
-                                </div>
-                              )}
-                              {submission.size && (
-                                <div>
-                                  <span className="text-muted-foreground">Size:</span>{" "}
-                                  <span className="text-foreground">{submission.size}</span>
-                                </div>
-                              )}
-                              {submission.color && (
-                                <div>
-                                  <span className="text-muted-foreground">Color:</span>{" "}
-                                  <span className="text-foreground">{submission.color}</span>
-                                </div>
-                              )}
-                              {String(submission.status || "").toLowerCase() !== "draft" && (
-                                <div>
-                                  <span className="text-muted-foreground">Submitted:</span>{" "}
-                                  <span className="text-foreground">
-                                    {new Date(submission.created_at).toLocaleDateString()}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
+                            <ContributionSummaryFields
+                              presentation={submission.presentation}
+                              updatedAt={submission.updated_at}
+                            />
 
                             {submission.description && (
                               <p className="text-sm text-muted-foreground line-clamp-2 mt-2">
@@ -2422,13 +2432,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     )}
                   <ul className="space-y-3">
                     {editorHistoryItems.map((item) => {
-                      const title = [item.town_display, item.state_display].filter(Boolean).join(", ");
-                      const shapeStr = (item.shape_display || "").trim();
-                      const fallbackName =
-                        [title, shapeStr].filter((x) => x && String(x).trim().toLowerCase() !== "unknown").join(" -- ") ||
-                        title ||
-                        `Submission #${item.id}`;
-                      const displayLabel = item.display_name || fallbackName;
+                      const displayLabel = item.presentation.title;
                       const statusClassName =
                         item.status === "approved"
                           ? "bg-green-600 text-white hover:bg-green-600"
@@ -2474,9 +2478,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               </span>
                               <span className="text-muted-foreground text-sm">
                                 by {item.contributor_username}
-                                {" - "}
-                                {new Date(item.created_at).toLocaleDateString()}
                               </span>
+                              <ContributionSummaryFields
+                                presentation={item.presentation}
+                                updatedAt={item.updated_at}
+                                compact
+                              />
                               {isArchivedView && (
                                 <span className="text-xs text-muted-foreground block truncate">
                                   Archived
@@ -2490,6 +2497,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            <Badge variant="outline" className="rounded-full px-3 py-1 text-xs font-semibold">
+                              {item.presentation.entryKind}
+                            </Badge>
                             <Badge className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${statusClassName}`}>
                               {item.status === "needs_revision"
                                 ? "Needs Revision"

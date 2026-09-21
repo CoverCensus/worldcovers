@@ -12,6 +12,8 @@ import { formatDateSeen } from "@/lib/catalogRecordDisplay";
 import { EntryDetailLayout } from "@/components/entry-detail/EntryDetailLayout";
 import { EntryImageGalleryCard } from "@/components/entry-detail/EntryImageGalleryCard";
 import { EntryAssociatedThumbnailsCard } from "@/components/entry-detail/EntryAssociatedThumbnailsCard";
+import { MoveTargetPicker } from "@/components/entry-detail/MoveTargetPicker";
+import { compareMarkingTargets, describeMarkingTarget } from "@/lib/moveTargetDisplay";
 import { EntryRecordHistoryCard } from "@/components/entry-detail/EntryRecordHistoryCard";
 import { EntryCitationsCard, type EntryCitationItem } from "@/components/entry-detail/EntryCitationsCard";
 import { CoverRecordDetailFields } from "@/components/entry-detail/CoverRecordDetailFields";
@@ -68,8 +70,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { parseMarkingIdInput } from "@/lib/recordLinking";
+import { moveImageAndRefresh } from "@/lib/imageMoveRefresh";
 import { listCitationsForSubject } from "@/services/citations";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
+import { ENTRY_LABELS } from "@/labels/entry";
 import { SUBMISSION_LABELS } from "@/labels/submission";
 import { dashboardHrefForTab } from "@/lib/dashboardParams";
 import { catalogHref } from "@/lib/catalogParams";
@@ -176,7 +180,7 @@ const CoverDetailPage = () => {
   const [linkMarkingBusy, setLinkMarkingBusy] = useState(false);
   const [linkMarkingError, setLinkMarkingError] = useState<string | null>(null);
   const [moveImageIndex, setMoveImageIndex] = useState<number | null>(null);
-  const [moveImageTargetMarkingId, setMoveImageTargetMarkingId] = useState("");
+  const [moveImageTargetMarkingId, setMoveImageTargetMarkingId] = useState<number | null>(null);
   const [moveImageView, setMoveImageView] = useState("FULL");
   const [moveImageBusy, setMoveImageBusy] = useState(false);
   const [moveImageError, setMoveImageError] = useState<string | null>(null);
@@ -536,7 +540,7 @@ const CoverDetailPage = () => {
     if (coverPk == null || moveImageIndex == null) return;
     const image = images[moveImageIndex];
     if (!image || image.imageId <= 0) return;
-    const targetId = parseInt(moveImageTargetMarkingId, 10);
+    const targetId = moveImageTargetMarkingId;
     if (!Number.isFinite(targetId) || targetId <= 0) {
       setMoveImageError("Select a target marking.");
       return;
@@ -544,19 +548,41 @@ const CoverDetailPage = () => {
     setMoveImageBusy(true);
     setMoveImageError(null);
     try {
-      const res = await moveImageSubject(image.imageId, "MARKING", targetId, moveImageView);
-      if (res.ok === false) {
-        setMoveImageError(res.message);
+      const links = associatedMarkings.map((row) => row.link);
+      const result = await moveImageAndRefresh(
+        () => moveImageSubject(image.imageId, "MARKING", targetId, moveImageView),
+        () => getImagesForSubject({ subjectType: "COVER", subjectId: coverPk }),
+        () => loadAssociatedMarkingsForCover(links),
+      );
+      if (result.moved === false) {
+        setMoveImageError(result.message);
         return;
       }
-      toast({ title: "Image moved", description: "Image reassigned to the marking." });
       setMoveImageIndex(null);
-      const refreshed = await getImagesForSubject({
-        subjectType: "COVER",
-        subjectId: coverPk,
+      let refreshFailed = false;
+      if (result.source.ok === true) {
+        const refreshed = result.source.value;
+        setImages(refreshed);
+        setCurrent((previous) =>
+          Math.max(0, Math.min(previous, refreshed.length - 1)),
+        );
+      } else {
+        refreshFailed = true;
+      }
+      if (result.destination.ok === true) {
+        setAssociatedMarkings(result.destination.value);
+        setMarkingsLoadError(null);
+      } else {
+        refreshFailed = true;
+        setMarkingsLoadError("The image moved, but the marking previews could not refresh.");
+      }
+      toast({
+        title: "Image moved",
+        description: refreshFailed
+          ? "The image moved, but the page could not fully refresh. Reload to see the latest thumbnails."
+          : "Image reassigned to the marking.",
+        variant: refreshFailed ? "destructive" : "default",
       });
-      setImages(refreshed);
-      setCurrent((prev) => Math.max(0, Math.min(prev, refreshed.length - 1)));
     } finally {
       setMoveImageBusy(false);
     }
@@ -625,6 +651,18 @@ const CoverDetailPage = () => {
     });
   };
 
+  // issues.md 114 / Trello T38, applied to the cover screen on 2026-09-21.
+  // This picker had the identical defect the marking screen's did -- a bare
+  // `marking.code ?? \`Marking #${id}\`` -- and had simply not been reported.
+  // On woco.dev every sampled row at one post office had NO code at all.
+  const markingMoveTargets = useMemo(
+    () =>
+      associatedMarkings
+        .map(({ marking, defaultImageUrl }) => describeMarkingTarget(marking, defaultImageUrl))
+        .sort(compareMarkingTargets),
+    [associatedMarkings],
+  );
+
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col">
@@ -683,13 +721,11 @@ const CoverDetailPage = () => {
     <>
       <EntryDetailLayout
         onBack={handleBack}
+        title="Cover"
         leftColumn={
           <>
             <EntryImageGalleryCard
               images={galleryImages}
-              // Issue #138: the marking screen labels its image "Marking"; this
-              // is the other half of telling the two screens apart.
-              title="Cover"
               showSubjectBadge={false}
               carouselApi={api}
               setCarouselApi={setApi}
@@ -703,7 +739,7 @@ const CoverDetailPage = () => {
               carouselApi={api}
               currentIndex={current}
               // Issue #138: must not read the same as the marking screen's card.
-              title="Associated Cover Thumbnails"
+              title={ENTRY_LABELS.associatedThumbnails.cover}
               emptyMessage="No images linked to this cover yet."
               canReorder={canManageImages && galleryImages.length > 1}
               reorderingImages={reorderingImages}
@@ -716,7 +752,7 @@ const CoverDetailPage = () => {
                   ? (index) => {
                       setMoveImageIndex(index);
                       setMoveImageTargetMarkingId(
-                        String(associatedMarkings[0]?.marking.id ?? ""),
+                        associatedMarkings[0]?.marking.id ?? null,
                       );
                       setMoveImageView("FULL");
                       setMoveImageError(null);
@@ -791,6 +827,8 @@ const CoverDetailPage = () => {
                   date={datesText}
                   institutionallyOwned={institutionalText}
                   backstamp={backstampText}
+                  catalogCode={cover.code}
+                  showCatalogCode={isStaff}
                   submittedBy={cover.submitterName}
                   description={cover.description}
                 />
@@ -942,26 +980,18 @@ const CoverDetailPage = () => {
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1">
-              <Label htmlFor="move-img-marking-id">Target marking</Label>
-              <Select
-                value={moveImageTargetMarkingId}
-                onValueChange={(v) => {
-                  setMoveImageTargetMarkingId(v);
+              <MoveTargetPicker
+                targets={markingMoveTargets}
+                selectedId={moveImageTargetMarkingId}
+                onSelect={(id) => {
+                  setMoveImageTargetMarkingId(id);
                   setMoveImageError(null);
                 }}
                 disabled={moveImageBusy}
-              >
-                <SelectTrigger id="move-img-marking-id">
-                  <SelectValue placeholder="Select a marking…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {associatedMarkings.map(({ marking }) => (
-                    <SelectItem key={marking.id} value={String(marking.id)}>
-                      {marking.code ?? `Marking #${marking.id}`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                filterLabel="Target marking"
+                filterPlaceholder="Search by code, inscription, shape…"
+                emptyMessage="No markings match that search."
+              />
             </div>
             <div className="space-y-1">
               <Label htmlFor="move-img-marking-view">Image view</Label>
@@ -991,7 +1021,7 @@ const CoverDetailPage = () => {
             </Button>
             <Button
               onClick={() => void handleMoveImageToMarking()}
-              disabled={moveImageBusy || !moveImageTargetMarkingId}
+              disabled={moveImageBusy || moveImageTargetMarkingId == null}
             >
               {moveImageBusy ? (
                 <>

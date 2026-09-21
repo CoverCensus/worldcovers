@@ -36,6 +36,9 @@ which is exactly when you need it).
 | `ascc import` | Load an ASCC CSV bundle | `backend/common/management/commands/import_ascc_bundle.py` |
 | `ascc drop` | Delete one region's imported catalog data | `backend/common/management/commands/drop_ascc_state.py` |
 | `import_apmc_bundle` | Umbrella importer; delegates to ASCC today | `backend/common/management/commands/import_apmc_bundle.py` |
+| `import_vphc_reference` | Load VPHC counties, offices, and postmaster events | `backend/common/management/commands/import_vphc_reference.py` |
+| `apply_vphc_ledger` | Apply reviewed VPHC actions and queue marking contributions | `backend/common/management/commands/apply_vphc_ledger.py` |
+| `repair_vphc_rate` | Repair rates derived from VPHC drawing numbers | `backend/common/management/commands/repair_vphc_rate.py` |
 | `wipe_user_data` | Clear submission/version/recycle-bin data | `backend/common/management/commands/wipe_user_data.py` |
 | `drop_ascc_state` | Delete one state's imported catalog data | `backend/common/management/commands/drop_ascc_state.py` |
 | `consolidate_superseded_contributions` | Delete superseded non-draft contributions | `backend/common/management/commands/consolidate_superseded_contributions.py` |
@@ -368,6 +371,103 @@ Set a password without opening the Django shell.
 ```
 
 Expected exit code: `0`.
+
+## VPHC Commands
+
+These commands consume prepared VPHC artifacts. They do not extract the source
+workbook. The extraction and cross-examination scripts named in their source
+comments are external workspace tools, not entry points in this checkout.
+`import_apmc_bundle` currently delegates to ASCC; use the commands below for
+VPHC.
+
+Run from the repo root with the intended database in `mysql.cnf`. Replace
+`/path/to/vphc` with the prepared artifact directory and `ACTOR_ID` with an
+existing user's numeric ID. All three commands default to user ID 1 if
+`--actor` is omitted; choose the account that should receive audit credit.
+Expected exit code for each successful command is `0`.
+
+Before a write run against edited data, follow [BACKUP.md](BACKUP.md) to
+preserve the database and media together. A ledger log or `backup_auth` export
+does not contain a full copy of user contributions and catalog edits.
+
+### `import_vphc_reference`
+
+Load counties, post offices, postmasters, and appointment events before
+applying marking actions. Existing offices can receive population and county
+updates. The target needs the `USA-VA1` and `USA-WV1` regions.
+
+Required files below `--vphc-dir`:
+
+- `extract/t1_markings.csv`
+- `extract/t3_postmasters.csv`
+- `crossexam/post_offices_to_create.csv`
+
+```sh
+./woco import_vphc_reference --vphc-dir /path/to/vphc --actor ACTOR_ID --dry-run
+./woco import_vphc_reference --vphc-dir /path/to/vphc --actor ACTOR_ID
+```
+
+The dry run executes the database work in one transaction and rolls it back
+after reporting counts. Omitting `--dry-run` commits the reference load.
+
+### `apply_vphc_ledger`
+
+Apply a reviewed action ledger after the reference load. The target needs a
+`VPHC1` reference work and active collections for the states being processed.
+The default inputs are `crossexam/ledger/proposed.jsonl`,
+`crossexam/crosswalk.csv`, and scans under `extract/media/`.
+
+```sh
+./woco apply_vphc_ledger --vphc-dir /path/to/vphc --actor ACTOR_ID --dry-run
+./woco apply_vphc_ledger --vphc-dir /path/to/vphc --actor ACTOR_ID
+```
+
+Create and update actions normally produce pending contributions for editor
+review. The command can also attach scans and archive duplicate markings.
+It is not safe to replay a committed ledger as a general refresh: create
+actions can produce duplicate contributions. Check the applied log and current
+records before another run.
+
+Options:
+
+- `--only create,update,images,archive`: run a comma-separated subset of the
+  action groups. Omitting it runs all four.
+- `--ledger`, `--crosswalk`, `--applied-log`: paths relative to `--vphc-dir`.
+  The applied log defaults to `LEDGER.jsonl`. Use separate paths for a separate
+  data pass so its records do not mix with an earlier run.
+- `--auto-approve`: comma-separated verdict buckets to approve immediately.
+  The default is empty. Set it only when those buckets are approved for direct
+  publication.
+
+`--dry-run` rolls back database changes, skips scan copies, and does not
+append to the applied log. It can still write `crossexam/skipped.csv` with
+listings that could not be emitted. Review skip counts and that file. A write
+run copies media and appends applied actions to the log; those filesystem
+operations are not part of the database transaction.
+
+### `repair_vphc_rate`
+
+Repair VPHC RATEMARK contribution rates that came from a drawing number
+instead of the inscription. This edits payloads in place; do not rerun the
+ledger to perform this repair. Contributions without a `vphc` provenance key
+are excluded. Already-approved payloads are skipped by default.
+
+```sh
+./woco repair_vphc_rate --actor ACTOR_ID --dry-run --report /tmp/vphc-rates.csv
+./woco repair_vphc_rate --actor ACTOR_ID --expect COUNT --commit
+```
+
+Replace `COUNT` with the number of unapproved contribution rows reported by
+the dry run. `--expect` aborts if that count has changed; it does not count live
+catalog markings. Dry run is the default, and `--dry-run` overrides `--commit`.
+`--report` writes a CSV even in a dry run. A report-file error prints a warning
+but does not stop the repair.
+
+`--audit-live` also examines VPHC-cited RATEMARKs in the catalog. With
+`--commit`, it repairs those live rates too, so it is not a read-only option
+when combined with that flag. `--sync-approved` also updates already-approved
+contribution payloads; it requires `--audit-live` and a clean live-rate audit.
+Live marking repairs and contribution repairs use separate transactions.
 
 ## Internal Modules (Not Operator Entry Points)
 

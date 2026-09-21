@@ -351,13 +351,11 @@ class ImageSerializer(serializers.ModelSerializer):
             pass
 
         # Browsers sometimes omit or mislabel Content-Type on multipart parts.
-        if content_type not in {"image/png", "image/jpeg", "image/jpg", "image/tiff"}:
+        if content_type not in {"image/png", "image/jpeg", "image/jpg"}:
             if content[:8] == b"\x89PNG\r\n\x1a\n":
                 content_type = "image/png"
             elif content[:2] == b"\xff\xd8":
                 content_type = "image/jpeg"
-            elif content[:4] in (b"II*\x00", b"MM\x00*"):
-                content_type = "image/tiff"
             else:
                 content_type = ""
 
@@ -367,8 +365,6 @@ class ImageSerializer(serializers.ModelSerializer):
 
         if "png" in content_type:
             ext = "png"
-        elif "tiff" in content_type:
-            ext = "tiff"
         else:
             ext = "jpg"
 
@@ -1243,6 +1239,11 @@ def _submitted_cover_date_label(sd) -> str:
         if len(parts) >= 2 and granularity == "MONTH":
             month = _MONTH_LABELS.get(_submitted_cover_date_component({"m": parts[1]}, "m"))
             return "{}, {}".format(month, parts[0]) if month else legacy
+        if len(parts) >= 3 and granularity == "DAY":
+            month = _submitted_cover_date_component({"m": parts[1]}, "m")
+            day = _submitted_cover_date_component({"d": parts[2]}, "d")
+            if month in _MONTH_LABELS and day is not None:
+                return "{:02d}/{:02d}/{}".format(month, day, parts[0])
         return legacy
     year = _submitted_cover_date_component(sd, "cover_date_year")
     month = _submitted_cover_date_component(sd, "cover_date_month")
@@ -1424,13 +1425,10 @@ class ContributionListSerializer(serializers.ModelSerializer):
             type_code = str(sd.get("type") or "").strip().upper()
             type_label = cover_types.get(type_code, type_code or "Cover")
             date = _submitted_cover_date_label(sd)
-            parent = sd.get("parent_marking_id") or sd.get("marking_id")
-            # Issue #137: the identifying facts lead and the record type trails,
-            # so an editor scanning the dashboard reads "which town" before
-            # "which kind of record". Issue #135 is the same complaint: the town
-            # was not there at all. Both come from the parent marking. The draft
-            # keeps priority where it does carry a state (CoverEdit sends one
-            # when the route names it) -- that is what the submitter chose.
+            # Issue #137: identifying facts lead so an editor reads the town
+            # before the Cover type. Issue #135 is the same complaint: the town
+            # was not there at all. Both come from the parent Marking. Submitted
+            # location values keep priority when present.
             parent_town, parent_state = self._parent_location(obj)
             town = str(sd.get("town") or "").strip() or parent_town
             state = str(sd.get("state") or "").strip() or parent_state
@@ -1438,13 +1436,11 @@ class ContributionListSerializer(serializers.ModelSerializer):
             # An unresolvable parent leaves location empty and the label falls
             # back to the type-first form it had before #137. A draft whose
             # marking was deleted still has to render.
-            parts = [location, "Cover draft", type_label]
+            parts = [location, type_label]
             if date:
                 parts.append(date)
-            if parent not in (None, ""):
-                parts.append(f"Marking #{parent}")
             label = " - ".join([p for p in parts if p])
-            return label or f"Cover draft #{obj.id}"
+            return label or f"Submission #{obj.id}"
 
         town = (sd.get("town") or "").strip()
         state = (sd.get("state") or "").strip()

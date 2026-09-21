@@ -1,0 +1,4 @@
+interface:
+  display_name: "WorldCovers Sync Plan"
+  short_description: "Compare repo, docs, and Trello; plan updates"
+  default_prompt: "Use $worldcovers-sync-plan to review the current WorldCovers repo against README.md and ISSUE.md, then compare Trello and produce linked update plans without making changes."

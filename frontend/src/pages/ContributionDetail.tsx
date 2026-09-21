@@ -29,7 +29,7 @@ import { normalizeImageUrl } from "@/services/markings";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getDateFormats, type DateFormatOption } from "@/constants/markingEnums";
-import { isCoverContributionData } from "@/lib/contributionDisplay";
+import { entryKindForContribution, isCoverContributionData } from "@/lib/contributionDisplay";
 import CoverContributionDetail from "@/pages/CoverContributionDetail";
 import { CatalogRecordFields } from "@/components/CatalogRecordFields";
 import {
@@ -235,7 +235,7 @@ const ContributionDetail = () => {
       })
       .catch((err) => {
         if (!cancelled) {
-          setCatalogCodeError(err instanceof Error ? err.message : "Could not generate catalog code.");
+          setCatalogCodeError(err instanceof Error ? err.message : "Could not generate Catalog Marking code.");
         }
       })
       .finally(() => {
@@ -257,7 +257,7 @@ const ContributionDetail = () => {
       setCatalogCode(suggestion.catalogCode);
       return suggestion.catalogCode;
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not generate catalog code.";
+      const message = err instanceof Error ? err.message : "Could not generate Catalog Marking code.";
       setCatalogCodeError(message);
       throw err;
     } finally {
@@ -527,6 +527,13 @@ const ContributionDetail = () => {
               Back to Dashboard
             </Button>
             <div className="flex flex-wrap items-center justify-end gap-2">
+              {/* Ian, 2026-09-21: "I do not know if it is a cover he is
+                  submitting or a marking. Could it say which it is on the
+                  screen". Derived from the same predicate this page dispatches
+                  on, so the label and the screen cannot disagree. */}
+              <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-xs">
+                {entryKindForContribution(sd)}
+              </Badge>
               <Badge className={statusBadgeClassName}>{statusLabel}</Badge>
               {markingId != null && (
                 <Button variant="outline" size="sm" asChild>
@@ -645,7 +652,7 @@ const ContributionDetail = () => {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="contribution-catalog-code">Catalog code</Label>
+                      <Label htmlFor="contribution-catalog-code">Catalog Marking code</Label>
                       <Input
                         id="contribution-catalog-code"
                         value={catalogCode}
@@ -656,7 +663,7 @@ const ContributionDetail = () => {
                         onBlur={() => {
                           if (!catalogCode.trim()) void ensureCatalogCode();
                         }}
-                        placeholder={catalogCodeLoading ? "Generating..." : "Catalog code"}
+                        placeholder={catalogCodeLoading ? "Generating..." : "Catalog Marking code"}
                         disabled={submitting || catalogCodeLoading}
                       />
                       {catalogCodeError ? (

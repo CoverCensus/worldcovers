@@ -14,12 +14,16 @@ so image bytes live on disk, not in the database. A SQL dump contains the
 yields a complete-looking catalog in which every image link is broken.** Every
 snapshot carries both halves; `worldcovers-restore` restores both.
 
-**2. Dumps are not engine-portable.** woco.dev runs MySQL 8.0.46, prod runs
-MariaDB 10.11, and Django emits different DDL per engine from the same
-migrations. A MariaDB dump aborts partway through a MySQL restore at `uuid`
-columns and `longtext ... CHECK (json_valid(...))` — see `ISSUE-2026-08-10-01`.
-`worldcovers-restore` refuses a family mismatch up front rather than failing
-halfway.
+**2. Check the dump engine and version.** Staging migrated from MySQL to
+MariaDB LTS on 2026-09-13, as confirmed by the operator. Production also uses
+MariaDB. See [database versions](DEPLOY.md#database-versions) for the recorded
+versions and upgrade plans.
+
+Older staging snapshots still contain MySQL dumps. Django can emit different
+DDL for the two server families, including UUID and JSON columns; see
+`ISSUE-2026-08-10-01`. `worldcovers-restore` refuses a family mismatch before
+import. Keep that check. A matching family does not prove that a dump from a
+newer release will load into an older release.
 
 ## Layout
 
@@ -74,7 +78,7 @@ sudo -u wocod /usr/local/sbin/worldcovers-restore \
 The live path stops gunicorn, verifies `SHA256SUMS`, checks the engine family,
 drops and reloads the database, asserts every row count in the manifest, moves
 the existing media tree aside as `media.pre-restore-<ts>` (a same-filesystem
-rename — instant and reversible), restores media, and restarts.
+rename -- instant and reversible), restores media, and restarts.
 
 **Row-count drift is reported, not fatal.** The manifest census is taken from
 the live database a few seconds before `mysqldump`'s `START TRANSACTION`, so a
@@ -101,9 +105,11 @@ change to the dump flags.
 `Image` row must resolve to a file whose sha256 matches. That is the half a
 database restore never exercises.
 
-woco.dev rehearses trivially because this workstation runs the same MySQL
-8.0.46. **Prod does not** — its MariaDB dumps cannot load here, so prod
-rehearsal needs the standalone-tarball recipe in `backups/2026-08-07/README.md`.
+The local workspace now uses MariaDB 12.2.2. Use the snapshot manifest to
+check the source engine and version before a rehearsal. Older MySQL staging
+snapshots need a MySQL restore target. New MariaDB LTS staging dumps must be
+checked for compatibility with the local version. The 2026-08-15 rehearsal
+below used the old MySQL setup; it does not verify the new MariaDB setup.
 
 > The workstation needs the same grant the installer applies on the box
 > (`GRANT ALL ON \`worldcovers\_%\`.*`), or pass
@@ -113,7 +119,7 @@ rehearsal needs the standalone-tarball recipe in `backups/2026-08-07/README.md`.
 
 | Date | Snapshot | Result | Notes |
 |---|---|---|---|
-| 2026-08-15 | woco-dev/2026-08-15T165404Z | **PASS** | 43 tables, census exact. Media: 2,939 image rows over 2,567 distinct files — 0 missing, 0 corrupt, 0 size drift. First time the media half has ever been restored. |
+| 2026-08-15 | woco-dev/2026-08-15T165404Z | **PASS** | 43 tables, census exact. Media: 2,939 image rows over 2,567 distinct files -- 0 missing, 0 corrupt, 0 size drift. First time the media half has ever been restored. |
 
 ## Monitoring
 
@@ -121,7 +127,7 @@ Five layers, because four of them have a blind spot.
 
 | Layer | Catches | Blind to |
 |---|---|---|
-| `OnFailure=` → journal + `ALERT` | the script ran and failed | the timer never firing; a dead box |
+| `OnFailure=` -> journal + `ALERT` | the script ran and failed | the timer never firing; a dead box |
 | `STATUS.json` / `LAST_SUCCESS` age | missed runs, however caused | nobody reading it |
 | MOTD banner at >36 h | anything, on your next login | not logging in |
 | `pull_backups.sh` non-zero exit | staleness on either host, weekly | the workstation being off |
@@ -129,7 +135,7 @@ Five layers, because four of them have a blind spot.
 
 Neither box has an MTA (`msmtp`, `mail`, `sendmail` all absent), so email is not
 an option without installing one. Only the dead-man's switch is genuinely
-out-of-band — everything else needs someone to show up. To enable:
+out-of-band -- everything else needs someone to show up. To enable:
 
 ```sh
 echo 'HEALTHCHECK_URL=https://hc-ping.com/<uuid>' > /etc/worldcovers-backup.env
@@ -138,7 +144,7 @@ chmod 640 /etc/worldcovers-backup.env && chown root:wocod /etc/worldcovers-backu
 
 ## Retention
 
-By rule, not by promotion — stateless and idempotent, so a multi-day outage
+By rule, not by promotion -- stateless and idempotent, so a multi-day outage
 cannot produce a missing weekly or a double-promoted daily:
 
 1. keep everything from the last 7 days
@@ -153,7 +159,7 @@ bad night cannot rotate away good snapshots.
 Media snapshots are hardlinked against the **previous snapshot** (never the live
 tree, so corrupting a live file cannot reach back into a backup). Measured on
 woco.dev: two snapshots that would be 2.52 GB as independent copies occupy
-1.26 GB — the second cost 2.8 MB.
+1.26 GB -- the second cost 2.8 MB.
 
 ## Protected destructive paths
 
@@ -166,7 +172,7 @@ tagged snapshot first and **refuse to run without one**
 
 - **`sudo -u wocod` inherits the caller's working directory.** From `/home/reese`
   (0750), `wocod` cannot read it and GNU `find` aborts *after* doing its work.
-  Both scripts `cd /` at startup. The systemd unit was never affected — it sets
+  Both scripts `cd /` at startup. The systemd unit was never affected -- it sets
   `WorkingDirectory=`.
 - **SFTP is disabled on both boxes.** `scp` fails with `subsystem request failed
   on channel 0`. Use `rsync`, `ssh host 'cat f' >`, or `scp -O`.

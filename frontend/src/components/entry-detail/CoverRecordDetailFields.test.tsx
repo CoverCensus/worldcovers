@@ -36,3 +36,31 @@ describe("CoverRecordDetailFields — description row", () => {
     expect(screen.queryByText("Description:")).toBeNull();
   });
 });
+
+describe("CoverRecordDetailFields - catalog code", () => {
+  it("shows the Catalog Cover code to staff", () => {
+    render(
+      <CoverRecordDetailFields
+        {...base}
+        catalogCode="APMC-VA-C0001"
+        showCatalogCode
+      />,
+    );
+    expect(screen.getByText("Catalog Cover code:")).toBeTruthy();
+    expect(screen.getByText("APMC-VA-C0001")).toBeTruthy();
+  });
+
+  it("does not show the code without staff visibility", () => {
+    render(
+      <CoverRecordDetailFields {...base} catalogCode="APMC-VA-C0001" />,
+    );
+    expect(screen.queryByText("Catalog Cover code:")).toBeNull();
+  });
+
+  it("does not show a blank code", () => {
+    render(
+      <CoverRecordDetailFields {...base} catalogCode=" " showCatalogCode />,
+    );
+    expect(screen.queryByText("Catalog Cover code:")).toBeNull();
+  });
+});

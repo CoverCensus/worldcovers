@@ -25,14 +25,15 @@ export interface ImageDimensions {
 
 export type ImageShape = "cover-like" | "marking-like" | "indeterminate";
 
-/** Landscape enough to read as a cover rather than a marking closeup. */
+/** Rectangular enough to read as a cover rather than a marking closeup. */
 export const COVER_MIN_ASPECT = 1.25;
-/** Cover scans are big; marking closeups are cropped small. 0.6 megapixels. */
+/** Large rectangular images can show a Cover at many aspect ratios. */
 export const COVER_MIN_PIXELS = 600_000;
-/**
- * Below this a landscape image is too small to be a cover scan -- it is a
- * cropped marking that simply happens to be wide. 0.3 megapixels.
- */
+/** Smaller images with an envelope-like shape can still show a whole Cover. */
+export const SMALL_COVER_MIN_ASPECT = 1.75;
+export const SMALL_COVER_MAX_ASPECT = 3;
+export const SMALL_COVER_MIN_PIXELS = 150_000;
+/** Small, square images are likely to be cropped Markings. */
 export const MARKING_MAX_PIXELS = 300_000;
 /** Wider or taller than this and "square-ish" no longer describes it. */
 export const MARKING_MAX_ASPECT = 1.25;
@@ -48,9 +49,16 @@ export function classifyImageShape({ width, height }: ImageDimensions): ImageSha
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     return "indeterminate";
   }
-  const aspect = width / height;
+  // Phone cameras and EXIF rotation can report the same Cover as either
+  // landscape or portrait. Classification must not depend on orientation.
+  const aspect = Math.max(width, height) / Math.min(width, height);
   const pixels = width * height;
-  if (aspect >= COVER_MIN_ASPECT && pixels >= COVER_MIN_PIXELS) {
+  const largeCover = aspect >= COVER_MIN_ASPECT && pixels >= COVER_MIN_PIXELS;
+  const smallEnvelope =
+    aspect >= SMALL_COVER_MIN_ASPECT &&
+    aspect <= SMALL_COVER_MAX_ASPECT &&
+    pixels >= SMALL_COVER_MIN_PIXELS;
+  if (largeCover || smallEnvelope) {
     return "cover-like";
   }
   if (aspect < MARKING_MAX_ASPECT && pixels <= MARKING_MAX_PIXELS) {
@@ -77,8 +85,7 @@ export function looksLikeWrongKind(
  * Read a selected file's natural dimensions in the browser.
  *
  * Resolves to null rather than rejecting when the image cannot be decoded: a
- * failed measurement must never block an upload the server would have accepted
- * (TIFF, for one, is an allowed upload type that most browsers cannot render).
+ * failed measurement must never block an upload the server would have accepted.
  */
 export function measureImageFile(file: Blob): Promise<ImageDimensions | null> {
   return new Promise((resolve) => {

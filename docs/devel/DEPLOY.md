@@ -3,12 +3,14 @@
 This document describes the secure hosted deploy flow for WorldCovers.
 
 WorldCovers hosted deployments target Ubuntu 24.04 LTS servers. The deploy
-pipeline assumes systemd, nginx, MySQL 8, Node 22, uv, and Python 3.13 on a
+pipeline assumes systemd, nginx, MariaDB, Node 22, uv, and Python 3.13 on a
 host laid out as described below. `deploy/provision.sh` is the supported path
 for creating that host profile; it is not a generic Linux provisioning script.
 
 Source of truth:
 
+- `.github/workflows/verify.yml`: shared frontend and backend checks
+- `.github/workflows/pr-checks.yml`: verification on pull requests
 - `.github/workflows/build-and-deploy.yml`: staging deploy to `woco.dev`
 - `.github/workflows/deploy-prod.yml`: production deploy to `hellowoco.app`
 - `deploy/provision.sh`: one-time Ubuntu 24.04 root host build (see below)
@@ -16,24 +18,47 @@ Source of truth:
 - `deploy/worldcovers.service`: gunicorn systemd service definition
 - `deploy/worldcovers-apply-unit.sh`: staging-only root-owned unit helper
 
+## Database Versions
+
+MariaDB is the intended server family for every environment. The versions are
+not yet aligned. Status recorded on 2026-09-13:
+
+| Environment | Current evidence | Planned change |
+|---|---|---|
+| CI | Staging deploys and PRs targeting `staging` use `mariadb:12.3`. Production deploys and other PRs use `mariadb:10.11`. | Update production verification with its server upgrade. |
+| Local workspace | MariaDB 12.2.2 was observed locally; setup does not enforce a release series. | No local upgrade has been made as part of this work. |
+| Staging, `woco.dev` | Migration from MySQL to MariaDB LTS completed successfully, confirmed by the operator. The migration procedure targeted 12.3. | Align provisioning with the selected LTS series. |
+| Production, `hellowoco.app` | MariaDB was reported; prior deployment records give 10.11.14. | A separate upgrade is planned. Completion is not confirmed. |
+
+Provisioning installs MariaDB server, client, and development packages from
+the host's configured apt repositories. It does not pin a release series or
+configure the MariaDB 12.3 repository. It stops if an installed MySQL server
+is detected. App deployment does not upgrade the database server.
+
+The staging migration used a dump and reload into a fresh MariaDB data
+directory, with the existing Linode server snapshot available for rollback.
+Older staging backups still contain MySQL dumps. Keep the restore engine
+checks when handling those dumps; the successful migration does not make
+old backups directly compatible with MariaDB.
+
 ## Provisioning vs Deploying
 
 Two scripts, two distinct jobs. Do not confuse them:
 
 - `deploy/provision.sh` -- **build the host, once, as root.** Installs system
-  packages (nginx, MySQL, Node, certbot, build tools), creates the `wocod`
-  service user, installs uv/Python, creates the MySQL database and user,
+  packages (nginx, MariaDB, Node, certbot, build tools), creates the `wocod`
+  service user, installs uv/Python, creates the MariaDB database and user,
   writes `mysql.cnf` and `backend/.env` (with generated secrets), and
   installs the systemd unit, sudoers drop-in, nginx site, and firewall. It
   finishes by calling `deploy.sh` once. It is idempotent. Use it only for
   first-time host provisioning or deliberate host rebuilds.
 - `deploy/deploy.sh` -- **build the app, every release, as `wocod`
   (unprivileged).** Only `uv sync`, migrate, frontend build, collectstatic.
-  No apt, no user creation, no MySQL, no nginx, no root. This is what CI runs
+  No apt, no user creation, no MariaDB, no nginx, no root. This is what CI runs
   on every deploy, and what `./woco setup prod` aliases.
 
 The privilege boundary is deliberate: per-release deploys never need root, so
-a compromised CI key cannot touch the OS, MySQL, or nginx. Provisioning is a
+a compromised CI key cannot touch the OS, MariaDB, or nginx. Provisioning is a
 separate, rare, root-only event.
 
 ## Provisioning A Fresh Host
@@ -96,14 +121,17 @@ Expected host layout:
 
 ## GitHub Actions Deploy Flow
 
-Build job on both branches:
+Pull requests and both deployment branches call `verify.yml`. Its frontend
+job runs the fingerprint scan, dependency audit, lint, type checks, tests,
+and build. Its backend job runs the tools pytest suite, Django system checks,
+and the `common` test suite. The shared workflow accepts a `mariadb-version`
+input, which defaults to `10.11` for production. Staging passes `12.3`; PRs
+targeting `staging` use the same version. See
+[BUILD.md](BUILD.md#verification) for local commands.
 
-```sh
-bash tools/fingerprint.sh
-uv sync --no-dev --frozen
-cd frontend && npm ci && npm run build
-uv run python backend/manage.py check
-```
+Both deploy jobs require verification to pass before they connect to the
+host. Pushes to `staging` deploy to `woco.dev`; pushes to `main` deploy to
+`hellowoco.app`. Both workflows also support manual dispatch.
 
 Staging deploy over SSH as `wocod`:
 
@@ -132,6 +160,10 @@ sudo -n /bin/systemctl start worldcovers
 Production deploy fails before stopping the service if the checked-in unit file
 differs from the installed unit. A root operator must review and apply that
 change manually.
+
+Both workflows install an EXIT trap before stopping the app. If a later
+deploy step fails, the trap attempts to start the service again. It does not
+roll back code or database migrations.
 
 ## What deploy/deploy.sh Does
 

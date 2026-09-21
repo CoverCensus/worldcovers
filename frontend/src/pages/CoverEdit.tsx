@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { sourceMarkingImageFromState } from "@/lib/coverFromImageHandoff";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -31,8 +32,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
+import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
 import { CoverReviewBanner } from "@/components/CoverReviewBanner";
 import { looksLikeWrongKind, measureImageFile } from "@/lib/imageShape";
+import { isBelowPreferredImageDpi, measureImageDpi } from "@/lib/imageResolution";
 import { COVER_SUBMISSION_GUIDELINES } from "@/labels/guidelines";
 import { isCoverContributionData } from "@/lib/contributionDisplay";
 import {
@@ -109,7 +112,7 @@ const DEFAULT_COVER_TYPE = "FL";
 const EMPTY_COVER_DATE: PartialDateInput = { unknown: false, year: "", month: "", day: "" };
 
 const MAX_IMAGE_SIZE_MB = 100;
-const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/tiff"];
+const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg"];
 const PAGE_NUMBER_RE = /^[A-Za-z0-9][A-Za-z0-9\s\-.,:;()/#]*$/;
 
 function formatAxiosError(err: unknown): string {
@@ -307,10 +310,14 @@ export default function CoverEdit() {
   // cover scan (issue #76). Keyed rather than flagged on the item so removing
   // an image drops it from the count for free.
   const [markingLikeImageKeys, setMarkingLikeImageKeys] = useState<string[]>([]);
-  const [wrongImageKindAcknowledged, setWrongImageKindAcknowledged] = useState(false);
+  const [lowResolutionImageKeys, setLowResolutionImageKeys] = useState<string[]>([]);
   const markingLikeImageCount = useMemo(
     () => gallery.filter((item) => markingLikeImageKeys.includes(item.key)).length,
     [gallery, markingLikeImageKeys],
+  );
+  const lowResolutionImageCount = useMemo(
+    () => gallery.filter((item) => lowResolutionImageKeys.includes(item.key)).length,
+    [gallery, lowResolutionImageKeys],
   );
 
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -565,6 +572,57 @@ export default function CoverEdit() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coverId]);
 
+  /**
+   * "Create cover from this image" (issues.md 167 / Trello T37).
+   *
+   * The marking screen sends an image descriptor in router state. It is shown
+   * as a CARRIED-OVER image, not re-uploaded: the bytes already exist on the
+   * server, and uploading a copy would put a second file on disk and a second
+   * row on the cover for one picture.
+   *
+   * So the form sends no file for it -- only `source_marking_image_id`. On
+   * approval the backend repoints that one existing Image to the new cover,
+   * which is also what removes it from the marking's thumbnails. One row, one
+   * file, no duplicate, and no delete (issues.md 113: destroy drops the row and
+   * leaves the file, with no reaper).
+   *
+   * An `existing` gallery item satisfies the "at least one image" rule and
+   * appends nothing to the FormData, which is exactly the behaviour wanted.
+   */
+  useEffect(() => {
+    if (mode !== "create") return;
+    const source = sourceMarkingImageFromState(location.state);
+    if (!source || seededImageRef.current === source.imageId) return;
+    seededImageRef.current = source.imageId;
+
+    setGallery((prev) =>
+      prev.length > 0
+        ? prev
+        : [
+            {
+              kind: "existing" as const,
+              key: normalizeImageUrl(source.imageUrl),
+              img: {
+                imageId: source.imageId,
+                subjectType: "MARKING",
+                subjectId: markingId ?? 0,
+                imageUrl: source.imageUrl,
+                imageView: "FRONT",
+                originalFilename: source.originalFilename ?? "",
+                storageFilename: source.storageFilename ?? "",
+                imageDescription: "",
+                isTracing: false,
+                displayOrder: 0,
+                imageWidth: 0,
+                imageHeight: 0,
+              },
+            },
+          ],
+    );
+  }, [mode, location.state, markingId]);
+
+  /** Guards against re-seeding when the effect re-runs. */
+  const seededImageRef = useRef<number | null>(null);
   const returnPath = () => {
     const from = (location.state as { from?: string } | null)?.from;
     if (from) return from;
@@ -615,6 +673,12 @@ export default function CoverEdit() {
       void measureImageFile(upload.file).then((dimensions) => {
         if (!dimensions || !looksLikeWrongKind(dimensions, "COVER")) return;
         setMarkingLikeImageKeys((prev) =>
+          prev.includes(key) ? prev : [...prev, key],
+        );
+      });
+      void measureImageDpi(upload.file).then((dpi) => {
+        if (!isBelowPreferredImageDpi(dpi)) return;
+        setLowResolutionImageKeys((prev) =>
           prev.includes(key) ? prev : [...prev, key],
         );
       });
@@ -723,12 +787,6 @@ export default function CoverEdit() {
     const imageCount = gallery.length;
     if (imageCount < 1 && !noCoverImage) {
       errors.images = "Add at least one cover image or confirm no image is available.";
-    } else if (markingLikeImageCount > 0 && !wrongImageKindAcknowledged) {
-      // Cleared by ticking the acknowledgement in WrongImageKindWarning or by
-      // removing the image -- never a hard block (issue #76). Unreachable when
-      // the gallery is empty, so the no-image opt-out above always wins.
-      errors.images =
-        "Confirm the highlighted image is correct, or remove it, before submitting.";
     }
 
     for (const work of selectedReferenceWorks) {
@@ -841,6 +899,12 @@ export default function CoverEdit() {
       }
       form.append("parent_marking_id", String(markingId));
       form.append("marking_id", String(markingId));
+      // issues.md 167: when this cover is approved, repoint THIS existing image
+      // to it instead of creating a second copy, and the marking's gallery
+      // loses it for free. Never a delete -- perform_destroy drops the row and
+      // leaves the file, with no reaper (issues.md 113).
+      const seeded = mode === "create" ? sourceMarkingImageFromState(location.state) : null;
+      if (seeded) form.append("source_marking_image_id", String(seeded.imageId));
       if (type.trim()) form.append("type", type.trim().toUpperCase());
       if (coverDate.unknown) {
         form.append("cover_date_unknown", "true");
@@ -1206,7 +1270,7 @@ export default function CoverEdit() {
                         <div className="pointer-events-none flex flex-col items-center gap-2 text-center select-none">
                           <Upload className="h-10 w-10 text-muted-foreground" aria-hidden />
                           <p className="text-sm text-muted-foreground">
-                            Click or drag images here (PNG, JPG, TIFF -- max {MAX_IMAGE_SIZE_MB}MB each).
+                            Click or drag images here (PNG or JPG -- max {MAX_IMAGE_SIZE_MB}MB each).
                           </p>
                         </div>
 
@@ -1328,9 +1392,8 @@ export default function CoverEdit() {
                       <WrongImageKindWarning
                         expected="COVER"
                         count={markingLikeImageCount}
-                        acknowledged={wrongImageKindAcknowledged}
-                        onAcknowledgedChange={setWrongImageKindAcknowledged}
                       />
+                      <LowResolutionImageWarning count={lowResolutionImageCount} />
                     </div>
 
                     <div className="space-y-3 pt-1">

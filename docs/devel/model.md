@@ -2,9 +2,13 @@
 
 ## Summary
 
-This document defines the structural vocabulary for data accessible through WorldCovers. Fifteen tables describe the philatelic domain's persistent state. `markings` is the central entity - the catalog entry itself - unifying town markings, rate markings, and auxiliary markings under a single type discriminator. Each row in `markings` carries the authoritative catalog text, the physical inscription of the device, and a reference to a row in `post_offices`, whose jurisdictional history is recorded in `post_office_regions` against a time-bounded `regions` hierarchy. `covers` are observations of markings, linked through the `cover_markings` junction, which also records per-observation positional context and review state. Marking classification is represented through two primary editorial dimensions: `shapes` and `letterings`. Both remain provisional editorial vocabularies: their current records preserve catalog usage patterns and known inconsistencies, and therefore do not yet constitute fully orthogonal or exhaustively normalized taxonomies. Curatorial responsibility is expressed through `collections`, each of which wraps exactly one region and serves as the routing target for contributions submitted within that region. Two junction tables resolve the document's many-to-many associations: `cover_markings` (covers to markings) and `post_office_regions` (post offices to regions). The latter exists because a post office is a fixed geographic place whose political jurisdiction can change over time; a marking's effective region context is derived by intersecting the post office's region associations with the marking's aggregated `dates_seen` (both those attached directly to the marking and those attached to its associated covers). System-internal tables (contributions, submission transactions, version snapshots, recycle-bin sidecars, FAQ entries, and role assignments) are intentionally not modeled in this document; they live alongside the domain tables in `backend/common/`.
+This document defines the structural vocabulary for data accessible through WorldCovers. Seventeen tables describe the philatelic domain's persistent state. `markings` is the central entity - the catalog entry itself - unifying town markings, rate markings, and auxiliary markings under a single type discriminator. Each row in `markings` carries the authoritative catalog text, the physical inscription of the device, and a reference to a row in `post_offices`, whose jurisdictional history is recorded in `post_office_regions` against a time-bounded `regions` hierarchy. `covers` are observations of markings, linked through the `cover_markings` junction, which also records per-observation positional context and review state. Marking classification is represented through two primary editorial dimensions: `shapes` and `letterings`. Both remain provisional editorial vocabularies: their current records preserve catalog usage patterns and known inconsistencies, and therefore do not yet constitute fully orthogonal or exhaustively normalized taxonomies. Curatorial responsibility is expressed through `collections`, each of which wraps exactly one region and serves as the routing target for contributions submitted within that region. Two junction tables resolve the document's many-to-many associations: `cover_markings` (covers to markings) and `post_office_regions` (post offices to regions). The latter exists because a post office is a fixed geographic place whose political jurisdiction can change over time; a marking's effective region context is derived by intersecting the post office's region associations with the marking's aggregated `dates_seen` (both those attached directly to the marking and those attached to its associated covers). Postmasters and their appointment events provide the recorded personnel history of each office; inferred service spans are for display only. System-internal tables (contributions, submission transactions, version snapshots, recycle-bin sidecars, FAQ entries, and role assignments) are intentionally not modeled in this document; they live alongside the domain tables in `backend/common/`.
 
 ## Domain Tables
+
+`postmasters` and `postmaster_tenures` below name the domain concepts. Their
+Django models are `Postmaster` and `PostmasterTenure`; their SQL table names
+are `postmaster` and `postmaster_tenure`.
 
 ### citations
 
@@ -333,6 +337,7 @@ A postal facility identified as a fixed geographic place. Its political jurisdic
 
 * Associated with one or more regions (via post_office_regions).  
 * Referenced by zero or more rows in markings.
+* Has zero or more appointment or office events in postmaster_tenures.
 
 ### post_office_regions
 
@@ -355,6 +360,60 @@ Junction linking a post office to a region under whose jurisdiction it operated.
 
 * References exactly one post office.  
 * References exactly one region.
+
+### postmasters
+
+A person named in a post office appointment record. The person and their
+appointment events are separate so one person can serve at more than one
+office or return to the same office.
+
+*Fields:*
+
+* name - Name as printed in the source.
+* sort_name - Surname-first form used for ordering and matching.
+
+*Invariants:*
+
+* Neither name nor sort_name has a database uniqueness constraint. Matching
+  names alone does not establish that two records refer to the same person.
+
+*Relationships:*
+
+* Referenced by zero or more postmaster_tenures events.
+
+### postmaster_tenures
+
+An appointment or office event, not a complete term of service.
+
+*Fields:*
+
+* tenure_id - Event identifier.
+* post_office_id - Office to which the event applies.
+* postmaster_id (nullable) - Person named in the event. An office closure or
+  other office-level event can have no person.
+* event - One of appointment, discontinued, reappointment, or unknown.
+* date_appointed (nullable) - Event date; null when no usable date is recorded.
+* date_appointed_granularity (nullable) - DAY, MONTH, or YEAR precision from
+  the source. Interpret the date together with this field.
+* source_ref - Source cell locator, such as `T3:r15904`.
+* rules_version (nullable) - Version of the extraction rules used for the row.
+
+*Invariants:*
+
+* Each event references exactly one post office and zero or one postmaster.
+* No service end date is stored. A displayed end is an inference from a later
+  event at the same office, not a date stated by the source.
+* For display, a later appointment, office closure, or named event ends the
+  preceding term. A reappointment without a named person does not end it.
+* Displayed terms use years. Named events with no usable date remain visible
+  without a guessed place in the sequence. An open end means there is no later
+  terminating record; it does not assert that the person still holds office.
+* Inferred ends stay in the display layer and are not added to API event data.
+
+*Relationships:*
+
+* References exactly one post office.
+* References zero or one postmaster.
 
 ### reference_works
 
@@ -555,6 +614,23 @@ int post_office_id FK
 int region_id FK  
 }
 
+postmasters {
+int id PK
+string name
+string sort_name
+}
+
+postmaster_tenures {
+int tenure_id PK
+int post_office_id FK
+int postmaster_id FK
+string event
+date date_appointed
+string date_appointed_granularity
+string source_ref
+int rules_version
+}
+
 reference_works {  
 int id PK  
 string code  
@@ -603,6 +679,8 @@ regions o|--o{ regions : "contains"
 post_offices ||--|{ post_office_regions : "associated"  
 regions ||--|{ post_office_regions : "associated"  
 post_offices ||--o{ markings : "operates"  
+post_offices ||--o{ postmaster_tenures : "records events"
+postmasters o|--o{ postmaster_tenures : "named in"
 regions ||--o| collections : "curated as"
 
 ```
