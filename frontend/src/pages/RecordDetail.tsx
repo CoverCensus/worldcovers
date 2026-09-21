@@ -32,6 +32,14 @@ import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
 import { MarkingFieldsDisplay } from "@/components/MarkingFieldsDisplay";
 import { ThumbnailImageActions } from "@/components/entry-detail/ThumbnailImageActions";
 import { MoveTargetPicker } from "@/components/entry-detail/MoveTargetPicker";
+import { CoverFromImagePrompt } from "@/components/entry-detail/CoverFromImagePrompt";
+import { CreateCoverFromImageForm } from "@/components/entry-detail/CreateCoverFromImageForm";
+import {
+  coverLikeMarkingImages,
+  isLastMarkingImage,
+} from "@/lib/coverLikeMarkingImages";
+import { createCoverFromMarkingImage } from "@/lib/coverFromMarkingImage";
+import { type PartialDateInput } from "@/lib/partialDate";
 import {
   compareMarkingTargets,
   describeCoverTarget,
@@ -46,6 +54,7 @@ import {
   getMarkingChangelog,
   loadAssociatedCoversForMarking,
   moveImageSubject,
+  postCoverMarkingReview,
   normalizeImageUrl,
   primaryRegions,
   regionsDisplay,
@@ -88,7 +97,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { createCoverMarking, getCoverById } from "@/services/covers";
+import {
+  createCover,
+  createCoverDate,
+  createCoverMarking,
+  getCoverById,
+} from "@/services/covers";
 import { parseCoverIdInput } from "@/lib/recordLinking";
 import { moveImageAndRefresh } from "@/lib/imageMoveRefresh";
 import { readVphcProvenance } from "@/lib/vphcProvenance";
@@ -356,6 +370,19 @@ const RecordDetail = () => {
   // half of the crop -> reattach workflow for scans that hold two devices.
   const [moveToMarkingImg, setMoveToMarkingImg] = useState<MarkingImage | null>(null);
   const [moveMarkingTargetId, setMoveMarkingTargetId] = useState<number | null>(null);
+
+  // issues.md 167 / Trello T37: create a cover from a marking image.
+  const [createCoverImg, setCreateCoverImg] = useState<MarkingImage | null>(null);
+  const [createCoverDateInput, setCreateCoverDateInput] = useState<PartialDateInput>({
+    unknown: false,
+    year: "",
+    month: "",
+    day: "",
+  });
+  const [createCoverBackstamp, setCreateCoverBackstamp] = useState(false);
+  const [createCoverView, setCreateCoverView] = useState("FRONT");
+  const [createCoverBusy, setCreateCoverBusy] = useState(false);
+  const [createCoverError, setCreateCoverError] = useState<string | null>(null);
   const [moveMarkingView, setMoveMarkingView] = useState("FULL");
   const [moveMarkingCandidates, setMoveMarkingCandidates] = useState<MarkingRecord[]>([]);
   // Own busy/error pair rather than sharing the move-to-cover one: they are
@@ -867,6 +894,11 @@ const RecordDetail = () => {
   // -markings hook; aliased rather than recomputed so the two cannot drift.
   const isStaff = userIsStaff;
 
+  // Images on this marking whose shape reads as a whole cover. Reuses the
+  // upload-form classifier over stored dimensions rather than a second
+  // heuristic (issues.md 167 / Trello T37).
+  const coverLikeImages = coverLikeMarkingImages(record.images);
+
 
   // Record History display rule: collapsed by default we show the three most
   // recent events; when expanded we cap at the 10 newest events. Backend
@@ -946,6 +978,66 @@ const RecordDetail = () => {
   // (issue #48: v1 attached every cover upload to the marking). Target list
   // is restricted to covers already linked to this marking so images can't
   // be scattered onto unrelated records from here.
+  // issues.md 167 / Trello T37. Ian: "all is needed is the date and then it
+  // creates the cover, moves the cover image and clears it from Marking
+  // Thumbails."
+  //
+  // The five-call sequence and its failure policy live in
+  // lib/coverFromMarkingImage so they can be tested without React; this only
+  // binds the services and applies the outcome. The endpoints are all
+  // editor-gated server-side (IsEditorOrAdminWrite, plus _editor_may_review on
+  // the link approval), so the entry point only renders for isStaff.
+  const handleCreateCoverFromImage = async () => {
+    const image = createCoverImg;
+    if (image?.imageId == null || markingId == null) return;
+
+    setCreateCoverBusy(true);
+    setCreateCoverError(null);
+    try {
+      const result = await createCoverFromMarkingImage(
+        {
+          markingId,
+          imageId: image.imageId,
+          imageView: createCoverView,
+          isBackstamp: createCoverBackstamp,
+          date: createCoverDateInput,
+        },
+        {
+          createCover: () => createCover({}),
+          createCoverMarking: (payload) => createCoverMarking(payload),
+          approveCoverMarking: (id) => postCoverMarkingReview(id, "approve"),
+          createCoverDate: (payload) => createCoverDate(payload),
+          moveImage: (coverId) =>
+            moveImageSubject(image.imageId, "COVER", coverId, createCoverView),
+        },
+      );
+
+      if (result.ok === false) {
+        setCreateCoverError(result.message);
+        return;
+      }
+
+      toast({
+        title: "Cover created",
+        description: `${result.coverCode ?? `Cover #${result.coverId}`} is linked to this marking, and the image has moved across.`,
+      });
+      setCreateCoverImg(null);
+      setCreateCoverDateInput({ unknown: false, year: "", month: "", day: "" });
+      setCreateCoverBackstamp(false);
+      setCreateCoverView("FRONT");
+
+      // Refresh both halves: the marking loses the image, the cover panel
+      // gains a row. Matches the teardown the move handlers do.
+      const refreshed = await getMarkingById(markingId);
+      if (refreshed) setRecord(refreshed);
+      const { covers: rows, error: coversErr } = await loadAssociatedCoversForMarking(markingId);
+      setCoversLoadError(coversErr);
+      setAssociatedCovers(rows);
+    } finally {
+      setCreateCoverBusy(false);
+    }
+  };
+
   const handleMoveImageToCover = async () => {
     const imageId = moveImageDialogImg?.imageId;
     if (!imageId) return;
@@ -1232,6 +1324,23 @@ const RecordDetail = () => {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
+                  {/* issues.md 167 / Trello T37. Editor-only: every endpoint
+                      behind it is editor-gated server-side. */}
+                  {isStaff && !record.isRemoved && (
+                    <CoverFromImagePrompt
+                      count={coverLikeImages.length}
+                      disabled={createCoverBusy}
+                      onCreate={() => {
+                        const first = coverLikeImages[0];
+                        if (!first) return;
+                        setCreateCoverImg(first);
+                        setCreateCoverView("FRONT");
+                        setCreateCoverBackstamp(false);
+                        setCreateCoverDateInput({ unknown: false, year: "", month: "", day: "" });
+                        setCreateCoverError(null);
+                      }}
+                    />
+                  )}
                   {galleryImages.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No approved images linked to this marking.</p>
                   ) : (
@@ -1800,6 +1909,65 @@ const RecordDetail = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* issues.md 167 / Trello T37 -- create the destination that does not
+          exist yet. The fields live in CreateCoverFromImageForm so they can be
+          tested without driving this Radix overlay. */}
+      <Dialog
+        open={createCoverImg != null}
+        onOpenChange={(open) => {
+          if (createCoverBusy) return;
+          if (!open) setCreateCoverImg(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Create a Cover from this Image</DialogTitle>
+            <DialogDescription>
+              This creates the cover, links it to this marking, records the date and moves the
+              image across. The image leaves Associated Marking Thumbnails and appears on the
+              cover.
+            </DialogDescription>
+          </DialogHeader>
+          <CreateCoverFromImageForm
+            date={createCoverDateInput}
+            onDateChange={(next) => {
+              setCreateCoverDateInput(next);
+              setCreateCoverError(null);
+            }}
+            isBackstamp={createCoverBackstamp}
+            onBackstampChange={setCreateCoverBackstamp}
+            imageView={createCoverView}
+            onImageViewChange={setCreateCoverView}
+            isOnlyImage={
+              createCoverImg?.imageId != null &&
+              isLastMarkingImage(record.images, createCoverImg.imageId)
+            }
+            onCropFirst={() => {
+              // Hand straight to the existing crop dialog rather than making
+              // the editor find it: crop and move are deliberately separate
+              // operations, so this is a genuine prerequisite, not a detour.
+              const target = createCoverImg;
+              setCreateCoverImg(null);
+              if (target) setCropImageTarget(target);
+            }}
+            busy={createCoverBusy}
+            error={createCoverError}
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCreateCoverImg(null)}
+              disabled={createCoverBusy}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleCreateCoverFromImage} disabled={createCoverBusy}>
+              {createCoverBusy ? "Creating…" : "Create cover"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={moveImageDialogImg != null}
