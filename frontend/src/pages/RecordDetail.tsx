@@ -31,18 +31,12 @@ import { formatRateValue } from "@/lib/rateDisplay";
 import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
 import { MarkingFieldsDisplay } from "@/components/MarkingFieldsDisplay";
 import { ThumbnailImageActions } from "@/components/entry-detail/ThumbnailImageActions";
-import { MoveTargetPicker } from "@/components/entry-detail/MoveTargetPicker";
 import { CoverFromImagePrompt } from "@/components/entry-detail/CoverFromImagePrompt";
-import { CreateCoverFromImageForm } from "@/components/entry-detail/CreateCoverFromImageForm";
 import {
   coverLikeMarkingImages,
   isLastMarkingImage,
 } from "@/lib/coverLikeMarkingImages";
-import { createCoverFromMarkingImage } from "@/lib/coverFromMarkingImage";
-import { type PartialDateInput } from "@/lib/partialDate";
 import {
-  compareMarkingTargets,
-  describeCoverTarget,
 } from "@/lib/moveTargetDisplay";
 import { imageActionState } from "@/lib/imageActionState";
 import {
@@ -50,8 +44,6 @@ import {
   getMarkingById,
   getMarkingChangelog,
   loadAssociatedCoversForMarking,
-  moveImageSubject,
-  postCoverMarkingReview,
   normalizeImageUrl,
   primaryRegions,
   regionsDisplay,
@@ -95,11 +87,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  createCover,
-  createCoverDate,
-  createCoverMarking,
 } from "@/services/covers";
-import { moveImageAndRefresh } from "@/lib/imageMoveRefresh";
 import { readVphcProvenance } from "@/lib/vphcProvenance";
 import { VphcProvenanceCard } from "@/components/VphcProvenanceCard";
 import { getTenuresForPostOffice, type PostmasterTenure } from "@/services/postmasters";
@@ -349,28 +337,12 @@ const RecordDetail = () => {
   const [removing, setRemoving] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [moveImageDialogImg, setMoveImageDialogImg] = useState<MarkingImage | null>(null);
   // Image whose marking an editor is cropping out of a whole-cover scan (#77).
   const [cropImageTarget, setCropImageTarget] = useState<MarkingImage | null>(null);
-  const [moveImageTargetCoverId, setMoveImageTargetCoverId] = useState<number | null>(null);
-  const [moveImageView, setMoveImageView] = useState("FRONT");
-  const [moveImageBusy, setMoveImageBusy] = useState(false);
-  const [moveImageError, setMoveImageError] = useState<string | null>(null);
   // Move an image to another marking at the same town (#104 / C3): the second
   // half of the crop -> reattach workflow for scans that hold two devices.
 
   // issues.md 167 / Trello T37: create a cover from a marking image.
-  const [createCoverImg, setCreateCoverImg] = useState<MarkingImage | null>(null);
-  const [createCoverDateInput, setCreateCoverDateInput] = useState<PartialDateInput>({
-    unknown: false,
-    year: "",
-    month: "",
-    day: "",
-  });
-  const [createCoverBackstamp, setCreateCoverBackstamp] = useState(false);
-  const [createCoverView, setCreateCoverView] = useState("FRONT");
-  const [createCoverBusy, setCreateCoverBusy] = useState(false);
-  const [createCoverError, setCreateCoverError] = useState<string | null>(null);
   // Own busy/error pair rather than sharing the move-to-cover one: they are
   // two independent dialogs, and shared state lets a failure in one surface
   // in the other.
@@ -393,14 +365,6 @@ const RecordDetail = () => {
     );
   }, [user]);
 
-  const coverMoveTargets = useMemo(
-    () =>
-      associatedCovers
-        .filter((c) => c.coverDetails?.id != null)
-        .map(describeCoverTarget)
-        .sort(compareMarkingTargets),
-    [associatedCovers],
-  );
 
   useEffect(() => {
     if (markingId == null || Number.isNaN(markingId)) {
@@ -891,6 +855,33 @@ const RecordDetail = () => {
     navigate("/auth", { state: { from: location } });
     return false;
   };
+  /**
+   * "Create cover from this image" -- Ian, 2026-09-21:
+   *
+   *   "change the 'move to cover' icon to 'Create cover from this image' then
+   *    it takes the cover image, opens Create New Cover and puts the image in
+   *    for the submitter to fill in the form and submit the cover"
+   *
+   * Reuses the ordinary Submit New Cover route rather than a bespoke dialog,
+   * so the cover goes through the same submission and review path as any
+   * other. The image travels in router state, and CoverEdit turns it back into
+   * an upload on arrival.
+   */
+  const openCreateCoverFromImage = (image: MarkingImage) => {
+    if (!requireAuth()) return;
+    navigate(`/record/${markingId}/cover/new`, {
+      state: {
+        from: location.pathname + location.search,
+        sourceMarkingImage: {
+          imageId: image.imageId,
+          imageUrl: image.imageUrl,
+          originalFilename: image.originalFilename,
+          storageFilename: image.storageFilename,
+        },
+      },
+    });
+  };
+
   const openNewCoverDialog = () => {
     if (!requireAuth()) return;
     navigate(`/record/${markingId}/cover/new`, {
@@ -898,130 +889,7 @@ const RecordDetail = () => {
     });
   };
 
-  // Reassigns an image from this marking to one of its associated covers
-  // (issue #48: v1 attached every cover upload to the marking). Target list
-  // is restricted to covers already linked to this marking so images can't
-  // be scattered onto unrelated records from here.
-  // issues.md 167 / Trello T37. Ian: "all is needed is the date and then it
-  // creates the cover, moves the cover image and clears it from Marking
-  // Thumbails."
-  //
-  // The five-call sequence and its failure policy live in
-  // lib/coverFromMarkingImage so they can be tested without React; this only
-  // binds the services and applies the outcome. The endpoints are all
-  // editor-gated server-side (IsEditorOrAdminWrite, plus _editor_may_review on
-  // the link approval), so the entry point only renders for isStaff.
-  const handleCreateCoverFromImage = async () => {
-    const image = createCoverImg;
-    if (image?.imageId == null || markingId == null) return;
 
-    setCreateCoverBusy(true);
-    setCreateCoverError(null);
-    try {
-      const result = await createCoverFromMarkingImage(
-        {
-          markingId,
-          imageId: image.imageId,
-          imageView: createCoverView,
-          isBackstamp: createCoverBackstamp,
-          date: createCoverDateInput,
-        },
-        {
-          createCover: () => createCover({}),
-          createCoverMarking: (payload) => createCoverMarking(payload),
-          approveCoverMarking: (id) => postCoverMarkingReview(id, "approve"),
-          createCoverDate: (payload) => createCoverDate(payload),
-          moveImage: (coverId) =>
-            moveImageSubject(image.imageId, "COVER", coverId, createCoverView),
-        },
-      );
-
-      if (result.ok === false) {
-        setCreateCoverError(result.message);
-        return;
-      }
-
-      toast({
-        title: "Cover created",
-        description: `${result.coverCode ?? `Cover #${result.coverId}`} is linked to this marking, and the image has moved across.`,
-      });
-      setCreateCoverImg(null);
-      setCreateCoverDateInput({ unknown: false, year: "", month: "", day: "" });
-      setCreateCoverBackstamp(false);
-      setCreateCoverView("FRONT");
-
-      // Refresh both halves: the marking loses the image, the cover panel
-      // gains a row. Matches the teardown the move handlers do.
-      const refreshed = await getMarkingById(markingId);
-      if (refreshed) setRecord(refreshed);
-      const { covers: rows, error: coversErr } = await loadAssociatedCoversForMarking(markingId);
-      setCoversLoadError(coversErr);
-      setAssociatedCovers(rows);
-    } finally {
-      setCreateCoverBusy(false);
-    }
-  };
-
-  const handleMoveImageToCover = async () => {
-    const imageId = moveImageDialogImg?.imageId;
-    if (!imageId) return;
-    const coverId = moveImageTargetCoverId;
-    if (coverId == null) {
-      setMoveImageError("Select a target cover.");
-      return;
-    }
-    setMoveImageBusy(true);
-    setMoveImageError(null);
-    try {
-      if (markingId == null) return;
-      const result = await moveImageAndRefresh(
-        () =>
-          moveImageSubject(
-            imageId,
-            "COVER",
-            coverId,
-            moveImageView,
-          ),
-        async () => {
-          const refreshed = await getMarkingById(markingId);
-          if (!refreshed) throw new Error("Could not refresh the Marking.");
-          return refreshed;
-        },
-        () => loadAssociatedCoversForMarking(markingId),
-      );
-      if (result.moved === false) {
-        setMoveImageError(result.message);
-        return;
-      }
-      setMoveImageDialogImg(null);
-      let refreshFailed = false;
-      if (result.source.ok === true) {
-        const refreshed = result.source.value;
-        setRecord(refreshed);
-        setCurrent((previous) =>
-          Math.max(0, Math.min(previous, refreshed.images.length - 1)),
-        );
-      } else {
-        refreshFailed = true;
-      }
-      if (result.destination.ok === true) {
-        setAssociatedCovers(result.destination.value.covers);
-        setCoversLoadError(result.destination.value.error);
-        if (result.destination.value.error) refreshFailed = true;
-      } else {
-        refreshFailed = true;
-      }
-      toast({
-        title: "Image moved",
-        description: refreshFailed
-          ? "The image moved, but the page could not fully refresh. Reload to see the latest thumbnails."
-          : "Image reassigned to the cover.",
-        variant: refreshFailed ? "destructive" : "default",
-      });
-    } finally {
-      setMoveImageBusy(false);
-    }
-  };
 
 
   const goCoverView = (cover: AssociatedCover) => {
@@ -1171,15 +1039,14 @@ const RecordDetail = () => {
                   {isStaff && !record.isRemoved && (
                     <CoverFromImagePrompt
                       count={coverLikeImages.length}
-                      disabled={createCoverBusy}
+                      isOnlyImage={
+                        coverLikeImages.length === 1 &&
+                        coverLikeImages[0].imageId != null &&
+                        isLastMarkingImage(record.images, coverLikeImages[0].imageId)
+                      }
                       onCreate={() => {
                         const first = coverLikeImages[0];
-                        if (!first) return;
-                        setCreateCoverImg(first);
-                        setCreateCoverView("FRONT");
-                        setCreateCoverBackstamp(false);
-                        setCreateCoverDateInput({ unknown: false, year: "", month: "", day: "" });
-                        setCreateCoverError(null);
+                        if (first) openCreateCoverFromImage(first);
                       }}
                     />
                   )}
@@ -1199,9 +1066,6 @@ const RecordDetail = () => {
                           isRemoved: record.isRemoved,
                         });
                         const canReorder = actionState.showControls && galleryImages.length > 1;
-                        const canMoveToCover =
-                          record.images[idx]?.subjectType === "MARKING" &&
-                          associatedCovers.some((c) => c.coverDetails?.id != null);
                         return (
                           <div
                             key={`${img.imageId ?? img.originalFilename ?? "img"}-${idx}`}
@@ -1227,7 +1091,6 @@ const RecordDetail = () => {
                               isDefault={img.isDefault}
                               reordering={reorderingImages}
                               deleting={deletingImageId === img.imageId}
-                              canMoveToCover={canMoveToCover}
                               onMoveBy={(offset) => moveImageBy(idx, offset)}
                               onSetDefault={() => setImageAsDefault(idx)}
                               onCrop={() => {
@@ -1235,16 +1098,9 @@ const RecordDetail = () => {
                                 if (!rawImg?.imageId) return;
                                 setCropImageTarget(rawImg);
                               }}
-                              onMoveToCover={() => {
+                              onCreateCoverFromImage={() => {
                                 const rawImg = record.images[idx];
-                                if (!rawImg) return;
-                                setMoveImageDialogImg(rawImg);
-                                setMoveImageTargetCoverId(
-                                  associatedCovers.find((c) => c.coverDetails?.id != null)
-                                    ?.coverDetails?.id ?? null,
-                                );
-                                setMoveImageView("FRONT");
-                                setMoveImageError(null);
+                                if (rawImg) openCreateCoverFromImage(rawImg);
                               }}
                               onDelete={() => handleDeleteImage(idx)}
                             />
@@ -1726,135 +1582,7 @@ const RecordDetail = () => {
       {/* issues.md 167 / Trello T37 -- create the destination that does not
           exist yet. The fields live in CreateCoverFromImageForm so they can be
           tested without driving this Radix overlay. */}
-      <Dialog
-        open={createCoverImg != null}
-        onOpenChange={(open) => {
-          if (createCoverBusy) return;
-          if (!open) setCreateCoverImg(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Create a Cover from this Image</DialogTitle>
-            <DialogDescription>
-              This creates the cover, links it to this marking, records the date and moves the
-              image across. The image leaves Associated Marking Thumbnails and appears on the
-              cover.
-            </DialogDescription>
-          </DialogHeader>
-          <CreateCoverFromImageForm
-            date={createCoverDateInput}
-            onDateChange={(next) => {
-              setCreateCoverDateInput(next);
-              setCreateCoverError(null);
-            }}
-            isBackstamp={createCoverBackstamp}
-            onBackstampChange={setCreateCoverBackstamp}
-            imageView={createCoverView}
-            onImageViewChange={setCreateCoverView}
-            isOnlyImage={
-              createCoverImg?.imageId != null &&
-              isLastMarkingImage(record.images, createCoverImg.imageId)
-            }
-            onCropFirst={() => {
-              // Hand straight to the existing crop dialog rather than making
-              // the editor find it: crop and move are deliberately separate
-              // operations, so this is a genuine prerequisite, not a detour.
-              const target = createCoverImg;
-              setCreateCoverImg(null);
-              if (target) setCropImageTarget(target);
-            }}
-            busy={createCoverBusy}
-            error={createCoverError}
-          />
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setCreateCoverImg(null)}
-              disabled={createCoverBusy}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleCreateCoverFromImage} disabled={createCoverBusy}>
-              {createCoverBusy ? "Creating…" : "Create cover"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
-      <Dialog
-        open={moveImageDialogImg != null}
-        onOpenChange={(open) => {
-          if (moveImageBusy) return;
-          if (!open) setMoveImageDialogImg(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Move Image to Cover</DialogTitle>
-            <DialogDescription>
-              Reassign this image from the marking to one of its associated covers.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1">
-              <MoveTargetPicker
-                targets={coverMoveTargets}
-                selectedId={moveImageTargetCoverId}
-                onSelect={(id) => {
-                  setMoveImageTargetCoverId(id);
-                  setMoveImageError(null);
-                }}
-                disabled={moveImageBusy}
-                filterLabel="Target cover"
-                filterPlaceholder="Search by code, type or date…"
-                emptyMessage="No covers match that search."
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="move-img-view">Image view</Label>
-              <Select
-                value={moveImageView}
-                onValueChange={(v) => setMoveImageView(v)}
-                disabled={moveImageBusy}
-              >
-                <SelectTrigger id="move-img-view">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="FRONT">Front</SelectItem>
-                  <SelectItem value="BACK">Back</SelectItem>
-                  <SelectItem value="INTERIOR">Interior</SelectItem>
-                  <SelectItem value="DETAIL">Detail</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {moveImageError && <p className="text-sm text-destructive">{moveImageError}</p>}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setMoveImageDialogImg(null)}
-              disabled={moveImageBusy}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void handleMoveImageToCover()}
-              disabled={moveImageBusy || moveImageTargetCoverId == null}
-            >
-              {moveImageBusy ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Moving…
-                </>
-              ) : (
-                "Move Image"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
 
       <CropImageDialog

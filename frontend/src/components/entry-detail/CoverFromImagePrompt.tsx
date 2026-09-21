@@ -21,11 +21,19 @@ import { Button } from "@/components/ui/button";
 export function CoverFromImagePrompt({
   count,
   onCreate,
+  isOnlyImage = false,
   disabled = false,
 }: {
   /** How many of the marking's images look like whole covers. */
   count: number;
   onCreate: () => void;
+  /**
+   * The flagged image is the marking's only picture. Moving it to a cover on
+   * approval would leave this record with nothing -- the situation the crop
+   * feature exists to prevent, since the backend promotes the next sibling to
+   * display_order 0 and here there is no sibling.
+   */
+  isOnlyImage?: boolean;
   disabled?: boolean;
 }) {
   if (count < 1) return null;
@@ -44,6 +52,12 @@ export function CoverFromImagePrompt({
           earliest and latest dates. You only need the date — the cover is created, linked and the
           image moved across for you.
         </p>
+        {isOnlyImage && (
+          <p className="mt-2 font-medium">
+            This is the marking's only image. Crop the marking out of it first, or this record
+            will be left with no picture.
+          </p>
+        )}
         <Button
           type="button"
           variant="outline"

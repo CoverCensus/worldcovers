@@ -67,6 +67,34 @@ function describe(
 }
 
 
+/**
+ * A marking as a move destination: thumbnail, code (or a record-number
+ * fallback) and the line that actually distinguishes same-town siblings.
+ *
+ * Built through `buildCatalogSearchRow` rather than off the record directly, so
+ * a picker row and a Catalog Search card cannot disagree about what a marking
+ * looks like -- that helper already owns the awkward parts, notably that true
+ * circles display as a diameter rather than WxH.
+ *
+ * Its original consumer (the marking screen's "move to another marking"
+ * picker) was removed on 2026-09-21 at Ian's request. It now serves the COVER
+ * screen's "Move Image to Marking" picker, which had the identical code-only
+ * defect and simply had not been reported yet.
+ */
+export function describeMarkingTarget(
+  marking: MarkingRecord,
+  thumbnailUrlOverride?: string | null,
+): MoveTargetDescription {
+  const row = buildCatalogSearchRow(marking);
+  return describe(
+    marking.id,
+    marking.code,
+    "Marking",
+    detailLine([row.type, row.markingTextSingle, row.shape, row.dimensions, row.color]),
+    thumbnailUrlOverride ?? row.image,
+  );
+}
+
 export function describeCoverTarget(cover: AssociatedCover): MoveTargetDescription {
   const details = cover.coverDetails;
   const id = details?.id ?? cover.id;

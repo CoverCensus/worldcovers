@@ -12,6 +12,8 @@ import { formatDateSeen } from "@/lib/catalogRecordDisplay";
 import { EntryDetailLayout } from "@/components/entry-detail/EntryDetailLayout";
 import { EntryImageGalleryCard } from "@/components/entry-detail/EntryImageGalleryCard";
 import { EntryAssociatedThumbnailsCard } from "@/components/entry-detail/EntryAssociatedThumbnailsCard";
+import { MoveTargetPicker } from "@/components/entry-detail/MoveTargetPicker";
+import { compareMarkingTargets, describeMarkingTarget } from "@/lib/moveTargetDisplay";
 import { EntryRecordHistoryCard } from "@/components/entry-detail/EntryRecordHistoryCard";
 import { EntryCitationsCard, type EntryCitationItem } from "@/components/entry-detail/EntryCitationsCard";
 import { CoverRecordDetailFields } from "@/components/entry-detail/CoverRecordDetailFields";
@@ -178,7 +180,7 @@ const CoverDetailPage = () => {
   const [linkMarkingBusy, setLinkMarkingBusy] = useState(false);
   const [linkMarkingError, setLinkMarkingError] = useState<string | null>(null);
   const [moveImageIndex, setMoveImageIndex] = useState<number | null>(null);
-  const [moveImageTargetMarkingId, setMoveImageTargetMarkingId] = useState("");
+  const [moveImageTargetMarkingId, setMoveImageTargetMarkingId] = useState<number | null>(null);
   const [moveImageView, setMoveImageView] = useState("FULL");
   const [moveImageBusy, setMoveImageBusy] = useState(false);
   const [moveImageError, setMoveImageError] = useState<string | null>(null);
@@ -538,7 +540,7 @@ const CoverDetailPage = () => {
     if (coverPk == null || moveImageIndex == null) return;
     const image = images[moveImageIndex];
     if (!image || image.imageId <= 0) return;
-    const targetId = parseInt(moveImageTargetMarkingId, 10);
+    const targetId = moveImageTargetMarkingId;
     if (!Number.isFinite(targetId) || targetId <= 0) {
       setMoveImageError("Select a target marking.");
       return;
@@ -649,6 +651,18 @@ const CoverDetailPage = () => {
     });
   };
 
+  // issues.md 114 / Trello T38, applied to the cover screen on 2026-09-21.
+  // This picker had the identical defect the marking screen's did -- a bare
+  // `marking.code ?? \`Marking #${id}\`` -- and had simply not been reported.
+  // On woco.dev every sampled row at one post office had NO code at all.
+  const markingMoveTargets = useMemo(
+    () =>
+      associatedMarkings
+        .map(({ marking, defaultImageUrl }) => describeMarkingTarget(marking, defaultImageUrl))
+        .sort(compareMarkingTargets),
+    [associatedMarkings],
+  );
+
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col">
@@ -738,7 +752,7 @@ const CoverDetailPage = () => {
                   ? (index) => {
                       setMoveImageIndex(index);
                       setMoveImageTargetMarkingId(
-                        String(associatedMarkings[0]?.marking.id ?? ""),
+                        associatedMarkings[0]?.marking.id ?? null,
                       );
                       setMoveImageView("FULL");
                       setMoveImageError(null);
@@ -966,26 +980,18 @@ const CoverDetailPage = () => {
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1">
-              <Label htmlFor="move-img-marking-id">Target marking</Label>
-              <Select
-                value={moveImageTargetMarkingId}
-                onValueChange={(v) => {
-                  setMoveImageTargetMarkingId(v);
+              <MoveTargetPicker
+                targets={markingMoveTargets}
+                selectedId={moveImageTargetMarkingId}
+                onSelect={(id) => {
+                  setMoveImageTargetMarkingId(id);
                   setMoveImageError(null);
                 }}
                 disabled={moveImageBusy}
-              >
-                <SelectTrigger id="move-img-marking-id">
-                  <SelectValue placeholder="Select a marking…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {associatedMarkings.map(({ marking }) => (
-                    <SelectItem key={marking.id} value={String(marking.id)}>
-                      {marking.code ?? `Marking #${marking.id}`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                filterLabel="Target marking"
+                filterPlaceholder="Search by code, inscription, shape…"
+                emptyMessage="No markings match that search."
+              />
             </div>
             <div className="space-y-1">
               <Label htmlFor="move-img-marking-view">Image view</Label>
@@ -1015,7 +1021,7 @@ const CoverDetailPage = () => {
             </Button>
             <Button
               onClick={() => void handleMoveImageToMarking()}
-              disabled={moveImageBusy || !moveImageTargetMarkingId}
+              disabled={moveImageBusy || moveImageTargetMarkingId == null}
             >
               {moveImageBusy ? (
                 <>
