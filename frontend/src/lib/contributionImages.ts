@@ -81,6 +81,14 @@ export function markingImagesFromContributionMetas(
         : typeof obj.originalFilename === "string"
           ? obj.originalFilename
           : "";
+    // Read dimensions from the same submitted_data keys contribution_apply
+    // uses when it creates the real Image row, so a draft preview and the row
+    // it becomes agree. Absent or unparseable means 0, which the shape
+    // classifier reads as indeterminate (issues.md 167).
+    const metaDimension = (v: unknown): number => {
+      const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
     rows.push({
       imageId: -(idx + 1),
       subjectType: "COVER",
@@ -92,6 +100,8 @@ export function markingImagesFromContributionMetas(
       imageDescription: "",
       isTracing: false,
       displayOrder: idx,
+      imageWidth: metaDimension(obj.image_width ?? obj.imageWidth),
+      imageHeight: metaDimension(obj.image_height ?? obj.imageHeight),
     });
   });
   return rows;

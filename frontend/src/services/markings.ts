@@ -60,6 +60,14 @@ export interface MarkingImage {
   imageDescription: string;
   isTracing: boolean;
   displayOrder: number;
+  /**
+   * Pixel dimensions as stored. 0 when the source row recorded none --
+   * contribution_apply writes `int(meta.get("image_width") or 0)` -- which
+   * classifyImageShape treats as indeterminate, so unknown data prompts
+   * nothing. issues.md 167 / Trello T37.
+   */
+  imageWidth: number;
+  imageHeight: number;
 }
 
 export type ImageSubjectType = MarkingImage["subjectType"];
@@ -82,6 +90,8 @@ interface ImageApiRow {
   image_description?: unknown;
   is_tracing?: unknown;
   display_order?: unknown;
+  image_width?: unknown;
+  image_height?: unknown;
 }
 
 function mapImageRow(raw: unknown): MarkingImage | null {
@@ -104,6 +114,8 @@ function mapImageRow(raw: unknown): MarkingImage | null {
     imageDescription: toStr(o.image_description),
     isTracing: Boolean(o.is_tracing),
     displayOrder: toNumOrNull(o.display_order) ?? 0,
+    imageWidth: toNumOrNull(o.image_width) ?? 0,
+    imageHeight: toNumOrNull(o.image_height) ?? 0,
   };
 }
 
@@ -595,6 +607,8 @@ function mapImage(raw: unknown): MarkingImage | null {
     imageDescription: toStr(o.image_description),
     isTracing: Boolean(o.is_tracing),
     displayOrder: toNumOrNull(o.display_order) ?? 0,
+    imageWidth: toNumOrNull(o.image_width) ?? 0,
+    imageHeight: toNumOrNull(o.image_height) ?? 0,
   };
 }
 
