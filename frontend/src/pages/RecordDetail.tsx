@@ -31,6 +31,12 @@ import { formatRateValue } from "@/lib/rateDisplay";
 import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
 import { MarkingFieldsDisplay } from "@/components/MarkingFieldsDisplay";
 import { ThumbnailImageActions } from "@/components/entry-detail/ThumbnailImageActions";
+import { MoveTargetPicker } from "@/components/entry-detail/MoveTargetPicker";
+import {
+  compareMarkingTargets,
+  describeCoverTarget,
+  describeMarkingTarget,
+} from "@/lib/moveTargetDisplay";
 import { imageActionState } from "@/lib/imageActionState";
 import {
   countyDisplay,
@@ -342,14 +348,14 @@ const RecordDetail = () => {
   const [moveImageDialogImg, setMoveImageDialogImg] = useState<MarkingImage | null>(null);
   // Image whose marking an editor is cropping out of a whole-cover scan (#77).
   const [cropImageTarget, setCropImageTarget] = useState<MarkingImage | null>(null);
-  const [moveImageTargetCoverId, setMoveImageTargetCoverId] = useState("");
+  const [moveImageTargetCoverId, setMoveImageTargetCoverId] = useState<number | null>(null);
   const [moveImageView, setMoveImageView] = useState("FRONT");
   const [moveImageBusy, setMoveImageBusy] = useState(false);
   const [moveImageError, setMoveImageError] = useState<string | null>(null);
   // Move an image to another marking at the same town (#104 / C3): the second
   // half of the crop -> reattach workflow for scans that hold two devices.
   const [moveToMarkingImg, setMoveToMarkingImg] = useState<MarkingImage | null>(null);
-  const [moveMarkingTargetId, setMoveMarkingTargetId] = useState("");
+  const [moveMarkingTargetId, setMoveMarkingTargetId] = useState<number | null>(null);
   const [moveMarkingView, setMoveMarkingView] = useState("FULL");
   const [moveMarkingCandidates, setMoveMarkingCandidates] = useState<MarkingRecord[]>([]);
   // Own busy/error pair rather than sharing the move-to-cover one: they are
@@ -375,6 +381,25 @@ const RecordDetail = () => {
       user.is_superuser === true
     );
   }, [user]);
+
+  // issues.md 114 / Trello T38. Both move pickers used to list bare catalog
+  // codes. Every marking candidate is a sibling at the SAME post office, so the
+  // town never tells them apart and adjacent codes do not either -- 147 of them
+  // at Richmond. These build the thumbnail and detail line each row shows, and
+  // sort by code the way a person reads it. No request: the candidates and
+  // their images are already in memory.
+  const markingMoveTargets = useMemo(
+    () => moveMarkingCandidates.map(describeMarkingTarget).sort(compareMarkingTargets),
+    [moveMarkingCandidates],
+  );
+  const coverMoveTargets = useMemo(
+    () =>
+      associatedCovers
+        .filter((c) => c.coverDetails?.id != null)
+        .map(describeCoverTarget)
+        .sort(compareMarkingTargets),
+    [associatedCovers],
+  );
 
   useEffect(() => {
     if (markingId == null || Number.isNaN(markingId)) {
@@ -924,8 +949,8 @@ const RecordDetail = () => {
   const handleMoveImageToCover = async () => {
     const imageId = moveImageDialogImg?.imageId;
     if (!imageId) return;
-    const coverId = parseInt(moveImageTargetCoverId, 10);
-    if (!Number.isFinite(coverId) || coverId <= 0) {
+    const coverId = moveImageTargetCoverId;
+    if (coverId == null) {
       setMoveImageError("Select a target cover.");
       return;
     }
@@ -989,8 +1014,8 @@ const RecordDetail = () => {
   // image cannot be filed under an unrelated record from here.
   const handleMoveImageToMarking = async () => {
     if (!moveToMarkingImg?.imageId) return;
-    const targetId = parseInt(moveMarkingTargetId, 10);
-    if (!Number.isFinite(targetId) || targetId <= 0) {
+    const targetId = moveMarkingTargetId;
+    if (targetId == null) {
       setMoveMarkingError("Select a target marking.");
       return;
     }
@@ -1011,7 +1036,7 @@ const RecordDetail = () => {
       // Full teardown, so reopening for a different image cannot inherit the
       // previous target.
       setMoveToMarkingImg(null);
-      setMoveMarkingTargetId("");
+      setMoveMarkingTargetId(null);
       setMoveMarkingView("FULL");
       if (markingId != null) {
         const refreshed = await getMarkingById(markingId);
@@ -1270,10 +1295,8 @@ const RecordDetail = () => {
                                 if (!rawImg) return;
                                 setMoveImageDialogImg(rawImg);
                                 setMoveImageTargetCoverId(
-                                  String(
-                                    associatedCovers.find((c) => c.coverDetails?.id != null)
-                                      ?.coverDetails?.id ?? "",
-                                  ),
+                                  associatedCovers.find((c) => c.coverDetails?.id != null)
+                                    ?.coverDetails?.id ?? null,
                                 );
                                 setMoveImageView("FRONT");
                                 setMoveImageError(null);
@@ -1282,7 +1305,7 @@ const RecordDetail = () => {
                                 const rawImg = record.images[idx];
                                 if (!rawImg) return;
                                 setMoveToMarkingImg(rawImg);
-                                setMoveMarkingTargetId(String(moveMarkingCandidates[0]?.id ?? ""));
+                                setMoveMarkingTargetId(moveMarkingCandidates[0]?.id ?? null);
                                 setMoveMarkingView("FULL");
                                 setMoveMarkingError(null);
                               }}
@@ -1785,7 +1808,7 @@ const RecordDetail = () => {
           if (!open) setMoveImageDialogImg(null);
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Move Image to Cover</DialogTitle>
             <DialogDescription>
@@ -1794,28 +1817,18 @@ const RecordDetail = () => {
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1">
-              <Label htmlFor="move-img-cover-id">Target cover</Label>
-              <Select
-                value={moveImageTargetCoverId}
-                onValueChange={(v) => {
-                  setMoveImageTargetCoverId(v);
+              <MoveTargetPicker
+                targets={coverMoveTargets}
+                selectedId={moveImageTargetCoverId}
+                onSelect={(id) => {
+                  setMoveImageTargetCoverId(id);
                   setMoveImageError(null);
                 }}
                 disabled={moveImageBusy}
-              >
-                <SelectTrigger id="move-img-cover-id">
-                  <SelectValue placeholder="Select a cover…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {associatedCovers
-                    .filter((c) => c.coverDetails?.id != null)
-                    .map((c) => (
-                      <SelectItem key={c.coverDetails!.id} value={String(c.coverDetails!.id)}>
-                        {c.coverDetails!.code ?? `Cover #${c.coverDetails!.id}`}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+                filterLabel="Target cover"
+                filterPlaceholder="Search by code, type or date…"
+                emptyMessage="No covers match that search."
+              />
             </div>
             <div className="space-y-1">
               <Label htmlFor="move-img-view">Image view</Label>
@@ -1847,7 +1860,7 @@ const RecordDetail = () => {
             </Button>
             <Button
               onClick={() => void handleMoveImageToCover()}
-              disabled={moveImageBusy || !moveImageTargetCoverId}
+              disabled={moveImageBusy || moveImageTargetCoverId == null}
             >
               {moveImageBusy ? (
                 <>
@@ -1869,7 +1882,7 @@ const RecordDetail = () => {
           if (!open) setMoveToMarkingImg(null);
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Move Image to Marking</DialogTitle>
             <DialogDescription>
@@ -1879,26 +1892,21 @@ const RecordDetail = () => {
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1">
-              <Label htmlFor="move-img-marking-id">Target marking</Label>
-              <Select
-                value={moveMarkingTargetId}
-                onValueChange={(v) => {
-                  setMoveMarkingTargetId(v);
-                  setMoveImageError(null);
+              <MoveTargetPicker
+                targets={markingMoveTargets}
+                selectedId={moveMarkingTargetId}
+                onSelect={(id) => {
+                  setMoveMarkingTargetId(id);
+                  // Was setMoveImageError: a failed move-to-marking left its
+                  // own error on screen while the editor picked another
+                  // target. The two busy/error pairs are deliberately separate.
+                  setMoveMarkingError(null);
                 }}
                 disabled={moveMarkingBusy}
-              >
-                <SelectTrigger id="move-img-marking-id">
-                  <SelectValue placeholder="Select a marking…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {moveMarkingCandidates.map((m) => (
-                    <SelectItem key={m.id} value={String(m.id)}>
-                      {m.code || `Marking #${m.id}`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                filterLabel="Target marking"
+                filterPlaceholder="Search by code, inscription, shape…"
+                emptyMessage="No markings match that search."
+              />
             </div>
             <div className="space-y-1">
               <Label htmlFor="move-img-marking-view">Image view</Label>
@@ -1930,7 +1938,7 @@ const RecordDetail = () => {
             </Button>
             <Button
               onClick={() => void handleMoveImageToMarking()}
-              disabled={moveMarkingBusy || !moveMarkingTargetId}
+              disabled={moveMarkingBusy || moveMarkingTargetId == null}
             >
               {moveMarkingBusy ? (
                 <>
