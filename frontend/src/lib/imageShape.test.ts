@@ -13,14 +13,23 @@ describe("classifyImageShape", () => {
     expect(classifyImageShape({ width: 2631, height: 1290 })).toBe("cover-like");
   });
 
+  it("calls a portrait-oriented cover photo cover-like", () => {
+    expect(classifyImageShape({ width: 1290, height: 2631 })).toBe("cover-like");
+  });
+
+  it("calls a smaller envelope photo cover-like", () => {
+    // Regression: letter.jpeg is a whole envelope cropped to 675 by 296.
+    expect(classifyImageShape({ width: 675, height: 296 })).toBe("cover-like");
+  });
+
   it("calls a marking closeup marking-like", () => {
     // image 2288 on prod: a correctly-slotted Berkeley Springs CDS.
     expect(classifyImageShape({ width: 458, height: 465 })).toBe("marking-like");
   });
 
   it("leaves the ambiguous middle band alone", () => {
-    // Landscape but small: a wide marking crop, not a cover scan.
-    expect(classifyImageShape({ width: 900, height: 400 })).toBe("indeterminate");
+    // Rectangular but too small to identify from dimensions alone.
+    expect(classifyImageShape({ width: 500, height: 200 })).toBe("indeterminate");
     // Big but square: could be either, so say nothing.
     expect(classifyImageShape({ width: 1200, height: 1100 })).toBe("indeterminate");
   });
@@ -43,6 +52,14 @@ describe("looksLikeWrongKind", () => {
     expect(looksLikeWrongKind(cover, "COVER")).toBe(false);
   });
 
+  it("flags a portrait-oriented cover on the marking form", () => {
+    expect(looksLikeWrongKind({ width: 1290, height: 2631 }, "MARKING")).toBe(true);
+  });
+
+  it("flags a smaller envelope photo on the marking form", () => {
+    expect(looksLikeWrongKind({ width: 675, height: 296 }, "MARKING")).toBe(true);
+  });
+
   it("flags a marking closeup on the cover form and not on the marking form", () => {
     const marking = { width: 458, height: 465 };
     expect(looksLikeWrongKind(marking, "COVER")).toBe(true);
@@ -50,7 +67,7 @@ describe("looksLikeWrongKind", () => {
   });
 
   it("never flags the ambiguous middle on either form", () => {
-    const middling = { width: 900, height: 400 };
+    const middling = { width: 500, height: 200 };
     expect(looksLikeWrongKind(middling, "MARKING")).toBe(false);
     expect(looksLikeWrongKind(middling, "COVER")).toBe(false);
   });
@@ -95,8 +112,7 @@ describe("measureImageFile", () => {
   });
 
   it("resolves null rather than rejecting when the image will not decode", async () => {
-    // TIFF is an allowed upload type most browsers cannot render. A failed
-    // measurement must never block an upload the server would accept.
+    // A failed measurement must never block an upload the server would accept.
     stubImageLoad("error");
     await expect(measureImageFile(new Blob())).resolves.toBeNull();
     expect(URL.revokeObjectURL).toHaveBeenCalled();

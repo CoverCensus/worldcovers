@@ -5,7 +5,7 @@ import mimetypes
 from pathlib import Path
 from typing import Optional
 
-ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/tiff"}
+ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/jpg"}
 
 
 def extract_image_metadata(content: bytes, mime_type: str) -> Optional[dict]:
@@ -107,6 +107,4 @@ def crop_image_bytes(
 def _format_for_mime(mime_type: str) -> str:
     if "png" in mime_type:
         return "PNG"
-    if "tiff" in mime_type:
-        return "TIFF"
     return "JPEG"

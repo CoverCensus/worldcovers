@@ -159,13 +159,15 @@ sudo -u wocod /usr/local/sbin/worldcovers-restore \
 
 Expected exit code: `0`.
 
-⚠ **Always restore both halves.** The dump contains the `images` rows but not
-the files — `MEDIA_ROOT` is a directory on disk. A database-only restore gives a
+**Always restore both halves.** The dump contains the `images` rows but not
+the files -- `MEDIA_ROOT` is a directory on disk. A database-only restore gives a
 complete-looking catalog with every image link broken.
 
-⚠ **Dumps are not portable between MySQL (woco.dev) and MariaDB (prod).** The
-restore tool refuses a cross-engine restore rather than failing halfway
-(`ISSUE-2026-08-10-01`).
+**Check the snapshot engine and version.** Both hosts now use MariaDB, but
+older staging snapshots contain MySQL dumps. The restore tool rejects a
+cross-engine restore (`ISSUE-2026-08-10-01`). See [BACKUP.md](BACKUP.md) for
+compatibility notes and [database versions](DEPLOY.md#database-versions) for
+the current environment status.
 
 ## Revision Maintenance
 

@@ -1,6 +1,7 @@
 """Session-based auth views shared by the SPA: /api/login, /api/logout, and the SPA session check."""
 from __future__ import annotations
 
+import logging
 import re
 
 from django.conf import settings
@@ -20,6 +21,8 @@ from rest_framework.views import APIView
 
 from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
 
+
+logger = logging.getLogger(__name__)
 
 _password_reset_token_generator = PasswordResetTokenGenerator()
 
@@ -428,14 +431,49 @@ class ForgotPasswordApiView(APIView):
                 <p>If you did not request a password reset, you can safely ignore this email.</p>
                 """
 
-        send_mail(
-            subject,
-            message,
-            getattr(settings, "DEFAULT_FROM_EMAIL", None) or f"no-reply@{settings.DJANGO_APP_HOSTNAME}",
-            [email],
-            fail_silently=False,
-            html_message=html_message,
-        )
+        try:
+            send_mail(
+                subject,
+                message,
+                getattr(settings, "DEFAULT_FROM_EMAIL", None) or f"no-reply@{settings.DJANGO_APP_HOSTNAME}",
+                [email],
+                fail_silently=False,
+                html_message=html_message,
+            )
+        except Exception:
+            # ⛔ A mail-transport failure must not surface as a 500 (issue #162).
+            #
+            # On production this is not an edge case, it is EVERY reset: the
+            # relay authenticates fine and then refuses the sender address
+            # (issue #152), so send_mail raises SMTPSenderRefused for all 26
+            # accounts. The uncaught version told the user nothing, told no
+            # admin anything, and made issue #150's own advice -- "Use 'Forgot
+            # password' to set one" -- lead to an error page.
+            #
+            # `except Exception` rather than SMTPException: a mail backend can
+            # fail with OSError, ConnectionRefusedError or a backend-specific
+            # type, and the try wraps exactly one call, so the breadth costs no
+            # diagnosability. Matches signals.py's activation-mail handler.
+            logger.exception(
+                "Password reset email to %s could not be sent. The reset link was "
+                "generated but NOT delivered; the account is unchanged.",
+                email,
+            )
+            # 503, not 200: a 200 here would claim a link was sent when none
+            # was, which is the same class of lie as the silent activation mail
+            # in signals.py. 503 is also what monitoring should see -- a
+            # dependency is down, and it is retryable once #152 is fixed.
+            return Response(
+                {
+                    "detail": (
+                        "We could not send the reset email. This is a problem on our side, "
+                        "not with your account, and resending will not help until it is "
+                        f"fixed. Email {_support_email()} and someone will set a password "
+                        "for you by hand."
+                    )
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         return Response(
             {"detail": "If an account exists for that email, a reset link has been sent."},
@@ -489,11 +527,19 @@ class ResetPasswordApiView(APIView):
         if blocked is not None:
             return blocked
 
-        if len(password) < 4:
-            return Response(
-                {"detail": "Password must be at least 4 characters long."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # The SAME rule change-password uses (issue #157). This endpoint used to
+        # accept 4 characters, which made Forgot Password a route around the
+        # strong policy: an attacker who could read one reset link, or any
+        # non-SPA client, could set a weaker password than the product allows
+        # anywhere else.
+        #
+        # ⭐ Note this was a server-only hole. ResetPassword.tsx already enforces
+        # all five rules client-side, so the SPA never sent a weak password and
+        # nothing user-facing changes here -- which is exactly why it survived:
+        # the form's own validation hid the missing server check.
+        err = _validate_password_strength(password)
+        if err:
+            return Response({"detail": err}, status=status.HTTP_400_BAD_REQUEST)
 
         # ⛔ is_active is deliberately NOT set here. Activation is an editorial
         # membership decision (issue #151), not proof of email ownership --

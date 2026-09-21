@@ -4,14 +4,14 @@
 #   ./woco setup prod   # production/staging build steps (deploy/deploy.sh)
 #
 # 'dev' is idempotent and safe to re-run. On a fresh clone it scaffolds .env,
-# creates or repairs mysql.cnf, creates the MySQL database/app user, builds the
+# creates or repairs mysql.cnf, creates the MariaDB database/app user, builds the
 # frontend, runs migrations, and collects static files.
 #
 # Optional non-interactive inputs:
 #   WOCO_DB_NAME             default: DB_NAME from .env, then worldcovers
 #   WOCO_DB_USER             default: wocod
 #   WOCO_DB_PASSWORD         default: prompted, then generated if blank
-#   WOCO_MYSQL_ROOT_PASSWORD default: use sudo mysql, or prompt on a tty
+#   WOCO_MYSQL_ROOT_PASSWORD default: use sudo mariadb, or prompt on a tty
 #   WOCO_SETUP_DB=1          re-run DB/user grants even when mysql.cnf exists
 #
 # 'prod' delegates to deploy/deploy.sh (uv sync --no-dev --frozen, migrate,
@@ -32,7 +32,7 @@ case "$MODE" in
   dev) ;;
   prod)
     echo "Running production build steps via deploy/deploy.sh ..."
-    echo "Note: first-time host provisioning (user, MySQL, .env, systemd,"
+    echo "Note: first-time host provisioning (user, MariaDB, .env, systemd,"
     echo "nginx) is deploy/provision.sh -- see docs/devel/DEPLOY.md."
     exec "$REPO_ROOT/deploy/deploy.sh"
     ;;
@@ -129,40 +129,38 @@ PY
 
 run_mysql_bootstrap() {
   local sql_file="$1"
+  local root_password="${WOCO_MYSQL_ROOT_PASSWORD:-}"
+  local -a client=(mariadb -u root)
 
-  if [[ -n "${WOCO_MYSQL_ROOT_PASSWORD:-}" ]]; then
-    mysql -u root --password="${WOCO_MYSQL_ROOT_PASSWORD}" < "$sql_file"
-    return
-  fi
-
-  if sudo -n mysql -e "SELECT 1" >/dev/null 2>&1; then
-    sudo mysql < "$sql_file"
-    return
-  fi
-
-  if [[ -t 0 ]]; then
-    echo
-    echo "MySQL root access is needed to create the database and app user."
-    echo "Leave the password blank to run 'sudo mysql' instead."
-    local root_password=""
-    read -r -s -p "MySQL root password: " root_password
+  if [[ -n "$root_password" ]]; then
+    client+=(--password="$root_password")
+  elif sudo -n mariadb -e "SELECT 1" >/dev/null 2>&1; then
+    client=(sudo mariadb)
+  elif [[ -t 0 ]]; then
+    echo "MariaDB root access is needed to create the database and app user."
+    read -r -s -p "MariaDB root password (blank for sudo mariadb): " root_password
     echo
     if [[ -n "$root_password" ]]; then
-      mysql -u root --password="$root_password" < "$sql_file"
+      client+=(--password="$root_password")
     else
-      sudo mysql < "$sql_file"
+      client=(sudo mariadb)
     fi
-    return
+  else
+    echo "Set WOCO_MYSQL_ROOT_PASSWORD or run setup interactively for MariaDB root access." >&2
+    exit 2
   fi
 
-  cat >&2 <<'MSG'
-setup.sh: cannot create the database without MySQL root access.
-Set WOCO_MYSQL_ROOT_PASSWORD for an unattended run, or create the database
-manually from tools/setup_worldcovers_db.sql and write matching credentials
-to mysql.cnf.
-MSG
-  exit 2
+  case "$("${client[@]}" --batch --skip-column-names -e 'SELECT VERSION()')" in
+    *MariaDB*) ;;
+    *) echo "Setup requires MariaDB. Migrate existing MySQL data first." >&2; exit 2 ;;
+  esac
+  "${client[@]}" < "$sql_file"
 }
+
+if ! command -v mariadb >/dev/null 2>&1; then
+  echo "Install and start MariaDB before running setup. See docs/devel/BUILD.md." >&2
+  exit 2
+fi
 
 echo "[1/6] Syncing Python dependencies (uv sync, includes dev group)..."
 uv sync
@@ -198,12 +196,16 @@ else:
     print("  DJANGO_SECRET_KEY already set; leaving it unchanged")
 PY
 
-echo "[3/6] Ensuring MySQL database and mysql.cnf..."
+echo "[3/6] Ensuring MariaDB database and mysql.cnf..."
 EXISTING_DB_USER="$(mysql_cnf_value user || true)"
 EXISTING_DB_PASSWORD="$(mysql_cnf_value password || true)"
 SETUP_DB="${WOCO_SETUP_DB:-0}"
 
 if [[ -f mysql.cnf && "$SETUP_DB" != "1" ]] && ! is_placeholder_password "$EXISTING_DB_PASSWORD"; then
+  case "$(mariadb --defaults-file="$REPO_ROOT/mysql.cnf" --batch --skip-column-names -e 'SELECT VERSION()')" in
+    *MariaDB*) ;;
+    *) echo "Setup requires MariaDB. Migrate existing MySQL data first." >&2; exit 2 ;;
+  esac
   echo "  using existing mysql.cnf"
 else
   DB_NAME_FROM_ENV="$(read_env_file_value DB_NAME .env || true)"
@@ -222,12 +224,12 @@ else
   fi
 
   if [[ -t 0 ]]; then
-    read -r -p "MySQL app database name [${DB_NAME_VALUE}]: " INPUT_DB_NAME
+    read -r -p "MariaDB app database name [${DB_NAME_VALUE}]: " INPUT_DB_NAME
     DB_NAME_VALUE="${INPUT_DB_NAME:-$DB_NAME_VALUE}"
-    read -r -p "MySQL app user [${DB_USER_VALUE}]: " INPUT_DB_USER
+    read -r -p "MariaDB app user [${DB_USER_VALUE}]: " INPUT_DB_USER
     DB_USER_VALUE="${INPUT_DB_USER:-$DB_USER_VALUE}"
     if [[ -z "$DB_PASSWORD_VALUE" ]]; then
-      read -r -s -p "MySQL app password (leave blank to generate): " INPUT_DB_PASSWORD
+      read -r -s -p "MariaDB app password (leave blank to generate): " INPUT_DB_PASSWORD
       echo
       DB_PASSWORD_VALUE="$INPUT_DB_PASSWORD"
     fi
@@ -235,7 +237,7 @@ else
 
   if [[ -z "$DB_PASSWORD_VALUE" ]]; then
     DB_PASSWORD_VALUE="$(generate_db_password)"
-    echo "  generated a random MySQL app password"
+    echo "  generated a random MariaDB app password"
   fi
 
   validate_mysql_name "database name" "$DB_NAME_VALUE"

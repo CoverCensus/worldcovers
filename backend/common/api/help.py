@@ -12,11 +12,33 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 
+# Explicit allowlist of documents published on the public Help page.
+#
+# This endpoint is AllowAny, so anything listed here is world-readable on
+# production. It is an allowlist rather than a "docs/ minus docs/devel/" sweep
+# on purpose: the previous rglob published every markdown file added anywhere
+# under docs/, which silently exposed two internal engineering writeups (the
+# #59 load-test report and the v1 cover-image-routing defect analysis) for
+# roughly six weeks. Publishing must be a deliberate act, not the default.
+#
+# To publish a new doc: add its stem here AND confirm it is written for
+# editors rather than for us.
+PUBLISHED_DOCS = frozenset({
+    "getting-started",
+    "faq",
+    "glossary",
+    "vision",
+    "acknowledgements",
+})
+
+
 class HelpDocsView(APIView):
     """
     Serve markdown files from docs/ for the Help page.
-    Files under docs/devel/ are excluded (internal-only convention).
-    Returns raw markdown so the SPA can render it as HTML.
+
+    Only files whose stem appears in PUBLISHED_DOCS are returned; everything
+    else under docs/ is treated as internal. Returns raw markdown so the SPA
+    can render it as HTML.
     """
     permission_classes = [AllowAny]
 
@@ -26,23 +48,19 @@ class HelpDocsView(APIView):
         if not docs_dir.exists():
             return Response({"results": items})
 
-        devel_dir = docs_dir / "devel"
         for md_file in sorted(
             docs_dir.rglob("*.md"),
             key=lambda p: str(p.relative_to(docs_dir)).lower(),
         ):
-            try:
-                if md_file.is_relative_to(devel_dir):
-                    continue
-            except ValueError:
-                pass
+            slug = slugify(md_file.stem) or md_file.stem.lower()
+            if slug not in PUBLISHED_DOCS:
+                continue
 
             try:
                 markdown = md_file.read_text(encoding="utf-8")
             except OSError:
                 continue
 
-            slug = slugify(md_file.stem) or md_file.stem.lower()
             title_match = re.search(r"^#\s+(.+)$", markdown, flags=re.MULTILINE)
             title = title_match.group(1).strip() if title_match else md_file.stem.replace("_", " ")
 

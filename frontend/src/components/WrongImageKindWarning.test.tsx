@@ -2,7 +2,6 @@
  * @jest-environment jsdom
  */
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 
 import { WrongImageKindWarning } from "./WrongImageKindWarning";
 
@@ -12,23 +11,22 @@ describe("WrongImageKindWarning (issue #76)", () => {
       <WrongImageKindWarning
         expected="MARKING"
         count={0}
-        acknowledged={false}
-        onAcknowledgedChange={jest.fn()}
       />,
     );
     expect(container.innerHTML).toBe("");
   });
 
-  it("tells a marking submitter their image looks like a cover", () => {
+  it("tells a marking submitter their image may show a cover", () => {
     render(
       <WrongImageKindWarning
         expected="MARKING"
         count={1}
-        acknowledged={false}
-        onAcknowledgedChange={jest.fn()}
       />,
     );
-    expect(screen.getByText(/looks like a whole cover/i)).toBeTruthy();
+    expect(screen.getByText(/may show a whole Cover/)).toBeTruthy();
+    expect(screen.getByText(/Create a new Cover record/)).toBeTruthy();
+    expect(screen.getByText(/use an existing Cover record/)).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
   it("reverses the message on the cover form", () => {
@@ -36,25 +34,10 @@ describe("WrongImageKindWarning (issue #76)", () => {
       <WrongImageKindWarning
         expected="COVER"
         count={1}
-        acknowledged={false}
-        onAcknowledgedChange={jest.fn()}
       />,
     );
     expect(screen.getByText(/looks like a marking close-up/i)).toBeTruthy();
-  });
-
-  it("always offers the override, so the contributor is never stuck", async () => {
-    const onAcknowledgedChange = jest.fn();
-    render(
-      <WrongImageKindWarning
-        expected="MARKING"
-        count={1}
-        acknowledged={false}
-        onAcknowledgedChange={onAcknowledgedChange}
-      />,
-    );
-    await userEvent.click(screen.getByRole("checkbox"));
-    expect(onAcknowledgedChange).toHaveBeenCalledWith(true);
+    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
   it("says how many images are affected when there is more than one", () => {
@@ -62,8 +45,6 @@ describe("WrongImageKindWarning (issue #76)", () => {
       <WrongImageKindWarning
         expected="MARKING"
         count={3}
-        acknowledged={false}
-        onAcknowledgedChange={jest.fn()}
       />,
     );
     expect(screen.getByText(/3 of the images/i)).toBeTruthy();

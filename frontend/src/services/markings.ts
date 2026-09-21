@@ -1,7 +1,7 @@
 import apiClient, { ensureCsrfToken } from "@/lib/api";
 import { listContributions } from "@/services/contributions";
 import {
-  coverContributionDisplayName,
+  coverContributionDisplayLabel,
   isCoverContributionData,
   parentMarkingIdFromContribution,
 } from "@/lib/contributionDisplay";
@@ -60,6 +60,14 @@ export interface MarkingImage {
   imageDescription: string;
   isTracing: boolean;
   displayOrder: number;
+  /**
+   * Pixel dimensions as stored. 0 when the source row recorded none --
+   * contribution_apply writes `int(meta.get("image_width") or 0)` -- which
+   * classifyImageShape treats as indeterminate, so unknown data prompts
+   * nothing. issues.md 167 / Trello T37.
+   */
+  imageWidth: number;
+  imageHeight: number;
 }
 
 export type ImageSubjectType = MarkingImage["subjectType"];
@@ -82,6 +90,8 @@ interface ImageApiRow {
   image_description?: unknown;
   is_tracing?: unknown;
   display_order?: unknown;
+  image_width?: unknown;
+  image_height?: unknown;
 }
 
 function mapImageRow(raw: unknown): MarkingImage | null {
@@ -104,6 +114,8 @@ function mapImageRow(raw: unknown): MarkingImage | null {
     imageDescription: toStr(o.image_description),
     isTracing: Boolean(o.is_tracing),
     displayOrder: toNumOrNull(o.display_order) ?? 0,
+    imageWidth: toNumOrNull(o.image_width) ?? 0,
+    imageHeight: toNumOrNull(o.image_height) ?? 0,
   };
 }
 
@@ -595,6 +607,8 @@ function mapImage(raw: unknown): MarkingImage | null {
     imageDescription: toStr(o.image_description),
     isTracing: Boolean(o.is_tracing),
     displayOrder: toNumOrNull(o.display_order) ?? 0,
+    imageWidth: toNumOrNull(o.image_width) ?? 0,
+    imageHeight: toNumOrNull(o.image_height) ?? 0,
   };
 }
 
@@ -687,33 +701,6 @@ export function countyDisplay(record: Pick<MarkingRecord, "regions">): string {
     .join(", ");
 }
 
-/**
- * Candidate targets for "move this image to another marking" (issue #104 / C3).
- *
- * A VPHC scan can hold two postal devices in one PNG -- a PAID handstamp above
- * a 10 ratemark. The editor crops the second device out (which lands a new
- * image on the same marking, because crop deliberately never relocates) and
- * then reassigns the crop to the marking it actually belongs to. That marking
- * is always at the same post office, so the picker is scoped to this office.
- *
- * `siblings` is expected to come from `getMarkingsPage({ postOfficeId })`, but
- * the post-office match is re-checked here rather than trusted: a caller that
- * passed the wrong filter would otherwise offer an unrelated town's markings,
- * and a mis-targeted move is silent damage to the catalog.
- *
- * Exported for unit testing.
- */
-export function moveTargetCandidates(
-  siblings: MarkingRecord[],
-  current: Pick<MarkingRecord, "id" | "postOfficeId">,
-): MarkingRecord[] {
-  // Without a post office there is no bounded set to offer, so offer nothing
-  // rather than every marking that also happens to lack one.
-  if (current.postOfficeId == null) return [];
-  return siblings.filter(
-    (m) => m.id !== current.id && m.postOfficeId === current.postOfficeId,
-  );
-}
 
 function mapRegionList(raw: unknown): MarkingRegion[] {
   if (!Array.isArray(raw)) return [];
@@ -1456,7 +1443,7 @@ function mapCoverContributionToAssociatedCover(
     id: -id,
     contributionDraftId: id,
     contributionStatus: status,
-    displayLabel: coverContributionDisplayName(sd, id),
+    displayLabel: coverContributionDisplayLabel(contrib, sd, id),
     reviewStatus,
     reviewNotes:
       typeof contrib.review_notes === "string"

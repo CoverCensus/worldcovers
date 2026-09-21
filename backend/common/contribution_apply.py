@@ -460,15 +460,28 @@ def apply_cover_contribution_to_catalog(contrib) -> dict:
     )
 
     _sync_cover_date_seen(cover.pk, payload, actor)
-    _sync_images(
-        Image.SUBJECT_COVER,
-        cover.pk,
-        payload,
-        actor,
-        image_view="FRONT",
-        metas_keys=("cover_image_metas", "image_metas"),
-        tags_key="cover_image_tags",
-    )
+
+    # issues.md 167. A carried-over image is not an upload, so such a
+    # submission can legitimately arrive with no image metas at all -- and
+    # _sync_images treats "no metas" as an error. Skip it in exactly that case;
+    # the repoint below supplies the cover's image.
+    cover_metas_keys = ("cover_image_metas", "image_metas")
+    carried_over = _source_marking_image_id(payload) is not None
+    if not (carried_over and not _has_image_metas(payload, cover_metas_keys)):
+        _sync_images(
+            Image.SUBJECT_COVER,
+            cover.pk,
+            payload,
+            actor,
+            image_view="FRONT",
+            metas_keys=cover_metas_keys,
+            tags_key="cover_image_tags",
+        )
+
+    # AFTER _sync_images on purpose: that function reconciles the cover's
+    # images against the full desired set and deletes anything not in it, so a
+    # row repointed beforehand would be removed again.
+    _repoint_source_marking_image(payload, cover.pk, actor)
     _sync_citations("COVER", cover.pk, payload, actor)
     _sync_cover_valuation(cover.pk, payload, actor)
 
@@ -1072,6 +1085,87 @@ def _meta_is_tracing(meta: dict) -> bool:
     if isinstance(tag, str):
         return tag.strip().lower() == "tracing"
     return False
+
+
+def _source_marking_image_id(payload) -> int | None:
+    """The catalog Image a "Create cover from this image" submission carried over.
+
+    issues.md 167. The marking screen sends the editor to the ordinary cover
+    form with an existing image already shown. That image is NOT re-uploaded --
+    the bytes are already on the server -- so the submission names it by id
+    instead, and approval repoints it.
+    """
+    raw = payload.get("source_marking_image_id")
+    if raw in (None, ""):
+        return None
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    # Negative ids are the draft-preview sentinel used by the frontend; those
+    # are not catalog rows and there is nothing to repoint.
+    return value if value > 0 else None
+
+
+def _repoint_source_marking_image(payload, cover_pk: int, actor) -> bool:
+    """Move the carried-over image from its marking onto the new cover.
+
+    Repoint, never copy and never delete:
+
+      * copying would put a second file on disk and a second row on the cover
+        for one picture;
+      * deleting drops the row and leaves the file, and nothing sweeps it up
+        (issues.md 113).
+
+    Changing the subject is also what removes it from the marking's thumbnails,
+    which is the visible half of what Ian asked for.
+
+    Returns True when a row was repointed. Never raises: if the image has since
+    been moved, cropped away or deleted, the approval must still succeed -- the
+    editor can attach an image afterwards, whereas a failed approval loses the
+    whole submission.
+    """
+    image_id = _source_marking_image_id(payload)
+    if image_id is None:
+        return False
+
+    row = Image.objects.filter(pk=image_id, subject_type=Image.SUBJECT_MARKING).first()
+    if row is None:
+        # Already moved, or gone. Not an error.
+        return False
+
+    # Cover subjects accept FRONT/BACK/INTERIOR/DETAIL only; a marking's "FULL"
+    # is rejected by the DB check constraint.
+    last = (
+        Image.objects.filter(subject_type=Image.SUBJECT_COVER, subject_id=cover_pk)
+        .order_by("-display_order")
+        .first()
+    )
+    row.subject_type = Image.SUBJECT_COVER
+    row.subject_id = cover_pk
+    row.image_view = "FRONT"
+    row.display_order = 0 if last is None else last.display_order + 1
+    row.modified_by = actor
+    row.save(
+        update_fields=[
+            "subject_type",
+            "subject_id",
+            "image_view",
+            "display_order",
+            "modified_by",
+            "modified_date",
+        ]
+    )
+    return True
+
+
+def _has_image_metas(payload, metas_keys) -> bool:
+    for k in metas_keys:
+        candidate = payload.get(k)
+        if isinstance(candidate, list) and len(candidate) > 0:
+            return True
+    return False
+
 
 
 def _sync_images(

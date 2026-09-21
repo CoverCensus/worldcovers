@@ -70,9 +70,9 @@ export function EntryAssociatedThumbnailsCard({
                   />
                 </button>
                 {(canReorder || onDeleteImage || onMoveImage) && (
-                  <div className="flex items-center gap-0.5">
+                  <div className="flex flex-col items-center gap-0.5">
                     {canReorder && onMoveBy && onSetDefault && (
-                      <>
+                      <div className="flex items-center justify-center gap-0.5">
                         <Button
                           type="button"
                           variant="ghost"
@@ -110,35 +110,39 @@ export function EntryAssociatedThumbnailsCard({
                         >
                           <Star className={`h-3 w-3 ${img.isDefault ? "fill-amber-500 text-amber-500" : ""}`} />
                         </Button>
-                      </>
+                      </div>
                     )}
-                    {onMoveImage && img.imageId != null && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        aria-label={moveImageLabel ?? "Move image to another record"}
-                        title={moveImageLabel ?? "Move image"}
-                        disabled={reorderingImages}
-                        onClick={() => onMoveImage(idx)}
-                      >
-                        <Replace className="h-3 w-3" />
-                      </Button>
-                    )}
-                    {onDeleteImage && img.imageId != null && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-destructive hover:text-destructive"
-                        aria-label="Delete image"
-                        title="Delete image"
-                        disabled={reorderingImages || deletingImageId === img.imageId}
-                        onClick={() => onDeleteImage(idx)}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
+                    {img.imageId != null && (onMoveImage || onDeleteImage) && (
+                      <div className="flex items-center justify-center gap-0.5">
+                        {onMoveImage && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            aria-label={moveImageLabel ?? "Move image to another record"}
+                            title={moveImageLabel ?? "Move image"}
+                            disabled={reorderingImages}
+                            onClick={() => onMoveImage(idx)}
+                          >
+                            <Replace className="h-3 w-3" />
+                          </Button>
+                        )}
+                        {onDeleteImage && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-destructive hover:text-destructive"
+                            aria-label="Delete image"
+                            title="Delete image"
+                            disabled={reorderingImages || deletingImageId === img.imageId}
+                            onClick={() => onDeleteImage(idx)}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
