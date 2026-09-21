@@ -72,7 +72,13 @@ export interface CoverFromMarkingImageServices {
   createCoverDate: (payload: {
     cover: number;
     date: string;
-    granularity: string;
+    /**
+     * Legacy granularities only. createCoverDate sends no date_year/month/day,
+     * so nothing finer round-trips -- and "circa" is a separate unresolved
+     * decision (issues.md 141 / Trello T42) that is a fourth concept, not a
+     * fourth granularity. Typed narrowly so that stays true.
+     */
+    granularity: "YEAR" | "MONTH" | "DAY";
   }) => Promise<unknown>;
   moveImage: (coverId: number) => Promise<{ ok: true } | { ok: false; message: string }>;
 }
