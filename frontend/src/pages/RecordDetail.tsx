@@ -92,6 +92,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { ENTRY_LABELS } from "@/labels/entry";
 import { SUBMISSION_LABELS } from "@/labels/submission";
 import { useAuth } from "@/hooks/useAuth";
 import { Input } from "@/components/ui/input";
@@ -1320,7 +1321,7 @@ const RecordDetail = () => {
                 <CardHeader>
                   {/* Issue #138: names this screen, not the cover screen. */}
                   <CardTitle className="font-heading text-lg">
-                    Associated Marking Thumbnails
+                    {ENTRY_LABELS.associatedThumbnails.marking}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>

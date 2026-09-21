@@ -71,6 +71,7 @@ import { parseMarkingIdInput } from "@/lib/recordLinking";
 import { moveImageAndRefresh } from "@/lib/imageMoveRefresh";
 import { listCitationsForSubject } from "@/services/citations";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
+import { ENTRY_LABELS } from "@/labels/entry";
 import { SUBMISSION_LABELS } from "@/labels/submission";
 import { dashboardHrefForTab } from "@/lib/dashboardParams";
 import { catalogHref } from "@/lib/catalogParams";
@@ -724,7 +725,7 @@ const CoverDetailPage = () => {
               carouselApi={api}
               currentIndex={current}
               // Issue #138: must not read the same as the marking screen's card.
-              title="Associated Cover Thumbnails"
+              title={ENTRY_LABELS.associatedThumbnails.cover}
               emptyMessage="No images linked to this cover yet."
               canReorder={canManageImages && galleryImages.length > 1}
               reorderingImages={reorderingImages}
