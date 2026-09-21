@@ -1,5 +1,6 @@
 import {
   contributionCardPresentation,
+  entryKindForContribution,
   coverContributionDisplayLabel,
   coverContributionDisplayName,
   materializedCoverIdFromContribution,
@@ -158,5 +159,42 @@ describe("contributionCardPresentation", () => {
         submittedData: { submission_kind: "cover", type: "FC", parent_marking_id: 12 },
       }).title,
     ).toBe("Submission #9");
+  });
+});
+
+/**
+ * Ian, 2026-09-21: "from this I do not know if it is a cover he is submitting
+ * or a marking. Could it say which it is on the screen."
+ *
+ * The badge uses the same predicate the page dispatches on, so these also pin
+ * which screen renders. The heuristic branch matters more than it looks:
+ * CoverEdit stamps `submission_kind`, but the marking form never has, and the
+ * backend only started defaulting it at views.py:3481 -- so older rows carry
+ * neither and fall through to the guesswork below.
+ */
+describe("entryKindForContribution", () => {
+  it("trusts an explicit submission_kind", () => {
+    expect(entryKindForContribution({ submission_kind: "cover" })).toBe("Cover");
+    expect(entryKindForContribution({ submission_kind: "marking" })).toBe("Marking");
+  });
+
+  it("reads a legacy cover row with no submission_kind", () => {
+    // Parent marking, a cover type, no town, no marking type.
+    expect(
+      entryKindForContribution({ parent_marking_id: 12, type: "FL" }),
+    ).toBe("Cover");
+  });
+
+  it("reads a legacy marking row with no submission_kind", () => {
+    expect(
+      entryKindForContribution({ town: "RICHMOND", type: "TOWNMARK" }),
+    ).toBe("Marking");
+  });
+
+  it("calls an ambiguous legacy row a Marking rather than guessing Cover", () => {
+    // No parent, no type, no date: nothing says cover. Defaulting to Marking
+    // keeps it on the screen that shows every field, so an editor can see what
+    // it actually is instead of a cover form with blanks.
+    expect(entryKindForContribution({})).toBe("Marking");
   });
 });

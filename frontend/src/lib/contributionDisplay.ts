@@ -37,6 +37,22 @@ export function isCoverContributionData(sd: Record<string, unknown> | null | und
   return Boolean(hasParent && (hasCoverType || hasCoverDate) && !hasTown && !hasMarkingType);
 }
 
+/**
+ * "Cover" or "Marking" for a contribution -- Ian, 2026-09-21: "from this I do
+ * not know if it is a cover he is submitting or a marking. Could it say which
+ * it is on the screen".
+ *
+ * Deliberately the same predicate `ContributionDetail` dispatches on, so the
+ * label and the screen can never disagree. If the heuristic below is ever
+ * wrong, the badge is wrong in the same direction -- which makes the
+ * misclassification visible and reportable instead of silent.
+ */
+export function entryKindForContribution(
+  sd: Record<string, unknown>,
+): "Cover" | "Marking" {
+  return isCoverContributionData(sd) ? "Cover" : "Marking";
+}
+
 export function parentMarkingIdFromContribution(sd: Record<string, unknown>): number | null {
   const raw = sd.parent_marking_id ?? sd.marking_id ?? sd.parentMarkingId;
   if (raw == null || raw === "") return null;

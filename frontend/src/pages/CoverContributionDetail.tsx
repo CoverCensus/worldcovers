@@ -601,8 +601,13 @@ export default function CoverContributionDetail({ initialContribution = null }: 
 
   return (
     <>
+    {/* Ian, 2026-09-21: the review screen must say which kind of submission
+        this is. The cover branch passed no title at all, so
+        EntryDetailLayout's <h1> never rendered and the only signal was a
+        badge inside a card, below the fold. */}
     <EntryDetailLayout
       onBack={handleBack}
+      title="Cover"
       leftColumn={(
         <>
           <EntryImageGalleryCard
@@ -771,7 +776,6 @@ export default function CoverContributionDetail({ initialContribution = null }: 
             <CardContent>
               <div className="mb-4 flex flex-wrap items-center gap-2">
                 <Badge className={statusBadgeClassName}>{statusLabel}</Badge>
-                <Badge variant="outline">Cover submission</Badge>
               </div>
               <CoverRecordDetailFields
                 type={coverTypeLabel(typeCode)}
