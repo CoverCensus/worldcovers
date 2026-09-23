@@ -25,6 +25,7 @@ import {
   yearFromCatalogDate,
 } from "@/lib/catalogRecordDisplay";
 import { dashboardHrefForTab } from "@/lib/dashboardParams";
+import { coverTypeLabel as sharedCoverTypeLabel } from "@/lib/coverTypes";
 import { catalogHref } from "@/lib/catalogParams";
 import { buildMarkingFields } from "@/lib/markingFields";
 import { formatRateValue } from "@/lib/rateDisplay";
@@ -150,9 +151,7 @@ function coverDimensionsDisplay(width: string | null, height: string | null): st
 }
 
 function coverTypeLabel(t: string | null): string {
-  if (t === "FC") return "Folded Cover";
-  if (t === "FL") return "Folded Letter";
-  return EMPTY;
+  return sharedCoverTypeLabel(t) || EMPTY;
 }
 
 function formatCoverDate(d: AssociatedDateSeen): string {

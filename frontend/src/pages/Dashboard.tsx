@@ -38,6 +38,7 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { cn } from "@/lib/utils";
+import { coverTypeLabel } from "@/lib/coverTypes";
 import {
   normalizeImageUrl,
   getRecycleBinMarkings,
@@ -2321,11 +2322,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             const coverLabel = c.code ?? `Cover #${c.id}`;
                             const coverMeta = [
                               c.colorName,
-                              c.type === "FC"
-                                ? "Folded Cover"
-                                : c.type === "FL"
-                                  ? "Folded Letter"
-                                  : "",
+                              coverTypeLabel(c.type),
                             ]
                               .filter(Boolean)
                               .join(" - ");

@@ -110,7 +110,7 @@ A physical postal cover bearing one or more recorded markings. A cover is concep
 * width and height are decimals in millimeters.  
 * has_adhesive defaults to false.  
 * is_institutional is nullable; a null value means the current data does not state institutional ownership.
-* type, if set, stores one of: `FC` (Folded Cover), or `FL` (Folded Letter).
+* type, if set, stores one of: `FL` (Folded Letter), `FLF` (Folded Letter Front), `ENV` (Envelope), `ENVF` (Envelope Front), `FC` (Folded Cover, legacy), or `UNK` (Unknown).
 
 *Relationships:*
 

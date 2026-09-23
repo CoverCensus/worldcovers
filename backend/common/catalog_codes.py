@@ -364,7 +364,7 @@ def _payload_is_cover(payload: dict[str, Any]) -> bool:
     if kind in {"marking", "townmark", "ratemark", "auxmark"}:
         return False
     type_value = str(payload.get("type") or "").strip().upper()
-    return type_value in {"FC", "FL"} or bool(payload.get("parent_marking_id"))
+    return type_value in Cover.COVER_TYPE_CODES or bool(payload.get("parent_marking_id"))
 
 
 def _existing_subject_id(

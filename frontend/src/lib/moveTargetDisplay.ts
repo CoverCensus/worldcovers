@@ -26,6 +26,7 @@ import {
   formatDateSeen,
 } from "@/lib/catalogRecordDisplay";
 import type { AssociatedCover, MarkingRecord } from "@/services/markings";
+import { coverTypeLabel } from "@/lib/coverTypes";
 import { normalizeImageUrl } from "@/services/markings";
 
 export interface MoveTargetDescription {
@@ -129,12 +130,6 @@ export function describeCoverTarget(cover: AssociatedCover): MoveTargetDescripti
   );
 }
 
-/** ASCC cover-type codes. Matches the marking detail screen's own wording. */
-function coverTypeLabel(t: string | null): string {
-  if (t === "FC") return "Folded Cover";
-  if (t === "FL") return "Folded Letter";
-  return "";
-}
 
 /**
  * Substring match over code and detail, so an editor can find a destination by

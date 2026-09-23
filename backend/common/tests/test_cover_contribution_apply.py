@@ -164,6 +164,23 @@ class CoverContributionApplyFunctionTests(TestCase):
             modified_by=self.user,
         )
 
+    def test_materializes_every_cover_type(self):
+        # Trello T67. Approval used to accept FC and FL only.
+        for code, label in (("FLF", "Folded Letter Front"), ("ENVF", "Envelope Front"),
+                            ("UNK", "Unknown")):
+            with self.subTest(code=code):
+                sd = _cover_submitted_data(self.parent, type=code)
+                contrib = _make_cover_contribution(self.user, sd, self.collection)
+                cover = apply_cover_contribution_to_catalog(contrib)["cover"]
+                self.assertEqual(cover.type, code)
+                self.assertEqual(cover.get_type_display(), label)
+
+    def test_rejects_an_unknown_cover_type_on_approval(self):
+        sd = _cover_submitted_data(self.parent, type="XX")
+        contrib = _make_cover_contribution(self.user, sd, self.collection)
+        with self.assertRaises(ContributionApplyError):
+            apply_cover_contribution_to_catalog(contrib)
+
     def test_materializes_cover_and_children(self):
         rw = self.parent_reference
         sd = _cover_submitted_data(
