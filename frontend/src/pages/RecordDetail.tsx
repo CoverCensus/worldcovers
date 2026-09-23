@@ -1225,6 +1225,15 @@ const RecordDetail = () => {
                 </CardContent>
               </Card>
 
+              {record.desc.trim() && (
+                <Card className="shadow-archival-md">
+                  <CardHeader><CardTitle className="font-heading text-lg">Description</CardTitle></CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">{record.desc}</p>
+                  </CardContent>
+                </Card>
+              )}
+
               <Card className="shadow-archival-md">
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
@@ -1344,15 +1353,6 @@ const RecordDetail = () => {
                 postOfficeId={recordPostOfficeId}
                 focusYear={postmasterFocusYear}
               />
-
-              {record.desc.trim() && (
-                <Card className="shadow-archival-md">
-                  <CardHeader><CardTitle className="font-heading text-lg">Description</CardTitle></CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">{record.desc}</p>
-                  </CardContent>
-                </Card>
-              )}
 
               {submitterName && (
                 <Card className="shadow-archival-md">
