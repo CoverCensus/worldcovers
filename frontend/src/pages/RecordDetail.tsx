@@ -89,6 +89,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
 } from "@/services/covers";
 import { readVphcProvenance } from "@/lib/vphcProvenance";
+import { earliestDateSeen } from "@/lib/associatedCoverSort";
 import { VphcProvenanceCard } from "@/components/VphcProvenanceCard";
 import { getTenuresForPostOffice, type PostmasterTenure } from "@/services/postmasters";
 import { PostmastersCard } from "@/components/PostmastersCard";
@@ -161,6 +162,12 @@ function formatCoverDate(d: AssociatedDateSeen): string {
     dateMonth: d.dateMonth,
     dateDay: d.dateDay,
   }) || d.date || "";
+}
+
+/** The cover's earliest observation, at its own precision, for the caption under its thumbnail. */
+function associatedCoverEarliestDisplay(c: AssociatedCover["coverDetails"]): string {
+  const earliest = c ? earliestDateSeen(c.datesSeen) : null;
+  return earliest ? formatCoverDate(earliest) : "";
 }
 
 function associatedCoverDatesDisplay(
@@ -1261,6 +1268,7 @@ const RecordDetail = () => {
                         {associatedCovers.map((cover) => {
                           const c = cover.coverDetails;
                           const thumb = cover.defaultImageUrl ?? null;
+                          const earliestLabel = associatedCoverEarliestDisplay(c);
                           const codeLabel =
                             cover.displayLabel?.trim() ||
                             (isStaff ? c?.code?.trim() : "") ||
@@ -1299,11 +1307,19 @@ const RecordDetail = () => {
                             >
                               <CardContent className="p-4">
                                 <div className="flex gap-6 md:flex-row flex-col">
-                                  <ImageOrPlaceholder
-                                    src={thumb}
-                                    alt={codeLabel}
-                                    className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border shrink-0"
-                                  />
+                                  <div className="shrink-0 md:w-32 w-full">
+                                    <ImageOrPlaceholder
+                                      src={thumb}
+                                      alt={codeLabel}
+                                      className="md:w-32 md:h-32 w-full h-48 object-cover rounded border border-border"
+                                    />
+                                    {/* Ian, 2026-09-23: the cover's date "under or on the thumbnail". */}
+                                    {earliestLabel && (
+                                      <p className="mt-1 text-xs text-center font-medium text-foreground">
+                                        {earliestLabel}
+                                      </p>
+                                    )}
+                                  </div>
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
                                       <h3 className="font-heading text-xl font-semibold text-foreground">
