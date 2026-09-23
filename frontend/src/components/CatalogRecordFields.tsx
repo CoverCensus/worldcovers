@@ -17,13 +17,6 @@ function hasValue(value: string): boolean {
   return value.trim() !== "" && value !== "-";
 }
 
-function truncateWithEllipsis(value: string, maxChars: number): string {
-  const s = String(value ?? "").trim();
-  if (!s) return s;
-  if (s.length <= maxChars) return s;
-  return `${s.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
-}
-
 function townmarkDescriptor(row: CatalogFieldValues): CatalogRecordField {
   if (hasValue(row.lettering)) {
     return { label: "Lettering Style", value: row.lettering };
@@ -87,10 +80,9 @@ function contributionFields(row: CatalogFieldValues): CatalogRecordField[] {
   const isRatemark = type === "ratemark";
   const isAuxmark = type === "auxmark";
 
-  if (isManuscript || type !== "townmark") {
-    const description = truncateWithEllipsis(row.desc === "-" ? "" : row.desc, 140);
-    if (description) fields.push({ label: "Description", value: description });
-  } else {
+  // The description is rendered after the dates, in full -- where the form
+  // put it (issues.md 173). Only a struck townmark carries the device fields.
+  if (!isManuscript && type === "townmark") {
     fields.push(
       { label: "Shape", value: row.shape },
       { label: "Lettering style", value: row.lettering },
@@ -115,6 +107,8 @@ export function CatalogRecordFields({
   record?: MarkingRecord;
   variant?: "list" | "gallery" | "detail" | "contribution";
 }) {
+  const reviewDescription =
+    variant === "contribution" && row.desc.trim() && row.desc.trim() !== "-" ? row.desc : "";
   const fields =
     variant === "detail"
       ? [
@@ -147,6 +141,12 @@ export function CatalogRecordFields({
           <span className="text-foreground break-words">{row.latestSeen}</span>
         </div>
       </div>
+      {reviewDescription && (
+        <div className="min-w-0 sm:col-span-2">
+          <span className="text-muted-foreground">Description:</span>{" "}
+          <span className="text-foreground break-words whitespace-pre-line">{reviewDescription}</span>
+        </div>
+      )}
     </dl>
   );
 }

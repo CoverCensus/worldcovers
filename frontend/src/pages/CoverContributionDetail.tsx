@@ -782,6 +782,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                 date={formatCoverDate(sd)}
                 institutionallyOwned={boolLabel(sd.is_institutional ?? sd.isInstitutional)}
                 backstamp={boolLabel(sd.is_backstamp ?? sd.isBackstamp)}
+                description={String(sd.description ?? sd.desc ?? "")}
               />
               {contributorComment && (
                 <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">

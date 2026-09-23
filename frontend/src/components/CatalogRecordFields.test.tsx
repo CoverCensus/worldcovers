@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import type { CatalogFieldValues } from "@/lib/catalogRecordDisplay";
 import { CatalogRecordFields } from "./CatalogRecordFields";
 
@@ -161,5 +161,40 @@ describe("CatalogRecordFields search gallery fields", () => {
       "Earliest Seen",
       "Latest Seen",
     ]);
+  });
+});
+
+describe("CatalogRecordFields contribution review fields", () => {
+  // issues.md 173 — Todd Hause: "the 'Contribution Details' does not include
+  // the 'Description' text which was entered under the date ranges in the
+  // original submission." For a plain townmark it was never rendered; for
+  // other types it was cut to 140 characters.
+  const longDesc = "Rough C on the left, weak strike at the top, ".repeat(5).trim();
+
+  it("shows a plain townmark's description in full, after the dates", () => {
+    const { container } = render(
+      <CatalogRecordFields row={catalogRow({ desc: longDesc })} variant="contribution" />,
+    );
+
+    expect(renderedLabels(container)).toEqual([
+      "Type",
+      "Manuscript",
+      "Shape",
+      "Lettering style",
+      "Dimensions",
+      "Color",
+      "Earliest Seen",
+      "Latest Seen",
+      "Description",
+    ]);
+    expect(screen.getByText(longDesc)).toBeTruthy();
+  });
+
+  it("omits Description when the submission has none", () => {
+    const { container } = render(
+      <CatalogRecordFields row={catalogRow({ desc: "-" })} variant="contribution" />,
+    );
+
+    expect(renderedLabels(container)).not.toContain("Description");
   });
 });
