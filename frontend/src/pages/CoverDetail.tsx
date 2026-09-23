@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { type CarouselApi } from "@/components/ui/carousel";
 import { formatDateSeen } from "@/lib/catalogRecordDisplay";
+import { coverTypeLabel as sharedCoverTypeLabel } from "@/lib/coverTypes";
 import { EntryDetailLayout } from "@/components/entry-detail/EntryDetailLayout";
 import { EntryImageGalleryCard } from "@/components/entry-detail/EntryImageGalleryCard";
 import { EntryAssociatedThumbnailsCard } from "@/components/entry-detail/EntryAssociatedThumbnailsCard";
@@ -99,9 +100,7 @@ function buildCoverGalleryImages(images: MarkingImage[]): EntryGalleryImage[] {
 }
 
 function coverTypeLabel(t: string | null): string {
-  if (t === "FC") return "Folded Cover";
-  if (t === "FL") return "Folded Letter";
-  return EMPTY;
+  return sharedCoverTypeLabel(t) || EMPTY;
 }
 
 function formatCoverDate(d: CoverDateSeenItem): string {

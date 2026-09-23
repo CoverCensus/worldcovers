@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { sourceMarkingImageFromState } from "@/lib/coverFromImageHandoff";
+import {
+  COVER_TYPE_OPTIONS,
+  DEFAULT_COVER_TYPE,
+  isCoverTypeCode,
+  normalizeCoverType,
+} from "@/lib/coverTypes";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -89,10 +95,6 @@ type ReferenceDetailFieldErrors = {
   citationUrl?: string;
 };
 
-const COVER_TYPE_OPTIONS: { value: string; label: string }[] = [
-  { value: "FC", label: "FC - Folded Cover" },
-  { value: "FL", label: "FL - Folded Letter" },
-];
 const COVER_MONTH_OPTIONS = [
   { value: "1", label: "JAN" },
   { value: "2", label: "FEB" },
@@ -108,7 +110,6 @@ const COVER_MONTH_OPTIONS = [
   { value: "12", label: "DEC" },
 ];
 
-const DEFAULT_COVER_TYPE = "FL";
 const EMPTY_COVER_DATE: PartialDateInput = { unknown: false, year: "", month: "", day: "" };
 
 const MAX_IMAGE_SIZE_MB = 100;
@@ -125,10 +126,6 @@ function formatAxiosError(err: unknown): string {
   if (Array.isArray(detail)) return detail.map(String).join(" ");
   if (data && typeof data === "object") return JSON.stringify(data);
   return err.message || "Request failed.";
-}
-
-function normalizeCoverType(raw: string | null | undefined): string {
-  return raw === "FC" || raw === "FL" ? raw : DEFAULT_COVER_TYPE;
 }
 
 function buildEditState(cover: AssociatedCover | null | undefined) {
@@ -364,7 +361,7 @@ export default function CoverEdit() {
           return;
         }
         const typeVal = String(sd.type ?? "").trim().toUpperCase();
-        if (typeVal === "FC" || typeVal === "FL") setType(typeVal);
+        if (isCoverTypeCode(typeVal)) setType(typeVal);
         const draftDate = partialDateInputFromSubmittedData(sd);
         if (draftDate.unknown || draftDate.year || draftDate.month || draftDate.day) {
           setCoverDate(draftDate);

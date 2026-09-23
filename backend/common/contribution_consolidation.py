@@ -55,7 +55,7 @@ def _is_cover_payload(submitted_data: dict) -> bool:
         or submitted_data.get("markingId")
     )
     has_parent = _parse_positive_int(parent) is not None
-    has_cover_type = type_value in {"FC", "FL"}
+    has_cover_type = type_value in Cover.COVER_TYPE_CODES
     has_cover_date = bool(
         str(
             submitted_data.get("cover_date")

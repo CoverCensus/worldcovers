@@ -80,7 +80,7 @@ export interface CoverWritePayload {
   code?: string | null;
   /** Color FK id; null clears the colour. */
   color?: number | null;
-  /** "FC" (Folded Cover) or "FL" (Folded Letter); null clears the choice. */
+  /** A cover type code (see lib/coverTypes); null clears the choice. */
   type?: string | null;
   has_adhesive?: boolean;
   is_institutional?: boolean | null;

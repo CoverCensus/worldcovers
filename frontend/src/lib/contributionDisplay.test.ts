@@ -198,3 +198,17 @@ describe("entryKindForContribution", () => {
     expect(entryKindForContribution({})).toBe("Marking");
   });
 });
+
+describe("new cover types (Trello T67)", () => {
+  it("treats every cover type code as a cover, not only FC and FL", () => {
+    for (const type of ["FLF", "ENV", "ENVF", "UNK"]) {
+      expect(entryKindForContribution({ parent_marking_id: 12, type })).toBe("Cover");
+    }
+  });
+
+  it("labels the new codes in the display name", () => {
+    expect(coverContributionDisplayName({ type: "FLF" }, 7)).toBe("Folded Letter Front");
+    expect(coverContributionDisplayName({ type: "ENVF" }, 7)).toBe("Envelope Front");
+    expect(coverContributionDisplayName({ type: "UNK" }, 7)).toBe("Unknown");
+  });
+});

@@ -1203,7 +1203,7 @@ def _contribution_submitted_data_is_cover(sd) -> bool:
     if kind in {"marking", "townmark", "ratemark", "auxmark"}:
         return False
     type_value = str(sd.get("type") or "").strip().upper()
-    has_cover_type = type_value in {"FC", "FL"}
+    has_cover_type = type_value in Cover.COVER_TYPE_CODES
     has_marking_type = type_value in {"TOWNMARK", "RATEMARK", "AUXMARK"}
     has_town = bool(str(sd.get("town") or "").strip())
     parent_raw = sd.get("parent_marking_id") or sd.get("marking_id")
@@ -1432,7 +1432,7 @@ class ContributionListSerializer(serializers.ModelSerializer):
         sd = obj.submitted_data or {}
 
         if _contribution_submitted_data_is_cover(sd):
-            cover_types = {"FC": "Folded Cover", "FL": "Folded Letter"}
+            cover_types = Cover.COVER_TYPE_LABELS
             type_code = str(sd.get("type") or "").strip().upper()
             type_label = cover_types.get(type_code, type_code or "Cover")
             date = _submitted_cover_date_label(sd)

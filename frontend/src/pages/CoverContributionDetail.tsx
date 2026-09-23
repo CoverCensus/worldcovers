@@ -29,6 +29,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { dashboardHref, dashboardHrefForTab } from "@/lib/dashboardParams";
+import { coverTypeLabel as sharedCoverTypeLabel } from "@/lib/coverTypes";
 import { readReturnTo } from "@/lib/returnTo";
 import {
   coverContributionDisplayName,
@@ -54,11 +55,6 @@ import {
 import { getMarkingById, type MarkingRecord } from "@/services/markings";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
 
-const COVER_TYPE_LABELS: Record<string, string> = {
-  FC: "Folded Cover",
-  FL: "Folded Letter",
-};
-
 type ReferenceDetailInput = {
   pageNumber: string;
   citationUrl: string;
@@ -71,8 +67,7 @@ function boolLabel(raw: unknown): string {
 }
 
 function coverTypeLabel(typeCode: string): string {
-  const code = typeCode.trim().toUpperCase();
-  return COVER_TYPE_LABELS[code] || code || "--";
+  return sharedCoverTypeLabel(typeCode) || "--";
 }
 
 function formatCoverDate(sd: Record<string, unknown>): string {

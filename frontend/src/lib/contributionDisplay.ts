@@ -6,11 +6,8 @@ import {
 } from "@/lib/partialDate";
 import { formatSizeFromSubmittedData } from "@/lib/dimensionsMm";
 import { ENTRY_LABELS } from "@/labels/entry";
+import { COVER_TYPE_LABELS, isCoverTypeCode } from "@/lib/coverTypes";
 
-const COVER_TYPE_LABELS: Record<string, string> = {
-  FC: "Folded Cover",
-  FL: "Folded Letter",
-};
 
 export function isCoverContributionData(sd: Record<string, unknown> | null | undefined): boolean {
   if (!sd || typeof sd !== "object") return false;
@@ -23,7 +20,7 @@ export function isCoverContributionData(sd: Record<string, unknown> | null | und
   const type = String(sd.type ?? "")
     .trim()
     .toUpperCase();
-  const hasCoverType = type === "FC" || type === "FL";
+  const hasCoverType = isCoverTypeCode(type);
   const hasMarkingType =
     type === "TOWNMARK" || type === "RATEMARK" || type === "AUXMARK";
   const hasTown = String(sd.town ?? "").trim().length > 0;

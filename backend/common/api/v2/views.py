@@ -3160,7 +3160,7 @@ def _is_cover_submission_data(data) -> bool:
     if kind in {"marking", "townmark", "ratemark", "auxmark"}:
         return False
     type_value = str(data.get("type") or "").strip().upper()
-    has_cover_type = type_value in {"FC", "FL"}
+    has_cover_type = type_value in Cover.COVER_TYPE_CODES
     has_marking_type = type_value in {"TOWNMARK", "RATEMARK", "AUXMARK"}
     has_town = bool(str(data.get("town") or "").strip())
     parent_raw = data.get("parent_marking_id") or data.get("marking_id")
@@ -3397,10 +3397,11 @@ class ContributionSubmitView(APIView):
                     {"detail": "type must be TOWNMARK, RATEMARK, or AUXMARK."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-        elif type_value and type_value not in {"FC", "FL"}:
-            # Cover contributions may send cover type as `type` (FC | FL).
+        elif type_value and type_value not in Cover.COVER_TYPE_CODES:
+            # Cover contributions may send the cover type as `type`.
             return Response(
-                {"detail": "For cover submissions, type must be FC or FL when provided."},
+                {"detail": "For cover submissions, type must be one of {} when provided.".format(
+                    ", ".join(code for code, _label in Cover.COVER_TYPE_CHOICES))},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
