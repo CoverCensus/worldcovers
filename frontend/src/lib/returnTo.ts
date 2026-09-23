@@ -77,3 +77,16 @@ function isSafeReturnTo(target: string): boolean {
   if (/[\u0000-\u001F\u007F]/.test(target)) return false;
   return true;
 }
+
+/**
+ * What the Back button should say for a return target (issues.md 175).
+ *
+ * Todd Hause approved from the catalog and landed on the Dashboard; the button
+ * said "Back to Dashboard" whatever the target was, which hid the bug. A
+ * `/search` target is the catalog; anything else, including no target, is the
+ * dashboard behaviour every caller falls back to.
+ */
+export function returnToLabel(returnTo: string | null | undefined): string {
+  const target = (returnTo ?? "").trim();
+  return target === "/search" || target.startsWith("/search?") ? "Back to catalog" : "Back to Dashboard";
+}

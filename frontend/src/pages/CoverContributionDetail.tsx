@@ -43,6 +43,8 @@ import {
   contributionImageMetasFromSubmittedData,
   contributionMetaImageUrl,
 } from "@/lib/contributionImages";
+// Separate line on purpose: another open PR touches the import above (merge safety).
+import { returnToLabel } from "@/lib/returnTo";
 import {
   type Contribution,
   decideContribution,
@@ -503,6 +505,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     return (
       <EntryDetailLayout
         onBack={handleBack}
+        backLabel={returnToLabel(returnTo)}
         leftColumn={null}
         rightColumn={
           <Card className="shadow-archival-md">
@@ -607,6 +610,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
         badge inside a card, below the fold. */}
     <EntryDetailLayout
       onBack={handleBack}
+      backLabel={returnToLabel(returnTo)}
       title="Cover"
       leftColumn={(
         <>

@@ -7,11 +7,14 @@ import { Button } from "@/components/ui/button";
 /** Two-column shell shared by marking and cover entry detail pages. */
 export function EntryDetailLayout({
   onBack,
+  backLabel = "Back",
   title,
   leftColumn,
   rightColumn,
 }: {
   onBack: () => void;
+  /** Where Back goes, when the caller knows (issues.md 175): "Back to catalog". */
+  backLabel?: string;
   title?: string;
   leftColumn: ReactNode;
   rightColumn: ReactNode;
@@ -25,7 +28,7 @@ export function EntryDetailLayout({
             <div className="flex flex-col items-start gap-1">
               <Button variant="ghost" onClick={onBack} className="-ml-4">
                 <ArrowLeft className="mr-2 h-4 w-4" />
-                Back
+                {backLabel}
               </Button>
               {title && (
                 <h1 className="font-heading text-[2.35rem] font-semibold text-foreground">

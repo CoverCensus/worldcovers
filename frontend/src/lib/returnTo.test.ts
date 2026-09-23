@@ -7,7 +7,7 @@
  * approve. That is an open redirect, and a persuasive one, because the editor
  * is mid-workflow on a site they trust and has just been told the save worked.
  */
-import { readReturnTo, withReturnTo } from "./returnTo";
+import { readReturnTo, returnToLabel, withReturnTo } from "./returnTo";
 
 function read(url: string): string | null {
   return readReturnTo(new URLSearchParams(url));
@@ -60,5 +60,21 @@ describe("readReturnTo", () => {
     ["newline-smuggled scheme", "/\njavascript:alert(1)"],
   ])("rejects %s", (_label, target) => {
     expect(read(`from=${encodeURIComponent(target)}`)).toBeNull();
+  });
+});
+
+describe("returnToLabel", () => {
+  // issues.md 175 -- Todd Hause: after approving from the catalog he landed
+  // on the Dashboard. The Back button also said "Back to Dashboard" whatever
+  // the target was, which hid the bug in plain sight.
+  it("names the catalog when the target is a search view", () => {
+    expect(returnToLabel("/search?state=AL&pageSize=100")).toBe("Back to catalog");
+    expect(returnToLabel("/search")).toBe("Back to catalog");
+  });
+
+  it("names the dashboard for a dashboard target and for no target at all", () => {
+    expect(returnToLabel("/dashboard?tab=editor&e_pageSize=100")).toBe("Back to Dashboard");
+    expect(returnToLabel(null)).toBe("Back to Dashboard");
+    expect(returnToLabel("")).toBe("Back to Dashboard");
   });
 });
