@@ -16,7 +16,12 @@ TOOLS_DIR = Path(__file__).resolve().parent.parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
-from munger.fields import classify_all_fields, classify_paren_field, subparse_fields
+from munger.fields import (
+    classify_all_fields,
+    classify_paren_field,
+    subparse_fields,
+    triage_other_field,
+)
 from munger.fields.sizes import parse_size_field
 from munger.assembly import resolve_effective_shape, resolve_shape_name
 
@@ -170,6 +175,87 @@ class CompoundColorClassification(unittest.TestCase):
         })
         self.assertEqual(parsed['parsed_colors'], ['RED BROWN'])
         self.assertEqual(parsed['other_fields'], [])
+
+
+class PartialColorTriage(unittest.TestCase):
+    """Trello T65: "Blue, Red 35" used to emit BLUE *and* "RED 35" as colours,
+    and the munger fans out one marking per colour, so "RED 35", "PAID", "--",
+    "30" and "MS" all became Color rows on hellowoco.app (Ian, 2026-09-21 and
+    09-23: "can this be cleaned up please?").
+
+    The rule now: a colour word with residue ("Red 35") yields the colour and
+    keeps the residue as text; a token with no colour word is not a colour.
+    Nothing from the source is dropped except a dash-only placeholder.
+    """
+
+    def _sub(self, field):
+        return subparse_fields({
+            'paren_fields': [field],
+            'paren_field_types': classify_all_fields([field]),
+            'Manuscript': '',
+        })
+
+    def test_colour_with_residue_keeps_colour_and_residue(self):
+        self.assertEqual(
+            triage_other_field('Blue, Red 35'),
+            ('color', {'colors': ['BLUE', 'RED'], 'residue': ['35']}))
+        parsed = self._sub('Blue, Red 35')
+        self.assertEqual(parsed['parsed_colors'], ['BLUE', 'RED'])
+        self.assertEqual(parsed['other_fields'], ['35'])
+
+    def test_bare_number_beside_a_colour_is_not_a_colour(self):
+        parsed = self._sub('Red, 30')
+        self.assertEqual(parsed['parsed_colors'], ['RED'])
+        self.assertEqual(parsed['other_fields'], ['30'])
+
+    def test_dash_placeholder_is_dropped_not_kept_as_a_colour(self):
+        parsed = self._sub('Black, --')
+        self.assertEqual(parsed['parsed_colors'], ['BLACK'])
+        self.assertEqual(parsed['other_fields'], [])
+
+    def test_paid_beside_a_colour_is_residue(self):
+        # classify_paren_field labels the whole field a rate because of PAID,
+        # so this exercises the triage function directly.
+        self.assertEqual(
+            triage_other_field('Red, Paid'),
+            ('color', {'colors': ['RED'], 'residue': ['Paid']}))
+
+    def test_single_token_with_residue_yields_one_colour(self):
+        parsed = self._sub('Red 35')
+        self.assertEqual(parsed['parsed_colors'], ['RED'])
+        self.assertEqual(parsed['other_fields'], ['35'])
+
+    def test_modifier_stays_with_its_colour(self):
+        parsed = self._sub('Dark red 35')
+        self.assertEqual(parsed['parsed_colors'], ['DARK RED'])
+        self.assertEqual(parsed['other_fields'], ['35'])
+
+    def test_dangling_connector_is_trimmed(self):
+        self.assertEqual(
+            triage_other_field('Red and 35'),
+            ('color', {'colors': ['RED'], 'residue': ['35']}))
+
+    def test_duplicate_colours_collapse(self):
+        # Otherwise the fan-out would create two identical RED markings.
+        self.assertEqual(
+            triage_other_field('Red, Red 35'),
+            ('color', {'colors': ['RED'], 'residue': ['35']}))
+
+    def test_no_colour_word_means_not_a_colour(self):
+        self.assertEqual(triage_other_field('MS, 38'), ('other', None))
+        parsed = self._sub('MS, 38')
+        self.assertEqual(parsed['parsed_colors'], [])
+        self.assertEqual(parsed['other_fields'], ['MS, 38'])
+
+    def test_two_dimensions_are_still_a_size(self):
+        self.assertEqual(triage_other_field('30, 38')[0], 'size')
+
+    def test_all_colour_fields_are_untouched(self):
+        # Fully-known compounds never reach the triage; guard the boundary.
+        self.assertEqual(classify_paren_field('Red brown,Olive green'), 'color')
+        self.assertEqual(
+            self._sub('Red brown,Olive green')['parsed_colors'],
+            ['RED BROWN', 'OLIVE GREEN'])
 
 
 if __name__ == '__main__':

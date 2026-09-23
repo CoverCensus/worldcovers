@@ -55,6 +55,45 @@ def is_color_token(tok):
         return False
     return has_color_word
 
+_COLOR_WORDISH = KNOWN_COLORS | COLOR_MODIFIER_WORDS | COLOR_CONNECTOR_WORDS
+_WORD_RE = re.compile(r'[^\s\-]+')
+
+def split_color_token(tok):
+    """Split one comma token into (colour phrase or None, residue text or None).
+
+    Trello T65. "Red 35" is a red marking with a "35" the catalogue put in the
+    same slot, not a colour called "RED 35"; "PAID" beside a colour is not a
+    colour at all. The colour phrase keeps the token's own separators
+    ("Red-orange 35" -> "RED-ORANGE"), the residue keeps the source spelling
+    so it can be written into the description verbatim, and a token that is
+    only dashes is the catalogue's unknown-value placeholder and yields
+    neither.
+    """
+    words = list(_WORD_RE.finditer(tok))
+    if not words:
+        return None, None
+    kinds = ['c' if m.group().lower() in _COLOR_WORDISH else 'r' for m in words]
+    if not any(m.group().lower() in KNOWN_COLORS for m in words):
+        return None, tok.strip()
+
+    colour_idx = [i for i, k in enumerate(kinds) if k == 'c']
+    # A connector only joins colours; on either end it joins nothing, so it
+    # is dropped rather than kept as residue ("Red and 35" -> RED, "35").
+    dropped = set()
+    while colour_idx and words[colour_idx[0]].group().lower() in COLOR_CONNECTOR_WORDS:
+        dropped.add(colour_idx.pop(0))
+    while colour_idx and words[colour_idx[-1]].group().lower() in COLOR_CONNECTOR_WORDS:
+        dropped.add(colour_idx.pop())
+    first, last = colour_idx[0], colour_idx[-1]
+    if colour_idx == list(range(first, last + 1)):
+        colour = tok[words[first].start():words[last].end()]
+    else:
+        colour = ' '.join(words[i].group() for i in colour_idx)
+    residue = ' '.join(
+        m.group() for i, m in enumerate(words)
+        if i not in colour_idx and i not in dropped)
+    return colour.upper(), (residue or None)
+
 def is_color_field(field):
     """True if all comma-separated tokens in the field are known colors."""
     tokens = [t.strip() for t in field.split(',') if t.strip()]
@@ -261,12 +300,21 @@ def triage_other_field(text):
     if BARE_RATE_RE.match(t):
         return 'rate', parse_rate_field(t)
 
-    # Color with unknown terms (partial match)
-    tokens = [tok.strip() for tok in t.split(',') if tok.strip()]
-    known_count = sum(1 for tok in tokens if is_color_token(tok))
-    if known_count > 0 and known_count >= len(tokens) - 1:
-        # At least one unknown term but majority are colors -> reclassify
-        return 'color', [t.upper() for t in tokens]
+    # Colour tokens with residue (Trello T65). Only the colour words become
+    # colours; whatever else shares the token is kept as text for the
+    # description. The old rule emitted every token as a colour once most of
+    # them were colours, which put "RED 35", "PAID", "--" and "30" in the
+    # Color table -- and, because the munger fans out one marking per colour,
+    # a spurious marking beside each.
+    colors, residue = [], []
+    for tok in t.split(','):
+        colour, rest = split_color_token(tok)
+        if colour and colour not in colors:
+            colors.append(colour)
+        if rest:
+            residue.append(rest)
+    if colors:
+        return 'color', {'colors': colors, 'residue': residue}
 
     return 'other', None
 
@@ -337,7 +385,8 @@ def subparse_fields(row):
                     else:
                         parsed_rates.append([parsed])
                 elif new_type == 'color':
-                    parsed_colors.extend(parsed)
+                    parsed_colors.extend(parsed['colors'])
+                    other_fields.extend(parsed['residue'])
             else:
                 other_fields.append(field)
 

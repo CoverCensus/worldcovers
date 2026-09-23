@@ -10,6 +10,8 @@
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 
+import re
+
 from rest_framework import serializers
 
 from common.catalog_codes import (
@@ -97,6 +99,15 @@ class ColorSerializer(serializers.ModelSerializer):
         model = Color
         fields = "__all__"
         read_only_fields = ["id", "created_date", "modified_date", "created_by", "modified_by"]
+
+    def validate_name(self, value):
+        # Trello T65: "RED 35", "--" and "30" reached the Color table once and
+        # every row shows in the search dropdown. A colour name is words only.
+        name = (value or "").strip()
+        if not name or not re.fullmatch(r"[A-Za-z]+(?:[\s\-][A-Za-z]+)*", name):
+            raise serializers.ValidationError(
+                "A colour name is letters only, such as RED or RED-ORANGE.")
+        return name
 
 
 class RegionSerializer(serializers.ModelSerializer):
