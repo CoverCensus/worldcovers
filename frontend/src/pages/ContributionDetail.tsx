@@ -23,7 +23,7 @@ import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/hooks/use-toast";
 import { dashboardHref, dashboardHrefForTab } from "@/lib/dashboardParams";
-import { readReturnTo } from "@/lib/returnTo";
+import { readReturnTo, returnToLabel } from "@/lib/returnTo";
 import { useAuth } from "@/hooks/useAuth";
 import { normalizeImageUrl } from "@/services/markings";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
@@ -129,6 +129,7 @@ const ContributionDetail = () => {
    */
   const returnHref = (fallbackTab: "submissions" | "editor") =>
     returnTo ?? dashboardHrefForTab(dashboardTab ?? fallbackTab);
+  const backLabel = returnToLabel(returnTo);
   const isStateEditor =
     user?.role === "editor" || user?.role === "administrator" || user?.is_superuser;
   /** True if the logged-in user is the person who submitted this contribution (edit/review UI is for other editors only). */
@@ -360,7 +361,7 @@ const ContributionDetail = () => {
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <p className="text-muted-foreground">{error || "Contribution not found"}</p>
           <Button variant="outline" onClick={handleBack}>
-            Back to Dashboard
+            {backLabel}
           </Button>
         </div>
         <Footer />
@@ -524,7 +525,7 @@ const ContributionDetail = () => {
           <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
             <Button variant="ghost" onClick={handleBack} className="sm:-ml-4">
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Dashboard
+              {backLabel}
             </Button>
             <div className="flex flex-wrap items-center justify-end gap-2">
               {/* Ian, 2026-09-21: "I do not know if it is a cover he is
