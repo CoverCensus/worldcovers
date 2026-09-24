@@ -247,6 +247,87 @@ class ContributionSubmitMarkingEditTests(TestCase):
         contribution = Contribution.objects.get(pk=response.data["id"])
         self.assertTrue(contribution.submitted_data["no_cover_image"])
 
+    def _marking_image(self, marking, name="whole-cover.jpg"):
+        # A catalog image sitting on a marking, for the "Create cover from this
+        # image" submissions (issues.md 167). Not in setUp: other tests count
+        # the marking's images.
+        return Image.objects.create(
+            subject_type=Image.SUBJECT_MARKING,
+            subject_id=marking.pk,
+            original_filename=name,
+            storage_filename="va/" + name,
+            file_checksum="deadbeef",
+            mime_type="image/jpeg",
+            image_width=1600,
+            image_height=1200,
+            file_size_bytes=123456,
+            image_view="FULL",
+            display_order=0,
+            uploaded_by=self.user,
+            created_by=self.user,
+            modified_by=self.user,
+        )
+
+    def _post_cover_from_image(self, image_id):
+        return self.client.post(
+            "/api/v2/contributions/",
+            {
+                "submission_kind": "cover",
+                "state": "VA",
+                "parent_marking_id": self.marking.pk,
+                "marking_id": self.marking.pk,
+                "type": "FC",
+                "cover_date_unknown": True,
+                "source_marking_image_id": image_id,
+            },
+            format="json",
+        )
+
+    def test_new_cover_accepts_a_carried_over_marking_image(self):
+        # "Create cover from this image" (issues.md 167) names the marking's
+        # existing image by id instead of re-uploading it, so the submission
+        # has no cover_image file. Ian, 2026-09-24: the form showed the image
+        # but Submit said no image was attached. This covers the submission
+        # gate only; the approval-time repoint is tested in
+        # test_cover_contribution_apply.
+        image = self._marking_image(self.marking)
+        response = self._post_cover_from_image(image.pk)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        contribution = Contribution.objects.get(pk=response.data["id"])
+        self.assertEqual(contribution.submitted_data["source_marking_image_id"], image.pk)
+
+    def test_new_cover_rejects_a_carried_over_image_from_another_marking(self):
+        # The id is contributor-supplied and approval repoints whatever row it
+        # names, so it must be pinned to the parent marking at submit time.
+        other = Marking.objects.create(
+            type="TOWNMARK",
+            inscription_txt="NORFOLK VA",
+            is_manuscript=True,
+            color=self.color,
+            post_office=self.post_office,
+            created_by=self.user,
+            modified_by=self.user,
+        )
+        stray = self._marking_image(other, name="other.jpg")
+
+        response = self._post_cover_from_image(stray.pk)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["detail"], "The image to carry over is not on this marking."
+        )
+
+    def test_new_cover_rejects_a_bogus_carried_over_image_id(self):
+        # A negative id is the frontend's draft-preview sentinel; it names no
+        # catalog row, so it must not count as an image.
+        response = self._post_cover_from_image(-1)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["detail"], "The image to carry over is not on this marking."
+        )
+
     def test_new_cover_accepts_every_cover_type(self):
         # Trello T67: the vocabulary grew from FC/FL to six codes. Each must
         # survive submission unchanged.
