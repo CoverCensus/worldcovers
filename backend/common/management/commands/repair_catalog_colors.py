@@ -28,14 +28,15 @@ Runbook (report, review, dry run, commit; woco.dev first, then production):
   commit:  ... --mapping /tmp/t65/mapping.csv --expect N --commit --actor <user id>
   on the box: cd /srv/woco && sudo -u wocod -H bash -lc 'cd /srv/woco && uv run python backend/manage.py repair_catalog_colors ...'
   expected exit code: 0
-Take the tagged backup first (worldcovers-backup --tag pre-t65-colors) plus a
-table dump of Colors, Markings, Covers, MarkingVersions, CoverVersions and
-Contributions. Duplicate markings that become colour-identical after a merge
+On production, take a verified tagged backup first. Staging is disposable.
+Use the reviewed site mapping; report suggestions are not the repair plan.
+Duplicate markings that become colour-identical after a merge
 are reported, not merged -- that is T47's job.
 """
 from __future__ import annotations
 
 import csv
+import json
 import os
 import re
 
@@ -78,6 +79,10 @@ REPORT_FIELDS = [
     "n_marking_versions", "n_cover_versions", "n_contributions",
     "is_suspect", "suggested_target", "action", "target",
 ]
+
+
+def _ascii(value: str) -> str:
+    return json.dumps(value, ensure_ascii=True)[1:-1]
 
 
 def _words(name: str) -> list[str]:
@@ -170,11 +175,15 @@ class Command(BaseCommand):
             raise CommandError(f"no user with id {opts['actor']}")
         if opts["actor"] == 1:
             self.stdout.write(self.style.WARNING(
-                f"actor defaulted to id 1 ({actor.get_username()}); "
+                f"actor is id 1 ({_ascii(actor.get_username())}); "
                 f"every write will be attributed to them."))
 
-        plan = self._load_mapping(opts["mapping"])
-        expect = opts["expect"]
+        with transaction.atomic():
+            plan = self._load_mapping(opts["mapping"])
+            self._check_contributions(plan)
+            self._run_plan(plan, actor, commit, opts["expect"])
+
+    def _run_plan(self, plan, actor, commit, expect):
         if expect is not None and expect != len(plan):
             raise CommandError(
                 f"--expect {expect} but the mapping changes {len(plan)} colour "
@@ -205,28 +214,28 @@ class Command(BaseCommand):
             suggestion = suggest_target(c.name, canonical) if suspect else ""
             action = "keep" if not suspect else ("merge" if suggestion else "null")
             row = {
-                "color_id": c.pk, "name": c.name, "hex_val": c.hex_val,
+                "color_id": c.pk, "name": _ascii(c.name), "hex_val": c.hex_val,
                 "n_markings": Marking.all_objects.filter(color=c).count(),
                 "n_covers": Cover.all_objects.filter(color=c).count(),
                 "n_marking_versions": _version_refs(MarkingVersion, c).count(),
                 "n_cover_versions": _version_refs(CoverVersion, c).count(),
                 "n_contributions": _contribution_refs(c).count(),
                 "is_suspect": "yes" if suspect else "no",
-                "suggested_target": suggestion,
-                "action": action, "target": suggestion,
+                "suggested_target": _ascii(suggestion),
+                "action": action, "target": _ascii(suggestion),
             }
             rows.append(row)
             if suggestion:
                 collisions += self._colour_identical_after(c, canonical[suggestion.lower()])
             self.stdout.write(
-                f"  {c.pk:<5} {c.name:<24} markings={row['n_markings']:<5} "
+                f"  {c.pk:<5} {_ascii(c.name):<24} markings={row['n_markings']:<5} "
                 f"covers={row['n_covers']:<4} versions="
                 f"{row['n_marking_versions'] + row['n_cover_versions']:<5} "
                 f"contributions={row['n_contributions']:<4} "
-                f"{'SUSPECT -> ' + (suggestion or 'NULL') if suspect else ''}")
+                f"{'SUSPECT -> ' + (_ascii(suggestion) or 'NULL') if suspect else ''}")
         suspects = sum(1 for r in rows if r["is_suspect"] == "yes")
         self.stdout.write(
-            f"colours {len(rows)} · suspect {suspects} · markings that would "
+            f"colours {len(rows)} | suspect {suspects} | markings that would "
             f"become colour-identical with an existing sibling after the "
             f"suggested merges: {collisions} (T47, not touched here)")
         self._write_report(path, rows)
@@ -279,13 +288,22 @@ class Command(BaseCommand):
                 raise CommandError(f"{path}:{line}: action must be one of {ACTIONS}, got {action!r}")
             if action == "keep":
                 continue
-            bad = self._color_named(name, path, line)
+            source_id = (row.get("color_id") or "").strip()
+            if source_id:
+                if not source_id.isascii() or not source_id.isdigit():
+                    raise CommandError(f"{path}:{line}: invalid color_id")
+                bad = Color.objects.select_for_update().filter(pk=int(source_id)).first()
+                if bad is None or (name and name.casefold() not in
+                                   (bad.name.casefold(), _ascii(bad.name).casefold())):
+                    raise CommandError(f"{path}:{line}: color_id/name mismatch")
+            else:
+                bad = self._color_named(name, path, line)
             if bad.name.lower() in PROTECTED_NAMES:
                 raise CommandError(
-                    f"{path}:{line}: {bad.name} is the default marking colour "
+                    f"{path}:{line}: {_ascii(bad.name)} is the default marking colour "
                     f"and is never a source")
             if bad.pk in sources:
-                raise CommandError(f"{path}:{line}: {bad.name} listed twice")
+                raise CommandError(f"{path}:{line}: {_ascii(bad.name)} listed twice")
             sources.add(bad.pk)
             target = None
             if action == "merge":
@@ -293,31 +311,44 @@ class Command(BaseCommand):
                     raise CommandError(f"{path}:{line}: merge needs a target")
                 target = self._color_named(target_name, path, line)
                 if target.pk == bad.pk:
-                    raise CommandError(f"{path}:{line}: {bad.name} cannot merge into itself")
+                    raise CommandError(f"{path}:{line}: {_ascii(bad.name)} cannot merge into itself")
             plan.append((bad, target))
 
         for bad, target in plan:
             if target is not None and target.pk in sources:
                 raise CommandError(
-                    f"{bad.name} merges into {target.name}, which is itself "
+                    f"{_ascii(bad.name)} merges into {_ascii(target.name)}, which is itself "
                     f"being merged or nulled; no chains")
         return plan
 
     def _color_named(self, name: str, path: str, line: int) -> Color:
         if not name:
             raise CommandError(f"{path}:{line}: empty colour name")
-        hits = list(Color.objects.filter(name__iexact=name))
+        hits = list(Color.objects.select_for_update().filter(name__iexact=name))
         if len(hits) != 1:
             raise CommandError(
-                f"{path}:{line}: {name!r} matches {len(hits)} Color row(s), need 1")
+                f"{path}:{line}: {name!a} matches {len(hits)} Color row(s), need 1")
         return hits[0]
+
+    def _check_contributions(self, plan):
+        for bad, _ in plan:
+            for row in _contribution_refs(bad).select_for_update():
+                data = row.submitted_data
+                name = data.get("color")
+                pk = data.get("color_id")
+                if name not in (None, "") and pk not in (None, ""):
+                    if (not isinstance(name, str)
+                            or name.casefold() != bad.name.casefold()
+                            or str(pk) != str(bad.pk)):
+                        raise CommandError(
+                            f"Submission {row.pk}: color and color_id disagree")
 
     # ----------------------------------------------------------------- apply
 
     def _apply_one(self, bad: Color, target: Color | None, actor):
         now = timezone.now()
         target_pk = target.pk if target is not None else None
-        label = target.name if target is not None else "NULL"
+        label = _ascii(target.name) if target is not None else "NULL"
 
         n_markings = Marking.all_objects.filter(color=bad).update(
             color=target, modified_by=actor, modified_date=now)
@@ -355,12 +386,16 @@ class Command(BaseCommand):
 
         if (Marking.all_objects.filter(color=bad).exists()
                 or Cover.all_objects.filter(color=bad).exists()):
-            raise CommandError(f"{bad.name}: still referenced after repointing")
+            raise CommandError(f"{_ascii(bad.name)}: still referenced after repointing")
+        if (_version_refs(MarkingVersion, bad).exists()
+                or _version_refs(CoverVersion, bad).exists()
+                or _contribution_refs(bad).exists()):
+            raise CommandError(f"Color {bad.pk}: stored references remain")
         try:
             bad.delete()
         except ProtectedError as err:
-            raise CommandError(f"{bad.name}: cannot delete, still protected: {err}")
+            raise CommandError(f"{_ascii(bad.name)}: cannot delete, still protected: {_ascii(str(err))}")
 
         self.stdout.write(
-            f"  {bad.name!r} -> {label}: markings={n_markings} covers={n_covers} "
+            f"  {bad.name!a} -> {label}: markings={n_markings} covers={n_covers} "
             f"versions={n_versions} contributions={n_contributions}; row deleted")

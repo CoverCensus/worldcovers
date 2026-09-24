@@ -8,8 +8,12 @@ is trusted anyway.
 """
 import csv
 import io
+import json
+import runpy
 import os
 import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
@@ -276,3 +280,113 @@ class RepairCatalogColorsTests(TestCase):
         self.assertEqual(res.status_code, 201, res.content)
         res = client.post("/api/v2/colors/", {"name": "Red-orange"}, format="json")
         self.assertEqual(res.status_code, 201, res.content)
+
+
+    def test_id_mapping_checks_escaped_name_and_writes_ascii(self):
+        bad = self._color("MS\u00b7BLACK")
+        marking = self._marking("TEST", bad, "TEST-ID")
+        path = os.path.join(self.tmp.name, "ids.csv")
+        with open(path, "w", encoding="ascii", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["color_id", "name", "action", "target"])
+            writer.writerow([bad.pk, r"MS\u00b7BLACK", "merge", "BLACK"])
+        report = os.path.join(self.tmp.name, "report.csv")
+        self._run("--report", report).encode("ascii")
+        Path(report).read_bytes().decode("ascii")
+        self._run("--mapping", path, "--commit",
+                  "--actor", str(self.user.pk)).encode("ascii")
+        marking.refresh_from_db()
+        self.assertEqual(marking.color_id, self.black.pk)
+
+    def test_wrong_site_id_is_rejected(self):
+        path = os.path.join(self.tmp.name, "wrong.csv")
+        with open(path, "w", encoding="ascii") as fh:
+            fh.write("color_id,name,action,target\n")
+            fh.write(f"{self.blue.pk},RED 35,merge,RED\n")
+        with self.assertRaisesMessage(CommandError, "color_id/name mismatch"):
+            self._run("--mapping", path, "--commit", "--actor", str(self.user.pk))
+        self.assertTrue(Color.objects.filter(pk=self.red35.pk).exists())
+
+    def test_conflicting_submission_aborts_before_changes(self):
+        self.pending.submitted_data["color_id"] = self.blue.pk
+        self.pending.save()
+        with self.assertRaisesMessage(CommandError, "color and color_id disagree"):
+            self._run("--mapping", self._mapping(self.STANDARD), "--commit",
+                      "--actor", str(self.user.pk))
+        self.marking.refresh_from_db()
+        self.assertEqual(self.marking.color_id, self.red35.pk)
+
+    def test_failure_rolls_back_earlier_repairs(self):
+        from common.management.commands.repair_catalog_colors import Command
+        original = Command._apply_one
+
+        def fail_on_second(command, bad, target, actor):
+            if bad.name == "PAID":
+                raise CommandError("test failure")
+            return original(command, bad, target, actor)
+
+        with patch.object(Command, "_apply_one", fail_on_second):
+            with self.assertRaisesMessage(CommandError, "test failure"):
+                self._run("--mapping", self._mapping(self.STANDARD), "--commit",
+                          "--actor", str(self.user.pk))
+        self.marking.refresh_from_db()
+        self.version.refresh_from_db()
+        self.pending.refresh_from_db()
+        self.assertEqual(self.marking.color_id, self.red35.pk)
+        self.assertEqual(self.version.snapshot["color_id"], self.red35.pk)
+        self.assertEqual(self.pending.submitted_data["color"], "Red 35")
+        self.assertTrue(Color.objects.filter(pk=self.red35.pk).exists())
+
+    def test_reviewed_map_preserves_shades_and_source_text(self):
+        root = Path(__file__).resolve().parents[3]
+        with (root / "tools/wip/t65/staging.csv").open() as fh:
+            staging = list(csv.DictReader(fh))
+        with (root / "tools/wip/t65/production.csv").open() as fh:
+            production = list(csv.DictReader(fh))
+        self.assertEqual([(r["name"], r["action"], r["target"]) for r in staging],
+                         [(r["name"], r["action"], r["target"]) for r in production])
+        shades = [self._color(n) for n in ("CLARET", "GREENISH BLUE", "BRIGHT RED")]
+        rows = []
+        expected = []
+        for i, row in enumerate(staging):
+            name = row["name"].encode("ascii").decode("unicode_escape")
+            bad = Color.objects.filter(name=name).first() or self._color(name)
+            marking = self._marking("SOURCE", bad, f"MAP-{i}")
+            marking.catalog_txt = "Original source text"
+            marking.save()
+            target = Color.objects.get(name=row["target"]) if row["target"] else None
+            expected.append((marking, target.pk if target else None))
+            rows.append((name, row["action"], row["target"]))
+        path = os.path.join(self.tmp.name, "reviewed.csv")
+        with open(path, "w", encoding="ascii", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["color_id", "name", "action", "target"])
+            for name, action, target in rows:
+                writer.writerow([Color.objects.get(name=name).pk,
+                                 json.dumps(name, ensure_ascii=True)[1:-1],
+                                 action, target])
+        if not get_user_model().objects.filter(pk=1).exists():
+            get_user_model().objects.create_user("operator", pk=1)
+        check = runpy.run_path(str(root / "tools/wip/t65/check.py"))["check"]
+        state = Path(self.tmp.name) / "state.json"
+        with patch("builtins.print"):
+            check("before", Path(path), state)
+            self._run("--mapping", path, "--expect", "20",
+                      "--actor", str(self.user.pk))
+            check("dry", Path(path), state)
+            self._run("--mapping", path, "--expect", "20", "--commit",
+                      "--actor", "1")
+            check("after", Path(path), state)
+            first = expected[0][0]
+            first.refresh_from_db()
+            first.catalog_txt = "Unexpected change"
+            first.save()
+            with self.assertRaisesMessage(ValueError, "Marking differs"):
+                check("after", Path(path), state)
+            first.catalog_txt = "Original source text"
+            first.save()
+        for marking, target_pk in expected:
+            marking.refresh_from_db()
+            self.assertEqual(marking.color_id, target_pk)
+            self.assertEqual(marking.catalog_txt, "Original source text")
+        self.assertEqual(Color.objects.filter(pk__in=[c.pk for c in shades]).count(), 3)

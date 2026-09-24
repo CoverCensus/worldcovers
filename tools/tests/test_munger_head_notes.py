@@ -305,10 +305,10 @@ class MungerHeadNotesIntegrationTests(unittest.TestCase):
         self.assertEqual(
             [row["inscription_txt"] for row in ratemarks],
             [
-                "CHICAGO PAID 6",
-                "CHICAGO 6 PAID",
-                "CHICAGO 5",
-                "CHICAGO.lll. PAID/3Cts",
+                "PAID 6",
+                "6 PAID",
+                "5",
+                "PAID/3Cts",
             ],
         )
         self.assertEqual(

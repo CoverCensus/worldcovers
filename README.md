@@ -133,6 +133,12 @@ limited to the affected work. Invoking a skill produces a plan; file and board
 updates need approval for that plan in the current task. Reuse approval already
 given for the same plan.
 
+For each commit, assign the relevant Trello cards and move only its work to
+Doing. Run a focused sync-plan review, develop and test, then move those cards
+to Testing. Run code-doc-sync for affected rules and a focused Trello sync
+check before pushing and deploying. Moving cards from Testing to Done is a
+separate acceptance step. See the [commit workflow decision](DECISIONS.md#keep-commit-work-in-sync-with-trello).
+
 The Trello review needs authenticated access to the WorldCovers board. Without
 it, continue the local review and report the board check as pending. Private
 workspace notes and archives are optional and are not part of these skills.

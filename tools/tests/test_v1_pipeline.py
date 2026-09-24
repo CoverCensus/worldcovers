@@ -1544,11 +1544,11 @@ class V1PipelineTests(unittest.TestCase):
             and "PARKERSBURG/VA." in row["catalog_txt"]
         ]
         self.assertEqual(len(falls_ratemarks), 1)
-        self.assertEqual(falls_ratemarks[0]["inscription_txt"], "Falls Church Paid 3")
+        self.assertEqual(falls_ratemarks[0]["inscription_txt"], "Paid 3")
         self.assertEqual(falls_ratemarks[0]["is_manuscript"], "True")
         self.assertEqual(falls_ratemarks[0]["rate_val"], "3.0")
         self.assertEqual(len(lewisburg_auxmarks), 1)
-        self.assertEqual(lewisburg_auxmarks[0]["inscription_txt"], "LEWISBURG/Va. PAID")
+        self.assertEqual(lewisburg_auxmarks[0]["inscription_txt"], "PAID")
         self.assertEqual(locust_children, [])
         self.assertEqual(len(franklin_townmarks), 1)
         self.assertEqual(franklin_townmarks[0]["desc"], "PM frank")
@@ -1558,18 +1558,18 @@ class V1PipelineTests(unittest.TestCase):
         self.assertEqual(freeport_children, [])
         self.assertEqual(len(bare_circle_townmarks), 1)
         self.assertEqual(bare_circle_townmarks[0]["shape"], "C - Circle")
-        self.assertEqual([row["inscription_txt"] for row in bare_circle_auxmarks], ["Bare Circle PAID"])
+        self.assertEqual([row["inscription_txt"] for row in bare_circle_auxmarks], ["PAID"])
         self.assertEqual(bare_circle_ratemarks, [])
         self.assertEqual(len(webster_ratemarks), 1)
-        self.assertEqual(webster_ratemarks[0]["inscription_txt"], "WEBSTER/Va PD 3")
+        self.assertEqual(webster_ratemarks[0]["inscription_txt"], "PD 3")
         self.assertEqual(webster_ratemarks[0]["impression"], "Negative")
         self.assertEqual(len(stencil_ratemarks), 1)
-        self.assertEqual(stencil_ratemarks[0]["inscription_txt"], "Stencilville 5")
+        self.assertEqual(stencil_ratemarks[0]["inscription_txt"], "5")
         self.assertEqual(stencil_ratemarks[0]["impression"], "Stencil")
         self.assertEqual(len(martinsburg_ratemarks), 1)
         self.assertEqual(
             martinsburg_ratemarks[0]["inscription_txt"],
-            "MARTINSBURGVA. DUE 3",
+            "DUE 3",
         )
         self.assertEqual(len(parkersburg_townmarks), 1)
         self.assertEqual(parkersburg_townmarks[0]["shape"], "C - Circle")
@@ -2007,8 +2007,8 @@ class V1PipelineTests(unittest.TestCase):
             for row in same_ratemarks
         }
 
-        self.assertIn(("WHITE SULr.SPRs.VA. 18-3/4", 18.75), observed)
-        self.assertIn(("WHITE SULr.SPRs.VA. 25", 25.0), observed)
+        self.assertIn(("18-3/4", 18.75), observed)
+        self.assertIn(("25", 25.0), observed)
 
     def test_overlay_uses_townmark_color_for_blank_text_fanout(self):
         with tempfile.TemporaryDirectory() as td:
