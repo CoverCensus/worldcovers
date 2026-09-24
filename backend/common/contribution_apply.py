@@ -482,7 +482,7 @@ def apply_cover_contribution_to_catalog(contrib) -> dict:
     # AFTER _sync_images on purpose: that function reconciles the cover's
     # images against the full desired set and deletes anything not in it, so a
     # row repointed beforehand would be removed again.
-    _repoint_source_marking_image(payload, cover.pk, actor)
+    _repoint_source_marking_image(payload, cover.pk, parent_marking.pk, actor)
     _sync_citations("COVER", cover.pk, payload, actor)
     _sync_cover_valuation(cover.pk, payload, actor)
 
@@ -1109,7 +1109,7 @@ def _source_marking_image_id(payload) -> int | None:
     return value if value > 0 else None
 
 
-def _repoint_source_marking_image(payload, cover_pk: int, actor) -> bool:
+def _repoint_source_marking_image(payload, cover_pk: int, parent_marking_pk: int, actor) -> bool:
     """Move the carried-over image from its marking onto the new cover.
 
     Repoint, never copy and never delete:
@@ -1122,6 +1122,11 @@ def _repoint_source_marking_image(payload, cover_pk: int, actor) -> bool:
     Changing the subject is also what removes it from the marking's thumbnails,
     which is the visible half of what Ian asked for.
 
+    Only an image still sitting on the cover's parent marking is moved. The
+    submit view pinned the id to that marking, and re-checking here closes the
+    window in which the image could be moved elsewhere between submission and
+    approval and then dragged along to this cover.
+
     Returns True when a row was repointed. Never raises: if the image has since
     been moved, cropped away or deleted, the approval must still succeed -- the
     editor can attach an image afterwards, whereas a failed approval loses the
@@ -1131,7 +1136,9 @@ def _repoint_source_marking_image(payload, cover_pk: int, actor) -> bool:
     if image_id is None:
         return False
 
-    row = Image.objects.filter(pk=image_id, subject_type=Image.SUBJECT_MARKING).first()
+    row = Image.objects.filter(
+        pk=image_id, subject_type=Image.SUBJECT_MARKING, subject_id=parent_marking_pk
+    ).first()
     if row is None:
         # Already moved, or gone. Not an error.
         return False

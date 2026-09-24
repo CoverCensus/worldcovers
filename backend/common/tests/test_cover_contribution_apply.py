@@ -1390,6 +1390,23 @@ class CarriedOverMarkingImageTests(TestCase):
         self.image.refresh_from_db()
         self.assertEqual(self.image.subject_id, 999999)
 
+    def test_leaves_an_image_that_moved_to_another_marking(self):
+        # Still a MARKING image, but no longer on this cover's parent. The
+        # submit view pinned the id to the parent; approval re-checks so the
+        # image cannot be carried off from wherever it went in between.
+        self.image.subject_id = self.parent.pk + 1000
+        self.image.save()
+
+        cover = self._approve(
+            source_marking_image_id=str(self.image.pk),
+            no_cover_image="true",
+        )
+
+        self.assertIsNotNone(cover.pk)
+        self.image.refresh_from_db()
+        self.assertEqual(self.image.subject_type, Image.SUBJECT_MARKING)
+        self.assertEqual(self.image.subject_id, self.parent.pk + 1000)
+
     def test_ignores_a_draft_preview_sentinel(self):
         # Negative ids are frontend draft previews, not catalog rows.
         cover = self._approve(source_marking_image_id="-1", no_cover_image="true")
