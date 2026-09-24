@@ -247,6 +247,48 @@ class ContributionSubmitMarkingEditTests(TestCase):
         contribution = Contribution.objects.get(pk=response.data["id"])
         self.assertTrue(contribution.submitted_data["no_cover_image"])
 
+    def test_new_cover_accepts_a_carried_over_marking_image(self):
+        # "Create cover from this image" (issues.md 167) names the marking's
+        # existing image by id instead of re-uploading it, so the submission
+        # has no cover_image file. Ian, 2026-09-24: the form showed the image
+        # but Submit said no image was attached.
+        response = self.client.post(
+            "/api/v2/contributions/",
+            {
+                "submission_kind": "cover",
+                "state": "VA",
+                "parent_marking_id": self.marking.pk,
+                "marking_id": self.marking.pk,
+                "type": "FC",
+                "cover_date_unknown": True,
+                "source_marking_image_id": 42,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        contribution = Contribution.objects.get(pk=response.data["id"])
+        self.assertEqual(contribution.submitted_data["source_marking_image_id"], 42)
+
+    def test_new_cover_rejects_a_bogus_carried_over_image_id(self):
+        # A negative id is the frontend's draft-preview sentinel; it names no
+        # catalog row, so it must not count as an image.
+        response = self.client.post(
+            "/api/v2/contributions/",
+            {
+                "submission_kind": "cover",
+                "state": "VA",
+                "parent_marking_id": self.marking.pk,
+                "marking_id": self.marking.pk,
+                "type": "FC",
+                "cover_date_unknown": True,
+                "source_marking_image_id": -1,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+
     def test_new_cover_accepts_every_cover_type(self):
         # Trello T67: the vocabulary grew from FC/FL to six codes. Each must
         # survive submission unchanged.

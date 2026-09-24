@@ -56,6 +56,7 @@ from common.contribution_apply import (
     ContributionApplyError,
     MARKING_DATE_SUBMIT_KEYS,
     _parse_int,
+    _source_marking_image_id,
     strip_marking_date_keys,
 )
 from common.contribution_consolidation import (
@@ -3770,6 +3771,13 @@ def _submitted_payload_has_images(submitted_data, is_cover):
         value = submitted_data.get(key)
         if isinstance(value, list) and len(value) > 0:
             return True
+    # "Create cover from this image" (issues.md 167) carries a marking's
+    # existing catalog image over by id and uploads no file, so there is no
+    # meta to count. The image is real and approval repoints it
+    # (_repoint_source_marking_image); it satisfies the rule. Without this the
+    # form showed the picture and Submit said there was none (Ian, 2026-09-24).
+    if is_cover and _source_marking_image_id(submitted_data) is not None:
+        return True
     return False
 
 
