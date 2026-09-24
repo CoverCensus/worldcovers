@@ -39,6 +39,8 @@ which is exactly when you need it).
 | `import_vphc_reference` | Load VPHC counties, offices, and postmaster events | `backend/common/management/commands/import_vphc_reference.py` |
 | `apply_vphc_ledger` | Apply reviewed VPHC actions and queue marking contributions | `backend/common/management/commands/apply_vphc_ledger.py` |
 | `repair_vphc_rate` | Repair rates derived from VPHC drawing numbers | `backend/common/management/commands/repair_vphc_rate.py` |
+| `repair_catalog_colors` | Apply an operator-reviewed Color correction map | `backend/common/management/commands/repair_catalog_colors.py` |
+| `check_catalog_colors.py` | Verify Color repair before, dry-run, and after states | `tools/check_catalog_colors.py` |
 | `repair_ascc_child_inscriptions` | Remove added Townmark prefixes from Ratemarks and Auxmarks | `backend/common/management/commands/repair_ascc_child_inscriptions.py` |
 | `wipe_user_data` | Clear submission/version/recycle-bin data | `backend/common/management/commands/wipe_user_data.py` |
 | `drop_ascc_state` | Delete one state's imported catalog data | `backend/common/management/commands/drop_ascc_state.py` |
@@ -50,6 +52,9 @@ which is exactly when you need it).
 | `backup_auth` | Export users and auth/collection config | `backend/common/management/commands/backup_auth.py` |
 | `restore_auth` | Restore users and auth/collection config | `backend/common/management/commands/restore_auth.py` |
 | `set_user_password` | Set a user's password from the CLI | `backend/common/management/commands/set_user_password.py` |
+
+See the [Color repair instructions](COLOR-REPAIR.md) for staging and production
+commands. Tool code is tracked; maps and run output belong in `tools/wip`.
 
 ## Host Scripts
 

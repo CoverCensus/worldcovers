@@ -10,6 +10,7 @@ import csv
 import io
 import json
 import os
+import runpy
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -367,6 +368,11 @@ class RepairCatalogColorsTests(TestCase):
                 writer.writerow([Color.objects.get(name=name).pk,
                                  json.dumps(name, ensure_ascii=True)[1:-1],
                                  action, target])
+        root = Path(__file__).resolve().parents[3]
+        check = runpy.run_path(str(root / "tools/check_catalog_colors.py"))["check"]
+        state = Path(self.tmp.name) / "state.json"
+        with patch("builtins.print"):
+            check("before", Path(path), state, actor_id=self.user.pk)
         models = (Color, Marking, Cover, MarkingVersion, CoverVersion, Contribution)
         before = {model: list(model._base_manager.order_by("pk").values())
                   for model in models}
@@ -375,8 +381,12 @@ class RepairCatalogColorsTests(TestCase):
         for model in models:
             self.assertEqual(list(model._base_manager.order_by("pk").values()),
                              before[model])
+        with patch("builtins.print"):
+            check("dry", Path(path), state)
         self._run("--mapping", path, "--expect", "20", "--commit",
                   "--actor", str(self.user.pk))
+        with patch("builtins.print"):
+            check("after", Path(path), state)
         self.assertEqual(Color.objects.count(), len(before[Color]) - 20)
         self.assertEqual(Marking.all_objects.count(), len(before[Marking]))
         for marking, target_pk in expected:
@@ -384,3 +394,10 @@ class RepairCatalogColorsTests(TestCase):
             self.assertEqual(marking.color_id, target_pk)
             self.assertEqual(marking.catalog_txt, "Original source text")
         self.assertEqual(Color.objects.filter(pk__in=[c.pk for c in shades]).count(), 3)
+
+        first = expected[0][0]
+        first.catalog_txt = "Unexpected source change"
+        first.save()
+        with patch("builtins.print"):
+            with self.assertRaisesMessage(ValueError, "Marking differs"):
+                check("after", Path(path), state)
