@@ -3406,6 +3406,30 @@ class ContributionSubmitView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # "Create cover from this image" (issues.md 167) names an existing
+        # marking image by id and uploads nothing; approval repoints that row
+        # to the new cover. The id is contributor-supplied, so pin it here to
+        # the marking the cover is being created under -- otherwise any
+        # positive integer would satisfy the image rule and, on approval, move
+        # somebody else's image. Approval stays tolerant (an image moved or
+        # cropped away since submission is not an error there).
+        if is_cover_submission and data.get("source_marking_image_id") not in (None, ""):
+            source_image_id = _source_marking_image_id(data)
+            parent_pk = _parse_int(data.get("parent_marking_id") or data.get("marking_id"))
+            if (
+                source_image_id is None
+                or parent_pk is None
+                or not Image.objects.filter(
+                    pk=source_image_id,
+                    subject_type=Image.SUBJECT_MARKING,
+                    subject_id=parent_pk,
+                ).exists()
+            ):
+                return Response(
+                    {"detail": "The image to carry over is not on this marking."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # Save uploaded image files under MEDIA_ROOT/<region_abbrev>/.
         # Marking flow uses `marking_image`; cover draft flow uses `cover_image`.
         # stash the resulting metadata on Contribution.submitted_data so the
@@ -3762,6 +3786,14 @@ def _parse_removed_image_keys(raw):
 
 
 def _submitted_payload_has_images(submitted_data, is_cover):
+    """True when the submission carries at least one picture.
+
+    Two ways to satisfy it: a non-empty uploaded-metas list (`cover_image_metas`
+    / `marking_image_metas` / `image_metas`), or, for covers only, a positive
+    `source_marking_image_id` -- an existing catalog image carried over from
+    the parent marking (issues.md 167). The view has already verified that id
+    is on the parent marking before this runs.
+    """
     keys = (
         ("cover_image_metas", "image_metas")
         if is_cover
