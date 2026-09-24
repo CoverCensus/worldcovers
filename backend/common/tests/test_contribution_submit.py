@@ -247,6 +247,45 @@ class ContributionSubmitMarkingEditTests(TestCase):
         contribution = Contribution.objects.get(pk=response.data["id"])
         self.assertTrue(contribution.submitted_data["no_cover_image"])
 
+    def test_new_cover_accepts_every_cover_type(self):
+        # Trello T67: the vocabulary grew from FC/FL to six codes. Each must
+        # survive submission unchanged.
+        for code in ("FL", "FLF", "ENV", "ENVF", "FC", "UNK"):
+            with self.subTest(code=code):
+                response = self.client.post(
+                    "/api/v2/contributions/",
+                    {
+                        "submission_kind": "cover",
+                        "state": "VA",
+                        "parent_marking_id": self.marking.pk,
+                        "marking_id": self.marking.pk,
+                        "type": code,
+                        "cover_date_unknown": True,
+                        "no_cover_image": True,
+                    },
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 201, response.data)
+                contribution = Contribution.objects.get(pk=response.data["id"])
+                self.assertEqual(contribution.submitted_data["type"], code)
+
+    def test_new_cover_rejects_an_unknown_cover_type(self):
+        response = self.client.post(
+            "/api/v2/contributions/",
+            {
+                "submission_kind": "cover",
+                "state": "VA",
+                "parent_marking_id": self.marking.pk,
+                "marking_id": self.marking.pk,
+                "type": "XX",
+                "cover_date_unknown": True,
+                "no_cover_image": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("ENVF", response.data["detail"])
+
     def test_fresh_marking_edit_supersedes_prior_same_contributor_rows(self):
         original = Contribution.objects.create(
             contributor=self.user,

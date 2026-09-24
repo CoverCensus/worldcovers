@@ -75,7 +75,7 @@ _BOOL_TRUE = {"true", "yes", "1"}
 _BOOL_FALSE = {"false", "no", "0"}
 
 _MARKING_TYPES = ("TOWNMARK", "RATEMARK", "AUXMARK")
-_COVER_TYPES = ("FC", "FL")
+_COVER_TYPES = Cover.COVER_TYPE_CODES
 
 # Every spelling _resolve_lettering understands, so "did the payload mention
 # lettering at all?" and "what does it resolve to?" stay in step.
@@ -406,7 +406,8 @@ def apply_cover_contribution_to_catalog(contrib) -> dict:
         cover_type = cover_type.strip().upper() or None
     if cover_type is not None and cover_type not in _COVER_TYPES:
         raise ContributionApplyError(
-            "Cover type must be FC or FL; got {!r}.".format(cover_type)
+            "Cover type must be one of {}; got {!r}.".format(
+                ", ".join(sorted(_COVER_TYPES)), cover_type)
         )
 
     color = _resolve_fk(Color, payload, "color_id", "color")
@@ -534,7 +535,8 @@ def _apply_cover_edit(
     if raw_type is not None:
         if raw_type not in _COVER_TYPES:
             raise ContributionApplyError(
-                "Cover type must be FC or FL; got {!r}.".format(raw_type)
+                "Cover type must be one of {}; got {!r}.".format(
+                    ", ".join(sorted(_COVER_TYPES)), raw_type)
             )
         cover.type = raw_type
 

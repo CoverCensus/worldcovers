@@ -439,33 +439,11 @@ class ColorAdmin(TimestampedModelAdmin):
     resource_class = ColorResource
     list_display = ['name', 'hex_val']
     search_fields = ['name', 'hex_val']
-    actions = ['delete_colors_keep_listings']
-
-    @admin.action(description='Delete selected colors (clear marking color)')
-    def delete_colors_keep_listings(self, request, queryset):
-        """
-        Delete Color records while preserving Marking listings. Markings whose
-        color FK points to a deleted color have color cleared to null.
-        """
-        from django.db import transaction
-
-        total_colors = queryset.count()
-        total_repointed = 0
-        with transaction.atomic():
-            for color in queryset:
-                if color.pk == 1:
-                    continue
-                count = Marking.objects.filter(color=color).update(color=None)
-                total_repointed += count
-                color.delete()
-
-        messages.success(
-            request,
-            f"Deleted {total_colors} color(s); cleared color on "
-            f"{total_repointed} marking(s). All catalog listings were kept."
-        )
 
     def get_actions(self, request):
+        # No bulk delete here. Removing a colour means repointing Marking.color,
+        # Cover.color, version snapshots and pending submissions first; that is
+        # `manage.py repair_catalog_colors` (Trello T65), not an admin action.
         actions = super().get_actions(request)
         if 'delete_selected' in actions:
             del actions['delete_selected']

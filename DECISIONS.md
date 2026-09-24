@@ -62,8 +62,8 @@ leaves Contributor linking permissions undecided. [T37 and T38](ISSUE.md#other-f
 cover related image and destination workflows, not approval to widen access.
 There is also a gap: ordinary `ImageViewSet` writes in
 [the API](backend/common/api/v2/views.py) check role but not Collection
-responsibility; crop adds a subject check. No matching item for that gap
-was found in ISSUE.md. Do not copy that omission into new write paths.
+responsibility; crop adds a subject check. [T73](ISSUE.md#t73---scope-image-writes-to-collection-responsibility)
+tracks source and destination checks. Do not copy that omission into new write paths.
 
 ## Keep Submissions Separate From Publication
 
@@ -115,8 +115,9 @@ contributor credit: an edit can replace the display-name preference, and
 public credit uses the original creator. Keeping omitted fields does not
 solve consent or cumulative credit. Upload forms also flatten multi-value
 Citation input in [the submit path](backend/common/api/v2/views.py); do not
-assume every form can express the full Citation replacement set. No matching
-ISSUE.md item for that form-input gap was found.
+assume every form can express the full Citation replacement set.
+[T72](ISSUE.md#t72---preserve-all-citations-in-multipart-submissions) tracks
+preserving all selections and explicit clearing through the form workflow.
 
 ## Preserve Date Evidence And Precision
 
@@ -143,9 +144,10 @@ Search and display must not make source evidence more precise than it is.
 qualifier for Markings and Covers. Partial dates do not implement it.
 The [glossary](docs/glossary.md) says new dates are contributed only through
 Covers, but [Editor submission tests](backend/common/tests/test_contribution_submit.py)
-and the current submit path support direct Marking date edits. No matching
-ISSUE.md item to reconcile that wording was found; do not remove the working
-Editor path merely to match the glossary.
+and the current submit path support direct Marking date edits.
+[T75](ISSUE.md#t75---reconcile-date-guidance-with-editor-submissions) tracks
+the wording correction. Do not remove the working Editor path merely to
+match the glossary.
 
 ## Account For Historical Regions In Search
 
@@ -196,8 +198,9 @@ entry does not prove that every field and relationship can be restored.
 **Open work:** [S23](ISSUE.md#feature-implementation-surfaces-reviewed-2026-09-13)
 is related history work, not a specific plan for full version restoration.
 The current Marking and Cover snapshot restore functions restore selected
-fields and Citations, but not images or date observations. No matching
-ISSUE.md item for that exact restore gap was found.
+fields and Citations, but not images or date observations.
+[T74](ISSUE.md#t74---define-and-verify-entry-version-restoration) tracks the
+restoration scope and verification separately from history viewing.
 
 ## Publish Help Content Explicitly
 
@@ -247,3 +250,49 @@ can work correctly without meeting the interface required by a story.
 require application backup and restore. Existing operator tools do not
 complete them. The same section records Michael's decision that S27 uses
 operator tools and does not require an application update interface.
+
+## Utilities Commit By Default
+
+**Do:** Utilities that change data commit by default. Provide `--dry-run`
+to preview changes without writing.
+
+**Don't:** Make dry run the default or require `--commit` to perform the
+utility's normal operation.
+
+**Why:** Running the utility should perform its stated task. Testing
+without changes is an explicit option.
+
+**Evidence:** Michael's explicit instruction, 2026-09-24.
+
+## Use The Existing Utility Work Directories
+
+**Do:** Use `tools/wip/in` for utility input files, `tools/wip/out` for
+generated output, and `tools/wip/cache` for intermediate or cached files.
+
+**Don't:** Invent another input, output, intermediate, or cache location for
+a utility.
+
+**Why:** One known working area makes utility files easier to find, review,
+and clean up.
+
+**Evidence:** Michael's instruction, 2026-09-24;
+[pipeline paths](docs/devel/PIPELINE.md) and [ignore rules](.gitignore).
+
+## Keep Commit Work In Sync With Trello
+
+**Do:** Assign the relevant Trello cards and move only the work in the current
+commit to Doing. Run a focused worldcovers-sync-plan review. Develop and test
+the change, then move those cards to Testing. Run worldcovers-code-doc-sync
+for affected rules and a focused worldcovers-sync-plan check before pushing
+and deploying. Apply proposed document and board corrections within the
+approved task scope.
+
+**Don't:** Treat the push or deployment as acceptance, or move cards from
+Testing to Done as part of this commit workflow.
+
+**Why:** The cards, code, and documents stay aligned as work moves forward.
+Acceptance can be checked separately after the workflow ends.
+
+**Evidence:** Michael's workflow decision, 2026-09-24;
+[sync plan](.agents/skills/worldcovers-sync-plan/SKILL.md) and
+[code and docs sync](.agents/skills/worldcovers-code-doc-sync/SKILL.md).

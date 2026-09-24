@@ -39,6 +39,9 @@ which is exactly when you need it).
 | `import_vphc_reference` | Load VPHC counties, offices, and postmaster events | `backend/common/management/commands/import_vphc_reference.py` |
 | `apply_vphc_ledger` | Apply reviewed VPHC actions and queue marking contributions | `backend/common/management/commands/apply_vphc_ledger.py` |
 | `repair_vphc_rate` | Repair rates derived from VPHC drawing numbers | `backend/common/management/commands/repair_vphc_rate.py` |
+| `repair_catalog_colors` | Apply an operator-reviewed Color correction map | `backend/common/management/commands/repair_catalog_colors.py` |
+| `check_catalog_colors.py` | Verify Color repair before, dry-run, and after states | `tools/check_catalog_colors.py` |
+| `repair_ascc_child_inscriptions` | Remove added Townmark prefixes from Ratemarks and Auxmarks | `backend/common/management/commands/repair_ascc_child_inscriptions.py` |
 | `wipe_user_data` | Clear submission/version/recycle-bin data | `backend/common/management/commands/wipe_user_data.py` |
 | `drop_ascc_state` | Delete one state's imported catalog data | `backend/common/management/commands/drop_ascc_state.py` |
 | `consolidate_superseded_contributions` | Delete superseded non-draft contributions | `backend/common/management/commands/consolidate_superseded_contributions.py` |
@@ -49,6 +52,9 @@ which is exactly when you need it).
 | `backup_auth` | Export users and auth/collection config | `backend/common/management/commands/backup_auth.py` |
 | `restore_auth` | Restore users and auth/collection config | `backend/common/management/commands/restore_auth.py` |
 | `set_user_password` | Set a user's password from the CLI | `backend/common/management/commands/set_user_password.py` |
+
+See the [Color repair instructions](COLOR-REPAIR.md) for staging and production
+commands. Tool code is tracked; maps and run output belong in `tools/wip`.
 
 ## Host Scripts
 
@@ -468,6 +474,30 @@ but does not stop the repair.
 when combined with that flag. `--sync-approved` also updates already-approved
 contribution payloads; it requires `--audit-live` and a clean live-rate audit.
 Live marking repairs and contribution repairs use separate transactions.
+
+## ASCC Inscription Repair (T50)
+
+`repair_ascc_child_inscriptions` removes the Townmark text that the munger
+prepended to Ratemark and Auxmark inscriptions. It matches Townmarks by
+Post Office and non-empty Catalog Text, then removes one exact inscription
+prefix plus its separating space. It skips missing or conflicting matches
+and cases with no remaining child text, printing their IDs.
+
+Running without switches commits changes. Previewing is optional:
+
+```sh
+./woco repair_ascc_child_inscriptions --dry-run
+./woco repair_ascc_child_inscriptions
+```
+
+The command prints up to five before/after examples and totals. Writes use
+one transaction and record system audit entries and new Marking versions.
+Submissions and recycle-bin records are outside this repair.
+
+Deploy the munger fix and command to woco.dev first. Michael runs the repair,
+spot-checks the corrected records, and repeats the dry run to check that the
+prefixes are gone. After staging passes, deploy and repeat on hellowoco.app.
+Record each site's result and any skipped cases under T50.
 
 ## Internal Modules (Not Operator Entry Points)
 

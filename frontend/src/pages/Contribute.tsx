@@ -57,6 +57,7 @@ import { isBelowPreferredImageDpi, measureImageDpi } from "@/lib/imageResolution
 import { useToast } from "@/hooks/use-toast";
 import { dashboardHref, dashboardHrefForTab } from "@/lib/dashboardParams";
 import { catalogHref } from "@/lib/catalogParams";
+import { withReturnTo } from "@/lib/returnTo";
 import { useAuth } from "@/hooks/useAuth";
 import {
   sanitizeMmInput,
@@ -1951,7 +1952,12 @@ const Contribute = () => {
         const fromDashboardViaDetail = (location.state as Record<string, unknown> | null)?.fromDashboardViaDetail;
         const fromSearch = (location.state as Record<string, unknown> | null)?.fromSearch;
         if (result.contributionId != null) {
-          navigate(`/contribution/${result.contributionId}`, { state: { fromDashboard: true } });
+          // issues.md 175: an edit started from the catalog returns there after
+          // the editor's decision. `?from=` is what the review screen reads.
+          const path = `/contribution/${result.contributionId}`;
+          navigate(fromSearch ? withReturnTo(path, catalogHref()) : path, {
+            state: { fromDashboard: true },
+          });
         } else if (fromDashboardDirect || fromDashboard || fromDashboardViaDetail) {
           // Issue #87: back to the dashboard view they left, filters intact.
           navigate(dashboardHref());

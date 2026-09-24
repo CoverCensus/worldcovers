@@ -1,4 +1,5 @@
 import apiClient, { ensureCsrfToken } from "@/lib/api";
+import { sortCoversEarliestFirst } from "@/lib/associatedCoverSort";
 import { listContributions } from "@/services/contributions";
 import {
   coverContributionDisplayLabel,
@@ -1255,11 +1256,27 @@ export type MarkingCoversResult = {
 
 export async function getMarkingCovers(markingId: number): Promise<MarkingCoversResult> {
   try {
-    const res = await apiClient.get<CoverMarkingApiResponse>(
-      "/cover-markings/",
-      { params: { marking: String(markingId) } },
-    );
-    const results = Array.isArray(res.data?.results) ? res.data.results : [];
+    // Every page, not the first ten (issues.md 174): the API's default page
+    // size is 10 and its maximum 100, so ask for the maximum and follow
+    // `next` until the list is complete, the way getColors() does.
+    const results: unknown[] = [];
+    let nextUrl: string | null = "/cover-markings/";
+    let params: Record<string, string> | undefined = {
+      marking: String(markingId),
+      page_size: "100",
+    };
+    let safetyCounter = 0;
+    while (nextUrl && safetyCounter < 50) {
+      const res: { data?: CoverMarkingApiResponse } = await apiClient.get<CoverMarkingApiResponse>(
+        nextUrl,
+        params ? { params } : undefined,
+      );
+      if (Array.isArray(res.data?.results)) results.push(...res.data.results);
+      const next: unknown = res.data?.next;
+      nextUrl = typeof next === "string" && next.trim() !== "" ? next : null;
+      params = undefined; // `next` already carries the query string
+      safetyCounter += 1;
+    }
     const covers = results
       .map(mapAssociatedCover)
       .filter((x): x is AssociatedCover => x !== null);
@@ -1514,7 +1531,9 @@ export async function loadAssociatedCoversForMarking(
   // drafts -- pending, returned, or unsubmitted -- are reached from Dashboard /
   // My Submissions, NOT from this panel.
   const approved = covers.filter((c) => c.reviewStatus === "approved");
-  const enriched = await enrichAssociatedCoversWithDefaultImages(approved);
+  // Earliest observed date first, undated last (issues.md 174). The API
+  // orders by link id, which is the order editors happened to attach them.
+  const enriched = await enrichAssociatedCoversWithDefaultImages(sortCoversEarliestFirst(approved));
   return { covers: enriched, error };
 }
 

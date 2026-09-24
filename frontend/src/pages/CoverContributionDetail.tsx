@@ -29,6 +29,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { dashboardHref, dashboardHrefForTab } from "@/lib/dashboardParams";
+import { coverTypeLabel as sharedCoverTypeLabel } from "@/lib/coverTypes";
 import { readReturnTo } from "@/lib/returnTo";
 import {
   coverContributionDisplayName,
@@ -43,6 +44,8 @@ import {
   contributionImageMetasFromSubmittedData,
   contributionMetaImageUrl,
 } from "@/lib/contributionImages";
+// Separate line on purpose: another open PR touches the import above (merge safety).
+import { returnToLabel } from "@/lib/returnTo";
 import {
   type Contribution,
   decideContribution,
@@ -53,11 +56,6 @@ import {
 } from "@/services/contributions";
 import { getMarkingById, type MarkingRecord } from "@/services/markings";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
-
-const COVER_TYPE_LABELS: Record<string, string> = {
-  FC: "Folded Cover",
-  FL: "Folded Letter",
-};
 
 type ReferenceDetailInput = {
   pageNumber: string;
@@ -71,8 +69,7 @@ function boolLabel(raw: unknown): string {
 }
 
 function coverTypeLabel(typeCode: string): string {
-  const code = typeCode.trim().toUpperCase();
-  return COVER_TYPE_LABELS[code] || code || "--";
+  return sharedCoverTypeLabel(typeCode) || "--";
 }
 
 function formatCoverDate(sd: Record<string, unknown>): string {
@@ -503,6 +500,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     return (
       <EntryDetailLayout
         onBack={handleBack}
+        backLabel={returnToLabel(returnTo)}
         leftColumn={null}
         rightColumn={
           <Card className="shadow-archival-md">
@@ -607,6 +605,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
         badge inside a card, below the fold. */}
     <EntryDetailLayout
       onBack={handleBack}
+      backLabel={returnToLabel(returnTo)}
       title="Cover"
       leftColumn={(
         <>
@@ -782,6 +781,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                 date={formatCoverDate(sd)}
                 institutionallyOwned={boolLabel(sd.is_institutional ?? sd.isInstitutional)}
                 backstamp={boolLabel(sd.is_backstamp ?? sd.isBackstamp)}
+                description={String(sd.description ?? sd.desc ?? "")}
               />
               {contributorComment && (
                 <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">

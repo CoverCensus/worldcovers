@@ -5,7 +5,14 @@ batch, plus the reconciled September 19 offline-note follow-ups. It is not
 the full current engineering queue. Later work also appears
 in GitHub PRs and Reese's workspace-local `docs/issues.md`.
 
-**Last review:** 2026-09-19, local `staging` at `d3da460`. Committed application
+**Last review:** 2026-09-21, `staged-20260921` at published
+`33b41f5da58e1b9337edc490f1c87eff6c009728`. Compared current code and tests,
+DECISIONS.md, recent PRs, and live Trello. Existing local ISSUE.md intake edits
+were preserved. Tests were inspected, not run; a focused multipart-input
+check confirmed the Citation loss tracked in T72. This review does not prove
+deployment, data coverage, mail delivery, or Editor acceptance.
+
+Previous review, 2026-09-19: local `staging` at `d3da460`. Committed application
 source matches published `338bc657` (PR #145). Uncommitted frontend work
 appeared during the tracker sync and was left untouched; its progress is not
 assessed here. Local docs/setup changes are preserved. State coverage below is
@@ -46,11 +53,12 @@ including deferred work. Labels do not change priority or release scope.
 Trello is Michael's visual work board; this file is the detailed reference.
 Sync preserves his board organization and updates the reference to match.
 
-## Current status (2026-09-19)
+## Current status (2026-09-21)
 
-Update, 2026-09-19: live Trello statuses, assignments, and feature labels were
-checked again after Michael's final Backlog and Doing moves. The board has
-29 Backlog, 42 To Do, 14 Doing, 5 Testing, and 24 Done cards, excluding README.
+Update, 2026-09-21: live Trello statuses, assignments, and feature labels were
+checked against the source review. Existing memberships and lists are preserved.
+After adding T72-T75 and mapping deferred T64, the board has 30 Backlog,
+53 To Do, 7 Doing, 12 Testing, and 24 Done cards, excluding README.
 Michael confirmed S16/S17 are deferred to Backlog and S27 remains
 in Testing for operator tools, without an application update interface.
 Historical defect reports below require current source/target checks before
@@ -60,11 +68,11 @@ S6, S7, S8, S15, S18, S22, S30, S31, S32, and S41 are accepted through live
 stakeholder review and confirmed use. Previously accepted stories remain Done.
 The separate data and editor-review tasks below remain open.
 
-T31-T36 are Doing and assigned to Michael for the quick UI fixes he selected.
+T31-T36 are Testing and assigned to Michael for the quick UI fixes he selected.
 Michael moved S20 and T52-T54 to Backlog. Other To Do and Backlog cards
-remain unassigned unless noted. The eight earlier Doing tasks
-are assigned to Michael (`grubermeister`): T7, T10, T13, T22, T23, T26, T27,
-and T28. Their original Issue or Batch sections below link to the cards.
+remain unassigned unless noted. The seven Doing tasks are assigned to Michael
+(`grubermeister`): T7, T10, T22, T23, T26, T27, and T28. T13 is now Testing
+under Michael. Their original Issue or Batch sections below link to the cards.
 
 Current engineering responsibility: Michael owns data engineering, including
 direct model adjustments. Reese owns other frontend/backend development.
@@ -79,6 +87,12 @@ model/data boundary rather than assigning it by directory alone.
 | [S27 - Apply system updates](https://trello.com/c/tT4fnM4W) | Michael (`grubermeister`), Jay Logan |
 | [S34 - Add and edit help articles](https://trello.com/c/F7fYDJLl) | Michael (`grubermeister`) |
 | [T14 - Submission-guideline copy acceptance](https://trello.com/c/O90RdMxz) | Reese Ludwick |
+| [T13 - State rollout and review status](https://trello.com/c/kWFoGpi3) | Michael (`grubermeister`) |
+| T31-T36 - Quick UI fixes (linked below) | Michael (`grubermeister`) |
+
+S23 (Entry history) and S35 (bulk approval) are implemented and await
+verification and acceptance. They remain To Do and unassigned on the board;
+assign a reviewer before moving them to Testing. Code alone does not close them.
 
 S33 and S34 are now active F9 requirements in the design. The feature table
 below records story status separately from available code. Developer docs
@@ -123,20 +137,309 @@ T numbers below are Trello tasks, not additions to the original Issue 1-34
 numbering. These requirements extend existing features; accepted stories
 remain Done within their original scope.
 
+## September 21 email review
+
+Michael requested this focused review and capture of remaining work. Baseline:
+clean `staged-20260921` at published
+`33b41f5da58e1b9337edc490f1c87eff6c009728`. This supplements the dated
+September 19 review above. The later code review updates the current status
+summary separately.
+
+| Request | Current evidence | Remaining work |
+| --- | --- | --- |
+| Clean search colors such as RED 35 | Still open. The production search dropdown on 2026-09-21 includes RED 35, RED 60, BLUE 20, PAID, and other non-color text. `useFilterOptions.ts` displays Color names unchanged. | T65: trace affected Color rows and source listings, correct verified data and parsing defects, and check search results after repair. Preserve source text, valid shades, and Entry relationships. |
+| Remove Move to another marking | Removed from `ThumbnailImageActions.tsx`. | No new implementation task. T33's instruction to preserve actions excludes this deliberately removed action. |
+| Remove Link existing cover from Marking detail | Removed from `RecordDetail.tsx`. | No duplicate removal task. T38 retains the work to define a clearer linking method; do not restore this control as part of the picker work. |
+| Create cover from this image | Implemented: `RecordDetail.tsx` opens the ordinary Cover form; `CoverEdit.tsx` shows the existing image and sends its ID. `contribution_apply.py` moves the same Image row on approval, with no duplicate file or row. | T37: verify the full flow using the example at https://hellowoco.app/record/21032 and a safe staging equivalent. Removal from the Marking occurs on approval, not merely on submission. Confirm that timing meets the request. Broader T37 work remains open. |
+| State whether a submission is a Marking or Cover | Implemented in `ContributionDetail.tsx` and `CoverContributionDetail.tsx`, using `entryKindForContribution`. | T32 related verification: check https://hellowoco.app/contribution/91 with Editor access. Guest access redirects to login. Confirm its actual Entry kind and displayed label; old payloads without submission_kind use a heuristic. Repair data only if a mismatch is established. |
+| Latest date on a second line | The munger already attaches a recognised (L) row's date to its parent Marking. On production, https://hellowoco.app/record/30841 (HUNTSVILLE,M.T.) still displays 11/12/1813 for both bounds. The source's correct latest date was not established in this review. | T49: inspect the source second line, trace extraction, parsing, import, and date aggregation, then repair only the confirmed gap. Record source citation, expected precision, affected IDs, and results separately for woco.dev and hellowoco.app. No blind reimport. |
+
+[T65](https://trello.com/c/j8JvVEDS) is To Do, unassigned, under F11 - Catalog Data Pipeline, with F2 -
+Collection Discovery for the search effect. Data work belongs to Michael;
+any application change belongs to Reese. T64 was reserved locally at intake
+and is now mapped in Deferred offline wishes below.
+Existing task memberships and lists are unchanged by this intake.
+
+Evidence: [filter options](frontend/src/hooks/useFilterOptions.ts),
+[thumbnail controls](frontend/src/components/entry-detail/ThumbnailImageActions.tsx),
+[Marking detail](frontend/src/pages/RecordDetail.tsx),
+[Cover form](frontend/src/pages/CoverEdit.tsx),
+[Cover approval](backend/common/contribution_apply.py),
+[submission labels](frontend/src/lib/contributionDisplay.ts), and
+[date emission](tools/ascc_data_munger.py).
+Existing tests were inspected, not run: `ThumbnailImageActions.test.tsx`,
+`coverFromImageHandoff.test.ts`, `contributionDisplay.test.ts`, and
+`test_cover_contribution_apply.py`. These support the code findings, not
+deployment or acceptance. The reported Editor workflow was not exercised.
+README.md and DECISIONS.md need no change for this intake.
+
+### Follow-up: Rotate image button
+
+Michael also reported a request for a Rotate button alongside Crop.
+Not implemented at the reviewed revision: `CropImageDialog.tsx` and the
+image API support rectangular cropping, but have no image rotation action.
+No matching task was found in the board review.
+[T66](https://trello.com/c/bnjVBgXI) is To Do, unassigned,
+under F5 - Image Attachments; application work belongs to Reese.
+
+Acceptance: add rotation alongside Crop, retain the original image, enforce
+the existing image-edit permissions, and keep saved orientation, thumbnails,
+image metadata, and later crops consistent after reload. Before implementation,
+confirm whether quarter turns are enough or fine-angle straightening is needed,
+and which Marking/Cover editing screens need the control. Related: T33/T37.
+
+### Follow-up: VPHC Reference Work and Envelope Cover type
+
+Michael requested VPHC in the Reference Works list and the Cover type
+`ENV - Envelope`. This is request intake, not application implementation.
+
+- **Issue 13 / T15:** `VPHC1 - Virginia Postal History Catalog (1st Ed.)`
+  is present in the public Reference Work options on both
+  [production](https://hellowoco.app/api/v2/reference-works/options/) and
+  [staging](https://woco.dev/api/v2/reference-works/options/), checked during
+  this follow-up. Retain the check of the signed-in Reference Works list and
+  Marking/Cover form selectors, including saving the Citation. Do not create
+  a duplicate VPHC record. `getReferenceWorks()` reads only the first page;
+  check pagination if an existing work is missing from a form. The VPHC
+  ledger requires an existing VPHC1 row; `import_vphc_reference` loads places
+  and postmasters, not the bibliographic Reference Work.
+- **[T67 - Add ENV - Envelope as a Cover type](https://trello.com/c/JN6C4SVt):** To Do, unassigned, F3 -
+  Submission Workflow. Current model choices, form options, and submission
+  validation accept FC and FL only; `Cover.type` has `max_length=2`.
+  Michael owns the model/migration change; Reese owns the application work.
+  Add the exact code ENV and label Envelope, widen the field, and update
+  validation, form normalisation, Entry-kind detection, and display labels.
+  Acceptance: create, save/resume a draft, submit, review/approve, display,
+  and edit an Envelope Cover without rejection, truncation, or conversion to
+  FL. Preserve FC/FL and blank values. Update the model documentation and
+  add regression coverage when implemented.
+
+Evidence: [Cover model](backend/common/models.py),
+[submission validation](backend/common/api/v2/views.py),
+[approval types](backend/common/contribution_apply.py),
+[Cover form](frontend/src/pages/CoverEdit.tsx), and
+[Reference Work service](frontend/src/services/referenceWorks.ts).
+
+### Follow-up: Email Editors about pending submissions
+
+Michael requested working email so Editors can be notified of pending
+submissions. Reuse [T30](https://trello.com/c/wDojGejL) for sender/relay repair
+and proof of production delivery. Its earlier sender-rejection report is
+dated evidence; this intake did not test the current relay.
+
+[T68 - Email Editors about pending submissions](https://trello.com/c/Y2SycFtn)
+is To Do, unassigned,
+F3 - Submission Workflow, with application work under Reese. It depends on
+T30 for delivery. Current mail code covers account activation and password
+reset; submission creation/resubmission does not notify assigned Editors.
+
+Acceptance: notify active Editors with confirmed assignments to the affected
+Collection about pending Marking and Cover submissions, with a link to the
+correct site's review queue. Verify recipients and Collection assignments
+before sending; the private Editor roster is not an assignment source.
+Decide manual sending, per-submission notification, or a digest before
+implementation, including treatment of the existing pending queue and
+resubmissions. Exclude drafts and completed reviews, prevent accidental
+duplicate sends, and report delivery failures without losing submissions.
+Verify receipt with an authorised test recipient before general use.
+
+This is the requested pending-submission email capability. S36's broader
+notification preferences and channels remain deferred. Evidence:
+[submission handlers](backend/common/api/v2/views.py),
+[activation mail](backend/common/signals.py), and
+[mail settings](backend/woco/settings.py). No notifications were sent.
+
+### Follow-up: Help on data and image rights and attribution
+
+Michael requested a Help section explaining rights and attribution for data
+and images. [T69](https://trello.com/c/BAU8GBYS) is To Do, unassigned,
+F9 - Documentation & Help. Current public
+Help has no dedicated guidance; the footer says all catalog data is available
+under CC BY 4.0, but that statement alone does not establish the rights for
+each imported source or image.
+
+Acceptance: publish a discoverable Help section covering source citations,
+image creator/rights-holder credit, contributor credit and name preferences,
+submission permissions, reuse terms, and how to raise a rights or credit
+correction. Include separate worked attribution examples for data and images,
+with source and license links and any changes made. Establish the applicable
+project terms and source-specific permissions before stating them as policy;
+distinguish software licensing from data and image terms. Reconcile the
+footer with the confirmed policy, and explain how to handle missing or unclear
+rights information. Preserve private correspondence and contact details.
+
+Use an existing published Help document or deliberately add a new document
+to the Help allowlist. Verify it is accessible to Guests. Related: T40 for
+contributor credit; T61 remains the separate deferred software-license audit.
+Evidence: [Help publication](backend/common/api/help.py),
+[footer](frontend/src/components/Footer.tsx), and
+[acknowledgements](docs/acknowledgements.md). This intake records the work;
+it does not select a new license or publish a rights policy.
+
+### Follow-up: Region type and county entry on new/edit pages
+
+Michael requested Region type controls on new/edit pages so users can enter
+counties. [T70](https://trello.com/c/u6OfTiMR) is To Do, unassigned,
+F3 - Submission Workflow. Reese owns the
+application work; Michael owns any required model/data changes.
+
+The Region model already supports COUNTY and parent Regions, and
+PostOfficeRegion has dated jurisdiction links. Marking detail displays
+counties. The current Marking new/edit form accepts State and Town/City;
+its Region options intentionally exclude counties. Submission approval
+resolves the Post Office from state and town, with no county input path.
+Storage and display therefore do not satisfy this request.
+
+Acceptance: expose Region type and county-entry controls in the applicable
+new/edit forms, select the correct county within its parent jurisdiction,
+and retain the selection through draft save/resume, submission, Editor
+review, approval, and subsequent editing. Store county jurisdiction on the
+Post Office through PostOfficeRegion; Cover context follows its linked
+Marking(s), not a new county field on Cover. Preserve state/territory context
+and Collection routing; do not put county names into the existing State
+selector. Preserve historical jurisdiction dates and existing links when an
+unrelated field is edited. Define how a missing county can be proposed and
+reviewed without giving Contributors direct Region-administration rights.
+Verify same-name counties under different parents and existing imported
+county links. Reuse the existing Region tiers rather than a second type list.
+
+Evidence: [Region and PostOfficeRegion](backend/common/models.py),
+[form](frontend/src/pages/Contribute.tsx),
+[Region options](frontend/src/services/regions.ts),
+[approval](backend/common/contribution_apply.py), and
+[county display](frontend/src/services/markings.ts).
+
+### Follow-up: Manual Postmaster entry
+
+Michael reported that the application does not expose manual Postmaster
+entry. [T71](https://trello.com/c/By0kwVmn) is To Do, unassigned,
+F3 - Submission Workflow. Reese owns the
+application work; Michael owns any required model/data changes.
+
+Current Postmaster and PostmasterTenure APIs are read-only, and the frontend
+fetches appointment events for display. The source-import command is not a
+manual-entry interface. T31 changes display order only and does not cover
+this missing capability.
+
+Acceptance: provide a discoverable application workflow to select or add a
+Postmaster and record or correct an event at the correct Post Office, with
+source evidence and the date precision actually known. Preserve the existing
+distinction between a person and an appointment/office event; do not store
+an inferred service end as a sourced date or merge people by name alone.
+Define permitted roles, review requirements, and change history before adding
+write endpoints. Preserve imported provenance and define how later source
+imports handle manually entered records and corrections. Verify create,
+edit, persistence, permission checks, and display on the associated pages.
+Review the source_ref field's suitability for manual citations rather than
+requiring a fabricated workbook cell reference.
+
+Evidence: [read-only APIs](backend/common/api/v2/views.py),
+[models](backend/common/models.py),
+[frontend service](frontend/src/services/postmasters.ts), and
+[import command](backend/common/management/commands/import_vphc_reference.py).
+The current API comment that editing belongs to source catalogs describes
+the existing limit; it does not satisfy the requested manual-entry workflow.
+
+## September 21 code-review gaps
+
+T72-T75 are To Do and unassigned. These gaps were already noted in
+DECISIONS.md; this review gives each one an explicit task. Application work
+belongs to Reese; any model changes belong to Michael. Citation preservation
+and image permissions should be addressed before expanding the affected
+workflows because they protect evidence and editing authority.
+
+### T72 - Preserve all Citations in multipart submissions
+
+[T72 on Trello](https://trello.com/c/FOS1WZHa) - F3 Submission Workflow.
+
+The Marking and Cover forms send repeated `reference_work_ids[]` values.
+The submit path reads each key with `data.get`, which retains only the last
+multipart value. Approval then replaces the Entry's Citations with that
+reduced set. A local QueryDict check with IDs 11 and 22 retained only 22.
+
+Preserve every selected Reference Work and its detail through draft save,
+resume, submission, review, and approval for both Entry types. Keep omitted
+Citations unchanged; allow an explicit empty selection to clear them. Check
+multipart and JSON input with regression tests, including an edit with two
+existing Citations. This is separate from T15's source-choice data checks.
+
+Evidence: [Marking form](frontend/src/pages/Contribute.tsx),
+[Cover form](frontend/src/pages/CoverEdit.tsx),
+[submit path](backend/common/api/v2/views.py), and
+[_sync_citations](backend/common/contribution_apply.py).
+
+### T73 - Scope image writes to Collection responsibility
+
+[T73 on Trello](https://trello.com/c/wgtwKkWr) - F5 Image Attachments.
+
+`ImageViewSet` ordinary create, update, and delete operations check the Editor
+role but not Collection responsibility. Crop adds `IsResponsibleForImageSubject`.
+The image-move serializer checks destination existence and view type, not
+the Editor's responsibility for the source and destination.
+
+Enforce responsibility on ordinary image writes, including both subjects
+when moving an image. Preserve the Administrator override and existing
+Contributor restrictions. Acceptance: an Editor cannot change images outside
+their assigned scope through direct API calls; authorised writes still work.
+Cover checks must account for its linked Marking Regions. Add regression
+coverage for create, update, delete, and reassignment. T20's separate
+Contributor-linking decision does not block these checks.
+
+Evidence: [ImageViewSet](backend/common/api/v2/views.py),
+[permissions](backend/common/api/v2/permissions.py), and
+[ImageSerializer](backend/common/api/v2/serializers.py).
+
+### T74 - Define and verify Entry version restoration
+
+[T74 on Trello](https://trello.com/c/eX68bPRW) - F8 Audit Trail.
+
+The Marking and Cover snapshot restore functions restore selected fields
+and Citations, but not images or date observations. S23 covers viewing
+history and does not close this recovery gap.
+
+Define which fields and relationships version restoration must restore,
+including image references and files, dates, and Cover/Marking links. Make
+any limitations explicit before the action. Verify the agreed result for
+both Entry types, including permissions, audit history, and rollback on
+failure. Do not equate a partial snapshot restore with full Entry recovery,
+recycle-bin restoration, or S26 backup restoration.
+
+Evidence: [snapshot restore functions](backend/common/audit.py) and
+[restore-version endpoints](backend/common/api/v2/views.py).
+
+### T75 - Reconcile date guidance with Editor submissions
+
+[T75 on Trello](https://trello.com/c/GCR4oSI9) - F9 Documentation & Help.
+
+The glossary says new dates are contributed only through Covers. Current
+code also permits Editors to submit direct Marking ERD/LRD observations.
+
+Correct the guidance to describe both source observations and the permitted
+Editor workflow, while preserving Contributor restrictions and date precision.
+Acceptance: public date guidance agrees with the implemented role checks and
+submission tests. Do not remove the working Editor path to match old prose;
+T42 remains the separate Circa requirement.
+
+Evidence: [Dates in the glossary](docs/glossary.md),
+[submit path](backend/common/api/v2/views.py), and
+[Editor submission tests](backend/common/tests/test_contribution_submit.py).
+
 ## Quick fixes assigned to Michael
 
-All six are Doing, assigned to Michael (`grubermeister`) at his request.
+All six are Testing, assigned to Michael (`grubermeister`) at his request.
 This is an explicit exception to the usual frontend/backend responsibility
-boundary. This sync does not establish implementation progress. Each card links source;
-acceptance requires checking the affected pages and recording the revision.
+boundary. The current source contains the UI changes; acceptance still
+requires checking the affected pages and recording the site and revision.
+T32 retains a wording check: some catalog-code errors still use generic
+wording in `Contribute.tsx` and `backend/common/catalog_codes.py`.
 
 | Task | Outcome | Feature | Acceptance scope |
 | --- | --- | --- | --- |
 | [T31](https://trello.com/c/LK3sXe5j) | Move postmasters below associated Covers | F2 | Show Associated Covers before the postmasters list on the Marking detail page. Preserve both sections and their existing behaviour. |
 | [T32](https://trello.com/c/VkbZnDZ1) | Distinguish Marking and Cover catalog code labels | F3 | Use Catalog Marking code and Catalog Cover code in the relevant forms, review labels, placeholders, and error messages. Each code's Entry type must be clear. |
-| [T33](https://trello.com/c/9XzQrOLb) | Split thumbnail action buttons into two rows | F5 | Arrange actions below Marking and Cover thumbnails in two readable rows. Check desktop and narrow layouts; preserve all actions and permissions. |
+| [T33](https://trello.com/c/9XzQrOLb) | Split thumbnail action buttons into two rows | F5 | Verify the implemented two-row layout on desktop and narrow screens. Preserve current actions and permissions: Move to another marking was deliberately removed; Move to cover became Create cover from this image. |
 | [T34](https://trello.com/c/L5tx4C7m) | Encourage Cover creation in the image upload warning | F3 | Explain that the image may show a whole Cover; suggest creating a Cover record or using an existing one. Preserve acknowledge-and-continue. The heuristic uses dimensions, not image recognition. This task changes wording, not creation workflow. |
-| [T35](https://trello.com/c/8GLvhowq) | Refresh destination thumbnails after moving an image | F5 | After a successful image move, refresh the source gallery and affected associated destination previews without manual reload. Verify both Marking-to-Cover and Cover-to-Marking; retain sensible selection after removal. |
+| [T35](https://trello.com/c/8GLvhowq) | Refresh destination thumbnails after moving an image | F5 | Cover-to-Marking moves now refresh the source gallery and associated Marking previews; verify success, refresh failure feedback, and selection after removal. The former Marking-to-Cover move is now T37's Create cover from this image flow: verify both galleries after approval and return to detail. Do not restore the removed move control. |
 | [T36](https://trello.com/c/FT3w6YrX) | Include town in Cover draft labels on Marking pages | F2 | Show the town and state when known in draft Cover labels on Marking detail cards. Reuse the API display name or existing location data, with a useful fallback for missing location. |
 
 ## Other follow-ups
@@ -149,8 +452,8 @@ to Reese. Source observations below describe code, not deployed behaviour.
 
 | Task | Outcome | Feature | Responsibility | Scope and acceptance |
 | --- | --- | --- | --- | --- |
-| [T37](https://trello.com/c/u1f8iyjw) | Create image destinations from crop and move workflows | F5 | Reese; Michael for model changes | Add create-new Cover/Marking destinations and crop/move controls in edit forms. Keep eligible actions visible when no destination exists. From a potential Cover upload in a Marking edit, allow a provisional associated Cover; define draft versus pending first. If the associated Marking has no image, offer a crop into that existing Marking. Preserve the original image. Contributor permission expansion depends on T20; wording and refresh are T34/T35. |
-| [T38](https://trello.com/c/eB0oWj65) | Search for recognizable link and move destinations | F2 | Reese | Replace code-only identification with searchable Entry details for linking and moving. Keep actions distinct and existing permission boundaries; T20 owns any Contributor link-permission change. Acceptance: find and select both Cover and Marking destinations without knowing a code. |
+| [T37](https://trello.com/c/u1f8iyjw) | Create image destinations from crop and move workflows | F5 | Reese; Michael for model changes | Partly implemented: Marking detail opens the normal Cover form with the existing image; approval transfers the same Image row. Verify that flow and timing. Remaining: create-new Marking destinations, crop/move controls in edit forms, and a provisional associated Cover from a potential Cover upload in a Marking edit; define draft versus pending first. If the associated Marking has no image, offer a crop into that existing Marking. Preserve the original image. Contributor permission expansion depends on T20; wording and refresh are T34/T35. |
+| [T38](https://trello.com/c/eB0oWj65) | Search for recognizable link and move destinations | F2 | Reese | Partly implemented: Cover-to-Marking image moves have a searchable picker with descriptions and thumbnails. Link Existing Marking still requires a numeric ID. Define the clearer linking method and complete searchable destinations without restoring Move to another marking or Link existing cover on Marking detail. Acceptance: find eligible destinations without knowing a code or ID. Keep link and move actions distinct; T20 owns any Contributor permission change. |
 | [T39](https://trello.com/c/YtcnoRop) | Compare proposed changes beside the current Entry | F3 | Reese | Show current and proposed values side by side during Marking and Cover submission review. Existing history is not this comparison. Acceptance: an Editor can identify changed and unchanged values before deciding. |
 | [T40](https://trello.com/c/vqYH3R2Z) | Preserve contributor credit preferences across edits | F3 | Michael: model; Reese: application | An edit currently replaces display_submitter_name and public credit uses created_by only. Define cumulative credit and each person's opt-in, then prevent one contributor's edit from replacing another's choice. Preserve Issue 17's completed original feature. |
 | [T41](https://trello.com/c/LI10JpcC) | Define rescind and inactivity handling for submissions | F3 | Reese; Michael for model changes | Keep existing pending approve/reject/revision and owner withdrawal. Define rescind, the inactivity interval, and whether the request concerns submissions or published Entries before implementing additional actions. Acceptance: agreed transitions and permissions, then verified behaviour; no arbitrary deletion policy. |
@@ -162,7 +465,7 @@ to Reese. Source observations below describe code, not deployed behaviour.
 | [T47](https://trello.com/c/8AVh7K9r) | Report possible duplicate Markings in existing data | F11 | Michael | Scan state, town, type, shape, dimensions, color, and optionally dates. Define match rules; report candidate groups with record IDs and evidence. Matches do not authorize automatic merge/deletion. Coordinate matching with T48. |
 | [T48](https://trello.com/c/gQ639Ld4) | Suggest similar Entries during new and edit submissions | F3 | Reese; Michael: matching/data | Check for similar Markings or Covers before new/edit submission. Coordinate criteria with T47; define warning versus blocking and exclude the Entry being edited. Acceptance: useful candidate previews without false claims of identity. |
 | [T49](https://trello.com/c/bvNVhddr) | Verify catalog interpretation and illustrated Cover capture | F11 | Michael | Review cross-reference exclusion (SHIP 1808-60), See State date references, date inheritance/precision, star ownership, and ring ornament placement against source pages. Capture IL illustrated Covers at printed pages 66 and 79 with citations. Account for exclusions and uncertainty rather than inventing fields. Related: T19, T25, T26; no blind reimport. |
-| [T50](https://trello.com/c/B25HULz7) | Remove added parent town text from child inscriptions | F11 | Michael | The munger prepends parent Townmark text to Ratemark/Auxmark inscription_txt. Remove only added text, preserving actual inscriptions. Identify affected source and target records, verify corrected output, and reconcile any data repair by site. |
+| [T50](https://trello.com/c/B25HULz7) | Remove added parent town text from child inscriptions | F11 | Michael | Implemented locally: the munger exports each child's own inscription; `repair_ascc_child_inscriptions` removes an exact Townmark prefix using the same Post Office and Catalog Text. Commits by default; `--dry-run` previews. [Usage](docs/devel/TOOLS.md#ascc-inscription-repair-t50). Deployment and repair pending on woco.dev, then hellowoco.app; record results and skipped cases separately. |
 | [T51](https://trello.com/c/os08ghUA) | Archive selected records before purge and sweep orphans | F10 | Michael | Extend existing purge/verification tools to dump selected records before deletion and identify orphan Citations/Images. Archive image bytes if deleting files. Acceptance: restorable archive is verified before erasure; dry-run reports scope. This is separate from S25/S26 application backup/restore. |
 | [T52](https://trello.com/c/2djEMidu) | Preserve catalog sections within Collections | F7 | Michael: model/data; Reese: application | Represent each state's source section order and cited explanatory prose within its Collection. Preserve source structure during intake. This is not the deferred user comment workflow S42. Acceptance: one representative state retains section membership, order, and source prose. |
 | [T53](https://trello.com/c/Q0KacWwW) | Compare sampled image colors and approximate Pantone matches | F5 | Michael: data/mapping; Reese: application | Use expected hex and sampled photo color for the first comparison, then approximate Pantone mapping. Existing Color storage is not a matching workflow. Define the Pantone reference and approximation method before implementation; distinguish this from deferred automatic predominant-color detection. |
@@ -182,8 +485,10 @@ to Reese. Source observations below describe code, not deployed behaviour.
   their completed implementation.
 - Has Covers is implemented in Search and `filter_has_covers`, with dedicated
   tests. Region already represents counties and dated PostOfficeRegion links.
+  County entry through new/edit forms is still missing and is tracked in T70.
   New uploads use region folders; older-file cleanup and draft relocation
-  remain unverified, not assumed defects. No new implementation cards for these.
+  remain unverified, not assumed defects. No new implementation cards for
+  these already implemented capabilities or unverified file-cleanup concerns.
 
 ## Deferred offline wishes
 
@@ -200,12 +505,14 @@ section. These ideas are not evidence that a feature or audit once existed.
 | [T61](https://trello.com/c/LXCEAOzU) | Audit licensing and fully free distribution compatibility | Audit licenses and dependencies and test a fully free distribution, with Trisquel proposed. This is a desired audit, not a completed finding or legal conclusion. |
 | [T62](https://trello.com/c/kShMWNpf) | Personalize detail and search field display | Allow saved field ordering on detail pages and hide/show choices in search. Other profile customization is unspecified. |
 | [T63](https://trello.com/c/GxfGUqS0) | Generate tracings and suggested details from original photos | Explore AI-generated tracings and recommended record details. Preserve originals and distinguish generated output from evidence; human review remains required. |
-| T64 | Accept and process PDF, BMP, and RAW uploads | Convert supported files into a web-displayable catalogue image before storage. Define PDF page selection and supported RAW formats, preserve useful resolution metadata, enforce size and decode limits, and verify previews, thumbnails, cropping, moves, submission review, and final Entry display. Current uploads remain PNG and JPEG until this work is complete. |
+| [T64](https://trello.com/c/pufJgNTJ) | Accept and process PDF, BMP, and RAW uploads | Convert supported files into a web-displayable catalogue image before storage. Define PDF page selection and supported RAW formats, preserve useful resolution metadata, enforce size and decode limits, and verify previews, thumbnails, cropping, moves, submission review, and final Entry display. Current uploads remain PNG and JPEG until this work is complete. |
 
 Full report generation is retained under deferred S43 as broader scope to
 define; it does not replace active S5 exports. Email distribution lists for
 review are retained with S36 as a related deferred idea; routing and whether
-email can perform review actions remain undecided.
+email can perform review actions remain undecided. The narrower request to
+email Editors about pending submissions is active under T68, with mail
+delivery repair under T30.
 
 # MD/MI editor-review batch (Ian email, 18 Jun 2026)
 
@@ -378,7 +685,7 @@ The earlier successful run does not establish completeness; see the later
 follow-ups and current staging work under Issue 8.
 
 ### Issue 8 -- State rollout tracking
-**Status:** Doing - [T13](https://trello.com/c/kWFoGpi3) - **Assigned:** Michael (`grubermeister`) - **Depends on:** none
+**Status:** Testing - [T13](https://trello.com/c/kWFoGpi3) - **Assigned:** Michael (`grubermeister`) - **Depends on:** none
 Michael reported the following on 2026-09-19. The July rollout sequence is
 historical. Production presence, data quality, and Editor acceptance are
 separate results; these reports were not independently checked on either site.
@@ -815,8 +1122,8 @@ unassigned as of 2026-09-13.
 
 Where each `docs/devel/design.md` feature (F1-F13) is implemented today.
 The design doc is pure spec and points here for status. Implementation evidence
-comes from the September 13 review and later notes below; story status matches
-the live board checked on September 19. To Do can include further work on an implemented
+comes from the September 13 review and the September 21 code review; story status
+matches the live board checked on September 21. To Do can include further work on an implemented
 capability. Routes are registered in `frontend/src/App.tsx`; re-verify against
 that file when updating this table.
 
@@ -824,12 +1131,12 @@ that file when updating this table.
 |---------|-------------------|--------------|
 | F1 Authentication | SPA (`/auth`, `/reset-password`) | Done: S1 |
 | F2 Collection Discovery | SPA (`/`, `/search`, `/record/:id`, `/covers/:coverId`); S5 document exports not found | Done: S2, S3, S4, S41; To Do: S5 |
-| F3 Submission Workflow | SPA contribution and editor review flows, including bulk approval/rejection (see notes below) | Done: S6-S11, S13-S15; Testing: S12; To Do: S35 |
+| F3 Submission Workflow | SPA contribution and editor review flows, including bulk approval/rejection (see notes below) | Done: S6-S11, S13-S15; Testing: S12; To Do: S35 (implemented; verification and acceptance remain) |
 | F4 Comment Workflow | Deferred: standalone Entry comments; existing notes to the Editor are part of Submissions | Backlog: S16, S17 |
 | F5 Image Attachments | SPA (image upload inside contribution forms) | Done: S18 |
 | F6 Reference Work Management | Editor/admin add/edit through `/api/v2/reference-works/` and Django `/admin/`; the SPA has citation lookup but no management UI | To Do: S19 |
 | F7 Collection Administration | SPA `/admin/collections` (superuser only) + Django `/admin/` | Done: S21; Backlog: S20 |
-| F8 Audit Trail | SPA submission transactions and editor/admin record-history views; django-reversion history in Django `/admin/` | Done: S22; To Do: S23 |
+| F8 Audit Trail | SPA submission transactions and editor/admin record-history views; django-reversion history in Django `/admin/` | Done: S22; To Do: S23 (history viewing implemented; verification and acceptance remain), T74 (restoration scope) |
 | F9 Documentation & Help | SPA (`/help`, `/help/:docSlug`); articles authored as repo Markdown | Testing: S24, S34; To Do: S33 |
 | F10 System Maintenance | Operator CLI and deployment workflows -- see `docs/devel/RUNBOOK.md`; no application interface | Testing: S27; To Do: S25, S26 |
 | F11 Catalog Data Pipeline | Offline tooling -- see `docs/devel/TOOLS.md` and `docs/devel/PIPELINE.md` | Done: S28-S32; separate data tasks remain open |
@@ -848,9 +1155,13 @@ Notes:
   (`ContributionDetail`). The SPA Editor Dashboard also supports bulk approve
   and reject, shipped in [PR #118](https://github.com/CoverCensus/worldcovers/pull/118).
   Django `/admin/` has secondary bulk actions for administrators.
+  T72 tracks loss of multiple Citations in multipart submissions; the
+  existing JSON approval tests do not establish correct form handling.
 - **F8**: Editors/admins can view record history on marking and cover detail
   pages. This is separate from the full django-reversion interface in Django
   `/admin/`; history is not limited to that admin interface.
+  Snapshot restoration is partial; T74 tracks its scope and verification
+  separately from S23 history viewing.
 - **F4**: Michael deferred the standalone comment-on-Entry flow on 2026-09-19.
   What exists today is the Contributor's
   comment-to-Editor, carried inside the submission payload and shown on

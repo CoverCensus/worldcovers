@@ -258,19 +258,8 @@ backups/*
 *.bak
 
 #Local WIP files for the one-off utilities in tools/
-tools/wip/in/*
-!tools/wip/in/_DELETE.ME
-tools/wip/out/*
-!tools/wip/out/_DELETE.ME
-tools/wip/cache/*
-# Scratch for the multi-state merge cutover (per-state bundles + merged output);
-# regenerable via tools/ascc_data_munger.py + tools/merge_ascc_bundles.py.
-tools/wip/bundles/
-tools/wip/cutover/
-tools/wip/**/*.pdf
-tools/wip/**/*.png
-tools/wip/**/*.jpg
-tools/wip/**/*.jpeg
+tools/wip
+
 .DS_Store
 /backend/imports
 docs/data/

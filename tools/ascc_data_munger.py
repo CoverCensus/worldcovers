@@ -3290,20 +3290,6 @@ def main(argv=None):
     marking_rows = []
     source_marking_map_rows = []
     marking_code_by_id = {}
-    townmark_inscription_by_id = {}
-    if townmarks_df is not None and len(townmarks_df):
-        townmark_inscription_by_id = dict(zip(
-            townmarks_df["townmark_id"],
-            townmarks_df["inscription_text"],
-        ))
-    ratemark_parent_townmark_by_id = {}
-    if townmark_ratemark_df is not None and len(townmark_ratemark_df):
-        for _, _link in townmark_ratemark_df.iterrows():
-            ratemark_parent_townmark_by_id.setdefault(
-                _link.get("ratemark_id"),
-                _link.get("townmark_id"),
-            )
-
     def _scalar_text(value):
         if value is None:
             return ""
@@ -3313,31 +3299,6 @@ def main(argv=None):
         except (TypeError, ValueError):
             pass
         return str(value).strip()
-
-    def _child_inscription_with_parent(parent_text, child_text):
-        parent = _scalar_text(parent_text)
-        child = _scalar_text(child_text)
-        if not parent:
-            return child
-        if not child:
-            return parent
-        child_upper = child.upper()
-        parent_upper = parent.upper()
-        if child_upper == parent_upper or child_upper.startswith(parent_upper + " "):
-            return child
-        return f"{parent} {child}"
-
-    def _parent_townmark_id_for_child(kind, row):
-        if kind == "RM":
-            return ratemark_parent_townmark_by_id.get(row.get("ratemark_id"))
-        if kind == "AX":
-            parent_type = row.get("parent_mark_type")
-            parent_id = row.get("parent_mark_id")
-            if parent_type == "TOWNMARK":
-                return parent_id
-            if parent_type == "RATEMARK":
-                return ratemark_parent_townmark_by_id.get(parent_id)
-        return None
 
     for kind, src_id, mk_id in emit_order:
         if kind == "TM":
@@ -3391,9 +3352,7 @@ def main(argv=None):
             desc_val = None
         inscription_txt = r.get("inscription_text")
         if kind in ("RM", "AX"):
-            parent_tm_id = _parent_townmark_id_for_child(kind, r)
-            parent_inscription = townmark_inscription_by_id.get(parent_tm_id)
-            inscription_txt = _child_inscription_with_parent(parent_inscription, inscription_txt)
+            inscription_txt = _scalar_text(inscription_txt)
         marking_code = f"{RW_CODE}-{REGION_ABBREV}-M{mk_id + 1000}"
         marking_code_by_id[mk_id] = marking_code
         marking_rows.append({

@@ -1109,10 +1109,21 @@ class Cover(TimestampedModel):
 
     model.md domain type: Cover
     """
-    COVER_TYPE_CHOICES = [('FC', 'Folded Cover'), ('FL', 'Folded Letter')]
+    # Trello T67 / Ian's 2026-09-23 "Cover Options" thread. FC stays for the
+    # rows that already carry it; UNK is for a submitter who cannot tell.
+    COVER_TYPE_CHOICES = [
+        ('FL', 'Folded Letter'),
+        ('FLF', 'Folded Letter Front'),
+        ('ENV', 'Envelope'),
+        ('ENVF', 'Envelope Front'),
+        ('FC', 'Folded Cover'),
+        ('UNK', 'Unknown'),
+    ]
+    COVER_TYPE_CODES = frozenset(code for code, _label in COVER_TYPE_CHOICES)
+    COVER_TYPE_LABELS = dict(COVER_TYPE_CHOICES)
     code = models.CharField(max_length=30, unique=True, null=True, blank=True, db_column='code', help_text='Editor-assigned reference identifier')
     color = models.ForeignKey(Color, on_delete=models.PROTECT, null=True, blank=True, related_name='covers', help_text='Ink or material color of the cover itself')
-    type = models.CharField(max_length=2, choices=COVER_TYPE_CHOICES, null=True, blank=True)
+    type = models.CharField(max_length=4, choices=COVER_TYPE_CHOICES, null=True, blank=True)
     has_adhesive = models.BooleanField(default=False, help_text='Whether the cover bears an adhesive stamp')
     height = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, help_text='Vertical dimension in millimeters')
     is_institutional = models.BooleanField(null=True, blank=True, help_text='Institutionally owned (museum, society, etc.)')
