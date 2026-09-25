@@ -761,7 +761,7 @@ One reusable guidelines block (used on three submission pages -- define once):
 3. Reference works -- "To add a new reference, please add a note to editor for approval and addition"
 4. Date-verification -- "please include image verifying date if not on exterior of cover"
 - [x] Reusable component/string exists with all four items
-- [ ] Content approved against Ian's wording
+- [x] Content approved against Ian's wording — accepted by Reese 2026-09-24 as shipped (items 1–4 match; the reference-works line kept as is); the "Review Time" (1–3 business days) line, which Ian never asked for, removed in the same decision
 Progress note, 2026-07-03: centralized guideline labels live in
 `frontend/src/labels/guidelines.ts`; Issue 21 resolved the Rate-vs-Aux wording.
 
