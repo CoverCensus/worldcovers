@@ -112,6 +112,15 @@ export const Navigation = () => {
             >
               Help
             </NavLink>
+            {hasEditorAccess && (
+              <NavLink
+                to="/editors"
+                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                activeClassName="text-primary font-semibold"
+              >
+                Editors
+              </NavLink>
+            )}
             {!user && (
               <NavLink
                 to="/auth"
@@ -195,6 +204,16 @@ export const Navigation = () => {
             >
               Help
             </NavLink>
+            {hasEditorAccess && (
+              <NavLink
+                to="/editors"
+                className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
+                activeClassName="text-primary bg-secondary font-semibold"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                Editors
+              </NavLink>
+            )}
             {!user && (
               <NavLink
                 to="/auth"

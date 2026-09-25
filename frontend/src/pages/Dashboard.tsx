@@ -1316,6 +1316,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to catalog
           </Link>
+          {isEditor && (
+            <Link
+              to="/editors"
+              className="mb-4 ml-6 inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
+            >
+              State editors
+            </Link>
+          )}
           <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div className="min-w-0 md:flex-1">
               <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">

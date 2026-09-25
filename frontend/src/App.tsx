@@ -14,6 +14,8 @@ import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
 import Help from "./pages/Help";
 import Collections from "./pages/Collections";
+import EditorRoster from "./pages/EditorRoster";
+import { RequireEditor } from "@/components/RequireEditor";
 import NotFound from "./pages/NotFound";
 
 // Lazy-loaded routes: heavier pages that are not on the common
@@ -120,6 +122,14 @@ const App = () => (
             />
             <Route path="/auth" element={<Auth />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route
+              path="/editors"
+              element={
+                <RequireEditor>
+                  <EditorRoster />
+                </RequireEditor>
+              }
+            />
             <Route path="/help" element={<Help />} />
             <Route path="/help/:docSlug" element={<Help />} />
             <Route path="/acknowledgements" element={<Help singleDocSlug="acknowledgements" />} />
