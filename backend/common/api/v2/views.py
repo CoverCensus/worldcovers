@@ -115,6 +115,7 @@ from common.models import (
 from woco.pagination import MarkingListPagination
 
 from .permissions import (
+    IsEditor,
     CanManageReferenceWorks,
     CanReviewContribution,
     IsOwnDeletableContribution,
@@ -4091,8 +4092,12 @@ class CollectionViewSet(viewsets.ModelViewSet):
     ordering = ["name"]
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve", "editors"):
+        if self.action in ("list", "retrieve"):
             return [IsAuthenticated()]
+        if self.action == "editors":
+            # Names and emails of a state's editors are for editors (issues.md 177);
+            # until 2026-09-24 any signed-in contributor could read them.
+            return [IsEditor()]
         return [IsAdminUser()]
 
     def perform_create(self, serializer):
@@ -4160,5 +4165,48 @@ class CollectionViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Assignment not found."}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+
+
+class EditorRosterView(APIView):
+    """
+    GET /editor-roster/ -- every active state editor, grouped by state (Trello T46,
+    issues.md 177). Ian, 2026-09-23: "a listing of the editors that is viewable only
+    by the editors."
+
+    Built live from CollectionAssignment, so a proposed appointment can never
+    appear (it has no assignment row), and gated to editors because the rows
+    carry email addresses. Superusers without an assignment are not state
+    editors and are not listed. Dwayne's spreadsheet remains the private roster
+    for anything beyond name, email and states (DECISIONS.md, Publish Help
+    Content Explicitly).
+    """
+    permission_classes = [IsEditor]
+
+    def get(self, request):
+        assignments = (
+            CollectionAssignment.objects
+            .filter(collection__is_active=True, user__is_active=True)
+            .select_related("user", "collection__region")
+        )
+        states_by_user = {}
+        for ca in assignments:
+            states_by_user.setdefault(ca.user_id, set()).add(ca.collection.region.abbrev)
+        groups = {}
+        for ca in assignments:
+            region = ca.collection.region
+            group = groups.setdefault(region.abbrev, {
+                "abbrev": region.abbrev, "name": region.name, "editors": {},
+            })
+            user = ca.user
+            group["editors"][user.pk] = {
+                "display_name": user.get_full_name().strip() or user.username,
+                "email": user.email or "",
+                "states": sorted(states_by_user[user.pk]),
+            }
+        rows = []
+        for group in sorted(groups.values(), key=lambda g: g["name"].lower()):
+            editors = sorted(group["editors"].values(), key=lambda e: e["display_name"].lower())
+            rows.append({"abbrev": group["abbrev"], "name": group["name"], "editors": editors})
+        return Response(rows)
 
 ###################################################################################################
