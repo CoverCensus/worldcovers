@@ -157,7 +157,7 @@ class DateSeenPermissionTests(TestCase):
 
         txn = SubmissionTransaction.objects.get(
             marking=self.virginia_marking,
-            action=SubmissionTransaction.ACTION_RECORD_CREATE,
+            action=SubmissionTransaction.ACTION_DATE_SEEN_ADDED,
         )
         self.assertEqual(txn.actor, self.editor)
         self.assertEqual(txn.extra_payload["date_seen_id"], response.data["id"])
@@ -191,7 +191,7 @@ class DateSeenPermissionTests(TestCase):
 
         txn = SubmissionTransaction.objects.get(
             marking=self.virginia_marking,
-            action=SubmissionTransaction.ACTION_RECORD_DELETE,
+            action=SubmissionTransaction.ACTION_DATE_SEEN_REMOVED,
         )
         self.assertEqual(txn.extra_payload["deleted_date_seen_id"], row.pk)
         self.assertEqual(len(txn.before_payload["dates_seen"]), 1)
@@ -200,6 +200,105 @@ class DateSeenPermissionTests(TestCase):
             marking=self.virginia_marking
         ).first()
         self.assertEqual(version.snapshot["dates_seen"], [])
+
+    # ------------------------------------------------------------------
+    # issues.md 107 -- editing dates from the marking page. The changelog
+    # used to say "Record deleted by ..." for a removed date, which reads as
+    # though the marking itself was deleted.
+
+    def _changelog_labels(self, marking):
+        response = self.client.get(f"/api/v2/markings/{marking.pk}/changelog/")
+        self.assertEqual(response.status_code, 200, response.data)
+        data = response.data
+        events = data.get("events", data) if isinstance(data, dict) else data
+        return [e["action_label"] for e in events]
+
+    def test_date_events_are_labelled_as_dates_in_the_changelog(self):
+        self.client.force_authenticate(self.editor)
+        created = self._post(self.virginia_marking)
+        self.assertEqual(created.status_code, 201, created.data)
+        patched = self.client.patch(
+            f"/api/v2/dates-seen/{created.data['id']}/",
+            {"date_year": 1851, "date_month": None, "date_day": None},
+            format="json",
+        )
+        self.assertEqual(patched.status_code, 200, patched.data)
+        deleted = self.client.delete(f"/api/v2/dates-seen/{created.data['id']}/")
+        self.assertIn(deleted.status_code, (200, 204))
+
+        labels = self._changelog_labels(self.virginia_marking)
+        self.assertEqual(labels[:3], ["Date removed", "Date changed", "Date added"])
+        self.assertNotIn("Record deleted", labels)
+        self.assertNotIn("Record created", labels)
+
+    def test_month_only_via_parts_creates_a_row_with_no_sortable_date(self):
+        self.client.force_authenticate(self.editor)
+        response = self.client.post(
+            "/api/v2/dates-seen/",
+            {"subject_type": "MARKING", "subject_id": self.virginia_marking.pk,
+             "date_year": None, "date_month": 6, "date_day": None},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        row = DateSeen.objects.get(pk=response.data["id"])
+        self.assertIsNone(row.date)
+        self.assertEqual(row.granularity, DateSeen.GRANULARITY_MONTH_ONLY)
+        self.virginia_marking.refresh_from_db()
+        self.assertIsNone(self.virginia_marking.earliest_seen)  # partial dates never set the range
+
+    def test_patch_with_all_parts_changes_precision_and_refreshes_the_range(self):
+        self.client.force_authenticate(self.editor)
+        row = DateSeen.objects.create(
+            subject_type=DateSeen.SUBJECT_MARKING, subject_id=self.virginia_marking.pk,
+            date_year=1850, date_month=3, date_day=12,
+            created_by=self.admin, modified_by=self.admin)
+        response = self.client.patch(
+            f"/api/v2/dates-seen/{row.pk}/",
+            {"date_year": 1851, "date_month": None, "date_day": None},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        row.refresh_from_db()
+        self.assertEqual(row.granularity, DateSeen.GRANULARITY_YEAR)
+        self.assertEqual(str(row.date), "1851-01-01")
+        self.virginia_marking.refresh_from_db()
+        self.assertEqual(str(self.virginia_marking.earliest_seen), "1851-01-01")
+
+    def test_patch_of_one_part_keeps_the_others_so_the_client_must_send_all_three(self):
+        # Documents the serializer's behaviour the UI is built around.
+        self.client.force_authenticate(self.editor)
+        row = DateSeen.objects.create(
+            subject_type=DateSeen.SUBJECT_MARKING, subject_id=self.virginia_marking.pk,
+            date_year=1850, date_month=3, date_day=12,
+            created_by=self.admin, modified_by=self.admin)
+        response = self.client.patch(
+            f"/api/v2/dates-seen/{row.pk}/", {"date_year": 1851}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        row.refresh_from_db()
+        self.assertEqual((row.date_year, row.date_month, row.date_day), (1851, 3, 12))
+
+    def test_contributor_cannot_post_a_marking_date(self):
+        contributor = User.objects.create_user(username="contributor", password="pw")
+        self.client.force_authenticate(contributor)
+        response = self._post(self.virginia_marking)
+        self.assertEqual(response.status_code, 403, response.data)
+
+    def test_can_edit_dates_is_region_scoped_on_the_detail_only(self):
+        def flag(user, marking):
+            if user is None:
+                self.client.force_authenticate(None)
+            else:
+                self.client.force_authenticate(user)
+            response = self.client.get(f"/api/v2/markings/{marking.pk}/")
+            self.assertEqual(response.status_code, 200, response.data)
+            return response.data.get("can_edit_dates")
+
+        self.assertIs(flag(self.editor, self.virginia_marking), True)
+        self.assertIs(flag(self.editor, self.maryland_marking), False)
+        self.assertIs(flag(None, self.virginia_marking), False)
+        self.assertIs(flag(self.admin, self.maryland_marking), True)
+        listing = self.client.get("/api/v2/markings/")
+        self.assertNotIn("can_edit_dates", listing.data["results"][0])
 
     def test_cover_date_scoped_to_all_linked_marking_regions(self):
         """A cover's region is the union of its markings' -- the editor must own all."""
@@ -216,7 +315,7 @@ class DateSeenPermissionTests(TestCase):
         self.assertTrue(
             SubmissionTransaction.objects.filter(
                 cover=virginia_only,
-                action=SubmissionTransaction.ACTION_RECORD_CREATE,
+                action=SubmissionTransaction.ACTION_DATE_SEEN_ADDED,
             ).exists()
         )
         self.assertTrue(CoverVersion.objects.filter(cover=virginia_only).exists())

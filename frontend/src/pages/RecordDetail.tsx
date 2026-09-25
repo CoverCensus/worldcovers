@@ -94,6 +94,7 @@ import { earliestDateSeen } from "@/lib/associatedCoverSort";
 import { VphcProvenanceCard } from "@/components/VphcProvenanceCard";
 import { getTenuresForPostOffice, type PostmasterTenure } from "@/services/postmasters";
 import { PostmastersCard } from "@/components/PostmastersCard";
+import { DatesSeenCard } from "@/components/DatesSeenCard";
 
 type GalleryImage = {
   imageUrl: string | null;
@@ -1230,6 +1231,14 @@ const RecordDetail = () => {
                   )}
                 </CardContent>
               </Card>
+
+              {/* issues.md 107: editors correct a marking's own dates here, one row per
+                  click on the region-scoped /dates-seen/ API. Shown only when the server
+                  says this viewer may (can_edit_dates); the public "Dates Seen" row above
+                  keeps its own rule (#122). */}
+              {record.canEditDates && markingId != null && (
+                <DatesSeenCard markingId={markingId} datesSeen={record.datesSeen} onChanged={refetchRecord} />
+              )}
 
               {record.desc.trim() && (
                 <Card className="shadow-archival-md">

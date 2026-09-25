@@ -37,6 +37,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
+import { PartialDateFields } from "@/components/PartialDateFields";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
 import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
 import { CoverReviewBanner } from "@/components/CoverReviewBanner";
@@ -95,20 +96,6 @@ type ReferenceDetailFieldErrors = {
   citationUrl?: string;
 };
 
-const COVER_MONTH_OPTIONS = [
-  { value: "1", label: "JAN" },
-  { value: "2", label: "FEB" },
-  { value: "3", label: "MAR" },
-  { value: "4", label: "APR" },
-  { value: "5", label: "MAY" },
-  { value: "6", label: "JUN" },
-  { value: "7", label: "JUL" },
-  { value: "8", label: "AUG" },
-  { value: "9", label: "SEP" },
-  { value: "10", label: "OCT" },
-  { value: "11", label: "NOV" },
-  { value: "12", label: "DEC" },
-];
 
 const EMPTY_COVER_DATE: PartialDateInput = { unknown: false, year: "", month: "", day: "" };
 
@@ -1126,97 +1113,17 @@ export default function CoverEdit() {
                       <Label>
                         Date <span className="text-destructive" aria-hidden="true">*</span>
                       </Label>
-                      <label className="flex items-center gap-2 text-sm">
-                        <Checkbox
-                          checked={coverDate.unknown}
-                          onCheckedChange={(v) => {
-                            setCoverDate(
-                              v === true
-                                ? { unknown: true, year: "", month: "", day: "" }
-                                : { ...EMPTY_COVER_DATE },
-                            );
-                            setFieldErrors((prev) => ({ ...prev, date: undefined }));
-                          }}
-                          disabled={submitting}
-                        />
-                        Date unknown
-                      </label>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div className="space-y-1.5">
-                          <Label htmlFor="cover-date-month" className="text-xs text-muted-foreground">
-                            Month
-                          </Label>
-                          <Select
-                            value={coverDate.month || "__none__"}
-                            onValueChange={(v) => {
-                              setCoverDate((prev) => ({
-                                ...prev,
-                                unknown: false,
-                                month: v === "__none__" ? "" : v,
-                              }));
-                              setFieldErrors((prev) => ({ ...prev, date: undefined }));
-                            }}
-                            disabled={submitting || coverDate.unknown}
-                          >
-                            <SelectTrigger
-                              id="cover-date-month"
-                              className={cn(fieldErrors.date && "border-destructive")}
-                            >
-                              <SelectValue placeholder="Unknown" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__none__">Unknown</SelectItem>
-                              {COVER_MONTH_OPTIONS.map((opt) => (
-                                <SelectItem key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="cover-date-day" className="text-xs text-muted-foreground">
-                            Day
-                          </Label>
-                          <Input
-                            id="cover-date-day"
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="DD"
-                            value={coverDate.day}
-                            onChange={(e) => {
-                              const raw = e.target.value.replace(/\D/g, "").slice(0, 2);
-                              setCoverDate((prev) => ({ ...prev, unknown: false, day: raw }));
-                              setFieldErrors((prev) => ({ ...prev, date: undefined }));
-                            }}
-                            disabled={submitting || coverDate.unknown}
-                            className={cn(fieldErrors.date && "border-destructive")}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="cover-date-year" className="text-xs text-muted-foreground">
-                            Year
-                          </Label>
-                          <Input
-                            id="cover-date-year"
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="YYYY"
-                            value={coverDate.year}
-                            onChange={(e) => {
-                              setCoverDate((prev) => ({
-                                ...prev,
-                                unknown: false,
-                                year: e.target.value.replace(/\D/g, "").slice(0, 4),
-                              }));
-                              setFieldErrors((prev) => ({ ...prev, date: undefined }));
-                            }}
-                            disabled={submitting || coverDate.unknown}
-                            className={cn(fieldErrors.date && "border-destructive")}
-                          />
-                        </div>
-                      </div>
-                      {fieldErrors.date && <p className="text-sm text-destructive">{fieldErrors.date}</p>}
+                      <PartialDateFields
+                        idPrefix="cover-date"
+                        value={coverDate}
+                        onChange={(next) => {
+                          setCoverDate(next);
+                          setFieldErrors((prev) => ({ ...prev, date: undefined }));
+                        }}
+                        disabled={submitting}
+                        error={fieldErrors.date}
+                        showUnknown
+                      />
                     </div>
 
                     <div className="space-y-2" id="cover-images-zone">

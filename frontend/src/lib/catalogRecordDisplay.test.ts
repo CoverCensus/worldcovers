@@ -45,6 +45,7 @@ function markingRecord(overrides: Partial<MarkingRecord> = {}): MarkingRecord {
     submitterName: null,
     isRemoved: false,
     canRemove: false,
+    canEditDates: false,
     isReviewed: false,
     commentForEditor: "",
     editorFeedback: "",

@@ -1341,10 +1341,12 @@ class DateSeenViewSet(viewsets.ModelViewSet):
       ranges still move (signals.py); the event just shows up in the cover's
       changelog rather than each marking's.
     * Each write emits one transaction and one version row, matching
-      MarkingViewSet. If issue #107 ships bulk date editing, N rows submitted
-      together would mean N versions on one changelog -- the answer then is a
-      batch endpoint writing one transaction and one version per submit, not
-      per-row suppression here.
+      MarkingViewSet. Issue #107 shipped as one row per editor click (the
+      Dates seen card on the marking page), so N versions for N clicks is by
+      design. If a bulk date editor ever ships, the answer is a batch endpoint
+      writing one transaction and one version per submit, not per-row
+      suppression here. Date events are logged as date_seen_added/changed/
+      removed so the changelog never reads "Record deleted" for a date.
     * Version snapshots *capture* dates_seen (audit.py:69-78) but
       restore_marking_from_snapshot does not replay them, so restoring a
       version leaves the current date rows in place. Deliberate and tracked
@@ -1470,7 +1472,7 @@ class DateSeenViewSet(viewsets.ModelViewSet):
             )
             subject = self._resolve_subject(subject_type, subject_id)
             self._log(
-                action_name=SubmissionTransaction.ACTION_RECORD_CREATE,
+                action_name=SubmissionTransaction.ACTION_DATE_SEEN_ADDED,
                 subject=subject,
                 subject_type=subject_type,
                 before={},
@@ -1494,7 +1496,7 @@ class DateSeenViewSet(viewsets.ModelViewSet):
             before = self._snapshot(subject, subject_type)
             row = serializer.save(modified_by=self.request.user)
             self._log(
-                action_name=SubmissionTransaction.ACTION_RECORD_UPDATE,
+                action_name=SubmissionTransaction.ACTION_DATE_SEEN_CHANGED,
                 subject=subject,
                 subject_type=subject_type,
                 before=before,
@@ -1511,7 +1513,7 @@ class DateSeenViewSet(viewsets.ModelViewSet):
             before = self._snapshot(subject, subject_type)
             instance.delete()
             self._log(
-                action_name=SubmissionTransaction.ACTION_RECORD_DELETE,
+                action_name=SubmissionTransaction.ACTION_DATE_SEEN_REMOVED,
                 subject=subject,
                 subject_type=subject_type,
                 before=before,

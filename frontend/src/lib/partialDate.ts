@@ -271,3 +271,45 @@ export function formatDateSeenLike(row: {
   const input = partialDateInputFromDateSeen(row);
   return formatPartialDateInput(input);
 }
+
+/** Month options for a partial-date input; one copy for every date form. */
+export const MONTH_OPTIONS: readonly { value: string; label: string }[] = MONTH_LABELS.map(
+  (label, i) => ({ value: String(i + 1), label }),
+);
+
+/**
+ * True for the precisions that carry a sortable `date` and therefore set a
+ * marking's Earliest/Latest (date_range.py ignores rows with date=None).
+ */
+export function isRangeBearing(granularity: string | null | undefined): boolean {
+  return granularity === "DAY" || granularity === "MONTH" || granularity === "YEAR";
+}
+
+type SortableDateSeen = {
+  dateYear?: number | null;
+  dateMonth?: number | null;
+  dateDay?: number | null;
+};
+
+/**
+ * Earliest first by year, then month, then day; rows with no year last; ties in
+ * their incoming order. The server orders by `date`, and rows without one
+ * (MONTH_ONLY etc.) sort differently per database, so the client decides.
+ * Returns a copy.
+ */
+export function sortDateSeenRows<T extends SortableDateSeen>(rows: readonly T[]): T[] {
+  const key = (r: T) => [
+    r.dateYear ?? Number.POSITIVE_INFINITY,
+    r.dateMonth ?? 0,
+    r.dateDay ?? 0,
+  ];
+  return rows
+    .map((row, index) => ({ row, index, k: key(row) }))
+    .sort((a, b) => {
+      for (let i = 0; i < 3; i += 1) {
+        if (a.k[i] !== b.k[i]) return a.k[i] < b.k[i] ? -1 : 1;
+      }
+      return a.index - b.index;
+    })
+    .map((x) => x.row);
+}
