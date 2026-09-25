@@ -424,6 +424,12 @@ Evidence: [Dates in the glossary](docs/glossary.md),
 [submit path](backend/common/api/v2/views.py), and
 [Editor submission tests](backend/common/tests/test_contribution_submit.py).
 
+2026-09-24 (Reese, with the issues.md 107 Dates seen work): the glossary
+sentence now names all three sources (catalogue text on the Marking, Cover
+observation dates, and Editors adding, correcting or removing Marking-level
+dates on the marking page) and keeps Contributors to Covers. The Editor path
+is unchanged. Awaiting Michael's acceptance.
+
 ## Quick fixes assigned to Michael
 
 All six are Testing, assigned to Michael (`grubermeister`) at his request.

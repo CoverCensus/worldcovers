@@ -445,6 +445,8 @@ export interface MarkingRecord {
   citations: MarkingCitation[];
   isRemoved: boolean;
   canRemove: boolean;
+  /** issues.md 107: this viewer may add/correct/remove the marking's own dates (region-scoped, server-decided). */
+  canEditDates: boolean;
   /**
    * Recycle-bin metadata: only GET /markings/recycle-bin/ returns these, so they
    * are optional rather than required -- a marking built from any other endpoint
@@ -781,6 +783,7 @@ export function mapApiMarkingToRecord(raw: unknown): MarkingRecord {
     citations: mapCitationList(o.citations),
     isRemoved: Boolean((raw as { is_removed?: boolean }).is_removed),
     canRemove: Boolean((raw as { can_remove?: boolean }).can_remove),
+    canEditDates: Boolean((raw as { can_edit_dates?: boolean }).can_edit_dates),
     removedAt: (raw as { removed_at?: string | null }).removed_at ?? null,
     removedByUsername:
       (raw as { removed_by_username?: string | null }).removed_by_username ?? null,

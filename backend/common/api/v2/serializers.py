@@ -534,6 +534,13 @@ class DateSeenSerializer(serializers.ModelSerializer):
             values["date_month"] = None
             values["date_day"] = None
 
+        # A parts edit states its precision by which parts it sends (issues.md
+        # 107): 1851 with month and day cleared is a YEAR row now, whatever the
+        # row was before. Let normalize_date_parts derive the granularity
+        # rather than letting the instance's old value veto the change.
+        if has_component_input and "granularity" not in attrs:
+            values["granularity"] = None
+
         row = DateSeen(**values)
         try:
             row.normalize_date_parts()
@@ -1015,6 +1022,9 @@ class MarkingSerializer(serializers.ModelSerializer):
     modified_by = UserSerializer(read_only=True)
     is_removed = serializers.SerializerMethodField()
     can_remove = serializers.SerializerMethodField()
+    # issues.md 107: may this viewer add/correct/remove this marking's dates? Same
+    # predicate the dates-seen API enforces, so the UI never guesses.
+    can_edit_dates = serializers.SerializerMethodField()
     comment_for_editor = serializers.SerializerMethodField()
     editor_feedback = serializers.SerializerMethodField()
     submitter_name = serializers.SerializerMethodField()
@@ -1067,6 +1077,7 @@ class MarkingSerializer(serializers.ModelSerializer):
             "modified_by",
             "is_removed",
             "can_remove",
+            "can_edit_dates",
             "comment_for_editor",
             "editor_feedback",
             "display_submitter_name",
@@ -1096,6 +1107,13 @@ class MarkingSerializer(serializers.ModelSerializer):
         return MarkingRecycleBin.objects.filter(marking_id=obj.pk).exists()
 
     def get_can_remove(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is None:
+            return False
+        return _user_is_responsible_for_marking(user, obj)
+
+    def get_can_edit_dates(self, obj):
         request = self.context.get("request")
         user = getattr(request, "user", None)
         if user is None:

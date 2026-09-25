@@ -19,7 +19,7 @@ import {
 import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Trash2 } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import type { FormEvent, MouseEvent } from "react";
-import { useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
+import { Link, useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
 import { getShapes, type ShapeOption } from "@/services/shapes";
 import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
@@ -53,6 +53,7 @@ import {
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
 import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
 import { looksLikeWrongKind, measureImageFile } from "@/lib/imageShape";
+import { PartialDateFields } from "@/components/PartialDateFields";
 import { isBelowPreferredImageDpi, measureImageDpi } from "@/lib/imageResolution";
 import { useToast } from "@/hooks/use-toast";
 import { dashboardHref, dashboardHrefForTab } from "@/lib/dashboardParams";
@@ -83,20 +84,6 @@ const MARKING_TYPE_OPTIONS = [
   { value: "AUXMARK", label: ENTRY_LABELS.markingType.AUXMARK },
 ];
 
-const DATE_MONTH_OPTIONS = [
-  { value: "1", label: "JAN" },
-  { value: "2", label: "FEB" },
-  { value: "3", label: "MAR" },
-  { value: "4", label: "APR" },
-  { value: "5", label: "MAY" },
-  { value: "6", label: "JUN" },
-  { value: "7", label: "JUL" },
-  { value: "8", label: "AUG" },
-  { value: "9", label: "SEP" },
-  { value: "10", label: "OCT" },
-  { value: "11", label: "NOV" },
-  { value: "12", label: "DEC" },
-];
 
 const EMPTY_PARTIAL_DATE: PartialDateInput = {
   unknown: false,
@@ -2216,85 +2203,17 @@ const Contribute = () => {
   ) => (
     <div id={baseId} className="space-y-2">
       <Label className="text-sm font-normal">{title}</Label>
-      <label className="flex items-center gap-2 text-sm">
-        <Checkbox
-          checked={value.unknown}
-          onCheckedChange={(checked) => {
-            setValue(
-              checked === true
-                ? { unknown: true, year: "", month: "", day: "" }
-                : { ...EMPTY_PARTIAL_DATE },
-            );
-            setFieldErrors((prev) => ({ ...prev, erd: undefined, lrd: undefined }));
-          }}
-          disabled={submitting}
-        />
-        Date unknown
-      </label>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <Select
-          value={value.month || "__none__"}
-          onValueChange={(month) => {
-            setValue({
-              ...value,
-              unknown: false,
-              month: month === "__none__" ? "" : month,
-            });
-            setFieldErrors((prev) => ({ ...prev, erd: undefined, lrd: undefined }));
-          }}
-          disabled={submitting || value.unknown}
-        >
-          <SelectTrigger
-            id={`${baseId}-month`}
-            className={error ? "border-destructive" : ""}
-          >
-            <SelectValue placeholder="Month" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none__">Unknown</SelectItem>
-            {DATE_MONTH_OPTIONS.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Input
-          id={`${baseId}-day`}
-          type="text"
-          inputMode="numeric"
-          placeholder="DD"
-          value={value.day}
-          onChange={(e) => {
-            setValue({
-              ...value,
-              unknown: false,
-              day: e.target.value.replace(/\D/g, "").slice(0, 2),
-            });
-            setFieldErrors((prev) => ({ ...prev, erd: undefined, lrd: undefined }));
-          }}
-          disabled={submitting || value.unknown}
-          className={error ? "border-destructive" : ""}
-        />
-        <Input
-          id={`${baseId}-year`}
-          type="text"
-          inputMode="numeric"
-          placeholder="YYYY"
-          value={value.year}
-          onChange={(e) => {
-            setValue({
-              ...value,
-              unknown: false,
-              year: e.target.value.replace(/\D/g, "").slice(0, 4),
-            });
-            setFieldErrors((prev) => ({ ...prev, erd: undefined, lrd: undefined }));
-          }}
-          disabled={submitting || value.unknown}
-          className={error ? "border-destructive" : ""}
-        />
-      </div>
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      <PartialDateFields
+        idPrefix={baseId}
+        value={value}
+        onChange={(next) => {
+          setValue(next);
+          setFieldErrors((prev) => ({ ...prev, erd: undefined, lrd: undefined }));
+        }}
+        disabled={submitting}
+        error={error}
+        showUnknown
+      />
     </div>
   );
 
@@ -2726,6 +2645,15 @@ const Contribute = () => {
                         Enter the earliest (ERD) and latest (LRD) recorded date status. Use
                         date components when known, or select Date unknown.
                       </p>
+                      {isEditMarking && editMarkingId != null && (
+                        // issues.md 107: approval only ADDS these as observations, so a
+                        // wrong date cannot be fixed here. Todd Hause looked for it here.
+                        <p className="text-sm text-muted-foreground">
+                          Saving adds these as observations; it does not replace existing dates. To
+                          correct or remove individual dates, use <em>Dates seen</em> on the{" "}
+                          <Link to={`/record/${editMarkingId}`} className="underline">marking page</Link>.
+                        </p>
+                      )}
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         {renderBoundaryDateFields(
                           "Earliest (ERD)",
