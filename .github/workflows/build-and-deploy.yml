@@ -11,6 +11,17 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
+# One deploy at a time per site (issues.md 176). Six merges on 2026-09-23 ran
+# six of these concurrently against the same /srv/woco; two `npm ci` in one
+# node_modules collide (ENOTEMPTY) and five runs died. GitHub keeps at most
+# one pending run per group and replaces it with a newer one, so the newest
+# SHA always deploys. cancel-in-progress stays false on purpose: cancelling
+# the runner does not reliably kill the remote script, and a kill mid-migrate
+# or mid-npm-ci leaves the box half-deployed with the service stopped.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
 jobs:
   # The verification steps live in verify.yml so that this deploy and every
   # pull request check exactly the same things. Do not inline steps here.
