@@ -14,6 +14,10 @@
  * every unsafe verb so a freshly-landed user does not 403 on the first write.
  */
 import apiClient, { ensureCsrfToken } from "@/lib/api";
+import {
+  sourceMarkingImageFromContribution,
+  type SourceMarkingImage,
+} from "@/lib/coverFromImageHandoff";
 
 const CONTRIBUTION_UPLOAD_TIMEOUT_MS = 300000;
 
@@ -43,6 +47,10 @@ export interface ContributionApiItem {
   // ContributionDetailSerializer exposes the approved marking link as plain
   // "marking" (the FK pk), distinct from the list serializer's "marking_id".
   marking?: number | null;
+  // ContributionDetailSerializer resolves a "Create cover from this image"
+  // submission's carried-over marking image (Trello T37); list rows omit it.
+  source_marking_image?: unknown;
+  sourceMarkingImage?: unknown;
   [k: string]: unknown;
 }
 
@@ -72,6 +80,12 @@ export interface Contribution {
   displayName?: string;
   markingId: number | null;
   coverId: number | null;
+  /**
+   * The marking image a "Create cover from this image" submission carries,
+   * resolved by the detail endpoint; null when there is none, when it has
+   * since moved off the marking, or on list rows (Trello T37).
+   */
+  sourceMarkingImage: SourceMarkingImage | null;
 }
 
 export interface CatalogCodeSuggestion {
@@ -120,6 +134,7 @@ export function mapApiItemToContribution(item: ContributionApiItem): Contributio
     // page sees a null marking id and the approved-to-record redirect never fires.
     markingId: toNumberOrNull(firstDefined(item.marking_id, item.markingId, item.marking)),
     coverId: toNumberOrNull(firstDefined(item.cover_id, item.coverId)),
+    sourceMarkingImage: sourceMarkingImageFromContribution(item),
   };
 }
 
