@@ -3989,6 +3989,20 @@ def _apply_existing_image_reconciliation(
                         )
                     )
                 ]
+        # The carried-over marking image ("Create cover from this image",
+        # Trello T37) has no meta row, so the filters above cannot see it and
+        # the picture could never be un-carried: approval would still have
+        # moved it. The form sends the tile's URL key like any other removal;
+        # match it against the catalog row's storage_filename and drop the id.
+        carried_id = _source_marking_image_id(existing_sd)
+        if carried_id is not None:
+            carried_storage = (
+                Image.objects.filter(pk=carried_id)
+                .values_list("storage_filename", flat=True)
+                .first()
+            )
+            if _storage_filename_removed(carried_storage, removed_set):
+                existing_sd.pop("source_marking_image_id", None)
         # image_meta is the catalog-default thumbnail pointer; if it was just
         # removed, replace it with the next surviving meta (or None if none).
         primary = existing_sd.get("image_meta")

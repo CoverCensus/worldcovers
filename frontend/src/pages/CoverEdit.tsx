@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { sourceMarkingImageFromState } from "@/lib/coverFromImageHandoff";
+import {
+  CARRIED_OVER_LABEL,
+  markingImageFromSourceMarkingImage,
+  sourceMarkingImageFromState,
+} from "@/lib/coverFromImageHandoff";
 import {
   COVER_TYPE_OPTIONS,
   DEFAULT_COVER_TYPE,
@@ -373,7 +377,12 @@ export default function CoverEdit() {
 
         const metas = contributionImageMetasFromSubmittedData(sd);
         const draftImages = markingImagesFromContributionMetas(metas, markingId);
-        if (!loadedNoCoverImage && draftImages.length > 0) {
+        // Trello T37: a "Create cover from this image" draft has no uploaded
+        // meta for its picture, only an id the server resolves for us. Router
+        // state is long gone by the time a Dashboard link reopens the draft,
+        // so this is the only way the tile comes back.
+        const carried = contribution.sourceMarkingImage;
+        if (!loadedNoCoverImage && (draftImages.length > 0 || carried)) {
           const tagsRaw = sd.cover_image_tags ?? sd.coverImageTags;
           let tags: string[] = [];
           if (typeof tagsRaw === "string") {
@@ -386,12 +395,22 @@ export default function CoverEdit() {
           } else if (Array.isArray(tagsRaw)) {
             tags = tagsRaw.map((t) => String(t));
           }
+          const metaItems = draftImages.map((img, i) => ({
+            kind: "existing" as const,
+            key: normalizeImageUrl(img.imageUrl),
+            img: { ...img, isTracing: tags[i] === "tracing" },
+          }));
           setGallery(
-            draftImages.map((img, i) => ({
-              kind: "existing" as const,
-              key: normalizeImageUrl(img.imageUrl),
-              img: { ...img, isTracing: tags[i] === "tracing" },
-            })),
+            carried
+              ? [
+                  {
+                    kind: "existing" as const,
+                    key: normalizeImageUrl(carried.imageUrl),
+                    img: markingImageFromSourceMarkingImage(carried, markingId),
+                  },
+                  ...metaItems,
+                ]
+              : metaItems,
           );
         }
 
@@ -586,20 +605,7 @@ export default function CoverEdit() {
             {
               kind: "existing" as const,
               key: normalizeImageUrl(source.imageUrl),
-              img: {
-                imageId: source.imageId,
-                subjectType: "MARKING",
-                subjectId: markingId ?? 0,
-                imageUrl: source.imageUrl,
-                imageView: "FRONT",
-                originalFilename: source.originalFilename ?? "",
-                storageFilename: source.storageFilename ?? "",
-                imageDescription: "",
-                isTracing: false,
-                displayOrder: 0,
-                imageWidth: 0,
-                imageHeight: 0,
-              },
+              img: markingImageFromSourceMarkingImage(source, markingId ?? 0),
             },
           ],
     );
@@ -887,8 +893,24 @@ export default function CoverEdit() {
       // to it instead of creating a second copy, and the marking's gallery
       // loses it for free. Never a delete -- perform_destroy drops the row and
       // leaves the file, with no reaper (issues.md 113).
-      const seeded = mode === "create" ? sourceMarkingImageFromState(location.state) : null;
-      if (seeded) form.append("source_marking_image_id", String(seeded.imageId));
+      //
+      // Trello T37: the gallery decides, not router state. A resumed draft has
+      // no router state (the tile came back from the server), and a tile the
+      // user removed must not be carried just because the page was opened
+      // from the marking. A published cover's own images sit on the COVER
+      // subject and draft previews carry negative ids, so neither can match.
+      const carriedTile =
+        mode === "create"
+          ? gallery.find(
+              (item) =>
+                item.kind === "existing" &&
+                item.img.subjectType === "MARKING" &&
+                item.img.imageId > 0,
+            )
+          : undefined;
+      if (carriedTile && carriedTile.kind === "existing") {
+        form.append("source_marking_image_id", String(carriedTile.img.imageId));
+      }
       if (type.trim()) form.append("type", type.trim().toUpperCase());
       if (coverDate.unknown) {
         form.append("cover_date_unknown", "true");
@@ -1213,6 +1235,13 @@ export default function CoverEdit() {
                                         </span>
                                       )}
                                     </div>
+                                    {item.kind === "existing" &&
+                                      item.img.subjectType === "MARKING" &&
+                                      item.img.imageId > 0 && (
+                                        <span className="text-xs text-muted-foreground text-center">
+                                          {CARRIED_OVER_LABEL}
+                                        </span>
+                                      )}
                                     <div className="flex items-center justify-center gap-1">
                                       <Button
                                         type="button"
