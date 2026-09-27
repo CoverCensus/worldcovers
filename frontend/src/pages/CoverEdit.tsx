@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
+  CARRIED_OVER_LABEL,
   markingImageFromSourceMarkingImage,
   sourceMarkingImageFromState,
 } from "@/lib/coverFromImageHandoff";
@@ -1238,7 +1239,7 @@ export default function CoverEdit() {
                                       item.img.subjectType === "MARKING" &&
                                       item.img.imageId > 0 && (
                                         <span className="text-xs text-muted-foreground text-center">
-                                          Carried over from the marking
+                                          {CARRIED_OVER_LABEL}
                                         </span>
                                       )}
                                     <div className="flex items-center justify-center gap-1">

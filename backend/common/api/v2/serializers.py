@@ -7,6 +7,7 @@
 ## (subject_type, subject_id) and can be attached to a Cover or a Marking.
 ## Image is polymorphic over (subject_type, subject_id).
 ###################################################################################################
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 
@@ -207,7 +208,6 @@ def image_public_url(image, request):
         return None
     if not request:
         return None
-    from django.conf import settings
     media_url = settings.MEDIA_URL.rstrip("/")
     if storage.startswith("markings/"):
         # Legacy stored value: strip the markings/ prefix so files served

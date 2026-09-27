@@ -22,6 +22,9 @@
  */
 import type { MarkingImage } from "@/services/markings";
 
+/** Caption for the carried-over tile on the form and in the review gallery. */
+export const CARRIED_OVER_LABEL = "Carried over from the marking";
+
 export interface SourceMarkingImage {
   /** Catalog id of the image being carried. Persisted so approval can repoint it. */
   imageId: number;

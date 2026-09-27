@@ -28,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
+import { CARRIED_OVER_LABEL } from "@/lib/coverFromImageHandoff";
 import { dashboardHref, dashboardHrefForTab } from "@/lib/dashboardParams";
 import { coverTypeLabel as sharedCoverTypeLabel } from "@/lib/coverTypes";
 import { readReturnTo } from "@/lib/returnTo";
@@ -330,7 +331,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
         ? [
             {
               imageUrl: carried.imageUrl,
-              originalFilename: carried.originalFilename || "Carried over from the marking",
+              originalFilename: carried.originalFilename || CARRIED_OVER_LABEL,
               isTracing: false,
               isDefault: true,
               imageId: carried.imageId,

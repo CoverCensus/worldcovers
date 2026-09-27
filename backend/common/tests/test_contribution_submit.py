@@ -426,6 +426,8 @@ class ContributionSubmitMarkingEditTests(TestCase):
         image = self._marking_image(self.marking)
         draft = self._post_cover_draft(image.pk, save_as_draft="true")
         contribution_id = draft.data["id"]
+        image.refresh_from_db()
+        self.assertEqual(image.subject_type, Image.SUBJECT_MARKING, "draft must not move it")
 
         resaved = self._post_cover_draft(
             None,
@@ -436,6 +438,8 @@ class ContributionSubmitMarkingEditTests(TestCase):
         self.assertEqual(resaved.status_code, 200, resaved.data)
         contribution = Contribution.objects.get(pk=contribution_id)
         self.assertNotIn("source_marking_image_id", contribution.submitted_data)
+        image.refresh_from_db()
+        self.assertEqual(image.subject_type, Image.SUBJECT_MARKING, "removal must not move it")
 
         submitted = self._post_cover_draft(None, edit_contribution_id=contribution_id)
         self.assertEqual(submitted.status_code, 400, submitted.data)
