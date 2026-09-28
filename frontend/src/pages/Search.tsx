@@ -21,6 +21,7 @@ import {
 import { getReferenceWorkOptions } from "@/services/referenceWorks";
 import { buildCatalogSearchRow } from "@/lib/catalogRecordDisplay";
 import { CatalogRecordFields } from "@/components/CatalogRecordFields";
+import { AdminEditLink } from "@/components/AdminEditLink";
 import { useToast } from "@/hooks/use-toast";
 import { useFilterOptions } from "@/hooks/useFilterOptions";
 import { useDebounce } from "@/hooks/useDebounce";
@@ -1221,14 +1222,20 @@ const Search = () => {
                     return (
                       <Card
                         key={row.cardId}
-                        className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
+                        className="relative shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
                         onClick={() =>
                           navigate(`/record/${record.id}`, {
                             state: { fromSearch: true },
                           })
                         }
                       >
-                        <CardContent className="p-4">
+                        <AdminEditLink
+                          user={authUser}
+                          kind="marking"
+                          recordId={record.id}
+                          className="absolute right-3 top-3 z-10 bg-background"
+                        />
+                        <CardContent className={authUser?.is_superuser === true ? "p-4 pr-16" : "p-4"}>
                           <div className="flex gap-6 md:flex-row flex-col">
                             <div className="md:w-32 md:h-32 w-full h-48 shrink-0 rounded border border-border bg-muted p-2 overflow-hidden">
                               <ImageOrPlaceholder
@@ -1263,13 +1270,19 @@ const Search = () => {
                     return (
                       <Card
                         key={row.cardId}
-                        className="shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden"
+                        className={`relative shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden ${authUser?.is_superuser === true ? "pt-14" : ""}`}
                         onClick={() =>
                           navigate(`/record/${record.id}`, {
                             state: { fromSearch: true },
                           })
                         }
                       >
+                        <AdminEditLink
+                          user={authUser}
+                          kind="marking"
+                          recordId={record.id}
+                          className="absolute right-3 top-3 z-10 bg-background"
+                        />
                         {row.image2 ? (
                           <div className="grid grid-cols-2 gap-1 bg-muted">
                             <div className="h-48 border-r border-border p-2">

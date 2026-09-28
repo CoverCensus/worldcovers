@@ -206,25 +206,32 @@ restoration scope and verification separately from history viewing.
 
 **Do:** Publish Help articles only through the explicit document-name
 allowlist in the Help API. Keep engineering notes and private rosters out
-of that list. For an Editor listing, publish confirmed assignments only.
+of that list. Generate the Editor roster from active users assigned to active
+Collections. Restrict its name, email, and state details to Editors and
+Administrators through `/editors` and `/api/v2/editor-roster/`.
 
 **Don't:** Publish every Markdown file under `docs/`, or assume placing a
 file under `docs/devel/` alone prevents publication. The API checks names,
 not just directories. Do not publish proposed appointments or private
-contact details as an Editor roster.
+contact details in public Help. The restricted Editor roster is a separate
+application page, not a Help article.
 
 **Why:** Help is readable by Guests. Adding an internal file must not expose
 it to the public.
 
 **Evidence:** [Help stories S24/S34](docs/devel/design.md#stories);
 [Help API](backend/common/api/help.py);
-[publication tests](backend/common/tests/test_help_docs_allowlist.py).
+[publication tests](backend/common/tests/test_help_docs_allowlist.py);
+[roster tests](backend/common/tests/test_editor_roster.py);
+[PR #163](https://github.com/CoverCensus/worldcovers/pull/163).
 
 **Open work:** [S24/S34](ISSUE.md#feature-implementation-surfaces-reviewed-2026-09-13)
 cover Help and article authoring. Repo Markdown is the current article source;
 there is no general article editor in the web interface.
-[T46](ISSUE.md#other-follow-ups) covers an Editor listing generated from
-confirmed assignments.
+[T46](ISSUE.md#other-follow-ups) is Done for the restricted assignment-based
+roster. The separate [public-user disclosure gap](ISSUE.md#prevent-public-disclosure-of-user-email-and-account-flags)
+tracks email and account flags exposed by public Marking responses. Roster
+permission tests do not establish privacy on other endpoints.
 
 ## Distinguish Application Features From Operator Tools
 

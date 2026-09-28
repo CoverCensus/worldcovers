@@ -11,6 +11,7 @@ import { type CarouselApi } from "@/components/ui/carousel";
 import { formatDateSeen } from "@/lib/catalogRecordDisplay";
 import { coverTypeLabel as sharedCoverTypeLabel } from "@/lib/coverTypes";
 import { EntryDetailLayout } from "@/components/entry-detail/EntryDetailLayout";
+import { AdminEditLink } from "@/components/AdminEditLink";
 import { EntryImageGalleryCard } from "@/components/entry-detail/EntryImageGalleryCard";
 import { EntryAssociatedThumbnailsCard } from "@/components/entry-detail/EntryAssociatedThumbnailsCard";
 import { MoveTargetPicker } from "@/components/entry-detail/MoveTargetPicker";
@@ -721,6 +722,9 @@ const CoverDetailPage = () => {
       <EntryDetailLayout
         onBack={handleBack}
         title="Cover"
+        headerAction={
+          !cover.isRemoved ? <AdminEditLink user={user} kind="cover" recordId={cover.id} /> : undefined
+        }
         leftColumn={
           <>
             <EntryImageGalleryCard

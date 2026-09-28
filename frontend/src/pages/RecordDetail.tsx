@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Crop, History, Info, Loader2, MessageSquare, Pencil, Plus, Recycle, Star, Trash2 } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
+import { AdminEditLink } from "@/components/AdminEditLink";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -919,7 +920,7 @@ const RecordDetail = () => {
       <Navigation />
       <div className="flex-1 bg-background">
         <div className="max-w-7xl mx-auto px-4 pb-8 pt-3 sm:px-6 lg:px-8">
-          <div className="mb-6 grid items-center gap-8 lg:grid-cols-2">
+          <div className="mb-6 flex items-start justify-between gap-4">
             <div className="flex flex-col items-start gap-1">
               <Button variant="ghost" onClick={handleBack} className="-ml-4">
                 <ArrowLeft className="mr-2 h-4 w-4" />
@@ -929,6 +930,9 @@ const RecordDetail = () => {
                 Marking
               </h1>
             </div>
+            {!record.isRemoved && (
+              <AdminEditLink user={user} kind="marking" recordId={record.id} />
+            )}
           </div>
 
           <div className="grid items-start lg:grid-cols-2 gap-8">
@@ -1300,7 +1304,7 @@ const RecordDetail = () => {
                           return (
                             <Card
                               key={cover.contributionDraftId ?? cover.id}
-                              className={`shadow-archival-md hover:shadow-archival-lg transition-shadow ${
+                              className={`relative shadow-archival-md hover:shadow-archival-lg transition-shadow ${
                                 canOpenCover ? "cursor-pointer" : ""
                               }`}
                               onClick={
@@ -1322,7 +1326,17 @@ const RecordDetail = () => {
                               tabIndex={canOpenCover ? 0 : undefined}
                               aria-label={canOpenCover ? `Open cover ${codeLabel}` : undefined}
                             >
-                              <CardContent className="p-4">
+                              {cover.contributionDraftId == null && (
+                                <AdminEditLink
+                                  user={user}
+                                  kind="cover"
+                                  recordId={c?.id}
+                                  className="absolute right-3 top-3 z-10 bg-background"
+                                />
+                              )}
+                              <CardContent
+                                className={user?.is_superuser === true && cover.contributionDraftId == null ? "p-4 pr-16" : "p-4"}
+                              >
                                 <div className="flex gap-6 md:flex-row flex-col">
                                   <div className="shrink-0 md:w-32 w-full">
                                     <ImageOrPlaceholder

@@ -35,4 +35,18 @@ describe("EntryDetailLayout", () => {
     fireEvent.click(back);
     expect(onBack).toHaveBeenCalledTimes(1);
   });
+
+  it("places a supplied admin action at the right edge of the page header", () => {
+    render(
+      <EntryDetailLayout
+        onBack={jest.fn()}
+        title="Cover"
+        headerAction={<a href="/admin/common/cover/42/change/">Edit Cover in Django admin</a>}
+        leftColumn={<div>Left</div>}
+        rightColumn={<div>Right</div>}
+      />,
+    );
+    const header = screen.getByRole("heading", { name: "Cover" }).parentElement?.parentElement;
+    expect(header?.contains(screen.getByRole("link", { name: "Edit Cover in Django admin" }))).toBe(true);
+  });
 });

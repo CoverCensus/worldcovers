@@ -13,9 +13,9 @@ deployment is currently `hellowoco.app`.
 ## Project Overview
 
 The first catalog is the American Postal Markings Catalog (APMC), with
-software support for ASCC and VPHC source data. Visitors search markings and
-their associated covers. Contributors submit additions and corrections;
-editors review them for their assigned collections. Offline tools prepare
+software support for ASCC and VPHC source data. Guests search Markings and
+their associated Covers. Contributors submit additions and corrections;
+Editors review them for their assigned Collections. Offline tools prepare
 catalog data for import. Available data and review progress vary by state
 and site.
 
@@ -24,7 +24,7 @@ Start with the [vision](./docs/vision.md) for scope, the
 [ASCC pipeline](./docs/devel/PIPELINE.md) or
 [VPHC commands](./docs/devel/TOOLS.md#vphc-commands) for data preparation.
 The [verification guide](./docs/devel/BUILD.md#verification) covers tests.
-New state editors should read [Getting Started](./docs/getting-started.md).
+New state Editors should read [Getting Started](./docs/getting-started.md).
 
 WorldCovers has three main code areas:
 
@@ -182,6 +182,8 @@ The deployment source of truth is:
 - [deploy/worldcovers-apply-unit.sh](./deploy/worldcovers-apply-unit.sh)
 
 GitHub Actions stops and starts the `worldcovers` service around each deploy.
+The staging and production workflows each run one deployment at a time.
+A running deployment is not canceled by a newer queued run.
 Staging can apply a changed systemd unit through the audited helper; production
 fails closed until a root operator reviews and applies unit changes manually.
 `deploy/deploy.sh` runs dependency sync, migrations, frontend build, and

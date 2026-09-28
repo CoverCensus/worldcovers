@@ -7,7 +7,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Menu, X, LogOut, KeyRound, ChevronDown, LayoutDashboard } from "lucide-react";
+import { Menu, X, LogOut, KeyRound, ChevronDown, LayoutDashboard, Settings } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
@@ -148,6 +148,14 @@ export const Navigation = () => {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
+                  {user.is_staff === true && (
+                    <DropdownMenuItem asChild>
+                      <a href="/admin/">
+                        <Settings className="mr-2 h-4 w-4" />
+                        Admin Panel
+                      </a>
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem onClick={() => navigate("/dashboard", { state: dashboardTabState })}>
                     <LayoutDashboard className="mr-2 h-4 w-4" />
                     {dashboardLabel}
@@ -234,6 +242,16 @@ export const Navigation = () => {
                   </Avatar>
                   <span className="text-sm font-medium truncate">{user.username || user.email}</span>
                 </div>
+                {user.is_staff === true && (
+                  <a
+                    href="/admin/"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="w-full flex items-center px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md text-left"
+                  >
+                    <Settings className="h-4 w-4 mr-2 shrink-0" />
+                    Admin Panel
+                  </a>
+                )}
                 <button
                   onClick={() => {
                     navigate("/dashboard", { state: dashboardTabState });
