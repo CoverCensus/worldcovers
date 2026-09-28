@@ -33,7 +33,7 @@ _MONTH_DATE_UNIT = (
     + MONTHS_PAT
     + r")\.?\s+\d{4}"
     r"|(?:0?[1-9]|1[0-2])\s+\d{4}"
-    r"|(?:c\.?\s*)?\d{3,4}(?:'?[Ss])?(?:-\d{1,4}(?:'?[Ss])?)?"
+    r"|(?:c\.?\s*)?\d{3,4}(?:'?[Ss])?(?:\s*-\s*\d{1,4}(?:'?[Ss])?)?"
     r")"
 )
 
@@ -191,10 +191,6 @@ def _is_date_annotation(text):
     ))
 
 
-def _is_short_name_fragment(text):
-    return bool(re.fullmatch(r'[A-Za-z]{1,2}', str(text or '').strip()))
-
-
 def _is_head_note_annotation(head, match, allow_leading_note=False,
                              include_attached_note=False):
     note = normalize_head_annotation_note(match.group(1))
@@ -220,7 +216,7 @@ def _is_head_note_annotation(head, match, allow_leading_note=False,
         return True
     if next_ch.isalnum():
         return False
-    return include_attached_note and not _is_short_name_fragment(note)
+    return include_attached_note and not re.fullmatch(r'[a-z]+', note)
 
 
 def head_note_lettering_name(notes):
@@ -355,8 +351,15 @@ def parse_head(row):
         include_attached_note=rel_type is None,
     )
 
-    # 5. Name body: head text with annotation parens removed, stripped
-    name_body = PAREN_GROUP_RE.sub('', head).strip()
+    # Remove control annotations, but retain letters within a name.
+    name_body = PAREN_GROUP_RE.sub(
+        lambda m: '' if (
+            HEAD_CONTROL_ANNOTATION_RE.fullmatch(m.group(1))
+            or HEAD_NUMERIC_ANNOTATION_RE.fullmatch(m.group(1))
+            or _is_date_annotation(m.group(1))
+        ) else m.group(0),
+        _head_without_notes,
+    ).strip()
     if not name_body and any(
         NO_TOWN_MARKING_ANNOTATION_RE.match(a) for a in annotations
     ):
@@ -406,7 +409,8 @@ def parse_head(row):
     #     bare year like "1849"): they would otherwise become a PostOffice
     #     name made only of digits and fail downstream normalization. A
     #     None town routes the row to the UNKNOWN post office instead.
-    if name_body and not re.search(r'[A-Za-z]{2,}', name_body):
+    if (name_body and not re.search(r'[A-Za-z]{2,}', name_body)
+            and not re.fullmatch(r'\d{1,2}(?:[ -]\d+/\d+)?', name_body)):
         name_body = None
 
     name_body = name_body if name_body else None

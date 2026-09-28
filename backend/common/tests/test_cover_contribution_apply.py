@@ -697,6 +697,78 @@ class CoverContributionApproveEndpointTests(APITestCase):
         self.assertEqual(contrib.status, Contribution.STATUS_PENDING)
         self.assertEqual(contrib.submitted_data["cover_date"], "1850-06-04")
 
+    def test_resumed_carried_over_draft_repoints_exactly_one_row_on_approval(self):
+        # Trello T37: save with the carried id, resume and re-save without it
+        # (the resumed form never had router state), submit, approve. The one
+        # Image row moves on approval and only then; nothing is duplicated.
+        image = Image.objects.create(
+            subject_type=Image.SUBJECT_MARKING,
+            subject_id=self.parent.pk,
+            original_filename="whole-cover.jpg",
+            storage_filename="va/whole-cover.jpg",
+            file_checksum="deadbeef",
+            mime_type="image/jpeg",
+            image_width=1600,
+            image_height=1200,
+            file_size_bytes=123456,
+            image_view="FULL",
+            display_order=0,
+            uploaded_by=self.contributor,
+            created_by=self.contributor,
+            modified_by=self.contributor,
+        )
+        base = {
+            "submission_kind": "cover",
+            "state": "VA",
+            "type": "FC",
+            "parent_marking_id": self.parent.pk,
+            "marking_id": self.parent.pk,
+            "cover_date": "1850-06-01",
+            "cover_granularity": "DAY",
+        }
+        self.client.force_authenticate(self.contributor)
+
+        draft = self.client.post(
+            "/api/v2/contributions/",
+            {**base, "save_as_draft": "true", "source_marking_image_id": image.pk},
+            format="json",
+        )
+        self.assertEqual(draft.status_code, 201, draft.data)
+        contribution_id = draft.data["id"]
+        image.refresh_from_db()
+        self.assertEqual(image.subject_type, Image.SUBJECT_MARKING, "draft must not move it")
+
+        resaved = self.client.post(
+            "/api/v2/contributions/",
+            {**base, "save_as_draft": "true", "edit_contribution_id": contribution_id},
+            format="json",
+        )
+        self.assertEqual(resaved.status_code, 200, resaved.data)
+        submitted = self.client.post(
+            "/api/v2/contributions/",
+            {**base, "edit_contribution_id": contribution_id},
+            format="json",
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        image.refresh_from_db()
+        self.assertEqual(image.subject_type, Image.SUBJECT_MARKING, "submit must not move it")
+
+        self.client.force_authenticate(self.editor)
+        approved = self.client.post(self._approve_url(contribution_id), {}, format="json")
+        self.assertEqual(approved.status_code, 200, approved.data)
+
+        contrib = Contribution.objects.get(pk=contribution_id)
+        cover_id = int(contrib.submitted_data["cover_id"])
+        image.refresh_from_db()
+        self.assertEqual(image.subject_type, Image.SUBJECT_COVER)
+        self.assertEqual(image.subject_id, cover_id)
+        self.assertEqual(
+            Image.objects.filter(subject_type=Image.SUBJECT_COVER, subject_id=cover_id).count(), 1
+        )
+        self.assertFalse(
+            Image.objects.filter(subject_type=Image.SUBJECT_MARKING, subject_id=self.parent.pk).exists()
+        )
+
     def test_draft_cover_edit_does_not_supersede_prior_rows(self):
         cover = Cover.objects.create(
             code="ASCC1-VA-C0001",
@@ -1389,6 +1461,23 @@ class CarriedOverMarkingImageTests(TestCase):
         self.assertIsNotNone(cover.pk)
         self.image.refresh_from_db()
         self.assertEqual(self.image.subject_id, 999999)
+
+    def test_leaves_an_image_that_moved_to_another_marking(self):
+        # Still a MARKING image, but no longer on this cover's parent. The
+        # submit view pinned the id to the parent; approval re-checks so the
+        # image cannot be carried off from wherever it went in between.
+        self.image.subject_id = self.parent.pk + 1000
+        self.image.save()
+
+        cover = self._approve(
+            source_marking_image_id=str(self.image.pk),
+            no_cover_image="true",
+        )
+
+        self.assertIsNotNone(cover.pk)
+        self.image.refresh_from_db()
+        self.assertEqual(self.image.subject_type, Image.SUBJECT_MARKING)
+        self.assertEqual(self.image.subject_id, self.parent.pk + 1000)
 
     def test_ignores_a_draft_preview_sentinel(self):
         # Negative ids are frontend draft previews, not catalog rows.

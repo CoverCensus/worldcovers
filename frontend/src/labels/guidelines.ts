@@ -30,10 +30,6 @@ export const SHARED_GUIDELINES: Guideline[] = [
       "Include established reference works when available. To cite a reference " +
       "that is not in the list, describe it in a note to the editor.",
   },
-  {
-    label: "Review Time",
-    body: "Most submissions are reviewed within 1-3 business days.",
-  },
 ];
 
 /**

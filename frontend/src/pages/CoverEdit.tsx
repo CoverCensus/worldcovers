@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { sourceMarkingImageFromState } from "@/lib/coverFromImageHandoff";
+import {
+  CARRIED_OVER_LABEL,
+  markingImageFromSourceMarkingImage,
+  sourceMarkingImageFromState,
+} from "@/lib/coverFromImageHandoff";
 import {
   COVER_TYPE_OPTIONS,
   DEFAULT_COVER_TYPE,
@@ -37,6 +41,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
+import { PartialDateFields } from "@/components/PartialDateFields";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
 import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
 import { CoverReviewBanner } from "@/components/CoverReviewBanner";
@@ -95,20 +100,6 @@ type ReferenceDetailFieldErrors = {
   citationUrl?: string;
 };
 
-const COVER_MONTH_OPTIONS = [
-  { value: "1", label: "JAN" },
-  { value: "2", label: "FEB" },
-  { value: "3", label: "MAR" },
-  { value: "4", label: "APR" },
-  { value: "5", label: "MAY" },
-  { value: "6", label: "JUN" },
-  { value: "7", label: "JUL" },
-  { value: "8", label: "AUG" },
-  { value: "9", label: "SEP" },
-  { value: "10", label: "OCT" },
-  { value: "11", label: "NOV" },
-  { value: "12", label: "DEC" },
-];
 
 const EMPTY_COVER_DATE: PartialDateInput = { unknown: false, year: "", month: "", day: "" };
 
@@ -386,7 +377,12 @@ export default function CoverEdit() {
 
         const metas = contributionImageMetasFromSubmittedData(sd);
         const draftImages = markingImagesFromContributionMetas(metas, markingId);
-        if (!loadedNoCoverImage && draftImages.length > 0) {
+        // Trello T37: a "Create cover from this image" draft has no uploaded
+        // meta for its picture, only an id the server resolves for us. Router
+        // state is long gone by the time a Dashboard link reopens the draft,
+        // so this is the only way the tile comes back.
+        const carried = contribution.sourceMarkingImage;
+        if (!loadedNoCoverImage && (draftImages.length > 0 || carried)) {
           const tagsRaw = sd.cover_image_tags ?? sd.coverImageTags;
           let tags: string[] = [];
           if (typeof tagsRaw === "string") {
@@ -399,12 +395,22 @@ export default function CoverEdit() {
           } else if (Array.isArray(tagsRaw)) {
             tags = tagsRaw.map((t) => String(t));
           }
+          const metaItems = draftImages.map((img, i) => ({
+            kind: "existing" as const,
+            key: normalizeImageUrl(img.imageUrl),
+            img: { ...img, isTracing: tags[i] === "tracing" },
+          }));
           setGallery(
-            draftImages.map((img, i) => ({
-              kind: "existing" as const,
-              key: normalizeImageUrl(img.imageUrl),
-              img: { ...img, isTracing: tags[i] === "tracing" },
-            })),
+            carried
+              ? [
+                  {
+                    kind: "existing" as const,
+                    key: normalizeImageUrl(carried.imageUrl),
+                    img: markingImageFromSourceMarkingImage(carried, markingId),
+                  },
+                  ...metaItems,
+                ]
+              : metaItems,
           );
         }
 
@@ -599,20 +605,7 @@ export default function CoverEdit() {
             {
               kind: "existing" as const,
               key: normalizeImageUrl(source.imageUrl),
-              img: {
-                imageId: source.imageId,
-                subjectType: "MARKING",
-                subjectId: markingId ?? 0,
-                imageUrl: source.imageUrl,
-                imageView: "FRONT",
-                originalFilename: source.originalFilename ?? "",
-                storageFilename: source.storageFilename ?? "",
-                imageDescription: "",
-                isTracing: false,
-                displayOrder: 0,
-                imageWidth: 0,
-                imageHeight: 0,
-              },
+              img: markingImageFromSourceMarkingImage(source, markingId ?? 0),
             },
           ],
     );
@@ -900,8 +893,24 @@ export default function CoverEdit() {
       // to it instead of creating a second copy, and the marking's gallery
       // loses it for free. Never a delete -- perform_destroy drops the row and
       // leaves the file, with no reaper (issues.md 113).
-      const seeded = mode === "create" ? sourceMarkingImageFromState(location.state) : null;
-      if (seeded) form.append("source_marking_image_id", String(seeded.imageId));
+      //
+      // Trello T37: the gallery decides, not router state. A resumed draft has
+      // no router state (the tile came back from the server), and a tile the
+      // user removed must not be carried just because the page was opened
+      // from the marking. A published cover's own images sit on the COVER
+      // subject and draft previews carry negative ids, so neither can match.
+      const carriedTile =
+        mode === "create"
+          ? gallery.find(
+              (item) =>
+                item.kind === "existing" &&
+                item.img.subjectType === "MARKING" &&
+                item.img.imageId > 0,
+            )
+          : undefined;
+      if (carriedTile && carriedTile.kind === "existing") {
+        form.append("source_marking_image_id", String(carriedTile.img.imageId));
+      }
       if (type.trim()) form.append("type", type.trim().toUpperCase());
       if (coverDate.unknown) {
         form.append("cover_date_unknown", "true");
@@ -1126,97 +1135,17 @@ export default function CoverEdit() {
                       <Label>
                         Date <span className="text-destructive" aria-hidden="true">*</span>
                       </Label>
-                      <label className="flex items-center gap-2 text-sm">
-                        <Checkbox
-                          checked={coverDate.unknown}
-                          onCheckedChange={(v) => {
-                            setCoverDate(
-                              v === true
-                                ? { unknown: true, year: "", month: "", day: "" }
-                                : { ...EMPTY_COVER_DATE },
-                            );
-                            setFieldErrors((prev) => ({ ...prev, date: undefined }));
-                          }}
-                          disabled={submitting}
-                        />
-                        Date unknown
-                      </label>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div className="space-y-1.5">
-                          <Label htmlFor="cover-date-month" className="text-xs text-muted-foreground">
-                            Month
-                          </Label>
-                          <Select
-                            value={coverDate.month || "__none__"}
-                            onValueChange={(v) => {
-                              setCoverDate((prev) => ({
-                                ...prev,
-                                unknown: false,
-                                month: v === "__none__" ? "" : v,
-                              }));
-                              setFieldErrors((prev) => ({ ...prev, date: undefined }));
-                            }}
-                            disabled={submitting || coverDate.unknown}
-                          >
-                            <SelectTrigger
-                              id="cover-date-month"
-                              className={cn(fieldErrors.date && "border-destructive")}
-                            >
-                              <SelectValue placeholder="Unknown" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__none__">Unknown</SelectItem>
-                              {COVER_MONTH_OPTIONS.map((opt) => (
-                                <SelectItem key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="cover-date-day" className="text-xs text-muted-foreground">
-                            Day
-                          </Label>
-                          <Input
-                            id="cover-date-day"
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="DD"
-                            value={coverDate.day}
-                            onChange={(e) => {
-                              const raw = e.target.value.replace(/\D/g, "").slice(0, 2);
-                              setCoverDate((prev) => ({ ...prev, unknown: false, day: raw }));
-                              setFieldErrors((prev) => ({ ...prev, date: undefined }));
-                            }}
-                            disabled={submitting || coverDate.unknown}
-                            className={cn(fieldErrors.date && "border-destructive")}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="cover-date-year" className="text-xs text-muted-foreground">
-                            Year
-                          </Label>
-                          <Input
-                            id="cover-date-year"
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="YYYY"
-                            value={coverDate.year}
-                            onChange={(e) => {
-                              setCoverDate((prev) => ({
-                                ...prev,
-                                unknown: false,
-                                year: e.target.value.replace(/\D/g, "").slice(0, 4),
-                              }));
-                              setFieldErrors((prev) => ({ ...prev, date: undefined }));
-                            }}
-                            disabled={submitting || coverDate.unknown}
-                            className={cn(fieldErrors.date && "border-destructive")}
-                          />
-                        </div>
-                      </div>
-                      {fieldErrors.date && <p className="text-sm text-destructive">{fieldErrors.date}</p>}
+                      <PartialDateFields
+                        idPrefix="cover-date"
+                        value={coverDate}
+                        onChange={(next) => {
+                          setCoverDate(next);
+                          setFieldErrors((prev) => ({ ...prev, date: undefined }));
+                        }}
+                        disabled={submitting}
+                        error={fieldErrors.date}
+                        showUnknown
+                      />
                     </div>
 
                     <div className="space-y-2" id="cover-images-zone">
@@ -1306,6 +1235,13 @@ export default function CoverEdit() {
                                         </span>
                                       )}
                                     </div>
+                                    {item.kind === "existing" &&
+                                      item.img.subjectType === "MARKING" &&
+                                      item.img.imageId > 0 && (
+                                        <span className="text-xs text-muted-foreground text-center">
+                                          {CARRIED_OVER_LABEL}
+                                        </span>
+                                      )}
                                     <div className="flex items-center justify-center gap-1">
                                       <Button
                                         type="button"

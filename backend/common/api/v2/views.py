@@ -56,6 +56,7 @@ from common.contribution_apply import (
     ContributionApplyError,
     MARKING_DATE_SUBMIT_KEYS,
     _parse_int,
+    _source_marking_image_id,
     strip_marking_date_keys,
 )
 from common.contribution_consolidation import (
@@ -114,6 +115,7 @@ from common.models import (
 from woco.pagination import MarkingListPagination
 
 from .permissions import (
+    IsEditor,
     CanManageReferenceWorks,
     CanReviewContribution,
     IsOwnDeletableContribution,
@@ -1340,10 +1342,12 @@ class DateSeenViewSet(viewsets.ModelViewSet):
       ranges still move (signals.py); the event just shows up in the cover's
       changelog rather than each marking's.
     * Each write emits one transaction and one version row, matching
-      MarkingViewSet. If issue #107 ships bulk date editing, N rows submitted
-      together would mean N versions on one changelog -- the answer then is a
-      batch endpoint writing one transaction and one version per submit, not
-      per-row suppression here.
+      MarkingViewSet. Issue #107 shipped as one row per editor click (the
+      Dates seen card on the marking page), so N versions for N clicks is by
+      design. If a bulk date editor ever ships, the answer is a batch endpoint
+      writing one transaction and one version per submit, not per-row
+      suppression here. Date events are logged as date_seen_added/changed/
+      removed so the changelog never reads "Record deleted" for a date.
     * Version snapshots *capture* dates_seen (audit.py:69-78) but
       restore_marking_from_snapshot does not replay them, so restoring a
       version leaves the current date rows in place. Deliberate and tracked
@@ -1469,7 +1473,7 @@ class DateSeenViewSet(viewsets.ModelViewSet):
             )
             subject = self._resolve_subject(subject_type, subject_id)
             self._log(
-                action_name=SubmissionTransaction.ACTION_RECORD_CREATE,
+                action_name=SubmissionTransaction.ACTION_DATE_SEEN_ADDED,
                 subject=subject,
                 subject_type=subject_type,
                 before={},
@@ -1493,7 +1497,7 @@ class DateSeenViewSet(viewsets.ModelViewSet):
             before = self._snapshot(subject, subject_type)
             row = serializer.save(modified_by=self.request.user)
             self._log(
-                action_name=SubmissionTransaction.ACTION_RECORD_UPDATE,
+                action_name=SubmissionTransaction.ACTION_DATE_SEEN_CHANGED,
                 subject=subject,
                 subject_type=subject_type,
                 before=before,
@@ -1510,7 +1514,7 @@ class DateSeenViewSet(viewsets.ModelViewSet):
             before = self._snapshot(subject, subject_type)
             instance.delete()
             self._log(
-                action_name=SubmissionTransaction.ACTION_RECORD_DELETE,
+                action_name=SubmissionTransaction.ACTION_DATE_SEEN_REMOVED,
                 subject=subject,
                 subject_type=subject_type,
                 before=before,
@@ -3405,6 +3409,30 @@ class ContributionSubmitView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # "Create cover from this image" (issues.md 167) names an existing
+        # marking image by id and uploads nothing; approval repoints that row
+        # to the new cover. The id is contributor-supplied, so pin it here to
+        # the marking the cover is being created under -- otherwise any
+        # positive integer would satisfy the image rule and, on approval, move
+        # somebody else's image. Approval stays tolerant (an image moved or
+        # cropped away since submission is not an error there).
+        if is_cover_submission and data.get("source_marking_image_id") not in (None, ""):
+            source_image_id = _source_marking_image_id(data)
+            parent_pk = _parse_int(data.get("parent_marking_id") or data.get("marking_id"))
+            if (
+                source_image_id is None
+                or parent_pk is None
+                or not Image.objects.filter(
+                    pk=source_image_id,
+                    subject_type=Image.SUBJECT_MARKING,
+                    subject_id=parent_pk,
+                ).exists()
+            ):
+                return Response(
+                    {"detail": "The image to carry over is not on this marking."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # Save uploaded image files under MEDIA_ROOT/<region_abbrev>/.
         # Marking flow uses `marking_image`; cover draft flow uses `cover_image`.
         # stash the resulting metadata on Contribution.submitted_data so the
@@ -3761,6 +3789,14 @@ def _parse_removed_image_keys(raw):
 
 
 def _submitted_payload_has_images(submitted_data, is_cover):
+    """True when the submission carries at least one picture.
+
+    Two ways to satisfy it: a non-empty uploaded-metas list (`cover_image_metas`
+    / `marking_image_metas` / `image_metas`), or, for covers only, a positive
+    `source_marking_image_id` -- an existing catalog image carried over from
+    the parent marking (issues.md 167). The view has already verified that id
+    is on the parent marking before this runs.
+    """
     keys = (
         ("cover_image_metas", "image_metas")
         if is_cover
@@ -3770,6 +3806,13 @@ def _submitted_payload_has_images(submitted_data, is_cover):
         value = submitted_data.get(key)
         if isinstance(value, list) and len(value) > 0:
             return True
+    # "Create cover from this image" (issues.md 167) carries a marking's
+    # existing catalog image over by id and uploads no file, so there is no
+    # meta to count. The image is real and approval repoints it
+    # (_repoint_source_marking_image); it satisfies the rule. Without this the
+    # form showed the picture and Submit said there was none (Ian, 2026-09-24).
+    if is_cover and _source_marking_image_id(submitted_data) is not None:
+        return True
     return False
 
 
@@ -3946,6 +3989,20 @@ def _apply_existing_image_reconciliation(
                         )
                     )
                 ]
+        # The carried-over marking image ("Create cover from this image",
+        # Trello T37) has no meta row, so the filters above cannot see it and
+        # the picture could never be un-carried: approval would still have
+        # moved it. The form sends the tile's URL key like any other removal;
+        # match it against the catalog row's storage_filename and drop the id.
+        carried_id = _source_marking_image_id(existing_sd)
+        if carried_id is not None:
+            carried_storage = (
+                Image.objects.filter(pk=carried_id)
+                .values_list("storage_filename", flat=True)
+                .first()
+            )
+            if _storage_filename_removed(carried_storage, removed_set):
+                existing_sd.pop("source_marking_image_id", None)
         # image_meta is the catalog-default thumbnail pointer; if it was just
         # removed, replace it with the next surviving meta (or None if none).
         primary = existing_sd.get("image_meta")
@@ -4051,8 +4108,12 @@ class CollectionViewSet(viewsets.ModelViewSet):
     ordering = ["name"]
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve", "editors"):
+        if self.action in ("list", "retrieve"):
             return [IsAuthenticated()]
+        if self.action == "editors":
+            # Names and emails of a state's editors are for editors (issues.md 177);
+            # until 2026-09-24 any signed-in contributor could read them.
+            return [IsEditor()]
         return [IsAdminUser()]
 
     def perform_create(self, serializer):
@@ -4120,5 +4181,48 @@ class CollectionViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Assignment not found."}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+
+
+class EditorRosterView(APIView):
+    """
+    GET /editor-roster/ -- every active state editor, grouped by state (Trello T46,
+    issues.md 177). Ian, 2026-09-23: "a listing of the editors that is viewable only
+    by the editors."
+
+    Built live from CollectionAssignment, so a proposed appointment can never
+    appear (it has no assignment row), and gated to editors because the rows
+    carry email addresses. Superusers without an assignment are not state
+    editors and are not listed. Dwayne's spreadsheet remains the private roster
+    for anything beyond name, email and states (DECISIONS.md, Publish Help
+    Content Explicitly).
+    """
+    permission_classes = [IsEditor]
+
+    def get(self, request):
+        assignments = (
+            CollectionAssignment.objects
+            .filter(collection__is_active=True, user__is_active=True)
+            .select_related("user", "collection__region")
+        )
+        states_by_user = {}
+        for ca in assignments:
+            states_by_user.setdefault(ca.user_id, set()).add(ca.collection.region.abbrev)
+        groups = {}
+        for ca in assignments:
+            region = ca.collection.region
+            group = groups.setdefault(region.abbrev, {
+                "abbrev": region.abbrev, "name": region.name, "editors": {},
+            })
+            user = ca.user
+            group["editors"][user.pk] = {
+                "display_name": user.get_full_name().strip() or user.username,
+                "email": user.email or "",
+                "states": sorted(states_by_user[user.pk]),
+            }
+        rows = []
+        for group in sorted(groups.values(), key=lambda g: g["name"].lower()):
+            editors = sorted(group["editors"].values(), key=lambda e: e["display_name"].lower())
+            rows.append({"abbrev": group["abbrev"], "name": group["name"], "editors": editors})
+        return Response(rows)
 
 ###################################################################################################

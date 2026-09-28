@@ -3,7 +3,7 @@ import re
 SIZE_SUFFIX_PAT = r'(?:YMDD|MDD|YMD|YD|MD|NOR)'
 
 SHAPE_CODE_PAT = (
-    r'(?:DLDC|DLDO|DLC|DLO|Octagon|Box|Arc|Pmk|SL|DC|DO|NOR|O|C)'
+    r'(?:DLDC|DLDO|DLC|DLO|Octagon|Oval|Half\s+circle|Semi-circle|Box|Arc|Pmk|SL|DC|DO|NOR|O|C)'
 )
 
 SIZE_IMPRESSION_PREFIX_RE = re.compile(r'^(negative|stencil)\s+', re.IGNORECASE)
@@ -209,6 +209,8 @@ def parse_size_field(text):
 
     is_irregular = bool(irregular_prefix)
     shape_code = shape_raw.upper() if shape_raw else None
+    shape_code = {'OVAL': 'O', 'HALF CIRCLE': 'ARC', 'SEMI-CIRCLE': 'ARC'}.get(
+        shape_code, shape_code)
 
     # Dimensions
     dim1, dim2 = None, None

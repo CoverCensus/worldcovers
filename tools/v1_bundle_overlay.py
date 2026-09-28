@@ -34,14 +34,20 @@ from pathlib import Path
 
 from PIL import Image as PILImage
 
-from munger.fields.dates import FULL_DATE_RE, is_approximate_date, parse_date_field
+from munger.fields import _split_ms_date_token, paired_dates_by_color
+from munger.segment import find_last_semicolon_paren
+from v1_catalog_rows import v1_color_split_key
+from munger.fields.dates import is_approximate_date, parse_date_field
 from munger.fields.rates import (
     parse_rate_token,
     split_inline_rate_from_inscription,
     split_rate_tokens,
+    standalone_marking_type,
 )
 from munger.fields.sizes import parse_size_field
 from munger.head import (
+    MS_DATE_AT_END,
+    MS_TAIL_AT_END,
     head_note_desc_lines,
     head_note_lettering_name,
     split_head_annotation_notes,
@@ -300,7 +306,7 @@ def resolve_same_inscription(inscription: object, parent_text: object) -> str:
         suffix_location, suffix_state = split_location_state_suffix(suffix)
         if suffix_state and same_suffix_repeats_parent_tail(parent_stem, suffix_location):
             return strip_inscription_markers(parent_stem + suffix_state)
-    sep = "" if suffix.startswith("/") else " "
+    sep = "" if suffix.startswith(("/", ",")) else " "
     return strip_inscription_markers(parent_stem + sep + suffix)
 
 
@@ -313,17 +319,12 @@ def row_town_key(raw_row: dict[str, str], townmark_text: str) -> str:
 
 
 def overlay_post_office_town(raw_row: dict[str, str]) -> str:
-    """Return v1 txtTown only when the townmark text has a real town."""
+    """Use the recorded office independently of the marking inscription."""
     town = clean(raw_row.get("txtTown"))
     if not town:
         return ""
-    for value in (
-        townmark_text_stem(raw_row.get("txtTownPostmark")),
-        townmark_text_stem(raw_row.get("txtPostmark")),
-        town,
-    ):
-        if clean(value) and normalize_post_office_town_text(value) is None:
-            return ""
+    if normalize_post_office_town_text(town) is None:
+        return ""
     return town
 
 
@@ -334,6 +335,11 @@ def overlay_row_inscription(
     """Resolve v1 row inscription using immediate previous-row carry-forward."""
     townmark_text = strip_inscription_markers(raw_row.get("txtTownPostmark"))
     postmark_text = strip_inscription_markers(raw_row.get("txtPostmark"))
+    if postmark_text in ("-", "--"):
+        postmark_text = townmark_text
+    if (townmark_text and postmark_text == townmark_text + ' c'
+            and re.search(r'\bc\d{4}\b', clean(raw_row.get('txtRawStateData')))):
+        postmark_text = townmark_text
     source_text = townmark_text
     town_key = row_town_key(raw_row, townmark_text)
     if SAME_PREFIX_RE.match(postmark_text):
@@ -343,7 +349,7 @@ def overlay_row_inscription(
             and nonblank(carry_state.get("inscription"))
         ):
             source_text = clean(carry_state.get("inscription"))
-    inscription = resolve_same_inscription(raw_row.get("txtPostmark"), source_text)
+    inscription = resolve_same_inscription(postmark_text, source_text)
     if not inscription:
         inscription = townmark_text
     if carry_state is not None and inscription:
@@ -490,6 +496,8 @@ def normalized_shape_code(value: object) -> str:
         "NO OUTER RIM": "NOR",
         "OCTAGON": "OCTAGON",
         "OVAL": "O",
+        "SEMI-CIRCLE": "ARC",
+        "HALF CIRCLE": "ARC",
         "SL - STRAIGHT LINE": "SL",
         "STRAIGHT LINE": "SL",
     }
@@ -619,7 +627,7 @@ def split_date_tokens(value: object) -> list[str]:
         part = part.strip()
         if not part:
             continue
-        if "," not in part or FULL_DATE_RE.search(part):
+        if "," not in part or not parse_date_field(part).get("date_error"):
             tokens.append(part)
             continue
         tokens.extend(piece.strip() for piece in part.split(",") if piece.strip())
@@ -878,19 +886,20 @@ def ensure_townmark_colors(
     deleted_ids: set[str],
     clone_sources: dict[str, str],
     warnings: list[dict[str, str]],
+    markings_by_code: dict[str, dict[str, str]] | None = None,
 ) -> None:
     desired_names = v1_color_tokens(raw_row)
     if not desired_names:
         return
-    by_code = {clean(row.get("code")): row for row in markings}
+    by_code = markings_by_code if markings_by_code is not None else {
+        clean(row.get("code")): row for row in markings}
     tm_codes = [code for code in tm_by_raw.get(raw_id, []) if code in by_code]
     if not tm_codes:
-        add_warning(warnings, raw_id, "missing_townmark", "v1 colors could not be applied")
         return
     desired_color_names = [
         ensure_color(name, colors, color_fields, audit) for name in desired_names
     ]
-    existing_codes = {clean(row.get("code")) for row in markings if nonblank(row.get("code"))}
+    existing_codes = set(by_code) if len(tm_codes) < len(desired_color_names) else set()
     while len(tm_codes) < len(desired_color_names):
         template = by_code[tm_codes[-1]]
         new_code = clone_code(clean(template.get("code")) or "V1", existing_codes)
@@ -1001,6 +1010,7 @@ def apply_row_fields(
                 row["shape"] = ""
                 row["lettering"] = ""
                 row["is_irreg"] = ""
+                row["impression"] = ""
                 continue
             if not clean(row.get("shape")):
                 add_warning(
@@ -1014,6 +1024,7 @@ def apply_row_fields(
                     row["shape"] = ""
                     row["lettering"] = ""
                     row["is_irreg"] = ""
+                    row["impression"] = ""
                 continue
             row["is_manuscript"] = manuscript
             if not row.get("is_irreg"):
@@ -1033,6 +1044,12 @@ def apply_row_fields(
             row["desc"] = append_desc(row.get("desc"), rate_desc_lines)
     if nonblank(raw_row.get("txtRatesText")):
         rate_values = parsed_rate_values(raw_row.get("txtRatesText"))
+        if standalone_marking_type(inscription) == 'RATEMARK':
+            amount, _ = parse_rate_amount(parse_rate_token(inscription)['rate_amount_raw'])
+            if rate_values != [decimal_text(amount)]:
+                add_warning(warnings, raw_id, 'legacy_rate_conflict',
+                            'txtRatesText conflicts with the numeric inscription; kept catalog rate')
+            rate_values = [decimal_text(amount)]
         # A single v1 value may only correct a uniform set of ratemarks.
         # When the bundle already carries distinct values (e.g. X=10 and
         # PAID 3=3 from the same listing), stamping the one v1 value over
@@ -1062,6 +1079,79 @@ def apply_row_fields(
             add_warning(warnings, raw_id, "unsupported_column", column)
 
 
+def catalog_fields(text: str) -> list[str]:
+    bounds = find_last_semicolon_paren(text)
+    if bounds is None:
+        body = MS_TAIL_AT_END.sub('', text).strip()
+        match = MS_DATE_AT_END.search(body)
+        return _split_ms_date_token(match.group(1)) if match else []
+    start, end = bounds
+    return [field.strip() for field in text[start + 1:end].split(";")]
+
+
+def is_latest_row(row: dict[str, str]) -> bool:
+    return bool(re.match(r'^\s*\*?\(L\)', clean(row.get('txtRawStateData')), re.IGNORECASE))
+
+
+def merge_equal_v1_markings(
+    raw_rows: dict[str, dict[str, str]],
+    source_map: list[dict[str, str]],
+    markings: list[dict[str, str]],
+) -> dict[str, str]:
+    """Merge proven source duplicates only after their context is resolved.
+
+    Equal catalog text alone is not a duplicate test. Require the legacy
+    semantic key and all emitted attributes to agree, and keep every source
+    alias. Images and dates are redirected by the caller.
+    """
+    by_code = {row['code']: row for row in markings}
+    seen = {}
+    redirects = {}
+    for mapping in source_map:
+        raw = raw_rows.get(clean(mapping.get('chunk')))
+        code = mapping['marking_code']
+        if raw is None or code in redirects or code not in by_code:
+            continue
+        marking = by_code[code]
+        source_key = v1_color_split_key(raw, sorted(raw))
+        values = tuple((key, clean(value)) for key, value in sorted(marking.items())
+                       if key not in {'code', 'catalog_txt', *AUDIT_TAIL})
+        key = (source_key, values)
+        if key in seen and seen[key] != code:
+            target = seen[key]
+            while target in redirects:
+                target = redirects[target]
+            if target == code:
+                continue
+            redirects[code] = target
+            # Each source map row still has its original catalog text.
+            lines = (clean(by_code[target]['catalog_txt']).splitlines()
+                     + clean(marking['catalog_txt']).splitlines())
+            by_code[target]['catalog_txt'] = '\n'.join(dict.fromkeys(lines))
+        else:
+            seen[key] = code
+    return redirects
+
+
+def redirect_marking_references(
+    rows: list[dict[str, str]], column: str, redirects: dict[str, str],
+) -> list[dict[str, str]]:
+    result = []
+    seen = set()
+    for row in rows:
+        code = clean(row.get(column))
+        if code in redirects:
+            target = redirects[code]
+            if not target:
+                continue
+            row = {**row, column: target}
+        key = tuple(sorted(row.items()))
+        if key not in seen:
+            seen.add(key)
+            result.append(row)
+    return result
+
+
 def rebuild_dates(
     raw_rows: dict[str, dict[str, str]],
     by_raw: dict[str, list[str]],
@@ -1071,12 +1161,34 @@ def rebuild_dates(
 ) -> list[dict[str, str]]:
     replaced_subjects = set()
     new_rows = []
+    dated_subjects = {clean(row.get('subject_id')) for row in dates}
     for raw_id, raw_row in raw_rows.items():
         if not nonblank(raw_row.get("txtDatesSeen")):
             continue
+        if is_latest_row(raw_row):
+            new_rows.extend(parsed_date_rows(
+                raw_row.get('txtDatesSeen'), by_raw.get(raw_id, []), audit))
+            continue
+        # Catalog dates include continuation dates, circa qualifiers, and
+        # color associations. Split legacy fields cannot safely replace them.
+        catalog = clean(raw_row.get("txtRawStateData"))
+        fields = catalog_fields(catalog)
+        catalog_dates = [field for field in fields
+                         if not parse_date_field(field).get('date_error')
+                         and parse_date_field(field).get('date_granularity') != 'UNKNOWN']
+        if catalog_dates:
+            if not paired_dates_by_color(fields):
+                undated = [code for code in by_raw.get(raw_id, []) if code not in dated_subjects]
+                for field in catalog_dates:
+                    new_rows.extend(parsed_date_rows(field, undated, audit))
+            continue
+        if re.search(r'\bc\.?\s*\d{4}\b', catalog, re.IGNORECASE):
+            continue
         subject_ids = by_raw.get(raw_id, [])
-        replaced_subjects.update(subject_ids)
-        new_rows.extend(parsed_date_rows(raw_row.get("txtDatesSeen"), subject_ids, audit))
+        parsed_rows = parsed_date_rows(raw_row.get("txtDatesSeen"), subject_ids, audit)
+        if parsed_rows or is_v1_sentinel_year(raw_row.get("txtDatesSeen")):
+            replaced_subjects.update(subject_ids)
+            new_rows.extend(parsed_rows)
     kept = [row for row in dates if clean(row.get("subject_id")) not in replaced_subjects]
     existing_by_subject = defaultdict(list)
     for row in kept:
@@ -1566,15 +1678,27 @@ def apply_overlay(args: argparse.Namespace) -> int:
     warnings = read_existing_warnings(Path(args.warnings)) if args.preserve_images else []
 
     by_raw, tm_by_raw = build_source_map_indexes(source_map_rows)
+    sources_by_code = defaultdict(set)
+    for raw_id, codes in by_raw.items():
+        for code in codes:
+            sources_by_code[code].add(raw_id)
+    continuation_aliases = {
+        raw_id for raw_id, raw in raw_rows.items() if is_latest_row(raw)
+        and any(len(sources_by_code[code]) > 1 for code in by_raw.get(raw_id, []))
+    }
     lookups = {
         "shapes": shape_lookup(shapes),
         "letterings": lettering_lookup(letterings),
     }
     deleted_ids = set()
     clone_sources = {}
+    color_markings_by_code = {row['code']: row for row in markings}
     for raw_id, raw_row in raw_rows.items():
         if raw_id not in by_raw:
             add_warning(warnings, raw_id, "missing_source_map", "no generated marking rows")
+            continue
+        if raw_id in continuation_aliases or paired_dates_by_color(catalog_fields(
+                clean(raw_row.get('txtRawStateData')))):
             continue
         ensure_townmark_colors(
             raw_id,
@@ -1589,6 +1713,7 @@ def apply_overlay(args: argparse.Namespace) -> int:
             deleted_ids,
             clone_sources,
             warnings,
+            color_markings_by_code,
         )
     if deleted_ids:
         markings = [row for row in markings if clean(row.get("code")) not in deleted_ids]
@@ -1618,6 +1743,8 @@ def apply_overlay(args: argparse.Namespace) -> int:
     }
     carry_state: dict[str, str] = {}
     for raw_id, raw_row in raw_rows.items():
+        if raw_id in continuation_aliases:
+            continue
         apply_row_fields(
             raw_id,
             raw_row,
@@ -1676,6 +1803,41 @@ def apply_overlay(args: argparse.Namespace) -> int:
         covers = covers + new_covers
         cover_markings = cover_markings + new_cover_markings
 
+    redirects = merge_equal_v1_markings(raw_rows, source_map_rows, markings)
+    for raw_id, raw_row in raw_rows.items():
+        codes = by_raw.get(raw_id, [])
+        no_town = [code for code in codes if code in markings_by_id
+                   and re.fullmatch(r'\(No town mark(?:ing)?\)',
+                                    clean(markings_by_id[code].get('inscription_txt')),
+                                    re.IGNORECASE)]
+        alternatives = [code for code in codes if code not in no_town]
+        for code in no_town:
+            for target in alternatives:
+                markings_by_id[target]['desc'] = append_desc(
+                    markings_by_id[target].get('desc'), [markings_by_id[code].get('desc')])
+            redirects[code] = alternatives[0] if alternatives else ''
+        catalog = clean(raw_row.get('txtRawStateData'))
+        if (re.search(r'\(See\b[^)]*\)\s*-+$', catalog, re.IGNORECASE)
+                and ';' not in catalog and not re.search(r'\d{4}', catalog)):
+            for code in codes:
+                redirects[code] = ''
+            add_warning(warnings, raw_id, 'reference_only', catalog)
+    # Follow chains when a no-town placeholder points to a merged rate.
+    for code in redirects:
+        target = redirects[code]
+        while target in redirects and redirects[target] != target:
+            target = redirects[target]
+        redirects[code] = target
+    markings = [row for row in markings if row['code'] not in redirects]
+    source_map_rows = redirect_marking_references(source_map_rows, 'marking_code', redirects)
+    final_types = {row['code']: row['type'] for row in markings}
+    for mapping in source_map_rows:
+        mapping['marking_type'] = final_types[mapping['marking_code']]
+    source_map_rows = redirect_marking_references(source_map_rows, 'marking_code', {})
+    dates = dedupe_date_rows(redirect_marking_references(dates, 'subject_id', redirects))
+    citations = redirect_marking_references(citations, 'subject_id', redirects)
+    images = redirect_marking_references(images, 'subject_id', redirects)
+    cover_markings = redirect_marking_references(cover_markings, 'marking', redirects)
     write_csv(paths["markings"], markings_fields, markings)
     write_csv(paths["source_map"], source_map_fields, source_map_rows)
     write_csv(paths["post_offices"], post_office_fields, post_offices)

@@ -31,7 +31,7 @@ from catalog_rows import read_legacy_dataframe
 from munger.assembly import LETTERING_SEEDS, SHAPE_SEEDS, _nkey, confidence_level, dt_date, promote_no_paren_to_manuscript, resolve_effective_shape, resolve_shape_name
 from munger.classify import RELATIONSHIP_PATTERN, TRAILING_VALUE_PATTERN, _csv_manuscript_truthy, classify_entry, detect_cross_reference, detect_fragment, detect_structural_anatomy
 from munger.export import AUDIT_TAIL, AUDIT_USER_ID, INT_COLS, _by_listing, _cast_int_columns, _resolve_int_fk, _src_row_by
-from munger.fields import _split_ms_date_token, classify_all_fields, classify_paren_field, subparse_fields, triage_other_field
+from munger.fields import _split_ms_date_token, classify_all_fields, classify_paren_field, paired_dates_by_color, subparse_fields, triage_other_field
 from munger.fields.colors import parse_color_field
 from munger.fields.dates import is_approximate_date, parse_date_field
 from munger.fields.rates import (
@@ -39,6 +39,7 @@ from munger.fields.rates import (
     parse_rate_token,
     split_inline_rate_from_inscription,
     split_rate_tokens,
+    standalone_marking_type,
 )
 from munger.fields.sizes import parse_size_field
 from munger.head import (
@@ -1360,6 +1361,11 @@ def main(argv=None):
         print(f'Step 7 (pre): repaired {n_rep} line-wrapped town name(s)')
     listings = resolve_relationships(listings)
     listings = roll_up_catalog_text(listings)
+    # A rate or auxiliary inscription does not name a Post Office. The v1
+    # overlay can supply the office from its separate source column.
+    for idx, row in listings.iterrows():
+        if standalone_marking_type(row['resolved_inscription']):
+            listings.at[idx, 'resolved_town'] = None
     # Issue #36: (E)/(L) merge. A "(L)" relationship row records a *later
     # observed date* of its parent (E) marking, not a separate marking (Ian:
     # Adamsville's (E) Feb-14-1834 and (L) Dec-11-1834 are ONE marking spanning
@@ -1371,6 +1377,12 @@ def main(argv=None):
         return (isinstance(rt, str) and bool(_L_REL_RE.search(rt))
                 and pd.notna(r.get('parent_idx')))
     listings['is_latest_merge'] = listings.apply(_is_latest_merge, axis=1)
+    # Latest-use rows refer to the preceding device, not the family root.
+    latest_targets = {}
+    for idx, row in listings.iterrows():
+        if row['is_latest_merge']:
+            previous = row['prev_sibling_idx']
+            latest_targets[idx] = latest_targets.get(previous, previous)
     print(f"Issue #36: (L) rows merged into parent (E) marking: "
           f"{int(listings['is_latest_merge'].sum())}")
     print(f'Step 7: Relationship resolution applied to {len(listings)} listings')
@@ -2993,10 +3005,22 @@ def main(argv=None):
         # later-observed date to the parent (E) marking's townmark code(s) so
         # the marking spans earliest..latest.
         if src.get('is_latest_merge'):
-            tm_codes = [c for c in _tm_codes_by_lst.get(src['parent_idx'], []) if c]
+            target = latest_targets[listing_idx]
+            colors = set(src.get('parsed_colors') or [])
+            tm_codes = [r['code'] for _, r in townmarks_df.iterrows()
+                        if r['source_listing_idx'] == target
+                        and (not colors or r['color_name'] in colors)]
         all_codes = tm_codes + rm_codes + ax_codes
         if not all_codes:
             continue
+        paired = paired_dates_by_color(src['paren_fields'])
+        code_colors = {}
+        if paired:
+            for frame in (townmarks_df, ratemarks_df, auxmarks_df):
+                for _, record in frame[frame['source_listing_idx'] == listing_idx].iterrows():
+                    code_colors[record['code']] = next(
+                        (name for name, cid in color_lookup.items()
+                         if cid == record.get('color_id')), None)
         for d in (src.get('parsed_dates') or []):
             if is_approximate_date(d):
                 continue
@@ -3023,6 +3047,8 @@ def main(argv=None):
                 continue
             for obs_str, out_gran, date_year, date_month, date_day in obs_rows:
                 for mc in all_codes:
+                    if paired and d not in paired.get(code_colors.get(mc), []):
+                        continue
                     ds_rows.append({
                         'marking_code': mc,
                         'date': obs_str,
@@ -3351,6 +3377,13 @@ def main(argv=None):
         else:
             desc_val = None
         inscription_txt = r.get("inscription_text")
+        if kind == 'TM':
+            standalone = standalone_marking_type(inscription_txt)
+            if standalone:
+                type_label = standalone
+                date_fmt = None
+                if standalone == 'RATEMARK':
+                    rate_val, _ = parse_rate_amount(parse_rate_token(str(inscription_txt))['rate_amount_raw'])
         if kind in ("RM", "AX"):
             inscription_txt = _scalar_text(inscription_txt)
         marking_code = f"{RW_CODE}-{REGION_ABBREV}-M{mk_id + 1000}"
@@ -3387,6 +3420,27 @@ def main(argv=None):
             "chunk": source_key_component(_chunk),
             "catalog_txt": catalog_txt,
         })
+    # Preserve source aliases for continuation dates and illustrations.
+    emitted_by_listing = {}
+    for mapping in source_marking_map_rows:
+        emitted_by_listing.setdefault(mapping['source_listing_idx'], []).append(mapping)
+    marking_by_code = {row['code']: row for row in marking_rows}
+    for idx, target in latest_targets.items():
+        src = listings.loc[idx]
+        colors = set(src.get('parsed_colors') or [])
+        for mapping in emitted_by_listing.get(target, []):
+            if mapping['marking_type'] != 'TOWNMARK':
+                continue
+            marking = marking_by_code[mapping['marking_code']]
+            if colors and marking['color'] not in colors:
+                continue
+            source_marking_map_rows.append({
+                **mapping,
+                'v2_key': v2_key_by_listing[idx],
+                'source_listing_idx': idx,
+                'page': source_key_component(src['Page']),
+                'chunk': source_key_component(src['Chunk']),
+            })
     markings_out = pd.DataFrame(marking_rows) if marking_rows else pd.DataFrame(columns=[
         "code", "type", "catalog_txt", "inscription_txt", "desc", "is_manuscript",
         "shape", "lettering", "color", "is_irreg", "width", "height", "date_fmt",
@@ -3420,7 +3474,7 @@ def main(argv=None):
             continue
         _target_listing_idx = int(_listing_idx)
         if bool(_listing.get("is_latest_merge")):
-            _parent_idx = _listing.get("parent_idx")
+            _parent_idx = latest_targets.get(_listing_idx)
             if _parent_idx is None or pd.isna(_parent_idx):
                 raise AssertionError(
                     f"Starred latest-use listing {_listing_idx} has no parent marking."

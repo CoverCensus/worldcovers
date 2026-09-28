@@ -53,6 +53,12 @@ describe("submission guidelines copy", () => {
     ).toBe(false);
   });
 
+  it("makes no promise about review time (T14, Reese 2026-09-24)", () => {
+    // Ian never asked for it and volunteers cannot guarantee it.
+    expect(SHARED_GUIDELINES.some((g) => /review time/i.test(g.label))).toBe(false);
+    expect(SHARED_GUIDELINES.some((g) => /business days/i.test(g.body))).toBe(false);
+  });
+
   it("renders identical shared guidance on both forms (DRY)", () => {
     for (const shared of SHARED_GUIDELINES) {
       expect(MARKING_SUBMISSION_GUIDELINES).toContainEqual(shared);

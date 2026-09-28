@@ -247,6 +247,209 @@ class ContributionSubmitMarkingEditTests(TestCase):
         contribution = Contribution.objects.get(pk=response.data["id"])
         self.assertTrue(contribution.submitted_data["no_cover_image"])
 
+    def _marking_image(self, marking, name="whole-cover.jpg"):
+        # A catalog image sitting on a marking, for the "Create cover from this
+        # image" submissions (issues.md 167). Not in setUp: other tests count
+        # the marking's images.
+        return Image.objects.create(
+            subject_type=Image.SUBJECT_MARKING,
+            subject_id=marking.pk,
+            original_filename=name,
+            storage_filename="va/" + name,
+            file_checksum="deadbeef",
+            mime_type="image/jpeg",
+            image_width=1600,
+            image_height=1200,
+            file_size_bytes=123456,
+            image_view="FULL",
+            display_order=0,
+            uploaded_by=self.user,
+            created_by=self.user,
+            modified_by=self.user,
+        )
+
+    def _post_cover_from_image(self, image_id):
+        return self.client.post(
+            "/api/v2/contributions/",
+            {
+                "submission_kind": "cover",
+                "state": "VA",
+                "parent_marking_id": self.marking.pk,
+                "marking_id": self.marking.pk,
+                "type": "FC",
+                "cover_date_unknown": True,
+                "source_marking_image_id": image_id,
+            },
+            format="json",
+        )
+
+    def test_new_cover_accepts_a_carried_over_marking_image(self):
+        # "Create cover from this image" (issues.md 167) names the marking's
+        # existing image by id instead of re-uploading it, so the submission
+        # has no cover_image file. Ian, 2026-09-24: the form showed the image
+        # but Submit said no image was attached. This covers the submission
+        # gate only; the approval-time repoint is tested in
+        # test_cover_contribution_apply.
+        image = self._marking_image(self.marking)
+        response = self._post_cover_from_image(image.pk)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        contribution = Contribution.objects.get(pk=response.data["id"])
+        self.assertEqual(contribution.submitted_data["source_marking_image_id"], image.pk)
+
+    def test_new_cover_rejects_a_carried_over_image_from_another_marking(self):
+        # The id is contributor-supplied and approval repoints whatever row it
+        # names, so it must be pinned to the parent marking at submit time.
+        other = Marking.objects.create(
+            type="TOWNMARK",
+            inscription_txt="NORFOLK VA",
+            is_manuscript=True,
+            color=self.color,
+            post_office=self.post_office,
+            created_by=self.user,
+            modified_by=self.user,
+        )
+        stray = self._marking_image(other, name="other.jpg")
+
+        response = self._post_cover_from_image(stray.pk)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["detail"], "The image to carry over is not on this marking."
+        )
+
+    def test_new_cover_rejects_a_bogus_carried_over_image_id(self):
+        # A negative id is the frontend's draft-preview sentinel; it names no
+        # catalog row, so it must not count as an image.
+        response = self._post_cover_from_image(-1)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["detail"], "The image to carry over is not on this marking."
+        )
+
+    def _post_cover_draft(self, image_id=None, **extra):
+        # Same shape as _post_cover_from_image, but for the save / resume /
+        # remove cycle: save_as_draft, edit_contribution_id and
+        # removed_existing_image_keys ride along in **extra, and the carried
+        # id is optional because a resumed form does not always resend it.
+        payload = {
+            "submission_kind": "cover",
+            "state": "VA",
+            "parent_marking_id": self.marking.pk,
+            "marking_id": self.marking.pk,
+            "type": "FC",
+            "cover_date_unknown": True,
+        }
+        if image_id is not None:
+            payload["source_marking_image_id"] = image_id
+        payload.update(extra)
+        return self.client.post("/api/v2/contributions/", payload, format="json")
+
+    def test_detail_resolves_the_carried_over_image(self):
+        # Trello T37 (Michael, 2026-09-26): a resumed draft and the review
+        # gallery showed no picture, because submitted_data holds only the id
+        # and nothing the SPA could render. The detail endpoint now resolves
+        # it, using the same "still on this marking" predicate as the pin.
+        image = self._marking_image(self.marking)
+        created = self._post_cover_from_image(image.pk)
+        self.assertEqual(created.status_code, 201, created.data)
+
+        response = self.client.get(f"/api/v2/contributions/{created.data['id']}/")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        resolved = response.data["source_marking_image"]
+        self.assertEqual(resolved["id"], image.pk)
+        self.assertTrue(resolved["image_url"].endswith("/media/va/whole-cover.jpg"))
+        self.assertEqual(resolved["original_filename"], "whole-cover.jpg")
+        self.assertEqual(resolved["storage_filename"], "va/whole-cover.jpg")
+        self.assertEqual(resolved["marking_id"], self.marking.pk)
+
+    def test_detail_returns_null_when_the_carried_over_image_left_the_marking(self):
+        # Approval tolerates an image that moved away after the draft was
+        # saved; the form must not show a picture that will not transfer.
+        image = self._marking_image(self.marking)
+        created = self._post_cover_from_image(image.pk)
+        other = Marking.objects.create(
+            type="TOWNMARK",
+            inscription_txt="NORFOLK VA",
+            is_manuscript=True,
+            color=self.color,
+            post_office=self.post_office,
+            created_by=self.user,
+            modified_by=self.user,
+        )
+        Image.objects.filter(pk=image.pk).update(subject_id=other.pk)
+
+        response = self.client.get(f"/api/v2/contributions/{created.data['id']}/")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(response.data["source_marking_image"])
+
+    def test_detail_returns_null_for_an_ordinary_cover_submission(self):
+        created = self._post_cover_draft(no_cover_image=True)
+        self.assertEqual(created.status_code, 201, created.data)
+
+        response = self.client.get(f"/api/v2/contributions/{created.data['id']}/")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(response.data["source_marking_image"])
+
+    def test_resaving_a_draft_without_the_id_keeps_the_carried_over_image(self):
+        # The resumed form used to read the id from router state, which a
+        # Dashboard link never carries, so the re-save omitted it. The merge
+        # keeps the stored value, and a final submit with no upload and no
+        # affirmation still passes on the strength of the carried image.
+        image = self._marking_image(self.marking)
+        draft = self._post_cover_draft(image.pk, save_as_draft="true")
+        self.assertEqual(draft.status_code, 201, draft.data)
+        contribution_id = draft.data["id"]
+
+        resaved = self._post_cover_draft(
+            None, save_as_draft="true", edit_contribution_id=contribution_id
+        )
+        self.assertEqual(resaved.status_code, 200, resaved.data)
+        contribution = Contribution.objects.get(pk=contribution_id)
+        self.assertEqual(int(contribution.submitted_data["source_marking_image_id"]), image.pk)
+
+        submitted = self._post_cover_draft(None, edit_contribution_id=contribution_id)
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        contribution.refresh_from_db()
+        self.assertEqual(contribution.status, Contribution.STATUS_PENDING)
+        self.assertEqual(int(contribution.submitted_data["source_marking_image_id"]), image.pk)
+
+    def test_removing_the_carried_over_image_on_resume_clears_it(self):
+        # The carried image has no meta row, so the removed_existing_image_keys
+        # filter could not see it and the picture could never be un-carried:
+        # approval would still have moved it. The form sends the tile's URL
+        # key, exactly as it does for uploaded images.
+        image = self._marking_image(self.marking)
+        draft = self._post_cover_draft(image.pk, save_as_draft="true")
+        contribution_id = draft.data["id"]
+        image.refresh_from_db()
+        self.assertEqual(image.subject_type, Image.SUBJECT_MARKING, "draft must not move it")
+
+        resaved = self._post_cover_draft(
+            None,
+            save_as_draft="true",
+            edit_contribution_id=contribution_id,
+            removed_existing_image_keys=["/media/va/whole-cover.jpg"],
+        )
+        self.assertEqual(resaved.status_code, 200, resaved.data)
+        contribution = Contribution.objects.get(pk=contribution_id)
+        self.assertNotIn("source_marking_image_id", contribution.submitted_data)
+        image.refresh_from_db()
+        self.assertEqual(image.subject_type, Image.SUBJECT_MARKING, "removal must not move it")
+
+        submitted = self._post_cover_draft(None, edit_contribution_id=contribution_id)
+        self.assertEqual(submitted.status_code, 400, submitted.data)
+        self.assertEqual(
+            submitted.data["detail"],
+            "Add at least one cover image or confirm no image is available.",
+        )
+        image.refresh_from_db()
+        self.assertEqual(image.subject_type, Image.SUBJECT_MARKING)
+
     def test_new_cover_accepts_every_cover_type(self):
         # Trello T67: the vocabulary grew from FC/FL to six codes. Each must
         # survive submission unchanged.

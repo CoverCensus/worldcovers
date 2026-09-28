@@ -59,6 +59,7 @@ urlpatterns = [
     path("reset-password/", csrf_exempt(ResetPasswordApiView.as_view()), name="reset-password"),
     path("change-password/", csrf_exempt(ChangePasswordApiView.as_view()), name="change-password"),
     path("help-docs/", HelpDocsView.as_view(), name="help-docs"),
+    path("editor-roster/", views.EditorRosterView.as_view(), name="editor-roster"),
 
     # Custom non-router endpoints.
     # Marking removal/restore are router-generated detail actions on

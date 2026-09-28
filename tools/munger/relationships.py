@@ -101,7 +101,7 @@ def resolve_same_inscription(parent_inscription, parent_town, suffix=''):
         suffix_location, suffix_state = _split_location_state_suffix(suffix_text)
         if suffix_state and _same_suffix_repeats_parent_tail(parent_text, suffix_location):
             return strip_inscription_markers(parent_text + suffix_state)
-    sep = '' if suffix_text.startswith('/') else ' '
+    sep = '' if suffix_text.startswith(('/', ',')) else ' '
     return strip_inscription_markers(parent_text + sep + suffix_text)
 
 
