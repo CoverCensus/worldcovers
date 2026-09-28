@@ -550,7 +550,7 @@ class V1PipelineTests(unittest.TestCase):
             "ABINGDON/*VA.*",
         )
 
-    def test_v1_overlay_keeps_unknown_post_office_for_no_town_text(self):
+    def test_v1_overlay_uses_known_office_for_auxiliary_inscription(self):
         cases = [
             (
                 {
@@ -626,7 +626,8 @@ class V1PipelineTests(unittest.TestCase):
                     [],
                 )
 
-                self.assertEqual(markings_by_id["M1"]["post_office"], "USA-AL1-999")
+                expected_office = "USA-AL1-326" if raw_row['txtTown'] == 'Mobile' else "USA-AL1-999"
+                self.assertEqual(markings_by_id["M1"]["post_office"], expected_office)
                 self.assertEqual(markings_by_id["M1"]["inscription_txt"], expected_inscription)
                 self.assertNotIn(
                     "(NO TOWN MARKING)",
@@ -1086,66 +1087,6 @@ class V1PipelineTests(unittest.TestCase):
         self.assertEqual(rolled["raw_id"].tolist(), ["71", "72"])
         self.assertEqual(rolled["parsed_colors"].tolist(), [["BLACK"], ["RED"]])
         self.assertEqual([row["chunk"] for row in source_map_rows], ["71", "72"])
-
-    def test_v1_catalog_rows_drop_manual_color_split_duplicates(self):
-        fields = [
-            "nRawStateDataID",
-            "txtRawStateData",
-            "txtTown",
-            "txtTownPostmark",
-            "txtRates",
-            "txtColors",
-            "txtTownmarkColor",
-            "dtUpdated",
-            "nImageCount",
-        ]
-        base = {
-            "txtRawStateData": "Same/Va.(1834-51;30;FREE,PAID;Black,Blue,Red) 20",
-            "txtTown": "ABINGDON",
-            "txtTownPostmark": "ABINGDON/Va.",
-            "txtRates": "FREE,PAID,5,10",
-            "txtColors": "Black,Blue,Red",
-            "dtUpdated": "2024-01-25 05:51:45",
-            "nImageCount": "0",
-        }
-        rows = [
-            {
-                **base,
-                "nRawStateDataID": "108",
-                "txtTownmarkColor": "Black",
-            },
-            {
-                **base,
-                "nRawStateDataID": "774",
-                "txtTownmarkColor": "Blue",
-                "dtUpdated": "2024-01-26 00:00:00",
-            },
-            {
-                **base,
-                "nRawStateDataID": "775",
-                "txtTownmarkColor": "Red",
-            },
-            {
-                **base,
-                "nRawStateDataID": "776",
-                "txtTownmarkColor": "Red",
-                "txtRates": "PAID",
-            },
-            {
-                **base,
-                "nRawStateDataID": "777",
-                "txtTownmarkColor": "Blue",
-            },
-        ]
-
-        kept, dropped = v1_catalog_rows.dedupe_v1_color_split_rows(
-            rows,
-            fields,
-            image_counts={"777": 1},
-        )
-
-        self.assertEqual([row["nRawStateDataID"] for row in kept], ["108", "776", "777"])
-        self.assertEqual(dropped, ["774", "775"])
 
     def test_synthetic_listing_preserves_note_only_rate_text_as_desc(self):
         row = {

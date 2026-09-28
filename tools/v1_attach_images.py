@@ -69,7 +69,9 @@ def attach_images(args: argparse.Namespace) -> int:
         else (COVER_MARKING_COLUMNS, [])
     )
     warnings = []
-    _, tm_by_raw = build_source_map_indexes(source_map_rows)
+    by_raw, tm_by_raw = build_source_map_indexes(source_map_rows)
+    for raw_id, codes in by_raw.items():
+        tm_by_raw.setdefault(raw_id, codes)
     images, new_covers, new_cover_markings = build_images(
         state,
         image_refs,

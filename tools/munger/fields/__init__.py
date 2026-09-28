@@ -99,6 +99,23 @@ def is_color_field(field):
     tokens = [t.strip() for t in field.split(',') if t.strip()]
     return bool(tokens) and all(is_color_token(t) for t in tokens)
 
+
+def paired_dates_by_color(fields):
+    """Keep explicit date/color pairs separate from a shared date range."""
+    pairs = {}
+    pending = []
+    groups = 0
+    for field in fields:
+        parsed = parse_date_field(field)
+        if not parsed.get('date_error') and parsed.get('date_granularity') != 'UNKNOWN':
+            pending.append(parsed)
+        elif is_color_field(field) and pending:
+            for color in parse_color_field(field):
+                pairs.setdefault(color, []).extend(pending)
+            pending = []
+            groups += 1
+    return pairs if groups > 1 and not pending else {}
+
 BARE_NUMBER_RE = re.compile(r'^\d{1,3}(?:\.\d+)?$')
 
 # Leading shape-code + dimension signature ("SL-42x5...", "DC 25...").
@@ -358,6 +375,10 @@ def subparse_fields(row):
     reclassified = []
 
     for i, (field, ftype) in enumerate(zip(fields, types)):
+        if (str(row.get('head_name_body', '')).lower() == '(no town marking)'
+                and ftype == 'size' and BARE_NUMBER_RE.fullmatch(field)
+                and float(field) < MIN_BARE_DIAMETER_MM):
+            ftype = 'rate'
         if ftype == 'ms':
             is_manuscript = True
         elif ftype == 'date':
@@ -408,7 +429,7 @@ def subparse_fields(row):
         'parsed_dates': parsed_dates,
         'parsed_sizes': parsed_sizes,
         'parsed_rates': parsed_rates,
-        'parsed_colors': parsed_colors,
+        'parsed_colors': list(dict.fromkeys(parsed_colors)),
         'is_manuscript': is_manuscript,
         'other_fields': other_fields,
         'reclassified_fields': reclassified,

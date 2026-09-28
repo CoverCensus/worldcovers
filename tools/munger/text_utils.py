@@ -21,6 +21,8 @@ _UNKNOWN_POST_OFFICE_TOWN_KEYS = {
     "NOTOWNMARK",
     "NOTOWNMARKING",
     "REGISTERED",
+    "SAME",
+    "THESAME",
 }
 
 
@@ -46,6 +48,7 @@ def strip_trailing_state_suffix(text):
     """Remove a trailing one-to-four-letter state abbreviation."""
     value = str(text or "").strip()
     for pattern in (
+        r"[,/]\s*(?:MASS|MS)\.?(?:\s*\d+\s*cts?\.?)?$",
         r"\s+[A-Za-z]{1,4}\.?$",
         r"/\s*[A-Za-z]{1,4}\.?$",
         r"\.\s*[A-Za-z]{1,4}\.?$",
