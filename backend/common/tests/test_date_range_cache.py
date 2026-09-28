@@ -222,6 +222,22 @@ class DateRangeApiTests(DateRangeCacheBase):
         self.assertIn(resp.status_code, (200, 204))
         self.assertEqual(self._range(marking), (None, None, None, None))
 
+    def test_deleting_the_last_direct_date_falls_back_to_the_cover_dates(self):
+        # issues.md 107: an editor removing a marking's only direct date must
+        # leave the range on the linked covers' evidence, not blank.
+        marking = self._marking()
+        cover = self._cover(marking)
+        self._date("COVER", cover.pk, "1855-03-01", granularity="DAY")
+        direct = self._date("MARKING", marking.pk, "1850-01-01")
+        self.assertEqual(self._range(marking)[0], date(1850, 1, 1))
+
+        resp = self.client.delete(f"/api/v2/dates-seen/{direct.pk}/")
+        self.assertIn(resp.status_code, (200, 204))
+        self.assertEqual(
+            self._range(marking),
+            (date(1855, 3, 1), "DAY", date(1855, 3, 1), "DAY"),
+        )
+
     def test_year_filters_use_columns(self):
         early = self._marking("EARLY")
         late = self._marking("LATE")

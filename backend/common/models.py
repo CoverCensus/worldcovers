@@ -322,6 +322,12 @@ class SubmissionTransaction(models.Model):
     #   CONTRIBUTION_RESTORED  -- ... and put back
     ACTION_CONTRIBUTION_ARCHIVED = "contribution_archived"
     ACTION_CONTRIBUTION_RESTORED = "contribution_restored"
+    # One DateSeen row added / changed / removed through /dates-seen/
+    # (issues.md 107). These used to be logged as record_create/update/delete,
+    # so the changelog read "Record deleted by ..." for a removed date.
+    ACTION_DATE_SEEN_ADDED = "date_seen_added"
+    ACTION_DATE_SEEN_CHANGED = "date_seen_changed"
+    ACTION_DATE_SEEN_REMOVED = "date_seen_removed"
     ACTION_CHOICES = [
         (ACTION_SUBMIT, "Record submitted"),
         (ACTION_EDIT_SUBMISSION, "Edited submission"),
@@ -341,6 +347,9 @@ class SubmissionTransaction(models.Model):
         (ACTION_COVER_RESTORED, "Cover restored"),
         (ACTION_CONTRIBUTION_ARCHIVED, "Contribution archived"),
         (ACTION_CONTRIBUTION_RESTORED, "Contribution restored"),
+        (ACTION_DATE_SEEN_ADDED, "Date added"),
+        (ACTION_DATE_SEEN_CHANGED, "Date changed"),
+        (ACTION_DATE_SEEN_REMOVED, "Date removed"),
     ]
 
     SOURCE_CONTRIBUTOR_PORTAL = "contributor_portal"

@@ -9,6 +9,7 @@ export function EntryDetailLayout({
   onBack,
   backLabel = "Back",
   title,
+  headerAction,
   leftColumn,
   rightColumn,
 }: {
@@ -16,6 +17,7 @@ export function EntryDetailLayout({
   /** Where Back goes, when the caller knows (issues.md 175): "Back to catalog". */
   backLabel?: string;
   title?: string;
+  headerAction?: ReactNode;
   leftColumn: ReactNode;
   rightColumn: ReactNode;
 }) {
@@ -24,7 +26,7 @@ export function EntryDetailLayout({
       <Navigation />
       <div className="flex-1 bg-background">
         <div className="max-w-7xl mx-auto px-4 pb-8 pt-3 sm:px-6 lg:px-8">
-          <div className="mb-6 grid items-center gap-8 lg:grid-cols-2">
+          <div className="mb-6 flex items-start justify-between gap-4">
             <div className="flex flex-col items-start gap-1">
               <Button variant="ghost" onClick={onBack} className="-ml-4">
                 <ArrowLeft className="mr-2 h-4 w-4" />
@@ -36,6 +38,7 @@ export function EntryDetailLayout({
                 </h1>
               )}
             </div>
+            {headerAction}
           </div>
           <div className="grid items-start lg:grid-cols-2 gap-8">
             <div className="space-y-6">{leftColumn}</div>

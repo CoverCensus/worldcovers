@@ -90,7 +90,7 @@ class TestParseHeadPeel(unittest.TestCase):
         self.assertEqual(_parsed_name("Accomack C.H 1835"), "Accomack C.H")
 
     def test_preserves_peeled_date_text_for_description(self):
-        self.assertEqual(_parsed_name("Aquia(s) 1811,1849-55"), "Aquia")
+        self.assertEqual(_parsed_name("Aquia(s) 1811,1849-55"), "Aquia(s)")
         self.assertEqual(_parsed_head_date("Aquia(s) 1811,1849-55"),
                          "1811,1849-55")
         self.assertEqual(format_dates_seen_desc("1811,1849-55"),
@@ -165,7 +165,7 @@ class TestParseHeadPeel(unittest.TestCase):
         self.assertIsNone(head_note_lettering_name(["sans-seriffed letters"]))
 
     def test_embedded_name_variant_is_not_description_note(self):
-        self.assertEqual(_parsed_name("Aquia(s) 1811"), "Aquia")
+        self.assertEqual(_parsed_name("Aquia(s) 1811"), "Aquia(s)")
         self.assertEqual(_parsed_head_notes("Aquia(s) 1811"), [])
         self.assertEqual(_parsed_head_notes("Fred(erick)Town 1780s"), [])
         self.assertEqual(_parsed_head_notes("Warren(s)ville 1845"), [])

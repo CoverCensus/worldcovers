@@ -35,7 +35,7 @@ FULL_DATE_RE = re.compile(
 )
 
 MONTH_YEAR_RE = re.compile(
-    r'^\s*(' + MONTHS_PAT + r')\.?\s+'
+    r'^\s*(' + MONTHS_PAT + r')\.?\s*,?\s+'
     r'(\d{4})\s*$',
     re.IGNORECASE
 )
@@ -47,7 +47,7 @@ NUMERIC_MONTH_YEAR_RE = re.compile(
 )
 
 YEAR_RANGE_RE = re.compile(
-    r'^\s*(?:c\.?\s*)?(\d{4})\s*[-]\s*(\d{2,4})\s*$',
+    r'^\s*(?:c\.?\s*)?(\d{4})\s*[-]\s*(\d{1,4})\s*$',
     re.IGNORECASE
 )
 
@@ -91,6 +91,12 @@ def _unknown_date_result(raw):
 def parse_date_field(text):
     """Decompose a date-classified paren field into structured components."""
     t = text.strip()
+    # Bracketed day/month text is uncertain; retain only the stated year.
+    bracketed = re.fullmatch(r'\[[^]]+\]\s*(\d{4})', t)
+    if bracketed:
+        parsed = parse_date_field(bracketed.group(1))
+        parsed['date_raw'] = t
+        return parsed
     if t == '--':
         return _unknown_date_result(t)
 
@@ -134,8 +140,8 @@ def parse_date_field(text):
     if m:
         y1 = int(m.group(1))
         y2_str = m.group(2)
-        if len(y2_str) == 2:
-            y2 = int(str(y1)[:2] + y2_str)
+        if len(y2_str) < 4:
+            y2 = int(str(y1)[:-len(y2_str)] + y2_str)
         else:
             y2 = int(y2_str)
         return {

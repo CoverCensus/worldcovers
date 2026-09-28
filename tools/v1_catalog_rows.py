@@ -170,12 +170,12 @@ def split_glued_same_listings(listing: str) -> list[str]:
 
 
 def v1_color_split_key(row: dict[str, str], fields: list[str]) -> tuple[str, ...]:
-    """Return the semantic key used to collapse manual v1 color splits.
+    """Return the source key used to compare manual v1 color splits.
 
     v1 sometimes has several rows for one catalog record because an editor
     manually split color variants across rows. The munger owns color fan-out,
-    so the v1 adapter drops later rows only when all parser-relevant fields are
-    identical after excluding color sources and administrative bookkeeping.
+    so the overlay compares these fields after parsing the full catalog order.
+    This key alone does not authorize a merge: emitted attributes must agree.
 
     Example duplicate shape:
       {"txtRawStateData": "Same(...;Black,Blue,Red) 20",
@@ -189,36 +189,6 @@ def v1_color_split_key(row: dict[str, str], fields: list[str]) -> tuple[str, ...
             continue
         parts.append(normalize_listing(row.get(field)))
     return tuple(parts)
-
-
-def dedupe_v1_color_split_rows(
-    rows: list[dict[str, str]],
-    fields: list[str],
-    image_counts: dict[str, int] | None = None,
-) -> tuple[list[dict[str, str]], list[str]]:
-    """Drop later rows that only differ by v1 color columns.
-
-    Rows with image refs are always kept. If a duplicate image-bearing row were
-    dropped here, write_image_refs() would have no included raw id to attach
-    that image to during the v1 overlay step.
-    """
-    image_counts = image_counts or {}
-    seen = set()
-    kept = []
-    dropped_raw_ids = []
-    for row in rows:
-        raw_id = (row.get(RAW_ID_COL) or "").strip()
-        key = v1_color_split_key(row, fields)
-        if int(image_counts.get(raw_id, 0)) > 0:
-            seen.add(key)
-            kept.append(row)
-            continue
-        if key in seen:
-            dropped_raw_ids.append(raw_id)
-            continue
-        seen.add(key)
-        kept.append(row)
-    return kept, dropped_raw_ids
 
 
 def write_v1_catalog_rows(
@@ -247,20 +217,9 @@ def write_v1_catalog_rows(
                     "error: {0} has no '{1}' column".format(slice_path, required)
                 )
         raw_rows = list(reader)
-        source_rows, dropped_raw_ids = dedupe_v1_color_split_rows(
-            raw_rows,
-            fields,
-            image_counts=image_counts,
-        )
-        if dropped_raw_ids:
-            print(
-                "dropped v1 color-split duplicate rows: {0} ({1})".format(
-                    len(dropped_raw_ids),
-                    ", ".join(dropped_raw_ids[:10]),
-                )
-            )
-        else:
-            print("dropped v1 color-split duplicate rows: 0")
+        # Every source row must take part in relationship resolution. The
+        # overlay can merge equal results after dates and offices are known.
+        source_rows = raw_rows
         split_rows = 0
         for row in source_rows:
             listing = normalize_listing(row.get(RAW_TEXT_COL))

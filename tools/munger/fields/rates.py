@@ -38,7 +38,7 @@ def split_rate_tokens(field_text):
     return [t for t in tokens if t]
 
 RATE_AMOUNT_RE = re.compile(
-    r'(\d+(?:[/-]\d+(?:/\d+)?)?)'  # amount: "3", "12-1/2", "3/CENTS"
+    r'(\d+(?:[ -]\d+/\d+|/\d+)?(?:\.\d+)?)'
 )
 
 RATE_BRACKET_RE = re.compile(
@@ -58,6 +58,20 @@ IMPRESSION_BY_TOKEN = {
 }
 
 ROMAN_RE = re.compile(r'^[IVXLDM]+$')
+
+
+def standalone_marking_type(text):
+    """Recognize complete rate and auxiliary inscriptions with no town."""
+    value = str(text or '').strip()
+    if re.fullmatch(r'\d{1,2}(?:[ -]\d+/\d+)?(?:\s+CENTS?)?', value, re.IGNORECASE):
+        return 'RATEMARK'
+    if re.fullmatch(
+        r'(?:FREE|PAID|FORWARDED|FORWD\.?|P\.?\s*O\.?\s*BUSINESS/FREE'
+        r'|\d+\s+O.CLOCK/DELIVERY|ADVERTISED(?:/\d+)?|REGISTERED(?:/NO_*)?)',
+        value, re.IGNORECASE,
+    ):
+        return 'AUXMARK'
+    return None
 
 INLINE_RATE_AMOUNT_TEXT_RE = (
     r'(?:\d+(?:[/-]\d+(?:/\d+)?)?|[VX])'
@@ -104,6 +118,8 @@ def split_inline_rate_from_inscription(inscription):
     value = re.sub(r'\s+', ' ', str(inscription or '').strip())
     if not value:
         return '', []
+    if standalone_marking_type(value):
+        return value, []
 
     slash_matches = list(re.finditer(r'\s*/\s*', value))
     for match in slash_matches:
@@ -129,6 +145,8 @@ def split_inline_rate_from_inscription(inscription):
 def parse_rate_token(tok):
     """Parse a single rate token into structured components."""
     t = tok.strip()
+    qualifier = re.match(r'^\([EL]\)\s+has\s+', t, re.IGNORECASE)
+    inscription = t[qualifier.end():] if qualifier else None
 
     result = {
         'rate_keyword': None,
@@ -136,7 +154,7 @@ def parse_rate_token(tok):
         'rate_bracket': None,
         'rate_is_manuscript': False,
         'rate_impression': None,
-        'rate_inscription_raw': None,
+        'rate_inscription_raw': inscription,
         'rate_raw': t,
     }
 

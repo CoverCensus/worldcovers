@@ -7,6 +7,7 @@
 ## (subject_type, subject_id) and can be attached to a Cover or a Marking.
 ## Image is polymorphic over (subject_type, subject_id).
 ###################################################################################################
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 
@@ -19,6 +20,7 @@ from common.catalog_codes import (
     strip_catalog_code_keys,
     validate_unique_catalog_code,
 )
+from common.contribution_apply import _source_marking_image_id
 from common.contribution_consolidation import contribution_target
 from common.models import (
     Citation,
@@ -186,6 +188,35 @@ class FAQEntrySerializer(serializers.ModelSerializer):
 ###################################################################################################
 ## Image (polymorphic over COVER | MARKING)
 ###################################################################################################
+def image_public_url(image, request):
+    """
+    Build the public URL for a stored image file.
+
+    Current layout: contributor uploads live under
+    MEDIA_ROOT/<region_abbrev>/<uuid>.<ext>, with storage_filename
+    like 'va/<uuid>.png'. The public URL is MEDIA_URL + storage_filename,
+    e.g. /media/va/<uuid>.png.
+
+    Some imported storage_filename values include their media subdirectory;
+    those files still live under MEDIA_ROOT at that exact path.
+
+    Shared by ImageSerializer and by the contribution detail's resolved
+    carried-over image (Trello T37), so both render the same URL.
+    """
+    storage = (getattr(image, "storage_filename", "") or "").lstrip("/")
+    if not storage:
+        return None
+    if not request:
+        return None
+    media_url = settings.MEDIA_URL.rstrip("/")
+    if storage.startswith("markings/"):
+        # Legacy stored value: strip the markings/ prefix so files served
+        # from the new MEDIA_ROOT/<abbrev>/ layout resolve correctly.
+        storage = storage[len("markings/"):]
+    path = f"{media_url}/{storage}"
+    return request.build_absolute_uri(path)
+
+
 class ImageSerializer(serializers.ModelSerializer):
     """Polymorphic image attached to either a Cover or a Marking by (subject_type, subject_id)."""
     image_url = serializers.SerializerMethodField()
@@ -399,31 +430,7 @@ class ImageSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
     def get_image_url(self, obj):
-        """
-        Build the public URL for the stored image file.
-
-        Current layout: contributor uploads live under
-        MEDIA_ROOT/<region_abbrev>/<uuid>.<ext>, with storage_filename
-        like 'va/<uuid>.png'. The public URL is MEDIA_URL + storage_filename,
-        e.g. /media/va/<uuid>.png.
-
-        Some imported storage_filename values include their media subdirectory;
-        those files still live under MEDIA_ROOT at that exact path.
-        """
-        storage = (obj.storage_filename or "").lstrip("/")
-        if not storage:
-            return None
-        request = self.context.get("request")
-        if not request:
-            return None
-        from django.conf import settings
-        media_url = settings.MEDIA_URL.rstrip("/")
-        if storage.startswith("markings/"):
-            # Legacy stored value: strip the markings/ prefix so files served
-            # from the new MEDIA_ROOT/<abbrev>/ layout resolve correctly.
-            storage = storage[len("markings/"):]
-        path = f"{media_url}/{storage}"
-        return request.build_absolute_uri(path)
+        return image_public_url(obj, self.context.get("request"))
 
 
 ###################################################################################################
@@ -533,6 +540,13 @@ class DateSeenSerializer(serializers.ModelSerializer):
             values["date_year"] = None
             values["date_month"] = None
             values["date_day"] = None
+
+        # A parts edit states its precision by which parts it sends (issues.md
+        # 107): 1851 with month and day cleared is a YEAR row now, whatever the
+        # row was before. Let normalize_date_parts derive the granularity
+        # rather than letting the instance's old value veto the change.
+        if has_component_input and "granularity" not in attrs:
+            values["granularity"] = None
 
         row = DateSeen(**values)
         try:
@@ -1015,6 +1029,9 @@ class MarkingSerializer(serializers.ModelSerializer):
     modified_by = UserSerializer(read_only=True)
     is_removed = serializers.SerializerMethodField()
     can_remove = serializers.SerializerMethodField()
+    # issues.md 107: may this viewer add/correct/remove this marking's dates? Same
+    # predicate the dates-seen API enforces, so the UI never guesses.
+    can_edit_dates = serializers.SerializerMethodField()
     comment_for_editor = serializers.SerializerMethodField()
     editor_feedback = serializers.SerializerMethodField()
     submitter_name = serializers.SerializerMethodField()
@@ -1067,6 +1084,7 @@ class MarkingSerializer(serializers.ModelSerializer):
             "modified_by",
             "is_removed",
             "can_remove",
+            "can_edit_dates",
             "comment_for_editor",
             "editor_feedback",
             "display_submitter_name",
@@ -1096,6 +1114,13 @@ class MarkingSerializer(serializers.ModelSerializer):
         return MarkingRecycleBin.objects.filter(marking_id=obj.pk).exists()
 
     def get_can_remove(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is None:
+            return False
+        return _user_is_responsible_for_marking(user, obj)
+
+    def get_can_edit_dates(self, obj):
         request = self.context.get("request")
         user = getattr(request, "user", None)
         if user is None:
@@ -1466,6 +1491,7 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
     reviewer_username = serializers.CharField(source="reviewer.username", read_only=True, allow_null=True)
     marking_id = serializers.SerializerMethodField()
     cover_id = serializers.SerializerMethodField()
+    source_marking_image = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField(source="created_date", read_only=True)
     updated_at = serializers.DateTimeField(source="modified_date", read_only=True)
 
@@ -1478,6 +1504,7 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
             "marking",
             "marking_id",
             "cover_id",
+            "source_marking_image",
             "collection",
             "submitted_data",
             "status",
@@ -1504,6 +1531,40 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
 
     def get_cover_id(self, obj):
         return _contribution_target_cover_id(obj)
+
+    def get_source_marking_image(self, obj):
+        """
+        The marking image a "Create cover from this image" submission carries.
+
+        Trello T37 (Michael, 2026-09-26): a resumed draft and the review
+        gallery showed no picture, because submitted_data holds only the id
+        (the bytes are never re-uploaded; approval repoints the one Image row)
+        and the SPA had nothing to render. This resolves the id into the same
+        descriptor the marking screen hands the form on first arrival, using
+        the same "still on this marking" predicate as the submit-time pin and
+        the approval-time repoint. None when the submission carries nothing,
+        or when the image has since moved away and will not transfer.
+        """
+        sd = obj.submitted_data or {}
+        image_id = _source_marking_image_id(sd)
+        parent_pk = _contribution_target_marking_id(obj)
+        if image_id is None or parent_pk is None:
+            return None
+        row = Image.objects.filter(
+            pk=image_id,
+            subject_type=Image.SUBJECT_MARKING,
+            subject_id=parent_pk,
+        ).first()
+        if row is None:
+            return None
+        request = self.context.get("request") if self.context else None
+        return {
+            "id": row.pk,
+            "image_url": image_public_url(row, request),
+            "original_filename": row.original_filename or "",
+            "storage_filename": row.storage_filename or "",
+            "marking_id": parent_pk,
+        }
 
 
 class ContributionApproveRejectSerializer(serializers.Serializer):

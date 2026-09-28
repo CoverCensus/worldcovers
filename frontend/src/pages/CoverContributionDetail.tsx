@@ -28,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
+import { CARRIED_OVER_LABEL } from "@/lib/coverFromImageHandoff";
 import { dashboardHref, dashboardHrefForTab } from "@/lib/dashboardParams";
 import { coverTypeLabel as sharedCoverTypeLabel } from "@/lib/coverTypes";
 import { readReturnTo } from "@/lib/returnTo";
@@ -319,16 +320,33 @@ export default function CoverContributionDetail({ initialContribution = null }: 
       .filter((row): row is NonNullable<typeof row> => row != null);
   }, [sd]);
 
+  // Trello T37: a "Create cover from this image" submission has no uploaded
+  // meta for its picture; the detail endpoint resolves the carried marking
+  // image instead, and it shows first, as it did on the form. `images` stays
+  // metas-only above so the tracing flags keep their positions.
+  const carried = contribution?.sourceMarkingImage ?? null;
   const galleryImages = useMemo<EntryGalleryImage[]>(
-    () =>
-      images.map((img, index) => ({
+    () => [
+      ...(carried
+        ? [
+            {
+              imageUrl: carried.imageUrl,
+              originalFilename: carried.originalFilename || CARRIED_OVER_LABEL,
+              isTracing: false,
+              isDefault: true,
+              imageId: carried.imageId,
+            },
+          ]
+        : []),
+      ...images.map((img, index) => ({
         imageUrl: img.imageUrl,
         originalFilename: img.originalFilename,
         isTracing: img.isTracing,
-        isDefault: index === 0,
+        isDefault: !carried && index === 0,
         imageId: null,
       })),
-    [images],
+    ],
+    [images, carried],
   );
 
   const citations = useMemo<EntryCitationItem[]>(() => {

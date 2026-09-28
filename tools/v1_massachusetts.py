@@ -226,13 +226,6 @@ def _tidy_listing(text: str) -> str:
     return text.strip()
 
 
-def _is_boston_fragment(text: str) -> bool:
-    if re.search(r"\d", text):
-        return False
-    letters = re.sub(r"[^A-Za-z]", "", text).upper()
-    return 2 <= len(letters) <= 6 and _BOSTON_TOWN_NAME.startswith(letters)
-
-
 def sanitize_boston_inscription(text: object) -> str:
     value = clean(text)
     if not value:
@@ -241,8 +234,6 @@ def sanitize_boston_inscription(text: object) -> str:
     value = _strip_bare_bpm_before_boston(value)
     value = _strip_bpm_parens_before_data(value)
     value = clean(value).rstrip("(").strip()
-    if _is_boston_fragment(value):
-        return _BOSTON_TOWN_NAME
     if SAME_HEAD_RE.match(value):
         return _BOSTON_TOWN_NAME
     return value
