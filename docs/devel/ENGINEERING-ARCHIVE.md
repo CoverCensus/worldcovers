@@ -56,6 +56,11 @@ it is now a hard gate -- a flaky test blocks shipping where previously nothing d
 intended trade. The risk is controlled on the way in: `pr-checks.yml` runs on the pull request that
 introduces it, so the new job proves itself before the deploy-workflow changes can take effect.
 
+> **2026-10-01 note (issues.md #179).** The "roughly 2.5 minutes" above was never the tests: it was
+> ~650 production-strength PBKDF2 hashes performed by `create_user` in per-test `setUp()`, for
+> passwords no test verifies. `settings.py` now selects the MD5 hasher under `TESTING` and the step
+> runs in ~20-40 s. The gate itself is unchanged.
+
 ## 2026-09-08 -- Date observations keep a DELETE verb, and cannot be moved between records (#128)
 
 **What was decided.** Three calls, all inside the #128 scoping/audit fix:
