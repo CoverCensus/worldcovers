@@ -75,10 +75,25 @@ describe("formatDateSeen", () => {
         dateDay: 14,
       }),
     ).toBe("AUG 14 (year unknown)");
+    expect(formatDateSeen(null, "MONTH_DAY", {
+      dateYear: null,
+      dateMonth: 7,
+      dateDay: 10,
+    })).toBe("JUL 10 (year unknown)");
   });
 });
 
 describe("formatDatesSeenList", () => {
+  it("shows a single yearless Marking date with no range bounds", () => {
+    expect(formatDatesSeenList([{
+      date: null,
+      granularity: "MONTH_DAY",
+      dateYear: null,
+      dateMonth: 7,
+      dateDay: 10,
+    }], ["", ""])).toBe("JUL 10 (year unknown)");
+  });
+
   it("returns '' for an empty list", () => {
     expect(formatDatesSeenList([])).toBe("");
   });

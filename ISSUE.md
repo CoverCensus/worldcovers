@@ -389,13 +389,16 @@ from that intake or Reese's report, not checks repeated in this reconciliation.
   visible eligible actions without destinations, and provisional Covers from
   Marking uploads. Check image order on approval when uploads also exist.
   T20 owns permission changes; T34/T35 own wording and refresh checks.
-- **[T76](https://trello.com/c/tRtMQsfN), To Do, unassigned:**
+- **[T76](https://trello.com/c/tRtMQsfN), Testing, Reese Ludwick:**
   [PR #158](https://github.com/CoverCensus/worldcovers/pull/158) implements
-  dates under associated Cover thumbnails and earliest-first order. Find
-  dated, partial-date, undated, tied-date, and more-than-ten Cover examples.
-  Verify all approved Covers, captions, and order on each site; undated Covers
-  belong last and date precision must survive. Marking thumbnails stay
-  unchanged. Record IDs, revision, results, and acceptance.
+  dates under associated Cover thumbnails and earliest-first order. An
+  uncommitted local patch fixes yearless Cover captions and single yearless
+  Marking Dates Seen rows; localhost display is verified, while hosted sites
+  have not been checked with this patch. Find dated, partial-date, undated,
+  tied-date, and more-than-ten Cover examples. On woco.dev and hellowoco.app,
+  verify all approved Covers, captions, and order. Undated Covers belong last;
+  date precision must survive. Marking thumbnails stay unchanged. Record IDs,
+  revision, results, and acceptance.
 - **[T77](https://trello.com/c/lGfEJzSw), To Do, unassigned:**
   The September 26 intake records production record 30876 showing `rough C`,
   despite the earlier report of `rough c`. Compare source, import text, and

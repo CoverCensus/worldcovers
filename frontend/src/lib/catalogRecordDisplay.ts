@@ -129,20 +129,21 @@ export function formatDateSeen(
  * preserving order. The caller (RecordDetail) decides where to render it; this
  * helper is pure so it can be unit-tested.
  *
- * Returns "" — collapsing the row — unless the listing adds something the
+ * Returns "" -- collapsing the row -- unless the listing adds something the
  * Earliest/Latest Seen rows do not already convey (issue #122):
- *   - fewer than two distinct dates: the single date IS Earliest/Latest; or
+ *   - one sortable date is already Earliest/Latest; or
  *   - every date equals one of the two boundary labels, so the row would just
  *     restate the rows above it.
+ * A yearless date has no Earliest/Latest value, so keep its label visible.
  *
  * Ian asked for the row to be removed outright on the grounds that the dates
  * are visible elsewhere. They are not: this listing is MARKING-scoped, while
- * the associated-cover cards show COVER-scoped dates — disjoint sets. On the
+ * the associated-cover cards show COVER-scoped dates -- disjoint sets. On the
  * VA/WV catalogue that distinction hides ~430 recorded observations across
  * ~283 markings, so instead of deleting the row it is shown only where it
  * still carries information (~7% of markings) and collapses everywhere else.
  * Pass the formatted boundary labels to get that behaviour; omit them and the
- * helper keeps its original issue-#25 semantics.
+ * helper keeps its original issue-#25 semantics for sortable dates.
  */
 export function formatDatesSeenList(
   rows: ReadonlyArray<{
@@ -167,7 +168,9 @@ export function formatDatesSeenList(
       formatted.push(label);
     }
   }
-  if (formatted.length < 2) return "";
+  if (formatted.length === 0) return "";
+  // A yearless observation has no Earliest/Latest value to repeat.
+  if (formatted.length === 1 && !rows.some((row) => row.date == null)) return "";
   const bounds = new Set(boundaryLabels.filter(Boolean));
   // Every date already shown as Earliest/Latest => the row adds nothing.
   if (bounds.size > 0 && formatted.every((label) => bounds.has(label))) return "";
