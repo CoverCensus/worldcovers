@@ -6,7 +6,7 @@
  * carry a thumbnail and an identifying line, and the list is filterable, which
  * is T38's "find and select ... without knowing a code".
  *
- * ⚠ The MARKING screen's picker was removed on 2026-09-21 (Ian asked twice).
+ * The MARKING screen's picker was removed on 2026-09-21 (Ian asked twice).
  * `describeMarkingTarget` now serves the COVER screen's "Move Image to
  * Marking" picker, which had the identical code-only defect and had simply not
  * been reported yet -- `CoverDetail.tsx` rendered a bare
@@ -55,6 +55,8 @@ const richmond = (over: Partial<MarkingRecord> = {}): MarkingRecord =>
     type: "TOWNMARK",
     inscriptionTxt: "RICHM'D/VA",
     postOfficeName: "Richmond",
+    town: "Richmond",
+    state: "Virginia",
     stateAbbrev: "VA",
     shapeName: "Circle",
     colorName: "Black",
@@ -72,6 +74,8 @@ describe("describeMarkingTarget", () => {
 
     expect(d.title).toBe("ASCC6-VA-M2110");
     expect(d.detail).toContain("Townmark");
+    expect(d.detail).toContain("Richmond");
+    expect(d.detail).toContain("VA");
     expect(d.detail).toContain("Circle");
     expect(d.detail).toContain("Black");
   });
@@ -98,6 +102,15 @@ describe("describeMarkingTarget", () => {
     const d = describeMarkingTarget(richmond(), "/media/va/from-cover.png");
     expect(d.thumbnailUrl).toBe("/media/va/from-cover.png");
   });
+
+  it("includes observed dates when identifying a Marking", () => {
+    const d = describeMarkingTarget(richmond({
+      earliestSeen: "1847-08-03",
+      latestSeen: "1851-04-12",
+    }));
+    expect(d.detail).toContain("1847");
+    expect(d.detail).toContain("1851");
+  });
 });
 
 describe("describeCoverTarget", () => {
@@ -120,15 +133,15 @@ describe("describeCoverTarget", () => {
       cover({ coverDetails: { type: null, colorName: "", width: null, height: null, datesSeen: [] } }),
     );
 
-    // "-" is the catalog's empty marker; a detail line of "- · - · -" is noise.
+    // "-" is the catalog's empty marker; a detail line of "- | - | -" is noise.
     expect(d.detail).not.toContain("-");
   });
 });
 
 describe("filterMoveTargets", () => {
   const targets = [
-    target(42, "C-42", "Folded Letter · Buff · AUG 3, 1847"),
-    target(43, "C-43", "Folded Cover · Blue · 1851"),
+    target(42, "C-42", "Folded Letter | Buff | AUG 3, 1847"),
+    target(43, "C-43", "Folded Cover | Blue | 1851"),
   ];
 
   it("finds a target by its detail, so no code needs to be known", () => {

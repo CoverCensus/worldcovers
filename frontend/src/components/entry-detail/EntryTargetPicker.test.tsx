@@ -15,10 +15,11 @@
  *    mis-selection is silent damage to the catalog -- it has to be testable.
  */
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 jest.mock("@/assets/image-not-available.jpg", () => "image-not-available.jpg");
 
-import { MoveTargetPicker } from "./MoveTargetPicker";
+import { EntryTargetPicker } from "./EntryTargetPicker";
 import type { MoveTargetDescription } from "@/lib/moveTargetDisplay";
 
 const target = (
@@ -35,30 +36,32 @@ const target = (
 });
 
 const targets = [
-  target(31108, "ASCC6-VA-M2110", "Townmark · Circle · Black", "/media/a.png"),
-  target(31110, "ASCC6-VA-M2147", "Auxmark · PAID · Box"),
+  target(31108, "ASCC6-VA-M2110", "Townmark | Circle | Black", "/media/a.png"),
+  target(31110, "ASCC6-VA-M2147", "Auxmark | PAID | Box"),
 ];
 
-const renderPicker = (over: Partial<Parameters<typeof MoveTargetPicker>[0]> = {}) =>
+const renderPicker = (over: Partial<Parameters<typeof EntryTargetPicker>[0]> = {}) =>
   render(
-    <MoveTargetPicker
+    <EntryTargetPicker
       targets={targets}
       selectedId={null}
       onSelect={() => {}}
       filterLabel="Find a marking"
-      filterPlaceholder="Search by code, inscription, shape…"
+      filterPlaceholder="Search by code, inscription, shape..."
       emptyMessage="No markings match that search."
       {...over}
     />,
   );
 
-describe("MoveTargetPicker", () => {
+describe("EntryTargetPicker", () => {
   it("offers every candidate with its identifying detail, not just a code", () => {
     renderPicker();
 
     expect(screen.getByRole("radio", { name: /ASCC6-VA-M2110/ })).toBeTruthy();
     // The detail line is the point of the issue, so assert it reaches the DOM.
-    expect(screen.getByText("Townmark · Circle · Black")).toBeTruthy();
+    expect(screen.getByText("Townmark | Circle | Black")).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /M2147/ }).querySelector("img")?.getAttribute("src"))
+      .toBe("image-not-available.jpg");
   });
 
   it("narrows a long list to what the editor typed", () => {
@@ -86,6 +89,14 @@ describe("MoveTargetPicker", () => {
     expect(onSelect).toHaveBeenCalledWith(31110);
   });
 
+  it("selects a result with the keyboard", async () => {
+    const onSelect = jest.fn();
+    renderPicker({ onSelect });
+    screen.getByRole("radio", { name: /M2147/ }).focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenCalledWith(31110);
+  });
+
   it("explains an empty result rather than showing a blank panel", () => {
     renderPicker();
 
@@ -101,5 +112,29 @@ describe("MoveTargetPicker", () => {
     screen
       .getAllByRole("radio")
       .forEach((row) => expect(row.hasAttribute("disabled")).toBe(true));
+  });
+
+  it("uses server results without applying a second local filter", () => {
+    const onQueryChange = jest.fn();
+    renderPicker({ serverSearch: { query: "Benton", onQueryChange } });
+    expect(screen.getAllByRole("radio")).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText("Find a marking"), { target: { value: "Florida" } });
+    expect(onQueryChange).toHaveBeenCalledWith("Florida");
+  });
+
+  it("marks linked results unavailable and offers the existing Marking", () => {
+    const onSelect = jest.fn();
+    const onOpenTarget = jest.fn();
+    renderPicker({
+      onSelect,
+      linkedTargets: new Map([[31108, "Pending review"]]),
+      onOpenTarget,
+    });
+    const linked = screen.getByRole("radio", { name: /M2110/ });
+    expect(linked.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText("Linked: Pending review")).toBeTruthy();
+    fireEvent.click(screen.getByText("Open Marking"));
+    expect(onOpenTarget).toHaveBeenCalledWith(31108);
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });
