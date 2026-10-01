@@ -303,3 +303,21 @@ Acceptance can be checked separately after the workflow ends.
 **Evidence:** Michael's workflow decision, 2026-09-24;
 [sync plan](.agents/skills/worldcovers-sync-plan/SKILL.md) and
 [code and docs sync](.agents/skills/worldcovers-code-doc-sync/SKILL.md).
+
+## Keep Test-Only Settings Under `TESTING`
+
+**Do:** Put behaviour that exists only to make the suite fast or quiet (the MD5
+password hasher, the WARNING log level) inside the `if TESTING:` block in
+`backend/woco/settings.py`. Measure with `manage.py test --timing --durations 25`
+before and after any change that claims a speed-up.
+
+**Don't:** Delete, skip, or weaken a test to buy time, enable `--parallel` on
+MariaDB without first proving the per-worker clone is populated, or let a
+test-only setting leak into a production code path.
+
+**Why:** The 2026-10 slowdown (2m50s per deploy) was ~650 PBKDF2 hashes in
+`setUp()`, not the 461 tests; the one-line hasher change cut the suite from
+137 s to 23 s with every test still running. On MariaDB Django clones the
+test database through a `mysqldump | mysql` pipe whose failure it ignores,
+and the GitHub runner ships MySQL 8 client tools that fail against MariaDB.
+Evidence: `docs/issues.md` #179 (workspace register), `verify.yml` comments.
