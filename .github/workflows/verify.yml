@@ -89,6 +89,9 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --no-dev --frozen
 
+      - name: Audit Python dependencies
+        run: uv audit --locked --python-version 3.13 --python-platform linux
+
       - name: Write mysql.cnf
         run: |
           # mysql.cnf is gitignored (.gitignore:252), so CI has to generate it.
