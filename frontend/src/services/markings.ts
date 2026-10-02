@@ -1336,10 +1336,25 @@ export async function getCoverMarkingsByCover(
   coverId: number,
 ): Promise<CoverMarkingsByCoverResult> {
   try {
-    const res = await apiClient.get<CoverMarkingApiResponse>("/cover-markings/", {
-      params: { cover: String(coverId) },
-    });
-    const results = Array.isArray(res.data?.results) ? res.data.results : [];
+    const results: unknown[] = [];
+    let nextUrl: string | null = "/cover-markings/";
+    let params: Record<string, string> | undefined = {
+      cover: String(coverId),
+      page_size: "100",
+    };
+    let pages = 0;
+    while (nextUrl && pages < 50) {
+      const res: { data?: CoverMarkingApiResponse } = await apiClient.get<CoverMarkingApiResponse>(
+        nextUrl,
+        params ? { params } : undefined,
+      );
+      if (Array.isArray(res.data?.results)) results.push(...res.data.results);
+      const next: unknown = res.data?.next;
+      nextUrl = typeof next === "string" && next.trim() ? next : null;
+      params = undefined;
+      pages += 1;
+    }
+    if (nextUrl) return { links: [], error: "Too many associated Marking pages to load." };
     const links = results
       .map(mapCoverMarkingLink)
       .filter((x): x is CoverMarkingLink => x !== null);

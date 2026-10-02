@@ -46,7 +46,7 @@ function detailLine(parts: Array<string | null | undefined>): string {
   return parts
     .map((p) => (p ?? "").trim())
     .filter((p) => p.length > 0 && p !== CATALOG_FIELD_EMPTY)
-    .join(" · ");
+    .join(" | ");
 }
 
 function describe(
@@ -91,7 +91,18 @@ export function describeMarkingTarget(
     marking.id,
     marking.code,
     "Marking",
-    detailLine([row.type, row.markingTextSingle, row.shape, row.dimensions, row.color]),
+    detailLine([
+      row.town,
+      row.state,
+      row.type,
+      row.markingTextSingle,
+      row.shape,
+      row.dimensions,
+      row.color,
+      row.earliestSeen === row.latestSeen
+        ? row.earliestSeen
+        : detailLine([row.earliestSeen, row.latestSeen]),
+    ]),
     thumbnailUrlOverride ?? row.image,
   );
 }

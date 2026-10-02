@@ -21,19 +21,23 @@ export function dateSeenSortKey(d: AssociatedDateSeen): string | null {
   return `${String(d.dateYear).padStart(4, "0")}-${pad(d.dateMonth ?? 1)}-${pad(d.dateDay ?? 1)}`;
 }
 
-/** The observation that sorts first, or null when none carries a year. */
+/** Earliest sortable observation, or the first yearless one for display. */
 export function earliestDateSeen(datesSeen: readonly AssociatedDateSeen[]): AssociatedDateSeen | null {
   let best: AssociatedDateSeen | null = null;
   let bestKey: string | null = null;
+  let firstYearless: AssociatedDateSeen | null = null;
   for (const d of datesSeen) {
     const key = dateSeenSortKey(d);
-    if (key == null) continue;
+    if (key == null) {
+      firstYearless ??= d;
+      continue;
+    }
     if (bestKey == null || key < bestKey) {
       best = d;
       bestKey = key;
     }
   }
-  return best;
+  return best ?? firstYearless;
 }
 
 function coverSortKey(cover: AssociatedCover): string | null {
@@ -41,7 +45,7 @@ function coverSortKey(cover: AssociatedCover): string | null {
   return earliest ? dateSeenSortKey(earliest) : null;
 }
 
-/** Earliest first, undated last, ties in their incoming order. Returns a copy. */
+/** Earliest first, Covers without a sortable year last, ties stable. Returns a copy. */
 export function sortCoversEarliestFirst(covers: readonly AssociatedCover[]): AssociatedCover[] {
   return covers
     .map((cover, index) => ({ cover, index, key: coverSortKey(cover) }))

@@ -223,6 +223,7 @@ Run these commands from the repo root after local setup:
 
 ```sh
 uv sync --frozen
+uv audit --locked --python-version 3.13 --python-platform linux
 bash tools/fingerprint.sh
 (cd tools && uv run python -m pytest tests)
 uv run python backend/manage.py check
@@ -243,6 +244,10 @@ The database user needs permission to create and drop `test_worldcovers` (or
 `test_<DB_NAME>` for a custom database name). Local setup grants access to
 the test database. Run the tools suite with pytest; unittest does not collect
 all of its tests.
+
+The Python audit checks application and development dependencies. Findings,
+an outdated lockfile, or an audit service failure stop verification. The npm
+audit stops verification for findings rated moderate or higher.
 
 [verify.yml](../../.github/workflows/verify.yml) defines the shared CI checks.
 Pull requests and both deploy workflows call it. CI uses Node 22, the pinned

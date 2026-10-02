@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { CheckCircle, Info, Loader2, MessageSquare, Pencil, Plus, Trash2, XCircle } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
+import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,7 +16,7 @@ import { EntryDetailLayout } from "@/components/entry-detail/EntryDetailLayout";
 import { AdminEditLink } from "@/components/AdminEditLink";
 import { EntryImageGalleryCard } from "@/components/entry-detail/EntryImageGalleryCard";
 import { EntryAssociatedThumbnailsCard } from "@/components/entry-detail/EntryAssociatedThumbnailsCard";
-import { MoveTargetPicker } from "@/components/entry-detail/MoveTargetPicker";
+import { EntryTargetPicker } from "@/components/entry-detail/EntryTargetPicker";
 import { compareMarkingTargets, describeMarkingTarget } from "@/lib/moveTargetDisplay";
 import { EntryRecordHistoryCard } from "@/components/entry-detail/EntryRecordHistoryCard";
 import { EntryCitationsCard, type EntryCitationItem } from "@/components/entry-detail/EntryCitationsCard";
@@ -26,6 +28,7 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   getImagesForSubject,
   getMarkingById,
+  getMarkingsPage,
   getMarkingChangelog,
   getCoverMarkingsByCover,
   deleteImage,
@@ -69,9 +72,8 @@ import {
   type CoverDetail,
   type CoverDateSeenItem,
 } from "@/services/covers";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { parseMarkingIdInput } from "@/lib/recordLinking";
+import { useDebounce } from "@/hooks/useDebounce";
 import { moveImageAndRefresh } from "@/lib/imageMoveRefresh";
 import { listCitationsForSubject } from "@/services/citations";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
@@ -158,7 +160,9 @@ const CoverDetailPage = () => {
   const [images, setImages] = useState<MarkingImage[]>([]);
   const [reorderingImages, setReorderingImages] = useState(false);
   const [coverMarkingLink, setCoverMarkingLink] = useState<CoverMarkingLink | null>(null);
+  const [coverMarkingLinks, setCoverMarkingLinks] = useState<CoverMarkingLink[]>([]);
   const [associatedMarkings, setAssociatedMarkings] = useState<AssociatedMarkingOnCover[]>([]);
+  const [linksLoadError, setLinksLoadError] = useState<string | null>(null);
   const [markingsLoadError, setMarkingsLoadError] = useState<string | null>(null);
   const [citations, setCitations] = useState<EntryCitationItem[]>([]);
   const [historyEvents, setHistoryEvents] = useState<MarkingChangelogEvent[]>([]);
@@ -175,10 +179,26 @@ const CoverDetailPage = () => {
   const [restoring, setRestoring] = useState(false);
   const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
   const [linkMarkingOpen, setLinkMarkingOpen] = useState(false);
-  const [linkMarkingInput, setLinkMarkingInput] = useState("");
+  const [linkMarkingQuery, setLinkMarkingQuery] = useState("");
+  const [linkMarkingPage, setLinkMarkingPage] = useState(1);
+  const [linkMarkingSelectedId, setLinkMarkingSelectedId] = useState<number | null>(null);
   const [linkMarkingIsBackstamp, setLinkMarkingIsBackstamp] = useState(false);
   const [linkMarkingBusy, setLinkMarkingBusy] = useState(false);
+  const [linkMarkingLinksBusy, setLinkMarkingLinksBusy] = useState(false);
   const [linkMarkingError, setLinkMarkingError] = useState<string | null>(null);
+  const debouncedLinkQuery = useDebounce(linkMarkingQuery, 800);
+  const linkSearchReady = linkMarkingOpen &&
+    linkMarkingQuery.trim().length > 0 &&
+    linkMarkingQuery === debouncedLinkQuery;
+  const linkSearch = useQuery({
+    queryKey: ["link-marking-search", debouncedLinkQuery, linkMarkingPage],
+    queryFn: () => getMarkingsPage(linkMarkingPage, 10, {
+      search: debouncedLinkQuery,
+      ordering: "primary_region_name,post_office__name,code,id",
+    }),
+    enabled: linkSearchReady,
+    staleTime: 0,
+  });
   const [moveImageIndex, setMoveImageIndex] = useState<number | null>(null);
   const [moveImageTargetMarkingId, setMoveImageTargetMarkingId] = useState<number | null>(null);
   const [moveImageView, setMoveImageView] = useState("FULL");
@@ -210,13 +230,39 @@ const CoverDetailPage = () => {
 
   const refreshCoverMarkingLink = useCallback(async () => {
     if (coverPk == null) return;
-    const { links } = await getCoverMarkingsByCover(coverPk);
+    const { links, error } = await getCoverMarkingsByCover(coverPk);
+    setCoverMarkingLinks(links);
+    setLinksLoadError(error);
+    setMarkingsLoadError(error);
     const link =
       markingId != null
         ? links.find((l) => l.markingId === markingId) ?? null
         : links[0] ?? null;
     setCoverMarkingLink(link);
   }, [coverPk, markingId]);
+
+  const retryAssociatedMarkings = async () => {
+    if (coverPk == null) return;
+    setLinkMarkingLinksBusy(true);
+    try {
+      const { links, error } = await getCoverMarkingsByCover(coverPk);
+      setCoverMarkingLinks(links);
+      setLinksLoadError(error);
+      setMarkingsLoadError(error);
+      if (error) return;
+      const link = markingId != null
+        ? links.find((item) => item.markingId === markingId) ?? null
+        : links[0] ?? null;
+      setCoverMarkingLink(link);
+      try {
+        setAssociatedMarkings(await loadAssociatedMarkingsForCover(links));
+      } catch {
+        setMarkingsLoadError("Could not load associated Marking previews.");
+      }
+    } finally {
+      setLinkMarkingLinksBusy(false);
+    }
+  };
 
   const submitCoverReview = async (kind: CoverMarkingReviewActionApi) => {
     if (!coverMarkingLink) return;
@@ -346,6 +392,7 @@ const CoverDetailPage = () => {
         setAssociatedMarkings([]);
         setCitations([]);
         setCoverMarkingLink(null);
+        setCoverMarkingLinks([]);
         setError("Cover not found");
         setLoading(false);
         return;
@@ -353,6 +400,8 @@ const CoverDetailPage = () => {
       setCover(detail);
       setImages(imgs);
       setMarkingsLoadError(linksResult.error);
+      setLinksLoadError(linksResult.error);
+      setCoverMarkingLinks(linksResult.links);
 
       const linkForMarking =
         markingId != null
@@ -360,8 +409,12 @@ const CoverDetailPage = () => {
           : linksResult.links[0] ?? null;
       setCoverMarkingLink(linkForMarking);
 
-      const markings = await loadAssociatedMarkingsForCover(linksResult.links);
-      if (!cancelled) setAssociatedMarkings(markings);
+      try {
+        const markings = await loadAssociatedMarkingsForCover(linksResult.links);
+        if (!cancelled) setAssociatedMarkings(markings);
+      } catch {
+        if (!cancelled) setMarkingsLoadError("Could not load associated Marking previews.");
+      }
 
       const citationRows = await listCitationsForSubject({
         subjectType: "COVER",
@@ -593,39 +646,50 @@ const CoverDetailPage = () => {
   // (IsEditorOrAdminWrite), so the button only renders for isStaff.
   const handleLinkExistingMarking = async () => {
     if (coverPk == null) return;
-    const markingIdTarget = parseMarkingIdInput(linkMarkingInput);
-    if (markingIdTarget == null) {
-      setLinkMarkingError("Enter a valid marking ID.");
+    const markingIdTarget = linkMarkingSelectedId;
+    if (markingIdTarget == null || linksLoadError || linkMarkingLinksBusy ||
+        !linkSearchReady || linkSearch.isFetching ||
+        !linkSearch.data?.results.some((record) => record.id === markingIdTarget) ||
+        coverMarkingLinks.some((link) => link.markingId === markingIdTarget)) {
+      setLinkMarkingError("Select an available Marking.");
       return;
     }
     setLinkMarkingBusy(true);
     setLinkMarkingError(null);
     try {
-      const marking = await getMarkingById(markingIdTarget);
-      if (!marking) {
-        setLinkMarkingError(`Marking ${markingIdTarget} not found.`);
-        return;
-      }
       await createCoverMarking({
         cover: coverPk,
         marking: markingIdTarget,
         is_backstamp: linkMarkingIsBackstamp,
       });
       toast({
-        title: "Marking linked",
-        description: `Marking ${marking.code ?? markingIdTarget} is now linked to this cover.`,
+        title: "Link submitted for review",
       });
       setLinkMarkingOpen(false);
-      setLinkMarkingInput("");
+      setLinkMarkingQuery("");
+      setLinkMarkingSelectedId(null);
+      setLinkMarkingPage(1);
       setLinkMarkingIsBackstamp(false);
       const linksResult = await getCoverMarkingsByCover(coverPk);
+      setCoverMarkingLinks(linksResult.links);
+      setLinksLoadError(linksResult.error);
+      setMarkingsLoadError(linksResult.error);
+      if (linksResult.error) {
+        toast({ title: "Link saved, but the list could not refresh", description: "Retry loading associated Markings.", variant: "destructive" });
+        return;
+      }
       const linkForMarking =
         markingId != null
           ? linksResult.links.find((l) => l.markingId === markingId) ?? null
           : linksResult.links[0] ?? null;
       setCoverMarkingLink(linkForMarking);
-      const markings = await loadAssociatedMarkingsForCover(linksResult.links);
-      setAssociatedMarkings(markings);
+      try {
+        const markings = await loadAssociatedMarkingsForCover(linksResult.links);
+        setAssociatedMarkings(markings);
+      } catch {
+        setMarkingsLoadError("Could not load associated Marking previews.");
+        toast({ title: "Link saved, but the previews could not refresh", description: "Retry loading associated Markings.", variant: "destructive" });
+      }
     } catch (err: unknown) {
       const ax = err as { response?: { data?: { detail?: string; non_field_errors?: string[] } } };
       const detail = ax.response?.data?.detail ?? ax.response?.data?.non_field_errors?.[0];
@@ -661,6 +725,19 @@ const CoverDetailPage = () => {
         .map(({ marking, defaultImageUrl }) => describeMarkingTarget(marking, defaultImageUrl))
         .sort(compareMarkingTargets),
     [associatedMarkings],
+  );
+  const linkMarkingTargets = useMemo(
+    () => linkSearchReady && !linkSearch.isFetching
+      ? (linkSearch.data?.results ?? []).map((record) => describeMarkingTarget(record))
+      : [],
+    [linkSearchReady, linkSearch.isFetching, linkSearch.data],
+  );
+  const linkedMarkingStatuses = useMemo(
+    () => new Map(coverMarkingLinks.map((link) => [
+      link.markingId,
+      coverLinkReviewBadgeLabel(link.reviewStatus),
+    ])),
+    [coverMarkingLinks],
   );
 
   if (loading) {
@@ -924,7 +1001,9 @@ const CoverDetailPage = () => {
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        setLinkMarkingInput("");
+                        setLinkMarkingQuery("");
+                        setLinkMarkingPage(1);
+                        setLinkMarkingSelectedId(null);
                         setLinkMarkingIsBackstamp(false);
                         setLinkMarkingError(null);
                         setLinkMarkingOpen(true);
@@ -939,7 +1018,10 @@ const CoverDetailPage = () => {
               <CardContent className="space-y-4 pt-0">
                 {markingsLoadError && (
                   <p className="text-sm text-destructive rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2">
-                    {markingsLoadError}
+                    {markingsLoadError}{" "}
+                    <Button type="button" variant="link" disabled={linkMarkingLinksBusy} onClick={() => void retryAssociatedMarkings()}>
+                      Retry
+                    </Button>
                   </p>
                 )}
                 {associatedMarkings.length === 0 && !markingsLoadError ? (
@@ -983,7 +1065,7 @@ const CoverDetailPage = () => {
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1">
-              <MoveTargetPicker
+              <EntryTargetPicker
                 targets={markingMoveTargets}
                 selectedId={moveImageTargetMarkingId}
                 onSelect={(id) => {
@@ -992,7 +1074,7 @@ const CoverDetailPage = () => {
                 }}
                 disabled={moveImageBusy}
                 filterLabel="Target marking"
-                filterPlaceholder="Search by code, inscription, shape…"
+                filterPlaceholder="Search by code, inscription, shape..."
                 emptyMessage="No markings match that search."
               />
             </div>
@@ -1029,7 +1111,7 @@ const CoverDetailPage = () => {
               {moveImageBusy ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Moving…
+                  Moving...
                 </>
               ) : (
                 "Move Image"
@@ -1045,36 +1127,77 @@ const CoverDetailPage = () => {
           if (linkMarkingBusy) return;
           setLinkMarkingOpen(open);
           if (!open) {
-            setLinkMarkingInput("");
+            setLinkMarkingQuery("");
+            setLinkMarkingPage(1);
+            setLinkMarkingSelectedId(null);
             setLinkMarkingIsBackstamp(false);
             setLinkMarkingError(null);
           }
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Link Existing Marking</DialogTitle>
             <DialogDescription>
-              Enter the marking ID to link it to this cover.
+              Search the catalog by town, Region, inscription, shape, color, or Marking code.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
-            <Input
-              placeholder="Marking ID"
-              value={linkMarkingInput}
-              onChange={(e) => {
-                setLinkMarkingInput(e.target.value);
+            <EntryTargetPicker
+              targets={linkMarkingTargets}
+              selectedId={linkMarkingSelectedId}
+              onSelect={(id) => {
+                setLinkMarkingSelectedId(id);
                 setLinkMarkingError(null);
               }}
+              filterLabel="Search Markings"
+              filterPlaceholder="Town, Region, inscription, or code"
+              emptyMessage={
+                !linkMarkingQuery.trim() ? "Enter a search to find a Marking." :
+                !linkSearchReady || linkSearch.isFetching ? "Searching..." :
+                linkSearch.isError ? "Search failed." : "No Markings found."
+              }
               disabled={linkMarkingBusy}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void handleLinkExistingMarking();
-                }
+              selectionDisabled={linkMarkingLinksBusy || !!linksLoadError || linkSearch.isFetching || !linkSearchReady}
+              serverSearch={{
+                query: linkMarkingQuery,
+                onQueryChange: (query) => {
+                  setLinkMarkingQuery(query);
+                  setLinkMarkingPage(1);
+                  setLinkMarkingSelectedId(null);
+                  setLinkMarkingError(null);
+                },
               }}
-              autoFocus
+              linkedTargets={linkedMarkingStatuses}
+              onOpenTarget={(id) => goMarkingView(id)}
             />
+            {linkSearchReady && linkSearch.isError && (
+              <p className="text-sm text-destructive">Search failed. <Button type="button" variant="link" onClick={() => void linkSearch.refetch()}>Retry</Button></p>
+            )}
+            {linksLoadError && (
+              <p className="text-sm text-destructive">{linksLoadError} <Button type="button" variant="link" onClick={() => void retryAssociatedMarkings()}>Retry associated Markings</Button></p>
+            )}
+            {linkSearchReady && !linkSearch.isFetching && linkSearch.data && linkSearch.data.count > 10 && (
+              <Pagination>
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      aria-disabled={linkMarkingPage === 1}
+                      className={linkMarkingPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                      onClick={() => { setLinkMarkingPage((page) => Math.max(1, page - 1)); setLinkMarkingSelectedId(null); }}
+                    />
+                  </PaginationItem>
+                  <PaginationItem className="text-sm">Page {linkMarkingPage} of {Math.ceil(linkSearch.data.count / 10)}</PaginationItem>
+                  <PaginationItem>
+                    <PaginationNext
+                      aria-disabled={!linkSearch.data.next}
+                      className={!linkSearch.data.next ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                      onClick={() => { if (linkSearch.data?.next) { setLinkMarkingPage((page) => page + 1); setLinkMarkingSelectedId(null); } }}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            )}
             <label className="flex items-center gap-2 text-sm">
               <Checkbox
                 checked={linkMarkingIsBackstamp}
@@ -1091,12 +1214,12 @@ const CoverDetailPage = () => {
             </Button>
             <Button
               onClick={() => void handleLinkExistingMarking()}
-              disabled={linkMarkingBusy || !linkMarkingInput.trim()}
+              disabled={linkMarkingBusy || linkMarkingSelectedId == null || !!linksLoadError || linkMarkingLinksBusy || !linkSearchReady || linkSearch.isFetching || linkSearch.isError}
             >
               {linkMarkingBusy ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Linking…
+                  Linking...
                 </>
               ) : (
                 "Link Marking"

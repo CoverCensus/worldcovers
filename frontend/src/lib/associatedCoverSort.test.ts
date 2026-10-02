@@ -1,8 +1,8 @@
 /**
- * issues.md 174 — Ian, 2026-09-23: covers under a marking are "sorted
+ * issues.md 174 -- Ian, 2026-09-23: covers under a marking are "sorted
  * earliest to latest in the cover thumbnail area", with the date shown.
  * Dates live in DateSeen rows with their own precision; a year-only
- * observation sorts as that year, and an undated cover goes last.
+ * observation sorts as that year, and a Cover without a year goes last.
  */
 import type { AssociatedCover, AssociatedDateSeen } from "@/services/markings";
 import { earliestDateSeen, sortCoversEarliestFirst } from "./associatedCoverSort";
@@ -36,9 +36,11 @@ describe("earliestDateSeen", () => {
     expect(earliestDateSeen([full])).toBe(full);
   });
 
-  it("returns null when nothing carries a year", () => {
+  it("uses a yearless observation for display when no year is known", () => {
+    const july10 = seen({ granularity: "MONTH_DAY", dateMonth: 7, dateDay: 10 });
     expect(earliestDateSeen([])).toBeNull();
-    expect(earliestDateSeen([seen({ granularity: "MONTH_ONLY", dateMonth: 5 })])).toBeNull();
+    expect(earliestDateSeen([july10])).toBe(july10);
+    expect(earliestDateSeen([july10, seen({ date: "1850-01-01" })])?.date).toBe("1850-01-01");
   });
 });
 
@@ -64,5 +66,12 @@ describe("sortCoversEarliestFirst", () => {
     const list = [cover(1, []), cover(2, [seen({ date: "1840-01-01" })])];
     sortCoversEarliestFirst(list);
     expect(list.map((c) => c.id)).toEqual([1, 2]);
+  });
+
+  it("keeps a yearless Cover after Covers with sortable dates", () => {
+    const july10 = cover(1, [seen({ granularity: "MONTH_DAY", dateMonth: 7, dateDay: 10 })]);
+    const dated = cover(2, [seen({ date: "1850-01-01" })]);
+    const unknown = cover(3, []);
+    expect(sortCoversEarliestFirst([july10, unknown, dated]).map((c) => c.id)).toEqual([2, 1, 3]);
   });
 });

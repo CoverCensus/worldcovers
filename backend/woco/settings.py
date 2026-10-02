@@ -33,6 +33,14 @@ SECRET_KEY = config("DJANGO_SECRET_KEY")
 DEBUG = config("DEBUG", default=True, cast=bool)
 TESTING = "test" in sys.argv or "PYTEST_VERSION" in os.environ
 
+if TESTING:
+    # The suite creates ~650 users per run in setUp() and never verifies a
+    # password (every API test uses force_authenticate). Django's default
+    # PBKDF2 at 1,000,000 iterations made those hashes ~110 s of a 137 s run.
+    # Django's testing docs recommend MD5 for test settings; this applies only
+    # under manage.py test / pytest (docs/issues.md #179).
+    PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+
 INTERNAL_IPS = [
     "127.0.0.1",
     "localhost"
@@ -264,7 +272,11 @@ MARKING_IMAGE_MAX_HEIGHT = 4000
 MARKING_IMAGE_QUALITY = 95
 
 # Logging Configuration
-DJANGO_LOG_LEVEL = "DEBUG" if DEBUG else config("DJANGO_LOG_LEVEL", default="WARNING")
+# Tests run at WARNING: DEBUG is True at import time locally and in CI, and the
+# django.db.backends.schema logger is not DEBUG-gated, so every migration's DDL
+# and every expected 4xx used to be written to the console and woco.log on each
+# test run (docs/issues.md #179).
+DJANGO_LOG_LEVEL = "DEBUG" if DEBUG and not TESTING else config("DJANGO_LOG_LEVEL", default="WARNING")
 LOG_FILENAME = config("LOG_FILENAME", default="woco.log")
 LOG_DIR = BASE_DIR / "logs"
 LOG_PATH = LOG_DIR / LOG_FILENAME

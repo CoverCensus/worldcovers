@@ -72,9 +72,9 @@ jobs:
           - 3306:3306
         options: >-
           --health-cmd="healthcheck.sh --connect --innodb_initialized"
-          --health-interval=10s
+          --health-interval=2s
           --health-timeout=5s
-          --health-retries=12
+          --health-retries=60
 
     steps:
       - name: Checkout
@@ -88,6 +88,9 @@ jobs:
 
       - name: Install Python dependencies
         run: uv sync --no-dev --frozen
+
+      - name: Audit Python dependencies
+        run: uv audit --locked --python-version 3.13 --python-platform linux
 
       - name: Write mysql.cnf
         run: |
@@ -122,8 +125,13 @@ jobs:
       - name: Backend tests
         env:
           DJANGO_SECRET_KEY: ci-dummy-not-a-real-secret-do-not-use-anywhere
-        # ~402 tests, ~2.5 min. Until this step existed the backend suite ran
-        # only when a developer remembered to run it by hand (issues.md #161) --
-        # both #128 and #150 shipped behaviour changes to production with no
-        # automated gate behind them at all.
-        run: uv run python backend/manage.py test common
+        # 461 tests. Until this step existed the backend suite ran only when a
+        # developer remembered to run it by hand (issues.md #161) -- both #128
+        # and #150 shipped behaviour changes to production with no automated
+        # gate behind them at all.
+        #
+        # It took ~2m50s until issues.md #179: each test paid for ~1.4
+        # production-strength PBKDF2 hashes in setUp(). settings.py now uses the
+        # MD5 hasher under TESTING (136.8 s -> 23.1 s locally). --durations keeps
+        # the slowest tests visible in every run so that cannot creep back.
+        run: uv run python backend/manage.py test common --timing --durations 25
