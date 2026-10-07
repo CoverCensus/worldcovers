@@ -20,6 +20,8 @@ from rest_framework.test import APIClient
 from common.models import (
     Collection,
     CollectionAssignment,
+    Cover,
+    CoverMarking,
     Image,
     Marking,
     PostOffice,
@@ -220,3 +222,136 @@ class ImageCropTests(TestCase):
         response = self._crop()
 
         self.assertIn(response.status_code, (401, 403))
+
+
+@override_settings(MEDIA_ROOT=MEDIA_ROOT)
+class ImageCropIntoMarkingTests(TestCase):
+    """Crop from a Cover into an associated Marking that has no image.
+
+    Trello T37 (workspace issues.md #182): "If the associated Marking has no
+    image, offer a crop into that existing Marking. Preserve the original
+    image." The destination is validated server-side -- approved CoverMarking,
+    zero images, responsibility for both subjects -- so this stays one request
+    and one row with `cropped_from`, and never inherits the image PATCH's
+    missing region scope (T73).
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(MEDIA_ROOT, ignore_errors=True)
+        super().tearDownClass()
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_superuser("admin2", password="pw")
+        self.editor = User.objects.create_user("va-editor-2", password="pw")
+        editors, _ = Group.objects.get_or_create(name="Editors")
+        editors.permissions.add(Permission.objects.get(codename="review_contribution"))
+        self.editor.groups.add(editors)
+
+        audit = {"created_by": self.admin, "modified_by": self.admin}
+        self.region = Region.objects.create(name="Virginia", abbrev="VA", region_tier="STATE", **audit)
+        collection = Collection.objects.create(name="Virginia Collection", region=self.region, **audit)
+        CollectionAssignment.objects.create(user=self.editor, collection=collection, **audit)
+        post_office = PostOffice.objects.create(name="Fetterman", **audit)
+        PostOfficeRegion.objects.create(post_office=post_office, region=self.region, **audit)
+        self.marking = Marking.objects.create(
+            code="ASCC1-VA-M0002", type="TOWNMARK", inscription_txt="FETTERMAN VA",
+            is_manuscript=False, post_office=post_office, **audit,
+        )
+        self.other_marking = Marking.objects.create(
+            code="ASCC1-VA-M0003", type="TOWNMARK", inscription_txt="FETTERMAN VA 2",
+            is_manuscript=False, post_office=post_office, **audit,
+        )
+        self.cover = Cover.objects.create(code="ASCC1-VA-C0002", type="FC", **audit)
+        self.link = CoverMarking.objects.create(
+            cover=self.cover, marking=self.marking,
+            review_status=CoverMarking.REVIEW_APPROVED, **audit,
+        )
+        # The whole-cover scan sits on the Cover; the Marking has no image.
+        path = Path(MEDIA_ROOT) / "va/cover-front.jpg"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        PILImage.new("RGB", (400, 200), color=(190, 170, 140)).save(path)
+        self.source = Image.objects.create(
+            subject_type=Image.SUBJECT_COVER, subject_id=self.cover.pk,
+            original_filename="cover-front.jpg", storage_filename="va/cover-front.jpg",
+            file_checksum="seed", mime_type="image/jpeg", image_width=400, image_height=200,
+            file_size_bytes=path.stat().st_size, image_view="FRONT", display_order=0,
+            uploaded_by=self.admin, **audit,
+        )
+
+    def _crop_into(self, marking_id, **body):
+        payload = {"x": 10, "y": 20, "width": 100, "height": 80,
+                   "subject_type": "MARKING", "subject_id": marking_id}
+        payload.update(body)
+        return self.client.post(f"/api/v2/images/{self.source.pk}/crop/", payload, format="json")
+
+    def test_editor_crops_the_marking_out_of_the_cover_into_the_imageless_marking(self):
+        self.client.force_authenticate(self.editor)
+
+        response = self._crop_into(self.marking.pk)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        cropped = Image.objects.get(pk=response.data["image_id"])
+        self.assertEqual((cropped.subject_type, cropped.subject_id), (Image.SUBJECT_MARKING, self.marking.pk))
+        self.assertEqual(cropped.image_view, "FULL")
+        self.assertEqual(cropped.display_order, 0)
+        self.assertEqual(cropped.cropped_from_id, self.source.pk)
+        # The original stays on the cover, untouched.
+        self.source.refresh_from_db()
+        self.assertEqual((self.source.subject_type, self.source.subject_id), (Image.SUBJECT_COVER, self.cover.pk))
+        self.assertEqual(Image.objects.filter(subject_type=Image.SUBJECT_COVER, subject_id=self.cover.pk).count(), 1)
+
+    def test_destination_must_be_an_approved_association(self):
+        self.client.force_authenticate(self.editor)
+
+        unlinked = self._crop_into(self.other_marking.pk)
+        self.assertEqual(unlinked.status_code, 400, unlinked.data)
+
+        CoverMarking.objects.create(
+            cover=self.cover, marking=self.other_marking,
+            review_status=CoverMarking.REVIEW_PENDING,
+            created_by=self.admin, modified_by=self.admin,
+        )
+        pending = self._crop_into(self.other_marking.pk)
+        self.assertEqual(pending.status_code, 400, pending.data)
+        self.assertEqual(Image.objects.filter(cropped_from=self.source).count(), 0)
+
+    def test_destination_must_have_no_image(self):
+        self.client.force_authenticate(self.editor)
+        Image.objects.create(
+            subject_type=Image.SUBJECT_MARKING, subject_id=self.marking.pk,
+            original_filename="x.jpg", storage_filename="va/x.jpg", file_checksum="x",
+            mime_type="image/jpeg", image_width=10, image_height=10, file_size_bytes=1,
+            image_view="FULL", display_order=0, uploaded_by=self.admin,
+            created_by=self.admin, modified_by=self.admin,
+        )
+
+        response = self._crop_into(self.marking.pk)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("already has an image", response.data["detail"])
+        self.assertEqual(Image.objects.filter(cropped_from=self.source).count(), 0)
+
+    def test_a_cover_view_is_rejected_for_a_marking_destination_before_any_write(self):
+        self.client.force_authenticate(self.editor)
+        before = {p.name for p in (Path(MEDIA_ROOT) / "va").iterdir()}
+
+        response = self._crop_into(self.marking.pk, image_view="FRONT")
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual({p.name for p in (Path(MEDIA_ROOT) / "va").iterdir()}, before)
+
+    def test_editor_of_another_state_cannot_crop_into_the_marking(self):
+        other = User.objects.create_user("md-editor-2", password="pw")
+        other.groups.add(Group.objects.get(name="Editors"))
+        audit = {"created_by": self.admin, "modified_by": self.admin}
+        md_region = Region.objects.create(name="Maryland", abbrev="MD", region_tier="STATE", **audit)
+        md_collection = Collection.objects.create(name="Maryland Collection", region=md_region, **audit)
+        CollectionAssignment.objects.create(user=other, collection=md_collection, **audit)
+        self.client.force_authenticate(other)
+
+        response = self._crop_into(self.marking.pk)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(Image.objects.filter(cropped_from=self.source).count(), 0)

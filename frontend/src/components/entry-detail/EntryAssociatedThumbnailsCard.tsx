@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Replace, Star, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Crop, Replace, Star, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
@@ -20,6 +20,9 @@ export function EntryAssociatedThumbnailsCard({
   onMoveImage,
   moveImageLabel,
   moveImageDisabledReason = null,
+  onCropImage,
+  cropImageLabel,
+  cropImageDisabledReason = null,
   title = "Associated Thumbnails",
 }: {
   images: EntryGalleryImage[];
@@ -51,6 +54,14 @@ export function EntryAssociatedThumbnailsCard({
    * own reason and overrides this one.
    */
   moveImageDisabledReason?: string | null;
+  /**
+   * Crop a region of this image into another record (Trello T37, workspace
+   * issues.md #182): on the cover screen, into an associated Marking that has
+   * no image. Same visible-reason rule as move.
+   */
+  onCropImage?: (index: number) => void;
+  cropImageLabel?: string;
+  cropImageDisabledReason?: string | null;
 }) {
   return (
     <Card className="shadow-archival-md">
@@ -67,8 +78,14 @@ export function EntryAssociatedThumbnailsCard({
               // moved or deleted; that reason wins over a missing destination.
               const unsaved = img.imageId == null;
               const moveReason = unsaved ? UNSAVED_IMAGE_REASON : moveImageDisabledReason;
+              const cropReason = unsaved ? UNSAVED_IMAGE_REASON : cropImageDisabledReason;
               const deleteReason = unsaved ? UNSAVED_IMAGE_REASON : null;
-              const reasonText = onMoveImage ? moveReason : deleteReason;
+              // One line per distinct reason; the unsaved case collapses to one.
+              const reasons = [
+                onMoveImage ? moveReason : null,
+                onCropImage ? cropReason : null,
+                onDeleteImage && !onMoveImage && !onCropImage ? deleteReason : null,
+              ].filter((r, i, all): r is string => r != null && all.indexOf(r) === i);
               return (
               <div
                 key={`${img.imageId ?? img.originalFilename ?? "img"}-${idx}`}
@@ -129,8 +146,22 @@ export function EntryAssociatedThumbnailsCard({
                         </Button>
                       </div>
                     )}
-                    {(onMoveImage || onDeleteImage) && (
+                    {(onMoveImage || onCropImage || onDeleteImage) && (
                       <div className="flex items-center justify-center gap-0.5">
+                        {onCropImage && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            aria-label={cropImageLabel ?? "Crop into another record"}
+                            title={cropImageLabel ?? "Crop"}
+                            disabled={reorderingImages || cropReason != null}
+                            onClick={() => onCropImage(idx)}
+                          >
+                            <Crop className="h-3 w-3" />
+                          </Button>
+                        )}
                         {onMoveImage && (
                           <Button
                             type="button"
@@ -163,12 +194,15 @@ export function EntryAssociatedThumbnailsCard({
                         )}
                       </div>
                     )}
-                    {reasonText && (
+                    {reasons.map((reason) => (
                       // Text, not only a tooltip (issues.md 166 / #180).
-                      <p className="max-w-[10rem] text-center text-[10px] leading-tight text-muted-foreground">
-                        {reasonText}
+                      <p
+                        key={reason}
+                        className="max-w-[10rem] text-center text-[10px] leading-tight text-muted-foreground"
+                      >
+                        {reason}
                       </p>
-                    )}
+                    ))}
                   </div>
                 )}
               </div>

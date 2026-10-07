@@ -385,3 +385,29 @@ applier never called the repoint at all. Workspace `docs/DECISIONS.md`
 `CarriedOverMarkingImageTests`, `CarriedOverImageOnCoverEditTests`,
 `CarriedImagePositionHelperTests`, `coverFromImageHandoff.test.ts`; workspace
 `docs/issues.md` #181.
+
+## Crop Into A Destination Only Through The Crop Endpoint
+
+**Do:** Send a crop to another record with the optional `subject_type` /
+`subject_id` on `POST /images/{id}/crop/`. Accept only a Marking linked to
+the source Cover by an approved `CoverMarking` that currently has no image;
+check the editor's responsibility for both the source and the destination;
+validate the view before writing any file; keep the original image on the
+Cover. On the cover screen offer "Crop into marking" only as this
+destination action, visible and disabled with a reason when no Marking
+qualifies.
+
+**Don't:** Compose crop-then-move in the client, accept a destination the
+server has not validated, let a same-subject cover crop appear without a
+request behind it, or move or delete the source.
+
+**Why:** One request keeps the operation atomic and auditable through a
+single row with `cropped_from`; a client composition would leave a stray
+cover image whenever the second call failed, and would route the write
+through the image PATCH, which still checks role only (T73) -- a gap new
+write paths must not inherit. This reverses the crop docstring's earlier
+"crop and move stay separate, composable operations" for this one
+destination; the default same-subject crop is unchanged. Evidence:
+`ImageCropIntoMarkingTests`; `permissions.py`
+`user_is_responsible_for_subject`; `coverImageActionState.test.ts`;
+workspace `docs/issues.md` #182.
