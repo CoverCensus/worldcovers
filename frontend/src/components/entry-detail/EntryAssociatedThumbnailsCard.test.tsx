@@ -72,4 +72,48 @@ describe("EntryAssociatedThumbnailsCard", () => {
     expect(screen.getByRole("button", { name: "Move image to another record" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Delete image" })).toBeTruthy();
   });
+
+  // Workspace issues.md #180 / Trello T37: the cover screen used to hide
+  // "Move to marking" when no Marking was linked (issues.md 166 on the other
+  // detail screen). The control must stay, disabled, with the reason as text.
+  it("keeps the move control visible and disabled with its reason when there is no destination", () => {
+    render(
+      <EntryAssociatedThumbnailsCard
+        images={[images[0]]}
+        carouselApi={undefined}
+        currentIndex={0}
+        emptyMessage="No images"
+        canReorder={false}
+        onMoveImage={jest.fn()}
+        moveImageLabel="Move to marking"
+        moveImageDisabledReason="This cover has no associated Marking to move the image to."
+        onDeleteImage={jest.fn()}
+      />,
+    );
+
+    const move = screen.getByRole("button", { name: "Move to marking" });
+    expect(move.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText(/no associated Marking/)).toBeTruthy();
+    // Delete is unaffected by a missing move destination.
+    expect(screen.getByRole("button", { name: "Delete image" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("shows move and delete disabled for an unsaved image instead of hiding them", () => {
+    render(
+      <EntryAssociatedThumbnailsCard
+        images={[{ ...images[0], imageId: null }]}
+        carouselApi={undefined}
+        currentIndex={0}
+        emptyMessage="No images"
+        canReorder={false}
+        onMoveImage={jest.fn()}
+        moveImageLabel="Move to marking"
+        onDeleteImage={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Move to marking" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Delete image" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText(/not been saved/)).toBeTruthy();
+  });
 });

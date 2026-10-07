@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import type { CarouselApi } from "@/components/ui/carousel";
 import type { EntryGalleryImage } from "./types";
+import { UNSAVED_IMAGE_REASON } from "@/lib/coverImageActionState";
 
 export function EntryAssociatedThumbnailsCard({
   images,
@@ -18,6 +19,7 @@ export function EntryAssociatedThumbnailsCard({
   onDeleteImage,
   onMoveImage,
   moveImageLabel,
+  moveImageDisabledReason = null,
   title = "Associated Thumbnails",
 }: {
   images: EntryGalleryImage[];
@@ -41,6 +43,14 @@ export function EntryAssociatedThumbnailsCard({
   /** Reassign the image to another subject (issue #48), e.g. cover → marking. */
   onMoveImage?: (index: number) => void;
   moveImageLabel?: string;
+  /**
+   * Why "move" is disabled right now, or null when it is usable (workspace
+   * issues.md #180). Rendered as visible text under the controls, never only
+   * as a tooltip: a tooltip on a disabled button is unreliable to reach and
+   * invisible to anyone not hovering. An unsaved image (no `imageId`) has its
+   * own reason and overrides this one.
+   */
+  moveImageDisabledReason?: string | null;
 }) {
   return (
     <Card className="shadow-archival-md">
@@ -52,7 +62,14 @@ export function EntryAssociatedThumbnailsCard({
           <p className="text-sm text-muted-foreground">{emptyMessage}</p>
         ) : (
           <div className="flex gap-3 overflow-x-auto pb-1">
-            {images.map((img, idx) => (
+            {images.map((img, idx) => {
+              // Unsaved rows (draft previews, uploads not yet saved) cannot be
+              // moved or deleted; that reason wins over a missing destination.
+              const unsaved = img.imageId == null;
+              const moveReason = unsaved ? UNSAVED_IMAGE_REASON : moveImageDisabledReason;
+              const deleteReason = unsaved ? UNSAVED_IMAGE_REASON : null;
+              const reasonText = onMoveImage ? moveReason : deleteReason;
+              return (
               <div
                 key={`${img.imageId ?? img.originalFilename ?? "img"}-${idx}`}
                 className="flex flex-col items-center gap-1 shrink-0"
@@ -112,7 +129,7 @@ export function EntryAssociatedThumbnailsCard({
                         </Button>
                       </div>
                     )}
-                    {img.imageId != null && (onMoveImage || onDeleteImage) && (
+                    {(onMoveImage || onDeleteImage) && (
                       <div className="flex items-center justify-center gap-0.5">
                         {onMoveImage && (
                           <Button
@@ -122,7 +139,7 @@ export function EntryAssociatedThumbnailsCard({
                             className="h-6 w-6"
                             aria-label={moveImageLabel ?? "Move image to another record"}
                             title={moveImageLabel ?? "Move image"}
-                            disabled={reorderingImages}
+                            disabled={reorderingImages || moveReason != null}
                             onClick={() => onMoveImage(idx)}
                           >
                             <Replace className="h-3 w-3" />
@@ -136,7 +153,9 @@ export function EntryAssociatedThumbnailsCard({
                             className="h-6 w-6 text-destructive hover:text-destructive"
                             aria-label="Delete image"
                             title="Delete image"
-                            disabled={reorderingImages || deletingImageId === img.imageId}
+                            disabled={
+                              reorderingImages || unsaved || deletingImageId === img.imageId
+                            }
                             onClick={() => onDeleteImage(idx)}
                           >
                             <Trash2 className="h-3 w-3" />
@@ -144,10 +163,17 @@ export function EntryAssociatedThumbnailsCard({
                         )}
                       </div>
                     )}
+                    {reasonText && (
+                      // Text, not only a tooltip (issues.md 166 / #180).
+                      <p className="max-w-[10rem] text-center text-[10px] leading-tight text-muted-foreground">
+                        {reasonText}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </CardContent>

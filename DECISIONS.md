@@ -341,3 +341,25 @@ for `created_by` / `modified_by` (ISSUE.md T78). No client code read them.
 The regression test is `common/tests/test_marking_public_user_fields.py`.
 Evidence: workspace `docs/issues.md` #178; OWASP API3:2023 Broken Object
 Property Level Authorization; DRF "Specifying which fields to include".
+
+## Show Eligible Image Actions With A Reason, Never Hide Them
+
+**Do:** On the Marking and Cover detail screens, render an editor's per-image
+controls whenever the editor may act at all (`canManageImages` /
+`imageActionState.showControls`), and disable a control with its reason as
+visible text when the image is unsaved or its destination is missing
+(`lib/imageActionState.ts`, `lib/coverImageActionState.ts`). Keep "Create
+cover from this image" as the Marking-to-Cover path.
+
+**Don't:** Hide a control because a destination list is empty, show a reason
+only in a tooltip, or restore "Move to another marking" (removed at Ian's
+request on 2026-09-21; ISSUE.md T33/T35). Do not widen who may act: roles are
+unchanged and T20 owns any Contributor change.
+
+**Why:** A hidden control reads as a missing feature; a Delaware editor lost
+two days to one on the marking screen (workspace `docs/issues.md` 166). The
+cover screen had the same defect in the other direction: it passed no
+`onMoveImage` when the cover had no associated Marking and hid move and
+delete for an unsaved image. Evidence: workspace `docs/issues.md` #180;
+`EntryAssociatedThumbnailsCard.test.tsx`, `CoverDetail.imageActions.test.tsx`,
+`coverImageActionState.test.ts`.
