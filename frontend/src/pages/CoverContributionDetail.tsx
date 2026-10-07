@@ -28,7 +28,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
-import { CARRIED_OVER_LABEL } from "@/lib/coverFromImageHandoff";
+import { CARRIED_OVER_LABEL,
+  insertCarriedTile,
+} from "@/lib/coverFromImageHandoff";
 import { dashboardHref, dashboardHrefForTab } from "@/lib/dashboardParams";
 import { coverTypeLabel as sharedCoverTypeLabel } from "@/lib/coverTypes";
 import { readReturnTo } from "@/lib/returnTo";
@@ -325,29 +327,31 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   // image instead, and it shows first, as it did on the form. `images` stays
   // metas-only above so the tracing flags keep their positions.
   const carried = contribution?.sourceMarkingImage ?? null;
-  const galleryImages = useMemo<EntryGalleryImage[]>(
-    () => [
-      ...(carried
-        ? [
-            {
-              imageUrl: carried.imageUrl,
-              originalFilename: carried.originalFilename || CARRIED_OVER_LABEL,
-              isTracing: false,
-              isDefault: true,
-              imageId: carried.imageId,
-            },
-          ]
-        : []),
-      ...images.map((img, index) => ({
-        imageUrl: img.imageUrl,
-        originalFilename: img.originalFilename,
-        isTracing: img.isTracing,
-        isDefault: !carried && index === 0,
-        imageId: null,
-      })),
-    ],
-    [images, carried],
-  );
+  const galleryImages = useMemo<EntryGalleryImage[]>(() => {
+    const uploads: EntryGalleryImage[] = images.map((img) => ({
+      imageUrl: img.imageUrl,
+      originalFilename: img.originalFilename,
+      isTracing: img.isTracing,
+      isDefault: false,
+      imageId: null,
+    }));
+    // The carried tile sits where the contributor left it (workspace
+    // issues.md #181), and approval will place the row at the same slot.
+    const ordered = carried
+      ? insertCarriedTile(
+          uploads,
+          {
+            imageUrl: carried.imageUrl,
+            originalFilename: carried.originalFilename || CARRIED_OVER_LABEL,
+            isTracing: false,
+            isDefault: false,
+            imageId: carried.imageId,
+          },
+          carried.position,
+        )
+      : uploads;
+    return ordered.map((img, index) => ({ ...img, isDefault: index === 0 }));
+  }, [images, carried]);
 
   const citations = useMemo<EntryCitationItem[]>(() => {
     const ids = parseReferenceWorkIds(
