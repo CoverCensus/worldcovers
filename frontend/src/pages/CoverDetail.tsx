@@ -18,6 +18,7 @@ import { EntryImageGalleryCard } from "@/components/entry-detail/EntryImageGalle
 import { EntryAssociatedThumbnailsCard } from "@/components/entry-detail/EntryAssociatedThumbnailsCard";
 import { EntryTargetPicker } from "@/components/entry-detail/EntryTargetPicker";
 import { compareMarkingTargets, describeMarkingTarget } from "@/lib/moveTargetDisplay";
+import { moveToMarkingDisabledReason } from "@/lib/coverImageActionState";
 import { EntryRecordHistoryCard } from "@/components/entry-detail/EntryRecordHistoryCard";
 import { EntryCitationsCard, type EntryCitationItem } from "@/components/entry-detail/EntryCitationsCard";
 import { CoverRecordDetailFields } from "@/components/entry-detail/CoverRecordDetailFields";
@@ -793,6 +794,14 @@ const CoverDetailPage = () => {
   // Count every associated marking, not just ratemarks: the header is labeled
   // "Associated Markings" and the list below renders all of them.
   const associatedMarkingCount = associatedMarkings.length;
+  // Workspace issues.md #180 / Trello T37: the move control stays on screen
+  // whenever the editor may manage images; a missing destination disables it
+  // with a visible reason instead of hiding it (issues.md 166 on the marking
+  // screen). Permission (`canManageImages`) still decides whether it renders.
+  const moveToMarkingReason = moveToMarkingDisabledReason({
+    associatedMarkingCount,
+    loadError: markingsLoadError,
+  });
 
   return (
     <>
@@ -828,8 +837,11 @@ const CoverDetailPage = () => {
               onSetDefault={setImageAsDefault}
               onDeleteImage={canManageImages ? handleDeleteImage : undefined}
               onMoveImage={
-                canManageImages && !cover.isRemoved && associatedMarkings.length > 0
+                canManageImages
                   ? (index) => {
+                      // The button is disabled while a reason stands; this
+                      // guard only covers a stale click during a reload.
+                      if (moveToMarkingReason != null) return;
                       setMoveImageIndex(index);
                       setMoveImageTargetMarkingId(
                         associatedMarkings[0]?.marking.id ?? null,
@@ -840,6 +852,7 @@ const CoverDetailPage = () => {
                   : undefined
               }
               moveImageLabel="Move to marking"
+              moveImageDisabledReason={moveToMarkingReason}
             />
             {canViewHistory && (
               <EntryRecordHistoryCard

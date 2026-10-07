@@ -38,8 +38,6 @@ import {
   coverLikeMarkingImages,
   isLastMarkingImage,
 } from "@/lib/coverLikeMarkingImages";
-import {
-} from "@/lib/moveTargetDisplay";
 import { imageActionState } from "@/lib/imageActionState";
 import {
   countyDisplay,
@@ -88,8 +86,6 @@ import { SUBMISSION_LABELS } from "@/labels/submission";
 import { useAuth } from "@/hooks/useAuth";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import {
-} from "@/services/covers";
 import { readVphcProvenance } from "@/lib/vphcProvenance";
 import { earliestDateSeen } from "@/lib/associatedCoverSort";
 import { VphcProvenanceCard } from "@/components/VphcProvenanceCard";
@@ -347,9 +343,6 @@ const RecordDetail = () => {
   const [restoring, setRestoring] = useState(false);
   // Image whose marking an editor is cropping out of a whole-cover scan (#77).
   const [cropImageTarget, setCropImageTarget] = useState<MarkingImage | null>(null);
-  // Move an image to another marking at the same town (#104 / C3): the second
-  // half of the crop -> reattach workflow for scans that hold two devices.
-
   // issues.md 167 / Trello T37: create a cover from a marking image.
   // Own busy/error pair rather than sharing the move-to-cover one: they are
   // two independent dialogs, and shared state lets a failure in one surface
@@ -1617,12 +1610,6 @@ const RecordDetail = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* issues.md 167 / Trello T37 -- create the destination that does not
-          exist yet. The fields live in CreateCoverFromImageForm so they can be
-          tested without driving this Radix overlay. */}
-
-
-
       <CropImageDialog
         open={cropImageTarget != null}
         onOpenChange={(open) => {
@@ -1634,7 +1621,7 @@ const RecordDetail = () => {
           toast({
             title: "Crop saved",
             description:
-              "Added as a new image on this record. You can now move the original to a cover.",
+              "Added as a new image on this marking.",
           });
           if (markingId != null) {
             const refreshed = await getMarkingById(markingId);
