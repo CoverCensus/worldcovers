@@ -53,6 +53,7 @@ from common.catalog_codes import (
     suggest_for_contribution,
 )
 from common.contribution_apply import (
+    _source_marking_image_position,
     ContributionApplyError,
     MARKING_DATE_SUBMIT_KEYS,
     _parse_int,
@@ -3506,6 +3507,21 @@ class ContributionSubmitView(APIView):
         if is_cover_submission:
             submitted_data["submission_kind"] = "cover"
             submitted_data["entity_type"] = "cover"
+            # Where the contributor left the carried-over tile (workspace
+            # issues.md #181). image_order is consumed above and never stored,
+            # so the index is persisted here for approval to honour. Absent
+            # order means the tile's default slot, 0.
+            carried_pk = _source_marking_image_id(submitted_data)
+            if carried_pk is not None:
+                carried_storage = (
+                    Image.objects.filter(pk=carried_pk)
+                    .values_list("storage_filename", flat=True)
+                    .first()
+                )
+                position = _carried_image_position(image_order, carried_storage)
+                submitted_data["source_marking_image_position"] = (
+                    position if position is not None else 0
+                )
         else:
             submitted_data["submission_kind"] = submitted_data.get("submission_kind") or "marking"
             submitted_data["entity_type"] = "marking"
@@ -3904,6 +3920,29 @@ def _normalize_order_key(value):
     return s
 
 
+def _carried_image_position(image_order, storage_filename):
+    """0-based index of the carried marking image in the contributor's gallery
+    order, or None when the order is unusable or names no such tile.
+
+    Workspace issues.md #181 / Trello T37. The form emits one token per tile:
+    "__new__" for an upload, otherwise the tile's media URL, which for the
+    carried image is the catalog row's storage_filename behind a media prefix.
+    Matched by the same tail rule as _storage_filename_removed.
+    """
+    if not isinstance(image_order, list) or not image_order:
+        return None
+    sf = _normalize_order_key(storage_filename)
+    if not sf:
+        return None
+    for index, token in enumerate(image_order):
+        tok = _normalize_order_key(token)
+        if tok == "__new__" or not tok:
+            continue
+        if tok == sf or tok.endswith(sf):
+            return index
+    return None
+
+
 def _reorder_metas_by_image_order(combined, new_metas, image_order):
     """Return `combined` reordered to match the contributor-chosen `image_order`.
 
@@ -4003,6 +4042,7 @@ def _apply_existing_image_reconciliation(
             )
             if _storage_filename_removed(carried_storage, removed_set):
                 existing_sd.pop("source_marking_image_id", None)
+                existing_sd.pop("source_marking_image_position", None)
         # image_meta is the catalog-default thumbnail pointer; if it was just
         # removed, replace it with the next surviving meta (or None if none).
         primary = existing_sd.get("image_meta")
@@ -4016,6 +4056,21 @@ def _apply_existing_image_reconciliation(
                     replacement = fallback_list[0]
                     break
             existing_sd["image_meta"] = replacement
+
+    # The carried tile's slot follows the same reorder (workspace issues.md
+    # #181): recompute it from this save's image_order when the tile is still
+    # carried and the order names it. A save without an order keeps the stored
+    # slot, exactly as it keeps the stored id.
+    carried_id = _source_marking_image_id(existing_sd)
+    if carried_id is not None and isinstance(image_order, list) and image_order:
+        carried_storage = (
+            Image.objects.filter(pk=carried_id)
+            .values_list("storage_filename", flat=True)
+            .first()
+        )
+        position = _carried_image_position(image_order, carried_storage)
+        if position is not None:
+            existing_sd["source_marking_image_position"] = position
 
     updates = {}
     # When the contributor only reordered prior images (no new uploads),

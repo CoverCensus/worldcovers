@@ -48,6 +48,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db.models import F
 from django.db.models import Count
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -629,15 +630,23 @@ def _apply_cover_edit(
     )
 
     _sync_cover_date_seen(cover.pk, payload, actor)
-    _sync_images(
-        Image.SUBJECT_COVER,
-        cover.pk,
-        payload,
-        actor,
-        image_view="FRONT",
-        metas_keys=("cover_image_metas", "image_metas"),
-        tags_key="cover_image_tags",
-    )
+    # Same carried-image rule as the create path (workspace issues.md #181):
+    # a cover edit may name a parent-marking image to carry over, and such a
+    # payload can legitimately arrive with no metas at all. The repoint runs
+    # AFTER _sync_images for the same reason as on create.
+    cover_metas_keys = ("cover_image_metas", "image_metas")
+    carried_over = _source_marking_image_id(payload) is not None
+    if not (carried_over and not _has_image_metas(payload, cover_metas_keys)):
+        _sync_images(
+            Image.SUBJECT_COVER,
+            cover.pk,
+            payload,
+            actor,
+            image_view="FRONT",
+            metas_keys=cover_metas_keys,
+            tags_key="cover_image_tags",
+        )
+    _repoint_source_marking_image(payload, cover.pk, parent_marking.pk, actor)
     _sync_citations("COVER", cover.pk, payload, actor)
     _sync_cover_valuation(cover.pk, payload, actor)
 
@@ -1109,6 +1118,26 @@ def _source_marking_image_id(payload) -> int | None:
     return value if value > 0 else None
 
 
+def _source_marking_image_position(payload) -> int:
+    """Where the contributor left the carried-over tile in the cover gallery.
+
+    Trello T37 (workspace issues.md #181). The form and the review page show
+    the carried image where the contributor arranged it, first by default; the
+    submit view records that index as `source_marking_image_position` because
+    `image_order` itself is consumed at submit and never stored. Absent or
+    malformed means 0: the tile's default position, and the behaviour the form
+    showed before the index existed.
+    """
+    raw = payload.get("source_marking_image_position")
+    if raw in (None, ""):
+        return 0
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return 0
+    return value if value > 0 else 0
+
+
 def _repoint_source_marking_image(payload, cover_pk: int, parent_marking_pk: int, actor) -> bool:
     """Move the carried-over image from its marking onto the new cover.
 
@@ -1143,17 +1172,21 @@ def _repoint_source_marking_image(payload, cover_pk: int, parent_marking_pk: int
         # Already moved, or gone. Not an error.
         return False
 
+    # Place the row where the contributor left the tile (workspace issues.md
+    # #181). _sync_images has just numbered the cover's uploads 0..n-1, so
+    # shifting everything at or after the slot by one and taking the slot is
+    # exact; a position past the end appends. Still one repoint, never a copy
+    # or a delete.
+    siblings = Image.objects.filter(subject_type=Image.SUBJECT_COVER, subject_id=cover_pk)
+    slot = min(_source_marking_image_position(payload), siblings.count())
+    siblings.filter(display_order__gte=slot).update(display_order=F("display_order") + 1)
+
     # Cover subjects accept FRONT/BACK/INTERIOR/DETAIL only; a marking's "FULL"
     # is rejected by the DB check constraint.
-    last = (
-        Image.objects.filter(subject_type=Image.SUBJECT_COVER, subject_id=cover_pk)
-        .order_by("-display_order")
-        .first()
-    )
     row.subject_type = Image.SUBJECT_COVER
     row.subject_id = cover_pk
     row.image_view = "FRONT"
-    row.display_order = 0 if last is None else last.display_order + 1
+    row.display_order = slot
     row.modified_by = actor
     row.save(
         update_fields=[

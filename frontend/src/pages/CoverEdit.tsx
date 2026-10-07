@@ -3,6 +3,7 @@ import {
   CARRIED_OVER_LABEL,
   markingImageFromSourceMarkingImage,
   sourceMarkingImageFromState,
+  insertCarriedTile,
 } from "@/lib/coverFromImageHandoff";
 import {
   COVER_TYPE_OPTIONS,
@@ -400,16 +401,19 @@ export default function CoverEdit() {
             key: normalizeImageUrl(img.imageUrl),
             img: { ...img, isTracing: tags[i] === "tracing" },
           }));
+          // Back at the slot the contributor left it in (workspace issues.md
+          // #181); first when the draft predates the recorded position.
           setGallery(
             carried
-              ? [
+              ? insertCarriedTile(
+                  metaItems,
                   {
                     kind: "existing" as const,
                     key: normalizeImageUrl(carried.imageUrl),
                     img: markingImageFromSourceMarkingImage(carried, markingId),
                   },
-                  ...metaItems,
-                ]
+                  carried.position,
+                )
               : metaItems,
           );
         }

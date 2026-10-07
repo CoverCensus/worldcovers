@@ -363,3 +363,25 @@ cover screen had the same defect in the other direction: it passed no
 delete for an unsaved image. Evidence: workspace `docs/issues.md` #180;
 `EntryAssociatedThumbnailsCard.test.tsx`, `CoverDetail.imageActions.test.tsx`,
 `coverImageActionState.test.ts`.
+
+## Approve Images In The Order The Contributor Arranged
+
+**Do:** Record the carried marking image's gallery index as
+`source_marking_image_position` when a cover submission is saved
+(`image_order` is consumed at submit and never stored), expose it on the
+contribution detail as `source_marking_image.position`, and let approval place
+the repointed row at that slot, shifting later rows by one
+(`_repoint_source_marking_image`). Honour `source_marking_image_id` on a cover
+edit exactly as on a create, including the "no metas, one carried image" case.
+
+**Don't:** Append the carried image after the uploads, copy or re-upload it,
+delete and recreate it, or run `_sync_images` after the repoint.
+
+**Why:** The form and the review page showed the carried tile where the
+contributor put it (first by default) while approval appended it last, so the
+published cover disagreed with what both screens had shown. The cover-edit
+applier never called the repoint at all. Workspace `docs/DECISIONS.md`
+2026-09-27 had left this "on purpose, on the T37 card"; closed here. Evidence:
+`CarriedOverMarkingImageTests`, `CarriedOverImageOnCoverEditTests`,
+`CarriedImagePositionHelperTests`, `coverFromImageHandoff.test.ts`; workspace
+`docs/issues.md` #181.

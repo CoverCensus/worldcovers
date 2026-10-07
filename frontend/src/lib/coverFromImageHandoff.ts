@@ -31,6 +31,13 @@ export interface SourceMarkingImage {
   imageUrl: string;
   originalFilename?: string;
   storageFilename?: string;
+  /**
+   * Where the contributor left the tile in the gallery, 0-based, as the server
+   * recorded it at the last save (workspace issues.md #181). Undefined on a
+   * first visit from the marking screen and for drafts saved before the field
+   * existed; both mean "first".
+   */
+  position?: number;
 }
 
 function str(v: unknown): string {
@@ -41,6 +48,11 @@ function num(v: unknown): number {
   if (typeof v === "number") return v;
   if (typeof v === "string" && v.trim() !== "") return Number(v);
   return Number.NaN;
+}
+
+function positionOrUndefined(v: unknown): number | undefined {
+  const n = num(v);
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
 }
 
 /**
@@ -69,7 +81,19 @@ export function sourceMarkingImageFromDescriptor(raw: unknown): SourceMarkingIma
     imageUrl,
     originalFilename: str(o.originalFilename ?? o.original_filename) || undefined,
     storageFilename: str(o.storageFilename ?? o.storage_filename) || undefined,
+    position: positionOrUndefined(o.position),
   };
+}
+
+/**
+ * Put the carried tile back where the contributor left it. Undefined means
+ * first, which is also the default slot on a first visit; a position past the
+ * end appends. Approval applies the same rule (`_repoint_source_marking_image`),
+ * so the form, the review page and the catalog agree.
+ */
+export function insertCarriedTile<T>(items: readonly T[], carried: T, position: number | undefined): T[] {
+  const slot = position == null ? 0 : Math.min(Math.max(0, Math.trunc(position)), items.length);
+  return [...items.slice(0, slot), carried, ...items.slice(slot)];
 }
 
 /** The descriptor the marking screen sends through router state, or null. */

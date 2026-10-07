@@ -20,7 +20,7 @@ from common.catalog_codes import (
     strip_catalog_code_keys,
     validate_unique_catalog_code,
 )
-from common.contribution_apply import _source_marking_image_id
+from common.contribution_apply import _source_marking_image_id, _source_marking_image_position
 from common.contribution_consolidation import contribution_target
 from common.models import (
     Citation,
@@ -1553,6 +1553,9 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
             "original_filename": row.original_filename or "",
             "storage_filename": row.storage_filename or "",
             "marking_id": parent_pk,
+            # Where the contributor left the tile (workspace issues.md #181);
+            # the form and the review page place it there, approval too.
+            "position": _source_marking_image_position(sd),
         }
 
 
