@@ -805,7 +805,7 @@ class ImageViewSet(viewsets.ModelViewSet):
         permission_classes=[IsEditorOrAdminWrite, IsResponsibleForImageSubject],
     )
     def crop(self, request, pk=None):
-        """Save a rectangle of this image as a new image on the same subject.
+        """Save a rectangle of this image as a new image.
 
         Built for the repair in issue #78: much of the catalog has a scan of a
         whole cover sitting in a marking's image slot. The full scan belongs on
@@ -814,15 +814,74 @@ class ImageViewSet(viewsets.ModelViewSet):
         first gives the marking a real closeup, and the original can then be
         moved with the existing PATCH (issue #48).
 
-        Deliberately does not relocate anything: crop and move stay separate,
-        composable operations. The source file is never modified, so a bad crop
-        costs one delete.
+        By default the crop lands on the source's own subject. Trello T37
+        (workspace issues.md #182) adds the one destination that scan-first
+        catalogues need: from a Cover, the crop may be sent to an associated
+        Marking that has no image yet (`subject_type` + `subject_id`). The
+        server owns the rule -- an approved CoverMarking link, zero images on
+        the Marking, and an editor responsible for BOTH subjects -- so the
+        operation stays one request and one audited row with `cropped_from`,
+        and the region-scope gap of the image PATCH (T73) is not inherited.
+        The source is never moved or modified, so a bad crop costs one delete.
 
         Body: {"x": int, "y": int, "width": int, "height": int,
-               "image_view": optional, "image_description": optional}
+               "image_view": optional, "image_description": optional,
+               "subject_type": optional "MARKING", "subject_id": optional int}
         """
         source = self.get_object()
         self.check_object_permissions(request, source)
+
+        # Optional destination (workspace issues.md #182 / Trello T37).
+        destination = None
+        dest_type_raw = str(request.data.get("subject_type") or "").strip().upper()
+        dest_id_raw = request.data.get("subject_id")
+        if dest_type_raw or dest_id_raw not in (None, ""):
+            dest_id = _parse_int(dest_id_raw)
+            if (
+                source.subject_type != Image.SUBJECT_COVER
+                or dest_type_raw != Image.SUBJECT_MARKING
+                or dest_id is None
+            ):
+                return Response(
+                    {"detail": "A crop can only be sent to a Marking associated with this Cover."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # Default manager on purpose: a recycle-binned marking takes no crops.
+            if not Marking.objects.filter(pk=dest_id).exists():
+                return Response(
+                    {"detail": "Unknown marking id: {}.".format(dest_id)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not CoverMarking.objects.filter(
+                cover_id=source.subject_id,
+                marking_id=dest_id,
+                review_status=CoverMarking.REVIEW_APPROVED,
+            ).exists():
+                return Response(
+                    {"detail": "Marking {} is not an approved association of this Cover.".format(dest_id)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if Image.objects.filter(
+                subject_type=Image.SUBJECT_MARKING, subject_id=dest_id
+            ).exists():
+                return Response(
+                    {
+                        "detail": (
+                            "Marking {} already has an image; cropping into it is "
+                            "offered only when it has none.".format(dest_id)
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # Responsibility for the destination as well as the source. The
+            # object permission above covered the Cover only.
+            if not user_is_responsible_for_subject(request.user, Image.SUBJECT_MARKING, dest_id):
+                return Response(
+                    {"detail": "You are not responsible for Marking {}.".format(dest_id)},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            destination = (Image.SUBJECT_MARKING, dest_id)
+        target_type, target_id = destination or (source.subject_type, source.subject_id)
 
         try:
             box = tuple(
@@ -859,50 +918,65 @@ class ImageViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Validate the view against the TARGET subject before anything is
+        # written, so no orphan file is left behind by a bad request.
+        default_view = (
+            Image.MARKING_VIEW_CHOICES[0]
+            if target_type == Image.SUBJECT_MARKING
+            else Image.COVER_VIEW_CHOICES[-1]
+        )
+        image_view = (request.data.get("image_view") or default_view).strip().upper()
+        allowed_views = (
+            Image.MARKING_VIEW_CHOICES
+            if target_type == Image.SUBJECT_MARKING
+            else Image.COVER_VIEW_CHOICES
+        )
+        if image_view not in allowed_views:
+            return Response(
+                {"image_view": [f"Must be one of {allowed_views} for this subject."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Keep the crop beside its source so media stays sorted by state.
         subdir = str(Path(source.storage_filename).parent).strip("/.")
         suffix = Path(source.storage_filename).suffix or ".jpg"
         storage_name = f"{uuid.uuid4().hex}{suffix}"
         if subdir:
             storage_name = f"{subdir}/{storage_name}"
-        destination = Path(settings.MEDIA_ROOT) / storage_name
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(content)
-
-        default_view = (
-            Image.MARKING_VIEW_CHOICES[0]
-            if source.subject_type == Image.SUBJECT_MARKING
-            else Image.COVER_VIEW_CHOICES[-1]
-        )
-        image_view = (request.data.get("image_view") or default_view).strip().upper()
-        allowed_views = (
-            Image.MARKING_VIEW_CHOICES
-            if source.subject_type == Image.SUBJECT_MARKING
-            else Image.COVER_VIEW_CHOICES
-        )
-        if image_view not in allowed_views:
-            destination.unlink(missing_ok=True)
-            return Response(
-                {"image_view": [f"Must be one of {allowed_views} for this subject."]},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        destination_path = Path(settings.MEDIA_ROOT) / storage_name
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        destination_path.write_bytes(content)
 
         with transaction.atomic():
-            # Appended, never promoted to default: an editor decides which image
-            # represents the record using the existing reorder controls.
-            max_order = Image.objects.filter(
-                subject_type=source.subject_type,
-                subject_id=source.subject_id,
-            ).aggregate(max_order=Max("display_order"))["max_order"]
+            if destination is not None:
+                # Re-checked inside the transaction: the Marking must still be
+                # imageless, and the crop becomes its first (default) image.
+                if Image.objects.select_for_update().filter(
+                    subject_type=target_type, subject_id=target_id
+                ).exists():
+                    destination_path.unlink(missing_ok=True)
+                    return Response(
+                        {"detail": "Marking {} already has an image.".format(target_id)},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                display_order = 0
+            else:
+                # Appended, never promoted to default: an editor decides which
+                # image represents the record using the existing reorder controls.
+                max_order = Image.objects.filter(
+                    subject_type=target_type,
+                    subject_id=target_id,
+                ).aggregate(max_order=Max("display_order"))["max_order"]
+                display_order = (max_order or 0) + 1
             cropped = Image.objects.create(
-                subject_type=source.subject_type,
-                subject_id=source.subject_id,
+                subject_type=target_type,
+                subject_id=target_id,
                 original_filename=source.original_filename[:255],
                 storage_filename=storage_name,
                 image_view=image_view,
                 image_description=(request.data.get("image_description") or "").strip(),
                 is_tracing=source.is_tracing,
-                display_order=(max_order or 0) + 1,
+                display_order=display_order,
                 cropped_from=source,
                 uploaded_by=request.user,
                 created_by=request.user,

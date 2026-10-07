@@ -107,7 +107,8 @@ describe("Cover page image actions", () => {
     openPage();
     const move = await screen.findByRole("button", { name: "Move to marking" });
     expect(move.hasAttribute("disabled")).toBe(true);
-    expect(screen.getByText(/no associated Marking/)).toBeTruthy();
+    // Two reasons now mention it (move and crop); check the move one.
+    expect(screen.getByText(/no associated Marking to move/)).toBeTruthy();
   });
 
   it("enables Move to marking once a Marking is linked", async () => {
@@ -118,6 +119,28 @@ describe("Cover page image actions", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Move to marking" }).hasAttribute("disabled")).toBe(false),
     );
-    expect(screen.queryByText(/no associated Marking/)).toBeNull();
+    expect(screen.queryByText(/no associated Marking to move/)).toBeNull();
+  });
+
+  // Trello T37 / workspace issues.md #182: crop from the cover into an
+  // associated Marking that has no image.
+  it("enables Crop into marking when an associated Marking has no image", async () => {
+    links.mockResolvedValue({ links: [approvedLink], error: null });
+    markings.mockResolvedValue([{ link: approvedLink, marking, defaultImageUrl: null }]);
+    openPage();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Crop into marking" }).hasAttribute("disabled")).toBe(false),
+    );
+  });
+
+  it("keeps Crop into marking visible and disabled when every Marking already has an image", async () => {
+    links.mockResolvedValue({ links: [approvedLink], error: null });
+    markings.mockResolvedValue([
+      { link: approvedLink, marking: { ...marking, images: [{ imageId: 1 }] }, defaultImageUrl: "/m.jpg" },
+    ]);
+    openPage();
+    const crop = await screen.findByRole("button", { name: "Crop into marking" });
+    await waitFor(() => expect(screen.getByText(/already has an image/)).toBeTruthy());
+    expect(crop.hasAttribute("disabled")).toBe(true);
   });
 });
