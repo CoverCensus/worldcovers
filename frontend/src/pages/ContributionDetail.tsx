@@ -41,6 +41,9 @@ import {
 import { submittedDataToFieldInput } from "@/lib/contributionToFields";
 import { readVphcProvenance } from "@/lib/vphcProvenance";
 import { VphcProvenanceCard } from "@/components/VphcProvenanceCard";
+import { EntryCitationsCard } from "@/components/entry-detail/EntryCitationsCard";
+import { submissionCitations } from "@/lib/submissionCitations";
+import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
 import type { MarkingFieldInput } from "@/lib/markingFields";
 import {
   type Contribution,
@@ -106,6 +109,8 @@ const ContributionDetail = () => {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [letteringOptions, setLetteringOptions] = useState<LetteringOption[]>([]);
+  const [referenceWorks, setReferenceWorks] = useState<ReferenceWorkRecord[]>([]);
+  const [referenceWorksError, setReferenceWorksError] = useState<string | null>(null);
   const [dateFormatOptions, setDateFormatOptions] = useState<DateFormatOption[]>([]);
   const [carouselApi, setCarouselApi] = useState<CarouselApi>();
   const [carouselCurrent, setCarouselCurrent] = useState(0);
@@ -193,6 +198,13 @@ const ContributionDetail = () => {
           setLetteringOptions([]);
           setDateFormatOptions([]);
         }
+      });
+    getReferenceWorks()
+      .then((references) => {
+        if (!cancelled) setReferenceWorks(references);
+      })
+      .catch(() => {
+        if (!cancelled) setReferenceWorksError("Could not load Reference Work names. Reload before review.");
       });
     return () => {
       cancelled = true;
@@ -792,6 +804,11 @@ const ContributionDetail = () => {
                   {vphc ? <VphcProvenanceCard provenance={vphc} /> : null}
                 </CardContent>
               </Card>
+              {referenceWorksError && <p role="alert" className="text-destructive">{referenceWorksError}</p>}
+              <EntryCitationsCard
+                citations={submissionCitations(contribution.submittedData ?? {}, referenceWorks)}
+                emptyMessage="No Citations selected for this submission."
+              />
 
             </div>
           </div>

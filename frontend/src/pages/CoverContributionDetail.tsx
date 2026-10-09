@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { AssociatedMarkingPreviewCard } from "@/components/entry-detail/AssociatedMarkingPreviewCard";
 import { EntryAssociatedThumbnailsCard } from "@/components/entry-detail/EntryAssociatedThumbnailsCard";
-import { EntryCitationsCard, type EntryCitationItem } from "@/components/entry-detail/EntryCitationsCard";
+import { EntryCitationsCard } from "@/components/entry-detail/EntryCitationsCard";
 import { EntryDetailLayout } from "@/components/entry-detail/EntryDetailLayout";
 import { EntryImageGalleryCard } from "@/components/entry-detail/EntryImageGalleryCard";
 import { CoverRecordDetailFields } from "@/components/entry-detail/CoverRecordDetailFields";
@@ -58,10 +58,7 @@ import {
 import { getMarkingById, type MarkingRecord } from "@/services/markings";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
 
-type ReferenceDetailInput = {
-  pageNumber: string;
-  citationUrl: string;
-};
+import { submissionCitations } from "@/lib/submissionCitations";
 
 function boolLabel(raw: unknown): string {
   if (raw === true || raw === "true" || raw === "1" || raw === 1) return "Yes";
@@ -95,84 +92,6 @@ function tracingFlagsFromSubmittedData(sd: Record<string, unknown>, imageCount: 
   return Array.from({ length: imageCount }, () => false);
 }
 
-function parseReferenceWorkIds(raw: unknown): number[] {
-  const values: unknown[] = [];
-  if (Array.isArray(raw)) {
-    values.push(...raw);
-  } else if (raw != null) {
-    values.push(raw);
-  }
-
-  const parsed: number[] = [];
-  const seen = new Set<number>();
-
-  for (const value of values) {
-    if (Array.isArray(value)) {
-      value.forEach((v) => values.push(v));
-      continue;
-    }
-    const text = String(value ?? "").trim();
-    if (!text) continue;
-    if (text.startsWith("[") && text.endsWith("]")) {
-      try {
-        const json = JSON.parse(text) as unknown;
-        if (Array.isArray(json)) {
-          json.forEach((v) => values.push(v));
-          continue;
-        }
-      } catch {
-        /* ignore malformed legacy payloads */
-      }
-    }
-    if (text.includes(",")) {
-      text.split(",").forEach((chunk) => values.push(chunk.trim()));
-      continue;
-    }
-    const id = Number.parseInt(text, 10);
-    if (Number.isNaN(id) || id <= 0 || seen.has(id)) continue;
-    seen.add(id);
-    parsed.push(id);
-  }
-
-  return parsed;
-}
-
-function parseReferenceWorkDetails(raw: unknown): Record<number, ReferenceDetailInput> {
-  if (raw == null) return {};
-  let list: unknown = raw;
-  if (typeof raw === "string") {
-    const text = raw.trim();
-    if (!text) return {};
-    try {
-      list = JSON.parse(text);
-    } catch {
-      return {};
-    }
-  }
-  if (!Array.isArray(list)) {
-    if (list && typeof list === "object") {
-      list = Object.entries(list as Record<string, unknown>).map(([id, detail]) => ({
-        reference_work_id: id,
-        ...(detail && typeof detail === "object" ? detail : {}),
-      }));
-    } else {
-      return {};
-    }
-  }
-
-  const out: Record<number, ReferenceDetailInput> = {};
-  for (const row of list as unknown[]) {
-    if (!row || typeof row !== "object") continue;
-    const rec = row as Record<string, unknown>;
-    const id = Number.parseInt(String(rec.reference_work_id ?? rec.referenceWorkId ?? ""), 10);
-    if (Number.isNaN(id) || id <= 0) continue;
-    out[id] = {
-      pageNumber: String(rec.page_number ?? rec.pageNumber ?? "").trim(),
-      citationUrl: String(rec.url ?? "").trim(),
-    };
-  }
-  return out;
-}
 
 interface CoverContributionDetailProps {
   initialContribution?: Contribution | null;
@@ -203,6 +122,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   const [parentMarking, setParentMarking] = useState<MarkingRecord | null>(null);
   const [parentMarkingError, setParentMarkingError] = useState<string | null>(null);
   const [referenceWorks, setReferenceWorks] = useState<ReferenceWorkRecord[]>([]);
+  const [referenceWorksError, setReferenceWorksError] = useState<string | null>(null);
 
   const locationState = location.state as {
     fromDashboard?: boolean;
@@ -278,11 +198,15 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     setParentMarking(null);
     setParentMarkingError(null);
     setReferenceWorks([]);
+    setReferenceWorksError(null);
 
     void (async () => {
       const [marking, refs] = await Promise.all([
         parentMarkingId != null ? getMarkingById(parentMarkingId) : Promise.resolve(null),
-        getReferenceWorks().catch(() => []),
+        getReferenceWorks().catch(() => {
+          if (!cancelled) setReferenceWorksError("Could not load Reference Work names. Reload before review.");
+          return [];
+        }),
       ]);
       if (cancelled) return;
       setParentMarking(marking);
@@ -349,43 +273,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     [images, carried],
   );
 
-  const citations = useMemo<EntryCitationItem[]>(() => {
-    const ids = parseReferenceWorkIds(
-      sd.reference_work_ids ?? sd.referenceWorkIds ?? sd["reference_work_ids[]"],
-    );
-    const detailsById = parseReferenceWorkDetails(
-      sd.reference_work_details ?? sd.referenceWorkDetails,
-    );
-    const citationIds =
-      ids.length > 0
-        ? ids
-        : Object.keys(detailsById)
-            .map((rawId) => Number.parseInt(rawId, 10))
-            .filter((value) => Number.isFinite(value) && value > 0);
-    const refsById = new Map(referenceWorks.map((row) => [row.id, row]));
-
-    return citationIds.map((refId, index) => {
-      const detail = detailsById[refId];
-      const referenceWork = refsById.get(refId) ?? null;
-      return {
-        id: refId * 1000 + index,
-        citationDetail: detail?.pageNumber || detail?.citationUrl || "",
-        referenceWork: referenceWork
-          ? {
-              code: referenceWork.code,
-              title: referenceWork.title,
-              authorship: referenceWork.authorship,
-              publisher: referenceWork.publisher,
-              publicationYear: referenceWork.publicationYear,
-              edition: referenceWork.edition,
-              volume: referenceWork.volume,
-              isbn: referenceWork.isbn,
-              url: referenceWork.url,
-            }
-          : null,
-      };
-    });
-  }, [referenceWorks, sd]);
+  const citations = useMemo(() => submissionCitations(sd, referenceWorks), [referenceWorks, sd]);
 
   const isContributor =
     !!user &&
@@ -844,6 +732,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
             </CardContent>
           </Card>
 
+          {referenceWorksError && <p role="alert" className="text-destructive">{referenceWorksError}</p>}
           <EntryCitationsCard
             citations={citations}
             emptyMessage="No citations linked to this cover submission yet."

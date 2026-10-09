@@ -189,11 +189,8 @@ class IsResponsibleForImageSubject(BasePermission):
     """
     Object-level write check for Image rows, scoped to the subject's region.
 
-    ImageViewSet carried only the role check (IsEditorOrAdminWrite), so any
-    editor could mutate any image in any state -- unlike MarkingViewSet, which
-    also applies IsResponsibleForRegion. Applied to the crop action (issue #77);
-    widening it to the whole viewset is tracked separately so that change can be
-    reviewed on its own.
+    Applies to update, delete, and crop. Creation and move destinations are
+    checked in ImageViewSet against the validated subject before saving.
     """
 
     def has_permission(self, request, view):

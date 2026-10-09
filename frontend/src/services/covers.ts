@@ -240,6 +240,7 @@ export interface CoverDetail {
   isInstitutional: boolean | null;
   /** Submitter opted in to show their name on the public detail page. */
   displaySubmitterName: boolean;
+  canChangeSubmitterName: boolean;
   /** Submitter display name; null unless they opted in (server-gated). */
   submitterName: string | null;
   /** Free-text description / notes, shown on the public cover detail page. */
@@ -277,6 +278,7 @@ function mapCoverDetail(data: unknown): CoverDetail | null {
     isInstitutional:
       o.is_institutional == null ? null : Boolean(o.is_institutional),
     displaySubmitterName: Boolean(o.display_submitter_name),
+    canChangeSubmitterName: o.can_change_submitter_name === true,
     submitterName:
       typeof o.submitter_name === "string" && o.submitter_name
         ? o.submitter_name

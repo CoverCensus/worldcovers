@@ -1,4 +1,8 @@
 import { Navigation } from "@/components/Navigation";
+import {
+  appendSubmissionCitations, parseReferenceWorkIds, parseReferenceWorkDetails, parseCitationDetail,
+  type ReferenceDetailInput, type ReferenceDetailPayload,
+} from "@/lib/submissionCitations";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -278,17 +282,6 @@ function scrollToFirstError(errors: Record<string, string | undefined>) {
   }
 }
 
-type ReferenceDetailInput = {
-  pageNumber: string;
-  citationUrl: string;
-};
-
-type ReferenceDetailPayload = {
-  reference_work_id: number;
-  page_number?: string;
-  url?: string;
-};
-
 type ReferenceDetailFieldErrors = {
   pageNumber?: string;
   citationUrl?: string;
@@ -324,85 +317,6 @@ function tracingToTag(tracing: boolean): UploadedImageTag {
   return tracing ? "tracing" : "photograph";
 }
 
-function parseReferenceWorkIds(raw: unknown): number[] {
-  const values: unknown[] = [];
-  if (Array.isArray(raw)) {
-    values.push(...raw);
-  } else if (raw != null) {
-    values.push(raw);
-  }
-
-  const parsed: number[] = [];
-  const seen = new Set<number>();
-
-  for (const value of values) {
-    if (Array.isArray(value)) {
-      value.forEach((v) => values.push(v));
-      continue;
-    }
-    const s = String(value ?? "").trim();
-    if (!s) continue;
-    if (s.startsWith("[") && s.endsWith("]")) {
-      try {
-        const json = JSON.parse(s);
-        if (Array.isArray(json)) {
-          json.forEach((v) => values.push(v));
-          continue;
-        }
-      } catch {
-        // Ignore malformed payloads from legacy records.
-      }
-    }
-    if (s.includes(",")) {
-      s.split(",").forEach((chunk) => values.push(chunk.trim()));
-      continue;
-    }
-    const n = Number.parseInt(s, 10);
-    if (Number.isNaN(n) || n <= 0 || seen.has(n)) continue;
-    seen.add(n);
-    parsed.push(n);
-  }
-
-  return parsed;
-}
-
-function parseReferenceWorkDetails(raw: unknown): Record<number, ReferenceDetailInput> {
-  if (raw == null) return {};
-  let list: unknown = raw;
-  if (typeof raw === "string") {
-    const s = raw.trim();
-    if (!s) return {};
-    try {
-      list = JSON.parse(s);
-    } catch {
-      return {};
-    }
-  }
-  if (!Array.isArray(list)) {
-    if (list && typeof list === "object") {
-      list = Object.entries(list as Record<string, unknown>).map(([id, detail]) => ({
-        reference_work_id: id,
-        ...(detail && typeof detail === "object" ? detail : {}),
-      }));
-    } else {
-      return {};
-    }
-  }
-  const rows = list as unknown[];
-  const out: Record<number, ReferenceDetailInput> = {};
-  for (const row of rows) {
-    if (!row || typeof row !== "object") continue;
-    const rec = row as Record<string, unknown>;
-    const idRaw = rec.reference_work_id ?? rec.referenceWorkId;
-    const id = Number.parseInt(String(idRaw ?? ""), 10);
-    if (Number.isNaN(id) || id <= 0) continue;
-    out[id] = {
-      pageNumber: String(rec.page_number ?? rec.pageNumber ?? "").trim(),
-      citationUrl: String(rec.url ?? "").trim(),
-    };
-  }
-  return out;
-}
 
 function submittedValue(
   sd: Record<string, unknown>,
@@ -571,6 +485,9 @@ const Contribute = () => {
   const [rateValue, setRateValue] = useState("");
   const [description, setDescription] = useState("");
   const [displaySubmitterName, setDisplaySubmitterName] = useState(false);
+  const [canChangeSubmitterName, setCanChangeSubmitterName] = useState(
+    !isEditMarking && editContributionId == null,
+  );
   const [contributorComment, setContributorComment] = useState("");
   const [noMarkingImage, setNoMarkingImage] = useState(false);
   // One entry in the combined image gallery: "existing" wraps an already-saved
@@ -810,6 +727,10 @@ const Contribute = () => {
     const mapped = pendingReferenceWorkIds
       .map((id) => referenceWorks.find((w) => w.id === id))
       .filter((w): w is ReferenceWorkRecord => w != null);
+    if (mapped.length !== pendingReferenceWorkIds.length) {
+      setReferenceWorksError("Could not load all selected Reference Works. Reload before saving.");
+      return;
+    }
     if (mapped.length > 0) {
       setSelectedReferenceWorks(mapped);
       setReferenceDetailsById((prev) => {
@@ -943,7 +864,7 @@ const Contribute = () => {
         setDescription(getStr(submittedValue(sd, "desc", "description")));
         setRateValue(getStr(submittedValue(sd, "rate_val", "rateVal")));
         const referenceWorkIds = parseReferenceWorkIds(
-          submittedValue(sd, "reference_work_ids", "referenceWorkIds")
+          sd.reference_work_ids ?? sd.referenceWorkIds ?? sd["reference_work_ids[]"]
         );
         const referenceDetails = parseReferenceWorkDetails(
           submittedValue(sd, "reference_work_details", "referenceWorkDetails")
@@ -1023,6 +944,7 @@ const Contribute = () => {
         // edits, not images) and (b) we can compare its modified_date to
         // the baseline stamped in submitted_data and flag a stale draft.
         const editMarkingIdNum = submittedNumber(sd, "edit_marking_id", "editMarkingId");
+        setCanChangeSubmitterName(!(Number.isFinite(editMarkingIdNum) && editMarkingIdNum > 0));
         if (Number.isFinite(editMarkingIdNum) && editMarkingIdNum > 0) {
           setResumedEditMarkingId(editMarkingIdNum);
           const baselineRaw = submittedValue(
@@ -1042,6 +964,7 @@ const Contribute = () => {
           getMarkingByIdRaw(editMarkingIdNum)
             .then((m) => {
               if (cancelled || !m) return;
+              setCanChangeSubmitterName(m.can_change_submitter_name === true);
               if (!loadedNoMarkingImage && existingUrls.length === 0 && Array.isArray(m.images)) {
                 const rows = (m.images as unknown[])
                   .map((img) => {
@@ -1180,7 +1103,21 @@ const Contribute = () => {
         setInscriptionText(typeof data.inscription_txt === "string" ? data.inscription_txt : "");
         setDescription(typeof data.desc === "string" ? data.desc : "");
         setDisplaySubmitterName(Boolean(data.display_submitter_name));
+        setCanChangeSubmitterName(data.can_change_submitter_name === true);
         setRateValue(String(data.rate_val ?? "").trim());
+
+        const citations = Array.isArray(data.citations) ? data.citations : [];
+        const referenceIds: number[] = [];
+        const referenceDetails: Record<number, ReferenceDetailInput> = {};
+        for (const citation of citations) {
+          const id = Number(citation.reference_work);
+          if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid Citation Reference Work");
+          referenceIds.push(id);
+          referenceDetails[id] = parseCitationDetail(String(citation.citation_detail ?? ""));
+        }
+        setPendingReferenceWorkIds(referenceIds);
+        setSelectedReferenceWorks([]);
+        setReferenceDetailsById(referenceDetails);
 
         setLetteringId(data.lettering != null ? String(data.lettering) : "");
         const dateFmt = String(data.date_fmt ?? "").trim();
@@ -1517,6 +1454,15 @@ const Contribute = () => {
   ) => {
     e.preventDefault();
 
+    if (!referenceWorksFetched || referenceWorksError || pendingReferenceWorkIds.length > 0) {
+      toast({
+        title: "Citations are not ready",
+        description: referenceWorksError ?? "Wait for the Reference Works to load before saving.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (!user) {
       toast({
         title: "Sign in required",
@@ -1790,15 +1736,14 @@ const Contribute = () => {
         }
         form.append("rate_val", showRateValueField ? rateValueToSend : "");
         form.append("desc", description.trim());
-        form.append("display_submitter_name", String(displaySubmitterName));
+        if (canChangeSubmitterName) {
+          form.append("display_submitter_name", String(displaySubmitterName));
+        }
         if (canEditCatalogCode && catalogCodeToSend) {
           form.append("catalog_code", catalogCodeToSend);
         }
         if (inscriptionToSend) form.append("inscription_txt", inscriptionToSend);
-        referenceWorkIdsToSend.forEach((id) => form.append("reference_work_ids[]", String(id)));
-        if (referenceWorkDetailsToSend.length > 0) {
-          form.append("reference_work_details", JSON.stringify(referenceWorkDetailsToSend));
-        }
+        appendSubmissionCitations(form, referenceWorkIdsToSend, referenceWorkDetailsToSend);
         // Both spellings carry the same value on purpose: the backend's
         // _resolve_lettering accepts either, and older payloads use the other
         // one. Do not "clean up" to a single key without changing
@@ -1874,7 +1819,7 @@ const Contribute = () => {
           // no rate, so a rate left over from a previous type should clear.
           rate_val: showRateValueField ? rateValueToSend : "",
           desc: description.trim(),
-          display_submitter_name: displaySubmitterName,
+          ...(canChangeSubmitterName ? { display_submitter_name: displaySubmitterName } : {}),
           ...(canEditCatalogCode && catalogCodeToSend
             ? { catalog_code: catalogCodeToSend }
             : {}),
@@ -3065,14 +3010,16 @@ const Contribute = () => {
                       true,
                     )}
 
-                    <label className="flex items-center gap-2 text-sm">
+                    {canChangeSubmitterName ? <label className="flex items-center gap-2 text-sm">
                       <Checkbox
                         checked={displaySubmitterName}
                         onCheckedChange={(v) => setDisplaySubmitterName(v === true)}
                         disabled={submitting}
                       />
                       Would you like your name to display as the submitter?
-                    </label>
+                    </label> : <p className="text-sm text-muted-foreground">
+                      The original Contributor's public-name preference will stay unchanged.
+                    </p>}
 
                     <div className="space-y-2">
                       <Label htmlFor="contributor-comment">Comment for editor</Label>

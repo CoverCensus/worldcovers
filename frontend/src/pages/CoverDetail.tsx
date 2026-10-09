@@ -443,7 +443,12 @@ const CoverDetailPage = () => {
       });
       if (!cancelled) setCitations(built);
       if (!cancelled) setLoading(false);
-    })();
+    })().catch(() => {
+      if (!cancelled) {
+        setError("Could not load the Cover and its Citations. Reload to try again.");
+        setLoading(false);
+      }
+    });
     return () => {
       cancelled = true;
     };

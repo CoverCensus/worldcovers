@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
+  appendSubmissionCitations, parseReferenceWorkIds, parseReferenceWorkDetails, parseCitationDetail,
+  type ReferenceDetailInput,
+} from "@/lib/submissionCitations";
+import {
   CARRIED_OVER_LABEL,
   markingImageFromSourceMarkingImage,
   sourceMarkingImageFromState,
@@ -22,6 +26,7 @@ import {
 } from "lucide-react";
 import axios from "axios";
 import { getContribution, createContribution } from "@/services/contributions";
+import { getCoverById } from "@/services/covers";
 
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
@@ -90,11 +95,6 @@ type GalleryItem =
   | { kind: "existing"; key: string; img: MarkingImage }
   | { kind: "pending"; key: string; upload: PendingUpload };
 
-type ReferenceDetailInput = {
-  pageNumber: string;
-  citationUrl: string;
-};
-
 type ReferenceDetailFieldErrors = {
   pageNumber?: string;
   citationUrl?: string;
@@ -139,18 +139,6 @@ function buildEditState(cover: AssociatedCover | null | undefined) {
 
 function fileKey(file: File) {
   return `${file.name}-${file.size}-${file.lastModified}`;
-}
-
-function parseCitationDetailBlob(text: string): ReferenceDetailInput {
-  let pageNumber = "";
-  let citationUrl = "";
-  for (const line of text.split("\n")) {
-    const p = line.match(/^Page number:\s*(.*)$/i);
-    if (p) pageNumber = p[1]?.trim() ?? "";
-    const u = line.match(/^Citation url:\s*(.*)$/i);
-    if (u) citationUrl = u[1]?.trim() ?? "";
-  }
-  return { pageNumber, citationUrl };
 }
 
 type FieldErrorsShape = {
@@ -270,6 +258,9 @@ export default function CoverEdit() {
   const [isInstitutional, setIsInstitutional] = useState(false);
   const [isBackstamp, setIsBackstamp] = useState(false);
   const [displaySubmitterName, setDisplaySubmitterName] = useState(false);
+  const [canChangeSubmitterName, setCanChangeSubmitterName] = useState(
+    mode === "create" && editContributionId == null,
+  );
   const [description, setDescription] = useState("");
   const [coverDate, setCoverDate] = useState<PartialDateInput>({ ...EMPTY_COVER_DATE });
   const [noCoverImage, setNoCoverImage] = useState(false);
@@ -331,6 +322,12 @@ export default function CoverEdit() {
       setDraftReview(null);
       return;
     }
+    if (referenceWorksLoading) return;
+    if (referenceWorksError) {
+      setDraftLoadError(referenceWorksError);
+      setDraftLoadDone(true);
+      return;
+    }
     let cancelled = false;
     setDraftLoadDone(false);
     setDraftLoadError(null);
@@ -360,20 +357,32 @@ export default function CoverEdit() {
         setIsInstitutional(String(sd.is_institutional ?? sd.isInstitutional) === "true");
         setIsBackstamp(String(sd.is_backstamp ?? sd.isBackstamp) === "true");
         setDisplaySubmitterName(String(sd.display_submitter_name ?? sd.displaySubmitterName) === "true");
+        const editedCoverId = Number(sd.edit_cover_id ?? sd.editCoverId);
+        const editedCover = Number.isInteger(editedCoverId) && editedCoverId > 0
+          ? await getCoverById(editedCoverId)
+          : null;
+        if (cancelled) return;
+        setCanChangeSubmitterName(
+          Number.isInteger(editedCoverId) && editedCoverId > 0
+            ? editedCover?.canChangeSubmitterName === true
+            : true,
+        );
         setDescription(String(sd.description ?? ""));
         const loadedNoCoverImage = String(sd.no_cover_image ?? sd.noCoverImage) === "true";
         setNoCoverImage(loadedNoCoverImage);
         const comment = String(sd.contributor_comment ?? sd.comment_for_editor ?? "").trim();
         if (comment) setContributorComment(comment);
 
-        const refIdsRaw = sd.reference_work_ids ?? sd.referenceWorkIds;
-        const refIds = Array.isArray(refIdsRaw)
-          ? refIdsRaw.map((x) => parseInt(String(x), 10)).filter((n) => Number.isFinite(n))
-          : [];
-        if (refIds.length > 0 && referenceWorks.length > 0) {
-          const selected = referenceWorks.filter((w) => refIds.includes(w.id));
-          setSelectedReferenceWorks(selected);
+        const refIds = parseReferenceWorkIds(
+          sd.reference_work_ids ?? sd.referenceWorkIds ?? sd["reference_work_ids[]"],
+        );
+        if (refIds.some((id) => !referenceWorks.some((work) => work.id === id))) {
+          throw new Error("Could not load all selected Reference Works.");
         }
+        setSelectedReferenceWorks(referenceWorks.filter((work) => refIds.includes(work.id)));
+        setReferenceDetailsById(parseReferenceWorkDetails(
+          sd.reference_work_details ?? sd.referenceWorkDetails,
+        ));
 
         const metas = contributionImageMetasFromSubmittedData(sd);
         const draftImages = markingImagesFromContributionMetas(metas, markingId);
@@ -425,7 +434,7 @@ export default function CoverEdit() {
     return () => {
       cancelled = true;
     };
-  }, [editContributionId, markingId, mode, referenceWorks]);
+  }, [editContributionId, markingId, mode, referenceWorks, referenceWorksLoading, referenceWorksError]);
 
   useEffect(() => {
     if (mode !== "edit" || !initial) return;
@@ -506,6 +515,7 @@ export default function CoverEdit() {
           return;
         }
         setCoverRow(found);
+        setCanChangeSubmitterName(found.coverDetails?.canChangeSubmitterName === true);
       })
       .catch(() => {
         if (!cancelled) setLoadError("Unable to load cover details.");
@@ -522,7 +532,7 @@ export default function CoverEdit() {
     if (
       mode !== "edit" ||
       !coverRow?.coverDetails?.id ||
-      referenceWorks.length === 0 ||
+      referenceWorksLoading || referenceWorksError ||
       citationsLoadedRef.current
     ) {
       return;
@@ -535,20 +545,22 @@ export default function CoverEdit() {
       const details: Record<number, ReferenceDetailInput> = {};
       for (const row of rows) {
         const rw = referenceWorks.find((w) => w.id === row.referenceWorkId);
-        if (!rw) continue;
+        if (!rw) throw new Error("Could not load all selected Reference Works.");
         picked.push(rw);
-        details[rw.id] = parseCitationDetailBlob(row.citationDetail);
+        details[rw.id] = parseCitationDetail(row.citationDetail);
       }
       if (picked.length > 0) {
         setSelectedReferenceWorks(picked);
         setReferenceDetailsById((prev) => ({ ...details, ...prev }));
       }
       citationsLoadedRef.current = true;
+    }).catch(() => {
+      if (!cancelled) setReferenceWorksError("Could not load Citations. Reload before saving.");
     });
     return () => {
       cancelled = true;
     };
-  }, [mode, coverRow, referenceWorks]);
+  }, [mode, coverRow, referenceWorks, referenceWorksLoading, referenceWorksError]);
 
   const refreshImages = async () => {
     if (coverId == null) {
@@ -833,6 +845,14 @@ export default function CoverEdit() {
   // status=pending when save_as_draft is absent and materializes the Cover + CoverMarking
   // on approval (see backend ContributionViewSet.approve / contribution_apply.py).
   const submitCoverContribution = async (asDraft: boolean) => {
+    if (referenceWorksLoading || referenceWorksError || (mode === "edit" && !citationsLoadedRef.current)) {
+      toast({
+        title: "Citations are not ready",
+        description: referenceWorksError ?? "Wait for the Citations to load before saving.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!user) {
       toast({
         title: "Sign in required",
@@ -929,7 +949,9 @@ export default function CoverEdit() {
       }
       form.append("is_institutional", String(isInstitutional));
       form.append("is_backstamp", String(isBackstamp));
-      form.append("display_submitter_name", String(displaySubmitterName));
+      if (canChangeSubmitterName) {
+        form.append("display_submitter_name", String(displaySubmitterName));
+      }
       if (noCoverImage) form.append("no_cover_image", "true");
       form.append("description", description.trim());
       const trimmedComment = contributorComment.trim();
@@ -937,15 +959,12 @@ export default function CoverEdit() {
         form.append("contributor_comment", trimmedComment);
         form.append("comment_for_editor", trimmedComment);
       }
-      selectedReferenceWorks.forEach((w) => form.append("reference_work_ids[]", String(w.id)));
-      if (selectedReferenceWorks.length > 0) {
-        const payload = selectedReferenceWorks.map((work) => ({
-          reference_work_id: work.id,
-          page_number: referenceDetailsById[work.id]?.pageNumber?.trim() || undefined,
-          url: referenceDetailsById[work.id]?.citationUrl?.trim() || undefined,
-        }));
-        form.append("reference_work_details", JSON.stringify(payload));
-      }
+      const citationDetails = selectedReferenceWorks.map((work) => ({
+        reference_work_id: work.id,
+        page_number: referenceDetailsById[work.id]?.pageNumber?.trim() || undefined,
+        url: referenceDetailsById[work.id]?.citationUrl?.trim() || undefined,
+      }));
+      appendSubmissionCitations(form, selectedReferenceWorks.map((work) => work.id), citationDetails);
       // Walk the combined gallery in display order: append each new-upload file
       // with its positional tracing tag, and emit an image_order token per image
       // (the existing image's key, or "__new__" for a new upload). The backend
@@ -1342,14 +1361,16 @@ export default function CoverEdit() {
                         <Checkbox checked={isBackstamp} onCheckedChange={(v) => setIsBackstamp(v === true)} disabled={submitting} />
                         Backstamp
                       </label>
-                      <label className="flex items-center gap-2 text-sm">
+                      {canChangeSubmitterName ? <label className="flex items-center gap-2 text-sm">
                         <Checkbox
                           checked={displaySubmitterName}
                           onCheckedChange={(v) => setDisplaySubmitterName(v === true)}
                           disabled={submitting}
                         />
                         Would you like your name to display as the submitter?
-                      </label>
+                      </label> : <p className="text-sm text-muted-foreground">
+                        The original Contributor's public-name preference will stay unchanged.
+                      </p>}
                     </div>
 
                     <div className="space-y-2">

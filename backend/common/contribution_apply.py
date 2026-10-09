@@ -317,7 +317,8 @@ def _apply_marking_edit(contrib, payload: dict, actor, marking_id: int) -> Marki
         marking.impression = impression
     if "rate_val" in payload:
         marking.rate_val = _parse_decimal(payload.get("rate_val"))
-    if "display_submitter_name" in payload:
+    # Public credit names the original Contributor, not the person editing.
+    if marking.created_by_id == actor.pk and "display_submitter_name" in payload:
         marking.display_submitter_name = bool(
             _coerce_optional_bool(
                 payload, "display_submitter_name", marking.display_submitter_name
@@ -551,7 +552,8 @@ def _apply_cover_edit(
         cover.is_institutional = _coerce_optional_bool(
             payload, "is_institutional", cover.is_institutional
         )
-    if "display_submitter_name" in payload:
+    # Review authority does not grant consent to change another person's choice.
+    if cover.created_by_id == actor.pk and "display_submitter_name" in payload:
         cover.display_submitter_name = bool(
             _coerce_optional_bool(
                 payload, "display_submitter_name", cover.display_submitter_name
@@ -1317,9 +1319,7 @@ def _sync_citations(subject_type: str, subject_id, payload: dict, actor) -> None
             ids_raw = payload.get(key)
             break
 
-    # A multipart QueryDict is flattened to its last value at submit time, so
-    # this arrives as a bare id rather than a list. Treat it as the one-element
-    # list it is instead of discarding it.
+    # Older submissions can hold a bare id. New submissions store a list.
     if isinstance(ids_raw, (str, int)) and not isinstance(ids_raw, bool):
         ids_raw = [ids_raw] if str(ids_raw).strip() else []
 

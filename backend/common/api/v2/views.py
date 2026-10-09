@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -55,6 +56,7 @@ from common.catalog_codes import (
 from common.contribution_apply import (
     ContributionApplyError,
     MARKING_DATE_SUBMIT_KEYS,
+    _CITATION_ID_KEYS,
     _parse_int,
     _source_marking_image_id,
     strip_marking_date_keys,
@@ -782,7 +784,7 @@ class ImageViewSet(viewsets.ModelViewSet):
     """
     queryset = Image.objects.all().select_related("uploaded_by")
     serializer_class = ImageSerializer
-    permission_classes = [IsEditorOrAdminWrite]
+    permission_classes = [IsEditorOrAdminWrite, IsResponsibleForImageSubject]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ["subject_type", "subject_id", "image_view", "is_tracing"]
@@ -790,6 +792,12 @@ class ImageViewSet(viewsets.ModelViewSet):
     ordering = ["subject_type", "subject_id", "display_order"]
 
     def perform_create(self, serializer):
+        if not user_is_responsible_for_subject(
+            self.request.user,
+            serializer.validated_data["subject_type"],
+            serializer.validated_data["subject_id"],
+        ):
+            raise PermissionDenied("You are not responsible for this image's Entry.")
         # Image.uploaded_by is required (PROTECT FK); TimestampedModel also needs
         # created_by / modified_by. All three must be set on create.
         serializer.save(
@@ -922,6 +930,10 @@ class ImageViewSet(viewsets.ModelViewSet):
             serializer.instance.subject_type,
             serializer.instance.subject_id,
         )
+        target_type = serializer.validated_data.get("subject_type", old_subject[0])
+        target_id = serializer.validated_data.get("subject_id", old_subject[1])
+        if not user_is_responsible_for_subject(self.request.user, target_type, target_id):
+            raise PermissionDenied("You are not responsible for the destination Entry.")
         with transaction.atomic():
             instance = serializer.save(modified_by=self.request.user)
             new_subject = (instance.subject_type, instance.subject_id)
@@ -3310,6 +3322,40 @@ def _clear_replaced_marking_date_boundaries(existing_data: dict, submitted_data:
             existing_data.pop(key, None)
 
 
+def _submission_citations(data) -> dict:
+    """Keep repeated form selections as one canonical Citation list."""
+    result = {}
+    for key in _CITATION_ID_KEYS:
+        if key not in data:
+            continue
+        raw = data.getlist(key) if hasattr(data, "getlist") else data.get(key)
+        if isinstance(raw, (str, int)) and not isinstance(raw, bool):
+            raw = [raw]
+        if raw == [""]:
+            raw = []
+        if not isinstance(raw, list) or any(
+            isinstance(value, bool) or re.fullmatch(r"[0-9]+", str(value)) is None or int(value) <= 0
+            for value in raw
+        ):
+            raise serializers.ValidationError({"reference_work_ids": "Use a list of positive Reference Work IDs."})
+        result["reference_work_ids"] = list(dict.fromkeys(int(value) for value in raw))
+        break
+    for key in ("reference_work_details", "referenceWorkDetails"):
+        if key not in data:
+            continue
+        details = data.get(key)
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except ValueError:
+                raise serializers.ValidationError({"reference_work_details": "Use a list of Citation details."})
+        if not isinstance(details, list) or any(not isinstance(row, dict) for row in details):
+            raise serializers.ValidationError({"reference_work_details": "Use a list of Citation details."})
+        result["reference_work_details"] = details
+        break
+    return result
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class ContributionSubmitView(APIView):
     """
@@ -3327,6 +3373,7 @@ class ContributionSubmitView(APIView):
 
     def post(self, request):
         data = request.data if isinstance(request.data, dict) else dict(request.data)
+        citation_data = _submission_citations(data)
         is_cover_submission = _is_cover_submission_data(data)
         is_draft = _is_save_as_draft_submission(data)
         edit_pk = None
@@ -3470,6 +3517,9 @@ class ContributionSubmitView(APIView):
         # captured them in image_metas above.
         submitted_data = {}
         skip_keys = {
+            *_CITATION_ID_KEYS,
+            "reference_work_details",
+            "referenceWorkDetails",
             "marking_image",
             "cover_image",
             "edit_contribution_id",
@@ -3503,6 +3553,7 @@ class ContributionSubmitView(APIView):
             except Exception:
                 submitted_data[key] = str(value)
 
+        submitted_data.update(citation_data)
         if is_cover_submission:
             submitted_data["submission_kind"] = "cover"
             submitted_data["entity_type"] = "cover"
@@ -3593,6 +3644,11 @@ class ContributionSubmitView(APIView):
                 )
                 return Response({"detail": detail}, status=status.HTTP_404_NOT_FOUND)
             existing_sd = dict(contrib.submitted_data or {})
+            if "reference_work_ids" in citation_data:
+                for key in _CITATION_ID_KEYS:
+                    existing_sd.pop(key, None)
+            if "reference_work_details" in citation_data:
+                existing_sd.pop("referenceWorkDetails", None)
 
             # Honor contributor-side image removals and merge new uploads
             # against the draft's prior submitted_data. Frontend

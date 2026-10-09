@@ -1093,6 +1093,7 @@ export interface AssociatedCoverDetails {
   hasAdhesive: boolean | null;
   isInstitutional: boolean | null;
   displaySubmitterName: boolean;
+  canChangeSubmitterName: boolean;
   /** Free-text description / notes; prefilled into the cover edit form. */
   description: string;
   datesSeen: AssociatedDateSeen[];
@@ -1188,6 +1189,7 @@ function mapAssociatedCoverDetails(raw: unknown): AssociatedCoverDetails | null 
     hasAdhesive: o.has_adhesive == null ? null : Boolean(o.has_adhesive),
     isInstitutional: o.is_institutional == null ? null : Boolean(o.is_institutional),
     displaySubmitterName: Boolean(o.display_submitter_name),
+    canChangeSubmitterName: o.can_change_submitter_name === true,
     description: typeof o.description === "string" ? o.description : "",
     datesSeen,
   };
@@ -1514,6 +1516,7 @@ function mapCoverContributionToAssociatedCover(
             ? sd.isInstitutional
             : null,
       displaySubmitterName: Boolean(sd.display_submitter_name ?? sd.displaySubmitterName),
+      canChangeSubmitterName: false,
       description: typeof sd.description === "string" ? sd.description : "",
       datesSeen: datesSeenFromCoverSubmission(sd),
     },
