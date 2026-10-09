@@ -418,6 +418,49 @@ class ContributionSubmitMarkingEditTests(TestCase):
         self.assertEqual(contribution.status, Contribution.STATUS_PENDING)
         self.assertEqual(int(contribution.submitted_data["source_marking_image_id"]), image.pk)
 
+    def test_submit_records_where_the_carried_over_tile_sits(self):
+        # Workspace issues.md #181: image_order is consumed at submit and never
+        # stored, so the carried tile's slot has to be written down for
+        # approval. "__new__" stands for an upload; the tile's token is its
+        # media URL.
+        image = self._marking_image(self.marking)
+        response = self._post_cover_draft(
+            image.pk, image_order=["__new__", "/media/va/whole-cover.jpg"]
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        contribution = Contribution.objects.get(pk=response.data["id"])
+        self.assertEqual(contribution.submitted_data["source_marking_image_position"], 1)
+
+        self.client.force_authenticate(self._editor())
+        detail = self.client.get("/api/v2/contributions/{}/".format(contribution.pk))
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertEqual(detail.data["source_marking_image"]["position"], 1)
+
+    def test_submit_without_an_order_puts_the_carried_over_tile_first(self):
+        image = self._marking_image(self.marking)
+        response = self._post_cover_from_image(image.pk)
+        self.assertEqual(response.status_code, 201, response.data)
+        contribution = Contribution.objects.get(pk=response.data["id"])
+        self.assertEqual(contribution.submitted_data["source_marking_image_position"], 0)
+
+    def test_removing_the_carried_over_image_on_resume_drops_its_position_too(self):
+        image = self._marking_image(self.marking)
+        draft = self._post_cover_draft(
+            image.pk, save_as_draft="true", image_order=["/media/va/whole-cover.jpg"]
+        )
+        contribution_id = draft.data["id"]
+
+        resaved = self._post_cover_draft(
+            None,
+            save_as_draft="true",
+            edit_contribution_id=contribution_id,
+            removed_existing_image_keys=["/media/va/whole-cover.jpg"],
+        )
+        self.assertEqual(resaved.status_code, 200, resaved.data)
+        contribution = Contribution.objects.get(pk=contribution_id)
+        self.assertNotIn("source_marking_image_id", contribution.submitted_data)
+        self.assertNotIn("source_marking_image_position", contribution.submitted_data)
+
     def test_removing_the_carried_over_image_on_resume_clears_it(self):
         # The carried image has no meta row, so the removed_existing_image_keys
         # filter could not see it and the picture could never be un-carried:
@@ -1053,3 +1096,20 @@ class ContributionSubmitMarkingEditTests(TestCase):
                 before_payload__contribution_id=original.pk,
             ).exists()
         )
+
+
+class CarriedImagePositionHelperTests(TestCase):
+    """_carried_image_position: pure token matching (workspace issues.md #181)."""
+
+    def test_first_second_and_absent(self):
+        from common.api.v2.views import _carried_image_position
+
+        order = ["/media/va/whole-cover.jpg", "__new__"]
+        self.assertEqual(_carried_image_position(order, "va/whole-cover.jpg"), 0)
+        self.assertEqual(
+            _carried_image_position(["__new__", "/media/va/whole-cover.jpg"], "va/whole-cover.jpg"),
+            1,
+        )
+        self.assertIsNone(_carried_image_position(["__new__"], "va/whole-cover.jpg"))
+        self.assertIsNone(_carried_image_position(None, "va/whole-cover.jpg"))
+        self.assertIsNone(_carried_image_position(order, ""))

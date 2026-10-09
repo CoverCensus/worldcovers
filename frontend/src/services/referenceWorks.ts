@@ -14,7 +14,7 @@ export interface ReferenceWorkUser {
 
 /** One item from GET /reference-works/ (DRF snake_case, matching v2 model) */
 export interface ReferenceWorkApiResultItem {
-  reference_work_id: number;
+  id: number;
   created_by?: ReferenceWorkUser;
   modified_by?: ReferenceWorkUser;
   created_date: string;
@@ -24,10 +24,10 @@ export interface ReferenceWorkApiResultItem {
   authorship: string;
   publisher: string;
   publication_year: number | null;
-  edition: string;
-  volume: string;
-  isbn: string;
-  url: string;
+  edition: string | null;
+  volume: string | null;
+  isbn: string | null;
+  url: string | null;
 }
 
 /** Paginated response from GET /reference-works/ */
@@ -62,17 +62,20 @@ export interface ReferenceWorkOption {
 }
 
 function mapApiResultToRecord(item: ReferenceWorkApiResultItem): ReferenceWorkRecord {
+  if (!Number.isInteger(item.id) || item.id <= 0) {
+    throw new Error("Reference works API: invalid id");
+  }
   return {
-    id: item.reference_work_id,
+    id: item.id,
     code: item.code ?? null,
     title: item.title,
     authorship: item.authorship,
     publisher: item.publisher,
     publicationYear: item.publication_year,
-    edition: item.edition,
-    volume: item.volume,
-    isbn: item.isbn,
-    url: item.url,
+    edition: item.edition ?? "",
+    volume: item.volume ?? "",
+    isbn: item.isbn ?? "",
+    url: item.url ?? "",
     createdDate: item.created_date,
     modifiedDate: item.modified_date,
   };
@@ -127,12 +130,18 @@ export function formatReferenceWorkLabel(
  * Fetches reference works from GET /reference-works/.
  */
 export async function getReferenceWorks(): Promise<ReferenceWorkRecord[]> {
-  const res = await apiClient.get<ReferenceWorkApiResponse>("/reference-works/");
-  const data = res.data;
-  if (!Array.isArray(data.results)) {
-    throw new Error("Reference works API: invalid response (missing results array)");
+  const works: ReferenceWorkRecord[] = [];
+  let next: string | null = "/reference-works/";
+  while (next) {
+    const res = await apiClient.get<ReferenceWorkApiResponse>(next);
+    const data = res.data;
+    if (!Array.isArray(data.results)) {
+      throw new Error("Reference works API: invalid response (missing results array)");
+    }
+    works.push(...data.results.map(mapApiResultToRecord));
+    next = data.next;
   }
-  return data.results.map(mapApiResultToRecord);
+  return works;
 }
 
 /**

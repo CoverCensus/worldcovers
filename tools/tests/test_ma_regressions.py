@@ -48,6 +48,15 @@ class MassachusettsParsers(unittest.TestCase):
         self.assertEqual(resolve_same_inscription('WALTHAM,MASS.5cts', 'Waltham', ',MASS.'),
                          'WALTHAM,MASS.')
 
+    def test_same_dotted_state_does_not_add_initials(self):
+        for inscription, suffix in [('BUFFALO N.Y.', 'N.Y.'),
+                                    ('PROVIDENCE R.l.', 'R.l.'),
+                                    ('TRENTON N.J.', 'N.J.')]:
+            resolved = inscription
+            for _ in range(4):
+                resolved = resolve_same_inscription(resolved, '', suffix)
+            self.assertEqual(resolved, inscription)
+
 
 class MassachusettsBundle(unittest.TestCase):
     @classmethod
@@ -71,6 +80,10 @@ class MassachusettsBundle(unittest.TestCase):
         source(17426, '(L)(July 24, 1769) 50', 'Boston', '', 'July 24, 1769')
         source(17427, '(E)(Sept. 9, 1769;Ms;Magenta,Red) 50', 'Boston', 'BOSTON', 'Sept. 9, 1769')
         source(17428, '(L)(Jan. 13, 1775;Magenta) 50', 'Boston', '', 'Jan. 13, 1775')
+        source(90001, 'SANTA FE(E)(Jan. 1, 1851;C-34;Red) 500', 'Santa Fe')
+        source(90002, '(L)(June 1, 1851;Black) 450', 'Santa Fe')
+        source(90003, 'NUEVO MEXICO(E)(June 3, 1800;SL-51x4;Black) 50', 'Nuevo Mexico')
+        source(90004, '(L)(1820;SL-53x4;Red) 50', 'Nuevo Mexico')
         source(17678, '(597) 2(1851;Red;1853-57;Black) 60', 'Boston', '2', '1851,1853-57', 'Red,Black')
         source(17694, 'FREE(1794-1801;Black;1803-04;Black) 15', 'Boston', 'FREE')
         source(17702, "(493) 3 O'CLOCK/DELIVERY(1854-56;oval-34;Red) 15", 'Boston', "3 O'CLOCK/DELIVERY")
@@ -140,6 +153,15 @@ class MassachusettsBundle(unittest.TestCase):
         colors = {r['color']: self.observed(r) for r in self.rows(17427)}
         self.assertEqual(colors, {'MAGENTA': {'1769-09-09', '1775-01-13'}, 'RED': {'1769-09-09'}})
         self.assertEqual(self.rows(17428)[0]['color'], 'MAGENTA')
+
+    def test_latest_row_with_new_color_or_dimensions_keeps_variant(self):
+        first, latest = self.rows(90001)[0], self.rows(90002)[0]
+        self.assertNotEqual(first['code'], latest['code'])
+        self.assertEqual((latest['color'], self.observed(latest)), ('BLACK', {'1851-06-01'}))
+        first, latest = self.rows(90003)[0], self.rows(90004)[0]
+        self.assertNotEqual(first['code'], latest['code'])
+        self.assertEqual(float(latest['width']), 53)
+        self.assertEqual(self.observed(latest), {'1820-01-01'})
 
     def test_date_color_pairs_and_standalone_types(self):
         rates = self.rows(17678)

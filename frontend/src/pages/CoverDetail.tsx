@@ -18,6 +18,12 @@ import { EntryImageGalleryCard } from "@/components/entry-detail/EntryImageGalle
 import { EntryAssociatedThumbnailsCard } from "@/components/entry-detail/EntryAssociatedThumbnailsCard";
 import { EntryTargetPicker } from "@/components/entry-detail/EntryTargetPicker";
 import { compareMarkingTargets, describeMarkingTarget } from "@/lib/moveTargetDisplay";
+import {
+  cropIntoMarkingDisabledReason,
+  imagelessAssociatedMarkings,
+  moveToMarkingDisabledReason,
+} from "@/lib/coverImageActionState";
+import { CropImageDialog } from "@/components/CropImageDialog";
 import { EntryRecordHistoryCard } from "@/components/entry-detail/EntryRecordHistoryCard";
 import { EntryCitationsCard, type EntryCitationItem } from "@/components/entry-detail/EntryCitationsCard";
 import { CoverRecordDetailFields } from "@/components/entry-detail/CoverRecordDetailFields";
@@ -178,6 +184,12 @@ const CoverDetailPage = () => {
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
+  // Trello T37 / workspace issues.md #182: crop from this cover into an
+  // associated Marking that has no image. The picker step only appears when
+  // more than one Marking qualifies.
+  const [cropImageIndex, setCropImageIndex] = useState<number | null>(null);
+  const [cropTargetMarkingId, setCropTargetMarkingId] = useState<number | null>(null);
+  const [cropPickerOpen, setCropPickerOpen] = useState(false);
   const [linkMarkingOpen, setLinkMarkingOpen] = useState(false);
   const [linkMarkingQuery, setLinkMarkingQuery] = useState("");
   const [linkMarkingPage, setLinkMarkingPage] = useState(1);
@@ -443,7 +455,12 @@ const CoverDetailPage = () => {
       });
       if (!cancelled) setCitations(built);
       if (!cancelled) setLoading(false);
-    })();
+    })().catch(() => {
+      if (!cancelled) {
+        setError("Could not load the Cover and its Citations. Reload to try again.");
+        setLoading(false);
+      }
+    });
     return () => {
       cancelled = true;
     };
@@ -793,6 +810,52 @@ const CoverDetailPage = () => {
   // Count every associated marking, not just ratemarks: the header is labeled
   // "Associated Markings" and the list below renders all of them.
   const associatedMarkingCount = associatedMarkings.length;
+  // Workspace issues.md #180 / Trello T37: the move control stays on screen
+  // whenever the editor may manage images; a missing destination disables it
+  // with a visible reason instead of hiding it (issues.md 166 on the marking
+  // screen). Permission (`canManageImages`) still decides whether it renders.
+  const moveToMarkingReason = moveToMarkingDisabledReason({
+    associatedMarkingCount,
+    loadError: markingsLoadError,
+  });
+  const cropEligibleMarkings = imagelessAssociatedMarkings(associatedMarkings);
+  const cropIntoMarkingReason = cropIntoMarkingDisabledReason({
+    associatedMarkingCount,
+    eligibleCount: cropEligibleMarkings.length,
+    loadError: markingsLoadError,
+  });
+  const cropTargets = cropEligibleMarkings
+    .map(({ marking, defaultImageUrl }) => describeMarkingTarget(marking, defaultImageUrl))
+    .sort(compareMarkingTargets);
+  const cropTarget = cropEligibleMarkings.find((row) => row.marking.id === cropTargetMarkingId) ?? null;
+  const cropSourceImage = cropImageIndex != null ? images[cropImageIndex] ?? null : null;
+  const beginCropIntoMarking = (index: number) => {
+    if (cropIntoMarkingReason != null) return;
+    setCropImageIndex(index);
+    if (cropEligibleMarkings.length === 1) {
+      setCropTargetMarkingId(cropEligibleMarkings[0].marking.id);
+      setCropPickerOpen(false);
+    } else {
+      setCropTargetMarkingId(null);
+      setCropPickerOpen(true);
+    }
+  };
+  const finishCropIntoMarking = async () => {
+    const links = associatedMarkings.map((row) => row.link);
+    try {
+      const refreshed = await loadAssociatedMarkingsForCover(links);
+      setAssociatedMarkings(refreshed);
+      setMarkingsLoadError(null);
+      toast({
+        title: "Crop added to the marking",
+        description: cropTarget
+          ? `${describeMarkingTarget(cropTarget.marking).title} now has its first image.`
+          : undefined,
+      });
+    } catch {
+      setMarkingsLoadError("The crop was saved, but the marking previews could not refresh.");
+    }
+  };
 
   return (
     <>
@@ -828,8 +891,11 @@ const CoverDetailPage = () => {
               onSetDefault={setImageAsDefault}
               onDeleteImage={canManageImages ? handleDeleteImage : undefined}
               onMoveImage={
-                canManageImages && !cover.isRemoved && associatedMarkings.length > 0
+                canManageImages
                   ? (index) => {
+                      // The button is disabled while a reason stands; this
+                      // guard only covers a stale click during a reload.
+                      if (moveToMarkingReason != null) return;
                       setMoveImageIndex(index);
                       setMoveImageTargetMarkingId(
                         associatedMarkings[0]?.marking.id ?? null,
@@ -840,6 +906,10 @@ const CoverDetailPage = () => {
                   : undefined
               }
               moveImageLabel="Move to marking"
+              moveImageDisabledReason={moveToMarkingReason}
+              onCropImage={canManageImages ? beginCropIntoMarking : undefined}
+              cropImageLabel="Crop into marking"
+              cropImageDisabledReason={cropIntoMarkingReason}
             />
             {canViewHistory && (
               <EntryRecordHistoryCard
@@ -1120,6 +1190,68 @@ const CoverDetailPage = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={cropPickerOpen}
+        onOpenChange={(open) => {
+          setCropPickerOpen(open);
+          if (!open) setCropImageIndex(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Crop into which Marking?</DialogTitle>
+            <DialogDescription>
+              Only associated Markings that have no image yet are offered. The cover keeps the original.
+            </DialogDescription>
+          </DialogHeader>
+          <EntryTargetPicker
+            targets={cropTargets}
+            selectedId={cropTargetMarkingId}
+            onSelect={(id) => setCropTargetMarkingId(id)}
+            filterLabel="Marking to crop into"
+            filterPlaceholder="Search by code, inscription, shape..."
+            emptyMessage="No markings match that search."
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setCropPickerOpen(false);
+                setCropImageIndex(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button disabled={cropTargetMarkingId == null} onClick={() => setCropPickerOpen(false)}>
+              Continue
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <CropImageDialog
+        open={cropImageIndex != null && !cropPickerOpen && cropTarget != null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCropImageIndex(null);
+            setCropTargetMarkingId(null);
+          }
+        }}
+        imageId={cropSourceImage?.imageId ?? null}
+        imageUrl={cropSourceImage?.imageUrl ?? null}
+        destination={
+          cropTarget
+            ? {
+                subjectType: "MARKING",
+                subjectId: cropTarget.marking.id,
+                imageView: "FULL",
+                label: describeMarkingTarget(cropTarget.marking).title,
+              }
+            : undefined
+        }
+        onCropped={finishCropIntoMarking}
+      />
 
       <Dialog
         open={linkMarkingOpen}

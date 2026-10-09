@@ -470,6 +470,12 @@ class MarkingAdmin(InlineRevisionMixin, TimestampedModelAdmin):
     raw_id_fields = ['post_office', 'shape', 'lettering', 'color']
     inlines = [CoverMarkingInline]
 
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(super().get_readonly_fields(request, obj))
+        if obj is not None and obj.created_by_id != request.user.pk:
+            fields.append('display_submitter_name')
+        return fields
+
     fieldsets = (
         ('Identity', {
             'fields': ('code', 'type', 'post_office'),
@@ -574,6 +580,12 @@ class CoverAdmin(TimestampedModelAdmin):
     search_fields = ['code', 'type']
     raw_id_fields = ['color']
     inlines = [CoverMarkingForCoverInline, CoverValuationInline]
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(super().get_readonly_fields(request, obj))
+        if obj is not None and obj.created_by_id != request.user.pk:
+            fields.append('display_submitter_name')
+        return fields
 
     def has_delete_permission(self, request, obj=None):
         # Removing the unaudited hard-delete path (and its cascade to

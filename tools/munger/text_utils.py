@@ -1,10 +1,10 @@
 import re
 
 
-_POST_OFFICE_APOSTROPHE_RE = re.compile(r"[\u2019']")
+_POST_OFFICE_APOSTROPHE_RE = re.compile(r"[\u2018\u2019']")
 _POST_OFFICE_QUOTE_RE = re.compile(r"[\u201c\u201d\u201e\u201f\"]")
 _POST_OFFICE_AMP_RE = re.compile(r"\s*&\s*")
-_POST_OFFICE_STRIP_PUNCT_RE = re.compile(r"[,/=()\[\]:;_`*?+]")
+_POST_OFFICE_STRIP_PUNCT_RE = re.compile(r"[,/=()\[\]{}:;_`*?+\u2022]")
 _POST_OFFICE_DOUBLE_DASH_RE = re.compile(r"-{2,}")
 _POST_OFFICE_MULTI_SPACE_RE = re.compile(r"\s+")
 _POST_OFFICE_EDGE_TRIM_RE = re.compile(r"^[\s.\-]+|[\s.,\-]+$")
@@ -49,6 +49,7 @@ def strip_trailing_state_suffix(text):
     value = str(text or "").strip()
     for pattern in (
         r"[,/]\s*(?:MASS|MS)\.?(?:\s*\d+\s*cts?\.?)?$",
+        r"[\s,/.]+(?:[A-Za-z]\.){2,4}$",
         r"\s+[A-Za-z]{1,4}\.?$",
         r"/\s*[A-Za-z]{1,4}\.?$",
         r"\.\s*[A-Za-z]{1,4}\.?$",

@@ -5,7 +5,23 @@ batch, plus the reconciled September 19 offline-note follow-ups. It is not
 the full current engineering queue. Later work also appears
 in GitHub PRs and Reese's workspace-local `docs/issues.md`.
 
-**Last review:** 2026-09-30, clean local `staging` at
+**Last review:** 2026-10-08, focused on T40, T72, T73, and T78, starting from clean local
+`staging` at `c0e09f3ecd1f9e21276da07c09f340924bdb3dd4`. The code and tests
+support the implementation notes below. Reused this session's local checks:
+483 backend tests ran with two skipped; all 428 frontend tests, type checking,
+and the production build passed. Local browser checks covered Citation
+save/resume/approval, image permissions, and public-name preferences.
+No application tests were rerun for this documentation review. Published
+staging was checked at `f60453e56cbed39e4893bbcb2213a782a214a606`;
+PR #171 already published the core T78 fix. The approved October 8 board sync
+updated all four card descriptions and added local validation evidence while
+preserving prior history. T72/T73 are Testing under Michael for verification;
+T40 remains To Do under Reese, and T78 remains Testing under Reese. Hosted
+verification, data coverage, and acceptance remain separate; T78's dated
+staging report is recorded below. The September board snapshot is preserved
+as history.
+
+Previous review, 2026-09-30: clean local `staging` at
 `d58887850d124ac7f1b10d8611decfbb16c5807a`. Published staging is
 `04414625a00295976b151a8d94e0db4fdd7fefb1`; published main is
 `3ae3b6b533a3ac546d69d0178aa0a4fce520cb1b` (PR #168). Local commits
@@ -420,52 +436,60 @@ from that intake or Reese's report, not checks repeated in this reconciliation.
 
 ## September 21 code-review gaps
 
-T72-T74 are To Do and unassigned; T75 is Done under Reese. These gaps were noted in
-DECISIONS.md; this review gives each one an explicit task. Application work
-belongs to Reese; any model changes belong to Michael. Citation preservation
-and image permissions should be addressed before expanding the affected
-workflows because they protect evidence and editing authority.
+The September 30 board snapshot has T72-T74 To Do and unassigned; T75 is Done
+under Reese. These gaps were noted in DECISIONS.md and mapped to the tasks
+below. Application work belongs to Reese; any model changes belong to Michael.
+T72 and T73 are now implemented and locally verified in `c0e09f3`; hosted
+verification and acceptance remain. The approved October 8 sync moved both
+cards to Testing and assigned Michael to verification. T74's restoration
+scope remains unresolved.
 
 ### T72 - Preserve all Citations in multipart submissions
 
 [T72 on Trello](https://trello.com/c/FOS1WZHa) - F3 Submission Workflow.
 
-The Marking and Cover forms send repeated `reference_work_ids[]` values.
-The submit path reads each key with `data.get`, which retains only the last
-multipart value. Approval then replaces the Entry's Citations with that
-reduced set. A local QueryDict check with IDs 11 and 22 retained only 22.
+Implemented and locally verified in `c0e09f3`. Marking and Cover forms preserve
+all selected Citations and details through draft save, resume, submission,
+review, and approval. Omission preserves the stored set; explicit empty
+selection clears it. Multipart and JSON regression tests cover both Entry
+types, including edits with two existing Citations. The frontend loads all
+Reference Work and Citation pages and blocks saving when existing Citations
+cannot be loaded.
 
-Preserve every selected Reference Work and its detail through draft save,
-resume, submission, review, and approval for both Entry types. Keep omitted
-Citations unchanged; allow an explicit empty selection to clear them. Check
-multipart and JSON input with regression tests, including an edit with two
-existing Citations. This is separate from T15's source-choice data checks.
+Hosted verification and acceptance remain: verify two selected Reference
+Works and their details through the complete form workflow, then verify
+explicit clearing. This is separate from T15's source-choice data checks.
+The original September 21 QueryDict check retained only ID 22 from IDs 11
+and 22; the submit path now reads all repeated values.
 
 Evidence: [Marking form](frontend/src/pages/Contribute.tsx),
 [Cover form](frontend/src/pages/CoverEdit.tsx),
-[submit path](backend/common/api/v2/views.py), and
-[_sync_citations](backend/common/contribution_apply.py).
+[submit path](backend/common/api/v2/views.py),
+[_sync_citations](backend/common/contribution_apply.py),
+[submission tests](backend/common/tests/test_submission_citations.py),
+[form tests](frontend/src/pages/SubmissionCitations.test.tsx), and
+[pagination tests](frontend/src/services/citationPaging.test.ts).
 
 ### T73 - Scope image writes to Collection responsibility
 
 [T73 on Trello](https://trello.com/c/wgtwKkWr) - F5 Image Attachments.
 
-`ImageViewSet` ordinary create, update, and delete operations check the Editor
-role but not Collection responsibility. Crop adds `IsResponsibleForImageSubject`.
-The image-move serializer checks destination existence and view type, not
-the Editor's responsibility for the source and destination.
+Implemented and locally verified in `c0e09f3`. Image creation, updates,
+deletion, and moves enforce subject responsibility; moves check both source
+and destination. Cover checks include linked Marking Regions. Existing
+Administrator overrides and Contributor restrictions remain. Regression
+tests cover allowed and denied writes, mixed-Region Covers, reassignment,
+and rejection of an unauthorized upload before a file is written.
 
-Enforce responsibility on ordinary image writes, including both subjects
-when moving an image. Preserve the Administrator override and existing
-Contributor restrictions. Acceptance: an Editor cannot change images outside
-their assigned scope through direct API calls; authorised writes still work.
-Cover checks must account for its linked Marking Regions. Add regression
-coverage for create, update, delete, and reassignment. T20's separate
-Contributor-linking decision does not block these checks.
+Hosted verification and acceptance remain: an Editor cannot change images
+outside their assigned scope through direct API calls, while authorized
+writes and moves still work. Verify file retention and image order after a
+move. T20's separate Contributor-linking decision does not block these checks.
 
 Evidence: [ImageViewSet](backend/common/api/v2/views.py),
-[permissions](backend/common/api/v2/permissions.py), and
-[ImageSerializer](backend/common/api/v2/serializers.py).
+[permissions](backend/common/api/v2/permissions.py),
+[ImageSerializer](backend/common/api/v2/serializers.py), and
+[image write tests](backend/common/tests/test_image_write_permissions.py).
 
 ### T74 - Define and verify Entry version restoration
 
@@ -534,7 +558,7 @@ to Reese. Source observations below describe code, not deployed behaviour.
 | [T37](https://trello.com/c/u1f8iyjw) | Create image destinations from crop and move workflows | F5 | Reese; Michael for model changes | Partly implemented: Marking detail opens the normal Cover form with the existing image; approval transfers the same Image row. Verify that flow and timing. Remaining: create-new Marking destinations, crop/move controls in edit forms, and a provisional associated Cover from a potential Cover upload in a Marking edit; define draft versus pending first. If the associated Marking has no image, offer a crop into that existing Marking. Preserve the original image. Contributor permission expansion depends on T20; wording and refresh are T34/T35. |
 | [T38](https://trello.com/c/eB0oWj65) | Search for recognizable link and move destinations | F2 | Reese | Unpublished local `d588878` makes Link Existing Marking reuse the image-move destination picker with whole-catalog search. Existing visible associations show review status and cannot be added again. New links retain pending review. Cover-to-Marking image moves retain their associated-Marking destination scope. Browser verification and acceptance remain pending. T37 owns cropping; T20 owns any Contributor permission change. |
 | [T39](https://trello.com/c/YtcnoRop) | Compare proposed changes beside the current Entry | F3 | Reese | Show current and proposed values side by side during Marking and Cover submission review. Existing history is not this comparison. Acceptance: an Editor can identify changed and unchanged values before deciding. |
-| [T40](https://trello.com/c/vqYH3R2Z) | Preserve contributor credit preferences across edits | F3 | Michael: model; Reese: application | An edit currently replaces display_submitter_name and public credit uses created_by only. Define cumulative credit and each person's opt-in, then prevent one contributor's edit from replacing another's choice. Preserve Issue 17's completed original feature. |
+| [T40](https://trello.com/c/vqYH3R2Z) | Preserve contributor credit preferences across edits | F3 | Michael: model; Reese: application | Preference protection is implemented and locally verified in `c0e09f3` for Markings and Covers, including older drafts, direct API edits, and admin forms. Only the original Contributor can change their choice; public credit still uses `created_by`. Cumulative credit and each person's opt-in remain unresolved. Hosted verification and acceptance remain. Preserve Issue 17's completed original feature. Evidence: [preference tests](backend/common/tests/test_submitter_name_preference.py) and [form tests](frontend/src/pages/SubmitterNamePreference.test.tsx). |
 | [T41](https://trello.com/c/LI10JpcC) | Define rescind and inactivity handling for submissions | F3 | Reese; Michael for model changes | Keep existing pending approve/reject/revision and owner withdrawal. Define rescind, the inactivity interval, and whether the request concerns submissions or published Entries before implementing additional actions. Acceptance: agreed transitions and permissions, then verified behaviour; no arbitrary deletion policy. |
 | [T42](https://trello.com/c/dfKkGHWl) | Support circa qualifiers on Marking and Cover dates | F3 | Michael: model; Reese: controls | Store approximation separately from missing date components and offer the requested Circa control. Acceptance: qualifier survives submission, review, retrieval, and display for both Entry types without inventing date precision. Published source commit `9f34260` protects source `c1849` from becoming an exact year during bundle processing; it does not add the application field or Circa control. |
 | [T43](https://trello.com/c/h55E9wFA) | Add captions to image upload forms | F5 | Reese | Expose editable per-image captions on Marking and Cover submission forms. Reuse Image.image_description unless a concrete distinction requires otherwise. Acceptance: caption persists and is available on image display after review. |
@@ -564,13 +588,24 @@ catalog facsimile. Retain the Huntsville, Mobile, and IL checks.
 
 ### Prevent public disclosure of user email and account flags
 
-[T78](https://trello.com/c/dCdskX07): To Do, unassigned;
-F2 - Collection Discovery.
+[T78](https://trello.com/c/dCdskX07): Testing under Reese, verified on the live
+board October 8; F2 - Collection Discovery.
 
-Public Marking detail uses `UserSerializer` for `created_by` and `modified_by`.
-The nested objects include `email`, `username`, `is_staff`, and `is_superuser`,
-independently of `display_submitter_name`. Preserve internal audit identity
-while returning only the approved public credit fields.
+The core disclosure fix was published in
+[PR #171](https://github.com/CoverCensus/worldcovers/pull/171). Public Marking
+detail no longer returns nested `created_by` or `modified_by` user objects.
+Local `c0e09f3` adds Guest and Contributor checks across public Entry list,
+detail, and nested responses. Public Marking credit remains opt-in; internal
+audit identity is retained. Local checks passed. Hosted verification and
+acceptance remain separate.
+
+The card records Reese's October 2 staging verification at `94e9f7b`:
+anonymous reads of woco.dev Marking 48909 and 40 recently modified Markings
+returned no email, account flags, or nested user objects. His October 5
+production check still found the fields on hellowoco.app Marking 48909.
+[Promotion PR #172](https://github.com/CoverCensus/worldcovers/pull/172) is
+still open as of this review. These are dated site reports, not fresh site
+checks. Production verification after promotion and final acceptance remain.
 
 Acceptance: public list/detail and nested Entry responses do not expose
 email or account flags; opted-out Contributors are not identified through
@@ -579,13 +614,17 @@ opted-out credit, and the authenticated administrative views that need
 identity. Keep the Editor roster restricted. Verify deployment separately.
 No real contact details need to be copied into the tracker.
 
-Evidence: [UserSerializer](https://github.com/CoverCensus/worldcovers/blob/50a3a5f82db8f5f96e3117d1281de9f0840d750a/backend/common/api/v2/serializers.py#L77),
-[MarkingSerializer](https://github.com/CoverCensus/worldcovers/blob/50a3a5f82db8f5f96e3117d1281de9f0840d750a/backend/common/api/v2/serializers.py#L996),
-[Marking API](https://github.com/CoverCensus/worldcovers/blob/50a3a5f82db8f5f96e3117d1281de9f0840d750a/backend/common/api/v2/views.py#L1874),
-and [read permissions](https://github.com/CoverCensus/worldcovers/blob/50a3a5f82db8f5f96e3117d1281de9f0840d750a/backend/common/api/v2/permissions.py).
-This is source-confirmed exposure in the public response path; this review
-did not collect personal data from a live site. Related: T40 credit
-preferences and T46's restricted roster.
+Remaining policy question, also recorded in PR #171: whether public
+`CoverMarking.reviewer_username` and integer audit IDs on lookup responses
+are appropriate. Those fields remain; do not describe this fix as complete
+API anonymity. Related: T40 credit preferences and T46's restricted roster.
+
+Evidence: [serializers](backend/common/api/v2/serializers.py),
+[public-response tests](backend/common/tests/test_marking_public_user_fields.py),
+and [restricted roster tests](backend/common/tests/test_editor_roster.py).
+The original September review found nested email and account flags in
+[the earlier serializer](https://github.com/CoverCensus/worldcovers/blob/50a3a5f82db8f5f96e3117d1281de9f0840d750a/backend/common/api/v2/serializers.py#L996);
+that evidence describes the defect before PR #171.
 
 ## Existing work reused and implemented requests
 
@@ -941,8 +980,8 @@ Cover Details screen. Incentivizes uploads.
 - [x] When no: no submitter name shown
 Current source also supports opt-in on Marking submissions and displays
 the opted-in name on Marking details (`Contribute.tsx`, `RecordDetail.tsx`).
-The original Cover feature remains done; cumulative credit and preference
-overwriting on edits are separate September 19 follow-up work.
+The original Cover feature remains done. T40's preference protection is now
+implemented and locally verified for edits; cumulative credit remains open.
 Resolution note, 2026-07-03: cover submissions persist
 `display_submitter_name`; the API only returns `submitter_name` when the
 submitter opted in, and Cover Details renders that server-gated value.
@@ -1260,14 +1299,17 @@ and published staging `50a3a5f`. Local-only changes and deployment limits are
 recorded above. To Do can include further work on an implemented
 capability. Routes are registered in `frontend/src/App.tsx`; re-verify against
 that file when updating this table.
+The October 8 focused review updates T40, T72, T73, and T78 implementation
+notes and records T72, T73, and T78 in Testing. Other story statuses were not
+rechecked; the September board snapshot remains dated history.
 
 | Feature | Where implemented | Status |
 |---------|-------------------|--------------|
 | F1 Authentication | SPA (`/auth`, `/reset-password`) | Done: S1 |
-| F2 Collection Discovery | SPA (`/`, `/search`, `/record/:id`, `/covers/:coverId`); S5 document exports not found | Done: S2, S3, S4, S41; To Do: S5, T78 (public-user privacy) |
-| F3 Submission Workflow | SPA contribution and editor review flows, including bulk approval/rejection (see notes below) | Done: S6-S11, S13-S15; Testing: S12; To Do: S35 (implemented; verification and acceptance remain) |
+| F2 Collection Discovery | SPA (`/`, `/search`, `/record/:id`, `/covers/:coverId`); S5 document exports not found | Done: S2, S3, S4, S41; To Do: S5; Testing: T78 (core privacy fix implemented; staging verification reported; production verification, acceptance, and the public-identity policy question remain open) |
+| F3 Submission Workflow | SPA contribution and editor review flows, including bulk approval/rejection (see notes below) | Done: S6-S11, S13-S15; Testing: S12, T72; To Do: S35 (implemented; verification and acceptance remain) |
 | F4 Comment Workflow | Deferred: standalone Entry comments; existing notes to the Editor are part of Submissions | Backlog: S16, S17 |
-| F5 Image Attachments | SPA (image upload inside contribution forms) | Done: S18 |
+| F5 Image Attachments | SPA (image upload inside contribution forms) | Done: S18; Testing: T73 |
 | F6 Reference Work Management | Editor/admin add/edit through `/api/v2/reference-works/` and Django `/admin/`; the SPA has citation lookup but no management UI | To Do: S19 |
 | F7 Collection Administration | SPA `/admin/collections` (superuser only), Editor-only `/editors` roster, and Django `/admin/` | Done: S21, T46; Backlog: S20 |
 | F8 Audit Trail | SPA submission transactions and editor/admin record-history views; django-reversion history in Django `/admin/` | Done: S22; To Do: S23 (history viewing implemented; verification and acceptance remain), T74 (restoration scope) |
@@ -1289,8 +1331,13 @@ Notes:
   (`ContributionDetail`). The SPA Editor Dashboard also supports bulk approve
   and reject, shipped in [PR #118](https://github.com/CoverCensus/worldcovers/pull/118).
   Django `/admin/` has secondary bulk actions for administrators.
-  T72 tracks loss of multiple Citations in multipart submissions; the
-  existing JSON approval tests do not establish correct form handling.
+  T72's Citation preservation fix is implemented and locally verified with
+  multipart and JSON tests and browser checks. Hosted verification and
+  acceptance remain. T40's original-Contributor preference protection is
+  implemented; cumulative credit remains open.
+- **F5**: T73's Image API responsibility checks are implemented and locally
+  verified, including source and destination checks for moves. Hosted
+  verification and acceptance remain; S18's accepted status is unchanged.
 - **F8**: Editors/admins can view record history on marking and cover detail
   pages. This is separate from the full django-reversion interface in Django
   `/admin/`; history is not limited to that admin interface.

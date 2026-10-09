@@ -170,7 +170,9 @@ def clean(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip())
 
 
-SAME_PREFIX_RE = re.compile(r"^\s*(?:The\s+)?Same\b", re.IGNORECASE)
+SAME_PREFIX_RE = re.compile(
+    r"^\s*(?i:(?:The\s+)?Same)(?=\b|[A-Z][A-Zl.]{0,5}(?:[/\s]|$))"
+)
 LEADING_INSCRIPTION_MARKER_RE = re.compile(r"^\s*(?:\(\s*\d(?:\.\d)?\s*\))\s*")
 TRAILING_INSCRIPTION_MARKER_RE = re.compile(r"\s*(?:\(\s*\d(?:\.\d)?\s*\))\s*$")
 CATALOG_DATE_MARKER_RE = re.compile(r"\s*[(\[{]\s*[EL]\s*[)\]}]\s*", re.IGNORECASE)

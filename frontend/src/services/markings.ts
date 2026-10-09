@@ -279,9 +279,21 @@ export async function moveImageSubject(
  * Coordinates are in the source image's own pixels, not display pixels -- the
  * caller must scale for any on-screen resizing before sending.
  */
+export type CropDestination = {
+  subjectType: "MARKING";
+  subjectId: number;
+  imageView?: "FULL" | "DETAIL";
+};
+
 export async function cropImage(
   imageId: number,
   rect: { x: number; y: number; width: number; height: number },
+  /**
+   * Send the crop to an associated Marking that has no image instead of the
+   * source's own subject (Trello T37, workspace issues.md #182). The server
+   * validates the destination; the client only offers eligible ones.
+   */
+  destination?: CropDestination,
 ): Promise<{ ok: true; imageId: number } | { ok: false; message: string }> {
   await ensureCsrfToken();
   try {
@@ -290,14 +302,21 @@ export async function cropImage(
       y: Math.round(rect.y),
       width: Math.round(rect.width),
       height: Math.round(rect.height),
+      ...(destination
+        ? {
+            subject_type: destination.subjectType,
+            subject_id: destination.subjectId,
+            image_view: destination.imageView ?? "FULL",
+          }
+        : {}),
     });
     return { ok: true, imageId: data.image_id };
   } catch (err: unknown) {
     const ax = err as {
-      response?: { data?: { detail?: string; image_view?: string[] } };
+      response?: { data?: { detail?: string; image_view?: string[]; subject_id?: string[] } };
     };
     const data = ax.response?.data;
-    const message = data?.detail ?? data?.image_view?.[0];
+    const message = data?.detail ?? data?.image_view?.[0] ?? data?.subject_id?.[0];
     return {
       ok: false,
       message: typeof message === "string" ? message : "Could not crop image.",
@@ -1093,6 +1112,7 @@ export interface AssociatedCoverDetails {
   hasAdhesive: boolean | null;
   isInstitutional: boolean | null;
   displaySubmitterName: boolean;
+  canChangeSubmitterName: boolean;
   /** Free-text description / notes; prefilled into the cover edit form. */
   description: string;
   datesSeen: AssociatedDateSeen[];
@@ -1188,6 +1208,7 @@ function mapAssociatedCoverDetails(raw: unknown): AssociatedCoverDetails | null 
     hasAdhesive: o.has_adhesive == null ? null : Boolean(o.has_adhesive),
     isInstitutional: o.is_institutional == null ? null : Boolean(o.is_institutional),
     displaySubmitterName: Boolean(o.display_submitter_name),
+    canChangeSubmitterName: o.can_change_submitter_name === true,
     description: typeof o.description === "string" ? o.description : "",
     datesSeen,
   };
@@ -1514,6 +1535,7 @@ function mapCoverContributionToAssociatedCover(
             ? sd.isInstitutional
             : null,
       displaySubmitterName: Boolean(sd.display_submitter_name ?? sd.displaySubmitterName),
+      canChangeSubmitterName: false,
       description: typeof sd.description === "string" ? sd.description : "",
       datesSeen: datesSeenFromCoverSubmission(sd),
     },

@@ -1488,3 +1488,165 @@ class CarriedOverMarkingImageTests(TestCase):
                 subject_type=Image.SUBJECT_COVER, subject_id=cover.pk
             ).exists()
         )
+
+    # Workspace issues.md #181: approval places the carried image where the
+    # contributor arranged it. The form and the review page always showed it
+    # at its slot (first by default); approval used to append it last.
+
+    def _upload_meta(self, name):
+        return {
+            "storage_filename": "va/{}".format(name),
+            "original_filename": name,
+            "file_checksum": "cafe",
+            "mime_type": "image/jpeg",
+            "image_width": 800,
+            "image_height": 600,
+            "file_size_bytes": 1,
+        }
+
+    def _approve_with_uploads(self, names, **extra):
+        metas = [self._upload_meta(n) for n in names]
+        sd = _cover_submitted_data(
+            self.parent,
+            cover_image_metas=metas,
+            image_metas=metas,
+            image_meta=metas[0] if metas else None,
+            cover_image_tags=["photograph"] * len(metas),
+            source_marking_image_id=str(self.image.pk),
+            **extra,
+        )
+        contrib = _make_cover_contribution(self.user, sd, self.collection)
+        cover = apply_cover_contribution_to_catalog(contrib)["cover"]
+        rows = Image.objects.filter(
+            subject_type=Image.SUBJECT_COVER, subject_id=cover.pk
+        ).order_by("display_order")
+        return [(r.storage_filename, r.display_order) for r in rows]
+
+    def test_carried_image_is_first_by_default_ahead_of_uploads(self):
+        # No position recorded (older drafts, or a form that sent no order):
+        # the tile's default slot is 0, which is what the review page showed.
+        order = self._approve_with_uploads(["a.jpg"])
+        self.assertEqual(order, [("va/whole-cover.jpg", 0), ("va/a.jpg", 1)])
+
+    def test_carried_image_honours_the_contributor_position(self):
+        order = self._approve_with_uploads(
+            ["a.jpg", "b.jpg"], source_marking_image_position=1
+        )
+        self.assertEqual(
+            order, [("va/a.jpg", 0), ("va/whole-cover.jpg", 1), ("va/b.jpg", 2)]
+        )
+
+    def test_position_past_the_end_appends(self):
+        order = self._approve_with_uploads(["a.jpg"], source_marking_image_position=7)
+        self.assertEqual(order, [("va/a.jpg", 0), ("va/whole-cover.jpg", 1)])
+
+
+class CarriedOverImageOnCoverEditTests(TestCase):
+    """
+    Workspace issues.md #181: a cover EDIT that names a parent-marking image
+    repoints it exactly as a create does. _apply_cover_edit never called the
+    repoint, so the id was silently ignored, and it ran _sync_images
+    unconditionally, so a carried-only edit payload raised.
+    """
+
+    def setUp(self):
+        self.user = _make_user("carryover-edit-editor")
+        self.collection = _make_collection(self.user)
+        self.parent = _make_parent_marking(self.user, self.collection.region)
+        self.cover = Cover.objects.create(
+            code="ASCC1-VA-C0777",
+            type="FC",
+            created_by=self.user,
+            modified_by=self.user,
+        )
+        self.link = CoverMarking.objects.create(
+            cover=self.cover,
+            marking=self.parent,
+            review_status=CoverMarking.REVIEW_APPROVED,
+            created_by=self.user,
+            modified_by=self.user,
+        )
+        self.existing = Image.objects.create(
+            subject_type=Image.SUBJECT_COVER,
+            subject_id=self.cover.pk,
+            original_filename="front.jpg",
+            storage_filename="va/front.jpg",
+            file_checksum="f00d",
+            mime_type="image/jpeg",
+            image_width=800,
+            image_height=600,
+            file_size_bytes=1,
+            image_view="FRONT",
+            display_order=0,
+            uploaded_by=self.user,
+            created_by=self.user,
+            modified_by=self.user,
+        )
+        self.marking_image = Image.objects.create(
+            subject_type=Image.SUBJECT_MARKING,
+            subject_id=self.parent.pk,
+            original_filename="whole-cover.jpg",
+            storage_filename="va/whole-cover.jpg",
+            file_checksum="beef",
+            mime_type="image/jpeg",
+            image_width=1600,
+            image_height=1200,
+            file_size_bytes=1,
+            image_view="FULL",
+            display_order=0,
+            uploaded_by=self.user,
+            created_by=self.user,
+            modified_by=self.user,
+        )
+
+    def _apply_edit(self, **extra):
+        sd = _cover_submitted_data(
+            self.parent,
+            edit_cover_id=self.cover.pk,
+            edit_cover_marking_id=self.link.pk,
+            source_marking_image_id=str(self.marking_image.pk),
+            **extra,
+        )
+        contrib = _make_cover_contribution(self.user, sd, self.collection)
+        return apply_cover_contribution_to_catalog(contrib)["cover"]
+
+    def test_cover_edit_repoints_the_carried_image_and_keeps_existing_rows(self):
+        existing_meta = {
+            "storage_filename": "va/front.jpg",
+            "original_filename": "front.jpg",
+            "file_checksum": "f00d",
+            "mime_type": "image/jpeg",
+            "image_width": 800,
+            "image_height": 600,
+            "file_size_bytes": 1,
+        }
+        cover = self._apply_edit(
+            cover_image_metas=[existing_meta],
+            image_metas=[existing_meta],
+            source_marking_image_position=1,
+        )
+
+        self.assertEqual(cover.pk, self.cover.pk)
+        rows = list(
+            Image.objects.filter(subject_type=Image.SUBJECT_COVER, subject_id=cover.pk)
+            .order_by("display_order")
+            .values_list("pk", "display_order")
+        )
+        self.assertEqual(rows, [(self.existing.pk, 0), (self.marking_image.pk, 1)])
+        self.assertFalse(
+            Image.objects.filter(
+                subject_type=Image.SUBJECT_MARKING, subject_id=self.parent.pk
+            ).exists()
+        )
+
+    def test_cover_edit_with_only_a_carried_image_does_not_raise(self):
+        # The create path already allows "no metas, one carried image"; the
+        # edit path raised "at least one image is required" instead.
+        cover = self._apply_edit(cover_image_metas=[], image_metas=[], image_meta=None)
+
+        self.marking_image.refresh_from_db()
+        self.assertEqual(self.marking_image.subject_type, Image.SUBJECT_COVER)
+        self.assertEqual(self.marking_image.subject_id, cover.pk)
+        # The existing row is left alone: an empty desired set with a carried
+        # image means "carry it", not "delete everything else".
+        self.assertTrue(Image.objects.filter(pk=self.existing.pk).exists())
