@@ -1376,15 +1376,6 @@ def main(argv=None):
         rt = r.get('head_rel_type')
         return (isinstance(rt, str) and bool(_L_REL_RE.search(rt))
                 and pd.notna(r.get('parent_idx')))
-    listings['is_latest_merge'] = listings.apply(_is_latest_merge, axis=1)
-    # Latest-use rows refer to the preceding device, not the family root.
-    latest_targets = {}
-    for idx, row in listings.iterrows():
-        if row['is_latest_merge']:
-            previous = row['prev_sibling_idx']
-            latest_targets[idx] = latest_targets.get(previous, previous)
-    print(f"Issue #36: (L) rows merged into parent (E) marking: "
-          f"{int(listings['is_latest_merge'].sum())}")
     print(f'Step 7: Relationship resolution applied to {len(listings)} listings')
     print(f'  Independent entries: {listings["parent_idx"].isna().sum()}')
     print(f'  Resolved from parent: {listings["parent_idx"].notna().sum()}')
@@ -1451,6 +1442,28 @@ def main(argv=None):
     print(f'  parsed_sizes inherited:   {inherited_size_count}')
     print(f'  parsed_dates inherited:   {inherited_dates_count}')
     print(f'  lettering inherited:      {inherited_lettering_count}')
+    # A latest-use row can introduce another color or device. It must then
+    # emit its own variant instead of losing its dates and source mapping.
+    listings['is_latest_merge'] = listings.apply(_is_latest_merge, axis=1)
+    latest_targets = {}
+    for idx, row in listings.iterrows():
+        if not row['is_latest_merge']:
+            continue
+        previous = row['prev_sibling_idx']
+        parent = listings.loc[previous]
+        colors = set(row['parsed_colors'] or ['BLACK'])
+        parent_colors = set(parent['parsed_colors'] or ['BLACK'])
+        dimensions = lambda sizes: [
+            (s.get('size_shape_code'), s.get('size_dim1'), s.get('size_dim2'))
+            for s in sizes
+        ]
+        if (not colors.issubset(parent_colors)
+                or dimensions(row['parsed_sizes']) != dimensions(parent['parsed_sizes'])):
+            listings.at[idx, 'is_latest_merge'] = False
+            continue
+        latest_targets[idx] = latest_targets.get(previous, previous)
+    print(f"Issue #36: (L) rows merged into parent (E) marking: "
+          f"{int(listings['is_latest_merge'].sum())}")
     canonical_by_alias = {}
     for rt in listings['resolved_town'].dropna().unique():
         m = OR_ALIAS_RE.match(str(rt))

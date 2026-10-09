@@ -197,6 +197,11 @@ class V1PipelineTests(unittest.TestCase):
             ("The same(L)", "DETROIT / Mich.", "DETROIT / Mich."),
             ("Same/Ills.(thin letters)", "QUINCY/Ills.(thick letters)", "QUINCY/Ills."),
             ("Same(Green)", "QUINCY/Ills.", "QUINCY/Ills."),
+            ("SameVT.", "BARNET VT.", "BARNET VT."),
+            ("SameME./5", "GOFF'S CORNERS ME.", "GOFF'S CORNERS ME."),
+            ("SameMl", "NATCHEZ MI", "NATCHEZ Ml"),
+            ("SameCAL./6 PAID", "GRASS VALLEY CAL.", "GRASS VALLEY CAL."),
+            ("Sametown", "OTHER", "Sametown"),
         ]
         for inscription, parent_text, expected in cases:
             with self.subTest(inscription=inscription):

@@ -46,7 +46,8 @@ RATE_BRACKET_RE = re.compile(
 )
 
 RATE_KEYWORD_RE = re.compile(
-    r'\b(PAID|FREE|STEAM|DUE)\b', re.IGNORECASE
+    r'\b(PAID|FREE|STEAM|DUE|ADVERTISED|SHIP|REGISTERED|FORWARDED)\b',
+    re.IGNORECASE,
 )
 
 PM_RE = re.compile(r'P\.?M\.?\s*(Free|frank)', re.IGNORECASE)
@@ -62,12 +63,21 @@ ROMAN_RE = re.compile(r'^[IVXLDM]+$')
 
 def standalone_marking_type(text):
     """Recognize complete rate and auxiliary inscriptions with no town."""
-    value = str(text or '').strip()
+    value = str(text or '').strip().rstrip('.')
+    if re.fullmatch(
+        r'(?:ADVERTISED|ADVT\.?|ADV\.?|DUE|PAID|DROP)'
+        r'[\s/,]*\d+(?:[ -]\d+/\d+)?(?:\s*(?:CTS?\.?|CENTS?))?\.?',
+        value, re.IGNORECASE,
+    ):
+        return 'RATEMARK'
     if re.fullmatch(r'\d{1,2}(?:[ -]\d+/\d+)?(?:\s+CENTS?)?', value, re.IGNORECASE):
         return 'RATEMARK'
     if re.fullmatch(
-        r'(?:FREE|PAID|FORWARDED|FORWD\.?|P\.?\s*O\.?\s*BUSINESS/FREE'
-        r'|\d+\s+O.CLOCK/DELIVERY|ADVERTISED(?:/\d+)?|REGISTERED(?:/NO_*)?)',
+        r'(?:FREE|PAID(?: ALL| PART)?|FORWARDED|FORWD\.?|SHIP|STEAM|STEAMSHIP|STEAM[- ]SHIP'
+        r'|P\.?\s*O\.?\s*BUSINESS/FREE'
+        r'|POST OFFICE/FREE/BUSINESS'
+        r'|\d+\s+O.CLOCK/DELIVERY|ADVERTISED|DUE|HELD FOR[ /]POSTAGE'
+        r'|REGISTERED(?:/NO_*)?)',
         value, re.IGNORECASE,
     ):
         return 'AUXMARK'
@@ -223,7 +233,7 @@ def parse_rate_token(tok):
     if (result['rate_keyword'] is None and result['rate_amount_raw'] is None
             and not result['rate_is_manuscript']):
         clean = RATE_BRACKET_RE.sub('', t).strip()
-        if ROMAN_RE.match(clean):
+        if clean != 'MDD' and ROMAN_RE.match(clean):
             result['rate_amount_raw'] = clean
 
     return result

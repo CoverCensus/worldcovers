@@ -49,6 +49,10 @@ class PostOfficeCodeAssignmentTests(unittest.TestCase):
 
 
 class PostOfficeTownNormalizationTests(unittest.TestCase):
+    def test_georgia_source_braces_and_leading_bullet(self):
+        self.assertEqual(normalize_post_office_town('{MILLEDGEVILLE,}'), 'MILLEDGEVILLE')
+        self.assertEqual(normalize_post_office_town('\u2022Jefferson'), 'JEFFERSON')
+
     def test_strips_spaced_descriptive_digit_tails(self):
         self.assertEqual(
             normalize_post_office_town("Newark 1854 with Newark"),

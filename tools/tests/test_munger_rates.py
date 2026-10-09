@@ -20,15 +20,55 @@ from munger.fields.rates import (
     parse_rate_token,
     split_inline_rate_from_inscription,
     split_rate_tokens,
+    standalone_marking_type,
 )
 from munger.rate_assembly import parse_rate_amount
 
 
 class TestRateParsing(unittest.TestCase):
 
+    def test_standalone_amount_and_auxiliary_types(self):
+        for text in ('ADVERTISED 2 CTS.', 'ADVERTISED/1', 'ADV.1', 'ADVT/1',
+                     'DUE 3', 'PAID/3', 'DROP/1', 'ADVERTISED, 1 ct.'):
+            with self.subTest(text=text):
+                self.assertEqual(standalone_marking_type(text), 'RATEMARK')
+        for text in ('ADVERTISED', 'Due', 'Held For Postage', 'HELD FOR/POSTAGE',
+                     'FORWARDED.', 'PAID ALL', 'POST OFFICE/FREE/BUSINESS'):
+            with self.subTest(text=text):
+                self.assertEqual(standalone_marking_type(text), 'AUXMARK')
+        self.assertIsNone(standalone_marking_type('DUE WEST/S.C.'))
+
+    def test_advertised_without_amount_keeps_auxiliary_token(self):
+        parsed = parse_rate_token('ADVERTISED[SL-24x2]')
+        self.assertEqual(parsed['rate_keyword'], 'ADVERTISED')
+        self.assertIsNone(parsed['rate_amount_raw'])
+        self.assertEqual(parsed['rate_bracket'], 'SL-24x2')
+
+    def test_device_and_rate_in_one_comma_field(self):
+        result = subparse_fields({
+            'paren_fields': ['1832-33', 'SL-40x4,PAID', 'Black'],
+            'paren_field_types': ['date', 'rate', 'color'],
+        })
+        self.assertEqual(result['parsed_sizes'][0]['size_dim1'], 40)
+        self.assertEqual(result['parsed_sizes'][0]['size_dim2'], 4)
+        self.assertEqual(len(result['parsed_rates'][0]), 1)
+        self.assertEqual(result['parsed_rates'][0][0]['rate_keyword'], 'PAID')
+        self.assertIsNone(result['parsed_rates'][0][0]['rate_amount_raw'])
+
+    def test_fancy_device_with_negative_letters_is_size(self):
+        text = 'fancy C-35,negative letters in black band'
+        self.assertEqual(classify_paren_field(text), 'size')
+        result = subparse_fields({'paren_fields': [text], 'paren_field_types': ['size']})
+        self.assertEqual(result['parsed_rates'], [])
+        self.assertEqual(result['parsed_sizes'][0]['size_dim1'], 35)
+
     def test_c_is_not_a_roman_rate_amount(self):
         self.assertIsNone(parse_rate_token('C')['rate_amount_raw'])
         self.assertEqual(parse_rate_amount('C'), (None, False))
+
+    def test_date_notation_is_not_a_roman_rate_amount(self):
+        self.assertIsNone(parse_rate_token('MDD[SL]')['rate_amount_raw'])
+        self.assertEqual(parse_rate_amount('MDD'), (None, False))
 
     def test_neg_bracket_sets_negative_impression(self):
         parsed = parse_rate_token('PD 3[neg]')
