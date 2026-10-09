@@ -321,3 +321,23 @@ test-only setting leak into a production code path.
 test database through a `mysqldump | mysql` pipe whose failure it ignores,
 and the GitHub runner ships MySQL 8 client tools that fail against MariaDB.
 Evidence: `docs/issues.md` #179 (workspace register), `verify.yml` comments.
+
+## Serialize Only Approved Public Credit, Never User Objects
+
+**Do:** On any response a Guest can read, carry contributor identity only
+through the opt-in `submitter_name` (built by
+`_submitter_name_for_opted_in_record` from `display_submitter_name`). Keep
+`created_by` / `modified_by` as database audit columns and expose them only
+on login-gated endpoints such as the change logs.
+
+**Don't:** Nest a `User` serializer, or any field list containing `email`,
+`is_staff` or `is_superuser`, inside a serializer that an anonymous request
+can reach. Do not reintroduce `created_by` / `modified_by` on
+`MarkingSerializer`; a username alone still identifies a Contributor who
+opted out.
+
+**Why:** Until 2026-10 the public Marking detail nested whole `User` objects
+for `created_by` / `modified_by` (ISSUE.md T78). No client code read them.
+The regression test is `common/tests/test_marking_public_user_fields.py`.
+Evidence: workspace `docs/issues.md` #178; OWASP API3:2023 Broken Object
+Property Level Authorization; DRF "Specifying which fields to include".

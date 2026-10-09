@@ -74,13 +74,6 @@ def _redact_catalog_code(serializer, data):
 ###################################################################################################
 ## Lookup / shared
 ###################################################################################################
-class UserSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        fields = ["id", "username", "email", "is_staff", "is_superuser"]
-        read_only_fields = fields
-
-
 class LoginRequestSerializer(serializers.Serializer):
     """Validates login access request (email, first_name, last_name). Creates User directly."""
     email = serializers.EmailField()
@@ -1025,8 +1018,6 @@ class MarkingSerializer(serializers.ModelSerializer):
     images = serializers.SerializerMethodField()
     citations = serializers.SerializerMethodField()
     size_display = serializers.SerializerMethodField()
-    created_by = UserSerializer(read_only=True)
-    modified_by = UserSerializer(read_only=True)
     is_removed = serializers.SerializerMethodField()
     can_remove = serializers.SerializerMethodField()
     # issues.md 107: may this viewer add/correct/remove this marking's dates? Same
@@ -1080,8 +1071,6 @@ class MarkingSerializer(serializers.ModelSerializer):
             "citations",
             "created_date",
             "modified_date",
-            "created_by",
-            "modified_by",
             "is_removed",
             "can_remove",
             "can_edit_dates",
