@@ -358,3 +358,73 @@ test-only setting leak into a production code path.
 test database through a `mysqldump | mysql` pipe whose failure it ignores,
 and the GitHub runner ships MySQL 8 client tools that fail against MariaDB.
 Evidence: `docs/issues.md` #179 (workspace register), `verify.yml` comments.
+
+## Show Eligible Image Actions With A Reason, Never Hide Them
+
+**Do:** On the Marking and Cover detail screens, render an editor's per-image
+controls whenever the editor may act at all (`canManageImages` /
+`imageActionState.showControls`), and disable a control with its reason as
+visible text when the image is unsaved or its destination is missing
+(`lib/imageActionState.ts`, `lib/coverImageActionState.ts`). Keep "Create
+cover from this image" as the Marking-to-Cover path.
+
+**Don't:** Hide a control because a destination list is empty, show a reason
+only in a tooltip, or restore "Move to another marking" (removed at Ian's
+request on 2026-09-21; ISSUE.md T33/T35). Do not widen who may act: roles are
+unchanged and T20 owns any Contributor change.
+
+**Why:** A hidden control reads as a missing feature; a Delaware editor lost
+two days to one on the marking screen (workspace `docs/issues.md` 166). The
+cover screen had the same defect in the other direction: it passed no
+`onMoveImage` when the cover had no associated Marking and hid move and
+delete for an unsaved image. Evidence: workspace `docs/issues.md` #180;
+`EntryAssociatedThumbnailsCard.test.tsx`, `CoverDetail.imageActions.test.tsx`,
+`coverImageActionState.test.ts`.
+
+## Approve Images In The Order The Contributor Arranged
+
+**Do:** Record the carried marking image's gallery index as
+`source_marking_image_position` when a cover submission is saved
+(`image_order` is consumed at submit and never stored), expose it on the
+contribution detail as `source_marking_image.position`, and let approval place
+the repointed row at that slot, shifting later rows by one
+(`_repoint_source_marking_image`). Honor `source_marking_image_id` on a cover
+edit exactly as on a create, including the "no metas, one carried image" case.
+
+**Don't:** Append the carried image after the uploads, copy or re-upload it,
+delete and recreate it, or run `_sync_images` after the repoint.
+
+**Why:** The form and the review page showed the carried tile where the
+contributor put it (first by default) while approval appended it last, so the
+published cover disagreed with what both screens had shown. The cover-edit
+applier never called the repoint at all. Workspace `docs/DECISIONS.md`
+2026-09-27 had left this "on purpose, on the T37 card"; closed here. Evidence:
+`CarriedOverMarkingImageTests`, `CarriedOverImageOnCoverEditTests`,
+`CarriedImagePositionHelperTests`, `coverFromImageHandoff.test.ts`; workspace
+`docs/issues.md` #181.
+
+## Crop Into A Destination Only Through The Crop Endpoint
+
+**Do:** Send a crop to another record with the optional `subject_type` /
+`subject_id` on `POST /images/{id}/crop/`. Accept only a Marking linked to
+the source Cover by an approved `CoverMarking` that currently has no image;
+check the editor's responsibility for both the source and the destination;
+validate the view before writing any file; keep the original image on the
+Cover. On the cover screen offer "Crop into marking" only as this
+destination action, visible and disabled with a reason when no Marking
+qualifies.
+
+**Don't:** Compose crop-then-move in the client, accept a destination the
+server has not validated, let a same-subject cover crop appear without a
+request behind it, or move or delete the source.
+
+**Why:** One request keeps the operation atomic and auditable through a
+single row with `cropped_from`; a client composition would leave a stray
+Cover image whenever the second call failed. Both crop and ordinary Image
+writes now check Collection responsibility (T73); keep those checks when
+adding a destination. This reverses the crop docstring's earlier
+"crop and move stay separate, composable operations" for this one
+destination; the default same-subject crop is unchanged. Evidence:
+`ImageCropIntoMarkingTests`; `permissions.py`
+`user_is_responsible_for_subject`; `coverImageActionState.test.ts`;
+workspace `docs/issues.md` #182.

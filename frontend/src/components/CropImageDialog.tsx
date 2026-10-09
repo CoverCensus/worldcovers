@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { cropImage } from "@/services/markings";
+import { cropImage, type CropDestination } from "@/services/markings";
 
 interface CropImageDialogProps {
   open: boolean;
@@ -20,6 +20,11 @@ interface CropImageDialogProps {
   imageUrl: string | null;
   /** Called after a crop is saved, so the caller can refetch the record. */
   onCropped: () => void | Promise<void>;
+  /**
+   * Send the crop to an associated Marking with no image instead of this
+   * record (Trello T37, workspace issues.md #182). `label` names it in the copy.
+   */
+  destination?: CropDestination & { label: string };
 }
 
 /** Smallest crop worth saving, in source pixels. Below this it is a misclick. */
@@ -43,6 +48,7 @@ export function CropImageDialog({
   imageId,
   imageUrl,
   onCropped,
+  destination,
 }: CropImageDialogProps) {
   const [crop, setCrop] = useState<Crop>();
   const [pixelCrop, setPixelCrop] = useState<PixelCrop | null>(null);
@@ -81,7 +87,7 @@ export function CropImageDialog({
     setBusy(true);
     setError(null);
     try {
-      const result = await cropImage(imageId, rect);
+      const result = await cropImage(imageId, rect, destination);
       if (result.ok === false) {
         setError(result.message);
         return;
@@ -98,11 +104,13 @@ export function CropImageDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Crop the marking out of this image</DialogTitle>
+          <DialogTitle>
+            {destination ? "Crop the marking out of this cover scan" : "Crop the marking out of this image"}
+          </DialogTitle>
           <DialogDescription>
-            Drag a box around the marking. The cropped area is added as a new
-            image on this record; the original is left untouched, so you can
-            still move it to a cover afterwards.
+            {destination
+              ? `Drag a box around the marking. The crop is added to ${destination.label}, which has no image yet. The cover keeps the original.`
+              : "Drag a box around the marking. The cropped area is added as a new image on this record; the original is left untouched."}
           </DialogDescription>
         </DialogHeader>
 

@@ -2265,7 +2265,7 @@ const Contribute = () => {
                                 edit_contribution_id: editContributionId,
                                 abandon_draft: "true",
                               });
-                              navigate(`/contribute/edit/${resumedEditMarkingId}`, { replace: true });
+                              navigate(`/edit/${resumedEditMarkingId}`, { replace: true });
                             } catch (err: unknown) {
                               toast({
                                 title: "Could not discard draft",

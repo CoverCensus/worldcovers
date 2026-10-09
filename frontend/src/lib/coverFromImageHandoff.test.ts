@@ -8,8 +8,10 @@
  * broken seed means the editor submits a cover with no picture and cannot tell.
  */
 import {
+  insertCarriedTile,
   markingImageFromSourceMarkingImage,
   sourceMarkingImageFromContribution,
+  sourceMarkingImageFromDescriptor,
   sourceMarkingImageFromState,
 } from "./coverFromImageHandoff";
 
@@ -126,5 +128,26 @@ describe("markingImageFromSourceMarkingImage", () => {
     expect(row.originalFilename).toBe("");
     expect(row.storageFilename).toBe("");
     expect(row.isTracing).toBe(false);
+  });
+});
+
+// Workspace issues.md #181: the carried tile goes back where the contributor
+// left it, and approval places the catalog row at the same slot.
+describe("carried tile position", () => {
+  it("reads the recorded position and ignores a malformed one", () => {
+    const base = { id: 10856, image_url: "/media/fl/alligator.png" };
+    expect(sourceMarkingImageFromDescriptor({ ...base, position: 2 })?.position).toBe(2);
+    expect(sourceMarkingImageFromDescriptor({ ...base, position: "1" })?.position).toBe(1);
+    expect(sourceMarkingImageFromDescriptor({ ...base, position: -1 })?.position).toBeUndefined();
+    expect(sourceMarkingImageFromDescriptor(base)?.position).toBeUndefined();
+  });
+
+  it("puts the tile first when no position is recorded", () => {
+    expect(insertCarriedTile(["a", "b"], "carried", undefined)).toEqual(["carried", "a", "b"]);
+  });
+
+  it("honours a middle position and clamps one past the end", () => {
+    expect(insertCarriedTile(["a", "b"], "carried", 1)).toEqual(["a", "carried", "b"]);
+    expect(insertCarriedTile(["a"], "carried", 7)).toEqual(["a", "carried"]);
   });
 });
