@@ -3,7 +3,10 @@ from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from common.models import Cover, CoverMarking, Image, Marking, PostOffice
+from common.models import (
+    Collection, CollectionAssignment, Cover, CoverMarking, Image, Marking,
+    PostOffice, PostOfficeRegion, Region,
+)
 
 
 User = get_user_model()
@@ -43,6 +46,10 @@ class ImageMoveTests(TestCase):
 
         audit = {"created_by": self.editor, "modified_by": self.editor}
         self.post_office = PostOffice.objects.create(name="Charlestown", **audit)
+        region = Region.objects.create(name="Virginia", abbrev="VA", region_tier="STATE", **audit)
+        collection = Collection.objects.create(name="Virginia", region=region, **audit)
+        CollectionAssignment.objects.create(user=self.editor, collection=collection, **audit)
+        PostOfficeRegion.objects.create(post_office=self.post_office, region=region, **audit)
         self.marking = Marking.objects.create(
             code="ASCC1-VA-M0001",
             type="TOWNMARK",

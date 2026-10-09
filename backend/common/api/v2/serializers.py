@@ -20,7 +20,7 @@ from common.catalog_codes import (
     strip_catalog_code_keys,
     validate_unique_catalog_code,
 )
-from common.contribution_apply import _source_marking_image_id
+from common.contribution_apply import _source_marking_image_id, _source_marking_image_position
 from common.contribution_consolidation import contribution_target
 from common.models import (
     Citation,
@@ -69,6 +69,20 @@ def _redact_catalog_code(serializer, data):
     if not _viewer_may_see_catalog_code(user):
         data["code"] = None
     return data
+
+
+def _can_change_submitter_name(serializer, entry) -> bool:
+    request = serializer.context.get("request")
+    user = getattr(request, "user", None)
+    return bool(user and user.is_authenticated and entry.created_by_id == user.pk)
+
+
+def _validate_submitter_name_preference(serializer, value):
+    if serializer.instance is not None and not _can_change_submitter_name(serializer, serializer.instance):
+        raise serializers.ValidationError(
+            "Only the original Contributor can change their public-name preference."
+        )
+    return value
 
 
 ###################################################################################################
@@ -602,6 +616,7 @@ class CoverSerializer(serializers.ModelSerializer):
     # contributor). Returned ONLY when the submitter opted in -- privacy is
     # enforced here at the API boundary, not just hidden in the UI.
     submitter_name = serializers.SerializerMethodField()
+    can_change_submitter_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Cover
@@ -617,6 +632,7 @@ class CoverSerializer(serializers.ModelSerializer):
             "width",
             "display_submitter_name",
             "submitter_name",
+            "can_change_submitter_name",
             "description",
             "dates_seen",
             "is_removed",
@@ -650,6 +666,12 @@ class CoverSerializer(serializers.ModelSerializer):
 
     def get_submitter_name(self, obj):
         return _submitter_name_for_opted_in_record(obj)
+
+    def get_can_change_submitter_name(self, obj):
+        return _can_change_submitter_name(self, obj)
+
+    def validate_display_submitter_name(self, value):
+        return _validate_submitter_name_preference(self, value)
 
     def get_dates_seen(self, obj):
         qs = DateSeen.objects.filter(
@@ -1026,6 +1048,7 @@ class MarkingSerializer(serializers.ModelSerializer):
     comment_for_editor = serializers.SerializerMethodField()
     editor_feedback = serializers.SerializerMethodField()
     submitter_name = serializers.SerializerMethodField()
+    can_change_submitter_name = serializers.SerializerMethodField()
     vphc_provenance = serializers.SerializerMethodField()
 
     class Meta:
@@ -1078,6 +1101,7 @@ class MarkingSerializer(serializers.ModelSerializer):
             "editor_feedback",
             "display_submitter_name",
             "submitter_name",
+            "can_change_submitter_name",
             "vphc_provenance",
         ]
         read_only_fields = ["id", "created_date", "modified_date"]
@@ -1098,6 +1122,12 @@ class MarkingSerializer(serializers.ModelSerializer):
             )
         except CatalogCodeError as exc:
             raise serializers.ValidationError(str(exc))
+
+    def get_can_change_submitter_name(self, obj):
+        return _can_change_submitter_name(self, obj)
+
+    def validate_display_submitter_name(self, value):
+        return _validate_submitter_name_preference(self, value)
 
     def get_is_removed(self, obj):
         return MarkingRecycleBin.objects.filter(marking_id=obj.pk).exists()
@@ -1553,6 +1583,9 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
             "original_filename": row.original_filename or "",
             "storage_filename": row.storage_filename or "",
             "marking_id": parent_pk,
+            # Where the contributor left the tile (workspace issues.md #181);
+            # the form and the review page place it there, approval too.
+            "position": _source_marking_image_position(sd),
         }
 
 

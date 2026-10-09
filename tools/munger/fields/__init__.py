@@ -20,6 +20,7 @@ from ..classify import _csv_manuscript_truthy
 RATE_FIELD_RE = re.compile(
     r'(?:'
     r'\bPAID\b|\bFREE\b|\bSTEAM\b|\bDUE\b'
+    r'|\bADVERTISED\b|\bSHIP\b|\bREGISTERED\b|\bFORWARDED\b'
     r'|\bP\.?M\.?'
     r'|\bfrank\b'
     r'|\bnegative\b|\bstencil\b'
@@ -122,7 +123,8 @@ BARE_NUMBER_RE = re.compile(r'^\d{1,3}(?:\.\d+)?$')
 # A field that OPENS like this is a size field even when a later annotation
 # bracket would otherwise trip RATE_FIELD_RE's catch-all bracket alternative.
 SIZE_LEADING_SHAPE_RE = re.compile(
-    r'^(?:' + SHAPE_CODE_PAT + r')[\s\-]?\d', re.IGNORECASE
+    r'^(?:(?:fancy|irregular)\s+)?(?:' + SHAPE_CODE_PAT + r')[\s\-]?\d',
+    re.IGNORECASE,
 )
 
 # Smallest plausible circular-datestamp diameter (mm). A bare number below this
@@ -386,7 +388,14 @@ def subparse_fields(row):
         elif ftype == 'size':
             parsed_sizes.append(parse_size_field(field))
         elif ftype == 'rate':
-            parsed_rates.append(parse_rate_field(field))
+            # Some source rows put a device and its rate in one comma field.
+            # Keep SL-40x4 as a size in "SL-40x4,PAID", not a 40-cent rate.
+            device, separator, rates = field.partition(',')
+            if separator and SIZE_LEADING_SHAPE_RE.match(device.strip()):
+                parsed_sizes.append(parse_size_field(device.strip()))
+                parsed_rates.append(parse_rate_field(rates.strip()))
+            else:
+                parsed_rates.append(parse_rate_field(field))
         elif ftype == 'color':
             parsed_colors.extend(parse_color_field(field))
         elif ftype == 'other':

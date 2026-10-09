@@ -38,7 +38,7 @@ def parse_rate_amount(raw):
         return None, False
 
     # Roman numeral check
-    if re.match(r'^[IVXLDM]+$', s):
+    if s != 'MDD' and re.match(r'^[IVXLDM]+$', s):
         val = roman_to_int(s)
         if val is not None:
             return float(val), True

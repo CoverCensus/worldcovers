@@ -44,6 +44,10 @@ the API. Preserve assigned-Collection checks for Submission review, including
 each item in a bulk action. Preserve the existing Region checks for Marking
 writes and Entry removal. Cover removal requires responsibility for all
 linked Marking Regions; the Administrator has a separate override.
+Check responsibility before ordinary Image creation, updates, and deletion.
+Check both source and destination when moving an Image, including the linked
+Marking Regions for a Cover. Preserve existing Administrator overrides and
+Contributor restrictions.
 
 **Don't:** Rely on a hidden button, a filtered screen, or permission to enter
 the review area as proof that the user may change any Entry.
@@ -55,15 +59,15 @@ not establish responsibility for a Collection.
 [API-first design](docs/devel/design.md#technical-constraints);
 [permission checks](backend/common/api/v2/permissions.py);
 [bulk review tests](backend/common/tests/test_bulk_review.py) and
-[Entry removal tests](backend/common/tests/test_entry_remove_permissions.py).
+[Entry removal tests](backend/common/tests/test_entry_remove_permissions.py);
+[Image API](backend/common/api/v2/views.py) and
+[image write tests](backend/common/tests/test_image_write_permissions.py).
 
 **Open work:** [Issue 26 / T20](ISSUE.md#issue-26----decide-whether-contributors-may-link-existing-covers-and-markings)
 leaves Contributor linking permissions undecided. [T37 and T38](ISSUE.md#other-follow-ups)
 cover related image and destination workflows, not approval to widen access.
-There is also a gap: ordinary `ImageViewSet` writes in
-[the API](backend/common/api/v2/views.py) check role but not Collection
-responsibility; crop adds a subject check. [T73](ISSUE.md#t73---scope-image-writes-to-collection-responsibility)
-tracks source and destination checks. Do not copy that omission into new write paths.
+[T73](ISSUE.md#t73---scope-image-writes-to-collection-responsibility)
+tracks hosted verification and acceptance of Image write checks.
 
 ## Keep Submissions Separate From Publication
 
@@ -95,6 +99,8 @@ omits them. Handle a requested clear according to that field's validation.
 Keep the form and approval code in agreement about omission and clearing.
 For Citations, an omitted list preserves the stored set; a supplied list
 replaces it, and an explicit empty list clears it.
+Preserve every selected Citation and its details in multipart and JSON
+submissions, including draft save, resume, review, and approval.
 
 **Don't:** Build a replacement Entry using empty defaults for missing fields.
 Do not assume every empty value is valid, or that supplied image, Citation,
@@ -107,17 +113,47 @@ values as empty can erase information the Contributor never changed.
 [approval helpers](backend/common/contribution_apply.py)
 (`_apply_marking_edit`, `_apply_cover_edit`, `_sync_citations`);
 [merge tests](backend/common/tests/test_marking_edit_merge.py) and
-[Cover/edit tests](backend/common/tests/test_cover_contribution_apply.py).
+[Cover/edit tests](backend/common/tests/test_cover_contribution_apply.py);
+[submission tests](backend/common/tests/test_submission_citations.py) and
+[form tests](frontend/src/pages/SubmissionCitations.test.tsx).
 
 **Open work:** [T39](ISSUE.md#other-follow-ups) covers comparing proposed and
-current values during review. [T40](ISSUE.md#other-follow-ups) covers
-contributor credit: an edit can replace the display-name preference, and
-public credit uses the original creator. Keeping omitted fields does not
-solve consent or cumulative credit. Upload forms also flatten multi-value
-Citation input in [the submit path](backend/common/api/v2/views.py); do not
-assume every form can express the full Citation replacement set.
+current values during review.
 [T72](ISSUE.md#t72---preserve-all-citations-in-multipart-submissions) tracks
-preserving all selections and explicit clearing through the form workflow.
+hosted verification and acceptance of Citation preservation and explicit
+clearing through the form workflow. [T40](ISSUE.md#other-follow-ups) covers
+cumulative credit; preserve the public-credit rule below when changing edits.
+
+## Serialize Only Approved Public Credit, Never User Objects
+
+**Do:** Expose Marking and Cover submitter names only through the opt-in
+`submitter_name`, using the original Contributor in `created_by`. Preserve
+that Contributor's public-name preference when another person edits the
+Entry. Only the original Contributor can change their choice through an
+approved Submission, direct API edit, or admin edit form. Keep internal
+audit identity and the separate permission checks for audit access.
+
+**Don't:** Expose nested account objects, email, or account flags in public
+Entry responses. Do not treat Editor review or Administrator authority as
+consent to change another person's public-name preference.
+
+**Why:** Corrections must preserve privacy and credit. A username alone can
+identify a Contributor who chose not to receive public credit.
+
+**Evidence:** [Public serializer fix, PR #171](https://github.com/CoverCensus/worldcovers/pull/171);
+[serializers](backend/common/api/v2/serializers.py),
+[approval helpers](backend/common/contribution_apply.py), and
+[admin forms](backend/common/admin.py);
+[public-response tests](backend/common/tests/test_marking_public_user_fields.py),
+[preference tests](backend/common/tests/test_submitter_name_preference.py), and
+[form tests](frontend/src/pages/SubmitterNamePreference.test.tsx).
+
+**Open work:** [T40](ISSUE.md#other-follow-ups) requires a cumulative-credit
+model and each person's opt-in.
+[T78](ISSUE.md#prevent-public-disclosure-of-user-email-and-account-flags)
+retains hosted verification and acceptance. Public reviewer usernames and
+integer audit IDs remain a separate policy question; this rule does not
+claim that every public identity field has been removed.
 
 ## Preserve Date Evidence And Precision
 
@@ -229,9 +265,10 @@ it to the public.
 cover Help and article authoring. Repo Markdown is the current article source;
 there is no general article editor in the web interface.
 [T46](ISSUE.md#other-follow-ups) is Done for the restricted assignment-based
-roster. The separate [public-user disclosure gap](ISSUE.md#prevent-public-disclosure-of-user-email-and-account-flags)
-tracks email and account flags exposed by public Marking responses. Roster
-permission tests do not establish privacy on other endpoints.
+roster. [T78](ISSUE.md#prevent-public-disclosure-of-user-email-and-account-flags)
+tracks verification and acceptance of the core public-user disclosure fix,
+plus the remaining public-identity policy question. Roster permission tests
+do not establish privacy on other endpoints.
 
 ## Distinguish Application Features From Operator Tools
 
@@ -322,22 +359,72 @@ test database through a `mysqldump | mysql` pipe whose failure it ignores,
 and the GitHub runner ships MySQL 8 client tools that fail against MariaDB.
 Evidence: `docs/issues.md` #179 (workspace register), `verify.yml` comments.
 
-## Serialize Only Approved Public Credit, Never User Objects
+## Show Eligible Image Actions With A Reason, Never Hide Them
 
-**Do:** On any response a Guest can read, carry contributor identity only
-through the opt-in `submitter_name` (built by
-`_submitter_name_for_opted_in_record` from `display_submitter_name`). Keep
-`created_by` / `modified_by` as database audit columns and expose them only
-on login-gated endpoints such as the change logs.
+**Do:** On the Marking and Cover detail screens, render an editor's per-image
+controls whenever the editor may act at all (`canManageImages` /
+`imageActionState.showControls`), and disable a control with its reason as
+visible text when the image is unsaved or its destination is missing
+(`lib/imageActionState.ts`, `lib/coverImageActionState.ts`). Keep "Create
+cover from this image" as the Marking-to-Cover path.
 
-**Don't:** Nest a `User` serializer, or any field list containing `email`,
-`is_staff` or `is_superuser`, inside a serializer that an anonymous request
-can reach. Do not reintroduce `created_by` / `modified_by` on
-`MarkingSerializer`; a username alone still identifies a Contributor who
-opted out.
+**Don't:** Hide a control because a destination list is empty, show a reason
+only in a tooltip, or restore "Move to another marking" (removed at Ian's
+request on 2026-09-21; ISSUE.md T33/T35). Do not widen who may act: roles are
+unchanged and T20 owns any Contributor change.
 
-**Why:** Until 2026-10 the public Marking detail nested whole `User` objects
-for `created_by` / `modified_by` (ISSUE.md T78). No client code read them.
-The regression test is `common/tests/test_marking_public_user_fields.py`.
-Evidence: workspace `docs/issues.md` #178; OWASP API3:2023 Broken Object
-Property Level Authorization; DRF "Specifying which fields to include".
+**Why:** A hidden control reads as a missing feature; a Delaware editor lost
+two days to one on the marking screen (workspace `docs/issues.md` 166). The
+cover screen had the same defect in the other direction: it passed no
+`onMoveImage` when the cover had no associated Marking and hid move and
+delete for an unsaved image. Evidence: workspace `docs/issues.md` #180;
+`EntryAssociatedThumbnailsCard.test.tsx`, `CoverDetail.imageActions.test.tsx`,
+`coverImageActionState.test.ts`.
+
+## Approve Images In The Order The Contributor Arranged
+
+**Do:** Record the carried marking image's gallery index as
+`source_marking_image_position` when a cover submission is saved
+(`image_order` is consumed at submit and never stored), expose it on the
+contribution detail as `source_marking_image.position`, and let approval place
+the repointed row at that slot, shifting later rows by one
+(`_repoint_source_marking_image`). Honor `source_marking_image_id` on a cover
+edit exactly as on a create, including the "no metas, one carried image" case.
+
+**Don't:** Append the carried image after the uploads, copy or re-upload it,
+delete and recreate it, or run `_sync_images` after the repoint.
+
+**Why:** The form and the review page showed the carried tile where the
+contributor put it (first by default) while approval appended it last, so the
+published cover disagreed with what both screens had shown. The cover-edit
+applier never called the repoint at all. Workspace `docs/DECISIONS.md`
+2026-09-27 had left this "on purpose, on the T37 card"; closed here. Evidence:
+`CarriedOverMarkingImageTests`, `CarriedOverImageOnCoverEditTests`,
+`CarriedImagePositionHelperTests`, `coverFromImageHandoff.test.ts`; workspace
+`docs/issues.md` #181.
+
+## Crop Into A Destination Only Through The Crop Endpoint
+
+**Do:** Send a crop to another record with the optional `subject_type` /
+`subject_id` on `POST /images/{id}/crop/`. Accept only a Marking linked to
+the source Cover by an approved `CoverMarking` that currently has no image;
+check the editor's responsibility for both the source and the destination;
+validate the view before writing any file; keep the original image on the
+Cover. On the cover screen offer "Crop into marking" only as this
+destination action, visible and disabled with a reason when no Marking
+qualifies.
+
+**Don't:** Compose crop-then-move in the client, accept a destination the
+server has not validated, let a same-subject cover crop appear without a
+request behind it, or move or delete the source.
+
+**Why:** One request keeps the operation atomic and auditable through a
+single row with `cropped_from`; a client composition would leave a stray
+Cover image whenever the second call failed. Both crop and ordinary Image
+writes now check Collection responsibility (T73); keep those checks when
+adding a destination. This reverses the crop docstring's earlier
+"crop and move stay separate, composable operations" for this one
+destination; the default same-subject crop is unchanged. Evidence:
+`ImageCropIntoMarkingTests`; `permissions.py`
+`user_is_responsible_for_subject`; `coverImageActionState.test.ts`;
+workspace `docs/issues.md` #182.

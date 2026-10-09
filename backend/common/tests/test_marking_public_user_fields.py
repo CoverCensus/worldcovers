@@ -16,6 +16,8 @@ from common.models import (
     Collection,
     CollectionAssignment,
     Color,
+    Cover,
+    CoverMarking,
     Marking,
     PostOffice,
     PostOfficeRegion,
@@ -110,7 +112,32 @@ class MarkingPublicUserFieldsTests(TestCase):
             self.client.get(f"/api/v2/markings/{self.opted_out.id}/")
         )
 
-    def test_submitter_name_honours_opt_in(self):
+    def test_public_entry_endpoints_do_not_expose_account_fields(self):
+        contributor = User.objects.create_user("contributor", email="private@example.com")
+        cover = Cover.objects.create(
+            type="FC", display_submitter_name=False,
+            created_by=self.admin, modified_by=self.admin,
+        )
+        CoverMarking.objects.create(
+            cover=cover, marking=self.opted_out,
+            created_by=self.admin, modified_by=self.admin,
+        )
+        for user in (None, contributor):
+            self.client.force_authenticate(user)
+            for path in (
+                "/api/v2/markings/", f"/api/v2/markings/{self.opted_out.pk}/",
+                "/api/v2/covers/", f"/api/v2/covers/{cover.pk}/",
+                f"/api/v2/cover-markings/?cover={cover.pk}",
+            ):
+                with self.subTest(user=user, path=path):
+                    response = self.client.get(path)
+                    self.assertEqual(response.status_code, 200)
+                    keys, values = _collect(response.data)
+                    self.assertFalse(keys & {"email", "is_staff", "is_superuser"})
+                    self.assertNotIn(self.admin.email, values)
+                    self.assertNotIn(contributor.email, values)
+
+    def test_submitter_name_honors_opt_in(self):
         opted_in = self.client.get(f"/api/v2/markings/{self.opted_in.id}/")
         self.assertEqual(opted_in.data["submitter_name"], "Ada Admin")
 

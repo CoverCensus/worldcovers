@@ -101,18 +101,26 @@ export async function listCitationsForSubject(params: {
   subjectType: WritableCitationSubjectType;
   subjectId: number;
 }): Promise<CitationSubjectRow[]> {
-  try {
-    const res = await apiClient.get<{ results?: unknown[] }>("/citations/", {
+  const rows: CitationSubjectRow[] = [];
+  let next: string | null = "/citations/";
+  while (next) {
+    const res = await apiClient.get<{ results?: unknown[]; next: string | null }>(next, {
       params: {
         subject_type: params.subjectType,
         subject_id: params.subjectId,
       },
     });
-    const rows = Array.isArray(res.data?.results) ? res.data.results : [];
-    return rows.map(mapCitationSubjectRow).filter((x): x is CitationSubjectRow => x != null);
-  } catch {
-    return [];
+    if (!Array.isArray(res.data?.results)) {
+      throw new Error("Citations API: invalid response (missing results array)");
+    }
+    for (const raw of res.data.results) {
+      const row = mapCitationSubjectRow(raw);
+      if (!row) throw new Error("Citations API: invalid Citation");
+      rows.push(row);
+    }
+    next = res.data.next;
   }
+  return rows;
 }
 
 export async function createCitationSubject(params: {
