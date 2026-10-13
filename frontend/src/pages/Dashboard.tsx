@@ -699,8 +699,16 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         // Fetch all contributor-owned contributions so submissions and edit
         // drafts appear in one canonical My Submissions list.
         // rawItems carry dynamic camelCase-or-snake_case display fields the mapper reads positionally.
+        const result = await listMyContributions();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const list = (await listMyContributions()) as any[];
+        const list = result.items as any[];
+        if (result.incomplete) {
+          toast({
+            title: "Some submissions could not be loaded",
+            description: "The server could not load every page. Please try again.",
+            variant: "destructive",
+          });
+        }
         if (!list.length) {
           setSubmissions([]);
           return;
@@ -1626,7 +1634,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     className="w-full"
                     onClick={() => {
                       setSearchQuery("");
-                      setStatusFilter("pending");
+                      setStatusFilter("all");
                       setStateFilter("all");
                       setTownFilter("");
                       setShapeFilter("all");
