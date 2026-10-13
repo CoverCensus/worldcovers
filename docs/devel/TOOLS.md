@@ -14,7 +14,8 @@ Use `./woco <command>` from repo root for Django management commands. The
 `execute_from_command_line`. Several shortcuts bypass Django entirely:
 `./woco setup dev` and `./woco setup prod` run the environment setup in
 `tools/setup.sh` (see [BUILD.md](BUILD.md) and [DEPLOY.md](DEPLOY.md)),
-`./woco push [args]` runs `tools/push_data.sh`, `./woco reload [args]`
+`./woco push [args]` runs `tools/push_data.sh`, `./woco refresh [args]`
+runs `tools/refresh_data.sh`, `./woco reload [args]`
 runs `tools/reload_data.sh` with the same arguments, and `./woco secretkey`
 prints a fresh `DJANGO_SECRET_KEY` value (it works before `.env` exists,
 which is exactly when you need it).
@@ -25,6 +26,7 @@ which is exactly when you need it).
 |------|---------|----------|
 | `setup.sh` | One-command dev/prod environment setup | `tools/setup.sh` |
 | `push_data.sh` | Sync local catalog data and media to staging | `tools/push_data.sh` |
+| `refresh_data.sh` | Import a bundle and keep existing catalog data | `tools/refresh_data.sh` |
 | `reload_data.sh` | Reload staging catalog data on the server | `tools/reload_data.sh` |
 | `rebuild_staging_db.sh` | Ensure DB exists, migrate, create admin, import | `tools/rebuild_staging_db.sh` |
 | `wipe_user_data.sh` | Wipe submissions, optionally reload a bundle | `tools/wipe_user_data.sh` |
@@ -63,17 +65,33 @@ commands. Tool code is tracked; maps and run output belong in `tools/wip`.
 Run from a local checkout:
 
 ```sh
-./tools/push_data.sh
-./tools/push_data.sh --dry-run
-./tools/push_data.sh --import --state VA
-./tools/push_data.sh --import --bundle-dir tools/wip/out/v1_va
+WOCO_HOST=woco.dev ./tools/push_data.sh
+WOCO_HOST=woco.dev ./tools/push_data.sh --dry-run
+WOCO_HOST=woco.dev ./tools/push_data.sh --state VA
+WOCO_HOST=woco.dev ./tools/push_data.sh --import --state VA
+WOCO_HOST=woco.dev ./tools/push_data.sh --import --bundle-dir tools/wip/out/v1_va
 ```
 
 Expected exit code: `0`.
 
 Syncs local `tools/wip/` and `backend/media/` to the staging host. With
-`--import`, it runs `/srv/woco/tools/reload_data.sh` remotely as `wocod` for
+`--import`, it runs `/srv/woco/tools/refresh_data.sh` remotely as `wocod` for
 the selected bundle. `--state VA` resolves to `tools/wip/out/v1_va`.
+
+With `--state`, only that state's bundle and media directory are uploaded.
+Set `WOCO_HOST=woco.dev` for staging; the default host is `hellowoco.app`.
+
+### `tools/refresh_data.sh`
+
+Run on the selected host as `wocod`:
+
+```sh
+sudo -u wocod /srv/woco/tools/refresh_data.sh tools/wip/out/v1_va
+```
+
+Calls `./woco ascc import` without `--truncate`. Existing natural-key rows
+are skipped, including rows whose values differ. This adds missing records;
+it does not replace existing records. Expected exit code: `0`.
 
 <a id="toolsreload_datash"></a>
 

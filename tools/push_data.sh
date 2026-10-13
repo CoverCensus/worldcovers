@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# Push local tools/wip/ and backend/media/ to hellowoco.app staging.
+# Push local tools/wip/ and backend/media/ to the selected host.
 #
 # Files land on the server owned wocod:wocod (via `sudo rsync` + --chown) so
 # the app runtime can read them without a manual chown dance. With --import,
-# also triggers /srv/woco/tools/reload_data.sh as the wocod user.
+# also triggers /srv/woco/tools/refresh_data.sh as the wocod user.
 #
 # No username is baked into this script. Set WOCO_DEPLOY_USER in the repo-root
 # .env (gitignored; see .env.example), or export WOCO_HOST=user@host to
 # override the full target. Files on the server are always owned by wocod
 # regardless of who pushes.
 #
-# With --import, the server-side reload_data.sh now takes a TAGGED BACKUP first
-# (pre-import-<bundle>) and refuses to run if no backup tool is installed. See
-# deploy/install-backup.sh and docs/devel/BACKUP.md. Override, at your own risk,
-# with WOCO_ALLOW_UNBACKED_IMPORT=1.
+# With --import, existing catalog records are kept. The regular importer
+# skips existing natural keys. Use WOCO_HOST=woco.dev to target staging.
 #
 # Prereq on the server: your SSH user needs passwordless sudo for exactly the
 # two commands below. Use a scoped drop-in (replace <user> with your SSH user)
 # rather than blanket NOPASSWD -- blanket sudo makes the SSH key root-equivalent:
 #   # /etc/sudoers.d/<user>-rsync
 #   <user> ALL=(root) NOPASSWD: /usr/bin/rsync
-#   <user> ALL=(wocod) NOPASSWD: /srv/woco/tools/reload_data.sh
+#   <user> ALL=(wocod) NOPASSWD: /srv/woco/tools/refresh_data.sh
 #
 # Usage:
 #   ./tools/push_data.sh              # push only
+#   WOCO_HOST=woco.dev ./tools/push_data.sh --state VA
+#                                     # push only the VA bundle and media
 #   ./tools/push_data.sh --import --state VA
 #                                     # push, then import tools/wip/out/v1_va as wocod
 #   ./tools/push_data.sh --import --bundle-dir tools/wip/out/v1_va
@@ -67,7 +67,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --dry-run only previews the rsyncs; there is no dry-run for the import,
-# which truncate-reloads the live DB. Refuse the combination outright.
+# which writes to the live DB. Refuse the combination outright.
 if [[ $DRY_RUN -eq 1 && $DO_IMPORT -eq 1 ]]; then
   echo "push_data.sh: refusing --import with --dry-run; the import step is never a dry run." >&2
   exit 2
@@ -91,7 +91,7 @@ if [[ -n "$IMPORT_STATE" ]]; then
   IMPORT_BUNDLE="tools/wip/out/v1_$(printf '%s' "$IMPORT_STATE" | tr '[:upper:]' '[:lower:]')"
 fi
 
-if [[ $DO_IMPORT -eq 1 ]]; then
+if [[ $DO_IMPORT -eq 1 || -n "$IMPORT_STATE" ]]; then
   if [[ -z "$IMPORT_BUNDLE" ]]; then
     echo "push_data.sh: --import requires --state, --bundle-dir, or WOCO_IMPORT_BUNDLE." >&2
     exit 2
@@ -176,12 +176,20 @@ push_tree() {
   rsync "${flags[@]}" "${src}/" "${HOST}:${dst}/"
 }
 
-push_tree "tools/wip"     "${REMOTE_ROOT}/tools/wip"     "${RSYNC_FLAGS_WIP[@]}"
-push_tree "backend/media" "${REMOTE_ROOT}/backend/media" "${RSYNC_FLAGS_MEDIA[@]}"
+if [[ -n "$IMPORT_STATE" ]]; then
+  push_tree "$IMPORT_BUNDLE" "${REMOTE_ROOT}/$IMPORT_BUNDLE" "${RSYNC_FLAGS_WIP[@]}"
+  STATE_MEDIA="backend/media/$(printf '%s' "$IMPORT_STATE" | tr '[:upper:]' '[:lower:]')"
+  if [[ -d "$STATE_MEDIA" ]]; then
+    push_tree "$STATE_MEDIA" "${REMOTE_ROOT}/$STATE_MEDIA" "${RSYNC_FLAGS_MEDIA[@]}"
+  fi
+else
+  push_tree "tools/wip"     "${REMOTE_ROOT}/tools/wip"     "${RSYNC_FLAGS_WIP[@]}"
+  push_tree "backend/media" "${REMOTE_ROOT}/backend/media" "${RSYNC_FLAGS_MEDIA[@]}"
+fi
 
 if [[ $DO_IMPORT -eq 1 ]]; then
-  echo "==> running reload_data.sh as wocod on ${HOST} for ${IMPORT_BUNDLE}"
-  ssh -t "$HOST" "sudo -u wocod ${REMOTE_ROOT}/tools/reload_data.sh ${IMPORT_BUNDLE}"
+  echo "==> running refresh_data.sh as wocod on ${HOST} for ${IMPORT_BUNDLE}"
+  ssh -t "$HOST" "sudo -u wocod ${REMOTE_ROOT}/tools/refresh_data.sh ${IMPORT_BUNDLE}"
 fi
 
 echo "Done."

@@ -26,6 +26,14 @@ from munger.rate_assembly import parse_rate_amount
 
 
 class TestRateParsing(unittest.TestCase):
+    def test_explicit_cent_way_and_collect_amounts_are_rates(self):
+        for text, amount in [('1\u00a2', 1), ('Way 18', 18), ('Collect 15', 15)]:
+            with self.subTest(text=text):
+                self.assertEqual(classify_paren_field(text), 'rate')
+                parsed = parse_rate_token(text)
+                value, _ = parse_rate_amount(parsed['rate_amount_raw'])
+                self.assertEqual(value, amount)
+
 
     def test_standalone_amount_and_auxiliary_types(self):
         for text in ('ADVERTISED 2 CTS.', 'ADVERTISED/1', 'ADV.1', 'ADVT/1',

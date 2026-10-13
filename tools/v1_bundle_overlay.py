@@ -942,6 +942,11 @@ def apply_row_fields(
     townmark_rows = [markings_by_id[mid] for mid in townmark_ids if mid in markings_by_id]
     ratemark_rows = [markings_by_id[mid] for mid in ratemark_ids if mid in markings_by_id]
     marking_rows = [markings_by_id[mid] for mid in marking_ids if mid in markings_by_id]
+    catalog_handstamps = {
+        row["code"] for row in townmark_rows
+        if nonblank(raw_row.get("txtRawStateData"))
+        and not truthy(row.get("is_manuscript")) and nonblank(row.get("shape"))
+    }
     overlay_town = overlay_post_office_town(raw_row)
     if overlay_town and marking_rows:
         first_po = clean(marking_rows[0].get("post_office"))
@@ -1008,6 +1013,10 @@ def apply_row_fields(
     if manuscript is not None:
         for row in townmark_rows:
             if manuscript == "True":
+                if row["code"] in catalog_handstamps:
+                    add_warning(warnings, raw_id, "legacy_manuscript_conflict",
+                                "Kept the catalog handstamp despite the legacy manuscript flag")
+                    continue
                 row["is_manuscript"] = manuscript
                 row["shape"] = ""
                 row["lettering"] = ""
