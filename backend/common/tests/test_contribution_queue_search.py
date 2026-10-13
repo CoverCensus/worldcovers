@@ -18,6 +18,7 @@ from datetime import datetime, timezone as dt_timezone
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
+from django.db import connection
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -264,6 +265,37 @@ class ContributionQueueSearchTests(TestCase):
         self.assertEqual(len(response.data["results"]), 17)
         for draft in drafts:
             self.assertIn(draft.pk, [row["id"] for row in response.data["results"]])
+
+    def test_author_can_list_and_open_draft_with_missing_collection(self):
+        draft = self._contribution(status=Contribution.STATUS_DRAFT)
+        missing_collection_id = self.collection.pk + 1000
+        self.assertFalse(Collection.objects.filter(pk=missing_collection_id).exists())
+        # Reproduce a saved Submission whose Collection row no longer exists.
+        with connection.constraint_checks_disabled():
+            Contribution.objects.filter(pk=draft.pk).update(
+                collection_id=missing_collection_id,
+            )
+        try:
+            self.client.force_authenticate(self.contributor)
+            response = self.client.get(URL, {"page_size": 100, "page": 1})
+
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["count"], 11)
+            self.assertIsNone(response.data["next"])
+            self.assertEqual(len(response.data["results"]), 11)
+            self.assertIn(draft.pk, [row["id"] for row in response.data["results"]])
+
+            detail = self.client.get(f"{URL}{draft.pk}/")
+            self.assertEqual(detail.status_code, 200, detail.data)
+            self.assertEqual(detail.data["collection"], missing_collection_id)
+
+            self.client.force_authenticate(self.editor)
+            other_list = self.client.get(URL, {"page_size": 100})
+            self.assertEqual(other_list.status_code, 200, other_list.data)
+            self.assertNotIn(draft.pk, [row["id"] for row in other_list.data["results"]])
+            self.assertEqual(self.client.get(f"{URL}{draft.pk}/").status_code, 404)
+        finally:
+            Contribution.objects.filter(pk=draft.pk).update(collection=self.collection)
 
     # -- ordering -----------------------------------------------------------
 

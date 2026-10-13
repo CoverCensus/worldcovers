@@ -2721,8 +2721,11 @@ class ContributionViewSet(
         #                              permission via the decorator on each
         #                              action.
         user = self.request.user
+        # The serializers use collection_id, not the Collection or its Region.
+        # Inner joins to those rows hide saved Submissions with stale links,
+        # while pagination still counts them.
         base_qs = Contribution.objects.select_related(
-            "contributor", "reviewer", "marking", "collection", "collection__region"
+            "contributor", "reviewer", "marking"
         )
         if self.action != "list":
             if user.is_superuser:
