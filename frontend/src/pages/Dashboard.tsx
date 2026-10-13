@@ -1634,7 +1634,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     className="w-full"
                     onClick={() => {
                       setSearchQuery("");
-                      setStatusFilter("pending");
+                      setStatusFilter("all");
                       setStateFilter("all");
                       setTownFilter("");
                       setShapeFilter("all");
