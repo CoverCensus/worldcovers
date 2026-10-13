@@ -49,6 +49,7 @@ import { getRecycleBinCovers, type RecycleBinCover } from "@/services/covers";
 import {
   archiveContribution,
   listContributions,
+  listMyContributions,
   restoreContribution,
 } from "@/services/contributions";
 import { BulkReviewBar } from "@/components/BulkReviewBar";
@@ -699,7 +700,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         // drafts appear in one canonical My Submissions list.
         // rawItems carry dynamic camelCase-or-snake_case display fields the mapper reads positionally.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const list = (await listContributions()).rawItems as any[];
+        const list = (await listMyContributions()) as any[];
         if (!list.length) {
           setSubmissions([]);
           return;

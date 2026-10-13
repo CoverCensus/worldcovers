@@ -25,6 +25,11 @@ printf '%s\\n' "$@" >> "$RSYNC_LOG"
 exit 0
 """
 
+SSH_STUB = """#!/usr/bin/env bash
+printf '%s\\n' "$@" >> "$SSH_LOG"
+exit 0
+"""
+
 
 class PushDataHostResolution(unittest.TestCase):
     def setUp(self):
@@ -43,9 +48,14 @@ class PushDataHostResolution(unittest.TestCase):
         stub = bindir / "rsync"
         stub.write_text(RSYNC_STUB)
         stub.chmod(0o755)
+        self.ssh_log = self.tmp / "ssh.log"
+        ssh_stub = bindir / "ssh"
+        ssh_stub.write_text(SSH_STUB)
+        ssh_stub.chmod(0o755)
         self.env = {
             "PATH": f"{bindir}:{os.environ['PATH']}",
             "RSYNC_LOG": str(self.rsync_log),
+            "SSH_LOG": str(self.ssh_log),
             "HOME": str(self.tmp),
         }
 
@@ -92,6 +102,29 @@ class PushDataHostResolution(unittest.TestCase):
         log = self.rsync_log.read_text()
         self.assertIn("bob@example.org:", log)
         self.assertNotIn("alice@", log)
+
+    def test_import_uses_refresh_on_staging(self):
+        (self.tmp / "tools" / "wip" / "out" / "v1_va").mkdir(parents=True)
+        result = self.run_script(
+            "--import", "--state", "VA", env_extra={"WOCO_HOST": "woco.dev"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = self.ssh_log.read_text()
+        self.assertIn("woco.dev", log)
+        self.assertIn("/srv/woco/tools/refresh_data.sh tools/wip/out/v1_va", log)
+        self.assertNotIn("reload_data.sh", log)
+
+    def test_state_push_excludes_other_data_and_review_files(self):
+        (self.tmp / "tools" / "wip" / "out" / "v1_va").mkdir(parents=True)
+        (self.tmp / "backend" / "media" / "va").mkdir()
+        result = self.run_script("--state", "VA", env_extra={"WOCO_HOST": "woco.dev"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.rsync_log.read_text().splitlines()
+        self.assertIn("tools/wip/out/v1_va/", args)
+        self.assertIn("backend/media/va/", args)
+        self.assertNotIn("tools/wip/", args)
+        self.assertNotIn("backend/media/", args)
+        self.assertFalse(self.ssh_log.exists())
 
 
 if __name__ == "__main__":

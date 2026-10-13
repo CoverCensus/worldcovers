@@ -11,7 +11,7 @@
  * to appear in the query params, or the queue is page-local again the moment
  * someone adds a caller.
  */
-import { listContributions } from "./contributions";
+import { listContributions, listMyContributions } from "./contributions";
 import apiClient from "@/lib/api";
 
 jest.mock("@/lib/api", () => ({
@@ -24,6 +24,37 @@ const mockedGet = apiClient.get as jest.Mock;
 
 const page = (results: unknown[] = []) => ({
   data: { count: results.length, next: null, previous: null, results },
+});
+
+describe("listMyContributions", () => {
+  beforeEach(() => mockedGet.mockReset());
+
+  it("requests enough rows to show all 17 drafts", async () => {
+    const drafts = Array.from({ length: 17 }, (_, i) => ({ id: i + 1, status: "draft" }));
+    mockedGet.mockResolvedValueOnce({ data: { count: 17, results: drafts } });
+
+    const result = await listMyContributions();
+
+    expect(result.map((item) => item.id)).toEqual(drafts.map((item) => item.id));
+    expect(mockedGet.mock.calls.map((call) => call[1].params)).toEqual([
+      { page: 1, page_size: 100 },
+    ]);
+  });
+
+  it("loads later pages when a user has more than 100 submissions", async () => {
+    const drafts = Array.from({ length: 117 }, (_, i) => ({ id: i + 1, status: "draft" }));
+    mockedGet
+      .mockResolvedValueOnce({ data: { count: 117, results: drafts.slice(0, 100) } })
+      .mockResolvedValueOnce({ data: { count: 117, results: drafts.slice(100) } });
+
+    const result = await listMyContributions();
+
+    expect(result.map((item) => item.id)).toEqual(drafts.map((item) => item.id));
+    expect(mockedGet.mock.calls.map((call) => call[1].params)).toEqual([
+      { page: 1, page_size: 100 },
+      { page: 2, page_size: 100 },
+    ]);
+  });
 });
 
 const paramsOfLastCall = () => mockedGet.mock.calls[0][1].params;

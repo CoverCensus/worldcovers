@@ -225,6 +225,9 @@ def write_v1_catalog_rows(
             listing = normalize_listing(row.get(RAW_TEXT_COL))
             listing = strip_glued_context_prefix(listing, row)
             if not listing:
+                if (normalize_listing(row.get("request_status")).lower() == "new record"
+                        and normalize_listing(row.get("approve_status")).lower() != "approved"):
+                    continue
                 listing = synthetic_listing(row)
             if not listing:
                 continue

@@ -21,6 +21,7 @@ RATE_FIELD_RE = re.compile(
     r'(?:'
     r'\bPAID\b|\bFREE\b|\bSTEAM\b|\bDUE\b'
     r'|\bADVERTISED\b|\bSHIP\b|\bREGISTERED\b|\bFORWARDED\b'
+    r'|\bWAY\b|\bCOLLECT\b|\b\d+(?:\.\d+)?\s*\u00a2'
     r'|\bP\.?M\.?'
     r'|\bfrank\b'
     r'|\bnegative\b|\bstencil\b'

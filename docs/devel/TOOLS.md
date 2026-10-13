@@ -14,7 +14,8 @@ Use `./woco <command>` from repo root for Django management commands. The
 `execute_from_command_line`. Several shortcuts bypass Django entirely:
 `./woco setup dev` and `./woco setup prod` run the environment setup in
 `tools/setup.sh` (see [BUILD.md](BUILD.md) and [DEPLOY.md](DEPLOY.md)),
-`./woco push [args]` runs `tools/push_data.sh`, `./woco reload [args]`
+`./woco push [args]` runs `tools/push_data.sh`, `./woco refresh [args]`
+runs `tools/refresh_data.sh`, `./woco reload [args]`
 runs `tools/reload_data.sh` with the same arguments, and `./woco secretkey`
 prints a fresh `DJANGO_SECRET_KEY` value (it works before `.env` exists,
 which is exactly when you need it).
@@ -25,6 +26,7 @@ which is exactly when you need it).
 |------|---------|----------|
 | `setup.sh` | One-command dev/prod environment setup | `tools/setup.sh` |
 | `push_data.sh` | Sync local catalog data and media to staging | `tools/push_data.sh` |
+| `refresh_data.sh` | Import a bundle and keep existing catalog data | `tools/refresh_data.sh` |
 | `reload_data.sh` | Reload staging catalog data on the server | `tools/reload_data.sh` |
 | `rebuild_staging_db.sh` | Ensure DB exists, migrate, create admin, import | `tools/rebuild_staging_db.sh` |
 | `wipe_user_data.sh` | Wipe submissions, optionally reload a bundle | `tools/wipe_user_data.sh` |
@@ -32,6 +34,7 @@ which is exactly when you need it).
 | `ascc_page_processor.py` | Render and split ASCC catalog pages | `tools/ascc_page_processor.py` |
 | `ascc_page_extract.py` | Extract ASCC listing text from page chunks | `tools/ascc_page_extract.py` |
 | `ascc_image_extract.py` | Extract marking images from page chunks | `tools/ascc_image_extract.py` |
+| `fphc_extract.py` | Dump native FPHC text, tables, images, and printed organization | `tools/fphc_extract.py` |
 | `ascc_data_munger.py` | Build Django-shape ASCC CSV bundles | `tools/ascc_data_munger.py` |
 | `ascc import` | Load an ASCC CSV bundle | `backend/common/management/commands/import_ascc_bundle.py` |
 | `ascc drop` | Delete one region's imported catalog data | `backend/common/management/commands/drop_ascc_state.py` |
@@ -63,17 +66,33 @@ commands. Tool code is tracked; maps and run output belong in `tools/wip`.
 Run from a local checkout:
 
 ```sh
-./tools/push_data.sh
-./tools/push_data.sh --dry-run
-./tools/push_data.sh --import --state VA
-./tools/push_data.sh --import --bundle-dir tools/wip/out/v1_va
+WOCO_HOST=woco.dev ./tools/push_data.sh
+WOCO_HOST=woco.dev ./tools/push_data.sh --dry-run
+WOCO_HOST=woco.dev ./tools/push_data.sh --state VA
+WOCO_HOST=woco.dev ./tools/push_data.sh --import --state VA
+WOCO_HOST=woco.dev ./tools/push_data.sh --import --bundle-dir tools/wip/out/v1_va
 ```
 
 Expected exit code: `0`.
 
 Syncs local `tools/wip/` and `backend/media/` to the staging host. With
-`--import`, it runs `/srv/woco/tools/reload_data.sh` remotely as `wocod` for
+`--import`, it runs `/srv/woco/tools/refresh_data.sh` remotely as `wocod` for
 the selected bundle. `--state VA` resolves to `tools/wip/out/v1_va`.
+
+With `--state`, only that state's bundle and media directory are uploaded.
+Set `WOCO_HOST=woco.dev` for staging; the default host is `hellowoco.app`.
+
+### `tools/refresh_data.sh`
+
+Run on the selected host as `wocod`:
+
+```sh
+sudo -u wocod /srv/woco/tools/refresh_data.sh tools/wip/out/v1_va
+```
+
+Calls `./woco ascc import` without `--truncate`. Existing natural-key rows
+are skipped, including rows whose values differ. This adds missing records;
+it does not replace existing records. Expected exit code: `0`.
 
 <a id="toolsreload_datash"></a>
 
@@ -200,6 +219,87 @@ ANTHROPIC_API_KEY=<key> \
 
 OpenRouter's default model is `anthropic/claude-sonnet-4.6`. Anthropic's
 direct default model is `claude-sonnet-4-6`.
+
+## FPHC Source Extraction
+
+Extract the 457-page 2021 second edition of *Florida Postal History
+1763-1861* from the local PDF:
+
+```sh
+uv run python tools/fphc_extract.py
+```
+
+Install Poppler (`brew install poppler` on macOS) for `pdfimages`.
+`uv sync` installs the Python extraction and rendering libraries in the
+development environment. Expected exit code: `0`.
+
+The source stays at `tools/wip/in/Florida Postal History Catalog.pdf`.
+Intermediates go under `tools/wip/cache/fphc/`, separated by source checksum,
+extraction version, and pdfplumber version. The completed dump goes under
+`tools/wip/out/fphc/`:
+
+| File | Contents |
+|------|----------|
+| `manifest.json` | Publication, checksum, settings, counts, full printed index, and reference text from pages 6 and 53 |
+| `pages.jsonl` | Native characters, words, text lines, vector rules, raw table cells, images, captions, and office spans |
+| `offices.jsonl` | Printed headings and their page/coordinate spans |
+| `assets/` | Native images and masks, plus rendered page crops for each image placement |
+| `exceptions.jsonl` | Unusual table geometry, index differences, missing extraction, and unresolved placement |
+
+Each JSONL line is one record. Text uses ASCII JSON escapes, so decoding the
+JSON restores the original characters. `raw_text` retains PDF character
+order. `layout_text`, words, lines, and table cell strings are extraction
+views; the positioned `chars` remain available to check their spacing.
+
+`pdf_page` is one-based; `pdf_page_index` is zero-based. `printed_page` is
+read from the printed header. Bounds are `[left, top, right, bottom]` in
+PDF points from the top left. Image matrices retain the PDF transform.
+The 300 dpi placement crops reproduce page clipping and rotation; the
+native assets retain their original pixel dimensions. A crop can include
+other PDF elements that overlap its region.
+
+Office spans follow the alphabetical section on pages 53-452, including
+changes within a page. County lists stay on their original pages as a
+separate cross-reference. Index spelling and page differences are recorded
+without changing either source string.
+
+Table rows stay separate. Blank strings are blank cells; `null` indicates
+no cell at that grid position, including a merged cell. `cell_columns`
+records the zero-based column index and span for each physical cell.
+`cell_raw_text` keeps native character order before whitespace cleanup;
+`cells` provides the table extractor's reading order. Differences beyond
+whitespace produce a `table_reading_order_difference` exception. Detected
+tables include ruled regions in front matter; inspect them before treating
+them as data tables.
+Continuation candidates point to preceding tables without filling cells
+or merging rows. Review unusual geometry before using the tables for
+normalization. A six-column grid can reflect a real division in only some
+rows, as on page 318.
+
+Caption detection uses the book's 11-point italic figure text. A clear
+caption below one image gets a printed placement link. In the office
+catalog, both must have the same office span. Ambiguous captions keep
+candidate image IDs and an exception.
+Other nearby text remains available by its page coordinates. These links
+describe layout and do not identify Markings or create Cover associations.
+
+For a sample, use a separate output directory:
+
+```sh
+uv run python tools/fphc_extract.py \
+  --pages 53-57,60,72-73,100,201,229,277,302,308,314-315,318,409-410,452 \
+  --out-dir tools/wip/out/fphc_sample
+```
+
+All pages are still read to establish office boundaries. A sample dump
+keeps complete office spans and the full index for context. `--pdf`,
+`--out-dir`, and `--cache-dir` override the paths. Repeat runs reuse native
+page data and placement crops; `--force` rebuilds them. The tool rejects a
+different page selection in an existing dump directory.
+
+This tool does not run OCR, create WoCo records, infer historical identities,
+or import a database bundle. Native text failures appear as exceptions;
+handwriting inside images remains in the image assets for later work.
 
 ## Management Commands
 

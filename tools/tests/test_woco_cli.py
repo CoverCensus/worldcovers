@@ -38,6 +38,11 @@ class WocoCliAliasTests(unittest.TestCase):
         self.assertEqual(Path(path_arg).parent.name, "tools")
         self.assertEqual(argv_arg, [path_arg, "tools/wip/out/v1_va"])
 
+    def test_refresh_execs_refresh_data_script_with_remaining_args(self):
+        path_arg, argv_arg = self.run_alias("refresh", "tools/wip/out/v1_va")
+        self.assertEqual(Path(path_arg).name, "refresh_data.sh")
+        self.assertEqual(argv_arg, [path_arg, "tools/wip/out/v1_va"])
+
 
 if __name__ == "__main__":
     unittest.main()
