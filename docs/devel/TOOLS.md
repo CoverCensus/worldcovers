@@ -34,6 +34,7 @@ which is exactly when you need it).
 | `ascc_page_processor.py` | Render and split ASCC catalog pages | `tools/ascc_page_processor.py` |
 | `ascc_page_extract.py` | Extract ASCC listing text from page chunks | `tools/ascc_page_extract.py` |
 | `ascc_image_extract.py` | Extract marking images from page chunks | `tools/ascc_image_extract.py` |
+| `fphc_extract.py` | Dump native FPHC text, tables, images, and printed organization | `tools/fphc_extract.py` |
 | `ascc_data_munger.py` | Build Django-shape ASCC CSV bundles | `tools/ascc_data_munger.py` |
 | `ascc import` | Load an ASCC CSV bundle | `backend/common/management/commands/import_ascc_bundle.py` |
 | `ascc drop` | Delete one region's imported catalog data | `backend/common/management/commands/drop_ascc_state.py` |
@@ -218,6 +219,87 @@ ANTHROPIC_API_KEY=<key> \
 
 OpenRouter's default model is `anthropic/claude-sonnet-4.6`. Anthropic's
 direct default model is `claude-sonnet-4-6`.
+
+## FPHC Source Extraction
+
+Extract the 457-page 2021 second edition of *Florida Postal History
+1763-1861* from the local PDF:
+
+```sh
+uv run python tools/fphc_extract.py
+```
+
+Install Poppler (`brew install poppler` on macOS) for `pdfimages`.
+`uv sync` installs the Python extraction and rendering libraries in the
+development environment. Expected exit code: `0`.
+
+The source stays at `tools/wip/in/Florida Postal History Catalog.pdf`.
+Intermediates go under `tools/wip/cache/fphc/`, separated by source checksum,
+extraction version, and pdfplumber version. The completed dump goes under
+`tools/wip/out/fphc/`:
+
+| File | Contents |
+|------|----------|
+| `manifest.json` | Publication, checksum, settings, counts, full printed index, and reference text from pages 6 and 53 |
+| `pages.jsonl` | Native characters, words, text lines, vector rules, raw table cells, images, captions, and office spans |
+| `offices.jsonl` | Printed headings and their page/coordinate spans |
+| `assets/` | Native images and masks, plus rendered page crops for each image placement |
+| `exceptions.jsonl` | Unusual table geometry, index differences, missing extraction, and unresolved placement |
+
+Each JSONL line is one record. Text uses ASCII JSON escapes, so decoding the
+JSON restores the original characters. `raw_text` retains PDF character
+order. `layout_text`, words, lines, and table cell strings are extraction
+views; the positioned `chars` remain available to check their spacing.
+
+`pdf_page` is one-based; `pdf_page_index` is zero-based. `printed_page` is
+read from the printed header. Bounds are `[left, top, right, bottom]` in
+PDF points from the top left. Image matrices retain the PDF transform.
+The 300 dpi placement crops reproduce page clipping and rotation; the
+native assets retain their original pixel dimensions. A crop can include
+other PDF elements that overlap its region.
+
+Office spans follow the alphabetical section on pages 53-452, including
+changes within a page. County lists stay on their original pages as a
+separate cross-reference. Index spelling and page differences are recorded
+without changing either source string.
+
+Table rows stay separate. Blank strings are blank cells; `null` indicates
+no cell at that grid position, including a merged cell. `cell_columns`
+records the zero-based column index and span for each physical cell.
+`cell_raw_text` keeps native character order before whitespace cleanup;
+`cells` provides the table extractor's reading order. Differences beyond
+whitespace produce a `table_reading_order_difference` exception. Detected
+tables include ruled regions in front matter; inspect them before treating
+them as data tables.
+Continuation candidates point to preceding tables without filling cells
+or merging rows. Review unusual geometry before using the tables for
+normalization. A six-column grid can reflect a real division in only some
+rows, as on page 318.
+
+Caption detection uses the book's 11-point italic figure text. A clear
+caption below one image gets a printed placement link. In the office
+catalog, both must have the same office span. Ambiguous captions keep
+candidate image IDs and an exception.
+Other nearby text remains available by its page coordinates. These links
+describe layout and do not identify Markings or create Cover associations.
+
+For a sample, use a separate output directory:
+
+```sh
+uv run python tools/fphc_extract.py \
+  --pages 53-57,60,72-73,100,201,229,277,302,308,314-315,318,409-410,452 \
+  --out-dir tools/wip/out/fphc_sample
+```
+
+All pages are still read to establish office boundaries. A sample dump
+keeps complete office spans and the full index for context. `--pdf`,
+`--out-dir`, and `--cache-dir` override the paths. Repeat runs reuse native
+page data and placement crops; `--force` rebuilds them. The tool rejects a
+different page selection in an existing dump directory.
+
+This tool does not run OCR, create WoCo records, infer historical identities,
+or import a database bundle. Native text failures appear as exceptions;
+handwriting inside images remains in the image assets for later work.
 
 ## Management Commands
 
