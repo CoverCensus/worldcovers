@@ -173,6 +173,7 @@ export interface ContributionListResult {
   items: Contribution[];
   /** null when the API returns a bare array instead of a paginated envelope. */
   count: number | null;
+  next: string | null;
   /** Raw rows for callers (Dashboard) that derive image/display strings off the wire shape. */
   rawItems: ContributionApiItem[];
 }
@@ -227,19 +228,30 @@ export async function listContributions(
     : typeof (data as ContributionListResponse)?.count === "number"
       ? ((data as ContributionListResponse).count as number)
       : null;
-  return { items: rawItems.map(mapApiItemToContribution), count, rawItems };
+  const next = !Array.isArray(data) && typeof (data as ContributionListResponse)?.next === "string"
+    ? (data as ContributionListResponse).next as string
+    : null;
+  return { items: rawItems.map(mapApiItemToContribution), count, next, rawItems };
 }
 
 /** Load every submission owned by the signed-in user for My Submissions. */
-export async function listMyContributions(): Promise<ContributionApiItem[]> {
+export async function listMyContributions(): Promise<{
+  items: ContributionApiItem[];
+  incomplete: boolean;
+}> {
   const pageSize = 100;
   const all: ContributionApiItem[] = [];
   for (let page = 1; ; page += 1) {
-    const result = await listContributions({ page, pageSize });
+    let result: ContributionListResult;
+    try {
+      result = await listContributions({ page, pageSize });
+    } catch (error) {
+      if (page === 1) throw error;
+      return { items: all, incomplete: true };
+    }
     all.push(...result.rawItems);
-    if (result.rawItems.length === 0 ||
-        (result.count !== null ? all.length >= result.count : result.rawItems.length < pageSize)) {
-      return all;
+    if (!result.next) {
+      return { items: all, incomplete: result.count !== null && all.length < result.count };
     }
   }
 }

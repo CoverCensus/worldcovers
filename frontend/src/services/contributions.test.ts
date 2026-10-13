@@ -35,7 +35,8 @@ describe("listMyContributions", () => {
 
     const result = await listMyContributions();
 
-    expect(result.map((item) => item.id)).toEqual(drafts.map((item) => item.id));
+    expect(result.items.map((item) => item.id)).toEqual(drafts.map((item) => item.id));
+    expect(result.incomplete).toBe(false);
     expect(mockedGet.mock.calls.map((call) => call[1].params)).toEqual([
       { page: 1, page_size: 100 },
     ]);
@@ -44,16 +45,41 @@ describe("listMyContributions", () => {
   it("loads later pages when a user has more than 100 submissions", async () => {
     const drafts = Array.from({ length: 117 }, (_, i) => ({ id: i + 1, status: "draft" }));
     mockedGet
-      .mockResolvedValueOnce({ data: { count: 117, results: drafts.slice(0, 100) } })
-      .mockResolvedValueOnce({ data: { count: 117, results: drafts.slice(100) } });
+      .mockResolvedValueOnce({ data: { count: 117, next: "?page=2", results: drafts.slice(0, 100) } })
+      .mockResolvedValueOnce({ data: { count: 117, next: null, results: drafts.slice(100) } });
 
     const result = await listMyContributions();
 
-    expect(result.map((item) => item.id)).toEqual(drafts.map((item) => item.id));
+    expect(result.items.map((item) => item.id)).toEqual(drafts.map((item) => item.id));
+    expect(result.incomplete).toBe(false);
     expect(mockedGet.mock.calls.map((call) => call[1].params)).toEqual([
       { page: 1, page_size: 100 },
       { page: 2, page_size: 100 },
     ]);
+  });
+
+  it("does not request an invalid page when the server has no next page", async () => {
+    const drafts = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, status: "draft" }));
+    mockedGet.mockResolvedValueOnce({ data: { count: 17, next: null, results: drafts } });
+
+    const result = await listMyContributions();
+
+    expect(result.items).toEqual(drafts);
+    expect(result.incomplete).toBe(true);
+    expect(mockedGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps loaded submissions if a later page becomes invalid", async () => {
+    const drafts = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, status: "draft" }));
+    mockedGet
+      .mockResolvedValueOnce({ data: { count: 117, next: "?page=2", results: drafts } })
+      .mockRejectedValueOnce(new Error("Invalid page."));
+
+    const result = await listMyContributions();
+
+    expect(result.items).toEqual(drafts);
+    expect(result.incomplete).toBe(true);
+    expect(mockedGet).toHaveBeenCalledTimes(2);
   });
 });
 

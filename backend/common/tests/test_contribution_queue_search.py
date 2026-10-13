@@ -252,6 +252,19 @@ class ContributionQueueSearchTests(TestCase):
 
         self.assertIn(draft.pk, [row["id"] for row in results])
 
+    def test_author_can_load_all_seventeen_submissions_on_one_large_page(self):
+        drafts = [self._contribution(status=Contribution.STATUS_DRAFT) for _ in range(7)]
+
+        self.client.force_authenticate(self.contributor)
+        response = self.client.get(URL, {"page_size": 100, "page": 1})
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 17)
+        self.assertIsNone(response.data["next"])
+        self.assertEqual(len(response.data["results"]), 17)
+        for draft in drafts:
+            self.assertIn(draft.pk, [row["id"] for row in response.data["results"]])
+
     # -- ordering -----------------------------------------------------------
 
     def test_ordering_by_town_walks_every_row_exactly_once(self):
