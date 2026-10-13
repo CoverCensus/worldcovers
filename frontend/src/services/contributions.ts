@@ -230,6 +230,20 @@ export async function listContributions(
   return { items: rawItems.map(mapApiItemToContribution), count, rawItems };
 }
 
+/** Load every submission owned by the signed-in user for My Submissions. */
+export async function listMyContributions(): Promise<ContributionApiItem[]> {
+  const pageSize = 100;
+  const all: ContributionApiItem[] = [];
+  for (let page = 1; ; page += 1) {
+    const result = await listContributions({ page, pageSize });
+    all.push(...result.rawItems);
+    if (result.rawItems.length === 0 ||
+        (result.count !== null ? all.length >= result.count : result.rawItems.length < pageSize)) {
+      return all;
+    }
+  }
+}
+
 /** GET /contributions/{id}/ -- normalized single contribution. Errors propagate. */
 export async function getContribution(id: number): Promise<Contribution> {
   const res = await apiClient.get(`/contributions/${id}/`);

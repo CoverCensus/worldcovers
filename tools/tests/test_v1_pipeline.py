@@ -142,6 +142,63 @@ def write_munger_seeds(root):
 
 
 class V1PipelineTests(unittest.TestCase):
+    def test_munger_preserves_manuscript_auxmark_beside_handstamp(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            inputs = write_munger_seeds(root)
+            source = root / "catalog.csv"
+            output = root / "out"
+            write_csv(source, ["listing_text", "catalog_page", "chunk_number", "image_count", "row_type"],
+                      [{"listing_text": "BOZEMAN/MONT.(1871;C-30;Free[ms];Black) 10",
+                        "catalog_page": "1", "chunk_number": "1", "image_count": "0", "row_type": "LISTING"}])
+            ascc_data_munger.main(["--input", str(source), "--input-dir", str(inputs),
+                                  "--out-dir", str(output), "--reference-work-code", "ASCC6",
+                                  "--region-abbrev", "WV"])
+            markings = read_csv(output / "markings.csv")
+            townmark = next(row for row in markings if row["type"] == "TOWNMARK")
+            auxmark = next(row for row in markings if row["type"] == "AUXMARK")
+            self.assertEqual(townmark["is_manuscript"], "False")
+            self.assertEqual(auxmark["is_manuscript"], "True")
+            self.assertEqual(auxmark["shape"], "")
+            self.assertEqual(auxmark["impression"], "")
+
+    def test_pending_new_record_is_not_a_catalog_listing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "slice.csv"
+            output = root / "catalog.csv"
+            fields = ["nRawStateDataID", "txtRawStateData", "txtTownPostmark",
+                      "txtTown", "request_status", "approve_status"]
+            write_csv(source, fields, [
+                {"nRawStateDataID": "1", "txtRawStateData": "", "txtTownPostmark": "Bannack City M Ter",
+                 "request_status": "New Record", "approve_status": "Pending"},
+                {"nRawStateDataID": "2", "txtRawStateData": "", "txtTownPostmark": "Everton",
+                 "request_status": "Approved", "approve_status": "Approved"},
+                {"nRawStateDataID": "3", "txtRawStateData": "HELENA (1866;C-25;Black) 10",
+                 "request_status": "New Record", "approve_status": "Pending"},
+            ])
+            count, included = v1_catalog_rows.write_v1_catalog_rows(source, output)
+            self.assertEqual(count, 2)
+            self.assertEqual(included, ["2", "3"])
+            self.assertEqual([row["chunk_number"] for row in read_csv(output)], ["2", "3"])
+
+    def test_manuscript_rate_does_not_erase_catalog_handstamp(self):
+        townmark = {"code": "M1", "is_manuscript": "False", "shape": "C - Circle",
+                    "inscription_txt": "BOZEMAN/MONT.", "desc": "", "impression": "Normal"}
+        rate = {"code": "M2", "is_manuscript": "True", "shape": "", "rate_val": "3"}
+        warnings = []
+        v1_bundle_overlay.apply_row_fields(
+            "22635", {"txtRawStateData": "BOZEMAN/MONT.(1871;C--;Free[ms];Black) 10",
+                      "ynManuscript": "TRUE"},
+            {"M1": townmark, "M2": rate}, ["M1", "M2"], ["M1"], ["M2"],
+            {"shapes": {}, "letterings": {}}, {}, warnings,
+        )
+        self.assertEqual(townmark["is_manuscript"], "False")
+        self.assertEqual(townmark["shape"], "C - Circle")
+        self.assertEqual(townmark["impression"], "Normal")
+        self.assertEqual(rate["is_manuscript"], "True")
+        self.assertEqual([row["issue"] for row in warnings], ["legacy_manuscript_conflict"])
+
     def test_overlay_reconciles_cover_markings_for_color_variant_changes(self):
         cover_markings = [
             stamped({

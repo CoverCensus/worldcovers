@@ -6,7 +6,8 @@ sys.path. All built-in and custom Django management commands work
 identically (same args, same exit codes). The ASCC workflow also has a
 grouped public wrapper at './woco ascc', including './woco ascc import'
 for import_ascc_bundle and './woco ascc drop' for drop_ascc_state. The
-data-deploy scripts are exposed as './woco push' and './woco reload'.
+data-deploy scripts are exposed as './woco push', './woco refresh', and
+'./woco reload'.
 './woco secretkey' prints a fresh DJANGO_SECRET_KEY value; it runs before
 Django settings load, so it works on a fresh clone that has no .env yet.
 './woco setup dev' and './woco setup prod' run the one-command environment
@@ -27,6 +28,9 @@ def main():
         os.execv(script, [script] + sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "reload":
         script = os.path.join(here, "tools", "reload_data.sh")
+        os.execv(script, [script] + sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "refresh":
+        script = os.path.join(here, "tools", "refresh_data.sh")
         os.execv(script, [script] + sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "setup":
         script = os.path.join(here, "tools", "setup.sh")
