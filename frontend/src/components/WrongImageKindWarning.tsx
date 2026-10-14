@@ -11,6 +11,8 @@ interface WrongImageKindWarningProps {
   expected: "MARKING" | "COVER";
   /** How many selected images look like the other kind. */
   count: number;
+  /** Optional fix offered under the notice, e.g. "Crop to the marking". */
+  action?: React.ReactNode;
 }
 
 /**
@@ -28,6 +30,7 @@ interface WrongImageKindWarningProps {
 export function WrongImageKindWarning({
   expected,
   count,
+  action,
 }: WrongImageKindWarningProps) {
   if (count < 1) return null;
 
@@ -46,6 +49,7 @@ export function WrongImageKindWarning({
             {count} of the images you selected look this way.
           </p>
         )}
+        {action && <div className="mt-2">{action}</div>}
       </AlertDescription>
     </Alert>
   );

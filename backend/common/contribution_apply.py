@@ -337,6 +337,7 @@ def _apply_marking_edit(contrib, payload: dict, actor, marking_id: int) -> Marki
         image_view="FULL",
         metas_keys=("marking_image_metas", "image_metas"),
         tags_key="marking_image_tags",
+        additive_only=True,
     )
     _sync_citations("MARKING", marking.pk, payload, actor)
     _sync_marking_dates_seen(marking.pk, payload, actor)
@@ -744,25 +745,43 @@ def _payload_affirms_no_images(payload: dict, subject_type) -> bool:
     return False
 
 
+_CENTS = Decimal("0.01")
+
+
 def _parse_decimal(value: Any) -> Decimal | None:
+    """Parse a submitted amount at the two decimal places every catalog
+    DecimalField stores (rate_val, width, height, valuation amt).
+
+    The database quantizes on save, but the approve path snapshots the
+    in-memory row for the audit diff, which compares str() values. Without
+    this, a form that sends "3" for a stored 3.00 records a fake
+    "rate val: 3.00 -> 3" change in Record History.
+    """
     if value is None:
         return None
     if isinstance(value, Decimal):
-        return value
-    if isinstance(value, (int, float)):
+        d = value
+    elif isinstance(value, (int, float)):
         try:
-            return Decimal(str(value))
+            d = Decimal(str(value))
         except (InvalidOperation, ValueError):
             return None
-    if isinstance(value, str):
+    elif isinstance(value, str):
         s = value.strip()
         if not s:
             return None
         try:
-            return Decimal(s)
+            d = Decimal(s)
         except (InvalidOperation, ValueError):
             return None
-    return None
+    else:
+        return None
+    if not d.is_finite():
+        return None
+    try:
+        return d.quantize(_CENTS)
+    except InvalidOperation:
+        return None
 
 
 def _parse_int(value: Any) -> int | None:
@@ -1221,6 +1240,7 @@ def _sync_images(
     image_view: str,
     metas_keys: tuple[str, ...],
     tags_key: str,
+    additive_only: bool = False,
 ) -> None:
     """
     Reconcile a subject's Image rows against the FULL desired set in
@@ -1243,6 +1263,14 @@ def _sync_images(
 
     At least one image is required unless the contributor explicitly affirmed
     that no image is available.
+
+    additive_only (marking edits, Ian 2026-10-14): the subject's current rows
+    are left exactly as they are -- never deleted, reordered or retagged, and
+    "no image available" deletes nothing. Only metas that are not already on
+    the subject are created, after the current rows. Existing images change on
+    the marking page through ImageViewSet, where editor responsibility is
+    checked, not through an approved edit whose review screen never showed the
+    removal.
     """
     metas = None
     for k in metas_keys:
@@ -1250,6 +1278,12 @@ def _sync_images(
         if isinstance(candidate, list) and len(candidate) > 0:
             metas = candidate
             break
+    if additive_only:
+        _append_new_images(
+            subject_type, subject_id, metas or [], payload, actor,
+            image_view=image_view, metas_key=metas_keys[0], tags_key=tags_key,
+        )
+        return
     if not metas:
         if _payload_affirms_no_images(payload, subject_type):
             Image.objects.filter(
@@ -1327,6 +1361,54 @@ def _sync_images(
     for sf, row in current.items():
         if sf not in desired:
             row.delete()
+
+
+def _append_new_images(
+    subject_type, subject_id, metas: list, payload: dict, actor,
+    *, image_view: str, metas_key: str, tags_key: str,
+) -> None:
+    """The additive_only branch of _sync_images: create each meta that is not
+    already one of the subject's rows, ordered after the current rows."""
+    current = {
+        _normalize_storage(sf): order
+        for sf, order in Image.objects.filter(
+            subject_type=subject_type, subject_id=subject_id
+        ).values_list("storage_filename", "display_order")
+    }
+    next_order = max(current.values(), default=-1) + 1
+    new_tags = _parse_tag_list(payload.get(tags_key))
+    new_index = 0
+    for i, meta in enumerate(metas):
+        if not isinstance(meta, dict):
+            raise ContributionApplyError("{}[{}] is not an object.".format(metas_key, i))
+        raw_sf = meta.get("storage_filename")
+        if not raw_sf:
+            raise ContributionApplyError(
+                "{}[{}].storage_filename is required.".format(metas_key, i)
+            )
+        if _normalize_storage(raw_sf) in current:
+            continue
+        is_tracing = new_index < len(new_tags) and new_tags[new_index] == "tracing"
+        new_index += 1
+        Image.objects.create(
+            subject_type=subject_type,
+            subject_id=subject_id,
+            original_filename=str(meta.get("original_filename", "") or ""),
+            storage_filename=str(raw_sf),
+            file_checksum=str(meta.get("file_checksum", "") or ""),
+            mime_type=str(meta.get("mime_type", "") or ""),
+            image_width=int(meta.get("image_width") or 0),
+            image_height=int(meta.get("image_height") or 0),
+            file_size_bytes=int(meta.get("file_size_bytes") or 0),
+            image_view=image_view,
+            image_description=str(meta.get("image_description", "") or ""),
+            is_tracing=is_tracing,
+            display_order=next_order,
+            uploaded_by=actor,
+            created_by=actor,
+            modified_by=actor,
+        )
+        next_order += 1
 
 
 def _sync_citations(subject_type: str, subject_id, payload: dict, actor) -> None:

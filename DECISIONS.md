@@ -428,3 +428,56 @@ destination; the default same-subject crop is unchanged. Evidence:
 `ImageCropIntoMarkingTests`; `permissions.py`
 `user_is_responsible_for_subject`; `coverImageActionState.test.ts`;
 workspace `docs/issues.md` #182.
+
+## Marking Edits Add Images Only
+
+**Do:** On Submit Edit to Existing Marking (and a resumed draft of one), show
+the Marking's current images as a read-only strip and let the form add new
+images only, placed after the current ones. At submit, rebuild the stored list
+as the current Image rows followed by the contributor's uploads
+(`_keep_marking_images_on_edit`). At approval, create only the new rows
+(`_sync_images(additive_only=True)`). Change existing images on the Marking
+page, where editor responsibility is checked.
+
+**Don't:** Accept `removed_existing_image_keys`, `existing_image_tags`, a
+reorder of current images, or "No image is available" from a Marking edit, or
+require a Marking edit to carry an image. New-Marking submissions and Cover
+edits keep their full gallery controls.
+
+**Why:** Ian, 2026-10-14: existing images appearing on the edit screen "don't
+think we want that ... we don't want contributors getting that". Any signed-in
+user could propose deleting every image on a Marking, and the review screen
+showed only the resulting list, never the removals, so an editor could approve
+a deletion without seeing it. Approval enforces the rule independently of the
+form, so payloads queued before this change cannot delete either. Evidence:
+`test_marking_edit_cannot_remove_retag_or_clear_existing_images`,
+`test_approved_marking_edit_keeps_current_images_and_appends_uploads`,
+`MarkingEditImages.test.tsx`.
+
+## Crop An Upload In The Browser Before It Is Submitted
+
+**Do:** On the Marking form (Submit New Marking and Submit Edit to Existing
+Marking), offer Crop on each new upload and from the "may show a whole Cover"
+warning. Crop in the browser (`lib/cropImageFile.ts`, drawn from the element
+the selection was made on) and replace the upload with the crop, keeping its
+position and Tracing flag. Keep PNG as PNG and save anything else as JPEG at
+the server crop's quality. Share the selection UI with the server crop
+(`CropSelectionDialog`).
+
+**Don't:** Send a pending upload's crop to `POST /images/{id}/crop/` (the file
+is not an Image row yet, and that endpoint is editor-only and writes the
+catalog at once), submit the uncropped original alongside the crop, or offer
+Crop on a Marking's current images in the form (they are read-only; editors
+crop them on the Marking page).
+
+**Why:** Ian, 2026-10-14: "As folks usually have the whole cover, could you
+add the crop function to the edit marking screen so that the user can crop out
+the marking itself before submission." Cropping before submission keeps the
+change inside the normal review flow: the reviewer sees exactly the image that
+would be published. Reese chose to replace rather than keep the original
+(2026-10-14). This does not conflict with "Crop Into A Destination Only
+Through The Crop Endpoint", which governs catalog images. A canvas keeps no
+metadata, so the low-resolution notice keeps the result measured on the
+original. T66 (rotation) can extend the same dialog. Evidence:
+`cropImageFile.test.ts`; a headless-Chromium run of `/edit/:id` against a
+mocked API posted a 440x440 crop of a 2400x1500 scan.
