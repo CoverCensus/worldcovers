@@ -33,10 +33,52 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Force runner DNS to 8.8.8.8 and IPv4-only
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Create a systemd-resolved drop-in to prefer Google DNS and IPv4-only
+          sudo mkdir -p /etc/systemd/resolved.conf.d
+          sudo tee /etc/systemd/resolved.conf.d/99-github-actions.conf >/dev/null <<'EOF'
+          [Resolve]
+          DNS=8.8.8.8
+          # Add the requested fallback address here; this is used only by systemd-resolved
+          FallbackDNS=172.236.125.238
+          DNSSEC=no
+          DNSOverTLS=no
+          MulticastDNS=no
+          LLMNR=no
+          # IPv4Only is available in systemd 251+; if unavailable it will be ignored
+          IPv4Only=yes
+          EOF
+
+          # Restart resolver (best-effort; some hosted runners may not allow restart)
+          sudo systemctl restart systemd-resolved || true
+
+          # Check whether hellowoco.app resolves to an IPv4 address using the configured resolver
+          if getent ahostsv4 hellowoco.app >/dev/null 2>&1; then
+            echo "hellowoco_resolves_ipv4=true"
+          else
+            echo "hellowoco_resolves_ipv4=false"
+          fi
+
+      - name: Resolve deployment host
+        id: deploy_host
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Prefer the FQDN if it resolves over IPv4, otherwise fall back to the provided IP
+          if getent ahostsv4 hellowoco.app >/dev/null 2>&1; then
+            echo "value=hellowoco.app" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=172.236.125.238" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy to hellowoco.app
         uses: appleboy/ssh-action@v1.2.5
         with:
-          host: hellowoco.app
+          host: ${{ steps.deploy_host.outputs.value }}
           username: wocod
           key: ${{ secrets.PROD_DEPLOY_SSH_KEY }}
           command_timeout: 20m
