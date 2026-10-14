@@ -3755,6 +3755,9 @@ class ContributionSubmitView(APIView):
             else:
                 _clear_replaced_marking_date_boundaries(existing_sd, submitted_data)
             existing_sd.update(submitted_data)
+            draft_edit_marking_id = _parse_int(existing_sd.get("edit_marking_id"))
+            if not is_cover_submission and draft_edit_marking_id is not None:
+                _keep_marking_images_on_edit(existing_sd, draft_edit_marking_id)
             if transition_to_pending:
                 image_error = _validate_final_submission_image_choice(
                     existing_sd, is_cover_submission
@@ -3823,6 +3826,7 @@ class ContributionSubmitView(APIView):
                 meta_key="marking_image_metas",
                 image_order=image_order,
             )
+            _keep_marking_images_on_edit(submitted_data, edit_marking_marker)
         elif image_metas:
             submitted_data["marking_image_metas"] = image_metas
             if is_cover_submission:
@@ -3989,6 +3993,10 @@ def _submitted_payload_affirms_no_images(submitted_data, is_cover):
 
 
 def _validate_final_submission_image_choice(submitted_data, is_cover):
+    # An edit to a published Marking may leave its images alone: approval
+    # keeps them (_keep_marking_images_on_edit), so there is nothing to require.
+    if not is_cover and _parse_int(submitted_data.get("edit_marking_id")) is not None:
+        return None
     if _submitted_payload_has_images(submitted_data, is_cover):
         return None
     if _submitted_payload_affirms_no_images(submitted_data, is_cover):
@@ -4224,6 +4232,57 @@ def _apply_existing_image_reconciliation(
     return updates
 
 
+_NO_MARKING_IMAGE_KEYS = (
+    "no_marking_image", "noMarkingImage", "marking_no_image", "markingNoImage",
+    "no_image", "noImage",
+)
+
+
+def _keep_marking_images_on_edit(submitted_data, marking_id):
+    """Marking edits add images only (Ian, 2026-10-14).
+
+    Rebuild the stored image list as the Marking's current Image rows, in
+    their current order and tags, followed by the contributor's own uploads.
+    Removals, retags and reorders of current rows, and "no image available",
+    are dropped from the payload, so the review screen shows what approval
+    will publish. Approval enforces the same rule on its own
+    (_sync_images additive_only), which also covers older queued payloads.
+    """
+    for key in (*_NO_MARKING_IMAGE_KEYS, "existing_image_tags"):
+        submitted_data.pop(key, None)
+    rows = list(
+        Image.objects.filter(
+            subject_type=Image.SUBJECT_MARKING, subject_id=marking_id
+        ).order_by("display_order", "image_id")
+    )
+    current = {_normalize_order_key(row.storage_filename) for row in rows}
+    metas = submitted_data.get("marking_image_metas") or submitted_data.get("image_metas") or []
+    uploads = [
+        m for m in metas
+        if isinstance(m, dict)
+        and _normalize_order_key(m.get("storage_filename")) not in current
+    ]
+    combined = [_image_row_meta(row, bool(row.is_tracing)) for row in rows] + uploads
+    submitted_data["marking_image_metas"] = combined
+    submitted_data["image_metas"] = combined
+    submitted_data["image_meta"] = combined[0] if combined else None
+
+
+def _image_row_meta(row, tracing):
+    """A catalog Image row as a submitted_data meta record."""
+    return {
+        "storage_filename": row.storage_filename,
+        "original_filename": row.original_filename or "",
+        "file_checksum": row.file_checksum or "",
+        "mime_type": row.mime_type or "",
+        "image_width": row.image_width or 0,
+        "image_height": row.image_height or 0,
+        "file_size_bytes": row.file_size_bytes or 0,
+        "image_description": row.image_description or "",
+        "tracing": tracing,
+    }
+
+
 def _apply_fresh_edit_image_metas(
     submitted_data, data, image_metas, *, subject_type, subject_id, meta_key,
     image_order=None,
@@ -4254,19 +4313,7 @@ def _apply_fresh_edit_image_metas(
             continue
         tag = _existing_image_tag_value(row.storage_filename, existing_tags)
         tracing = (tag == "tracing") if tag is not None else bool(row.is_tracing)
-        kept_records.append(
-            {
-                "storage_filename": row.storage_filename,
-                "original_filename": row.original_filename or "",
-                "file_checksum": row.file_checksum or "",
-                "mime_type": row.mime_type or "",
-                "image_width": row.image_width or 0,
-                "image_height": row.image_height or 0,
-                "file_size_bytes": row.file_size_bytes or 0,
-                "image_description": row.image_description or "",
-                "tracing": tracing,
-            }
-        )
+        kept_records.append(_image_row_meta(row, tracing))
 
     new_metas = list(image_metas or [])
     combined = kept_records + new_metas
