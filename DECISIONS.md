@@ -428,3 +428,28 @@ destination; the default same-subject crop is unchanged. Evidence:
 `ImageCropIntoMarkingTests`; `permissions.py`
 `user_is_responsible_for_subject`; `coverImageActionState.test.ts`;
 workspace `docs/issues.md` #182.
+
+## Marking Edits Add Images Only
+
+**Do:** On Submit Edit to Existing Marking (and a resumed draft of one), show
+the Marking's current images as a read-only strip and let the form add new
+images only, placed after the current ones. At submit, rebuild the stored list
+as the current Image rows followed by the contributor's uploads
+(`_keep_marking_images_on_edit`). At approval, create only the new rows
+(`_sync_images(additive_only=True)`). Change existing images on the Marking
+page, where editor responsibility is checked.
+
+**Don't:** Accept `removed_existing_image_keys`, `existing_image_tags`, a
+reorder of current images, or "No image is available" from a Marking edit, or
+require a Marking edit to carry an image. New-Marking submissions and Cover
+edits keep their full gallery controls.
+
+**Why:** Ian, 2026-10-14: existing images appearing on the edit screen "don't
+think we want that ... we don't want contributors getting that". Any signed-in
+user could propose deleting every image on a Marking, and the review screen
+showed only the resulting list, never the removals, so an editor could approve
+a deletion without seeing it. Approval enforces the rule independently of the
+form, so payloads queued before this change cannot delete either. Evidence:
+`test_marking_edit_cannot_remove_retag_or_clear_existing_images`,
+`test_approved_marking_edit_keeps_current_images_and_appends_uploads`,
+`MarkingEditImages.test.tsx`.

@@ -319,6 +319,15 @@ function tracingToTag(tracing: boolean): UploadedImageTag {
 }
 
 
+/** True when two image URLs name the same media file, whatever their origin or
+ * media prefix: a draft stores "/media/va/x.jpg", the marking API an absolute URL. */
+function sameMediaPath(a: string, b: string): boolean {
+  const tail = (u: string) => u.replace(/^[a-z]+:\/\/[^/]+/i, "").replace(/^\/+/, "");
+  const ta = tail(a);
+  const tb = tail(b);
+  return ta !== "" && tb !== "" && (ta === tb || ta.endsWith(`/${tb}`) || tb.endsWith(`/${ta}`));
+}
+
 function submittedValue(
   sd: Record<string, unknown>,
   snakeKey: string,
@@ -505,6 +514,12 @@ const Contribute = () => {
   // so each new file needs a stable key independent of its array position.
   const newImageKeyCounter = useRef(0);
   const [removedExistingImageKeys, setRemovedExistingImageKeys] = useState<string[]>([]);
+  // A marking edit adds images only (Ian, 2026-10-14): the marking's current
+  // images are shown read-only, outside `gallery`, and approval keeps them as
+  // they are (backend _keep_marking_images_on_edit / _sync_images additive_only).
+  const [currentMarkingImages, setCurrentMarkingImages] = useState<
+    Array<{ url: string; tracing: boolean }>
+  >([]);
   // Gallery keys whose pixel dimensions read as a whole cover rather than a
   // marking closeup (issue #76). Held as keys rather than a flag on the item so
   // removing an image drops it from the count for free.
@@ -967,31 +982,30 @@ const Contribute = () => {
             .then((m) => {
               if (cancelled || !m) return;
               setCanChangeSubmitterName(m.can_change_submitter_name === true);
-              if (!loadedNoMarkingImage && existingUrls.length === 0 && Array.isArray(m.images)) {
-                const rows = (m.images as unknown[])
-                  .map((img) => {
-                    const o = img as Record<string, unknown>;
-                    const url = normalizeImageUrl(
-                      typeof o.image_url === "string" ? o.image_url : null,
-                    );
-                    if (!url) return null;
-                    const tracing = Boolean(o.is_tracing);
-                    return { url, tracing };
-                  })
-                  .filter(
-                    (row): row is { url: string; tracing: boolean } => row !== null,
+              // The draft's stored list mixes the marking's current images
+              // with the contributor's own draft uploads. The current ones
+              // move to the read-only strip; only the uploads stay editable.
+              const rows = (Array.isArray(m.images) ? (m.images as unknown[]) : [])
+                .map((img) => {
+                  const o = img as Record<string, unknown>;
+                  const url = normalizeImageUrl(
+                    typeof o.image_url === "string" ? o.image_url : null,
                   );
-                if (rows.length > 0) {
-                  setGallery(
-                    rows.map((r) => ({
-                      kind: "existing" as const,
-                      key: r.url,
-                      url: r.url,
-                      tracing: r.tracing,
-                    })),
-                  );
-                }
-              }
+                  if (!url) return null;
+                  const tracing = Boolean(o.is_tracing);
+                  return { url, tracing };
+                })
+                .filter(
+                  (row): row is { url: string; tracing: boolean } => row !== null,
+                );
+              setCurrentMarkingImages(rows);
+              setNoMarkingImage(false);
+              setGallery((prev) =>
+                prev.filter(
+                  (item) =>
+                    item.kind === "new" || !rows.some((r) => sameMediaPath(r.url, item.url)),
+                ),
+              );
               const modified = typeof m.modified_date === "string" ? m.modified_date : null;
               if (baseline && modified && modified > baseline) {
                 setMarkingChangedSinceDraft(true);
@@ -1056,14 +1070,8 @@ const Contribute = () => {
               })
               .filter((row): row is { url: string; tracing: boolean } => row !== null)
           : [];
-        setGallery(
-          existingRows.map((r) => ({
-            kind: "existing" as const,
-            key: r.url,
-            url: r.url,
-            tracing: r.tracing,
-          })),
-        );
+        setCurrentMarkingImages(existingRows);
+        setGallery([]);
         setNoMarkingImage(false);
         setRemovedExistingImageKeys([]);
 
@@ -1514,10 +1522,9 @@ const Contribute = () => {
         errors.rateValue = "Rate Value must be cents, like 3 or 3.5";
       }
 
-      // At least one image must accompany every entry. The combined gallery
-      // holds both kept existing images and new uploads, so a single emptiness
-      // check covers all modes (new / edit-marking / edit-contribution).
-      if (gallery.length === 0 && !noMarkingImage) {
+      // At least one image must accompany every new entry. A marking edit
+      // keeps the marking's current images, so it may add none.
+      if (!isMarkingEditAction && gallery.length === 0 && !noMarkingImage) {
         errors.images = "Add at least one image or confirm no image is available";
       }
 
@@ -1945,8 +1952,45 @@ const Contribute = () => {
   const renderImageUploader = (label: string, helperText: string, required = false) => {
     const inputRef = markingFileInputRef;
     const hasAnyImage = gallery.length > 0;
+    // On a marking edit the current images stay first, so a new upload can
+    // never become the catalog Default from here.
+    const currentImagesLead = isMarkingEditAction && currentMarkingImages.length > 0;
+    const markingEditTargetId = isEditMarking ? editMarkingId : resumedEditMarkingId;
     return (
       <div className="space-y-2">
+        {currentImagesLead && (
+          <div className="space-y-2" data-testid="current-marking-images">
+            <Label>Already on this marking</Label>
+            <div className="flex flex-wrap gap-2">
+              {currentMarkingImages.map((img, i) => (
+                <figure key={img.url} className="w-24 rounded border bg-muted/30 overflow-hidden">
+                  <img
+                    src={img.url}
+                    alt={`Current marking image ${i + 1}`}
+                    className="w-full aspect-square object-contain"
+                  />
+                  <figcaption className="px-1 py-0.5 text-[10px] text-muted-foreground truncate">
+                    {i === 0 ? "Default" : img.tracing ? "Tracing" : "Photograph"}
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              These stay as they are. New images you add below are placed after them.{" "}
+              {isStateEditor && markingEditTargetId != null ? (
+                <>
+                  To remove, reorder or crop them, use the{" "}
+                  <Link to={`/record/${markingEditTargetId}`} className="underline">
+                    marking page
+                  </Link>
+                  .
+                </>
+              ) : (
+                "To change one, ask a state editor."
+              )}
+            </p>
+          </div>
+        )}
         <Label>
           {label}
           {required ? <span className="text-destructive" aria-hidden="true"> *</span> : null}
@@ -1988,10 +2032,12 @@ const Contribute = () => {
               */}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                 {gallery.map((item, i) => {
-                  const isCatalogDefault = i === 0;
+                  const isCatalogDefault = i === 0 && !currentImagesLead;
                   const src = item.kind === "existing" ? item.url : item.previewUrl;
                   const caption =
-                    item.kind === "existing" ? "Current image" : item.file.name || "New image";
+                    item.kind === "existing"
+                      ? isMarkingEditAction ? "Saved with draft" : "Current image"
+                      : item.file.name || "New image";
                   return (
                     <div
                       key={item.key}
@@ -2062,23 +2108,25 @@ const Contribute = () => {
                         >
                           <ArrowRight className="h-3.5 w-3.5" />
                         </Button>
-                        <Button
-                          type="button"
-                          variant={isCatalogDefault ? "secondary" : "ghost"}
-                          size="icon"
-                          className="h-7 w-7"
-                          aria-label="Set as default catalog thumbnail"
-                          title="Set as default catalog thumbnail"
-                          disabled={isCatalogDefault}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setGalleryDefault(i);
-                          }}
-                        >
-                          <Star
-                            className={`h-3.5 w-3.5 ${isCatalogDefault ? "fill-current" : ""}`}
-                          />
-                        </Button>
+                        {!currentImagesLead && (
+                          <Button
+                            type="button"
+                            variant={isCatalogDefault ? "secondary" : "ghost"}
+                            size="icon"
+                            className="h-7 w-7"
+                            aria-label="Set as default catalog thumbnail"
+                            title="Set as default catalog thumbnail"
+                            disabled={isCatalogDefault}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setGalleryDefault(i);
+                            }}
+                          >
+                            <Star
+                              className={`h-3.5 w-3.5 ${isCatalogDefault ? "fill-current" : ""}`}
+                            />
+                          </Button>
+                        )}
                       </div>
                       <Button
                         type="button"
@@ -2097,10 +2145,11 @@ const Contribute = () => {
                 })}
               </div>
               <p className="text-xs text-muted-foreground">
-                The first image in this list becomes the Catalog Search
-                thumbnail. Use the up / down arrows or the star button to
-                change the order; check Tracing on hand-traced or computer-traced
-                diagrams (everything else is treated as a photograph).
+                {currentImagesLead
+                  ? "Use the arrows to order your new images; "
+                  : "The first image in this list becomes the Catalog Search thumbnail. Use the arrows or the star button to change the order; "}
+                check Tracing on hand-traced or computer-traced diagrams
+                (everything else is treated as a photograph).
               </p>
               <Button
                 type="button"
@@ -2124,14 +2173,16 @@ const Contribute = () => {
             </>
           )}
         </div>
-        <label className="flex items-center gap-2 text-sm">
-          <Checkbox
-            checked={noMarkingImage}
-            onCheckedChange={(v) => setNoMarkingImageChecked(v === true)}
-            disabled={submitting}
-          />
-          No image is available to upload
-        </label>
+        {!isMarkingEditAction && (
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={noMarkingImage}
+              onCheckedChange={(v) => setNoMarkingImageChecked(v === true)}
+              disabled={submitting}
+            />
+            No image is available to upload
+          </label>
+        )}
         <WrongImageKindWarning
           expected="MARKING"
           count={coverLikeImageCount}
@@ -3007,9 +3058,9 @@ const Contribute = () => {
                     </div>}
 
                     {renderImageUploader(
-                      "Marking Images",
+                      isMarkingEditAction ? "Add Marking Images" : "Marking Images",
                       `PNG or JPG up to ${MAX_IMAGE_SIZE_MB}MB each`,
-                      true,
+                      !isMarkingEditAction,
                     )}
 
                     {canChangeSubmitterName ? <label className="flex items-center gap-2 text-sm">
