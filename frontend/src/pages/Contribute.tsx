@@ -57,6 +57,7 @@ import {
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
 import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
 import { looksLikeWrongKind, measureImageFile } from "@/lib/imageShape";
+import { formatRateNumber } from "@/lib/rateDisplay";
 import { PartialDateFields } from "@/components/PartialDateFields";
 import { isBelowPreferredImageDpi, measureImageDpi } from "@/lib/imageResolution";
 import { useToast } from "@/hooks/use-toast";
@@ -862,7 +863,8 @@ const Contribute = () => {
         setIsIrregular(submittedBool(sd, "is_irreg", "isIrreg"));
         setInscriptionText(getStr(submittedValue(sd, "inscription_txt", "inscriptionTxt")));
         setDescription(getStr(submittedValue(sd, "desc", "description")));
-        setRateValue(getStr(submittedValue(sd, "rate_val", "rateVal")));
+        const draftRate = getStr(submittedValue(sd, "rate_val", "rateVal"));
+        setRateValue(formatRateNumber(draftRate) || draftRate);
         const referenceWorkIds = parseReferenceWorkIds(
           sd.reference_work_ids ?? sd.referenceWorkIds ?? sd["reference_work_ids[]"]
         );
@@ -1104,7 +1106,7 @@ const Contribute = () => {
         setDescription(typeof data.desc === "string" ? data.desc : "");
         setDisplaySubmitterName(Boolean(data.display_submitter_name));
         setCanChangeSubmitterName(data.can_change_submitter_name === true);
-        setRateValue(String(data.rate_val ?? "").trim());
+        setRateValue(formatRateNumber(String(data.rate_val ?? "")));
 
         const citations = Array.isArray(data.citations) ? data.citations : [];
         const referenceIds: number[] = [];
