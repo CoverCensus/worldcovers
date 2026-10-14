@@ -20,7 +20,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Trash2 } from "lucide-react";
+import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Trash2, Crop } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import type { FormEvent, MouseEvent } from "react";
 import { Link, useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
@@ -55,6 +55,7 @@ import {
   LETTERING_HELP,
 } from "@/labels/guidelines";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
+import { LocalCropImageDialog } from "@/components/LocalCropImageDialog";
 import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
 import { looksLikeWrongKind, measureImageFile } from "@/lib/imageShape";
 import { formatRateNumber } from "@/lib/rateDisplay";
@@ -524,6 +525,8 @@ const Contribute = () => {
   // marking closeup (issue #76). Held as keys rather than a flag on the item so
   // removing an image drops it from the count for free.
   const [coverLikeImageKeys, setCoverLikeImageKeys] = useState<string[]>([]);
+  // Key of the new upload open in the crop dialog, if any.
+  const [cropTargetKey, setCropTargetKey] = useState<string | null>(null);
   const [lowResolutionImageKeys, setLowResolutionImageKeys] = useState<string[]>([]);
   // Timestamp of the marking record as observed when this edit session loaded
   // (Marking.modified_date). Stamped into save-as-draft payloads so a later
@@ -1380,6 +1383,30 @@ const Contribute = () => {
 
   // Reorder + set-default + tracing + remove all act on the single combined
   // gallery, so they work uniformly across already-saved and newly-picked images.
+  // Swap a new upload for its crop, keeping its key, position and Tracing
+  // flag. The cover-shape check runs again on the crop; the DPI flag is left
+  // as measured on the original, because a canvas crop carries no DPI.
+  const replaceGalleryFile = (key: string, file: File) => {
+    setGallery((prev) =>
+      prev.map((g) => (g.kind === "new" && g.key === key ? { ...g, file, previewUrl: "" } : g)),
+    );
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const previewUrl = reader.result as string;
+      setGallery((prev) =>
+        prev.map((g) =>
+          g.kind === "new" && g.key === key && g.file === file ? { ...g, previewUrl } : g,
+        ),
+      );
+    };
+    reader.readAsDataURL(file);
+    setCoverLikeImageKeys((prev) => prev.filter((k) => k !== key));
+    void measureImageFile(file).then((dimensions) => {
+      if (!dimensions || !looksLikeWrongKind(dimensions, "MARKING")) return;
+      setCoverLikeImageKeys((prev) => (prev.includes(key) ? prev : [...prev, key]));
+    });
+  };
+
   const removeGalleryAt = (index: number) => {
     setGallery((prev) => {
       const item = prev[index];
@@ -1952,6 +1979,13 @@ const Contribute = () => {
   const renderImageUploader = (label: string, helperText: string, required = false) => {
     const inputRef = markingFileInputRef;
     const hasAnyImage = gallery.length > 0;
+    const cropTarget = gallery.find(
+      (g): g is Extract<MarkingGalleryItem, { kind: "new" }> =>
+        g.kind === "new" && g.key === cropTargetKey,
+    );
+    const firstCoverLikeUploadKey = gallery.find(
+      (g) => g.kind === "new" && coverLikeImageKeys.includes(g.key),
+    )?.key;
     // On a marking edit the current images stay first, so a new upload can
     // never become the catalog Default from here.
     const currentImagesLead = isMarkingEditAction && currentMarkingImages.length > 0;
@@ -2108,6 +2142,22 @@ const Contribute = () => {
                         >
                           <ArrowRight className="h-3.5 w-3.5" />
                         </Button>
+                        {item.kind === "new" && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            aria-label="Crop image"
+                            title="Crop the marking out of this image"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCropTargetKey(item.key);
+                            }}
+                          >
+                            <Crop className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                         {!currentImagesLead && (
                           <Button
                             type="button"
@@ -2186,6 +2236,27 @@ const Contribute = () => {
         <WrongImageKindWarning
           expected="MARKING"
           count={coverLikeImageCount}
+          action={firstCoverLikeUploadKey ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setCropTargetKey(firstCoverLikeUploadKey)}
+            >
+              <Crop className="mr-1 h-3.5 w-3.5" />
+              Crop to the marking
+            </Button>
+          ) : null}
+        />
+        <LocalCropImageDialog
+          open={cropTarget != null}
+          onOpenChange={(open) => {
+            if (!open) setCropTargetKey(null);
+          }}
+          file={cropTarget?.file ?? null}
+          onCropped={(file) => {
+            if (cropTarget) replaceGalleryFile(cropTarget.key, file);
+          }}
         />
         <LowResolutionImageWarning count={lowResolutionImageCount} />
       </div>
