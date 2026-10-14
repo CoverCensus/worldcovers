@@ -22,6 +22,7 @@ from pathlib import Path
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
+from common.audit import build_marking_snapshot, compute_payload_diff
 from common.contribution_apply import apply_contribution_to_catalog
 from common.models import (
     Citation,
@@ -195,6 +196,26 @@ class MarkingEditMergeTests(TestCase):
                 marking = self._marking(2000 + index)
                 self._approve(marking, payload)
                 self.assertEqual(str(marking.rate_val), "3.00")
+
+    def test_an_unchanged_rate_records_no_history_change(self):
+        """The edit form shows a stored 3.00 as "3" and sends that back. The
+        approve path snapshots the returned in-memory row, so it must hold
+        3.00 or Record History shows a fake "rate val: 3.00 -> 3"."""
+        marking = self._marking(5000)
+        before = build_marking_snapshot(marking)
+        contrib = Contribution.objects.create(
+            contributor=self.user,
+            collection=Collection.objects.get(region=self.va),
+            submitted_data=dict(self.payloads[0], edit_marking_id=marking.pk, rate_val="3"),
+            status=Contribution.STATUS_PENDING,
+            created_by=self.user,
+            modified_by=self.user,
+        )
+        applied = apply_contribution_to_catalog(contrib)
+
+        self.assertEqual(str(applied.rate_val), "3.00")
+        changed = {row["field"] for row in compute_payload_diff(before, build_marking_snapshot(applied))}
+        self.assertNotIn("rate_val", changed)
 
     def test_the_sheet_still_wins_where_it_speaks(self):
         """Merge semantics must not turn into "ignore the submission"."""

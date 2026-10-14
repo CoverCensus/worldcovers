@@ -744,25 +744,43 @@ def _payload_affirms_no_images(payload: dict, subject_type) -> bool:
     return False
 
 
+_CENTS = Decimal("0.01")
+
+
 def _parse_decimal(value: Any) -> Decimal | None:
+    """Parse a submitted amount at the two decimal places every catalog
+    DecimalField stores (rate_val, width, height, valuation amt).
+
+    The database quantizes on save, but the approve path snapshots the
+    in-memory row for the audit diff, which compares str() values. Without
+    this, a form that sends "3" for a stored 3.00 records a fake
+    "rate val: 3.00 -> 3" change in Record History.
+    """
     if value is None:
         return None
     if isinstance(value, Decimal):
-        return value
-    if isinstance(value, (int, float)):
+        d = value
+    elif isinstance(value, (int, float)):
         try:
-            return Decimal(str(value))
+            d = Decimal(str(value))
         except (InvalidOperation, ValueError):
             return None
-    if isinstance(value, str):
+    elif isinstance(value, str):
         s = value.strip()
         if not s:
             return None
         try:
-            return Decimal(s)
+            d = Decimal(s)
         except (InvalidOperation, ValueError):
             return None
-    return None
+    else:
+        return None
+    if not d.is_finite():
+        return None
+    try:
+        return d.quantize(_CENTS)
+    except InvalidOperation:
+        return None
 
 
 def _parse_int(value: Any) -> int | None:
