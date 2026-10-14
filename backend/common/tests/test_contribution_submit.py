@@ -138,7 +138,10 @@ class ContributionSubmitMarkingEditTests(TestCase):
             contribution.pk
         )
 
-    def test_fresh_marking_edit_preserves_existing_images(self):
+    def test_marking_edit_cannot_remove_retag_or_clear_existing_images(self):
+        """Marking edits add images only (Ian, 2026-10-14). The form no longer
+        offers these controls; a payload that sends them anyway is ignored at
+        submit, so the review screen shows what approval will publish."""
         response = self.client.post(
             "/api/v2/contributions/",
             {
@@ -150,22 +153,45 @@ class ContributionSubmitMarkingEditTests(TestCase):
                 "color_id": self.color.pk,
                 "is_manuscript": True,
                 "inscription_txt": "RICHMOND VA",
-                "existing_image_tags": {
-                    "/media/va/front.jpg": "photograph",
-                },
-                "image_order": ["/media/va/front.jpg"],
+                "existing_image_tags": {"/media/va/front.jpg": "photograph"},
+                "removed_existing_image_keys": ["/media/va/front.jpg"],
+                "no_marking_image": True,
             },
             format="json",
         )
 
         self.assertEqual(response.status_code, 201, response.data)
-        contribution = Contribution.objects.get(pk=response.data["id"])
-        self.assertEqual(contribution.status, Contribution.STATUS_PENDING)
-        self.assertEqual(contribution.submitted_data["edit_marking_id"], self.marking.pk)
-        metas = contribution.submitted_data["marking_image_metas"]
-        self.assertEqual(len(metas), 1)
-        self.assertEqual(metas[0]["storage_filename"], self.image.storage_filename)
-        self.assertFalse(metas[0]["tracing"])
+        sd = Contribution.objects.get(pk=response.data["id"]).submitted_data
+        self.assertEqual(sd["edit_marking_id"], self.marking.pk)
+        self.assertEqual(
+            [(m["storage_filename"], m["tracing"]) for m in sd["marking_image_metas"]],
+            [(self.image.storage_filename, True)],
+        )
+        self.assertNotIn("no_marking_image", sd)
+        self.assertNotIn("existing_image_tags", sd)
+
+    def test_approved_marking_edit_keeps_current_images_and_appends_uploads(self):
+        """Approval enforces the rule on its own, so a payload queued before
+        the submit-side rule still cannot delete or reorder a current image."""
+        contribution = self._make_pending_marking_contribution(
+            edit_marking_id=self.marking.pk,
+            no_marking_image=True,
+            existing_image_tags={"/media/va/front.jpg": "photograph"},
+            marking_image_metas=[
+                {"storage_filename": "va/new-crop.jpg", "original_filename": "crop.jpg"},
+            ],
+        )
+        self.client.force_authenticate(self._editor())
+        response = self.client.post(self._approve_url(contribution), {}, format="json")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = Image.objects.filter(
+            subject_type=Image.SUBJECT_MARKING, subject_id=self.marking.pk
+        ).order_by("display_order")
+        self.assertEqual(
+            [(r.storage_filename, r.is_tracing, r.display_order) for r in rows],
+            [("va/front.jpg", True, 0), ("va/new-crop.jpg", False, 1)],
+        )
 
     def test_new_marking_without_image_requires_affirmation(self):
         response = self.client.post(
