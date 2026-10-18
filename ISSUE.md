@@ -7,8 +7,22 @@ in GitHub PRs and Reese's workspace-local `docs/issues.md`.
 
 **Latest focused review:** 2026-10-18, local quick fixes for T82, T83, T32,
 S33, and T1. See the October 18 notes below for implementation and checks.
+The earlier Issue 2 / T8 production check remains recorded under Issue 2.
 
-**Last review:** 2026-10-08, focused on T40, T72, T73, and T78, starting from clean local
+**Last full review:** 2026-10-17, clean published `staging` at
+`972f3b7d24e2ae27874e52fc0b021f8b28affca0`, upstream `origin/staging`.
+Published `main` is `09569e9df633330af2db92a4bf9bf164022d54c0`.
+Checked source, relevant tests, recent PRs, deployment runs, and live Trello,
+including archived cards. No application tests or hosted data audit was run.
+Michael approved the documentation and board plan in this session.
+Successful October 14 deployments: [staging](https://github.com/CoverCensus/worldcovers/actions/runs/38593965174)
+and [production](https://github.com/CoverCensus/worldcovers/actions/runs/38606892315).
+These results do not establish data coverage or stakeholder acceptance.
+Production also has [8f0d1fd](https://github.com/CoverCensus/worldcovers/commit/8f0d1fd211ed3860839c3a54259d805f892e1334),
+which keeps saved Submissions visible when Collection links are missing;
+current staging lacks this fix. Preserve it in future production promotions.
+
+Previous review, 2026-10-08, focused on T40, T72, T73, and T78, starting from clean local
 `staging` at `c0e09f3ecd1f9e21276da07c09f340924bdb3dd4`. The code and tests
 support the implementation notes below. Reused this session's local checks:
 483 backend tests ran with two skipped; all 428 frontend tests, type checking,
@@ -102,37 +116,49 @@ including deferred work. Labels do not change priority or release scope.
 Trello is Michael's visual work board; this file is the detailed reference.
 Sync preserves his board organization and updates the reference to match.
 
-## Current status (2026-09-30)
+## Current status (2026-10-18, focused updates)
 
-Live Trello has 30 Backlog, 53 To Do, 4 Doing, 12 Testing, and 30 Done cards,
-excluding the README policy card. Status and assignment below follow the board;
-a merge does not establish acceptance or target-site data coverage.
+After the October 17 approved sync, Trello had 29 Backlog, 40 To Do, 9 Doing,
+18 Testing, and 38 Done cards, excluding the README policy card. T82/T83
+were added to To Do and T20 moved from Testing to Done. Counts, affected
+descriptions, completion flags, labels, and existing memberships were checked
+after the writes. A merge does not establish acceptance or data coverage.
+On October 18, Michael moved T8 to Testing after the production check below;
+the live card confirms Testing, Michael's assignment, and incomplete acceptance.
+The October 17 board counts above are a dated snapshot, not a new board audit.
 
-T8, T9, T10, and T13 are Doing under Michael (`grubermeister`). T7, T15, T21,
-T22, T23, T26, T27, T28, T42, and T55 are To Do under Michael.
-T37, T40, T43, T44, T45, and T66 are To Do under Reese.
-T31 and T36 are Done; T32-T35 remain Testing under Michael.
-T50 is Testing under Michael; T38 and T65 are Testing under Michael and Reese.
-T76 is Testing under Reese.
-T14, T46, T67, and T75 are Done. S20 and T52-T54 remain Backlog.
-[T78](https://trello.com/c/dCdskX07) is To Do and unassigned.
-Other To Do and Backlog cards remain unassigned unless noted below.
+T9, T10, T13, T19, and T24 are Doing under Michael (`grubermeister`).
+T11, T12, and T18 are Doing under Reese. T7, T15, T21, T22, T23, T26,
+T28, T42, and T55 are To Do under Michael. T43, T44, and T66 are To Do
+under Reese. Other To Do and Backlog cards remain unassigned unless noted.
 
-S6, S7, S8, S15, S18, S22, S30, S31, S32, and S41 are accepted through live
-stakeholder review and confirmed use. Preserve existing Done status.
-S16/S17 remain deferred. S27 remains Testing for operator tools; it does not
-require an application update interface.
+T31, T36, T14, T46, T67, T75, T80, and T81 are Done.
+T38, T65, T76, and S12 are Done with October 5-6 verification and acceptance
+recorded in their card comments. T32-T35 and T50 remain Testing under Michael.
+T8, T17, T27, T40, T45, T72, T73, and T77 are Testing under Michael;
+T37, T78, and T79 are Testing under Reese.
 
-Michael confirmed on 2026-09-26 that Color values and Ratemark/Auxmark text
-were cleaned up on woco.dev and hellowoco.app. T50/T65 remain Testing for
-final verification and acceptance. This is his recorded operational report,
-not a new data audit; do not repeat repairs from the old checklists.
+S6, S7, S8, S15, S18, S22, S30, S31, S32, and S41 remain accepted.
+S16/S17, S20, and T52-T54 remain Backlog. S27 stays Testing for operator
+tools; it does not require an application update interface.
+
+Ian declined ordinary Contributor linking (Issue 26 / T20) and social ratings
+(S39), as recorded by Michael on October 9. T20 closes the permission decision;
+S39 is Done for a declined request, not an implemented ratings feature.
+S39 has no member; retain that assignment gap rather than invent an owner.
+The design still lists S39 as deferred and needs a separate correction.
+
+Michael confirmed Color and child-inscription cleanup on both sites on
+September 26. Reese verified and accepted T65 on October 5; T50 remains
+Testing. Do not repeat completed repairs from historical checklists.
 
 The September 27 session plan was T8's Richmond check, then T9's Amelia
 rates and T10's New Glasgow shapes. Find source rows and target IDs first,
 compare staging and production separately, and repair only confirmed
 mismatches. The Doing status is from Trello; no new site-check result is
 established by the September 28 review.
+For T8, Michael limited the October 18 acceptance target to production;
+the verified results and remaining acceptance step are in Issue 2.
 T15 remains To Do with Michael's assignment restored from the live card.
 
 Current engineering responsibility: Michael owns data engineering, including
@@ -143,15 +169,11 @@ model/data boundary rather than assigning it by directory alone.
 
 | Work in Testing | Current assignees |
 |---|---|
-| [S12 - Submission queue filters and sorting](https://trello.com/c/hvcjPb6q) | Reese Ludwick, Jay Logan |
-| [S24 - Read help articles](https://trello.com/c/lqyysKov) | Michael (`grubermeister`), Jay Logan |
-| [S27 - Apply system updates](https://trello.com/c/tT4fnM4W) | Michael (`grubermeister`), Jay Logan |
-| [S34 - Add and edit help articles](https://trello.com/c/F7fYDJLl) | Michael (`grubermeister`) |
-| T32-T35 - Quick UI fixes (linked below) | Michael (`grubermeister`) |
-| [T38 - Searchable link and move destinations](https://trello.com/c/eB0oWj65) | Michael (`grubermeister`), Reese Ludwick |
-| [T50 - Child inscription cleanup](https://trello.com/c/B25HULz7) | Michael (`grubermeister`) |
-| [T65 - Catalog Color cleanup](https://trello.com/c/j8JvVEDS) | Michael (`grubermeister`), Reese Ludwick |
-| [T76 - Cover thumbnail dates and order](https://trello.com/c/tRtMQsfN) | Reese Ludwick |
+| S24, S27 | Michael (`grubermeister`), Jay Logan |
+| S34, T8, T17, T27, T32-T35, T40, T45, T50, T72, T73, T77 | Michael (`grubermeister`) |
+| T37, T78, T79 | Reese Ludwick |
+
+The completed T20 move closes Ian's recorded refusal; it does not add permission.
 
 S23 (Entry history) and S35 (bulk approval) are implemented and await
 verification and acceptance. They remain To Do and unassigned on the board;
@@ -210,14 +232,14 @@ summary separately.
 
 | Request | Current evidence | Remaining work |
 | --- | --- | --- |
-| Clean search colors such as RED 35 | The September 21 dropdown report is historical. Michael confirmed cleanup on both sites on September 26. PR #155 adds parser/repair work; PR #160 tracks the checker and operator guide. | T65 remains Testing: verify final choices, results, preserved source text, and Entry relationships. Record acceptance; do not repeat the completed repair. |
+| Clean search colors such as RED 35 | The September 21 dropdown report is historical. Michael confirmed cleanup on both sites on September 26. PR #155 adds parser/repair work; PR #160 tracks the checker and operator guide. | T65 is Done: Reese verified both sites and recorded acceptance on October 5. Do not repeat the completed repair. |
 | Remove Move to another marking | Removed from `ThumbnailImageActions.tsx`. | No new implementation task. T33's instruction to preserve actions excludes this deliberately removed action. |
 | Remove Link existing cover from Marking detail | Removed from `RecordDetail.tsx`. | No duplicate removal task. T38 retains the work to define a clearer linking method; do not restore this control as part of the picker work. |
 | Create cover from this image | Implemented: `RecordDetail.tsx` opens the ordinary Cover form; `CoverEdit.tsx` shows the existing image and sends its ID. `contribution_apply.py` moves the same Image row on approval, with no duplicate file or row. 2026-09-24: final Submit was rejected with "Add at least one cover image" because the image-required check counted only uploaded files; `_submitted_payload_has_images` now also accepts a positive `source_marking_image_id`. 2026-09-27: the resumed draft and the review gallery omitted the carried image because `submitted_data` holds only its id; `ContributionDetailSerializer` now resolves it as `source_marking_image` (null once the image leaves the marking), `CoverEdit.tsx` rebuilds the tile from that and sends the id from the gallery rather than router state, and removing the tile on resume clears the id through `removed_existing_image_keys`. The row still moves only on approval. | T37: verify the full flow using the example at https://hellowoco.app/record/21032 and a safe staging equivalent. Removal from the Marking occurs on approval, not merely on submission. Confirm that timing meets the request. Broader T37 work remains open. |
 | State whether a submission is a Marking or Cover | Implemented in `ContributionDetail.tsx` and `CoverContributionDetail.tsx`, using `entryKindForContribution`. | T32 related verification: check https://hellowoco.app/contribution/91 with Editor access. Guest access redirects to login. Confirm its actual Entry kind and displayed label; old payloads without submission_kind use a heuristic. Repair data only if a mismatch is established. |
 | Latest date on a second line | The munger already attaches a recognised (L) row's date to its parent Marking. The September 21 production check of https://hellowoco.app/record/30841 (HUNTSVILLE,M.T.) displayed 11/12/1813 for both bounds. The source's correct latest date was not established in this review. | T49: inspect the source second line, trace extraction, parsing, import, and date aggregation, then repair only the confirmed gap. Record source citation, expected precision, affected IDs, and results separately for woco.dev and hellowoco.app. No blind reimport. |
 
-[T65](https://trello.com/c/j8JvVEDS) is Testing under Michael and Reese, under F11 - Catalog Data Pipeline, with F2 -
+[T65](https://trello.com/c/j8JvVEDS) is Done under Michael and Reese, under F11 - Catalog Data Pipeline, with F2 -
 Collection Discovery for the search effect. Data work belongs to Michael;
 any application change belongs to Reese. T64 was reserved locally at intake
 and is now mapped in Deferred offline wishes below.
@@ -405,32 +427,30 @@ the existing limit; it does not satisfy the requested manual-entry workflow.
 These items are recorded on the existing cards. Site observations below are
 from that intake or Reese's report, not checks repeated in this reconciliation.
 
-- **[T37](https://trello.com/c/u1f8iyjw), To Do under Reese:**
-  [PR #167](https://github.com/CoverCensus/worldcovers/pull/167) implements
-  carried-image display through draft save/resume and review, including removal
-  from a resumed draft. Approval transfers one Image row; save/submit do not.
-  Reese reports staging deployment at `50a3a5f` with the bundle checked at
-  01:22 UTC on September 27. His staging browser check remains pending;
-  production verification at record 21032 waits for promotion.
-  The larger request remains: create a new Marking and associated Cover in one
-  submission/cropping flow, preserving the original image, crop, and link.
-  Both Entries require approval. Define drafts, partial approval, return, and
-  rejection; retain new destinations and crop/move controls in edit forms,
-  visible eligible actions without destinations, and provisional Covers from
-  Marking uploads. Check image order on approval when uploads also exist.
-  T20 owns permission changes; T34/T35 own wording and refresh checks.
-- **[T76](https://trello.com/c/tRtMQsfN), Testing, Reese Ludwick:**
-  [PR #158](https://github.com/CoverCensus/worldcovers/pull/158) implements
-  dates under associated Cover thumbnails and earliest-first order. An
-  unpublished local commit `ac1e294` fixes yearless Cover captions and single
-  yearless Marking Dates Seen rows. The earlier localhost display check is
-  recorded, while hosted sites have not been checked with this commit. Find
-  dated, partial-date, undated,
-  tied-date, and more-than-ten Cover examples. On woco.dev and hellowoco.app,
-  verify all approved Covers, captions, and order. Undated Covers belong last;
-  date precision must survive. Marking thumbnails stay unchanged. Record IDs,
-  revision, results, and acceptance.
-- **[T77](https://trello.com/c/lGfEJzSw), To Do, unassigned:**
+- **[T37](https://trello.com/c/u1f8iyjw), Testing under Reese:**
+  PRs #161/#167 preserve the carried image through draft, resume, review,
+  and approval. Reese's October 7 checks confirmed approval-only transfer on
+  both sites, including production Marking 21032 and Cover 2204.
+  PRs #173-#175 add visible disabled actions, carried-image approval order,
+  Cover-edit transfer, and crops into approved associated imageless Markings.
+  Those catalog crops preserve the Cover's original image.
+  [PR #181](https://github.com/CoverCensus/worldcovers/pull/181) adds browser
+  cropping of new uploads on Marking forms; the crop replaces that pending
+  upload and the uncropped original is not submitted. Production rollout is
+  recorded in the October 15 card comment after PR #182 and the successful
+  October 14 deploy. Verify the remaining shipped cases separately from
+  the unresolved combined Marking/Cover and provisional Cover workflow.
+  Both Entries require review; approval, draft, return, rejection, and
+  parent/child behavior remain to be decided. T20 does not grant Contributor
+  linking; T34/T35 retain wording and refresh checks.
+- **[T76](https://trello.com/c/tRtMQsfN), Done under Reese:**
+  PR #158 and the yearless-date fix published through PR #170 are accepted.
+  Reese's October 5-6 API and browser checks cover full, partial, yearless,
+  undated, and tied dates on both sites. No hosted example has more than ten
+  Covers; that case is supported by `markings.coverPaging.test.ts`.
+  Preserve date precision, stable ordering, and unchanged Marking thumbnails.
+
+- **[T77](https://trello.com/c/lGfEJzSw), Testing under Michael:**
   The September 26 intake records production record 30876 showing `rough C`,
   despite the earlier report of `rough c`. Compare source, import text, and
   available record history to establish the cause and correction, or record
@@ -442,7 +462,8 @@ from that intake or Reese's report, not checks repeated in this reconciliation.
 The September 30 board snapshot has T72-T74 To Do and unassigned; T75 is Done
 under Reese. These gaps were noted in DECISIONS.md and mapped to the tasks
 below. Application work belongs to Reese; any model changes belong to Michael.
-T72 and T73 are now implemented and locally verified in `c0e09f3`; hosted
+T72 and T73 were locally verified in `c0e09f3` and published through
+[PR #176](https://github.com/CoverCensus/worldcovers/pull/176); hosted
 verification and acceptance remain. The approved October 8 sync moved both
 cards to Testing and assigned Michael to verification. T74's restoration
 scope remains unresolved.
@@ -451,7 +472,8 @@ scope remains unresolved.
 
 [T72 on Trello](https://trello.com/c/FOS1WZHa) - F3 Submission Workflow.
 
-Implemented and locally verified in `c0e09f3`. Marking and Cover forms preserve
+Implemented and locally verified in `c0e09f3`, published through
+[PR #176](https://github.com/CoverCensus/worldcovers/pull/176). Marking and Cover forms preserve
 all selected Citations and details through draft save, resume, submission,
 review, and approval. Omission preserves the stored set; explicit empty
 selection clears it. Multipart and JSON regression tests cover both Entry
@@ -477,7 +499,8 @@ Evidence: [Marking form](frontend/src/pages/Contribute.tsx),
 
 [T73 on Trello](https://trello.com/c/wgtwKkWr) - F5 Image Attachments.
 
-Implemented and locally verified in `c0e09f3`. Image creation, updates,
+Implemented and locally verified in `c0e09f3`, published through
+[PR #176](https://github.com/CoverCensus/worldcovers/pull/176). Image creation, updates,
 deletion, and moves enforce subject responsibility; moves check both source
 and destination. Cover checks include linked Marking Regions. Existing
 Administrator overrides and Contributor restrictions remain. Regression
@@ -487,7 +510,7 @@ and rejection of an unauthorized upload before a file is written.
 Hosted verification and acceptance remain: an Editor cannot change images
 outside their assigned scope through direct API calls, while authorized
 writes and moves still work. Verify file retention and image order after a
-move. T20's separate Contributor-linking decision does not block these checks.
+move. T20's resolved refusal does not block these checks.
 
 Evidence: [ImageViewSet](backend/common/api/v2/views.py),
 [permissions](backend/common/api/v2/permissions.py),
@@ -550,8 +573,9 @@ errors now identify the Marking or Cover. Hosted verification remains open.
 ## Other follow-ups
 
 T46 is Done under Michael; T50 is Testing under Michael. T52-T54 are
-Backlog and unassigned. The other tasks here are To Do: T37/T38/T40/T43-T45
-are assigned to Reese, T42/T55 to Michael, and the rest are unassigned.
+Backlog and unassigned. T37 is Testing under Reese; T40/T45 are Testing
+under Michael. T38 is Done under Michael and Reese. T43/T44 are To Do under
+Reese, T42/T55 To Do under Michael; other tasks here are To Do and unassigned.
 The responsibility column directs planning;
 it does not assert work has started or change existing card memberships.
 Model/data work belongs to Michael even when a related interface belongs
@@ -559,10 +583,10 @@ to Reese. Source observations below describe code, not deployed behaviour.
 
 | Task | Outcome | Feature | Responsibility | Scope and acceptance |
 | --- | --- | --- | --- | --- |
-| [T37](https://trello.com/c/u1f8iyjw) | Create image destinations from crop and move workflows | F5 | Reese; Michael for model changes | Partly implemented: Marking detail opens the normal Cover form with the existing image; approval transfers the same Image row. Verify that flow and timing. Remaining: create-new Marking destinations, crop/move controls in edit forms, and a provisional associated Cover from a potential Cover upload in a Marking edit; define draft versus pending first. If the associated Marking has no image, offer a crop into that existing Marking. Preserve the original image. Contributor permission expansion depends on T20; wording and refresh are T34/T35. |
-| [T38](https://trello.com/c/eB0oWj65) | Search for recognizable link and move destinations | F2 | Reese | Unpublished local `d588878` makes Link Existing Marking reuse the image-move destination picker with whole-catalog search. Existing visible associations show review status and cannot be added again. New links retain pending review. Cover-to-Marking image moves retain their associated-Marking destination scope. Browser verification and acceptance remain pending. T37 owns cropping; T20 owns any Contributor permission change. |
+| [T37](https://trello.com/c/u1f8iyjw) | Create image destinations from crop and move workflows | F5 | Reese; Michael for model changes | Shipped: carried-image flow, ordered approval, Cover-edit transfer, visible disabled actions, catalog crops into associated imageless Markings, and upload crops on Marking forms (PRs #173-#175, #181). Catalog crops keep the original; upload crops replace it. Testing under Reese. Combined Marking/Cover and provisional Cover states remain unresolved; retain both Entries' review and links. T20 keeps Contributor linking restricted. |
+| [T38](https://trello.com/c/eB0oWj65) | Search for recognizable link and move destinations | F2 | Reese | Done. Published through PR #170; Reese accepted both-site browser checks on October 6. Whole-catalog search, pagination, existing-link status, Backstamp, and narrow-screen behavior were checked. Benton already had approved links, so no duplicate link was submitted. Preserve existing link/move scope and removed controls. |
 | [T39](https://trello.com/c/YtcnoRop) | Compare proposed changes beside the current Entry | F3 | Reese | Show current and proposed values side by side during Marking and Cover submission review. Existing history is not this comparison. Acceptance: an Editor can identify changed and unchanged values before deciding. |
-| [T40](https://trello.com/c/vqYH3R2Z) | Preserve contributor credit preferences across edits | F3 | Michael: model; Reese: application | Preference protection is implemented and locally verified in `c0e09f3` for Markings and Covers, including older drafts, direct API edits, and admin forms. Only the original Contributor can change their choice; public credit still uses `created_by`. Cumulative credit and each person's opt-in remain unresolved. Hosted verification and acceptance remain. Preserve Issue 17's completed original feature. Evidence: [preference tests](backend/common/tests/test_submitter_name_preference.py) and [form tests](frontend/src/pages/SubmitterNamePreference.test.tsx). |
+| [T40](https://trello.com/c/vqYH3R2Z) | Preserve contributor credit preferences across edits | F3 | Michael: model; Reese: application | Preference protection is implemented and locally verified in `c0e09f3`, published through PR #176, for Markings and Covers, including older drafts, direct API edits, and admin forms. Only the original Contributor can change their choice; public credit still uses `created_by`. Cumulative credit and each person's opt-in remain unresolved. Hosted verification and acceptance remain. Preserve Issue 17's completed original feature. Evidence: [preference tests](backend/common/tests/test_submitter_name_preference.py) and [form tests](frontend/src/pages/SubmitterNamePreference.test.tsx). |
 | [T41](https://trello.com/c/LI10JpcC) | Define rescind and inactivity handling for submissions | F3 | Reese; Michael for model changes | Keep existing pending approve/reject/revision and owner withdrawal. Define rescind, the inactivity interval, and whether the request concerns submissions or published Entries before implementing additional actions. Acceptance: agreed transitions and permissions, then verified behaviour; no arbitrary deletion policy. |
 | [T42](https://trello.com/c/dfKkGHWl) | Support circa qualifiers on Marking and Cover dates | F3 | Michael: model; Reese: controls | Store approximation separately from missing date components and offer the requested Circa control. Acceptance: qualifier survives submission, review, retrieval, and display for both Entry types without inventing date precision. Published source commit `9f34260` protects source `c1849` from becoming an exact year during bundle processing; it does not add the application field or Circa control. |
 | [T43](https://trello.com/c/h55E9wFA) | Add captions to image upload forms | F5 | Reese | Expose editable per-image captions on Marking and Cover submission forms. Reuse Image.image_description unless a concrete distinction requires otherwise. Acceptance: caption persists and is available on image display after review. |
@@ -598,7 +622,7 @@ board October 8; F2 - Collection Discovery.
 The core disclosure fix was published in
 [PR #171](https://github.com/CoverCensus/worldcovers/pull/171). Public Marking
 detail no longer returns nested `created_by` or `modified_by` user objects.
-Local `c0e09f3` adds Guest and Contributor checks across public Entry list,
+`c0e09f3`, published through PR #176, adds Guest and Contributor checks across public Entry list,
 detail, and nested responses. Public Marking credit remains opt-in; internal
 audit identity is retained. Local checks passed. Hosted verification and
 acceptance remain separate.
@@ -607,9 +631,11 @@ The card records Reese's October 2 staging verification at `94e9f7b`:
 anonymous reads of woco.dev Marking 48909 and 40 recently modified Markings
 returned no email, account flags, or nested user objects. His October 5
 production check still found the fields on hellowoco.app Marking 48909.
-[Promotion PR #172](https://github.com/CoverCensus/worldcovers/pull/172) is
-still open as of this review. These are dated site reports, not fresh site
-checks. Production verification after promotion and final acceptance remain.
+[Promotion PR #172](https://github.com/CoverCensus/worldcovers/pull/172)
+merged, but its deployment failed. PR #176 superseded that promotion; the
+latest production deployment succeeded on October 14. These are deployment
+results and dated site reports, not a fresh privacy check. Guest/Contributor
+production verification and final acceptance remain.
 
 Acceptance: public list/detail and nested Entry responses do not expose
 email or account flags; opted-out Contributors are not identified through
@@ -679,6 +705,16 @@ delivery repair under T30.
 
 ## October 17 sync and feature requests
 
+Source: Michael's approved sync plan and Ian's requests relayed on 2026-10-17.
+
+- **T80, Done under Reese, F3:** stored rates show without trailing zeros on
+  edit and draft resume; unchanged rates do not create false history changes.
+  [PR #179](https://github.com/CoverCensus/worldcovers/pull/179), promoted in
+  [PR #182](https://github.com/CoverCensus/worldcovers/pull/182).
+- **T81, Done under Reese, F5:** current Marking images are read-only on
+  Submit Edit; edits append images only, enforced at submit and approval.
+  [PR #180](https://github.com/CoverCensus/worldcovers/pull/180), promoted in
+  PR #182. Older pending deletion requests retain the original images.
 - **[T82](https://trello.com/c/aX5MzTQA), To Do, unassigned, F2:** implemented locally
   and visually accepted by Michael on October 18; publication and deployment
   remain pending. Catalog Search and Marking detail Color text is bold and
@@ -697,6 +733,10 @@ delivery repair under T30.
   send their selected page size explicitly. Hosted verification remains open.
   S41 remains Done for its original configurable-pagination scope.
 
+S39's [October 9 decision](https://trello.com/c/qVWJMQGK) closes the request
+as declined, not implemented. The design's deferred S39 wording and the
+DECISIONS.md statements about undecided Contributor linking and obsolete date
+guidance need separate approved edits; this update changes ISSUE.md only.
 
 ## October 18 local quick fixes
 
@@ -757,7 +797,7 @@ work.
 | Territory/state detail tags and search | Batch #28 | **done** - PR #59; broader alias policy remains Issue 31 |
 | Institutional designation | Batch #29 | **To Do** - [T26](https://trello.com/c/S7ZsuqjL), Michael (`grubermeister`); code implemented in [PR #66](https://github.com/CoverCensus/worldcovers/pull/66) and current starred-listing import |
 | Clear Filters at the top | Batch #30 | **done** - [PR #64](https://github.com/CoverCensus/worldcovers/pull/64) |
-| Per-state notification and editor review | Batch #31 | **To Do** - [T27](https://trello.com/c/cq72B5NA), Michael (`grubermeister`); staging re-import reported in PR #71; invitations and acceptance still to confirm |
+| Per-state notification and editor review | Batch #31 | **Testing** - [T27](https://trello.com/c/cq72B5NA), Michael (`grubermeister`); staging re-import reported in PR #71; invitations and acceptance still to confirm |
 | MD: Anna/Polis backstamp | Batch #32 | **done** - PR #71 |
 | MD: S/D notation in notes | Batch #33 | **done** - PR #71 |
 | MD: Barry manuscript and congressional-frank note | Batch #34 | **done** - PR #71 |
@@ -840,20 +880,43 @@ gaps, pending records, and search/filter behaviour before proposing a repair.
 - [ ] Root cause documented: import gap vs. query/filter bug
 
 ### Issue 2 -- Fix Richmond town-name normalization
-**Status:** Doing - [T8](https://trello.com/c/YUs5t7yl) - **Assigned:** Michael (`grubermeister`) - **Depends on:** none
+**Status:** Testing - [T8](https://trello.com/c/YUs5t7yl) - **Assigned:** Michael (`grubermeister`) - **Depends on:** none
 The original report described `Richmd, VA` display and Richmond search failures.
-Current affected records have not been verified. Record the source row, target
-Post Office, displayed name, and search result on the intended site. Correct
-only a reproduced gap; do not assume the parser still has the reported defect.
-The September 27 session plan put this check before T9 and T10. Record
-source references, Marking and Post Office IDs, display names, and Richmond search results on
-woco.dev and hellowoco.app separately. Preserve the actual Marking inscription;
-an abbreviated inscription does not by itself make the Post Office name
-correct. If stored data is correct but search fails, identify the application
-follow-up for Reese. The September 28 review establishes no new live check
-or repair.
-- [ ] Records showing `Richmd` display as "Richmond"
-- [ ] Searching "Richmond, VA" returns those markings
+On 2026-10-18, Frank checked the production API, rendered Catalog Search,
+and both Marking detail pages. Michael limited acceptance to hellowoco.app;
+staging verification is outside this check. The site displayed version 1.9.4.
+
+| Legacy source row | Production Marking | Color | Post Office | Inscription Text |
+| --- | --- | --- | --- | --- |
+| 587 | [23010](https://hellowoco.app/record/23010) | BLACK | 7191: RICHMOND | `RICHMD.VA.` |
+| 913, parent 587 | [23011](https://hellowoco.app/record/23011) | RED | 7191: RICHMOND | `RICHMD.VA.` |
+
+The local legacy snapshot `backups/db_export/tblRawStateData.csv` has
+`txtTown=Richmond` and `txtTownPostmark=RICHMD.VA.` for both source rows.
+Their catalog text and Colors match the production records. Both production
+titles read `RICHMOND, VA - "RICHMD.VA."`; detail pages show Town and Townmark
+Text separately. Preserve the abbreviated Inscription Text.
+
+State = Virginia and Town = Richmond returned 376 Markings, including these
+two on pages 7 and 8 at the default page size of 10. The keyword search
+[`Richmond, VA`](https://hellowoco.app/search?q=Richmond%2C%20VA&page=8)
+returned 397 Markings, with both on page 8. This
+[focused search](https://hellowoco.app/search?state=Virginia&town=Richmond&q=Richmd)
+shows both together. Counts and page positions are the October 18 results.
+Post Offices 7189 (`RICHMD`) and 7190 (`RICHMD.VA`) returned no public Markings.
+No code or data repair was needed or performed for these examples.
+
+The evidence supports a possible confusion between Post Office name and
+Inscription Text, but does not prove what the original reporter saw. The
+complaint supplied no record ID or screenshot. Recommended feedback contacts
+are Ian Gibson-Smith and Greg Stone, named in the source feedback group;
+the individual Richmond reporter is unconfirmed. No notifications were sent.
+Reese needs a follow-up only if review reproduces an application defect.
+
+- [x] Identify source rows and production Markings with the reported abbreviation
+- [x] Verify Richmond Post Office names and preserve the source Inscription Text
+- [x] Verify both Markings appear in Richmond searches and display correctly
+- [ ] Ask the feedback contacts to confirm these examples address the complaint; record acceptance before Done
 
 ### Issue 3 -- Verify remaining Amelia rate errors in deployed data
 **Status:** Doing - [T9](https://trello.com/c/TF3jpD2V) - **Assigned:** Michael (`grubermeister`) - **Depends on:** none - **Source:** Greg Stone
@@ -876,7 +939,7 @@ record site and record IDs, and repair only confirmed mismatches.
 - [ ] Spot-check confirms catalog circles aren't imported as straight-line
 
 ### Issue 5 -- Import updated VA data from worldcovers.org
-**Status:** To Do - [T11](https://trello.com/c/eU2o17lO) - **Assigned:** unassigned - **Depends on:** none
+**Status:** Doing Do - [T11](https://trello.com/c/eU2o17lO) - **Assigned:** Reese Ludwick - **Depends on:** none
 Reconcile the Virginia legacy-source snapshot with current WoCo records before
 requesting another import. Record the source date, matching keys, target site,
 counts, missing/extra records, and release disposition. The original request
@@ -885,7 +948,7 @@ does not establish that the current target is missing those records.
 - [ ] Record counts reconcile between source and target
 
 ### Issue 6 -- Finish VPHC data reconciliation and editor acceptance
-**Status:** To Do - [T12](https://trello.com/c/AqdYZttW) - **Assigned:** unassigned - **Depends on:** Issue 5 data reconciliation
+**Status:** Doing Do - [T12](https://trello.com/c/AqdYZttW) - **Assigned:** Reese Ludwick - **Depends on:** Issue 5 data reconciliation
 VPHC reference and marking ingestion are implemented in
 [PR #106](https://github.com/CoverCensus/worldcovers/pull/106), with manuscript
 support in [PR #132](https://github.com/CoverCensus/worldcovers/pull/132).
@@ -913,24 +976,30 @@ Michael's September 19 request adds a city-by-city completeness audit and
 rerun: account for every source listing, including intentional exclusions.
 The earlier successful run does not establish completeness; see the later
 follow-ups and current staging work under Issue 8.
+Michael confirmed on October 18 that Michigan is withheld in `woco.dev`
+pending further review and is not in production.
 
 ### Issue 8 -- State rollout tracking
 **Status:** Doing - [T13](https://trello.com/c/kWFoGpi3) - **Assigned:** Michael (`grubermeister`) - **Depends on:** none
-Michael reported the following on 2026-09-19. The July rollout sequence is
-historical. Production presence, data quality, and Editor acceptance are
-separate results; these reports were not independently checked on either site.
+Michael reported the following on 2026-09-19, with Michigan corrected on
+2026-10-18: Michigan is withheld in `woco.dev` pending further review and is
+not in production. The October 18 production audit found no public Michigan
+Markings, consistent with that decision. The other September 19 workflow
+groups remain dated reports. The July rollout sequence is historical.
+Production presence, data quality, and Editor acceptance are separate results.
 
 | Stage | Sections / next work |
 | --- | --- |
-| Loaded into hellowoco.app production | WV, VA, MD, DE, FL, MI, AL, IL, DC, IA, NC, OH, CT, TN |
+| Loaded into hellowoco.app production | WV, VA, MD, DE, FL, AL, IL, DC, IA, NC, OH, CT, TN |
 | Deleted from woco.dev after production load | MD, DE, AL, IL, DC, IA, OH, CT, TN |
-| Still in staging | MI: known issues and completeness audit; WV: possibly missing VA entries; VA: verify VPHC additions; FL and NC: attempt OCR |
+| Still in staging | MI: withheld from production pending further review, including known issues and completeness audit; WV: possibly missing VA entries; VA: verify VPHC additions; FL and NC: attempt OCR |
 | Need staging load for initial review; suggested Editors exist | LA, VT, GA, RI, ME, NH, NJ, SC, TX, OK, HI, MS, CA, ND, NM, AZ, CO, UT, NE, MO, AR, NV, WI |
 | Difficult and unloaded | NY, PA, MA, KY |
 | Deferred until everything else is finished | AK, SD, IN, WA, OR, ID, WY, MT, KS, MN, XX |
 
-Every current staging Entry also exists in production, per Michael; this
-does not establish matching field values. XX is retained as supplied.
+The September 19 claim that every staging Entry also exists in production
+is superseded by the October 18 Michigan correction. Do not assume staging
+and production have the same records or field values. XX is retained as supplied.
 Suggested Editors are not confirmed appointments or permission assignments.
 
 September 28 source review: Massachusetts source preparation has progressed
@@ -1062,7 +1131,7 @@ input for circle-family shapes and mirrors diameter to both `height` and `width`
 ## Markings model & display (Greg Stone parsing feedback)
 
 ### Issue 19 -- Ratemark display: plain vs. in-circle rate
-**Status:** To Do - [T17](https://trello.com/c/Vf3dOZAe) - **Assigned:** unassigned - **Depends on:** none - **Source:** Greg Stone
+**Status:** Testing Do - [T17](https://trello.com/c/Vf3dOZAe) - **Assigned:** Michael (`grubermeister`) - **Depends on:** none - **Source:** Greg Stone
 Show the difference between a plain rate ("5") and a rate enclosed in a circle --
 as the Stampless catalog distinguishes Cumberland vs. Curdsville.
 - [ ] A "5" and a circled "5" render distinguishably
@@ -1103,7 +1172,7 @@ sections, `frontend/src/App.tsx` routes `/acknowledgements`, and
 `frontend/src/components/Footer.tsx` links to the page.
 
 ### Issue 23 -- Branding: APMC + Classics Society
-**Status:** To Do - [T18](https://trello.com/c/E8OcLZaT) - **Assigned:** unassigned - **Depends on:** none - related **[R7]**
+**Status:** Doing Do - [T18](https://trello.com/c/E8OcLZaT) - **Assigned:** Reese Ludwick - **Depends on:** none - related **[R7]**
 **WARNING Board approval required before merge.**
 Replace "Worldcovers" branding with **APMC**, add the U.S. Philatelic Classics
 Society logo, and add Society website / "Become a member" links.
@@ -1112,11 +1181,20 @@ Society logo, and add Society website / "Become a member" links.
 - [ ] Final branding/logo/links confirmed with the board before merge
 
 ### Issue 24 -- Per-state reference citations
-**Status:** To Do - [T19](https://trello.com/c/FN102Dm0) - **Assigned:** unassigned - **Depends on:** 13
+**Status:** Doing Do - [T19](https://trello.com/c/FN102Dm0) - **Assigned:** Michael (`grubermeister`) - **Depends on:** 13
 As each state is added, attach its source reference/citation (e.g. VPHC Catalog) --
 listings from another catalog are accepted as genuine on that catalog's authority.
 - [ ] Imported listings carry their source reference work
 - [ ] VA imports cite the VPHC Catalog where applicable
+
+Separate follow-up requested by Michael on 2026-10-18: review Massachusetts
+Markings that should also cite `BPM2` (*Boston Postal Markings to 1890*,
+second edition). Check source references and target record IDs, then add
+the supported Citations and catalog locators while preserving ASCC Citations.
+Coordinate source interpretation with [T49](https://trello.com/c/bvNVhddr).
+This is a separate pass from T19's current production repair; the target site
+and affected records must be established before changes.
+- [ ] Complete the separate Massachusetts BPM2 Citation pass
 
 ## Lower priority / later
 
@@ -1133,7 +1211,7 @@ Resolution note, 2026-07-03: detail display and region-filter links are merged
 via PR #59. Broader territory alias/search-design questions remain in Issue 31.
 
 ### Issue 26 -- Decide whether contributors may link existing covers and markings
-**Status:** To Do - [T20](https://trello.com/c/yEfLz6cC) - **Assigned:** unassigned - **Depends on:** none
+**Status:** Done Do - [T20](https://trello.com/c/yEfLz6cC) - **Assigned:** Michael (`grubermeister`) - **Depends on:** none
 [PR #84](https://github.com/CoverCensus/worldcovers/pull/84) added linking in
 both directions from the detail pages. Editors and administrators can repeat
 this action to associate one cover with several markings without uploading
@@ -1142,12 +1220,14 @@ it again. Ordinary contributors do not have that write permission.
 Narrowed 2026-09-21: "Link Existing Cover" was removed from the marking detail
 screen at Ian's request ("both of these are confusing and we need to come up
 with a better method"). The cover detail screen keeps its "Link Existing
-Marking" control, so linking still exists, but in one direction only. The open
-decision below is unchanged.
+Marking" control, so linking still exists, but in one direction only.
+Decision, 2026-10-09: Ian declined ordinary Contributor linking, as reported
+by Michael in the [T20 comment](https://trello.com/c/yEfLz6cC). Keep linking
+restricted to Editors and Administrators; the API enforces that restriction.
 
 - [x] Editors/admins can link existing covers and markings without another upload
-- [ ] Decide whether ordinary contributors should be allowed to create these links
-- [ ] If approved, define review and permission rules before extending the UI/API
+- [x] Record the decision: ordinary Contributors may not create these links
+- [x] Preserve the existing Editor/Administrator restriction
 
 ### Issue 27 -- Submitter self-delete / withdrawal policy -- [DONE]
 **Status:** done (policy + implementation) - **Depends on:** none
@@ -1203,7 +1283,7 @@ database remain untouched. Avoid state-abbreviation collisions and do not
 recreate missing scratch files merely to satisfy this historical reference.
 
 ### Issue 31 -- Territory search/UI surfacing
-**Status:** To Do - [T24](https://trello.com/c/2GkfHBtv) - **Assigned:** unassigned - **Depends on:** 7 - related **25, [R5]**, M2
+**Status:** Doing Do - [T24](https://trello.com/c/2GkfHBtv) - **Assigned:** Michael (`grubermeister`) - **Depends on:** 7 - related **25, [R5]**, M2
 Territory regions hang off USA (parent id 1), not off their successor state -- so a
 `region=MI` search won't include Michigan Territory markings as modeled. Decide
 whether territories should also parent under (or alias to) their successor state
@@ -1330,14 +1410,14 @@ Findings:
 
 The contacts below come from the original feedback. They identify who was
 asked for a decision, not the current task assignee. T21, T22, and T23 are
-To Do under Michael; the other tasks in this table are To Do and unassigned
-on the September 27 live board.
+To Do under Michael. T18 is Doing under Reese and T24 is Doing under
+Michael on the October 17 board. T16 remains To Do and unassigned.
+Issue 26 is resolved: Ian declined Contributor linking on October 9.
 
 | Original issue | Decision | Original decision contact | Current task |
 |---|---|---|---|
 | Issue 14 | Confirm the "year-and-month" date-format code (source listed YMDD twice) | Ian | T16 |
 | Issue 23 | APMC branding / logo / Society links sign-off | Board | T18 |
-| Issue 26 | Allow ordinary contributors to link existing covers and markings? | Project team | T20 |
 | Issue 28 | Strip territory suffixes in `parse_head`? | Michael | T21 |
 | Issue 29 | `#N` office-name handling (allow `#` or `NO. N`) | Michael | T22 |
 | Issue 30 | Bless territory region rows into canonical `regions.csv` + DB; territory abbrevs | Michael | T23 |
@@ -1363,15 +1443,15 @@ and published staging `50a3a5f`. Local-only changes and deployment limits are
 recorded above. To Do can include further work on an implemented
 capability. Routes are registered in `frontend/src/App.tsx`; re-verify against
 that file when updating this table.
-The October 8 focused review updates T40, T72, T73, and T78 implementation
-notes and records T72, T73, and T78 in Testing. Other story statuses were not
-rechecked; the September board snapshot remains dated history.
+The October 8 focused review updated T40, T72, T73, and T78 implementation
+notes. The October 17 review records T40, T72, T73, and T78 in Testing. The October 17 sync updates current board status and published implementation
+evidence; the September board snapshot remains dated history.
 
 | Feature | Where implemented | Status |
 |---------|-------------------|--------------|
 | F1 Authentication | SPA (`/auth`, `/reset-password`) | Done: S1 |
-| F2 Collection Discovery | SPA (`/`, `/search`, `/record/:id`, `/covers/:coverId`); S5 document exports not found | Done: S2, S3, S4, S41; To Do: S5; Testing: T78 (core privacy fix implemented; staging verification reported; production verification, acceptance, and the public-identity policy question remain open) |
-| F3 Submission Workflow | SPA contribution and editor review flows, including bulk approval/rejection (see notes below) | Done: S6-S11, S13-S15; Testing: S12, T72; To Do: S35 (implemented; verification and acceptance remain) |
+| F2 Collection Discovery | SPA (`/`, `/search`, `/record/:id`, `/covers/:coverId`); S5 document exports not found | Done: S2, S3, S4, S41; To Do: S5; Testing: T78 (fix published and production deployment succeeded; current production verification, acceptance, and the public-identity policy question remain open) |
+| F3 Submission Workflow | SPA contribution and editor review flows, including bulk approval/rejection (see notes below) | Done: S6-S15; Testing: T72; To Do: S35 (implemented; verification and acceptance remain) |
 | F4 Comment Workflow | Deferred: standalone Entry comments; existing notes to the Editor are part of Submissions | Backlog: S16, S17 |
 | F5 Image Attachments | SPA (image upload inside contribution forms) | Done: S18; Testing: T73 |
 | F6 Reference Work Management | Editor/admin add/edit through `/api/v2/reference-works/` and Django `/admin/`; the SPA has citation lookup but no management UI | To Do: S19 |
@@ -1381,9 +1461,10 @@ rechecked; the September board snapshot remains dated history.
 | F10 System Maintenance | Operator CLI and deployment workflows -- see `docs/devel/RUNBOOK.md`; no application interface | Testing: S27; To Do: S25, S26 |
 | F11 Catalog Data Pipeline | Offline tooling -- see `docs/devel/TOOLS.md` and `docs/devel/PIPELINE.md` | Done: S28-S32; separate data tasks remain open |
 | F12 Engineering | Shared developer docs, test coverage, accessibility, performance, and dependency checks | To Do: T1, T4-T6; Backlog: T2, T29, T61 |
-| F13 Project Administration | Design, branding approval, and board governance | Done: S0 and board setup; To Do: T18; Trello Policy is in README |
+| F13 Project Administration | Design, branding approval, and board governance | Done: S0 and board setup; Doing: T18; Trello Policy is in README |
 
-The deferred stories are S16, S17, S20, S36-S40, and S42-S49. S0 (design) and board setup
+The deferred stories are S16, S17, S20, S36-S38, S40, and S42-S49.
+S39 is declined, as recorded on October 9; its design entry is not yet corrected. S0 (design) and board setup
 are also Done; they are not user-facing features in the design's S1-S49 map.
 
 Notes:

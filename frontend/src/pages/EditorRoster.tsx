@@ -93,9 +93,6 @@ export default function EditorRoster() {
                             ) : (
                               "no email on file"
                             )}
-                            {editor.states.length > 1 && (
-                              <span className="ml-3">also edits {editor.states.filter((s) => s !== state.abbrev).join(", ")}</span>
-                            )}
                           </span>
                         </li>
                       ))}
