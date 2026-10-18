@@ -4421,11 +4421,9 @@ class EditorRosterView(APIView):
     by the editors."
 
     Built live from CollectionAssignment, so a proposed appointment can never
-    appear (it has no assignment row), and gated to editors because the rows
-    carry email addresses. Superusers without an assignment are not state
-    editors and are not listed. Dwayne's spreadsheet remains the private roster
-    for anything beyond name, email and states (DECISIONS.md, Publish Help
-    Content Explicitly).
+    appear (it has no assignment row). Access is restricted to Editors and
+    Administrators. The response includes names and states, without emails.
+    Superusers without an assignment are not state Editors and are not listed.
     """
     permission_classes = [IsEditor]
 
@@ -4447,7 +4445,6 @@ class EditorRosterView(APIView):
             user = ca.user
             group["editors"][user.pk] = {
                 "display_name": user.get_full_name().strip() or user.username,
-                "email": user.email or "",
                 "states": sorted(states_by_user[user.pk]),
             }
         rows = []

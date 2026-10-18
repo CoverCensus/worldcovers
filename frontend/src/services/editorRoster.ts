@@ -2,15 +2,13 @@
  * Editors-only roster: GET /editor-roster/ (issues.md 177, Trello T46).
  *
  * Built by the server from CollectionAssignment, so it reflects current
- * assignments and never a proposed appointment. The endpoint is gated to
- * editors because rows carry email addresses; apiClient sends the session
- * cookie, which is why this does not use a bare fetch like Help does.
+ * assignments and never a proposed appointment. The endpoint is restricted to
+ * Editors and Administrators and returns names and states, without emails.
  */
 import apiClient from "@/lib/api";
 
 export interface RosterEditor {
   displayName: string;
-  email: string;
   states: string[];
 }
 
@@ -22,7 +20,6 @@ export interface RosterState {
 
 interface RosterApiEditor {
   display_name?: unknown;
-  email?: unknown;
   states?: unknown;
 }
 
@@ -39,7 +36,6 @@ function text(v: unknown): string {
 function mapEditor(raw: RosterApiEditor): RosterEditor {
   return {
     displayName: text(raw.display_name),
-    email: text(raw.email),
     states: Array.isArray(raw.states) ? raw.states.map(text).filter(Boolean) : [],
   };
 }

@@ -911,6 +911,12 @@ Suggested Editors are not confirmed appointments or permission assignments.
 The Editor roster is implemented; accuracy of Collection assignments remains
 a separate data check.
 
+October 18 roster privacy correction (T46): Michael requested names and state
+assignments without email addresses on the Editor screen. The page and
+`/api/v2/editor-roster/` now omit emails. Local roster API tests and all 475
+frontend tests passed. Hosted verification remains pending. The T46 Trello
+description still needs its earlier email-inclusion claim corrected.
+
 September 28 source review: Massachusetts source preparation has progressed
 through offline review and fixes in published source commit `9f34260`. Staging
 load, production load, and Editor acceptance are not established by this

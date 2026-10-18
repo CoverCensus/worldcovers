@@ -2,8 +2,8 @@
 
 Ian, 2026-09-23: "It wouldn't hurt to have a listing of the editors that is
 viewable only by the editors." Built live from CollectionAssignment, so it can
-never show a proposed appointment, and gated to editors, so a contributor or a
-guest never sees an email address.
+never show a proposed appointment. Access is restricted to Editors and
+Administrators. The roster does not return email addresses.
 """
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
@@ -67,7 +67,7 @@ class EditorRosterTests(TestCase):
 
     # ------------------------------------------------------------ content
 
-    def test_roster_is_grouped_by_state_with_name_email_and_states(self):
+    def test_roster_is_grouped_by_state_with_name_and_states(self):
         rows = self._get(self.va_editor).json()
         by_state = {r["abbrev"]: r for r in rows}
         self.assertEqual(list(by_state), ["MD", "VA"])  # ordered by state name
@@ -77,10 +77,19 @@ class EditorRosterTests(TestCase):
         # Full name when known, username otherwise; ordered by display name.
         self.assertEqual(names, ["mdeditor", "Vera Adams"])
         vera = next(e for e in va["editors"] if e["display_name"] == "Vera Adams")
-        self.assertEqual(vera["email"], "va@example.com")
         self.assertEqual(vera["states"], ["VA"])
         md_in_va = next(e for e in va["editors"] if e["display_name"] == "mdeditor")
         self.assertEqual(md_in_va["states"], ["MD", "VA"])
+
+    def test_roster_omits_emails_for_editors_and_administrators(self):
+        for user in (self.va_editor, self.admin):
+            with self.subTest(user=user.username):
+                response = self._get(user)
+                self.assertEqual(response.status_code, 200)
+                for state in response.json():
+                    for editor in state["editors"]:
+                        self.assertEqual(set(editor), {"display_name", "states"})
+                self.assertNotIn(b"@example.com", response.content)
 
     def test_inactive_users_inactive_collections_and_unassigned_roles_are_left_out(self):
         rows = self._get(self.admin).json()

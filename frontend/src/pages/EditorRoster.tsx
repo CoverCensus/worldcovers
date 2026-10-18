@@ -5,8 +5,7 @@
  *
  * Rows come straight from the server's current Collection assignments, so the
  * list is always up to date and can never show a proposed appointment.
- * Dwayne's spreadsheet remains the private roster for anything beyond a name,
- * an email and the states someone edits.
+ * Contact details stay out of this page and its API response.
  */
 import { useEffect, useState } from "react";
 import { Navigation } from "@/components/Navigation";
@@ -50,8 +49,8 @@ export default function EditorRoster() {
             State editors
           </h1>
           <p className="text-muted-foreground mb-6">
-            Who reviews each state, with the address to send covers to. Visible to editors and
-            administrators only, and always reflects the current assignments.
+            Current Editor assignments for each state. Visible to Editors and
+            Administrators only.
           </p>
 
           {error && (
@@ -61,7 +60,7 @@ export default function EditorRoster() {
           )}
           {!error && states === null && (
             <div className="flex items-center gap-2 text-muted-foreground">
-              <Spinner /> Loading…
+              <Spinner /> Loading...
             </div>
           )}
           {!error && states !== null && states.length === 0 && (
@@ -81,19 +80,10 @@ export default function EditorRoster() {
                     <ul className="divide-y divide-border">
                       {state.editors.map((editor) => (
                         <li
-                          key={`${state.abbrev}-${editor.email || editor.displayName}`}
-                          className="py-2 flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1"
+                          key={`${state.abbrev}-${editor.displayName}`}
+                          className="py-2"
                         >
                           <span className="text-foreground">{editor.displayName}</span>
-                          <span className="text-sm text-muted-foreground">
-                            {editor.email ? (
-                              <a className="underline hover:text-foreground" href={`mailto:${editor.email}`}>
-                                {editor.email}
-                              </a>
-                            ) : (
-                              "no email on file"
-                            )}
-                          </span>
                         </li>
                       ))}
                     </ul>

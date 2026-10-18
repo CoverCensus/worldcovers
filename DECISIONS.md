@@ -242,8 +242,9 @@ restoration scope and verification separately from history viewing.
 **Do:** Publish Help articles only through the explicit document-name
 allowlist in the Help API. Keep engineering notes and private rosters out
 of that list. Generate the Editor roster from active users assigned to active
-Collections. Restrict its name, email, and state details to Editors and
-Administrators through `/editors` and `/api/v2/editor-roster/`.
+Collections. Restrict its names and state assignments to Editors and
+Administrators through `/editors` and `/api/v2/editor-roster/`. Do not include
+email addresses in this page or its API response.
 
 **Don't:** Publish every Markdown file under `docs/`, or assume placing a
 file under `docs/devel/` alone prevents publication. The API checks names,
