@@ -5,6 +5,9 @@ batch, plus the reconciled September 19 offline-note follow-ups. It is not
 the full current engineering queue. Later work also appears
 in GitHub PRs and Reese's workspace-local `docs/issues.md`.
 
+**Latest focused review:** 2026-10-18, local quick fixes for T82, T83, T32,
+S33, and T1. See the October 18 notes below for implementation and checks.
+
 **Last review:** 2026-10-08, focused on T40, T72, T73, and T78, starting from clean local
 `staging` at `c0e09f3ecd1f9e21276da07c09f340924bdb3dd4`. The code and tests
 support the implementation notes below. Reused this session's local checks:
@@ -531,8 +534,9 @@ Michael (`grubermeister`) at his request.
 This is an explicit exception to the usual frontend/backend responsibility
 boundary. The current source contains the UI changes; acceptance still
 requires checking the affected pages and recording the site and revision.
-T32 retains a wording check: some catalog-code errors still use generic
-wording in `Contribute.tsx` and `backend/common/catalog_codes.py`.
+T32's remaining generic catalog-code errors are corrected in the local
+October 18 changes. Missing-code, duplicate-code, and generation
+errors now identify the Marking or Cover. Hosted verification remains open.
 
 | Task | Outcome | Feature | Acceptance scope |
 | --- | --- | --- | --- |
@@ -672,6 +676,66 @@ review are retained with S36 as a related deferred idea; routing and whether
 email can perform review actions remain undecided. The narrower request to
 email Editors about pending submissions is active under T68, with mail
 delivery repair under T30.
+
+## October 17 sync and feature requests
+
+- **[T82](https://trello.com/c/aX5MzTQA), To Do, unassigned, F2:** implemented locally
+  and visually accepted by Michael on October 18; publication and deployment
+  remain pending. Catalog Search and Marking detail Color text is bold and
+  uses the stored hex value, with a contrasting background and a plain-text
+  fallback. Michael authorized approximate screen values: all 62 local Color
+  rows were populated, then 28 compound values were revised. The palette
+  covers all 49 production Color names checked on October 18. Names, Pantone
+  codes, and Entry links were preserved; production data was not changed.
+  These are display choices, not measured ink colors or Pantone matches.
+  Separate from deferred T53/T56 and completed T65.
+- **[T83](https://trello.com/c/F5gzAlhh), To Do, unassigned, F2/F3:** implemented
+  locally in Catalog Search and both Dashboard tabs. Fresh views default to
+  25; explicit choices, including 10, remain in the URL. Existing page-reset
+  and return-navigation behavior remains. Service/API defaults and intentional
+  picker/background-fetch sizes were reviewed and retained: these list views
+  send their selected page size explicitly. Hosted verification remains open.
+  S41 remains Done for its original configurable-pagination scope.
+
+
+## October 18 local quick fixes
+
+Michael authorized these changes and the matching ISSUE.md/Trello updates.
+The working tree is based on published `staging`
+`972f3b7d24e2ae27874e52fc0b021f8b28affca0`. Changes in this commit have not
+been pushed or deployed. Earlier unrelated ISSUE.md edits were left uncommitted.
+
+The Color palette utility follows the project's commit-by-default rule:
+`./woco set_color_display_hex --actor <user id>` applies values;
+`./woco set_color_display_hex --dry-run` previews them.
+
+- **T83:** [Dashboard defaults](frontend/src/lib/dashboardParams.ts) now use
+  25, matching the earlier Catalog Search change. The URL tests cover fresh
+  defaults and explicit 10-row choices for both Dashboard tabs.
+- **T32:** [Catalog-code validation](backend/common/catalog_codes.py), the
+  generation API, and the Marking form now use Entry-specific error wording.
+  Direct checks covered missing and duplicate codes for both Entry types and
+  missing generation context. T32 stays in Testing for hosted acceptance,
+  including the separate legacy Entry-kind check at contribution 91.
+- **[S33](https://trello.com/c/9TH4dywm):** the Marking new/edit form now has
+  keyboard-accessible help for Lettering style, Impression, and Is Irregular,
+  using the glossary meanings and the existing tooltip component. Existing
+  visible Lettering guidance remains. The keyboard check covers focus,
+  accessible description, Escape dismissal, and no accidental form submit.
+  This bounded part is implemented; the broader tooltip story remains To Do.
+- **[T1](https://trello.com/c/AvISZKlp):** README.md and BUILD.md now explain
+  custom database setup, matching `WOCO_DB_NAME` to `DB_NAME`, environment
+  precedence, and existing `mysql.cnf` handling. Checked against `tools/setup.sh`,
+  `.env.example`, and Django settings; no fresh database installation was run.
+  The broader developer-documentation review remains To Do.
+
+Verification: 32 focused frontend tests and 14 backend tests passed, along
+with frontend type checking, build, and diff checks. Lint had no errors and
+three warnings in generated coverage reports. These checks do
+not establish hosted acceptance. T82/T83 remain in their current To Do lane
+with no members; the board policy requires an assigned member before moving
+to Testing. The connector cannot assign card members. Their descriptions
+record local implementation separately from that board-state limitation.
 
 # MD/MI editor-review batch (Ian email, 18 Jun 2026)
 

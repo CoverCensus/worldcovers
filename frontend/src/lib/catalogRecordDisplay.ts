@@ -210,6 +210,7 @@ export type CatalogFieldValues = {
   irregular: string;
   dimensions: string;
   color: string;
+  colorHex?: string;
   rateValue: string;
   earliestSeen: string;
   latestSeen: string;
@@ -267,6 +268,7 @@ export function buildCatalogFieldValues(record: MarkingRecord): CatalogFieldValu
     ),
     dimensions: displayCatalogField(dimensionsField(record)),
     color: displayCatalogField(record.colorName),
+    colorHex: record.colorHex,
     rateValue: displayCatalogField(formatRateValue(record.rateVal)),
     earliestSeen: displayCatalogField(
       formatDateSeen(record.earliestSeen, record.earliestSeenGranularity),

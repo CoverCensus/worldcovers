@@ -877,6 +877,7 @@ class MarkingListSerializer(serializers.ModelSerializer):
     shape_name = serializers.CharField(source="shape.name", read_only=True, default="")
     lettering_name = serializers.CharField(source="lettering.name", read_only=True, default="")
     color_name = serializers.CharField(source="color.name", read_only=True, default="")
+    color_hex = serializers.CharField(source="color.hex_val", read_only=True, default="")
     post_office_name = serializers.CharField(source="post_office.name", read_only=True, default="")
     earliest_seen = serializers.DateField(read_only=True, allow_null=True, required=False)
     earliest_seen_granularity = serializers.CharField(read_only=True, allow_null=True, required=False)
@@ -919,6 +920,7 @@ class MarkingListSerializer(serializers.ModelSerializer):
             "lettering_name",
             "color_name",
             "post_office_name",
+            "color_hex",
             "region_name",
             "is_reviewed",
             "earliest_seen",
@@ -1024,6 +1026,7 @@ class MarkingSerializer(serializers.ModelSerializer):
     shape_name = serializers.CharField(source="shape.name", read_only=True, default="")
     lettering_name = serializers.CharField(source="lettering.name", read_only=True, default="")
     color_name = serializers.CharField(source="color.name", read_only=True, default="")
+    color_hex = serializers.CharField(source="color.hex_val", read_only=True, default="")
     post_office_name = serializers.CharField(source="post_office.name", read_only=True, default="")
     earliest_seen = serializers.DateField(read_only=True, allow_null=True, required=False)
     earliest_seen_granularity = serializers.CharField(read_only=True, allow_null=True, required=False)
@@ -1080,6 +1083,7 @@ class MarkingSerializer(serializers.ModelSerializer):
             "lettering_name",
             "color_name",
             "post_office_name",
+            "color_hex",
             "region_name",
             "regions",
             "is_reviewed",

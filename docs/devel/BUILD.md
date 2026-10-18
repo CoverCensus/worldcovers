@@ -15,7 +15,8 @@ valid `mysql.cnf`.
 
 Interactive defaults:
 
-- Database name: `DB_NAME` from `.env`, then `worldcovers`.
+- Database name: `WOCO_DB_NAME`, then `DB_NAME` from the environment or `.env`,
+  then `worldcovers`.
 - App database user: `wocod`.
 - App database password: prompt; leave blank to generate a random password.
 - MariaDB root access: passwordless `sudo mariadb` when available; otherwise it
@@ -42,6 +43,27 @@ WOCO_SETUP_DB=1
 
 Set `WOCO_SETUP_DB=1` only when you want setup to re-run the database/user
 grants even though `mysql.cnf` already exists.
+
+For a custom database, create `.env` from `.env.example` if it does not
+exist, then set this value in `.env`:
+
+```text
+DB_NAME=worldcovers_local
+```
+
+Run setup with the same name:
+
+```sh
+WOCO_DB_NAME=worldcovers_local ./woco setup dev
+```
+
+`WOCO_DB_NAME` selects the database that setup creates. Django reads
+`DB_NAME` for migrations, normal use, and the `test_<DB_NAME>` test database.
+Setup does not copy `WOCO_DB_NAME` or an interactive name choice into `.env`.
+Keep them equal, and check that an exported `DB_NAME` does not override
+`.env` with another name. If `mysql.cnf` already exists, also set
+`WOCO_SETUP_DB=1` to create the custom database and grant access. This does
+not move data from the old database.
 
 The rest of this document is the same sequence done by hand, with the
 reasoning behind each step. Read it when `./woco setup dev` reports a problem,

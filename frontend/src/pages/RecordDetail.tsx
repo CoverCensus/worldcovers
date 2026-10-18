@@ -839,6 +839,7 @@ const RecordDetail = () => {
       impression: impressionValue,
       isIrreg: record.isIrreg,
       colorName: record.colorName,
+      colorHex: record.colorHex,
       letteringName: record.letteringName,
       dimensions: dimensionsValue,
       catalogTxt: record.catalogTxt,

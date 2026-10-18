@@ -17,6 +17,7 @@ export interface MarkingFieldRow {
   // Pre-formatted display string. "" means blank; the renderer decides
   // whether to show a "-" placeholder or hide the row.
   value: string;
+  colorHex?: string;
   // RecordDetail honors this (rows where alwaysShow=true survive the
   // hasDisplayValue filter even when blank). ContributionDetail ignores it
   // and shows every row.
@@ -76,6 +77,7 @@ export interface MarkingFieldInput {
   impression: string;
   isIrreg: boolean | null;
   colorName: string;
+  colorHex?: string;
   letteringName: string;
   // Already formatted via dimensionsDisplay ("28x32 mm" or "28 mm diameter").
   dimensions: string;
@@ -142,7 +144,7 @@ export function buildMarkingFields(
   rows.push({ label: "Date Format", value: i.dateFmt, alwaysShow: false });
   rows.push({ label: "Impression", value: i.impression, alwaysShow: false });
   rows.push({ label: "Is Irregular", value: i.isIrreg === true ? "Yes" : "", alwaysShow: false });
-  rows.push({ label: "Color", value: i.colorName, alwaysShow: false });
+  rows.push({ label: "Color", value: i.colorName, colorHex: i.colorHex, alwaysShow: false });
   if (showPhysical) {
     rows.push({ label: "Lettering", value: i.letteringName, alwaysShow: false });
     rows.push({ label: "Dimensions", value: i.dimensions, alwaysShow: false });

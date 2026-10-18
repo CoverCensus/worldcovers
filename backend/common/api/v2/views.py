@@ -480,7 +480,7 @@ class CatalogCodeSuggestionView(APIView):
         user = request.user
         if not user_can_review_contributions(user):
             return Response(
-                {"detail": "You do not have permission to generate catalog codes."},
+                {"detail": "You do not have permission to generate Catalog Marking or Catalog Cover codes."},
                 status=status.HTTP_403_FORBIDDEN,
             )
         payload = request.data if isinstance(request.data, dict) else dict(request.data)
