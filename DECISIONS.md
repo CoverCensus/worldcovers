@@ -63,9 +63,11 @@ not establish responsibility for a Collection.
 [Image API](backend/common/api/v2/views.py) and
 [image write tests](backend/common/tests/test_image_write_permissions.py).
 
-**Open work:** [Issue 26 / T20](ISSUE.md#issue-26----decide-whether-contributors-may-link-existing-covers-and-markings)
-leaves Contributor linking permissions undecided. [T37 and T38](ISSUE.md#other-follow-ups)
-cover related image and destination workflows, not approval to widen access.
+The [T20 decision](https://trello.com/c/yEfLz6cC) keeps existing-record linking
+restricted to Editors and Administrators; Contributor linking was declined.
+
+**Open work:** [T37](ISSUE.md#other-follow-ups) covers related image and
+destination workflows, not approval to widen access.
 [T73](ISSUE.md#t73---scope-image-writes-to-collection-responsibility)
 tracks hosted verification and acceptance of Image write checks.
 
@@ -86,8 +88,7 @@ and permissions.
 **Evidence:** [Submission stories S6-S15](docs/devel/design.md#stories);
 [approval and removal paths](backend/common/api/v2/views.py);
 [withdrawal tests](backend/common/tests/test_contribution_withdraw.py) and
-[approval tests](backend/common/tests/test_cover_contribution_apply.py);
-[resolved Issue 27](ISSUE.md#issue-27----submitter-self-delete--withdrawal-policy----done).
+[approval tests](backend/common/tests/test_cover_contribution_apply.py).
 
 **Open work:** [T41](ISSUE.md#other-follow-ups) covers further rescind and
 inactivity rules. Do not invent an expiry period or automatic deletion rule.
@@ -173,17 +174,15 @@ Search and display must not make source evidence more precise than it is.
 **Evidence:** [Date model](docs/devel/model.md#dates_seen);
 [date calculation](backend/common/date_range.py);
 [date-range tests](backend/common/tests/test_marking_date_range.py) and
-[refresh tests](backend/common/tests/test_date_range_cache.py);
-[resolved Issue 20](ISSUE.md#issue-20----years-seen-model-for-marking-dates----done).
+[refresh tests](backend/common/tests/test_date_range_cache.py).
 
 **Open work:** [T42](ISSUE.md#other-follow-ups) adds a separate approximation
 qualifier for Markings and Covers. Partial dates do not implement it.
-The [glossary](docs/glossary.md) says new dates are contributed only through
-Covers, but [Editor submission tests](backend/common/tests/test_contribution_submit.py)
-and the current submit path support direct Marking date edits.
-[T75](ISSUE.md#t75---reconcile-date-guidance-with-editor-submissions) tracks
-the wording correction. Do not remove the working Editor path merely to
-match the glossary.
+The [glossary](docs/glossary.md) and
+[Editor submission tests](backend/common/tests/test_contribution_submit.py)
+support direct Editor changes to Marking dates; Contributors supply dates
+through Covers. The guidance correction is archived in
+[T75](https://trello.com/c/GCR4oSI9). Preserve the working Editor path.
 
 ## Account For Historical Regions In Search
 
@@ -264,7 +263,7 @@ it to the public.
 **Open work:** [S24/S34](ISSUE.md#feature-implementation-surfaces-reviewed-2026-09-13)
 cover Help and article authoring. Repo Markdown is the current article source;
 there is no general article editor in the web interface.
-[T46](ISSUE.md#other-follow-ups) is Done for the restricted assignment-based
+[T46](https://trello.com/c/evcIZUrt) is Done for the restricted assignment-based
 roster. [T78](ISSUE.md#prevent-public-disclosure-of-user-email-and-account-flags)
 tracks verification and acceptance of the core public-user disclosure fix,
 plus the remaining public-identity policy question. Roster permission tests
