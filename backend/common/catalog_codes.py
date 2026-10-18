@@ -73,15 +73,16 @@ def validate_unique_catalog_code(
     code: str,
     exclude_id: int | None = None,
 ) -> str:
+    model = _model_for_subject(subject_type)
+    label = f"Catalog {model.__name__} code"
     normalized = normalize_catalog_code(code)
     if not normalized:
-        raise CatalogCodeError("Catalog code is required.")
-    model = _model_for_subject(subject_type)
+        raise CatalogCodeError(f"{label} is required.")
     qs = model.all_objects.filter(code=normalized)
     if exclude_id is not None:
         qs = qs.exclude(pk=exclude_id)
     if qs.exists():
-        raise CatalogCodeError("Catalog code already exists: {}".format(normalized))
+        raise CatalogCodeError(f"{label} already exists: {normalized}")
     return normalized
 
 
@@ -149,7 +150,7 @@ def suggest_direct_catalog_code(payload: dict[str, Any]) -> CatalogCodeSuggestio
     subject_type = _subject_type_from_payload(payload)
     if subject_type == "COVER":
         parent_marking = _parent_marking_from_payload(payload)
-        region = _region_for_marking(parent_marking)
+        region = _region_for_marking(parent_marking, subject_type="COVER")
         reference_code = _reference_code_for_cover(parent_marking)
         exclude_id = _parse_positive_int(payload.get("exclude_id") or payload.get("cover_id"))
         return _build_suggestion(
@@ -184,7 +185,7 @@ def _build_contribution_suggestion(
             subject_type="COVER",
             prefix_letter="C",
             reference_code=_reference_code_for_cover(parent_marking),
-            region=_region_for_marking(parent_marking),
+            region=_region_for_marking(parent_marking, subject_type="COVER"),
             exclude_id=_existing_subject_id(contrib, "COVER", payload),
             source="contribution_cover",
             exclude_contribution_id=contrib.pk,
@@ -216,7 +217,8 @@ def _build_suggestion(
     region_abbrev = normalize_catalog_code(region.abbrev).upper()
     if not region_abbrev:
         raise CatalogCodeError(
-            "Region {} has no abbrev for catalog code generation.".format(region.pk)
+            f"Region {region.pk} needs an abbreviation to generate a "
+            f"Catalog {_model_for_subject(subject_type).__name__} code."
         )
     prefix = "{}-{}-{}".format(reference, region_abbrev, prefix_letter)
     serial = _next_serial(
@@ -396,7 +398,7 @@ def _parent_marking_from_payload(payload: dict[str, Any]) -> Marking:
         or payload.get("marking")
     )
     if marking_id is None:
-        raise CatalogCodeError("parent_marking_id is required for cover catalog codes.")
+        raise CatalogCodeError("A parent Marking is required to generate a Catalog Cover code.")
     try:
         return (
             Marking.all_objects
@@ -405,15 +407,18 @@ def _parent_marking_from_payload(payload: dict[str, Any]) -> Marking:
             .get(pk=marking_id)
         )
     except Marking.DoesNotExist:
-        raise CatalogCodeError("Unknown parent marking id: {}".format(marking_id))
+        raise CatalogCodeError(
+            f"Cannot generate a Catalog Cover code: parent Marking {marking_id} was not found."
+        )
 
 
-def _region_for_marking(marking: Marking) -> Region:
+def _region_for_marking(marking: Marking, *, subject_type: str) -> Region:
     post_office = marking.post_office if marking and marking.post_office_id else None
     region = post_office.region if post_office else None
     if region is None:
         raise CatalogCodeError(
-            "Catalog code generation requires a region on the marking post office."
+            f"Generating a Catalog {_model_for_subject(subject_type).__name__} code "
+            "requires a Region on the Marking's Post Office."
         )
     return region
 
@@ -444,8 +449,8 @@ def _region_from_payload(payload: dict[str, Any]) -> Region:
             .first()
         )
         if marking is not None:
-            return _region_for_marking(marking)
-    raise CatalogCodeError("A region/state is required for catalog code generation.")
+            return _region_for_marking(marking, subject_type="MARKING")
+    raise CatalogCodeError("A Region or state is required to generate a Catalog Marking code.")
 
 
 def _reference_code_for_cover(parent_marking: Marking) -> str:

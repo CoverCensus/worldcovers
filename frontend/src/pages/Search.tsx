@@ -351,7 +351,7 @@ const Search = () => {
   const debouncedHeightFilter = useDebounce(heightFilter, DEBOUNCE_MS);
   const debouncedWidthFilter = useDebounce(widthFilter, DEBOUNCE_MS);
 
-  // Pagination - 10 records per page from api/markings/
+  // Pagination - 25 records per page by default.
   const [currentPage, setCurrentPage] = useState(() => {
     const p = searchParams.get("page");
     const n = p ? parseInt(p, 10) : 1;
@@ -360,9 +360,9 @@ const Search = () => {
   const [goToPageInput, setGoToPageInput] = useState("");
   const [itemsPerPage, setItemsPerPage] = useState(() => {
     const raw = searchParams.get("pageSize") || searchParams.get("page_size") || "";
-    const n = raw ? parseInt(raw, 10) : 10;
-    if (n === 25 || n === 50 || n === 100) return n;
-    return 10;
+    const n = raw ? parseInt(raw, 10) : 25;
+    if (n === 10 || n === 25 || n === 50 || n === 100) return n;
+    return 25;
   });
 
   const prevKeywordRef = useRef(debouncedKeywordSearch);
@@ -671,7 +671,7 @@ const Search = () => {
     // Empty list (user toggled off all sorts) -> persist as the sentinel
     // "none" so a page reload distinguishes that intent from "no param".
     if (!isDefaultSort(catalogSort)) params.set("order", catalogSortKey || "none");
-    if (itemsPerPage !== 10) params.set("pageSize", String(itemsPerPage));
+    if (itemsPerPage !== 25) params.set("pageSize", String(itemsPerPage));
     if (currentPage > 1) params.set("page", String(currentPage));
     const next = params.toString();
     const current = searchParams.toString();

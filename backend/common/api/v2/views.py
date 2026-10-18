@@ -480,7 +480,7 @@ class CatalogCodeSuggestionView(APIView):
         user = request.user
         if not user_can_review_contributions(user):
             return Response(
-                {"detail": "You do not have permission to generate catalog codes."},
+                {"detail": "You do not have permission to generate Catalog Marking or Catalog Cover codes."},
                 status=status.HTTP_403_FORBIDDEN,
             )
         payload = request.data if isinstance(request.data, dict) else dict(request.data)
@@ -919,7 +919,7 @@ class ImageViewSet(viewsets.ModelViewSet):
         except CropError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        metadata = extract_image_metadata(content, source.mime_type)
+        metadata = extract_image_metadata(content, "image/png")
         if metadata is None:
             return Response(
                 {"detail": "Cropped image could not be encoded."},
@@ -947,8 +947,7 @@ class ImageViewSet(viewsets.ModelViewSet):
 
         # Keep the crop beside its source so media stays sorted by state.
         subdir = str(Path(source.storage_filename).parent).strip("/.")
-        suffix = Path(source.storage_filename).suffix or ".jpg"
-        storage_name = f"{uuid.uuid4().hex}{suffix}"
+        storage_name = f"{uuid.uuid4().hex}.png"
         if subdir:
             storage_name = f"{subdir}/{storage_name}"
         destination_path = Path(settings.MEDIA_ROOT) / storage_name
@@ -3885,11 +3884,11 @@ def _save_contribution_image(uploaded_file, region_abbrev):
     mime_type, image_width, image_height, file_size_bytes; or None if the
     file is missing, oversize, or not a recognized image format.
 
-    storage_filename is returned as '<region_abbrev>/<uuid>.<ext>'. Public
+    storage_filename is returned as '<region_abbrev>/<uuid>.png'. Public
     URLs are built by ImageSerializer.get_image_url, which serves from
-    MEDIA_URL directly (e.g. /media/<region_abbrev>/<uuid>.<ext>).
+    MEDIA_URL directly (e.g. /media/<region_abbrev>/<uuid>.png).
     """
-    from common.images import extract_image_metadata
+    from common.images import extract_image_metadata, normalize_image_upload
 
     if not uploaded_file or not getattr(uploaded_file, "read", None):
         return None
@@ -3906,15 +3905,15 @@ def _save_contribution_image(uploaded_file, region_abbrev):
         uploaded_file.seek(0)
     except Exception:
         pass
-    metadata = extract_image_metadata(content, content_type)
+    try:
+        content = normalize_image_upload(content, content_type)
+    except ValueError:
+        return None
+    metadata = extract_image_metadata(content, "image/png")
     if metadata is None:
         return None
-    if "png" in content_type:
-        ext = "png"
-    else:
-        ext = "jpg"
     abbrev = (region_abbrev or "").strip().lower() or "unknown"
-    storage_name = f"{abbrev}/{uuid.uuid4().hex}.{ext}"
+    storage_name = f"{abbrev}/{uuid.uuid4().hex}.png"
     sub_dir = os.path.join(settings.MEDIA_ROOT, abbrev)
     os.makedirs(sub_dir, exist_ok=True)
     file_path = os.path.join(settings.MEDIA_ROOT, storage_name)
@@ -4425,11 +4424,9 @@ class EditorRosterView(APIView):
     by the editors."
 
     Built live from CollectionAssignment, so a proposed appointment can never
-    appear (it has no assignment row), and gated to editors because the rows
-    carry email addresses. Superusers without an assignment are not state
-    editors and are not listed. Dwayne's spreadsheet remains the private roster
-    for anything beyond name, email and states (DECISIONS.md, Publish Help
-    Content Explicitly).
+    appear (it has no assignment row). Access is restricted to Editors and
+    Administrators. The response includes names and states, without emails.
+    Superusers without an assignment are not state Editors and are not listed.
     """
     permission_classes = [IsEditor]
 
@@ -4451,7 +4448,6 @@ class EditorRosterView(APIView):
             user = ca.user
             group["editors"][user.pk] = {
                 "display_name": user.get_full_name().strip() or user.username,
-                "email": user.email or "",
                 "states": sorted(states_by_user[user.pk]),
             }
         rows = []

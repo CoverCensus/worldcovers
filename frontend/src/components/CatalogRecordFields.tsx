@@ -1,5 +1,6 @@
 import type { CatalogFieldValues } from "@/lib/catalogRecordDisplay";
 import type { MarkingRecord } from "@/services/markings";
+import { ColorText } from "@/components/ColorText";
 
 /**
  * Fixed catalog fields for Catalog Search and Record Detail.
@@ -128,7 +129,11 @@ export function CatalogRecordFields({
       {fields.map((field) => (
         <div key={field.label} className="min-w-0">
           <span className="text-muted-foreground">{field.label}:</span>{" "}
-          <span className="text-foreground break-words">{field.value}</span>
+          <span className="text-foreground break-words">
+            {field.label === "Color" ? (
+              <ColorText name={field.value} hex={row.colorHex} />
+            ) : field.value}
+          </span>
         </div>
       ))}
       <div className="min-w-0 sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">

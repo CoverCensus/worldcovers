@@ -276,6 +276,13 @@ class ImageSerializer(serializers.ModelSerializer):
             "file_checksum": {"required": False, "allow_blank": True},
         }
 
+    def get_unique_together_validators(self):
+        # File uploads get a new server-generated path in create(). The
+        # manual-import path still needs the subject/path uniqueness check.
+        if self.instance is None and getattr(self, "initial_data", {}).get("file") is not None:
+            return []
+        return super().get_unique_together_validators()
+
     def validate(self, attrs):
         # Create: either multipart `file` (normal SPA upload) or a full manual row
         # (imports) with storage_filename + metadata.
@@ -379,7 +386,7 @@ class ImageSerializer(serializers.ModelSerializer):
             validated_data.pop(k, None)
 
         from django.conf import settings
-        from common.images import extract_image_metadata
+        from common.images import extract_image_metadata, normalize_image_upload
         import os
         import uuid
 
@@ -408,17 +415,17 @@ class ImageSerializer(serializers.ModelSerializer):
             else:
                 content_type = ""
 
+        try:
+            content = normalize_image_upload(content, content_type)
+        except ValueError as exc:
+            raise serializers.ValidationError({"file": str(exc)}) from exc
+        content_type = "image/png"
         metadata = extract_image_metadata(content, content_type)
         if metadata is None:
             raise serializers.ValidationError({"file": "Unsupported image format."})
 
-        if "png" in content_type:
-            ext = "png"
-        else:
-            ext = "jpg"
-
         subdir = "uploads"
-        storage_name = f"{subdir}/{uuid.uuid4().hex}.{ext}"
+        storage_name = f"{subdir}/{uuid.uuid4().hex}.png"
         os.makedirs(os.path.join(settings.MEDIA_ROOT, subdir), exist_ok=True)
         file_path = os.path.join(settings.MEDIA_ROOT, storage_name)
         with open(file_path, "wb") as f:
@@ -877,6 +884,7 @@ class MarkingListSerializer(serializers.ModelSerializer):
     shape_name = serializers.CharField(source="shape.name", read_only=True, default="")
     lettering_name = serializers.CharField(source="lettering.name", read_only=True, default="")
     color_name = serializers.CharField(source="color.name", read_only=True, default="")
+    color_hex = serializers.CharField(source="color.hex_val", read_only=True, default="")
     post_office_name = serializers.CharField(source="post_office.name", read_only=True, default="")
     earliest_seen = serializers.DateField(read_only=True, allow_null=True, required=False)
     earliest_seen_granularity = serializers.CharField(read_only=True, allow_null=True, required=False)
@@ -919,6 +927,7 @@ class MarkingListSerializer(serializers.ModelSerializer):
             "lettering_name",
             "color_name",
             "post_office_name",
+            "color_hex",
             "region_name",
             "is_reviewed",
             "earliest_seen",
@@ -1024,6 +1033,7 @@ class MarkingSerializer(serializers.ModelSerializer):
     shape_name = serializers.CharField(source="shape.name", read_only=True, default="")
     lettering_name = serializers.CharField(source="lettering.name", read_only=True, default="")
     color_name = serializers.CharField(source="color.name", read_only=True, default="")
+    color_hex = serializers.CharField(source="color.hex_val", read_only=True, default="")
     post_office_name = serializers.CharField(source="post_office.name", read_only=True, default="")
     earliest_seen = serializers.DateField(read_only=True, allow_null=True, required=False)
     earliest_seen_granularity = serializers.CharField(read_only=True, allow_null=True, required=False)
@@ -1080,6 +1090,7 @@ class MarkingSerializer(serializers.ModelSerializer):
             "lettering_name",
             "color_name",
             "post_office_name",
+            "color_hex",
             "region_name",
             "regions",
             "is_reviewed",

@@ -63,9 +63,11 @@ not establish responsibility for a Collection.
 [Image API](backend/common/api/v2/views.py) and
 [image write tests](backend/common/tests/test_image_write_permissions.py).
 
-**Open work:** [Issue 26 / T20](ISSUE.md#issue-26----decide-whether-contributors-may-link-existing-covers-and-markings)
-leaves Contributor linking permissions undecided. [T37 and T38](ISSUE.md#other-follow-ups)
-cover related image and destination workflows, not approval to widen access.
+The [T20 decision](https://trello.com/c/yEfLz6cC) keeps existing-record linking
+restricted to Editors and Administrators; Contributor linking was declined.
+
+**Open work:** [T37](ISSUE.md#other-follow-ups) covers related image and
+destination workflows, not approval to widen access.
 [T73](ISSUE.md#t73---scope-image-writes-to-collection-responsibility)
 tracks hosted verification and acceptance of Image write checks.
 
@@ -86,8 +88,7 @@ and permissions.
 **Evidence:** [Submission stories S6-S15](docs/devel/design.md#stories);
 [approval and removal paths](backend/common/api/v2/views.py);
 [withdrawal tests](backend/common/tests/test_contribution_withdraw.py) and
-[approval tests](backend/common/tests/test_cover_contribution_apply.py);
-[resolved Issue 27](ISSUE.md#issue-27----submitter-self-delete--withdrawal-policy----done).
+[approval tests](backend/common/tests/test_cover_contribution_apply.py).
 
 **Open work:** [T41](ISSUE.md#other-follow-ups) covers further rescind and
 inactivity rules. Do not invent an expiry period or automatic deletion rule.
@@ -173,17 +174,15 @@ Search and display must not make source evidence more precise than it is.
 **Evidence:** [Date model](docs/devel/model.md#dates_seen);
 [date calculation](backend/common/date_range.py);
 [date-range tests](backend/common/tests/test_marking_date_range.py) and
-[refresh tests](backend/common/tests/test_date_range_cache.py);
-[resolved Issue 20](ISSUE.md#issue-20----years-seen-model-for-marking-dates----done).
+[refresh tests](backend/common/tests/test_date_range_cache.py).
 
 **Open work:** [T42](ISSUE.md#other-follow-ups) adds a separate approximation
 qualifier for Markings and Covers. Partial dates do not implement it.
-The [glossary](docs/glossary.md) says new dates are contributed only through
-Covers, but [Editor submission tests](backend/common/tests/test_contribution_submit.py)
-and the current submit path support direct Marking date edits.
-[T75](ISSUE.md#t75---reconcile-date-guidance-with-editor-submissions) tracks
-the wording correction. Do not remove the working Editor path merely to
-match the glossary.
+The [glossary](docs/glossary.md) and
+[Editor submission tests](backend/common/tests/test_contribution_submit.py)
+support direct Editor changes to Marking dates; Contributors supply dates
+through Covers. The guidance correction is archived in
+[T75](https://trello.com/c/GCR4oSI9). Preserve the working Editor path.
 
 ## Account For Historical Regions In Search
 
@@ -243,8 +242,9 @@ restoration scope and verification separately from history viewing.
 **Do:** Publish Help articles only through the explicit document-name
 allowlist in the Help API. Keep engineering notes and private rosters out
 of that list. Generate the Editor roster from active users assigned to active
-Collections. Restrict its name, email, and state details to Editors and
-Administrators through `/editors` and `/api/v2/editor-roster/`.
+Collections. Restrict its names and state assignments to Editors and
+Administrators through `/editors` and `/api/v2/editor-roster/`. Do not include
+email addresses in this page or its API response.
 
 **Don't:** Publish every Markdown file under `docs/`, or assume placing a
 file under `docs/devel/` alone prevents publication. The API checks names,
@@ -264,7 +264,7 @@ it to the public.
 **Open work:** [S24/S34](ISSUE.md#feature-implementation-surfaces-reviewed-2026-09-13)
 cover Help and article authoring. Repo Markdown is the current article source;
 there is no general article editor in the web interface.
-[T46](ISSUE.md#other-follow-ups) is Done for the restricted assignment-based
+[T46](https://trello.com/c/evcIZUrt) is Done for the restricted assignment-based
 roster. [T78](ISSUE.md#prevent-public-disclosure-of-user-email-and-account-flags)
 tracks verification and acceptance of the core public-user disclosure fix,
 plus the remaining public-identity policy question. Roster permission tests
@@ -460,9 +460,12 @@ form, so payloads queued before this change cannot delete either. Evidence:
 Marking), offer Crop on each new upload and from the "may show a whole Cover"
 warning. Crop in the browser (`lib/cropImageFile.ts`, drawn from the element
 the selection was made on) and replace the upload with the crop, keeping its
-position and Tracing flag. Keep PNG as PNG and save anything else as JPEG at
-the server crop's quality. Share the selection UI with the server crop
-(`CropSelectionDialog`).
+position and Tracing flag. Save browser crops, catalog crops, and new JPEG
+or PNG uploads as PNG to avoid further JPEG compression loss. On both server
+upload paths, apply EXIF rotation or mirroring before storage, remove the
+orientation tag, and compute dimensions, size, and checksum from the PNG.
+Preserve resolution, color profiles, and supported credit metadata on server
+uploads. Share the selection UI with the server crop (`CropSelectionDialog`).
 
 **Don't:** Send a pending upload's crop to `POST /images/{id}/crop/` (the file
 is not an Image row yet, and that endpoint is editor-only and writes the
@@ -481,3 +484,7 @@ metadata, so the low-resolution notice keeps the result measured on the
 original. T66 (rotation) can extend the same dialog. Evidence:
 `cropImageFile.test.ts`; a headless-Chromium run of `/edit/:id` against a
 mocked API posted a 440x440 crop of a 2400x1500 scan.
+Michael chose PNG storage over further JPEG compression on 2026-10-18.
+Normalization and pixel preservation are covered by
+`ImageUploadNormalizationTests` and `ImageCropOrientationTests`; multipart
+storage is covered by `ImageWritePermissionTests`.

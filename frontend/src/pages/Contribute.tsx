@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FieldHelp } from "@/components/FieldHelp";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -53,6 +54,8 @@ import {
   INSCRIPTION_TEXT_HELP,
   DATE_FORMAT_HELP,
   LETTERING_HELP,
+  IMPRESSION_HELP,
+  IRREGULAR_HELP,
 } from "@/labels/guidelines";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
 import { LocalCropImageDialog } from "@/components/LocalCropImageDialog";
@@ -767,7 +770,7 @@ const Contribute = () => {
     if (!canEditCatalogCode) return "";
     const stateVal = state.trim();
     if (!stateVal) {
-      setCatalogCodeError("Select a state before generating a catalog code.");
+      setCatalogCodeError("Select a state before generating a Catalog Marking code.");
       return "";
     }
     setCatalogCodeLoading(true);
@@ -3067,16 +3070,12 @@ const Contribute = () => {
                     {showAnythingElseSection && <div className="space-y-3">
                       {/* <Label>Anything else?</Label> */}
                       <div className="space-y-2">
-                        <Label>
-                          <span
-                            className="cursor-help border-b border-dotted border-muted-foreground/40"
-                            title="Lettering style describes the shape/appearance of the letters used in the marking text."
-                          >
-                            Lettering style
-                          </span>
-                        </Label>
+                        <div className="flex items-center gap-1">
+                          <Label htmlFor="lettering">Lettering style</Label>
+                          <FieldHelp label="Lettering style">{LETTERING_HELP}</FieldHelp>
+                        </div>
                         <Select value={letteringId} onValueChange={(v) => { setLetteringId(v); setFieldErrors((prev) => ({ ...prev, lettering: undefined })); }} disabled={catalogOptionsLoading}>
-                          <SelectTrigger className={fieldErrors.lettering ? "border-destructive" : ""}>
+                          <SelectTrigger id="lettering" className={fieldErrors.lettering ? "border-destructive" : ""}>
                             <SelectValue placeholder={catalogOptionsLoading ? "Loading..." : "Select lettering style"} />
                           </SelectTrigger>
                           <SelectContent>
@@ -3101,7 +3100,10 @@ const Contribute = () => {
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor="impression">Impression</Label>
+                        <div className="flex items-center gap-1">
+                          <Label htmlFor="impression">Impression</Label>
+                          <FieldHelp label="Impression">{IMPRESSION_HELP}</FieldHelp>
+                        </div>
                         <Select value={impression} onValueChange={setImpression}>
                           <SelectTrigger id="impression">
                             <SelectValue placeholder="Select impression..." />
@@ -3125,6 +3127,7 @@ const Contribute = () => {
                           onChange={(e) => setIsIrregular(e.target.checked)}
                         />
                         <Label htmlFor="is-irregular">Is Irregular</Label>
+                        <FieldHelp label="Is Irregular">{IRREGULAR_HELP}</FieldHelp>
                       </div>
                     </div>}
 
