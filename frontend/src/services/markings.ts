@@ -443,6 +443,7 @@ export interface MarkingRecord {
   shapeName: string;
   letteringName: string;
   colorName: string;
+  colorHex?: string;
   postOfficeName: string;
   regionName: string;
   // All territories/states this town belonged to over time (current-first).
@@ -778,6 +779,7 @@ export function mapApiMarkingToRecord(raw: unknown): MarkingRecord {
     shapeName: toStr(o.shape_name),
     letteringName: toStr(o.lettering_name),
     colorName: toStr(o.color_name),
+    colorHex: toStr(o.color_hex),
     postOfficeName: toStr(o.post_office_name),
     regionName: toStr(o.region_name),
     regions: mapRegionList(o.regions),

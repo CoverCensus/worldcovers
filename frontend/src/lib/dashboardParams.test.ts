@@ -27,7 +27,18 @@ function defaults(): DashboardParams {
 
 describe("dashboard URL params", () => {
   it("omits every default, so a clean dashboard has no query string", () => {
+    const parsed = parseDashboardParams(new URLSearchParams());
+    expect(parsed.submissions.pageSize).toBe(25);
+    expect(parsed.editor.pageSize).toBe(25);
     expect(buildDashboardParams(defaults()).toString()).toBe("");
+  });
+
+  it("preserves an explicit 10 records per page in both tabs", () => {
+    const query = "pageSize=10&page=2&e_pageSize=10&e_page=3";
+    const parsed = parseDashboardParams(new URLSearchParams(query));
+    expect(parsed.submissions.pageSize).toBe(10);
+    expect(parsed.editor.pageSize).toBe(10);
+    expect(buildDashboardParams(parsed).toString()).toBe(query);
   });
 
   it("round-trips a fully populated editor view", () => {

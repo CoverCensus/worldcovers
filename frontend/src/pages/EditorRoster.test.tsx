@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-// issues.md 177 / Trello T46 — the editors-only roster page.
+// issues.md 177 / Trello T46 -- the Editors-only roster page.
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import EditorRoster from "./EditorRoster";
@@ -26,7 +26,7 @@ function renderPage() {
 describe("EditorRoster page", () => {
   beforeEach(() => mockedGet.mockReset());
 
-  it("lists each state with its editors, names linked to email", async () => {
+  it("lists Editor names by state without showing email addresses", async () => {
     mockedGet.mockResolvedValue([
       {
         abbrev: "MD", name: "Maryland",
@@ -43,8 +43,8 @@ describe("EditorRoster page", () => {
     renderPage();
     expect(await screen.findByText("Virginia")).toBeTruthy();
     expect(screen.getByText("Maryland")).toBeTruthy();
-    const vera = screen.getByRole("link", { name: "va@example.com" });
-    expect(vera.getAttribute("href")).toBe("mailto:va@example.com");
+    expect(screen.queryByText(/@example\.com/)).toBeNull();
+    expect(document.querySelector('a[href^="mailto:"]')).toBeNull();
     expect(screen.getAllByText("Vera Adams").length).toBe(1);
     // An editor of two states appears under both.
     expect(screen.getAllByText("mdeditor").length).toBe(2);

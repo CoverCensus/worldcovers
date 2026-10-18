@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import type { MarkingFieldRow } from "@/lib/markingFields";
 import { hasDisplayValue } from "@/lib/markingFields";
 import { Badge } from "@/components/ui/badge";
+import { ColorText } from "@/components/ColorText";
 
 const EMPTY = "-";
 
@@ -58,7 +59,9 @@ export function MarkingFieldsDisplay({ rows, mode }: Props) {
             </dd>
           ) : (
             <dd className="text-foreground whitespace-pre-line text-right">
-              {row.value && row.value.trim() !== "" ? row.value : EMPTY}
+              {row.label === "Color" ? (
+                <ColorText name={row.value.trim() || EMPTY} hex={row.colorHex} />
+              ) : row.value && row.value.trim() !== "" ? row.value : EMPTY}
             </dd>
           )}
         </div>

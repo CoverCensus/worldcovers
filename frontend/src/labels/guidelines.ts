@@ -80,6 +80,12 @@ export const DATE_FORMAT_HELP =
 export const LETTERING_HELP =
   "The shape and style of the letters in the marking (for example, serif vs. sans-serif). Leave blank for manuscript (handwritten) markings.";
 
+export const IMPRESSION_HELP =
+  "Printing technique of the handstamp: Normal, Stencil, or Negative. Not used for Manuscript Markings.";
+
+export const IRREGULAR_HELP =
+  "Select when the handstamp outline is non-uniform. Not used for Manuscript Markings.";
+
 /**
  * Copy for the wrong-kind-of-image warning (issue #76).
  *

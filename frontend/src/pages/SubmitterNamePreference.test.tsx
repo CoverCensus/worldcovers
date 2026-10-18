@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import Contribute from "./Contribute";
 import CoverEdit from "./CoverEdit";
 import { createContribution, getContribution } from "@/services/contributions";
@@ -50,7 +51,7 @@ beforeEach(() => {
 });
 
 function openForm(path: string) {
-  render(<MemoryRouter initialEntries={[path]}><Routes>
+  render(<TooltipProvider><MemoryRouter initialEntries={[path]}><Routes>
     <Route path="/contribute" element={<Contribute />} />
     <Route path="/edit/:id" element={<Contribute />} />
     <Route path="/markings/:id/covers/new" element={<CoverEdit />} />
@@ -58,7 +59,7 @@ function openForm(path: string) {
     <Route path="/dashboard" element={<div>Saved</div>} />
     <Route path="/record/:id" element={<div>Saved</div>} />
     <Route path="/record/:id/cover/:coverId" element={<div>Saved</div>} />
-  </Routes></MemoryRouter>);
+  </Routes></MemoryRouter></TooltipProvider>);
 }
 
 it.each([

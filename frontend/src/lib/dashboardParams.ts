@@ -34,7 +34,7 @@ const SORT_FIELDS: readonly DashboardSortField[] = [
 ];
 
 export const DEFAULT_DASHBOARD_SORT: SortEntry[] = [{ field: "submitted", dir: "desc" }];
-export const DEFAULT_PAGE_SIZE = 10;
+export const DEFAULT_PAGE_SIZE = 25;
 
 /** Read a single search param with a default. Shared with Catalog Search. */
 export function getSearchParam(

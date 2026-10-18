@@ -74,8 +74,22 @@ WOCO_MYSQL_ROOT_PASSWORD=<mariadb-root-password> \
 ./woco setup dev
 ```
 
-`WOCO_DB_NAME` and `WOCO_DB_USER` are optional; defaults are `worldcovers`
-and `wocod`. Omit `WOCO_MYSQL_ROOT_PASSWORD` when `sudo mariadb` works locally.
+`WOCO_DB_NAME` and `WOCO_DB_USER` are optional. The database name falls back
+to `DB_NAME` from the environment or `.env`, then `worldcovers`; the default
+user is `wocod`. Omit `WOCO_MYSQL_ROOT_PASSWORD` when `sudo mariadb` works locally.
+
+For a custom database, first set `DB_NAME=worldcovers_local` in `.env`
+(copy `.env.example` if `.env` does not exist). Then run:
+
+```sh
+WOCO_DB_NAME=worldcovers_local ./woco setup dev
+```
+
+Keep the two names equal: `WOCO_DB_NAME` selects the database to create,
+while Django uses `DB_NAME` for migrations and normal use. Setup does not
+copy the selected name into `.env`. If `mysql.cnf` already exists, also set
+`WOCO_SETUP_DB=1` to create the custom database and grant access. This creates
+the database; it does not move data from the old one.
 
 Then start the dev server:
 
