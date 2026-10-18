@@ -654,14 +654,20 @@ delivery repair under T30.
 
 Source: Michael's approved sync plan and Ian's requests relayed on 2026-10-17.
 
-- **[T82](https://trello.com/c/aX5MzTQA), To Do, unassigned, F2:** implemented locally
-  and visually accepted by Michael on October 18; publication and deployment
+- **[T82](https://trello.com/c/aX5MzTQA), Testing, F2:** implemented
+  and visually accepted locally by Michael on October 18. Staging deployment
+  at `2e77277` passed; production code promotion and hosted visual review
   remain pending. Catalog Search and Marking detail Color text is bold and
   uses the stored hex value, with a contrasting background and a plain-text
   fallback. Michael authorized approximate screen values: all 62 local Color
   rows were populated, then 28 compound values were revised. The palette
-  covers all 49 production Color names checked on October 18. Names, Pantone
-  codes, and Entry links were preserved; production data was not changed.
+  covers all 49 production Color names checked on October 18. Michael then
+  authorized hosted data updates: all 64 staging Color records and all 49
+  production Color records now have display values. Staging's two range names
+  use midpoint display values outside the command palette. Saved values were
+  checked after each update; no white placeholders remain. Names, Pantone
+  codes, and Entry links were preserved. Production used the reviewed palette
+  through a one-time script because its deployed code lacks the command.
   These are display choices, not measured ink colors or Pantone matches.
   Separate from deferred T53/T56 and catalog Color cleanup.
 - **[T83](https://trello.com/c/F5gzAlhh), To Do, unassigned, F2/F3:** implemented
@@ -914,8 +920,9 @@ a separate data check.
 October 18 roster privacy correction (T46): Michael requested names and state
 assignments without email addresses on the Editor screen. The page and
 `/api/v2/editor-roster/` now omit emails. Local roster API tests and all 475
-frontend tests passed. Hosted verification remains pending. The T46 Trello
-description still needs its earlier email-inclusion claim corrected.
+frontend tests passed. Staging deployment at `2e77277` passed; hosted page and
+API verification remain pending. The T46 Trello description now states the
+no-email requirement, with the prior description preserved in a comment.
 
 September 28 source review: Massachusetts source preparation has progressed
 through offline review and fixes in published source commit `9f34260`. Staging
