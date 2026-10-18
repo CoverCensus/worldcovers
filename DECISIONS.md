@@ -460,9 +460,12 @@ form, so payloads queued before this change cannot delete either. Evidence:
 Marking), offer Crop on each new upload and from the "may show a whole Cover"
 warning. Crop in the browser (`lib/cropImageFile.ts`, drawn from the element
 the selection was made on) and replace the upload with the crop, keeping its
-position and Tracing flag. Keep PNG as PNG and save anything else as JPEG at
-the server crop's quality. Share the selection UI with the server crop
-(`CropSelectionDialog`).
+position and Tracing flag. Save browser crops, catalog crops, and new JPEG
+or PNG uploads as PNG to avoid further JPEG compression loss. On both server
+upload paths, apply EXIF rotation or mirroring before storage, remove the
+orientation tag, and compute dimensions, size, and checksum from the PNG.
+Preserve resolution, color profiles, and supported credit metadata on server
+uploads. Share the selection UI with the server crop (`CropSelectionDialog`).
 
 **Don't:** Send a pending upload's crop to `POST /images/{id}/crop/` (the file
 is not an Image row yet, and that endpoint is editor-only and writes the
@@ -481,3 +484,7 @@ metadata, so the low-resolution notice keeps the result measured on the
 original. T66 (rotation) can extend the same dialog. Evidence:
 `cropImageFile.test.ts`; a headless-Chromium run of `/edit/:id` against a
 mocked API posted a 440x440 crop of a 2400x1500 scan.
+Michael chose PNG storage over further JPEG compression on 2026-10-18.
+Normalization and pixel preservation are covered by
+`ImageUploadNormalizationTests` and `ImageCropOrientationTests`; multipart
+storage is covered by `ImageWritePermissionTests`.

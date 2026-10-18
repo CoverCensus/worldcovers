@@ -13,10 +13,11 @@ from pathlib import Path
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from PIL import Image as PILImage
 from rest_framework.test import APIClient
 
+from common.images import CropError, crop_image_bytes
 from common.models import (
     Collection,
     CollectionAssignment,
@@ -33,6 +34,54 @@ from common.models import (
 User = get_user_model()
 
 MEDIA_ROOT = tempfile.mkdtemp(prefix="woco-crop-tests-")
+
+
+class ImageCropOrientationTests(SimpleTestCase):
+    def _source(self, orientation: int, image_format: str = "PNG") -> bytes:
+        image = PILImage.new("RGB", (80, 60), "red")
+        image.paste("green", (40, 0, 80, 30))
+        image.paste("blue", (0, 30, 40, 60))
+        image.paste("yellow", (40, 30, 80, 60))
+        exif = PILImage.Exif()
+        exif[274] = orientation
+        output = io.BytesIO()
+        image.save(output, format=image_format, exif=exif)
+        return output.getvalue()
+
+    def test_crop_uses_the_displayed_orientation(self):
+        # Top-left colors after each EXIF rotation or reflection.
+        colors = {
+            1: (255, 0, 0),
+            2: (0, 128, 0),
+            3: (255, 255, 0),
+            4: (0, 0, 255),
+            5: (255, 0, 0),
+            6: (0, 0, 255),
+            7: (255, 255, 0),
+            8: (0, 128, 0),
+        }
+        for image_format, mime_type in (("PNG", "image/png"), ("JPEG", "image/jpeg")):
+            for orientation, color in colors.items():
+                with self.subTest(image_format=image_format, orientation=orientation):
+                    content = crop_image_bytes(
+                        self._source(orientation, image_format), mime_type, (5, 5, 10, 10)
+                    )
+                    with PILImage.open(io.BytesIO(content)) as cropped:
+                        self.assertEqual(cropped.size, (10, 10))
+                        self.assertEqual(cropped.format, "PNG")
+                        self.assertIsNone(cropped.getexif().get(274))
+                        for actual, expected in zip(cropped.getpixel((5, 5)), color):
+                            self.assertLessEqual(abs(actual - expected), 5)
+
+    def test_crop_can_reach_beyond_the_unrotated_height(self):
+        content = crop_image_bytes(self._source(6), "image/png", (5, 65, 10, 10))
+        with PILImage.open(io.BytesIO(content)) as cropped:
+            self.assertEqual(cropped.size, (10, 10))
+            self.assertEqual(cropped.getpixel((5, 5)), (255, 255, 0))
+
+    def test_crop_outside_the_rotated_width_is_rejected(self):
+        with self.assertRaisesMessage(CropError, "outside the 60x80 source image"):
+            crop_image_bytes(self._source(6), "image/png", (65, 5, 10, 10))
 
 
 @override_settings(MEDIA_ROOT=MEDIA_ROOT)
@@ -121,6 +170,8 @@ class ImageCropTests(TestCase):
         self.assertEqual(cropped.subject_id, self.marking.pk)
         # Metadata is recomputed from the cropped bytes, not copied.
         self.assertEqual((cropped.image_width, cropped.image_height), (100, 80))
+        self.assertEqual(cropped.mime_type, "image/png")
+        self.assertTrue(cropped.storage_filename.endswith(".png"))
         self.assertNotEqual(cropped.file_checksum, self.source.file_checksum)
         self.assertEqual(cropped.cropped_from_id, self.source.pk)
         # Appended, never promoted over the existing default.

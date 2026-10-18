@@ -2,8 +2,11 @@
 import hashlib
 import io
 import mimetypes
+import struct
 from pathlib import Path
 from typing import Optional
+
+from PIL import Image as PILImage, ImageCms, ImageOps, PngImagePlugin
 
 ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/jpg"}
 
@@ -17,10 +20,6 @@ def extract_image_metadata(content: bytes, mime_type: str) -> Optional[dict]:
     if not content:
         return None
     if mime_type not in ALLOWED_MIME_TYPES:
-        return None
-    try:
-        from PIL import Image as PILImage
-    except ImportError:
         return None
     try:
         img = PILImage.open(io.BytesIO(content))
@@ -50,6 +49,81 @@ class CropError(ValueError):
     """A crop rectangle that cannot be applied to the given image."""
 
 
+def _oriented_image(source: PILImage.Image) -> PILImage.Image:
+    image = ImageOps.exif_transpose(source)
+    # A quarter turn swaps the physical resolution axes as well.
+    if source.getexif().get(274) in (5, 6, 7, 8):
+        if dpi := image.info.get("dpi"):
+            image.info["dpi"] = dpi[::-1]
+        exif = image.getexif()
+        if 282 in exif and 283 in exif:
+            exif[282], exif[283] = exif[283], exif[282]
+            image.info["exif"] = exif.tobytes()
+    return image
+
+
+def _png_bytes(image: PILImage.Image) -> bytes:
+    """Save decoded pixels without compression loss and keep useful metadata."""
+    info = image.info.copy()
+    exif = image.getexif()
+    # Pixels already have their displayed orientation. Do not apply it twice.
+    exif.pop(274, None)
+    for tag, value in ((256, image.width), (257, image.height)):
+        if tag in exif:
+            exif[tag] = value
+    if 34665 in exif:
+        details = exif.get_ifd(34665)
+        for tag, value in ((40962, image.width), (40963, image.height)):
+            if tag in details:
+                details[tag] = value
+    info["exif"] = exif.tobytes() if exif else b""
+
+    # PNG has no CMYK mode. Convert using the source profile when available.
+    if image.mode == "CMYK":
+        if profile := info.get("icc_profile"):
+            destination = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
+            image = ImageCms.profileToProfile(
+                image, ImageCms.ImageCmsProfile(io.BytesIO(profile)), destination,
+                outputMode="RGB",
+            )
+            info["icc_profile"] = destination.tobytes()
+        else:
+            image = image.convert("RGB")
+
+    text = PngImagePlugin.PngInfo()
+    for key, value in info.items():
+        if isinstance(value, str):
+            text.add_itxt(key, value)
+    if xmp := info.get("xmp"):
+        text.add_itxt("XML:com.adobe.xmp", xmp.decode("utf-8"))
+    if comment := info.get("comment"):
+        if isinstance(comment, bytes):
+            text.add_text("Comment", comment.decode("latin-1"))
+    if "gamma" in info:
+        text.add(b"gAMA", struct.pack(">I", round(info["gamma"] * 100000)))
+    if "chromaticity" in info:
+        text.add(b"cHRM", struct.pack(">8I", *(round(v * 100000) for v in info["chromaticity"])))
+    if "srgb" in info:
+        text.add(b"sRGB", bytes([info["srgb"]]))
+    output = io.BytesIO()
+    image.save(output, format="PNG", **{**info, "pnginfo": text})
+    return output.getvalue()
+
+
+def normalize_image_upload(content: bytes, mime_type: str) -> bytes:
+    """Convert a PNG or JPEG upload to an upright PNG without JPEG recompression."""
+    if mime_type not in ALLOWED_MIME_TYPES:
+        raise ValueError("Unsupported image format.")
+    try:
+        with PILImage.open(io.BytesIO(content)) as source:
+            if source.format not in ("PNG", "JPEG"):
+                raise ValueError("Unsupported image format.")
+            source.load()
+            return _png_bytes(_oriented_image(source))
+    except Exception as exc:
+        raise ValueError("Could not process the source image.") from exc
+
+
 def crop_image_bytes(
     content: bytes,
     mime_type: str,
@@ -62,18 +136,11 @@ def crop_image_bytes(
     a 400: an undecodable source, or a rectangle that is empty or reaches
     outside the image.
 
-    The output keeps the source's format so the stored mime_type stays true.
-    JPEG is re-encoded at quality 95 (settings.MARKING_IMAGE_QUALITY's value)
-    because the crop becomes a catalog image and generation loss is visible on
-    faint strikes.
+    The box uses the displayed pixels, after EXIF rotation or reflection.
+    The output is PNG so faint strikes have no additional compression loss.
     """
     if mime_type not in ALLOWED_MIME_TYPES:
         raise CropError("Unsupported image format.")
-    try:
-        from PIL import Image as PILImage
-    except ImportError as exc:  # pragma: no cover - Pillow is a hard dependency
-        raise CropError("Image processing is unavailable.") from exc
-
     x, y, width, height = (int(v) for v in box)
     if width <= 0 or height <= 0:
         raise CropError("Crop width and height must be greater than zero.")
@@ -83,6 +150,7 @@ def crop_image_bytes(
     try:
         img = PILImage.open(io.BytesIO(content))
         img.load()
+        img = _oriented_image(img)
     except Exception as exc:
         raise CropError("Could not read the source image.") from exc
 
@@ -92,19 +160,4 @@ def crop_image_bytes(
         )
 
     cropped = img.crop((x, y, x + width, y + height))
-    out = io.BytesIO()
-    image_format = (img.format or "").upper() or _format_for_mime(mime_type)
-    if image_format == "JPEG":
-        # JPEG has no alpha; a PNG-sourced RGBA crop would fail to save.
-        if cropped.mode not in ("RGB", "L"):
-            cropped = cropped.convert("RGB")
-        cropped.save(out, format="JPEG", quality=95)
-    else:
-        cropped.save(out, format=image_format)
-    return out.getvalue()
-
-
-def _format_for_mime(mime_type: str) -> str:
-    if "png" in mime_type:
-        return "PNG"
-    return "JPEG"
+    return _png_bytes(cropped)

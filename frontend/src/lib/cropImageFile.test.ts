@@ -22,10 +22,11 @@ function image(width: number, height: number): HTMLImageElement {
   return img;
 }
 
-it("returns the selection as a new file of the same kind, clamped to the image", async () => {
+it("returns the selection as a PNG, clamped to the image", async () => {
   const jpeg = await cropImageFile(image(1000, 800), { x: 900, y: 10, width: 300, height: 50 },
     new File(["a"], "cover scan.jpeg", { type: "image/jpeg" }));
-  expect([jpeg.name, jpeg.type]).toEqual(["cover scan-crop.jpg", "image/jpeg"]);
+  expect([jpeg.name, jpeg.type]).toEqual(["cover scan-crop.png", "image/png"]);
+  expect(HTMLCanvasElement.prototype.toBlob).toHaveBeenCalledWith(expect.any(Function), "image/png");
   expect(drawImage).toHaveBeenCalledWith(expect.anything(), 900, 10, 100, 50, 0, 0, 100, 50);
 
   const png = await cropImageFile(image(100, 100), { x: 0, y: 0, width: 50, height: 50 },

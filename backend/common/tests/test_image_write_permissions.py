@@ -1,4 +1,5 @@
 """T73: image writes require responsibility for both subjects of a move."""
+import hashlib
 import io
 import tempfile
 from pathlib import Path
@@ -150,8 +151,47 @@ class ImageWritePermissionTests(TestCase):
         with tempfile.TemporaryDirectory() as media, self.settings(MEDIA_ROOT=media):
             response = self.client.post("/api/v2/images/", {
                 "subject_type": "MARKING", "subject_id": self.markings[1].pk,
-                "image_view": "FULL", "storage_filename": "",
+                "image_view": "FULL",
                 "file": SimpleUploadedFile("scan.png", content.getvalue(), content_type="image/png"),
             }, format="multipart")
             self.assertEqual(response.status_code, 403, response.data)
+            self.assertEqual(list(Path(media).rglob("*")), [])
+
+    def test_multipart_upload_stores_upright_png(self):
+        source = PILImage.new("RGB", (80, 60), "blue")
+        exif = PILImage.Exif()
+        exif[274] = 6
+        content = io.BytesIO()
+        source.save(content, format="JPEG", exif=exif)
+        self.client.force_authenticate(self.editor)
+        with tempfile.TemporaryDirectory() as media, self.settings(MEDIA_ROOT=media):
+            response = self.client.post("/api/v2/images/", {
+                "subject_type": "MARKING", "subject_id": self.markings[0].pk,
+                "image_view": "FULL",
+                "file": SimpleUploadedFile("scan.jpg", content.getvalue(), content_type="image/jpeg"),
+            }, format="multipart")
+            self.assertEqual(response.status_code, 201, response.data)
+            row = Image.objects.get(pk=response.data["image_id"])
+            self.assertEqual(row.original_filename, "scan.jpg")
+            self.assertEqual(row.mime_type, "image/png")
+            self.assertTrue(row.storage_filename.endswith(".png"))
+            stored = (Path(media) / row.storage_filename).read_bytes()
+            self.assertEqual(row.file_checksum, hashlib.sha256(stored).hexdigest())
+            self.assertEqual(row.file_size_bytes, len(stored))
+            self.assertEqual((row.image_width, row.image_height), (60, 80))
+            with PILImage.open(io.BytesIO(stored)) as result:
+                self.assertEqual(result.format, "PNG")
+                self.assertIsNone(result.getexif().get(274))
+
+    def test_invalid_multipart_upload_writes_nothing(self):
+        self.client.force_authenticate(self.editor)
+        count = Image.objects.count()
+        with tempfile.TemporaryDirectory() as media, self.settings(MEDIA_ROOT=media):
+            response = self.client.post("/api/v2/images/", {
+                "subject_type": "MARKING", "subject_id": self.markings[0].pk,
+                "image_view": "FULL",
+                "file": SimpleUploadedFile("scan.jpg", b"broken", content_type="image/jpeg"),
+            }, format="multipart")
+            self.assertEqual(response.status_code, 400, response.data)
+            self.assertEqual(Image.objects.count(), count)
             self.assertEqual(list(Path(media).rglob("*")), [])
