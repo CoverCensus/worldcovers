@@ -488,3 +488,30 @@ Michael chose PNG storage over further JPEG compression on 2026-10-18.
 Normalization and pixel preservation are covered by
 `ImageUploadNormalizationTests` and `ImageCropOrientationTests`; multipart
 storage is covered by `ImageWritePermissionTests`.
+
+## Rotate Marking Images In Quarter Turns, In Place
+
+**Do:** Offer Rotate beside Crop for an editor on the Marking page
+(`ThumbnailImageActions`) and for a contributor on each new upload in the
+Marking form. Both use `RotateImageDialog`, which previews the turn and saves
+once. On the Marking page, `POST /images/{id}/rotate/ {quarter_turns: 1|2|3}`
+(clockwise) writes the turned pixels to a new PNG file beside the original and
+points the same Image row at it, keeping its position, view, caption and
+Tracing flag. It logs `image_rotated` with the previous `storage_filename` and
+writes a MarkingVersion. On the form, `lib/rotateImageFile.ts` turns the upload
+in the browser and replaces it like a browser crop.
+
+**Don't:** Rotate Cover images (the endpoint returns 400), offer fine-angle
+straightening, overwrite the original file or reuse its filename, delete the
+previous file, or rotate a pending submission's image on the review page.
+
+**Why:** Ian, 2026-10-16: "After a marking image (only markings and not
+covers) is there an easy way to allow for rotation". Reese chose quarter turns,
+these two screens, and replace-in-place on 2026-10-19. Quarter turns are exact
+pixel moves (Pillow `transpose`), so nothing is resampled. A rotated copy added
+like a crop would leave the sideways image as the default. `/media/` is served
+with `expires 30d`, so only a new filename shows the turn at once, and
+`storage_filename` can be shared by several rows, so the old file stays. The
+review page has no pending-image edit path; an editor approves, then rotates.
+Evidence: `test_image_rotate.py`, `rotateImageFile.test.ts`,
+`markings.rotate.test.ts`, `ThumbnailImageActions.test.tsx`.
