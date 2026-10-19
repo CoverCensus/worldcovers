@@ -89,6 +89,12 @@ const COVER_DATE_KEYS = [
 
 const isEmpty = (value: unknown) => value == null || String(value).trim() === "";
 
+function markingKeys(name: string): string[] {
+  const field = MARKING_FIELDS.find((f) => f.name === name);
+  if (!field) throw new Error(`Unknown marking field "${name}"`);
+  return field.keys;
+}
+
 function mentions(sd: Data, field: FieldKeys): boolean {
   return field.keys.some((key) => key in sd && !(field.emptyKeeps && isEmpty(sd[key])));
 }
@@ -145,16 +151,19 @@ export function compareMarkingEdit(
   if (proposed.is_manuscript === true || text(proposed.is_manuscript) === "true") {
     // Approval clears these for a manuscript whatever the edit says.
     for (const name of ["shape", "lettering", "irregular"]) {
-      for (const key of MARKING_FIELDS.find((f) => f.name === name)!.keys) delete proposed[key];
+      for (const key of markingKeys(name)) delete proposed[key];
     }
   }
   const before = submittedDataToFieldInput(canonicalNumbers(current), lookups, { contributionId });
   const after = submittedDataToFieldInput(canonicalNumbers(proposed), lookups, { contributionId });
   const added = "Approval adds this as a recorded date";
 
-  const rows = [
+  // Either spelling of the current state is the same state.
+  const sameStateByAbbrev =
+    text(stateAbbrev) !== "" && text(stateAbbrev).toLowerCase() === after.state.toLowerCase();
+  return [
     row("catalogCode", "Catalog code", text(current.catalog_code), text(proposed.catalog_code)),
-    row("state", "State", before.state, after.state),
+    { ...row("state", "State", before.state, after.state), ...(sameStateByAbbrev ? { changed: false } : {}) },
     row("town", "Town", before.town, after.town),
     row("type", "Type", markingTypeLabel(before.type), markingTypeLabel(after.type)),
     row("inscription", "Inscription", before.inscriptionTxt, after.inscriptionTxt),
@@ -172,12 +181,6 @@ export function compareMarkingEdit(
     row("lrd", "Latest Seen", before.latestSeen, after.latestSeen, added),
     row("citations", "Citations", citationText(current, referenceWorks), citationText(proposed, referenceWorks)),
   ];
-  // Either spelling of the current state is the same state.
-  const state = rows.find((r) => r.key === "state")!;
-  if (state.changed && text(stateAbbrev).toLowerCase() === state.proposed.toLowerCase()) {
-    state.changed = false;
-  }
-  return rows;
 }
 
 export function compareCoverEdit(
@@ -198,7 +201,7 @@ export function compareCoverEdit(
     row("type", "Type", coverTypeLabel(text(baseline.type)), coverTypeLabel(text(proposed.type))),
     row(
       "date", "Date", date(baseline), date(proposed),
-      COVER_DATE_KEYS.some((key) => key in sd) ? undefined : "This edit has no date, so approval clears it",
+      COVER_DATE_KEYS.some((key) => !isEmpty(sd[key])) ? undefined : "This edit has no date, so approval clears it",
     ),
     row("institutional", "Institutionally Owned", bool(baseline.is_institutional), bool(proposed.is_institutional)),
     row("backstamp", "Backstamp", bool(baseline.is_backstamp), bool(proposed.is_backstamp)),
