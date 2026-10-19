@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ImageCaptionInput } from "@/components/ImageCaptionInput";
 import { FieldHelp } from "@/components/FieldHelp";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -507,9 +508,18 @@ const Contribute = () => {
   const [noMarkingImage, setNoMarkingImage] = useState(false);
   // One entry in the combined image gallery: "existing" wraps an already-saved
   // image (edit-marking or draft-resume); "new" wraps a freshly-picked file.
+  // `description` is the caption (T43): editable on new uploads, shown
+  // read-only on images saved with a draft.
   type MarkingGalleryItem =
-    | { kind: "existing"; key: string; url: string; tracing: boolean }
-    | { kind: "new"; key: string; file: File; previewUrl: string; tracing: boolean };
+    | { kind: "existing"; key: string; url: string; tracing: boolean; description?: string }
+    | {
+        kind: "new";
+        key: string;
+        file: File;
+        previewUrl: string;
+        tracing: boolean;
+        description: string;
+      };
   // Single ordered gallery: already-saved images interleaved with new uploads.
   // Reorder + set-default work across the whole list; the chosen order is sent as
   // image_order and applied at approval (see backend _reorder_metas_by_image_order
@@ -934,21 +944,30 @@ const Contribute = () => {
         const submittedMarkingImages = submittedArray(sd, "marking_images", "markingImages")
           .map((v) => (typeof v === "string" ? v.trim() : ""))
           .filter((v) => v.length > 0);
+        const metas = submittedArray(sd, "marking_image_metas", "markingImageMetas") as Array<{
+          storage_filename?: string;
+          storageFilename?: string;
+          image_description?: string;
+        }>;
+        const metaFilename = (m: (typeof metas)[number]) =>
+          (m?.storage_filename ?? m?.storageFilename ?? "").replace(/^\/+/, "");
         let existingUrls: string[] = submittedMarkingImages;
         if (existingUrls.length === 0) {
-          const metas = submittedArray(sd, "marking_image_metas", "markingImageMetas") as Array<{
-            storage_filename?: string;
-            storageFilename?: string;
-          }>;
           const baseUrl =
             (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "") || "/media";
           existingUrls = metas
             .map((m) => {
-              const sf = m?.storage_filename ?? m?.storageFilename;
-              return sf ? `${baseUrl}/${sf.replace(/^\/+/, "")}` : "";
+              const sf = metaFilename(m);
+              return sf ? `${baseUrl}/${sf}` : "";
             })
             .filter((u) => u.length > 0);
         }
+        // Captions live on the metas; match each saved image by filename tail.
+        const savedDescription = (url: string) =>
+          metas.find((m) => {
+            const sf = metaFilename(m);
+            return sf && url.endsWith(`/${sf}`);
+          })?.image_description ?? "";
         if (!loadedNoMarkingImage && existingUrls.length > 0) {
           setGallery(
             existingUrls.map((url) => ({
@@ -956,6 +975,7 @@ const Contribute = () => {
               key: url,
               url,
               tracing: false,
+              description: savedDescription(url),
             })),
           );
           setRemovedExistingImageKeys([]);
@@ -1348,6 +1368,7 @@ const Contribute = () => {
       file,
       previewUrl: "",
       tracing: false,
+      description: "",
     }));
     setGallery((prev) => [...prev, ...items]);
     items.forEach((item) => {
@@ -1480,6 +1501,12 @@ const Contribute = () => {
   const setGalleryTracingAt = (index: number, tracing: boolean) => {
     setGallery((prev) =>
       prev.map((item, i) => (i === index ? { ...item, tracing } : item)),
+    );
+  };
+
+  const setGalleryDescription = (key: string, description: string) => {
+    setGallery((prev) =>
+      prev.map((item) => (item.key === key ? { ...item, description } : item)),
     );
   };
 
@@ -1674,11 +1701,13 @@ const Contribute = () => {
     // display_order at approval matches the on-screen order (index 0 = default).
     const allImageFiles: File[] = [];
     const orderedNewTags: string[] = [];
+    const orderedNewDescriptions: string[] = [];
     const imageOrder: string[] = [];
     for (const item of gallery) {
       if (item.kind === "new") {
         allImageFiles.push(item.file);
         orderedNewTags.push(tracingToTag(item.tracing));
+        orderedNewDescriptions.push(item.description.trim());
         imageOrder.push("__new__");
       } else {
         imageOrder.push(item.url);
@@ -1805,6 +1834,9 @@ const Contribute = () => {
           form.append("marking_image", file, file.name);
         }
         form.append("marking_image_tags", JSON.stringify(orderedNewTags));
+        if (orderedNewDescriptions.some(Boolean)) {
+          form.append("marking_image_descriptions", JSON.stringify(orderedNewDescriptions));
+        }
         if (imageOrder.length > 0) {
           form.append("image_order", JSON.stringify(imageOrder));
         }
@@ -2105,6 +2137,17 @@ const Contribute = () => {
                           </span>
                         )}
                       </div>
+                      {item.kind === "new" ? (
+                        <ImageCaptionInput
+                          id={`gallery-caption-${item.key}`}
+                          value={item.description}
+                          onChange={(value) => setGalleryDescription(item.key, value)}
+                        />
+                      ) : (
+                        item.description && (
+                          <p className="px-2 pb-2 text-left text-xs break-words">{item.description}</p>
+                        )
+                      )}
                       <div className="flex items-center gap-2 px-2 pb-2">
                         <input
                           id={`gallery-tracing-${item.key}`}

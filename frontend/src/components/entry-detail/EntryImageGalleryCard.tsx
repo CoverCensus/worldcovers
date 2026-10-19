@@ -12,6 +12,7 @@ import {
   type CarouselApi,
 } from "@/components/ui/carousel";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
+import { ImageFigcaption } from "./ImageFigcaption";
 import type { EntryGalleryImage } from "./types";
 
 export function EntryImageGalleryCard({
@@ -90,49 +91,52 @@ export function EntryImageGalleryCard({
               );
               return (
                 <CarouselItem key={index}>
-                  <div className="relative">
-                    {img.imageUrl ? (
-                      <a
-                        href={img.imageUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        aria-label={`Open ${alt} in new tab`}
-                        className="block"
-                      >
-                        {imageFrame}
-                      </a>
-                    ) : (
-                      imageFrame
-                    )}
-                    {showDefaultAction && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            className={
-                              img.isDefault
-                                ? "absolute right-2 top-2 h-8 w-8 border-amber-400 bg-amber-100 text-amber-700 hover:bg-amber-100 hover:text-amber-700 disabled:opacity-100"
-                                : "absolute right-2 top-2 h-8 w-8 bg-background/90"
-                            }
-                            aria-label={
-                              img.isDefault
-                                ? "Default catalog image"
-                                : "Set as default catalog image"
-                            }
-                            disabled={settingDefaultImage || img.isDefault}
-                            onClick={() => onSetDefaultImage(index)}
-                          >
-                            <Star className={`h-4 w-4 ${img.isDefault ? "fill-amber-500 text-amber-500" : ""}`} />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          {img.isDefault ? "Default catalog image" : "Set as default catalog image"}
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-                  </div>
+                  <figure>
+                    <div className="relative">
+                      {img.imageUrl ? (
+                        <a
+                          href={img.imageUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`Open ${alt} in new tab`}
+                          className="block"
+                        >
+                          {imageFrame}
+                        </a>
+                      ) : (
+                        imageFrame
+                      )}
+                      {showDefaultAction && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              className={
+                                img.isDefault
+                                  ? "absolute right-2 top-2 h-8 w-8 border-amber-400 bg-amber-100 text-amber-700 hover:bg-amber-100 hover:text-amber-700 disabled:opacity-100"
+                                  : "absolute right-2 top-2 h-8 w-8 bg-background/90"
+                              }
+                              aria-label={
+                                img.isDefault
+                                  ? "Default catalog image"
+                                  : "Set as default catalog image"
+                              }
+                              disabled={settingDefaultImage || img.isDefault}
+                              onClick={() => onSetDefaultImage(index)}
+                            >
+                              <Star className={`h-4 w-4 ${img.isDefault ? "fill-amber-500 text-amber-500" : ""}`} />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {img.isDefault ? "Default catalog image" : "Set as default catalog image"}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+                    <ImageFigcaption text={img.description} />
+                  </figure>
                 </CarouselItem>
               );
             })}

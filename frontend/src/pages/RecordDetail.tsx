@@ -35,6 +35,7 @@ import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
 import { MarkingFieldsDisplay } from "@/components/MarkingFieldsDisplay";
 import { ThumbnailImageActions } from "@/components/entry-detail/ThumbnailImageActions";
 import { CoverFromImagePrompt } from "@/components/entry-detail/CoverFromImagePrompt";
+import { ImageFigcaption } from "@/components/entry-detail/ImageFigcaption";
 import {
   coverLikeMarkingImages,
   isLastMarkingImage,
@@ -113,6 +114,8 @@ type GalleryImage = {
    * "image not available" placeholder slide.
    */
   imageId: number | null;
+  /** Caption (Image.image_description); empty shows none. */
+  description?: string;
 };
 
 const EMPTY = "-";
@@ -286,6 +289,7 @@ function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
     isDefault: img.displayOrder === 0,
     isTracing: img.subjectType === "MARKING" && img.isTracing,
     imageId: img.imageId > 0 ? img.imageId : null,
+    description: img.imageDescription,
   }));
 }
 
@@ -971,49 +975,52 @@ const RecordDetail = () => {
                         );
                         return (
                           <CarouselItem key={index}>
-                            <div className="relative">
-                              {img.imageUrl ? (
-                                <a
-                                  href={img.imageUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  aria-label={`Open ${alt} in new tab`}
-                                  className="block"
-                                >
-                                  {imageFrame}
-                                </a>
-                              ) : (
-                                imageFrame
-                              )}
-                              {canSetDefaultImage && (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="icon"
-                                      className={
-                                        img.isDefault
-                                          ? "absolute right-2 top-2 h-8 w-8 border-amber-400 bg-amber-100 text-amber-700 hover:bg-amber-100 hover:text-amber-700 disabled:opacity-100"
-                                          : "absolute right-2 top-2 h-8 w-8 bg-background/90"
-                                      }
-                                      aria-label={
-                                        img.isDefault
-                                          ? "Default catalog image"
-                                          : "Set as default catalog image"
-                                      }
-                                      disabled={reorderingImages || img.isDefault}
-                                      onClick={() => setImageAsDefault(index)}
-                                    >
-                                      <Star className={`h-4 w-4 ${img.isDefault ? "fill-amber-500 text-amber-500" : ""}`} />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    {img.isDefault ? "Default catalog image" : "Set as default catalog image"}
-                                  </TooltipContent>
-                                </Tooltip>
-                              )}
-                            </div>
+                            <figure>
+                              <div className="relative">
+                                {img.imageUrl ? (
+                                  <a
+                                    href={img.imageUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    aria-label={`Open ${alt} in new tab`}
+                                    className="block"
+                                  >
+                                    {imageFrame}
+                                  </a>
+                                ) : (
+                                  imageFrame
+                                )}
+                                {canSetDefaultImage && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="icon"
+                                        className={
+                                          img.isDefault
+                                            ? "absolute right-2 top-2 h-8 w-8 border-amber-400 bg-amber-100 text-amber-700 hover:bg-amber-100 hover:text-amber-700 disabled:opacity-100"
+                                            : "absolute right-2 top-2 h-8 w-8 bg-background/90"
+                                        }
+                                        aria-label={
+                                          img.isDefault
+                                            ? "Default catalog image"
+                                            : "Set as default catalog image"
+                                        }
+                                        disabled={reorderingImages || img.isDefault}
+                                        onClick={() => setImageAsDefault(index)}
+                                      >
+                                        <Star className={`h-4 w-4 ${img.isDefault ? "fill-amber-500 text-amber-500" : ""}`} />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      {img.isDefault ? "Default catalog image" : "Set as default catalog image"}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                )}
+                              </div>
+                              <ImageFigcaption text={img.description} />
+                            </figure>
                           </CarouselItem>
                         );
                       })}

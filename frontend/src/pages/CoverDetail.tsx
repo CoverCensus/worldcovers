@@ -105,6 +105,7 @@ function buildCoverGalleryImages(images: MarkingImage[]): EntryGalleryImage[] {
     isDefault: img.displayOrder === 0,
     isTracing: img.isTracing,
     imageId: img.imageId > 0 ? img.imageId : null,
+    description: img.imageDescription,
   }));
 }
 
