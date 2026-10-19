@@ -31,6 +31,7 @@ jest.mock("@/lib/rotateImageFile", () => ({
   rotateImageFile: jest.fn(async () => new File(["png"], "strike-rotated.png", { type: "image/png" })),
 }));
 jest.mock("@/services/markings", () => ({
+  ...jest.requireActual("@/services/markings"),
   getMarkingByIdRaw: jest.fn(),
   routingStateFromMarkingRecord: () => "VA",
   getMarkingById: jest.fn().mockResolvedValue({ id: 7, state: "Virginia", stateAbbrev: "VA" }),

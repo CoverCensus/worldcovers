@@ -70,6 +70,7 @@ from common.contribution_apply import (
     _parse_int,
     _source_marking_image_id,
     strip_marking_date_keys,
+    normalize_marking_dates_seen,
 )
 from common.contribution_consolidation import (
     ContributionTarget,
@@ -3918,6 +3919,13 @@ class ContributionSubmitView(APIView):
                 submitted_data[key] = str(value)
 
         submitted_data.update(citation_data)
+        if "marking_dates_seen" in submitted_data:
+            try:
+                submitted_data["marking_dates_seen"] = normalize_marking_dates_seen(
+                    submitted_data["marking_dates_seen"]
+                )
+            except ContributionApplyError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         if is_cover_submission:
             submitted_data["submission_kind"] = "cover"
             submitted_data["entity_type"] = "cover"

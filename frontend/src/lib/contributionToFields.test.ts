@@ -6,6 +6,13 @@ const lookups = {
 };
 
 describe("submittedDataToFieldInput", () => {
+  it("shows submitted Dates Seen at their recorded precision", () => {
+    const fields = submittedDataToFieldInput({ marking_dates_seen: [
+      { date_year: 1840, granularity: "YEAR", date: "1840-01-01" },
+      { date_month: 6, date_day: 12, granularity: "MONTH_DAY", date: null },
+    ] }, lookups, { contributionId: 56 });
+    expect(fields.datesSeen).toBe("1840, JUN 12 (year unknown)");
+  });
   it("accepts pending marking ERD/LRD keys and formats them by precision", () => {
     const fieldInput = submittedDataToFieldInput(
       {

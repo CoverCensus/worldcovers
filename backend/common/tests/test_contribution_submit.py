@@ -1,3 +1,5 @@
+import json
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -6,6 +8,7 @@ from common.models import (
     Collection,
     Color,
     Contribution,
+    DateSeen,
     Image,
     Marking,
     PostOffice,
@@ -806,6 +809,58 @@ class ContributionSubmitMarkingEditTests(TestCase):
         self.assertEqual(contribution.submitted_data["marking_erd_date_day"], "1")
         self.assertEqual(contribution.submitted_data["marking_lrd_date_year"], "1850")
         self.assertEqual(contribution.submitted_data["marking_lrd_date_month"], "12")
+
+    def test_new_marking_dates_survive_draft_submit_and_approval(self):
+        self.client.force_authenticate(self._editor("date-list-editor"))
+        dates = [
+            {"date_year": 1840, "date_month": None, "date_day": None},
+            {"date_year": None, "date_month": 6, "date_day": 12},
+        ]
+        for wire_format in ("json", "multipart"):
+            with self.subTest(wire_format=wire_format):
+                payload = {
+                    "state": "VA", "town": "Richmond", "type": "TOWNMARK",
+                    "color_id": self.color.pk, "is_manuscript": True,
+                    "inscription_txt": "RICHMOND VA", "no_marking_image": True,
+                    "save_as_draft": True,
+                    "marking_dates_seen": json.dumps(dates) if wire_format == "multipart" else dates,
+                }
+                response = self.client.post("/api/v2/contributions/", payload, format=wire_format)
+                self.assertEqual(response.status_code, 201, response.data)
+                contribution = Contribution.objects.get(pk=response.data["id"])
+                self.assertEqual(len(contribution.submitted_data["marking_dates_seen"]), 2)
+                payload.update({"edit_contribution_id": contribution.pk, "save_as_draft": False})
+                response = self.client.post("/api/v2/contributions/", payload, format=wire_format)
+                self.assertEqual(response.status_code, 200, response.data)
+                response = self.client.post(self._approve_url(contribution), {}, format="json")
+                self.assertEqual(response.status_code, 200, response.data)
+                contribution.refresh_from_db()
+                rows = DateSeen.objects.filter(subject_type="MARKING", subject_id=contribution.marking_id)
+                self.assertEqual(set(rows.values_list("granularity", flat=True)), {"YEAR", "MONTH_DAY"})
+                contribution.marking.refresh_from_db()
+                self.assertEqual(contribution.marking.earliest_seen.year, 1840)
+
+    def test_date_list_rejects_invalid_components_and_contributor_input_is_stripped(self):
+        payload = {"state": "VA", "save_as_draft": True, "marking_dates_seen": [{"date_month": 13}]}
+        response = self.client.post("/api/v2/contributions/", payload, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertNotIn("marking_dates_seen", Contribution.objects.get(pk=response.data["id"]).submitted_data)
+        self.client.force_authenticate(self._editor("invalid-date-list-editor"))
+        for dates in ([{"date_month": 13}], [{"date_year": "1840"}], [{}], {"date_year": 1840}):
+            with self.subTest(dates=dates):
+                payload["marking_dates_seen"] = dates
+                response = self.client.post("/api/v2/contributions/", payload, format="json")
+                self.assertEqual(response.status_code, 400, response.data)
+
+    def test_removing_all_draft_dates_clears_the_submission_list(self):
+        self.client.force_authenticate(self._editor("clear-date-list-editor"))
+        payload = {"state": "VA", "save_as_draft": True, "marking_dates_seen": [{"date_year": 1840}]}
+        response = self.client.post("/api/v2/contributions/", payload, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        payload.update({"edit_contribution_id": response.data["id"], "marking_dates_seen": []})
+        response = self.client.post("/api/v2/contributions/", payload, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(Contribution.objects.get(pk=response.data["id"]).submitted_data["marking_dates_seen"], [])
 
     def test_editor_submitted_unknown_marking_date_is_preserved(self):
         editor = self._editor("submit-unknown-date-editor")

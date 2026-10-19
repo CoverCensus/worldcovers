@@ -1567,12 +1567,13 @@ def _sync_cover_date_seen(cover_id, payload: dict, actor) -> None:
     )
 
 
-# Form keys carrying a manually-entered marking ERD/LRD (+ granularity), read
+# Form keys carrying manual Marking dates and ERD/LRD (+ granularity), read
 # by _sync_marking_dates_seen below. Setting a marking's date is editor-only
 # (issue #27): the contribution submit handler strips these from a non-editor's
 # submission, exactly as it strips CATALOG_CODE_KEYS. Kept here, next to the
 # code that consumes them, so the key list has one home.
 MARKING_DATE_SUBMIT_KEYS = frozenset({
+    "marking_dates_seen",
     "marking_erd",
     "marking_erd_granularity",
     "marking_erd_unknown",
@@ -1593,10 +1594,44 @@ def strip_marking_date_keys(data: dict) -> dict:
     return {k: v for k, v in data.items() if k not in MARKING_DATE_SUBMIT_KEYS}
 
 
+def normalize_marking_dates_seen(value) -> list[dict]:
+    """Validate submitted observations without creating catalog records."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError as exc:
+            raise ContributionApplyError("Dates seen must be a list of dates.") from exc
+    if not isinstance(value, list):
+        raise ContributionApplyError("Dates seen must be a list of dates.")
+    result = []
+    for parts in value:
+        if not isinstance(parts, dict):
+            raise ContributionApplyError("Each date must contain date components.")
+        keys = ("date_year", "date_month", "date_day")
+        if any(parts.get(key) is not None and type(parts[key]) is not int for key in keys):
+            raise ContributionApplyError("Date components must be whole numbers or null.")
+        if all(parts.get(key) is None for key in keys):
+            raise ContributionApplyError("Enter at least one date component.")
+        row = DateSeen(granularity="", **{key: parts.get(key) for key in keys})
+        try:
+            row.normalize_date_parts()
+        except DjangoValidationError as exc:
+            raise ContributionApplyError("Invalid date components: {}".format(exc)) from exc
+        normalized = {
+            **{key: getattr(row, key) for key in keys},
+            "granularity": row.granularity,
+            "date": row.date.isoformat() if row.date else None,
+        }
+        if normalized not in result:
+            result.append(normalized)
+    return result
+
+
 def _sync_marking_dates_seen(marking_id, payload: dict, actor) -> None:
     """
-    Record manually-entered ERD/LRD as MARKING-subject DateSeen rows from
-    marking_erd / marking_lrd (+ *_granularity). Used when a marking is added
+    Record submitted observations and ERD/LRD as MARKING-subject DateSeen rows
+    from marking_dates_seen and marking_erd / marking_lrd (+ *_granularity).
+    Used when a marking is added
     or edited from another catalog and has no covers to derive dates from.
 
     No date fields means no-op, preserving imported history. Explicit
@@ -1706,6 +1741,17 @@ def _sync_marking_dates_seen(marking_id, payload: dict, actor) -> None:
                 "created_by": actor,
                 "modified_by": actor,
             },
+        )
+    # Add the submitted list after unknown boundaries clear older evidence.
+    for parts in normalize_marking_dates_seen(payload.get("marking_dates_seen", [])):
+        DateSeen.objects.get_or_create(
+            subject_type=DateSeen.SUBJECT_MARKING,
+            subject_id=marking_id,
+            granularity=parts["granularity"],
+            date_year=parts["date_year"],
+            date_month=parts["date_month"],
+            date_day=parts["date_day"],
+            defaults={"date": parts["date"], "created_by": actor, "modified_by": actor},
         )
 
 

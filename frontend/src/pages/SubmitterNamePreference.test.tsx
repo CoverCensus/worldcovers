@@ -29,6 +29,7 @@ jest.mock("@/services/referenceWorks", () => ({
 jest.mock("@/services/citations", () => ({ listCitationsForSubject: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/services/covers", () => ({ getCoverById: jest.fn() }));
 jest.mock("@/services/markings", () => ({
+  ...jest.requireActual("@/services/markings"),
   getMarkingByIdRaw: jest.fn(), getMarkingCovers: jest.fn(),
   routingStateFromMarkingRecord: () => "VA",
   getMarkingById: jest.fn().mockResolvedValue({ id: 7, state: "Virginia", stateAbbrev: "VA" }),

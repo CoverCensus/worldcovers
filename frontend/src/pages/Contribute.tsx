@@ -30,7 +30,8 @@ import { getColors, type ColorOption } from "@/services/colors";
 import { getShapes, type ShapeOption } from "@/services/shapes";
 import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
 import { getRegions } from "@/services/regions";
-import { getMarkingByIdRaw, normalizeImageUrl } from "@/services/markings";
+import { getMarkingByIdRaw, mapApiMarkingToRecord, normalizeImageUrl, type MarkingRecord, type AssociatedDateSeen } from "@/services/markings";
+import { DatesSeenCard } from "@/components/DatesSeenCard";
 import {
   partialDateInputFromDateSeen,
   partialDateInputFromPayload,
@@ -482,6 +483,8 @@ const Contribute = () => {
       : baseCopy;
   const [loadingRecord, setLoadingRecord] = useState(isEditMarking);
   const [recordError, setRecordError] = useState<string | null>(null);
+  const [dateRecord, setDateRecord] = useState<MarkingRecord | null>(null);
+  const [newMarkingDates, setNewMarkingDates] = useState<AssociatedDateSeen[]>([]);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [stateOptions, setStateOptions] = useState<Array<{ value: string; label: string }>>([]);
   const [shapeOptions, setShapeOptions] = useState<ShapeOption[]>([]);
@@ -618,6 +621,9 @@ const Contribute = () => {
 
   const isStateEditor =
     user?.role === "editor" || user?.role === "administrator" || user?.is_superuser === true;
+  const showRecordedDateRange = isStateEditor && (
+    isMarkingEditAction ? (dateRecord?.datesSeen.length ?? 0) > 0 : newMarkingDates.length > 0
+  );
 
   const canEditCatalogCode = Boolean(isStateEditor);
 
@@ -945,6 +951,10 @@ const Contribute = () => {
         setLrd(markingBoundaryDateFromPayload(sd, "marking_lrd"));
         setErdBaseline({ ...EMPTY_PARTIAL_DATE });
         setLrdBaseline({ ...EMPTY_PARTIAL_DATE });
+        const submittedDates = Array.isArray(sd.marking_dates_seen) ? sd.marking_dates_seen : [];
+        setNewMarkingDates(mapApiMarkingToRecord({
+          dates_seen: submittedDates.map((date, index) => ({ ...date, id: index + 1 })),
+        }).datesSeen);
         // Load prior images as "existing" gallery items (same path used by the
         // edit-marking flow) so the remove button records removals in
         // `removedExistingImageKeys` and the contributor can reorder / set the
@@ -1021,6 +1031,7 @@ const Contribute = () => {
           getMarkingByIdRaw(editMarkingIdNum)
             .then((m) => {
               if (cancelled || !m) return;
+              setDateRecord(mapApiMarkingToRecord(m));
               setCanChangeSubmitterName(m.can_change_submitter_name === true);
               // The draft's stored list mixes the marking's current images
               // with the contributor's own draft uploads. The current ones
@@ -1159,6 +1170,7 @@ const Contribute = () => {
           setRecordError("Record not found");
           return;
         }
+        setDateRecord(mapApiMarkingToRecord(data));
 
         const existingRows = Array.isArray(data.images)
           ? (data.images as unknown[])
@@ -1670,15 +1682,15 @@ const Contribute = () => {
     // Final editor submissions require each visible boundary date to be known
     // or explicitly unknown. Drafts stay permissive, but typed draft values are
     // still checked for shape.
-    const shouldValidateBoundaryDates = !saveAsDraft && isStateEditor;
+    const shouldValidateBoundaryDates = !saveAsDraft && showRecordedDateRange;
     const erdChanged = partialDateKey(erd) !== partialDateKey(erdBaseline);
     const lrdChanged = partialDateKey(lrd) !== partialDateKey(lrdBaseline);
     const erdValidation =
-      shouldValidateBoundaryDates || partialDateHasValue(erd) || erdChanged
+      showRecordedDateRange && (shouldValidateBoundaryDates || partialDateHasValue(erd) || erdChanged)
         ? validatePartialDate(erd)
         : null;
     const lrdValidation =
-      shouldValidateBoundaryDates || partialDateHasValue(lrd) || lrdChanged
+      showRecordedDateRange && (shouldValidateBoundaryDates || partialDateHasValue(lrd) || lrdChanged)
         ? validatePartialDate(lrd)
         : null;
     if (erdValidation?.ok === false) {
@@ -1840,11 +1852,17 @@ const Contribute = () => {
         if (!parsed.ok) return null;
         return parsed.value;
       };
-      const erdToSend = markingDateToSend(erd, erdBaseline);
-      const lrdToSend = markingDateToSend(lrd, lrdBaseline);
+      const erdToSend = showRecordedDateRange ? markingDateToSend(erd, erdBaseline) : null;
+      const lrdToSend = showRecordedDateRange ? markingDateToSend(lrd, lrdBaseline) : null;
+      const datesToSend = newMarkingDates.map((date) => ({
+        date_year: date.dateYear, date_month: date.dateMonth, date_day: date.dateDay,
+      }));
 
       if (allImageFiles.length > 0 || isEditMarking) {
         const form = new FormData();
+        if (isStateEditor && !isMarkingEditAction) {
+          form.append("marking_dates_seen", JSON.stringify(datesToSend));
+        }
         if (isEditContribution && editContributionId != null) {
           form.append("edit_contribution_id", String(editContributionId));
         }
@@ -1938,6 +1956,7 @@ const Contribute = () => {
         const existingTagMap: Record<string, UploadedImageTag> =
           Object.fromEntries(existingTagMapEntries);
         body = {
+          ...(isStateEditor && !isMarkingEditAction ? { marking_dates_seen: datesToSend } : {}),
           ...(isEditContribution && editContributionId != null
             ? { edit_contribution_id: editContributionId }
             : {}),
@@ -2869,19 +2888,43 @@ const Contribute = () => {
                     {/* Setting a marking's date is editor-only (issue #27); the
                         field is hidden for non-editors and the server strips
                         ERD/LRD from a non-editor's submission. */}
-                    {isStateEditor && <div className="space-y-2">
+                    {isMarkingEditAction && dateRecord?.canEditDates && (
+                      <DatesSeenCard
+                        markingId={dateRecord.id}
+                        datesSeen={dateRecord.datesSeen}
+                        onChanged={async () => {
+                          const data = await getMarkingByIdRaw(dateRecord.id);
+                          if (!data) throw new Error("Could not reload the Marking dates.");
+                          const refreshed = mapApiMarkingToRecord(data);
+                          setDateRecord(refreshed);
+                          const earliest = partialDateInputFromDateSeen({
+                            date: refreshed.earliestSeen,
+                            granularity: refreshed.earliestSeenGranularity,
+                          });
+                          const latest = partialDateInputFromDateSeen({
+                            date: refreshed.latestSeen,
+                            granularity: refreshed.latestSeenGranularity,
+                          });
+                          setErd((value) => partialDateKey(value) === partialDateKey(erdBaseline) ? earliest : value);
+                          setLrd((value) => partialDateKey(value) === partialDateKey(lrdBaseline) ? latest : value);
+                          setErdBaseline(earliest);
+                          setLrdBaseline(latest);
+                        }}
+                      />
+                    )}
+                    {isStateEditor && editMarkingId == null && resumedEditMarkingId == null && (
+                      <DatesSeenCard datesSeen={newMarkingDates} onDatesChange={setNewMarkingDates} />
+                    )}
+                    {showRecordedDateRange && <div className="space-y-2">
                       <Label>Recorded date range</Label>
                       <p className="text-sm text-muted-foreground">
                         Enter the earliest (ERD) and latest (LRD) recorded date status. Use
                         date components when known, or select Date unknown.
                       </p>
-                      {isEditMarking && editMarkingId != null && (
-                        // issues.md 107: approval only ADDS these as observations, so a
-                        // wrong date cannot be fixed here. Todd Hause looked for it here.
+                      {isMarkingEditAction && (
                         <p className="text-sm text-muted-foreground">
-                          Saving adds these as observations; it does not replace existing dates. To
-                          correct or remove individual dates, use <em>Dates seen</em> on the{" "}
-                          <Link to={`/record/${editMarkingId}`} className="underline">marking page</Link>.
+                          Saving adds these as observations; it does not replace existing dates.
+                          {dateRecord?.canEditDates && " Use Dates seen above to correct or remove individual dates."}
                         </p>
                       )}
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

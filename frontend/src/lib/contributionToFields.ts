@@ -13,9 +13,10 @@ import { formatRateValue } from "@/lib/rateDisplay";
 import {
   formatPartialDateInput,
   partialDateInputFromPayload,
+  formatDateSeenLike,
 } from "@/lib/partialDate";
 import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
-import type { MarkingTypeValue } from "@/services/markings";
+import { mapApiMarkingToRecord, type MarkingTypeValue } from "@/services/markings";
 
 export interface ContributionLookups {
   letteringOptions: { id: number; name: string }[];
@@ -42,6 +43,7 @@ export const KNOWN_SUBMITTED_DATA_KEYS: ReadonlySet<string> = new Set([
   "last_seen", "lastSeen",
   "date_range", "dateRange",
   "dates_observed", "datesObserved",
+  "marking_dates_seen",
   // consumed: editor-only ERD/LRD (fall back to these for earliest/latest)
   "marking_erd", "markingErd",
   "marking_erd_granularity", "markingErdGranularity",
@@ -328,6 +330,10 @@ export function submittedDataToFieldInput(
     inscriptionTxt: toStr(sd.inscription_txt ?? sd.inscriptionTxt),
     earliestSeen: earliest,
     latestSeen: latest,
+    datesSeen: mapApiMarkingToRecord({
+      dates_seen: (Array.isArray(sd.marking_dates_seen) ? sd.marking_dates_seen : [])
+        .map((date, index) => ({ ...date, id: index + 1 })),
+    }).datesSeen.map(formatDateSeenLike).join(", "),
     shapeName,
     rateValFormatted: formatRateValue(toStr(sd.rate_val ?? sd.rateVal)),
     dateFmt: resolveDateFormat(sd, lookups),
