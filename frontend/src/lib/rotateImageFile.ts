@@ -1,28 +1,25 @@
+import { drawRotated, normalizeAngle, rotatedSize } from "@/lib/imageRotation";
+
 /**
- * Turn an upload that is not in the catalog yet clockwise by `quarterTurns`
- * (1, 2 or 3), returning a new File to submit in its place (Trello T66).
+ * Turn an upload that is not in the catalog yet clockwise by `degrees`,
+ * returning a new File to submit in its place (Trello T66; any angle since
+ * workspace issue #193). The canvas grows to hold the whole turned image and
+ * the uncovered corners are white, as on the server.
  *
  * `image` is the loaded preview element, so the turn starts from what the
  * contributor saw (browsers apply EXIF orientation to it). Saved as PNG like
  * an upload crop; a canvas keeps no metadata, so the result has no DPI or EXIF.
  */
-export function rotateImageFile(
-  image: HTMLImageElement,
-  quarterTurns: 1 | 2 | 3,
-  original: File,
-): Promise<File> {
-  const { naturalWidth: width, naturalHeight: height } = image;
-  const sideways = quarterTurns % 2 === 1;
+export function rotateImageFile(image: HTMLImageElement, degrees: number, original: File): Promise<File> {
+  if (normalizeAngle(degrees) === 0) return Promise.reject(new Error("Turn the image before saving."));
+  const size = rotatedSize(image.naturalWidth, image.naturalHeight, degrees);
 
   const canvas = document.createElement("canvas");
-  canvas.width = sideways ? height : width;
-  canvas.height = sideways ? width : height;
+  canvas.width = size.width;
+  canvas.height = size.height;
   const ctx = canvas.getContext("2d");
   if (!ctx) return Promise.reject(new Error("Your browser could not rotate this image."));
-  // Turn about the canvas centre, then draw the image centred on it.
-  ctx.translate(canvas.width / 2, canvas.height / 2);
-  ctx.rotate((quarterTurns * Math.PI) / 2);
-  ctx.drawImage(image, -width / 2, -height / 2);
+  drawRotated(ctx, image, degrees);
 
   const type = "image/png";
   const base = original.name.replace(/\.[^.]+$/, "") || "image";

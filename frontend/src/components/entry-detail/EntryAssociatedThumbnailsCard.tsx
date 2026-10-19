@@ -64,7 +64,7 @@ export function EntryAssociatedThumbnailsCard({
   onCropImage?: (index: number) => void;
   cropImageLabel?: string;
   cropImageDisabledReason?: string | null;
-  /** Turn a saved image in quarter turns, in place (Trello T66, Cover images). */
+  /** Turn a saved image by any angle, in place (Trello T66, issue #193; Cover images). */
   onRotateImage?: (index: number) => void;
   /** Edit a saved image's caption (Trello T87). */
   onEditCaption?: (index: number) => void;

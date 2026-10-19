@@ -15,7 +15,8 @@ interface LocalRotateImageDialogProps {
 }
 
 /**
- * Turn an upload before it is submitted (Trello T66; Ian, 2026-10-16). Like
+ * Turn an upload before it is submitted (Trello T66; Ian, 2026-10-16; any
+ * angle since workspace issue #193). Like
  * LocalCropImageDialog this writes nothing to the server: the turned File
  * replaces the upload in the form, so the reviewer sees the image that would
  * be published.
@@ -45,10 +46,10 @@ export function LocalRotateImageDialog({
       onOpenChange={onOpenChange}
       imageUrl={url}
       description={description}
-      onSave={async (quarterTurns, image) => {
+      onSave={async (angle, image) => {
         if (!file) return "Image unavailable.";
         try {
-          onRotated(await rotateImageFile(image, quarterTurns, file));
+          onRotated(await rotateImageFile(image, angle, file));
           return null;
         } catch (err) {
           return err instanceof Error ? err.message : "Could not rotate this image.";

@@ -1663,10 +1663,10 @@ const RecordDetail = () => {
         }}
         imageUrl={rotateImageTarget?.imageUrl ?? null}
         description="Turn the image until the marking reads upright, then save. It replaces this image; the original file is kept."
-        onSave={async (quarterTurns) => {
+        onSave={async (angle) => {
           const imageId = rotateImageTarget?.imageId;
           if (imageId == null) return "This image has not been saved to the catalog yet.";
-          const result = await rotateImage(imageId, quarterTurns);
+          const result = await rotateImage(imageId, angle);
           if (result.ok === false) return result.message;
           toast({ title: "Rotation saved" });
           if (markingId != null) {

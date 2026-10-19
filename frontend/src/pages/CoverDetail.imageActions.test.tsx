@@ -171,9 +171,9 @@ describe("Cover page image actions", () => {
     await waitFor(() => expect(getCoverChangelog).toHaveBeenCalledWith(7));
     fireEvent.click(await screen.findByRole("button", { name: "Rotate this image" }));
     fireEvent.load(screen.getByAltText("Image to rotate"));
-    fireEvent.click(screen.getByRole("button", { name: /Rotate right/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Turn 90° right/ }));
     fireEvent.click(screen.getByRole("button", { name: "Save rotation" }));
-    await waitFor(() => expect(rotateImage).toHaveBeenCalledWith(10916, 1));
+    await waitFor(() => expect(rotateImage).toHaveBeenCalledWith(10916, 90));
     await waitFor(() => expect(getCoverChangelog).toHaveBeenCalledTimes(2));
     expect(getImagesForSubject).toHaveBeenLastCalledWith({ subjectType: "COVER", subjectId: 7 });
     expect((getImagesForSubject as jest.Mock).mock.calls.length).toBeGreaterThan(1);

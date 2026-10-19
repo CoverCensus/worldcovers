@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import uuid
@@ -50,6 +51,7 @@ from common.images import (
     RotateError,
     crop_image_bytes,
     extract_image_metadata,
+    normalize_angle,
     rotate_image_bytes,
 )
 from common.catalog_codes import (
@@ -798,6 +800,21 @@ def _caption_change(txn):
     }
 
 
+def _parse_angle(raw):
+    """A rotation in clockwise degrees, normalised to (-180, 180], or None.
+
+    Any finite number is accepted (the rotate handle can go round many times);
+    a boolean, an empty value or anything non-numeric is a client bug.
+    """
+    if isinstance(raw, bool) or raw is None or raw == "":
+        return None
+    try:
+        angle = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return normalize_angle(angle) if math.isfinite(angle) else None
+
+
 def _image_entry(image):
     """The Marking or Cover an image belongs to, with its snapshot/version writers.
 
@@ -867,7 +884,8 @@ class ImageViewSet(viewsets.ModelViewSet):
 
         Body: {"x": int, "y": int, "width": int, "height": int,
                "image_view": optional, "image_description": optional,
-               "subject_type": optional "MARKING", "subject_id": optional int}
+               "subject_type": optional "MARKING", "subject_id": optional int,
+               "angle": optional clockwise degrees, applied before the box}
         """
         source = self.get_object()
         self.check_object_permissions(request, source)
@@ -934,6 +952,17 @@ class ImageViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Optional turn applied before the box (workspace issue #193); the box
+        # is in the turned image's pixels.
+        angle = 0.0
+        if request.data.get("angle") is not None:
+            angle = _parse_angle(request.data.get("angle"))
+            if angle is None:
+                return Response(
+                    {"detail": "angle must be a number of degrees."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         source_path = Path(settings.MEDIA_ROOT) / source.storage_filename.lstrip("/")
         # storage_filename is editable in the admin, so confirm the resolved
         # path is still inside MEDIA_ROOT before reading it.
@@ -948,7 +977,7 @@ class ImageViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            content = crop_image_bytes(resolved.read_bytes(), source.mime_type, box)
+            content = crop_image_bytes(resolved.read_bytes(), source.mime_type, box, angle)
         except CropError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1033,7 +1062,7 @@ class ImageViewSet(viewsets.ModelViewSet):
         permission_classes=[IsEditorOrAdminWrite, IsResponsibleForImageSubject],
     )
     def rotate(self, request, pk=None):
-        """Turn a Marking or Cover image clockwise in quarter turns, in place.
+        """Turn a Marking or Cover image clockwise by any angle, in place.
 
         Trello T66: Editors asked for an easy way to fix a marking scanned on
         its side; Ian extended it to Cover images on 2026-10-19. Unlike a crop,
@@ -1043,17 +1072,25 @@ class ImageViewSet(viewsets.ModelViewSet):
         the 30-day /media/ cache; the previous file is never deleted and is
         named in the audit row on the image's Marking or Cover.
 
-        Body: {"quarter_turns": 1 | 2 | 3}
+        Workspace issue #193 (Reese, 2026-10-19) replaced quarter turns with a
+        free angle set by dragging a rotate handle. Right angles stay exact
+        pixel moves; any other angle grows the canvas with white corners.
+
+        Body: {"angle": number} -- clockwise degrees, any finite value; only
+        where it ends up (normalised to -180..180) matters.
         """
         image = self.get_object()
         self.check_object_permissions(request, image)
 
-        # Exactly 1, 2 or 3: a float such as 1.5 or a boolean is a client bug.
-        raw_turns = str(request.data.get("quarter_turns")).strip()
-        quarter_turns = int(raw_turns) if raw_turns in ("1", "2", "3") else None
-        if quarter_turns is None:
+        angle = _parse_angle(request.data.get("angle"))
+        if angle is None:
             return Response(
-                {"detail": "quarter_turns must be 1, 2 or 3."},
+                {"detail": "angle must be a number of degrees."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if angle == 0:
+            return Response(
+                {"detail": "Turn the image before saving."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         subject, snapshot, create_version = _image_entry(image)
@@ -1079,7 +1116,7 @@ class ImageViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            content = rotate_image_bytes(resolved.read_bytes(), image.mime_type, quarter_turns)
+            content = rotate_image_bytes(resolved.read_bytes(), image.mime_type, angle)
         except RotateError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1127,7 +1164,7 @@ class ImageViewSet(viewsets.ModelViewSet):
                 after_payload=snapshot(subject),
                 extra_payload={
                     "image_id": image.pk,
-                    "quarter_turns": quarter_turns,
+                    "angle": angle,
                     "previous_storage_filename": previous_storage_filename,
                 },
             )

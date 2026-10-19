@@ -39,10 +39,10 @@ export function LocalCropImageDialog({ open, onOpenChange, file, onCropped }: Lo
       title="Crop the marking out of this image"
       description="Drag a box around the marking. The cropped area replaces this upload; the uncropped image is not submitted."
       saveLabel="Use crop"
-      onSave={async (rect, image) => {
+      onSave={async (rect, image, angle) => {
         if (!file) return "Image unavailable.";
         try {
-          onCropped(await cropImageFile(image, rect, file));
+          onCropped(await cropImageFile(image, rect, file, angle));
           return null;
         } catch (err) {
           return err instanceof Error ? err.message : "Could not crop this image.";

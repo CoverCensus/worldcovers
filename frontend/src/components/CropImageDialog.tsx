@@ -45,9 +45,9 @@ export function CropImageDialog({
           : "Drag a box around the marking. The cropped area is added as a new image on this record; the original is left untouched."
       }
       saveLabel="Save crop"
-      onSave={async (rect) => {
+      onSave={async (rect, _image, angle) => {
         if (!imageId) return "Image unavailable.";
-        const result = await cropImage(imageId, rect, destination);
+        const result = await cropImage(imageId, rect, destination, angle);
         if (result.ok === false) return result.message;
         await onCropped();
         return null;

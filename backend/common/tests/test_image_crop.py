@@ -14,7 +14,7 @@ from pathlib import Path
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
 from django.test import SimpleTestCase, TestCase, override_settings
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageDraw
 from rest_framework.test import APIClient
 
 from common.images import CropError, crop_image_bytes
@@ -82,6 +82,33 @@ class ImageCropOrientationTests(SimpleTestCase):
     def test_crop_outside_the_rotated_width_is_rejected(self):
         with self.assertRaisesMessage(CropError, "outside the 60x80 source image"):
             crop_image_bytes(self._source(6), "image/png", (65, 5, 10, 10))
+
+    def test_a_turned_crop_straightens_a_tilted_strike(self):
+        """Issue #193: a line tilted 10 degrees comes out level."""
+        image = PILImage.new("RGB", (200, 100), "white")
+        rise = 80 * 0.17633  # tan(10 deg)
+        ImageDraw.Draw(image).line((20, 50 + rise, 180, 50 - rise), fill="black", width=3)
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+
+        # Pillow's expanded size for 200x100 turned 10 degrees is 216x134.
+        content = crop_image_bytes(output.getvalue(), "image/png", (48, 47, 120, 40), angle=10)
+
+        with PILImage.open(io.BytesIO(content)) as cropped:
+            self.assertEqual(cropped.size, (120, 40))
+            dark_rows = {
+                y for x in range(cropped.width) for y in range(cropped.height)
+                if cropped.getpixel((x, y))[0] < 128
+            }
+            self.assertTrue(dark_rows)
+            self.assertLessEqual(max(dark_rows) - min(dark_rows), 5)
+
+    def test_a_box_overshooting_by_two_pixels_is_clamped(self):
+        content = crop_image_bytes(self._source(1), "image/png", (0, 0, 82, 60))
+        with PILImage.open(io.BytesIO(content)) as cropped:
+            self.assertEqual(cropped.size, (80, 60))
+        with self.assertRaises(CropError):
+            crop_image_bytes(self._source(1), "image/png", (0, 0, 83, 60))
 
 
 @override_settings(MEDIA_ROOT=MEDIA_ROOT)
@@ -221,6 +248,14 @@ class ImageCropTests(TestCase):
         self.client.force_authenticate(self.editor)
 
         self.assertEqual(self._crop(x="left").status_code, 400)
+
+    def test_non_numeric_angle_is_rejected_without_writing(self):
+        self.client.force_authenticate(self.editor)
+
+        for angle in ("left", True, "nan"):
+            with self.subTest(angle=angle):
+                self.assertEqual(self._crop(angle=angle).status_code, 400)
+        self.assertEqual(Image.objects.filter(cropped_from=self.source).count(), 0)
 
     def test_image_view_must_be_valid_for_the_subject(self):
         """FRONT is a cover view; the CheckConstraint would reject it anyway."""
