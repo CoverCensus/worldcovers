@@ -301,6 +301,7 @@ export async function cropImage(
    */
   angle = 0,
 ): Promise<{ ok: true; imageId: number } | { ok: false; message: string }> {
+  const turn = normalizeAngle(angle);
   await ensureCsrfToken();
   try {
     const { data } = await apiClient.post(`/images/${imageId}/crop/`, {
@@ -315,7 +316,7 @@ export async function cropImage(
             image_view: destination.imageView ?? "FULL",
           }
         : {}),
-      ...(normalizeAngle(angle) !== 0 ? { angle: normalizeAngle(angle) } : {}),
+      ...(turn !== 0 ? { angle: turn } : {}),
     });
     return { ok: true, imageId: data.image_id };
   } catch (err: unknown) {

@@ -955,8 +955,9 @@ class ImageViewSet(viewsets.ModelViewSet):
         # Optional turn applied before the box (workspace issue #193); the box
         # is in the turned image's pixels.
         angle = 0.0
-        if request.data.get("angle") is not None:
-            angle = _parse_angle(request.data.get("angle"))
+        raw_angle = request.data.get("angle")
+        if raw_angle is not None:
+            angle = _parse_angle(raw_angle)
             if angle is None:
                 return Response(
                     {"detail": "angle must be a number of degrees."},

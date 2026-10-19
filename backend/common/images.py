@@ -158,6 +158,7 @@ def normalize_angle(angle: float) -> float:
 
 
 # Corners uncovered by a turn that is not a right angle, per image mode.
+# CMYK white is no ink: (0, 0, 0, 0).
 _WHITE = {"L": 255, "LA": (255, 255), "RGB": (255, 255, 255), "RGBA": (255, 255, 255, 255),
           "CMYK": (0, 0, 0, 0)}
 

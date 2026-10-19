@@ -17,8 +17,9 @@ export const SNAP_DEGREES = 3;
 /** Uncovered corners are filled white, like scan paper (matches the server). */
 export const FILL_COLOUR = "#ffffff";
 
-/** Clockwise degrees in (-180, 180], to a tenth of a degree. */
+/** Clockwise degrees in (-180, 180], to a tenth of a degree. A non-finite angle is no turn. */
 export function normalizeAngle(degrees: number): number {
+  if (!Number.isFinite(degrees)) return 0;
   let turned = Math.round((((degrees % 360) + 360) % 360) * 10) / 10;
   turned %= 360;
   if (turned > 180) turned -= 360;
