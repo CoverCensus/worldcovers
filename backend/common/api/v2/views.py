@@ -44,7 +44,13 @@ from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
 
-from common.images import CropError, crop_image_bytes, extract_image_metadata
+from common.images import (
+    CropError,
+    RotateError,
+    crop_image_bytes,
+    extract_image_metadata,
+    rotate_image_bytes,
+)
 from common.catalog_codes import (
     CATALOG_CODE_KEYS,
     CatalogCodeError,
@@ -993,6 +999,116 @@ class ImageViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(cropped)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsEditorOrAdminWrite, IsResponsibleForImageSubject],
+    )
+    def rotate(self, request, pk=None):
+        """Turn a Marking image clockwise in quarter turns, in place.
+
+        Trello T66: Editors asked for an easy way to fix a marking scanned on
+        its side. Unlike a crop, the rotated image takes the original's place
+        (same row, position, view and caption), so a sideways default image
+        is fixed rather than joined by a second copy. The pixels go to a new
+        file so the new URL defeats the 30-day /media/ cache; the previous
+        file is never deleted and is named in the audit row.
+        Covers are out of scope.
+
+        Body: {"quarter_turns": 1 | 2 | 3}
+        """
+        image = self.get_object()
+        self.check_object_permissions(request, image)
+
+        if image.subject_type != Image.SUBJECT_MARKING:
+            return Response(
+                {"detail": "Rotation is only available for Marking images."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Exactly 1, 2 or 3: a float such as 1.5 or a boolean is a client bug.
+        raw_turns = str(request.data.get("quarter_turns")).strip()
+        quarter_turns = int(raw_turns) if raw_turns in ("1", "2", "3") else None
+        if quarter_turns is None:
+            return Response(
+                {"detail": "quarter_turns must be 1, 2 or 3."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Default manager on purpose: a recycle-binned marking is read-only.
+        marking = Marking.objects.filter(pk=image.subject_id).first()
+        if marking is None:
+            return Response(
+                {"detail": "This image's marking is not in the catalog."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        previous_storage_filename = image.storage_filename
+        source_path = Path(settings.MEDIA_ROOT) / previous_storage_filename.lstrip("/")
+        # storage_filename is editable in the admin, so confirm the resolved
+        # path is still inside MEDIA_ROOT before reading it.
+        media_root = Path(settings.MEDIA_ROOT).resolve()
+        try:
+            resolved = source_path.resolve(strict=True)
+            resolved.relative_to(media_root)
+        except (OSError, ValueError):
+            return Response(
+                {"detail": "Source image file is missing."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            content = rotate_image_bytes(resolved.read_bytes(), image.mime_type, quarter_turns)
+        except RotateError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        metadata = extract_image_metadata(content, "image/png")
+        if metadata is None:
+            return Response(
+                {"detail": "Rotated image could not be encoded."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Keep the rotated file beside its source so media stays sorted by state.
+        subdir = str(Path(image.storage_filename).parent).strip("/.")
+        storage_name = f"{uuid.uuid4().hex}.png"
+        if subdir:
+            storage_name = f"{subdir}/{storage_name}"
+        destination_path = Path(settings.MEDIA_ROOT) / storage_name
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        destination_path.write_bytes(content)
+
+        with transaction.atomic():
+            image = Image.objects.select_for_update().get(pk=image.pk)
+            if image.storage_filename != previous_storage_filename:
+                # Another editor changed this image while it was being turned.
+                destination_path.unlink(missing_ok=True)
+                return Response(
+                    {"detail": "This image changed while it was being rotated. Reload and try again."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            before = build_marking_snapshot(marking)
+            image.storage_filename = storage_name
+            for field, value in metadata.items():
+                setattr(image, field, value)
+            image.modified_by = request.user
+            image.save()
+            txn = log_submission_transaction(
+                action=SubmissionTransaction.ACTION_IMAGE_ROTATED,
+                actor=request.user,
+                marking=marking,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload=before,
+                after_payload=build_marking_snapshot(marking),
+                extra_payload={
+                    "image_id": image.pk,
+                    "quarter_turns": quarter_turns,
+                    "previous_storage_filename": previous_storage_filename,
+                },
+            )
+            create_marking_version(marking, txn, request.user)
+
+        serializer = self.get_serializer(image)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     def perform_update(self, serializer):
         # Moving an image to another subject (issue #48) has the same

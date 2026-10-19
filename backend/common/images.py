@@ -49,16 +49,32 @@ class CropError(ValueError):
     """A crop rectangle that cannot be applied to the given image."""
 
 
+class RotateError(ValueError):
+    """A rotation that cannot be applied to the given image."""
+
+
+# Clockwise quarter turns. Pillow's ROTATE_* constants turn counter-clockwise.
+_CLOCKWISE_TRANSPOSE = {
+    1: PILImage.Transpose.ROTATE_270,
+    2: PILImage.Transpose.ROTATE_180,
+    3: PILImage.Transpose.ROTATE_90,
+}
+
+
+def _swap_resolution_axes(image: PILImage.Image) -> None:
+    """A quarter turn swaps the physical resolution axes as well."""
+    if dpi := image.info.get("dpi"):
+        image.info["dpi"] = dpi[::-1]
+    exif = image.getexif()
+    if 282 in exif and 283 in exif:
+        exif[282], exif[283] = exif[283], exif[282]
+        image.info["exif"] = exif.tobytes()
+
+
 def _oriented_image(source: PILImage.Image) -> PILImage.Image:
     image = ImageOps.exif_transpose(source)
-    # A quarter turn swaps the physical resolution axes as well.
     if source.getexif().get(274) in (5, 6, 7, 8):
-        if dpi := image.info.get("dpi"):
-            image.info["dpi"] = dpi[::-1]
-        exif = image.getexif()
-        if 282 in exif and 283 in exif:
-            exif[282], exif[283] = exif[283], exif[282]
-            image.info["exif"] = exif.tobytes()
+        _swap_resolution_axes(image)
     return image
 
 
@@ -161,3 +177,32 @@ def crop_image_bytes(
 
     cropped = img.crop((x, y, x + width, y + height))
     return _png_bytes(cropped)
+
+
+def rotate_image_bytes(content: bytes, mime_type: str, quarter_turns: int) -> bytes:
+    """Turn ``content`` clockwise by ``quarter_turns`` (1, 2 or 3) and re-encode it.
+
+    Used by the editor Rotate tool (Trello T66) for a Marking image stored on
+    its side. Quarter turns are exact pixel moves, so nothing is resampled.
+    The turn starts from the displayed orientation, after EXIF rotation or
+    reflection. The output is PNG, like a crop. Raises RotateError for anything
+    the caller should turn into a 400.
+    """
+    if mime_type not in ALLOWED_MIME_TYPES:
+        raise RotateError("Unsupported image format.")
+    method = _CLOCKWISE_TRANSPOSE.get(quarter_turns)
+    if method is None:
+        raise RotateError("quarter_turns must be 1, 2 or 3.")
+
+    try:
+        img = PILImage.open(io.BytesIO(content))
+        img.load()
+        img = _oriented_image(img)
+    except Exception as exc:
+        raise RotateError("Could not read the source image.") from exc
+
+    rotated = img.transpose(method)
+    rotated.info = img.info.copy()
+    if quarter_turns % 2:
+        _swap_resolution_axes(rotated)
+    return _png_bytes(rotated)

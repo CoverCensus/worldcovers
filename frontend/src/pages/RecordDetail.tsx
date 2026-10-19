@@ -19,6 +19,7 @@ import {
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { ImageOrPlaceholder } from "@/components/ImageOrPlaceholder";
 import { CropImageDialog } from "@/components/CropImageDialog";
+import { RotateImageDialog } from "@/components/RotateImageDialog";
 import {
   formatDateSeen,
   formatDatesSeenList,
@@ -50,6 +51,7 @@ import {
   removeMarking,
   reorderImages,
   restoreMarking,
+  rotateImage,
   updateMarkingReviewed,
   type AssociatedCover,
   type AssociatedDateSeen,
@@ -343,6 +345,8 @@ const RecordDetail = () => {
   const [restoring, setRestoring] = useState(false);
   // Image whose marking an editor is cropping out of a whole-cover scan (#77).
   const [cropImageTarget, setCropImageTarget] = useState<MarkingImage | null>(null);
+  // Image an editor is turning a quarter at a time (Trello T66).
+  const [rotateImageTarget, setRotateImageTarget] = useState<MarkingImage | null>(null);
   // issues.md 167 / Trello T37: create a cover from a marking image.
   // Own busy/error pair rather than sharing the move-to-cover one: they are
   // two independent dialogs, and shared state lets a failure in one surface
@@ -1103,6 +1107,11 @@ const RecordDetail = () => {
                                 if (!rawImg?.imageId) return;
                                 setCropImageTarget(rawImg);
                               }}
+                              onRotate={() => {
+                                const rawImg = record.images[idx];
+                                if (!rawImg?.imageId) return;
+                                setRotateImageTarget(rawImg);
+                              }}
                               onCreateCoverFromImage={() => {
                                 const rawImg = record.images[idx];
                                 if (rawImg) openCreateCoverFromImage(rawImg);
@@ -1610,6 +1619,27 @@ const RecordDetail = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <RotateImageDialog
+        open={rotateImageTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setRotateImageTarget(null);
+        }}
+        imageUrl={rotateImageTarget?.imageUrl ?? null}
+        description="Turn the image until the marking reads upright, then save. It replaces this image; the original file is kept."
+        onSave={async (quarterTurns) => {
+          const imageId = rotateImageTarget?.imageId;
+          if (imageId == null) return "This image has not been saved to the catalog yet.";
+          const result = await rotateImage(imageId, quarterTurns);
+          if (result.ok === false) return result.message;
+          toast({ title: "Rotation saved" });
+          if (markingId != null) {
+            const refreshed = await getMarkingById(markingId);
+            if (refreshed) setRecord(refreshed);
+          }
+          return null;
+        }}
+      />
 
       <CropImageDialog
         open={cropImageTarget != null}

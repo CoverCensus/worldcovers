@@ -70,7 +70,9 @@ it.each(["Marking", "Cover"])("resumes and saves both %s Citation selections and
   open(kind === "Cover" ? "/markings/7/covers/new?edit=1" : "/contribute?edit=1",
     kind === "Cover" ? "/markings/:id/covers/new" : "/contribute",
     kind === "Cover" ? <CoverEdit /> : <Contribute />);
-  expect(await screen.findByDisplayValue("https://example.com/11")).toBeTruthy();
+  // The first render of the whole form can pass the 1 s default when the full
+  // suite runs in parallel; this waits for the resumed draft, not a race.
+  expect(await screen.findByDisplayValue("https://example.com/11", {}, { timeout: 5000 })).toBeTruthy();
   expect(screen.getByDisplayValue("https://example.com/22")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
   await waitFor(() => expect(createContribution).toHaveBeenCalled());

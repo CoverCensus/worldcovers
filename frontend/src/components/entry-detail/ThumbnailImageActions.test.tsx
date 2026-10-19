@@ -35,6 +35,7 @@ const renderActions = (
       onMoveBy={noop}
       onSetDefault={noop}
       onCrop={noop}
+      onRotate={noop}
       onCreateCoverFromImage={noop}
       onDelete={noop}
       {...overrides}
@@ -69,6 +70,18 @@ describe("ThumbnailImageActions", () => {
 
     expect(crop().hasAttribute("disabled")).toBe(false);
     expect(screen.queryByText(/has not been saved/i)).toBeNull();
+  });
+
+  it("offers Rotate beside Crop, under the same saved-image rule (Trello T66)", () => {
+    const onRotate = jest.fn();
+    renderActions(imageActionState({ imageId: 5869, isStaff: true, isRemoved: false }), { onRotate });
+    screen.getByRole("button", { name: "Rotate this image" }).click();
+    expect(onRotate).toHaveBeenCalledTimes(1);
+
+    renderActions(imageActionState({ imageId: null, isStaff: true, isRemoved: false }));
+    expect(
+      screen.getAllByRole("button", { name: "Rotate this image" })[1].hasAttribute("disabled"),
+    ).toBe(true);
   });
 
   it("no longer offers to move an image to another marking", () => {
