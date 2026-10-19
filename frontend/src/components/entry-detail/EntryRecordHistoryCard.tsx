@@ -2,7 +2,7 @@ import { History, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { MarkingChangelogEvent } from "@/services/markings";
-import { formatDiffValue, humanizeFieldKey } from "./historyDiffFormatting";
+import { formatCaptionChange, formatDiffValue, humanizeFieldKey } from "./historyDiffFormatting";
 
 const HISTORY_COLLAPSED_LIMIT = 3;
 const HISTORY_EXPANDED_LIMIT = 10;
@@ -71,7 +71,7 @@ export function EntryRecordHistoryCard({
         ) : error ? (
           <p className="text-sm text-muted-foreground">{error}</p>
         ) : events.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No audit events recorded for this marking yet.</p>
+          <p className="text-sm text-muted-foreground">No audit events recorded for this record yet.</p>
         ) : (
           <>
             <ul className="divide-y divide-border text-sm">
@@ -91,7 +91,12 @@ export function EntryRecordHistoryCard({
                   {/* Field-level changes. Gate on version_no > 1 so the initial
                       create approval (version 1, before == empty) does not list
                       every field; reject/return events carry empty diffs. */}
-                  {event.diff.length > 0 && event.version_no != null && event.version_no > 1 && (
+                  {event.caption_change ? (
+                    <p className="mt-2 text-xs text-muted-foreground break-all">
+                      <span className="font-medium text-foreground">Caption</span>
+                      {`: ${formatCaptionChange(event.caption_change)}`}
+                    </p>
+                  ) : event.diff.length > 0 && event.version_no != null && event.version_no > 1 && (
                     <ul className="mt-2 space-y-0.5 text-xs text-muted-foreground">
                       {event.diff.slice(0, DIFF_FIELD_LIMIT).map((change) => (
                         <li key={change.field} className="break-all">

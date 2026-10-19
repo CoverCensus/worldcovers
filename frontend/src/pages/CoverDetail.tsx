@@ -24,6 +24,7 @@ import {
   moveToMarkingDisabledReason,
 } from "@/lib/coverImageActionState";
 import { CropImageDialog } from "@/components/CropImageDialog";
+import { ImageCaptionDialog } from "@/components/ImageCaptionDialog";
 import { EntryRecordHistoryCard } from "@/components/entry-detail/EntryRecordHistoryCard";
 import { EntryCitationsCard, type EntryCitationItem } from "@/components/entry-detail/EntryCitationsCard";
 import { CoverRecordDetailFields } from "@/components/entry-detail/CoverRecordDetailFields";
@@ -35,7 +36,8 @@ import {
   getImagesForSubject,
   getMarkingById,
   getMarkingsPage,
-  getMarkingChangelog,
+  getCoverChangelog,
+  updateImageCaption,
   getCoverMarkingsByCover,
   deleteImage,
   loadAssociatedMarkingsForCover,
@@ -165,6 +167,9 @@ const CoverDetailPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [cover, setCover] = useState<CoverDetail | null>(null);
   const [images, setImages] = useState<MarkingImage[]>([]);
+  const [captionImageTarget, setCaptionImageTarget] = useState<MarkingImage | null>(null);
+  // Bumped after an action that writes history, so the panel refetches.
+  const [historyReloadKey, setHistoryReloadKey] = useState(0);
   const [reorderingImages, setReorderingImages] = useState(false);
   const [coverMarkingLink, setCoverMarkingLink] = useState<CoverMarkingLink | null>(null);
   const [coverMarkingLinks, setCoverMarkingLinks] = useState<CoverMarkingLink[]>([]);
@@ -467,8 +472,9 @@ const CoverDetailPage = () => {
     };
   }, [coverPk, markingId]);
 
+  // The Cover's own history (Trello T87); it used to show the parent Marking's.
   useEffect(() => {
-    if (markingId == null || Number.isNaN(markingId) || !canViewHistory) {
+    if (coverPk == null || Number.isNaN(coverPk) || !canViewHistory) {
       setHistoryEvents([]);
       setHistoryError(null);
       return;
@@ -477,7 +483,7 @@ const CoverDetailPage = () => {
     setHistoryLoading(true);
     setHistoryError(null);
     setHistoryExpanded(false);
-    getMarkingChangelog(markingId)
+    getCoverChangelog(coverPk)
       .then((data) => {
         if (cancelled) return;
         if (!data) {
@@ -500,7 +506,7 @@ const CoverDetailPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [markingId, canViewHistory]);
+  }, [coverPk, canViewHistory, historyReloadKey]);
 
   useEffect(() => {
     if (!api) return;
@@ -921,6 +927,9 @@ const CoverDetailPage = () => {
               onCropImage={canManageImages ? beginCropIntoMarking : undefined}
               cropImageLabel="Crop into marking"
               cropImageDisabledReason={cropIntoMarkingReason}
+              onEditCaption={
+                canManageImages ? (index) => setCaptionImageTarget(images[index] ?? null) : undefined
+              }
             />
             {canViewHistory && (
               <EntryRecordHistoryCard
@@ -1411,6 +1420,26 @@ const CoverDetailPage = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ImageCaptionDialog
+        open={captionImageTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setCaptionImageTarget(null);
+        }}
+        caption={captionImageTarget?.imageDescription ?? ""}
+        onSave={async (caption) => {
+          const imageId = captionImageTarget?.imageId;
+          if (imageId == null || imageId <= 0 || coverPk == null) {
+            return "This image has not been saved to the catalog yet.";
+          }
+          const result = await updateImageCaption(imageId, caption);
+          if (result.ok === false) return result.message;
+          toast({ title: "Caption saved" });
+          setImages(await getImagesForSubject({ subjectType: "COVER", subjectId: coverPk }));
+          setHistoryReloadKey((key) => key + 1);
+          return null;
+        }}
+      />
 
       <AlertDialog open={restoreOpen} onOpenChange={(open) => !restoring && setRestoreOpen(open)}>
         <AlertDialogContent>

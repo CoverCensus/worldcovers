@@ -10,6 +10,10 @@ from PIL import Image as PILImage, ImageCms, ImageOps, PngImagePlugin
 
 ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/jpg"}
 
+# Image.image_description is a TextField, whose max_length Django does not
+# enforce, so every API path that writes a caption caps it here (T43, T87).
+MAX_IMAGE_DESCRIPTION_LENGTH = 500
+
 
 def extract_image_metadata(content: bytes, mime_type: str) -> Optional[dict]:
     """

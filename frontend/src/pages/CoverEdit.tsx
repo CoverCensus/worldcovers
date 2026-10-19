@@ -58,6 +58,7 @@ import { COVER_SUBMISSION_GUIDELINES } from "@/labels/guidelines";
 import { isCoverContributionData } from "@/lib/contributionDisplay";
 import {
   contributionImageMetasFromSubmittedData,
+  isDraftContributionImage,
   markingImagesFromContributionMetas,
 } from "@/lib/contributionImages";
 
@@ -246,6 +247,8 @@ export default function CoverEdit() {
   const [draftLoadError, setDraftLoadError] = useState<string | null>(null);
   const [coverRow, setCoverRow] = useState<AssociatedCover | null>(null);
   const [copySource, setCopySource] = useState<AssociatedCover | null>(null);
+  // Captions typed on images already saved with a resumed draft (T87), by tile key.
+  const [savedCaptionEdits, setSavedCaptionEdits] = useState<Record<string, string>>({});
   const [copySourceError, setCopySourceError] = useState<string | null>(null);
   const [markingRecord, setMarkingRecord] = useState<MarkingRecord | null>(null);
   // Review state of a contribution resumed via ?edit=<id>. `mode` is "edit" only when the
@@ -1035,6 +1038,16 @@ export default function CoverEdit() {
         }
       }
       form.append("cover_image_tags", JSON.stringify(tracingTags));
+      // Changed captions of images saved with this draft (T87), by image URL.
+      const changedSavedCaptions: Record<string, string> = {};
+      for (const item of gallery) {
+        if (item.kind !== "existing" || !(item.key in savedCaptionEdits)) continue;
+        const caption = savedCaptionEdits[item.key].trim();
+        if (caption !== item.img.imageDescription.trim()) changedSavedCaptions[item.key] = caption;
+      }
+      if (editContributionId != null && Object.keys(changedSavedCaptions).length > 0) {
+        form.append("existing_image_descriptions", JSON.stringify(changedSavedCaptions));
+      }
       if (descriptions.some(Boolean)) {
         form.append("cover_image_descriptions", JSON.stringify(descriptions));
       }
@@ -1390,6 +1403,14 @@ export default function CoverEdit() {
                                         id={`cover-caption-${idx}`}
                                         value={item.upload.description}
                                         onChange={(value) => setPendingDescription(item.key, value)}
+                                      />
+                                    ) : isDraftContributionImage(item.img.imageId) ? (
+                                      <ImageCaptionInput
+                                        id={`cover-caption-${idx}`}
+                                        value={savedCaptionEdits[item.key] ?? item.img.imageDescription}
+                                        onChange={(value) =>
+                                          setSavedCaptionEdits((prev) => ({ ...prev, [item.key]: value }))
+                                        }
                                       />
                                     ) : (
                                       item.img.imageDescription && (
