@@ -96,11 +96,19 @@ it.each(["marking", "cover"] as const)(
   },
 );
 
-it("shows a caption saved with a resumed Marking draft", async () => {
+it("lets a resumed Marking draft change a saved image's caption and sends only that change", async () => {
   resumeDraft("marking", {
     marking_image_metas: [{ storage_filename: "va/mine.png", image_description: "Back of the cover" }],
   });
-  expect(await screen.findByText("Back of the cover", {}, { timeout: 5000 })).toBeTruthy();
+  const caption = await screen.findByDisplayValue("Back of the cover", {}, { timeout: 5000 });
+  fireEvent.change(caption, { target: { value: "Front of the cover " } });
+  fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+  await waitFor(() => expect(createContribution).toHaveBeenCalled());
+  const payload = (createContribution as jest.Mock).mock.calls[0][0];
+  const sent = payload instanceof FormData
+    ? JSON.parse(String(payload.get("existing_image_descriptions")))
+    : payload.existing_image_descriptions;
+  expect(sent).toEqual({ "/media/va/mine.png": "Front of the cover" });
 });
 
 it("captions only the gallery images that have a description", () => {

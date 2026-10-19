@@ -20,6 +20,8 @@ import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { ImageOrPlaceholder } from "@/components/ImageOrPlaceholder";
 import { CropImageDialog } from "@/components/CropImageDialog";
 import { RotateImageDialog } from "@/components/RotateImageDialog";
+import { ImageCaptionDialog } from "@/components/ImageCaptionDialog";
+import { formatCaptionChange } from "@/components/entry-detail/historyDiffFormatting";
 import {
   formatDateSeen,
   formatDatesSeenList,
@@ -53,6 +55,7 @@ import {
   reorderImages,
   restoreMarking,
   rotateImage,
+  updateImageCaption,
   updateMarkingReviewed,
   type AssociatedCover,
   type AssociatedDateSeen,
@@ -351,6 +354,9 @@ const RecordDetail = () => {
   const [cropImageTarget, setCropImageTarget] = useState<MarkingImage | null>(null);
   // Image an editor is turning a quarter at a time (Trello T66).
   const [rotateImageTarget, setRotateImageTarget] = useState<MarkingImage | null>(null);
+  const [captionImageTarget, setCaptionImageTarget] = useState<MarkingImage | null>(null);
+  // Bumped after an action that writes history, so the panel refetches.
+  const [historyReloadKey, setHistoryReloadKey] = useState(0);
   // issues.md 167 / Trello T37: create a cover from a marking image.
   // Own busy/error pair rather than sharing the move-to-cover one: they are
   // two independent dialogs, and shared state lets a failure in one surface
@@ -509,7 +515,7 @@ const RecordDetail = () => {
     return () => {
       cancelled = true;
     };
-  }, [markingId, canViewHistory]);
+  }, [markingId, canViewHistory, historyReloadKey]);
 
   useEffect(() => {
     if (!api) return;
@@ -1125,6 +1131,11 @@ const RecordDetail = () => {
                                 if (!rawImg?.imageId) return;
                                 setRotateImageTarget(rawImg);
                               }}
+                              onEditCaption={() => {
+                                const rawImg = record.images[idx];
+                                if (!rawImg?.imageId) return;
+                                setCaptionImageTarget(rawImg);
+                              }}
                               onCreateCoverFromImage={() => {
                                 const rawImg = record.images[idx];
                                 if (rawImg) openCreateCoverFromImage(rawImg);
@@ -1178,6 +1189,12 @@ const RecordDetail = () => {
                               <div className="mt-1 text-xs text-muted-foreground break-all">
                                 {historyActorDisplay(event)}
                               </div>
+                              {event.caption_change && (
+                                <p className="mt-2 text-xs text-muted-foreground break-all">
+                                  <span className="font-medium text-foreground">Caption</span>
+                                  {`: ${formatCaptionChange(event.caption_change)}`}
+                                </p>
+                              )}
                             </li>
                           ))}
                         </ul>
@@ -1656,6 +1673,24 @@ const RecordDetail = () => {
             const refreshed = await getMarkingById(markingId);
             if (refreshed) setRecord(refreshed);
           }
+          return null;
+        }}
+      />
+
+      <ImageCaptionDialog
+        open={captionImageTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setCaptionImageTarget(null);
+        }}
+        caption={captionImageTarget?.imageDescription ?? ""}
+        onSave={async (caption) => {
+          const imageId = captionImageTarget?.imageId;
+          if (imageId == null) return "This image has not been saved to the catalog yet.";
+          const result = await updateImageCaption(imageId, caption);
+          if (result.ok === false) return result.message;
+          toast({ title: "Caption saved" });
+          await refetchRecord();
+          setHistoryReloadKey((key) => key + 1);
           return null;
         }}
       />

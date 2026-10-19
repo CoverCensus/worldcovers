@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Crop, Replace, Star, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Crop, Replace, Star, Trash2, Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
@@ -23,6 +23,7 @@ export function EntryAssociatedThumbnailsCard({
   onCropImage,
   cropImageLabel,
   cropImageDisabledReason = null,
+  onEditCaption,
   title = "Associated Thumbnails",
 }: {
   images: EntryGalleryImage[];
@@ -62,6 +63,8 @@ export function EntryAssociatedThumbnailsCard({
   onCropImage?: (index: number) => void;
   cropImageLabel?: string;
   cropImageDisabledReason?: string | null;
+  /** Edit a saved image's caption (Trello T87). */
+  onEditCaption?: (index: number) => void;
 }) {
   return (
     <Card className="shadow-archival-md">
@@ -85,6 +88,7 @@ export function EntryAssociatedThumbnailsCard({
                 onMoveImage ? moveReason : null,
                 onCropImage ? cropReason : null,
                 onDeleteImage && !onMoveImage && !onCropImage ? deleteReason : null,
+                onEditCaption && unsaved ? UNSAVED_IMAGE_REASON : null,
               ].filter((r, i, all): r is string => r != null && all.indexOf(r) === i);
               return (
               <div
@@ -146,8 +150,22 @@ export function EntryAssociatedThumbnailsCard({
                         </Button>
                       </div>
                     )}
-                    {(onMoveImage || onCropImage || onDeleteImage) && (
+                    {(onMoveImage || onCropImage || onDeleteImage || onEditCaption) && (
                       <div className="flex items-center justify-center gap-0.5">
+                        {onEditCaption && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            aria-label="Edit this image's caption"
+                            title="Edit caption"
+                            disabled={reorderingImages || unsaved}
+                            onClick={() => onEditCaption(idx)}
+                          >
+                            <Type className="h-3 w-3" />
+                          </Button>
+                        )}
                         {onCropImage && (
                           <Button
                             type="button"

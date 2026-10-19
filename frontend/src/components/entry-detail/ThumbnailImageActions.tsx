@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Crop, ImagePlus, RotateCw, Star, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Crop, ImagePlus, RotateCw, Star, Trash2, Type } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { ImageActionState } from "@/lib/imageActionState";
@@ -40,6 +40,7 @@ export function ThumbnailImageActions({
   onSetDefault,
   onCrop,
   onRotate,
+  onEditCaption,
   onCreateCoverFromImage,
   onDelete,
 }: {
@@ -54,6 +55,8 @@ export function ThumbnailImageActions({
   onSetDefault: () => void;
   onCrop: () => void;
   onRotate: () => void;
+  /** Optional: edit the saved caption (Trello T87). */
+  onEditCaption?: () => void;
   onCreateCoverFromImage: () => void;
   onDelete: () => void;
 }) {
@@ -135,6 +138,20 @@ export function ThumbnailImageActions({
         >
           <RotateCw className="h-3 w-3" />
         </Button>
+        {onEditCaption && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            aria-label="Edit this image's caption"
+            title="Edit caption"
+            disabled={reordering || blocked}
+            onClick={onEditCaption}
+          >
+            <Type className="h-3 w-3" />
+          </Button>
+        )}
         <Button
           type="button"
           variant="ghost"
