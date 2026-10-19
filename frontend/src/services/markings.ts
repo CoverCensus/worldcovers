@@ -325,6 +325,28 @@ export async function cropImage(
 }
 
 /**
+ * POST /api/v2/images/{image_id}/rotate/ -- turn a Marking image clockwise in
+ * place (Trello T66). The server writes the turned pixels to a new file, so the
+ * refreshed record carries a new URL; the previous file is kept.
+ */
+export async function rotateImage(
+  imageId: number,
+  quarterTurns: 1 | 2 | 3,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  await ensureCsrfToken();
+  try {
+    await apiClient.post(`/images/${imageId}/rotate/`, { quarter_turns: quarterTurns });
+    return { ok: true };
+  } catch (err: unknown) {
+    const message = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+    return {
+      ok: false,
+      message: typeof message === "string" ? message : "Could not rotate image.",
+    };
+  }
+}
+
+/**
  * DELETE /api/v2/images/{image_id}/ -- remove one image row.
  *
  * Cwd for manual verification: frontend/.

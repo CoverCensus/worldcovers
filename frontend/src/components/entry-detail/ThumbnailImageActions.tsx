@@ -1,11 +1,11 @@
-import { ArrowDown, ArrowUp, Crop, ImagePlus, Star, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Crop, ImagePlus, RotateCw, Star, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { ImageActionState } from "@/lib/imageActionState";
 
 /**
  * The per-thumbnail action cluster on the marking detail screen: reorder, set
- * default, crop, create a cover from the image, delete.
+ * default, crop, rotate, create a cover from the image, delete.
  *
  * "Move to cover" became "Create cover from this image" on 2026-09-21. It
  * used to require a cover to already exist, so on a marking with none it was
@@ -39,6 +39,7 @@ export function ThumbnailImageActions({
   onMoveBy,
   onSetDefault,
   onCrop,
+  onRotate,
   onCreateCoverFromImage,
   onDelete,
 }: {
@@ -52,6 +53,7 @@ export function ThumbnailImageActions({
   onMoveBy: (offset: -1 | 1) => void;
   onSetDefault: () => void;
   onCrop: () => void;
+  onRotate: () => void;
   onCreateCoverFromImage: () => void;
   onDelete: () => void;
 }) {
@@ -120,6 +122,18 @@ export function ThumbnailImageActions({
           onClick={onCrop}
         >
           <Crop className="h-3 w-3" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          aria-label="Rotate this image"
+          title="Rotate image"
+          disabled={reordering || blocked}
+          onClick={onRotate}
+        >
+          <RotateCw className="h-3 w-3" />
         </Button>
         <Button
           type="button"

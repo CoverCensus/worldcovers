@@ -57,7 +57,7 @@ const REMOVED_REASON =
 
 /** The case that cost a Delaware editor two days. */
 const UNSAVED_REASON =
-  "This image has not been saved to the catalog yet, so it cannot be cropped or moved.";
+  "This image has not been saved to the catalog yet, so it cannot be cropped, rotated or moved.";
 
 export function imageActionState({
   imageId,
