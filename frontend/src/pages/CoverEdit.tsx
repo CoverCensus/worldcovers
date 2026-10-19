@@ -35,6 +35,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ImageCaptionInput } from "@/components/ImageCaptionInput";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -87,6 +88,8 @@ type PendingUpload = {
   file: File;
   tracing: boolean;
   previewUrl: string;
+  /** Caption (T43), saved as the image's description on approval. */
+  description: string;
 };
 
 // One entry in the combined image gallery. "existing" wraps an already-saved
@@ -658,7 +661,13 @@ export default function CoverEdit() {
       next.push({
         kind: "pending",
         key,
-        upload: { key, file, tracing: false, previewUrl: URL.createObjectURL(file) },
+        upload: {
+          key,
+          file,
+          tracing: false,
+          previewUrl: URL.createObjectURL(file),
+          description: "",
+        },
       });
     }
     if (next.length === 0) return;
@@ -771,6 +780,16 @@ export default function CoverEdit() {
           ? { ...item, upload: { ...item.upload, tracing } }
           : { ...item, img: { ...item.img, isTracing: tracing } };
       }),
+    );
+  };
+
+  const setPendingDescription = (key: string, description: string) => {
+    setGallery((prev) =>
+      prev.map((item) =>
+        item.key === key && item.kind === "pending"
+          ? { ...item, upload: { ...item.upload, description } }
+          : item,
+      ),
     );
   };
 
@@ -975,17 +994,22 @@ export default function CoverEdit() {
       // rebuilds the saved metas list in this order so display_order at approval
       // matches the on-screen order (and index 0 becomes the catalog default).
       const tracingTags: string[] = [];
+      const descriptions: string[] = [];
       const imageOrder: string[] = [];
       for (const item of gallery) {
         if (item.kind === "pending") {
           form.append("cover_image", item.upload.file, item.upload.file.name);
           tracingTags.push(item.upload.tracing ? "tracing" : "photograph");
+          descriptions.push(item.upload.description.trim());
           imageOrder.push("__new__");
         } else {
           imageOrder.push(item.key);
         }
       }
       form.append("cover_image_tags", JSON.stringify(tracingTags));
+      if (descriptions.some(Boolean)) {
+        form.append("cover_image_descriptions", JSON.stringify(descriptions));
+      }
       form.append("image_order", JSON.stringify(imageOrder));
 
       // Existing-image removals apply on approval in both flows: the fresh
@@ -1320,6 +1344,17 @@ export default function CoverEdit() {
                                       />
                                       Tracing
                                     </label>
+                                    {item.kind === "pending" ? (
+                                      <ImageCaptionInput
+                                        id={`cover-caption-${idx}`}
+                                        value={item.upload.description}
+                                        onChange={(value) => setPendingDescription(item.key, value)}
+                                      />
+                                    ) : (
+                                      item.img.imageDescription && (
+                                        <p className="w-full text-xs break-words">{item.img.imageDescription}</p>
+                                      )
+                                    )}
                                     {item.kind === "pending" && (
                                       <p className="text-xs text-muted-foreground truncate max-w-[200px]">{item.upload.file.name}</p>
                                     )}

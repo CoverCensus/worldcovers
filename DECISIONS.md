@@ -515,3 +515,28 @@ with `expires 30d`, so only a new filename shows the turn at once, and
 review page has no pending-image edit path; an editor approves, then rotates.
 Evidence: `test_image_rotate.py`, `rotateImageFile.test.ts`,
 `markings.rotate.test.ts`, `ThumbnailImageActions.test.tsx`.
+
+## Caption New Uploads Through Their Image Metas
+
+**Do:** Give each new upload on the Marking and Cover forms an optional
+"Caption (optional)" field (`ImageCaptionInput`). The form sends the captions as
+`marking_image_descriptions` / `cover_image_descriptions`, a JSON list
+positional over the uploaded files like `*_image_tags`. The submit view strips
+each one, rejects any over 500 characters before writing a file, and stores it
+as that upload's `image_description` meta; approval already copies the meta
+onto `Image.image_description`. Show a caption as a `<figcaption>` under the
+main image on the Marking and Cover pages and both review pages; show a
+draft's saved caption read-only on its tile.
+
+**Don't:** Edit the caption of an already-saved image here (Marking edits stay
+add-only; a Cover edit's kept rows keep their caption), copy the caption into
+`alt`, or hide the "Front"/"Back"/"Details" view labels that v1 imports wrote
+into the same field.
+
+**Why:** Trello T43 asks for editable per-upload captions and reuse of
+`image_description`. Riding the metas needs no model change and no approval
+change, and drafts already keep metas as they are. Django does not enforce
+`max_length` on a `TextField`, so the API sets the cap. WAI advises that alt
+text should not repeat a caption. Reese chose new uploads only and showing the
+v1 labels as they are on 2026-10-19; changing that data is Michael's call.
+Evidence: `test_image_captions.py`, `ImageCaptions.test.tsx`.

@@ -3432,6 +3432,11 @@ def _resolve_collection_for_submission(
     return region, collection, effective_state
 
 
+# Image.image_description is a TextField, whose max_length Django does not
+# enforce, so the submit boundary caps contributor captions (T43).
+MAX_IMAGE_DESCRIPTION_LENGTH = 500
+
+
 MARKING_DATE_BOUNDARY_KEYS = (
     (
         "marking_erd",
@@ -3671,6 +3676,26 @@ class ContributionSubmitView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        # Per-upload captions (T43), positional over the uploaded files like
+        # *_image_tags. Checked before any file is written so a rejected
+        # caption cannot leave orphan files under MEDIA_ROOT.
+        image_descriptions = _parse_image_descriptions(
+            data.get(
+                "cover_image_descriptions"
+                if is_cover_submission
+                else "marking_image_descriptions"
+            )
+        )
+        for number, text in enumerate(image_descriptions, start=1):
+            if len(text) > MAX_IMAGE_DESCRIPTION_LENGTH:
+                return Response(
+                    {"detail": (
+                        f"Caption for image {number} is longer than "
+                        f"{MAX_IMAGE_DESCRIPTION_LENGTH} characters."
+                    )},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # Save uploaded image files under MEDIA_ROOT/<region_abbrev>/.
         # Marking flow uses `marking_image`; cover draft flow uses `cover_image`.
         # stash the resulting metadata on Contribution.submitted_data so the
@@ -3691,9 +3716,14 @@ class ContributionSubmitView(APIView):
         except AttributeError:
             uploaded_files = []
         image_metas = []
-        for uploaded in uploaded_files:
+        for index, uploaded in enumerate(uploaded_files):
             meta = _save_contribution_image(uploaded, region_abbrev)
             if meta:
+                # Index over the uploads, not the saved metas, so a file that
+                # fails to save cannot shift later captions onto the wrong image.
+                # Approval copies meta["image_description"] onto the Image row.
+                if index < len(image_descriptions) and image_descriptions[index]:
+                    meta["image_description"] = image_descriptions[index]
                 image_metas.append(meta)
 
         # Contributor-chosen final image order: a list of tokens, one per
@@ -3713,6 +3743,9 @@ class ContributionSubmitView(APIView):
             "referenceWorkDetails",
             "marking_image",
             "cover_image",
+            # Captions are copied into the image metas above.
+            "marking_image_descriptions",
+            "cover_image_descriptions",
             "edit_contribution_id",
             "editContributionId",
             "removed_existing_image_keys",
@@ -4146,6 +4179,21 @@ def _parse_existing_image_tags(raw):
     if isinstance(raw, dict):
         return {str(k): str(v) for k, v in raw.items()}
     return {}
+
+
+def _parse_image_descriptions(raw):
+    """Parse positional captions for newly uploaded files (*_image_descriptions)
+    from a JSON string or list into stripped strings. A non-string entry
+    becomes "" so it keeps its position; anything unparseable returns []. The
+    forms omit the key when no upload has a caption, so absent means none."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(raw, list):
+        return []
+    return [item.strip() if isinstance(item, str) else "" for item in raw]
 
 
 def _existing_image_tag_value(storage_filename, existing_tags):
