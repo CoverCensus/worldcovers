@@ -9,11 +9,11 @@ hang off one either.
 Runbook:
   cwd: repo root
   command: uv run python backend/manage.py import_vphc_reference \
-               --vphc-dir ../docs/vphc --actor 1 --dry-run
+               --vphc-dir tools/wip/out/vphc --actor 1 --dry-run
   expected exit code: 0
 
-Inputs (produced by tools/vphc_extract.py and tools/vphc_crossexam.py, which
-live in the workspace root, not this repo):
+Inputs (produced by tools/vphc_extract.py and tools/vphc_crossexam.py; see
+docs/devel/TOOLS.md, "VPHC Source Extraction"):
 
   extract/t1_markings.csv              town populations
   extract/t3_postmasters.csv           9,244 people, 11,544 appointment events
@@ -136,7 +136,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             "--vphc-dir", required=True,
-            help="Path to the docs/vphc directory in the workspace root")
+            help="VPHC artifact directory, e.g. tools/wip/out/vphc")
         parser.add_argument(
             "--actor", type=int, default=1,
             help="User id recorded as created_by/modified_by (default 1)")

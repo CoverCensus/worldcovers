@@ -7,7 +7,7 @@ cannot name a town that has no post office.
 Runbook:
   cwd: repo root
   command: uv run python backend/manage.py apply_vphc_ledger \
-               --vphc-dir ../docs/vphc --actor 1 --dry-run
+               --vphc-dir tools/wip/out/vphc --actor 1 --dry-run
   expected exit code: 0
 
 Markings arrive as **pending contributions**, not catalog rows, so an editor

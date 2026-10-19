@@ -15,6 +15,7 @@ Start here. Pick the row that matches what you are trying to do.
 | Name UI elements and actions consistently | [vocab.md](vocab.md) |
 | Digitize an ASCC state (build and import a bundle) | [PIPELINE.md](PIPELINE.md) |
 | Understand decisions made during VPHC ingestion | [VPHC-DECISIONS.md](VPHC-DECISIONS.md) |
+| Look up a VPHC decode or match rule (R1, I3c, E6...) | [VPHC-RULES.md](VPHC-RULES.md) |
 | Look up a management command or data script | [TOOLS.md](TOOLS.md) |
 | Run day-to-day server operations | [RUNBOOK.md](RUNBOOK.md) |
 | Understand or change the deploy flow | [DEPLOY.md](DEPLOY.md) |

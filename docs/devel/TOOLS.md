@@ -35,6 +35,10 @@ which is exactly when you need it).
 | `ascc_page_extract.py` | Extract ASCC listing text from page chunks | `tools/ascc_page_extract.py` |
 | `ascc_image_extract.py` | Extract marking images from page chunks | `tools/ascc_image_extract.py` |
 | `fphc_extract.py` | Dump native FPHC text, tables, images, and printed organization | `tools/fphc_extract.py` |
+| `vphc_extract.py` | Decode the VPHS workbook into CSVs and scans | `tools/vphc_extract.py` |
+| `vphc_crossexam.py` | Match the VPHC sheet against a catalog bundle; write the ledger | `tools/vphc_crossexam.py` |
+| `vphc_manuscript_ledger.py` | Write the create-only ledger for VPHC manuscript markings | `tools/vphc_manuscript_ledger.py` |
+| `vphc_aux_census.py` | Count VPHC scans that show more than one device | `tools/vphc_aux_census.py` |
 | `ascc_data_munger.py` | Build Django-shape ASCC CSV bundles | `tools/ascc_data_munger.py` |
 | `ascc import` | Load an ASCC CSV bundle | `backend/common/management/commands/import_ascc_bundle.py` |
 | `ascc drop` | Delete one region's imported catalog data | `backend/common/management/commands/drop_ascc_state.py` |
@@ -301,6 +305,68 @@ This tool does not run OCR, create WoCo records, infer historical identities,
 or import a database bundle. Native text failures appear as exceptions;
 handwriting inside images remains in the image assets for later work.
 
+## VPHC Source Extraction
+
+Build the artifact directory that the [VPHC commands](#vphc-commands) load,
+from the Virginia Postal History Society workbook. These tools read and write
+files only; none opens a database. Every rule they apply is in
+[VPHC-RULES.md](VPHC-RULES.md).
+
+Inputs go under `tools/wip/in/`:
+
+| Path | Contents |
+|------|----------|
+| `VPHS_COMPLETE_BOOK_DONE.xlsx` | The source workbook. The August 2026 ingest used sha256 `7e8f7ff565c59cc016d689bc8cafd1a4c47c811e5625f93acf1274417ea3075e` |
+| `vphc-prod-va-wv/` | An `import_ascc_bundle`-format bundle of the catalog's VA and WV, read for `post_offices.csv`, `markings.csv`, `shapes.csv`, and `images.csv`. The ingest used production as of 2026-08-12. This checkout has no tool that exports one from a live catalog |
+
+Run the steps in order with a plain `python3`. `vphc_crossexam.py` and
+`vphc_manuscript_ledger.py` stop with a `RuntimeError` if Django or a MySQL
+driver is importable, so do not use `uv run` for them. The census needs
+Pillow and numpy from the dev group, so it does use `uv run`:
+
+```sh
+python3 tools/vphc_extract.py            # Phase 0: decode the sheet
+python3 tools/vphc_crossexam.py          # Phase 2: match it against the bundle
+python3 tools/vphc_manuscript_ledger.py  # Phase 6: manuscript markings
+uv run python tools/vphc_aux_census.py   # optional: two-device scans
+```
+
+Expected exit code for each step is `0`. Output goes under
+`tools/wip/out/vphc/`, which is the `--vphc-dir` for the commands:
+
+| Path | Contents |
+|------|----------|
+| `extract/` | `t1_markings.csv`, `t2_images.csv`, `t3_postmasters.csv`, 4,373 scans in `media/`, and `manifest.json` with every file digest |
+| `unresolved/` | One CSV per reason code: rows a person must decide |
+| `crossexam/` | `ledger/proposed.jsonl`, `crosswalk.csv`, `post_offices_to_create.csv`, conflict and duplicate reports, `manifest.json` |
+| `manuscripts/` | `ledger-{va,wv}.jsonl` and `crosswalk-{va,wv}.csv`, the overlap report for editors, and `quarantine.csv` |
+| `aux_census.csv` | Per-scan device counts and the metrics behind each call |
+
+Every step is deterministic. A repeat run over the same inputs writes
+identical files; only `generated_at` in `extract/manifest.json` changes.
+Each tool's `--help` lists its path overrides.
+
+The cross-exam and manuscript steps carry fixtures that run against the real
+data. Run them after a rules change. Each ends with `all fixtures green`:
+
+```sh
+python3 tools/vphc_crossexam.py --selftest
+python3 tools/vphc_manuscript_ledger.py --selftest
+python3 tools/vphc_crossexam.py --explain T1:r6   # one row's match reasoning
+```
+
+Load order: `import_vphc_reference`, then `apply_vphc_ledger` with its default
+ledger, then once per state for the manuscripts:
+
+```sh
+./woco apply_vphc_ledger --vphc-dir tools/wip/out/vphc --actor ACTOR_ID \
+  --ledger manuscripts/ledger-va.jsonl --crosswalk manuscripts/crosswalk-va.csv \
+  --applied-log manuscripts/APPLIED-va.jsonl --dry-run
+```
+
+The VA/WV ledgers were applied in August 2026. Rerunning a ledger creates
+duplicate contributions; see [`apply_vphc_ledger`](#apply_vphc_ledger).
+
 ## Management Commands
 
 ### `ascc import`
@@ -481,10 +547,9 @@ Expected exit code: `0`.
 ## VPHC Commands
 
 These commands consume prepared VPHC artifacts. They do not extract the source
-workbook. The extraction and cross-examination scripts named in their source
-comments are external workspace tools, not entry points in this checkout.
-`import_apmc_bundle` currently delegates to ASCC; use the commands below for
-VPHC.
+workbook; [VPHC Source Extraction](#vphc-source-extraction) builds the artifact
+directory, by default `tools/wip/out/vphc`. `import_apmc_bundle` currently
+delegates to ASCC; use the commands below for VPHC.
 
 Run from the repo root with the intended database in `mysql.cnf`. Replace
 `/path/to/vphc` with the prepared artifact directory and `ACTOR_ID` with an
