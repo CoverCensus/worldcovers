@@ -23,7 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Trash2, Crop, RotateCw } from "lucide-react";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import type { FormEvent, MouseEvent } from "react";
 import { Link, useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
@@ -1061,6 +1061,69 @@ const Contribute = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editContributionId]);
 
+  // The Marking fields a Contributor may change, set from a catalog record
+  // (getMarkingByIdRaw). Submit Edit uses it and then adds its edit-only state;
+  // Create Similar (T44) uses it alone, so nothing tying a submission to the
+  // source -- catalog code, submitter-name choice, images, dates -- comes along.
+  const prefillMarkingFields = useCallback((data: Record<string, unknown>) => {
+    const typeRaw = String(data.type ?? "").trim().toUpperCase();
+    if (typeRaw === "RATEMARK") setMarkingType("RATEMARK");
+    else if (typeRaw === "AUXMARK") setMarkingType("AUXMARK");
+    else if (typeRaw === "TOWNMARK") setMarkingType("TOWNMARK");
+
+    setState(typeof data.state === "string" ? data.state : "");
+    setTown(sanitizeTown(typeof data.town === "string" ? data.town : ""));
+
+    const shapeName = typeof data.shape_name === "string" ? data.shape_name : "";
+    if (shapeName) {
+      setShape(shapeName);
+    } else if (data.shape != null) {
+      const shapeById = shapeOptions.find((opt) => String(opt.id) === String(data.shape));
+      setShape(shapeById?.name ?? "");
+    } else {
+      setShape("");
+    }
+    setColor(typeof data.color_name === "string" ? data.color_name : "");
+    setWidthMm(String(data.width ?? "").replace(/[^0-9.]/g, ""));
+    setHeightMm(String(data.height ?? "").replace(/[^0-9.]/g, ""));
+    setIsManuscript(Boolean(data.is_manuscript));
+    setIsIrregular(Boolean(data.is_irreg));
+    const impressionRaw = String(data.impression ?? "").trim();
+    const normalizedImpression = impressionRaw
+      ? IMPRESSION_OPTIONS.find((opt) => opt.value.toLowerCase() === impressionRaw.toLowerCase())?.value
+      : undefined;
+    setImpression(normalizedImpression ?? "Normal");
+    setInscriptionText(typeof data.inscription_txt === "string" ? data.inscription_txt : "");
+    setDescription(typeof data.desc === "string" ? data.desc : "");
+    setRateValue(formatRateNumber(String(data.rate_val ?? "")));
+
+    const citations = Array.isArray(data.citations) ? data.citations : [];
+    const referenceIds: number[] = [];
+    const referenceDetails: Record<number, ReferenceDetailInput> = {};
+    for (const citation of citations) {
+      const id = Number(citation.reference_work);
+      if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid Citation Reference Work");
+      referenceIds.push(id);
+      referenceDetails[id] = parseCitationDetail(String(citation.citation_detail ?? ""));
+    }
+    setPendingReferenceWorkIds(referenceIds);
+    setSelectedReferenceWorks([]);
+    setReferenceDetailsById(referenceDetails);
+
+    setLetteringId(data.lettering != null ? String(data.lettering) : "");
+    const dateFmt = String(data.date_fmt ?? "").trim();
+    if (dateFmt) {
+      const byCode = dateFormatOptions.find(
+        (opt) =>
+          String(opt.description ?? "").trim().toLowerCase() === dateFmt.toLowerCase() ||
+          String(opt.name).trim().toLowerCase() === dateFmt.toLowerCase(),
+      );
+      setDateFormatIds(byCode ? [String(byCode.id)] : []);
+    } else {
+      setDateFormatIds([]);
+    }
+  }, [dateFormatOptions, shapeOptions]);
+
   // Load Marking record for edit-marking mode (from /edit/:id).
   //
   // Before loading, dedupe against any existing open draft this user has
@@ -1107,68 +1170,13 @@ const Contribute = () => {
         setMarkingModifiedAtBaseline(modifiedDate);
         setMarkingChangedSinceDraft(false);
 
-        const typeRaw = String(data.type ?? "").trim().toUpperCase();
-        if (typeRaw === "RATEMARK") setMarkingType("RATEMARK");
-        else if (typeRaw === "AUXMARK") setMarkingType("AUXMARK");
-        else if (typeRaw === "TOWNMARK") setMarkingType("TOWNMARK");
-
-        setState(typeof data.state === "string" ? data.state : "");
-        setTown(sanitizeTown(typeof data.town === "string" ? data.town : ""));
+        prefillMarkingFields(data);
         if (typeof data.code === "string" && data.code.trim()) {
           setCatalogCode(data.code.trim());
           setCatalogCodeTouched(true);
         }
-
-        const shapeName = typeof data.shape_name === "string" ? data.shape_name : "";
-        if (shapeName) {
-          setShape(shapeName);
-        } else if (data.shape != null) {
-          const shapeById = shapeOptions.find((opt) => String(opt.id) === String(data.shape));
-          setShape(shapeById?.name ?? "");
-        } else {
-          setShape("");
-        }
-        setColor(typeof data.color_name === "string" ? data.color_name : "");
-        setWidthMm(String(data.width ?? "").replace(/[^0-9.]/g, ""));
-        setHeightMm(String(data.height ?? "").replace(/[^0-9.]/g, ""));
-        setIsManuscript(Boolean(data.is_manuscript));
-        setIsIrregular(Boolean(data.is_irreg));
-        const impressionRaw = String(data.impression ?? "").trim();
-        const normalizedImpression = impressionRaw
-          ? IMPRESSION_OPTIONS.find((opt) => opt.value.toLowerCase() === impressionRaw.toLowerCase())?.value
-          : undefined;
-        setImpression(normalizedImpression ?? "Normal");
-        setInscriptionText(typeof data.inscription_txt === "string" ? data.inscription_txt : "");
-        setDescription(typeof data.desc === "string" ? data.desc : "");
         setDisplaySubmitterName(Boolean(data.display_submitter_name));
         setCanChangeSubmitterName(data.can_change_submitter_name === true);
-        setRateValue(formatRateNumber(String(data.rate_val ?? "")));
-
-        const citations = Array.isArray(data.citations) ? data.citations : [];
-        const referenceIds: number[] = [];
-        const referenceDetails: Record<number, ReferenceDetailInput> = {};
-        for (const citation of citations) {
-          const id = Number(citation.reference_work);
-          if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid Citation Reference Work");
-          referenceIds.push(id);
-          referenceDetails[id] = parseCitationDetail(String(citation.citation_detail ?? ""));
-        }
-        setPendingReferenceWorkIds(referenceIds);
-        setSelectedReferenceWorks([]);
-        setReferenceDetailsById(referenceDetails);
-
-        setLetteringId(data.lettering != null ? String(data.lettering) : "");
-        const dateFmt = String(data.date_fmt ?? "").trim();
-        if (dateFmt) {
-          const byCode = dateFormatOptions.find(
-            (opt) =>
-              String(opt.description ?? "").trim().toLowerCase() === dateFmt.toLowerCase() ||
-              String(opt.name).trim().toLowerCase() === dateFmt.toLowerCase(),
-          );
-          setDateFormatIds(byCode ? [String(byCode.id)] : []);
-        } else {
-          setDateFormatIds([]);
-        }
 
         // Prefill ERD/LRD from the marking's current earliest/latest. Baselines
         // let submit send a boundary only when the user actually changes it, so
@@ -1219,7 +1227,45 @@ const Contribute = () => {
     return () => {
       cancelled = true;
     };
-  }, [isEditMarking, editMarkingId, dateFormatOptions, shapeOptions, navigate]);
+  }, [isEditMarking, editMarkingId, prefillMarkingFields, navigate]);
+
+  // Create Similar (Trello T44): /contribute?copy=<markingId> starts a NEW
+  // submission from an existing Marking's fields and citations. Only the
+  // ordinary new-submission keys are sent, so approval creates a separate Entry
+  // with its own catalog code and review; the source is never touched.
+  const copySourceRaw = mode === "new" ? Number(searchParams.get("copy")) : NaN;
+  const copySourceId = Number.isInteger(copySourceRaw) && copySourceRaw > 0 ? copySourceRaw : null;
+  const [copySource, setCopySource] = useState<Record<string, unknown> | null>(null);
+  const [copySourceLabel, setCopySourceLabel] = useState<string | null>(null);
+  const [copySourceError, setCopySourceError] = useState<string | null>(null);
+  const copyAppliedRef = useRef(false);
+  useEffect(() => {
+    if (copySourceId == null) return;
+    let cancelled = false;
+    setCopySourceError(null);
+    getMarkingByIdRaw(copySourceId)
+      .then((data) => {
+        if (cancelled) return;
+        if (data) setCopySource(data);
+        else setCopySourceError("The Marking to start from was not found. Fill in the form from scratch.");
+      })
+      .catch(() => {
+        if (!cancelled) setCopySourceError("The Marking to start from could not be loaded. Fill in the form from scratch.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [copySourceId]);
+  // Prefill once, after the shape and date-format options have loaded, so the
+  // lookups resolve and nothing the Contributor types afterwards is overwritten.
+  useEffect(() => {
+    if (!copySource || copyAppliedRef.current || loadingShapes || catalogOptionsLoading) return;
+    copyAppliedRef.current = true;
+    prefillMarkingFields(copySource);
+    const place = [copySource.town, copySource.state].filter((v) => typeof v === "string" && v).join(", ");
+    const inscription = typeof copySource.inscription_txt === "string" ? copySource.inscription_txt.trim() : "";
+    setCopySourceLabel(inscription ? `${place} - "${inscription}"` : place || `Marking ${copySourceId}`);
+  }, [copySource, copySourceId, loadingShapes, catalogOptionsLoading, prefillMarkingFields]);
 
   const noAssignedStates = false;
 
@@ -2416,6 +2462,19 @@ const Contribute = () => {
                   <CardTitle className="font-heading text-xl">{copy.card}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
+                  {copySourceId != null && (
+                    copySourceError ? (
+                      <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+                        {copySourceError}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
+                        {copySourceLabel
+                          ? `Started from ${copySourceLabel}. Change what differs; images, dates and the catalog code are not copied.`
+                          : "Loading the Marking to start from..."}
+                      </div>
+                    )
+                  )}
                   {noAssignedStates && (
                     <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
                       You are signed in but do not have any states assigned to your account. Please contact an
