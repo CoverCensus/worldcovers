@@ -570,3 +570,36 @@ signal of a change.
 Evidence: `test_contribution_edit_baseline.py`, `editComparison.test.ts`,
 `EditComparisonCard.test.tsx`.
 
+
+## Start A Submission From A Similar Entry
+
+**Do:** Offer "Create Similar Marking" and "Create Similar Cover" beside Submit
+Edit on the Marking and Cover pages (same gating: signed in, Entry not
+removed). They open the ordinary new-submission form with `?copy=<id>`
+(`/contribute?copy=<markingId>`, `/record/<markingId>/cover/new?copy=<coverId>`),
+which prefills only what a sibling Entry plausibly shares:
+- Marking: type, state, town, inscription, manuscript, shape, lettering,
+  irregular, color, size, impression, rate, date format, description and
+  Citations, through the same `prefillMarkingFields` the Submit Edit form uses.
+- Cover: type, institutionally owned, backstamp, description and Citations,
+  under the same parent Marking.
+
+The prefill runs once, after the option lists load.
+
+**Don't:**
+- Copy the catalog code, the submitter-name choice, images, the Marking's
+  ERD/LRD, the Cover's date or the contributor comment.
+- Send any key that targets an Entry: `edit_marking_id`, `edit_cover_*`,
+  `original_marking_id`, `marking_id` or `cover_id`.
+- Record a "copied from" key.
+
+**Why:** Trello T44 asks for a new submission that "never updates the source
+Entry or inherits approval/identity". Leaving out the target keys makes the
+backend treat a copy as a plain create: a new row, a new catalog code and a
+fresh review. The catalog code is unique, so carrying it would fail approval.
+The submitter-name choice belongs to the source's creator. Images, dates and
+the comment describe the source item itself. The provenance keys the code
+already reads are target keys, so recording a source through them would turn a
+copy into an edit and remove the copier's pending edits of the source.
+Similar-entry warnings belong to T48. Reese chose this scope on 2026-10-19.
+Evidence: `CreateSimilar.test.tsx`.

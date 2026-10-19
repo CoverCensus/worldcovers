@@ -231,12 +231,22 @@ export default function CoverEdit() {
     editContributionIdRaw && /^\d+$/.test(editContributionIdRaw)
       ? parseInt(editContributionIdRaw, 10)
       : null;
+  // Create Similar (Trello T44): ?copy=<coverId> on the new-cover route starts a
+  // NEW Cover under this Marking from that cover's fields and citations. No
+  // edit_cover_* key is sent, so approval creates a separate Cover.
+  const copyParam = searchParams.get("copy");
+  const copySourceCoverId =
+    mode === "create" && editContributionId == null && copyParam && /^\d+$/.test(copyParam)
+      ? parseInt(copyParam, 10)
+      : null;
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draftLoadDone, setDraftLoadDone] = useState(editContributionId == null);
   const [draftLoadError, setDraftLoadError] = useState<string | null>(null);
   const [coverRow, setCoverRow] = useState<AssociatedCover | null>(null);
+  const [copySource, setCopySource] = useState<AssociatedCover | null>(null);
+  const [copySourceError, setCopySourceError] = useState<string | null>(null);
   const [markingRecord, setMarkingRecord] = useState<MarkingRecord | null>(null);
   // Review state of a contribution resumed via ?edit=<id>. `mode` is "edit" only when the
   // route carries a coverId, but the dashboard sends a needs-revision cover to
@@ -513,6 +523,11 @@ export default function CoverEdit() {
         if (cancelled) return;
         if (mode === "create") {
           setCoverRow(null);
+          if (copySourceCoverId != null) {
+            const source = covers.find((c) => c.coverDetails?.id === copySourceCoverId) ?? null;
+            if (source) setCopySource(source);
+            else setCopySourceError("The Cover to start from is not linked to this Marking. Fill in the form from scratch.");
+          }
           return;
         }
         const found = covers.find((c) => c.coverDetails?.id === routeCoverId) ?? null;
@@ -533,18 +548,31 @@ export default function CoverEdit() {
     return () => {
       cancelled = true;
     };
-  }, [markingId, routeCoverId, mode]);
+  }, [markingId, routeCoverId, mode, copySourceCoverId]);
 
+  // Only the fields a sibling Cover shares; its date, images, comment and
+  // submitter-name choice describe the source itself and stay behind.
+  useEffect(() => {
+    if (!copySource) return;
+    const shared = buildEditState(copySource);
+    setType(shared.type);
+    setIsInstitutional(shared.isInstitutional);
+    setIsBackstamp(shared.isBackstamp);
+    setDescription(shared.description);
+  }, [copySource]);
+
+  // Citations come from the cover being edited, or from the Create Similar source.
+  const citationSourceCoverId =
+    mode === "edit" ? coverRow?.coverDetails?.id ?? null : copySource?.coverDetails?.id ?? null;
   useEffect(() => {
     if (
-      mode !== "edit" ||
-      !coverRow?.coverDetails?.id ||
+      citationSourceCoverId == null ||
       referenceWorksLoading || referenceWorksError ||
       citationsLoadedRef.current
     ) {
       return;
     }
-    const cid = coverRow.coverDetails.id;
+    const cid = citationSourceCoverId;
     let cancelled = false;
     void listCitationsForSubject({ subjectType: "COVER", subjectId: cid }).then((rows) => {
       if (cancelled) return;
@@ -567,7 +595,7 @@ export default function CoverEdit() {
     return () => {
       cancelled = true;
     };
-  }, [mode, coverRow, referenceWorks, referenceWorksLoading, referenceWorksError]);
+  }, [citationSourceCoverId, referenceWorks, referenceWorksLoading, referenceWorksError]);
 
   const refreshImages = async () => {
     if (coverId == null) {
@@ -1151,6 +1179,19 @@ export default function CoverEdit() {
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <CoverReviewBanner status={reviewStatus} notes={reviewNotes} />
+                  {copySourceCoverId != null && (
+                    copySourceError ? (
+                      <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+                        {copySourceError}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
+                        {copySource
+                          ? `Started from Cover ${copySource.coverDetails?.code || copySourceCoverId}. Change what differs; images, the date and the catalog code are not copied.`
+                          : "Loading the Cover to start from..."}
+                      </div>
+                    )
+                  )}
 
                   <form onSubmit={handleFormSubmit} className="space-y-6" noValidate>
                     <div className="space-y-2">

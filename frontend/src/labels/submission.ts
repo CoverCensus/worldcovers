@@ -15,6 +15,9 @@ export const SUBMISSION_LABELS = {
     submitCover: "Submit Cover",
     submitNewCover: "Submit New Cover",
     submitEditToCover: "Submit Edit to Cover",
+    // Start a NEW Submission from an existing Entry's fields (Trello T44).
+    createSimilarMarking: "Create Similar Marking",
+    createSimilarCover: "Create Similar Cover",
     resubmit: "Resubmit",
     saveDraft: "Save Draft",
   },

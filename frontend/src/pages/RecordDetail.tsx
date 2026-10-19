@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Crop, History, Info, Loader2, MessageSquare, Pencil, Plus, Recycle, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, Copy, Crop, History, Info, Loader2, MessageSquare, Pencil, Plus, Recycle, Star, Trash2 } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { AdminEditLink } from "@/components/AdminEditLink";
 import { Footer } from "@/components/Footer";
@@ -656,6 +656,12 @@ const RecordDetail = () => {
       },
     });
 
+  // Create Similar (Trello T44): a NEW submission prefilled from this marking.
+  const goCreateSimilar = () =>
+    navigate(`/contribute?copy=${record.id}`, {
+      state: { from: location.pathname + location.search },
+    });
+
   // Re-pull the marking after a remove/restore so the buttons toggle in place
   // and the recycle-bin banner appears/disappears. Reuses the same loader the
   // page mounts with and refreshes after image edits. The editor/superuser
@@ -1215,10 +1221,16 @@ const RecordDetail = () => {
                     <CardTitle className="font-heading text-lg">Marking Details</CardTitle>
                     {/* A removed marking is read-only: no edits until it is restored. */}
                     {!record.isRemoved && (
-                      <Button variant="outline" size="sm" onClick={goEdit}>
-                        <Pencil className="mr-2 h-4 w-4" />
-                        {SUBMISSION_LABELS.action.submitEditToMarking}
-                      </Button>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Button variant="outline" size="sm" onClick={goCreateSimilar}>
+                          <Copy className="mr-2 h-4 w-4" />
+                          {SUBMISSION_LABELS.action.createSimilarMarking}
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={goEdit}>
+                          <Pencil className="mr-2 h-4 w-4" />
+                          {SUBMISSION_LABELS.action.submitEditToMarking}
+                        </Button>
+                      </div>
                     )}
                   </div>
                 </CardHeader>
