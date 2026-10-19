@@ -1152,21 +1152,23 @@ class ImageViewSet(viewsets.ModelViewSet):
                 {"detail": f"Caption is longer than {MAX_IMAGE_DESCRIPTION_LENGTH} characters."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Default managers on purpose: a recycle-binned Entry is read-only.
-        if image.subject_type == Image.SUBJECT_COVER:
-            subject = Cover.objects.filter(pk=image.subject_id).first()
-            snapshot, create_version = build_cover_snapshot, create_cover_version
-        else:
-            subject = Marking.objects.filter(pk=image.subject_id).first()
-            snapshot, create_version = build_marking_snapshot, create_marking_version
-        if subject is None:
-            return Response(
-                {"detail": "This image's Entry is not in the catalog."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         with transaction.atomic():
+            # Lock first, then check and resolve against the locked row, so a
+            # concurrent move cannot log this change on the wrong Entry.
             image = Image.objects.select_for_update().get(pk=image.pk)
+            self.check_object_permissions(request, image)
+            # Default managers on purpose: a recycle-binned Entry is read-only.
+            if image.subject_type == Image.SUBJECT_COVER:
+                subject = Cover.objects.filter(pk=image.subject_id).first()
+                snapshot, create_version = build_cover_snapshot, create_cover_version
+            else:
+                subject = Marking.objects.filter(pk=image.subject_id).first()
+                snapshot, create_version = build_marking_snapshot, create_marking_version
+            if subject is None:
+                return Response(
+                    {"detail": "This image's Entry is not in the catalog."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             previous = image.image_description or ""
             if previous != caption:
                 before = snapshot(subject)

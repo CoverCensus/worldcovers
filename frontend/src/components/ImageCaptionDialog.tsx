@@ -35,7 +35,8 @@ export function ImageCaptionDialog({ open, onOpenChange, caption, onSave }: Imag
     }
   }, [open, caption]);
 
-  const unchanged = value.trim() === caption.trim();
+  // Against the stored text as-is, so a whitespace-only caption can be cleared.
+  const unchanged = value.trim() === caption;
 
   const handleSave = async () => {
     setBusy(true);
