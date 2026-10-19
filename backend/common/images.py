@@ -186,8 +186,8 @@ def crop_image_bytes(
 def rotate_image_bytes(content: bytes, mime_type: str, quarter_turns: int) -> bytes:
     """Turn ``content`` clockwise by ``quarter_turns`` (1, 2 or 3) and re-encode it.
 
-    Used by the editor Rotate tool (Trello T66) for a Marking image stored on
-    its side. Quarter turns are exact pixel moves, so nothing is resampled.
+    Used by the editor Rotate tool (Trello T66) for a Marking or Cover image
+    stored on its side. Quarter turns are exact pixel moves, so nothing is resampled.
     The turn starts from the displayed orientation, after EXIF rotation or
     reflection. The output is PNG, like a crop. Raises RotateError for anything
     the caller should turn into a 400.

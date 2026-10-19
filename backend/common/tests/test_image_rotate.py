@@ -1,6 +1,7 @@
-"""Rotate a Marking image in quarter turns (Trello T66).
+"""Rotate a Marking or Cover image in quarter turns (Trello T66).
 
-Editors asked for an easy way to fix a marking scanned on its side. The
+Editors asked for an easy way to fix a marking scanned on its side; Ian
+extended it to Cover images on 2026-10-19. The
 rotated pixels replace the image in place (same row, position and caption)
 in a new file, so the 30-day /media/ cache cannot show the old orientation;
 the previous file is kept and named in the audit row.
@@ -21,6 +22,7 @@ from common.models import (
     Collection,
     CollectionAssignment,
     Cover,
+    CoverMarking,
     Image,
     Marking,
     PostOffice,
@@ -186,16 +188,26 @@ class ImageRotateTests(TestCase):
         self.image.refresh_from_db()
         self.assertEqual(self.image.storage_filename, "va/sideways.png")
 
-    def test_cover_images_are_not_rotated(self):
-        self.client.force_authenticate(self.admin)
-        cover = Cover.objects.create(
-            code="ASCC1-VA-C0002", type="FC", created_by=self.admin, modified_by=self.admin
-        )
+    def test_editor_rotates_a_cover_image_and_logs_it_on_the_cover(self):
+        audit = {"created_by": self.admin, "modified_by": self.admin}
+        cover = Cover.objects.create(code="ASCC1-VA-C0002", type="FC", **audit)
+        CoverMarking.objects.create(cover=cover, marking=self.marking, **audit)
         cover_image = self._make_image(Image.SUBJECT_COVER, cover.pk, "va/cover.png")
+        self.client.force_authenticate(self.editor)
 
         response = self._rotate(image=cover_image)
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 200, response.data)
+        cover_image.refresh_from_db()
+        self.assertEqual((cover_image.image_width, cover_image.image_height), (60, 80))
+        self.assertNotEqual(cover_image.storage_filename, "va/cover.png")
+        self.assertTrue((Path(MEDIA_ROOT) / "va/cover.png").exists())
+        # Logged on the Cover's own history, not on its linked Marking's.
+        txn = SubmissionTransaction.objects.get(action=SubmissionTransaction.ACTION_IMAGE_ROTATED)
+        self.assertEqual(txn.cover_id, cover.pk)
+        self.assertIsNone(txn.marking_id)
+        self.assertEqual(cover.versions.count(), 1)
+        self.assertEqual(self.marking.versions.count(), 0)
 
     def test_missing_source_file_is_reported_not_crashed(self):
         self.client.force_authenticate(self.editor)

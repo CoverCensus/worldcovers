@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Crop, Replace, Star, Trash2, Type } from "lucide-react";
+import { ArrowDown, ArrowUp, Crop, Replace, RotateCw, Star, Trash2, Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
@@ -23,6 +23,7 @@ export function EntryAssociatedThumbnailsCard({
   onCropImage,
   cropImageLabel,
   cropImageDisabledReason = null,
+  onRotateImage,
   onEditCaption,
   title = "Associated Thumbnails",
 }: {
@@ -63,6 +64,8 @@ export function EntryAssociatedThumbnailsCard({
   onCropImage?: (index: number) => void;
   cropImageLabel?: string;
   cropImageDisabledReason?: string | null;
+  /** Turn a saved image in quarter turns, in place (Trello T66, Cover images). */
+  onRotateImage?: (index: number) => void;
   /** Edit a saved image's caption (Trello T87). */
   onEditCaption?: (index: number) => void;
 }) {
@@ -88,7 +91,7 @@ export function EntryAssociatedThumbnailsCard({
                 onMoveImage ? moveReason : null,
                 onCropImage ? cropReason : null,
                 onDeleteImage && !onMoveImage && !onCropImage ? deleteReason : null,
-                onEditCaption && unsaved ? UNSAVED_IMAGE_REASON : null,
+                (onEditCaption || onRotateImage) && unsaved ? UNSAVED_IMAGE_REASON : null,
               ].filter((r, i, all): r is string => r != null && all.indexOf(r) === i);
               return (
               <div
@@ -107,7 +110,7 @@ export function EntryAssociatedThumbnailsCard({
                     className="h-full w-full object-cover"
                   />
                 </button>
-                {(canReorder || onDeleteImage || onMoveImage) && (
+                {(canReorder || onDeleteImage || onMoveImage || onRotateImage) && (
                   <div className="flex flex-col items-center gap-0.5">
                     {canReorder && onMoveBy && onSetDefault && (
                       <div className="flex items-center justify-center gap-0.5">
@@ -150,7 +153,7 @@ export function EntryAssociatedThumbnailsCard({
                         </Button>
                       </div>
                     )}
-                    {(onMoveImage || onCropImage || onDeleteImage || onEditCaption) && (
+                    {(onMoveImage || onCropImage || onRotateImage || onDeleteImage || onEditCaption) && (
                       <div className="flex items-center justify-center gap-0.5">
                         {onEditCaption && (
                           <Button
@@ -178,6 +181,20 @@ export function EntryAssociatedThumbnailsCard({
                             onClick={() => onCropImage(idx)}
                           >
                             <Crop className="h-3 w-3" />
+                          </Button>
+                        )}
+                        {onRotateImage && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            aria-label="Rotate this image"
+                            title="Rotate"
+                            disabled={reorderingImages || unsaved}
+                            onClick={() => onRotateImage(idx)}
+                          >
+                            <RotateCw className="h-3 w-3" />
                           </Button>
                         )}
                         {onMoveImage && (
