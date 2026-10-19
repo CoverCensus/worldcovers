@@ -61,6 +61,8 @@ import { getMarkingById, type MarkingRecord } from "@/services/markings";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
 
 import { submissionCitations } from "@/lib/submissionCitations";
+import { compareCoverEdit } from "@/lib/editComparison";
+import { EditComparisonCard } from "@/components/entry-detail/EditComparisonCard";
 
 function boolLabel(raw: unknown): string {
   if (raw === true || raw === "true" || raw === "1" || raw === 1) return "Yes";
@@ -280,6 +282,12 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   }, [images, carried]);
 
   const citations = useMemo(() => submissionCitations(sd, referenceWorks), [referenceWorks, sd]);
+  // Trello T39: an edit under review is set beside the cover as it is now.
+  const editBaseline = contribution?.editBaseline ?? null;
+  const editComparison = useMemo(
+    () => (editBaseline ? compareCoverEdit(editBaseline, sd, referenceWorks) : null),
+    [editBaseline, referenceWorks, sd],
+  );
 
   const isContributor =
     !!user &&
@@ -638,6 +646,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
       )}
       rightColumn={(
         <>
+          {editComparison && <EditComparisonCard entryLabel="cover" rows={editComparison} />}
           <Card className="shadow-archival-md">
             <CardHeader>
               <div className="flex items-center justify-between gap-3">
