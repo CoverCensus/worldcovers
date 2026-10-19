@@ -508,10 +508,18 @@ const Contribute = () => {
   const [noMarkingImage, setNoMarkingImage] = useState(false);
   // One entry in the combined image gallery: "existing" wraps an already-saved
   // image (edit-marking or draft-resume); "new" wraps a freshly-picked file.
-  // `description` is the caption (T43): editable on new uploads, shown
-  // read-only on images saved with a draft.
+  // `description` is the caption (T43), editable on new uploads and (T87) on
+  // images saved with a resumed draft; `savedDescription` is what the draft
+  // holds, so only changed captions are sent.
   type MarkingGalleryItem =
-    | { kind: "existing"; key: string; url: string; tracing: boolean; description?: string }
+    | {
+        kind: "existing";
+        key: string;
+        url: string;
+        tracing: boolean;
+        description?: string;
+        savedDescription?: string;
+      }
     | {
         kind: "new";
         key: string;
@@ -970,13 +978,17 @@ const Contribute = () => {
           })?.image_description ?? "";
         if (!loadedNoMarkingImage && existingUrls.length > 0) {
           setGallery(
-            existingUrls.map((url) => ({
-              kind: "existing" as const,
-              key: url,
-              url,
-              tracing: false,
-              description: savedDescription(url),
-            })),
+            existingUrls.map((url) => {
+              const caption = savedDescription(url);
+              return {
+                kind: "existing" as const,
+                key: url,
+                url,
+                tracing: false,
+                description: caption,
+                savedDescription: caption,
+              };
+            }),
           );
           setRemovedExistingImageKeys([]);
         }
@@ -1771,6 +1783,14 @@ const Contribute = () => {
     const existingTagMapEntries = gallery
       .filter((item) => item.kind === "existing")
       .map((item) => [item.url, tracingToTag(item.tracing)] as const);
+    // Changed captions of images saved with a resumed draft (T87), by URL.
+    const changedSavedCaptions: Record<string, string> = {};
+    for (const item of gallery) {
+      if (item.kind !== "existing") continue;
+      const caption = (item.description ?? "").trim();
+      if (caption !== (item.savedDescription ?? "").trim()) changedSavedCaptions[item.url] = caption;
+    }
+    const sendSavedCaptions = isEditContribution && Object.keys(changedSavedCaptions).length > 0;
     const oversized = allImageFiles.filter((f) => f.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
     if (oversized.length) {
       toast({
@@ -1908,6 +1928,9 @@ const Contribute = () => {
             Object.fromEntries(existingTagMapEntries);
           form.append("existing_image_tags", JSON.stringify(existingTagMap));
         }
+        if (sendSavedCaptions) {
+          form.append("existing_image_descriptions", JSON.stringify(changedSavedCaptions));
+        }
         body = form;
         // Do not set Content-Type so browser sets multipart/form-data with boundary
       } else {
@@ -1974,6 +1997,7 @@ const Contribute = () => {
           ...(isEditMarking && Object.keys(existingTagMap).length > 0
             ? { existing_image_tags: existingTagMap }
             : {}),
+          ...(sendSavedCaptions ? { existing_image_descriptions: changedSavedCaptions } : {}),
           ...(saveAsDraft ? { save_as_draft: true } : {}),
           ...(saveAsDraft && isEditMarking && markingModifiedAtBaseline
             ? { marking_modified_at_baseline: markingModifiedAtBaseline }
@@ -2189,17 +2213,11 @@ const Contribute = () => {
                           </span>
                         )}
                       </div>
-                      {item.kind === "new" ? (
-                        <ImageCaptionInput
-                          id={`gallery-caption-${item.key}`}
-                          value={item.description}
-                          onChange={(value) => setGalleryDescription(item.key, value)}
-                        />
-                      ) : (
-                        item.description && (
-                          <p className="px-2 pb-2 text-left text-xs break-words">{item.description}</p>
-                        )
-                      )}
+                      <ImageCaptionInput
+                        id={`gallery-caption-${item.key}`}
+                        value={item.description ?? ""}
+                        onChange={(value) => setGalleryDescription(item.key, value)}
+                      />
                       <div className="flex items-center gap-2 px-2 pb-2">
                         <input
                           id={`gallery-tracing-${item.key}`}

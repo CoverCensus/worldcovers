@@ -45,6 +45,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
 
 from common.images import (
+    MAX_IMAGE_DESCRIPTION_LENGTH,
     CropError,
     RotateError,
     crop_image_bytes,
@@ -784,6 +785,19 @@ class FAQEntryViewSet(viewsets.ReadOnlyModelViewSet):
 ###################################################################################################
 ## Image (polymorphic over COVER | MARKING)
 ###################################################################################################
+def _caption_change(txn):
+    """The old and new caption of an "Image caption changed" changelog entry
+    (Trello T87), or None. Only these two strings leave extra_payload, which
+    for other actions holds storage details the history panel does not need."""
+    if txn.action != SubmissionTransaction.ACTION_IMAGE_CAPTION_CHANGED:
+        return None
+    extra = txn.extra_payload or {}
+    return {
+        "previous": str(extra.get("previous_caption") or ""),
+        "caption": str(extra.get("caption") or ""),
+    }
+
+
 class ImageViewSet(viewsets.ModelViewSet):
     """
     Polymorphic image API. Filter by `?subject_type=MARKING&subject_id=<id>`
@@ -1108,6 +1122,78 @@ class ImageViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(image)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsEditorOrAdminWrite, IsResponsibleForImageSubject],
+    )
+    def caption(self, request, pk=None):
+        """Change a saved image's caption (Trello T87).
+
+        Its own action rather than a PATCH so the change is logged: PATCH also
+        carries reorder and set-default, and writes no history. The Marking or
+        Cover the image belongs to gets an "Image caption changed" entry with
+        the previous and new caption, plus a version snapshot.
+
+        Body: {"image_description": "<caption>"}; an empty value clears it.
+        """
+        image = self.get_object()
+        self.check_object_permissions(request, image)
+
+        raw = request.data.get("image_description", "")
+        if not isinstance(raw, str):
+            return Response(
+                {"detail": "image_description must be text."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        caption = raw.strip()
+        if len(caption) > MAX_IMAGE_DESCRIPTION_LENGTH:
+            return Response(
+                {"detail": f"Caption is longer than {MAX_IMAGE_DESCRIPTION_LENGTH} characters."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        with transaction.atomic():
+            # Lock first, then check and resolve against the locked row, so a
+            # concurrent move cannot log this change on the wrong Entry.
+            image = Image.objects.select_for_update().get(pk=image.pk)
+            self.check_object_permissions(request, image)
+            # Default managers on purpose: a recycle-binned Entry is read-only.
+            if image.subject_type == Image.SUBJECT_COVER:
+                subject = Cover.objects.filter(pk=image.subject_id).first()
+                snapshot, create_version = build_cover_snapshot, create_cover_version
+            else:
+                subject = Marking.objects.filter(pk=image.subject_id).first()
+                snapshot, create_version = build_marking_snapshot, create_marking_version
+            if subject is None:
+                return Response(
+                    {"detail": "This image's Entry is not in the catalog."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            previous = image.image_description or ""
+            if previous != caption:
+                before = snapshot(subject)
+                image.image_description = caption
+                image.modified_by = request.user
+                image.save(update_fields=["image_description", "modified_by", "modified_date"])
+                txn = log_submission_transaction(
+                    action=SubmissionTransaction.ACTION_IMAGE_CAPTION_CHANGED,
+                    actor=request.user,
+                    marking=subject if isinstance(subject, Marking) else None,
+                    cover=subject if isinstance(subject, Cover) else None,
+                    source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                    before_payload=before,
+                    after_payload=snapshot(subject),
+                    extra_payload={
+                        "image_id": image.pk,
+                        "previous_caption": previous,
+                        "caption": caption,
+                    },
+                )
+                create_version(subject, txn, request.user)
+
+        serializer = self.get_serializer(image)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     def perform_update(self, serializer):
         # Moving an image to another subject (issue #48) has the same
         # default-image bookkeeping needs as deletion: the source subject may
@@ -1426,6 +1512,7 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
                     "contribution_id": txn.contribution_id,
                     "version_no": version_no_by_txn_id.get(txn.id),
                     "diff": txn.diff_payload or [],
+                    "caption_change": _caption_change(txn),
                     "summary": f"{action_labels.get(txn.action, txn.action)} by {actor_email or actor_name or 'system'}",
                 }
             )
@@ -2466,6 +2553,7 @@ class MarkingViewSet(viewsets.ModelViewSet):
                     "contribution_id": txn.contribution_id,
                     "version_no": version_no_by_txn_id.get(txn.id),
                     "diff": txn.diff_payload or [],
+                    "caption_change": _caption_change(txn),
                     "summary": f"{action_labels.get(txn.action, txn.action)} by {actor_email or actor_name or 'system'}",
                 }
             )
@@ -3432,11 +3520,6 @@ def _resolve_collection_for_submission(
     return region, collection, effective_state
 
 
-# Image.image_description is a TextField, whose max_length Django does not
-# enforce, so the submit boundary caps contributor captions (T43).
-MAX_IMAGE_DESCRIPTION_LENGTH = 500
-
-
 MARKING_DATE_BOUNDARY_KEYS = (
     (
         "marking_erd",
@@ -3695,6 +3778,16 @@ class ContributionSubmitView(APIView):
                     )},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+        # Changed captions of images already saved with a resumed draft (T87),
+        # keyed by image URL; applied to the draft's stored metas below.
+        saved_image_descriptions = _parse_saved_image_descriptions(
+            data.get("existing_image_descriptions")
+        )
+        if any(len(text) > MAX_IMAGE_DESCRIPTION_LENGTH for text in saved_image_descriptions.values()):
+            return Response(
+                {"detail": f"A caption is longer than {MAX_IMAGE_DESCRIPTION_LENGTH} characters."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Save uploaded image files under MEDIA_ROOT/<region_abbrev>/.
         # Marking flow uses `marking_image`; cover draft flow uses `cover_image`.
@@ -3746,6 +3839,7 @@ class ContributionSubmitView(APIView):
             # Captions are copied into the image metas above.
             "marking_image_descriptions",
             "cover_image_descriptions",
+            "existing_image_descriptions",
             "edit_contribution_id",
             "editContributionId",
             "removed_existing_image_keys",
@@ -3894,6 +3988,8 @@ class ContributionSubmitView(APIView):
             # (Contribute.tsx -> removeExistingImageAt) sends a JSON list of the
             # displayed URLs the user removed from the edit form; the helper
             # drops matching entries and merges any newly uploaded files.
+            # Before the merge, so merged meta lists carry the new captions.
+            _apply_saved_image_descriptions(existing_sd, saved_image_descriptions)
             image_updates = _apply_existing_image_reconciliation(
                 existing_sd, data, image_metas, is_cover_submission, image_order
             )
@@ -4152,6 +4248,49 @@ def _validate_final_submission_image_choice(submitted_data, is_cover):
         return None
     label = "cover image" if is_cover else "marking image"
     return "Add at least one {} or confirm no image is available.".format(label)
+
+
+def _parse_saved_image_descriptions(raw):
+    """Parse existing_image_descriptions ({image URL: caption}) from a JSON
+    string or dict into stripped captions. Non-text values are dropped; anything
+    unparseable returns {}."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(url): text.strip() for url, text in raw.items() if isinstance(text, str)}
+
+
+def _apply_saved_image_descriptions(existing_sd, descriptions):
+    """Set the caption of images already saved with a draft (Trello T87).
+
+    Matches each URL against the stored metas' storage_filename with the same
+    URL-tail rule as removals. Approval copies a meta's caption onto the Image
+    row it creates, so nothing else changes. A Marking-edit draft's current
+    Marking images are rebuilt from the catalog afterwards, so they stay
+    add-only and keep their captions.
+    """
+    if not descriptions:
+        return
+    metas = [
+        meta
+        for key in ("marking_image_metas", "cover_image_metas", "image_metas")
+        for meta in (existing_sd.get(key) or [])
+        if isinstance(meta, dict)
+    ]
+    if isinstance(existing_sd.get("image_meta"), dict):
+        metas.append(existing_sd["image_meta"])
+    for meta in metas:
+        for url, caption in descriptions.items():
+            if _storage_filename_removed(meta.get("storage_filename"), {url}):
+                if caption:
+                    meta["image_description"] = caption
+                else:
+                    meta.pop("image_description", None)
+                break
 
 
 def _storage_filename_removed(storage_filename, removed_set):

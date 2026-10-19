@@ -530,10 +530,11 @@ onto `Image.image_description`. Show a caption as a `<figcaption>` under the
 main image on the Marking and Cover pages and both review pages; show a
 draft's saved caption read-only on its tile.
 
-**Don't:** Edit the caption of an already-saved image here (Marking edits stay
-add-only; a Cover edit's kept rows keep their caption), copy the caption into
-`alt`, or hide the "Front"/"Back"/"Details" view labels that v1 imports wrote
-into the same field.
+**Don't:** Edit the caption of a catalog image through a Marking or Cover edit
+(Marking edits stay add-only; a Cover edit's kept rows keep their caption) --
+saved captions change through "Edit A Saved Image's Caption As An Audited
+Action" below. Don't copy the caption into `alt`, or hide the
+"Front"/"Back"/"Details" view labels that v1 imports wrote into the same field.
 
 **Why:** Trello T43 asks for editable per-upload captions and reuse of
 `image_description`. Riding the metas needs no model change and no approval
@@ -603,3 +604,40 @@ already reads are target keys, so recording a source through them would turn a
 copy into an edit and remove the copier's pending edits of the source.
 Similar-entry warnings belong to T48. Reese chose this scope on 2026-10-19.
 Evidence: `CreateSimilar.test.tsx`.
+
+## Edit A Saved Image's Caption As An Audited Action
+
+**Do:** Let a responsible editor change a saved image's caption from the
+Marking page (`ThumbnailImageActions`) or the Cover page
+(`EntryAssociatedThumbnailsCard`) with "Edit caption". It calls
+`POST /api/v2/images/{id}/caption/ {image_description}`, which is guarded like
+rotate (`IsEditorOrAdminWrite` + `IsResponsibleForImageSubject`), strips the
+text and caps it at `MAX_IMAGE_DESCRIPTION_LENGTH` (500, `common/images.py`).
+In one `transaction.atomic` it logs an `image_caption_changed` transaction on
+the image's Marking or Cover, with the previous and new caption in
+`extra_payload`, and writes a Marking or Cover version. An unchanged caption
+logs nothing. Both changelogs expose the two strings as `caption_change`, and
+Record History shows `Caption: "old" -> "new"`. The Cover page's Record History
+now reads the Cover's own changelog rather than its parent Marking's.
+
+On a resumed draft, images saved with the draft also take an editable caption.
+The form sends only changed ones as `existing_image_descriptions`
+({image URL: caption}), and the submit view writes them into the draft's
+stored metas before merging, so approval copies them as for a new upload.
+
+**Don't:** Audit caption edits through `PATCH /images/{id}/`: reorder and
+set-default use it, and it logs nothing. Don't recaption a Marking's current
+images through a Marking-edit draft (they are rebuilt from the catalog,
+add-only), a Cover edit's kept images, or the image carried by "Create cover
+from this image" (none of these were in scope). Don't return a transaction's
+whole `extra_payload` from the changelog; rotate stores storage details there.
+
+**Why:** Trello T87 (split from T43). Its acceptance: "a caption changed through
+each chosen route is saved, appears in Record History, and shows on the detail
+page." Reese chose the editor action and drafts, the Cover's own history and
+old -> new in history on 2026-10-19. "Marking Edits Add Images Only" already
+says existing images change on the Marking page, where editor responsibility is
+checked. Migration `0021_image_caption_changed_action` adds the choice only.
+Evidence: `test_image_caption_edit.py`, `CoverDetail.imageActions.test.tsx`,
+`EntryRecordHistoryCard.caption.test.tsx`, `ImageCaptions.test.tsx`.
+

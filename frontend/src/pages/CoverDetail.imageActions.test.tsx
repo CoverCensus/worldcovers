@@ -7,13 +7,15 @@
  * Mocks follow CoverDetail.linking.test.tsx, minus its stub of the thumbnails
  * card: this test needs the real card to see the control.
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import CoverDetailPage from "./CoverDetail";
 import { useAuth } from "@/hooks/useAuth";
-import { getCoverMarkingsByCover, loadAssociatedMarkingsForCover } from "@/services/markings";
+import {
+  getCoverChangelog, getCoverMarkingsByCover, loadAssociatedMarkingsForCover, updateImageCaption,
+} from "@/services/markings";
 
 jest.mock("@/assets/image-not-available.jpg", () => "image-not-available.jpg");
 jest.mock("@/hooks/useAuth", () => ({ useAuth: jest.fn() }));
@@ -42,6 +44,8 @@ jest.mock("@/components/ui/dialog", () => ({
   DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 jest.mock("@/services/markings", () => ({
+  getCoverChangelog: jest.fn().mockResolvedValue({ id: 7, events: [], versions: [] }),
+  updateImageCaption: jest.fn().mockResolvedValue({ ok: true }),
   getImagesForSubject: jest.fn().mockResolvedValue([
     {
       imageId: 10916,
@@ -142,5 +146,18 @@ describe("Cover page image actions", () => {
     const crop = await screen.findByRole("button", { name: "Crop into marking" });
     await waitFor(() => expect(screen.getByText(/already has an image/)).toBeTruthy());
     expect(crop.hasAttribute("disabled")).toBe(true);
+  });
+
+  // Trello T87: an editor recaptions a saved image; the Cover's own history reloads.
+  it("saves an edited caption and reloads the Cover's own history", async () => {
+    links.mockResolvedValue({ links: [], error: null });
+    markings.mockResolvedValue([]);
+    openPage();
+    await waitFor(() => expect(getCoverChangelog).toHaveBeenCalledWith(7));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit this image's caption" }));
+    fireEvent.change(screen.getByLabelText("Caption"), { target: { value: " Front of the cover " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save caption" }));
+    await waitFor(() => expect(updateImageCaption).toHaveBeenCalledWith(10916, "Front of the cover"));
+    await waitFor(() => expect(getCoverChangelog).toHaveBeenCalledTimes(2));
   });
 });

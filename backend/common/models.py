@@ -331,6 +331,9 @@ class SubmissionTransaction(models.Model):
     # A Marking image turned in place by an editor (Trello T66). The previous
     # file stays on disk and is named in extra_payload.
     ACTION_IMAGE_ROTATED = "image_rotated"
+    # An editor changed a saved image's caption (Trello T87); the previous and
+    # new caption are in extra_payload.
+    ACTION_IMAGE_CAPTION_CHANGED = "image_caption_changed"
     ACTION_CHOICES = [
         (ACTION_SUBMIT, "Record submitted"),
         (ACTION_EDIT_SUBMISSION, "Edited submission"),
@@ -354,6 +357,7 @@ class SubmissionTransaction(models.Model):
         (ACTION_DATE_SEEN_CHANGED, "Date changed"),
         (ACTION_DATE_SEEN_REMOVED, "Date removed"),
         (ACTION_IMAGE_ROTATED, "Image rotated"),
+        (ACTION_IMAGE_CAPTION_CHANGED, "Image caption changed"),
     ]
 
     SOURCE_CONTRIBUTOR_PORTAL = "contributor_portal"

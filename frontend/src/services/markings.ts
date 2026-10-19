@@ -347,6 +347,27 @@ export async function rotateImage(
 }
 
 /**
+ * POST /api/v2/images/{image_id}/caption/ -- change a saved image's caption
+ * (Trello T87). The server logs it to the Entry's Record History.
+ */
+export async function updateImageCaption(
+  imageId: number,
+  caption: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  await ensureCsrfToken();
+  try {
+    await apiClient.post(`/images/${imageId}/caption/`, { image_description: caption });
+    return { ok: true };
+  } catch (err: unknown) {
+    const message = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+    return {
+      ok: false,
+      message: typeof message === "string" ? message : "Could not save the caption.",
+    };
+  }
+}
+
+/**
  * DELETE /api/v2/images/{image_id}/ -- remove one image row.
  *
  * Cwd for manual verification: frontend/.
@@ -533,6 +554,8 @@ export interface MarkingChangelogEvent {
   version_no: number | null;
   summary: string;
   diff: Array<{ field: string; before: unknown; after: unknown }>;
+  /** Set on "Image caption changed" entries only (Trello T87). */
+  caption_change?: { previous: string; caption: string } | null;
 }
 
 export interface MarkingVersionRow {
@@ -1074,6 +1097,22 @@ export async function getMarkingChangelog(markingId: number): Promise<MarkingCha
   try {
     const res = await apiClient.get<MarkingChangelogResponse>(
       `/markings/${markingId}/changelog/`,
+      {
+        withCredentials: true,
+        headers: { Accept: "application/json" },
+      }
+    );
+    return res.data;
+  } catch {
+    return null;
+  }
+}
+
+/** The Cover's own Record History (same event shape as a Marking's). */
+export async function getCoverChangelog(coverId: number): Promise<MarkingChangelogResponse | null> {
+  try {
+    const res = await apiClient.get<MarkingChangelogResponse>(
+      `/covers/${coverId}/changelog/`,
       {
         withCredentials: true,
         headers: { Accept: "application/json" },
