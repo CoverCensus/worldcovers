@@ -39,6 +39,8 @@ export function RotateImageDialog({
 }: RotateImageDialogProps) {
   // Net clockwise quarter turns, 0-3.
   const [turns, setTurns] = useState(0);
+  // Save needs the loaded element: the upload form draws it onto a canvas.
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
@@ -47,6 +49,7 @@ export function RotateImageDialog({
     if (busy) return;
     if (!next) {
       setTurns(0);
+      setLoaded(false);
       setError(null);
     }
     onOpenChange(next);
@@ -59,7 +62,7 @@ export function RotateImageDialog({
 
   const handleSave = async () => {
     const img = imgRef.current;
-    if (!img || turns === 0) return;
+    if (!img || !loaded || turns === 0) return;
     setBusy(true);
     setError(null);
     try {
@@ -69,6 +72,7 @@ export function RotateImageDialog({
         return;
       }
       setTurns(0);
+      setLoaded(false);
       onOpenChange(false);
     } finally {
       setBusy(false);
@@ -92,6 +96,8 @@ export function RotateImageDialog({
               alt="Image to rotate"
               className="max-h-[50vh] max-w-[50vh] object-contain transition-transform"
               style={{ transform: `rotate(${turns * 90}deg)` }}
+              onLoad={() => setLoaded(true)}
+              onError={() => setError("The image could not be loaded.")}
             />
           </div>
         ) : (
@@ -115,7 +121,7 @@ export function RotateImageDialog({
           <Button type="button" variant="outline" disabled={busy} onClick={() => handleOpenChange(false)}>
             Cancel
           </Button>
-          <Button type="button" disabled={busy || turns === 0} onClick={() => void handleSave()}>
+          <Button type="button" disabled={busy || !loaded || turns === 0} onClick={() => void handleSave()}>
             {busy ? "Saving..." : "Save rotation"}
           </Button>
         </DialogFooter>

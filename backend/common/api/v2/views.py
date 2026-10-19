@@ -1069,12 +1069,10 @@ class ImageViewSet(viewsets.ModelViewSet):
             )
 
         # Keep the rotated file beside its source so media stays sorted by state.
-        subdir = str(Path(image.storage_filename).parent).strip("/.")
-        storage_name = f"{uuid.uuid4().hex}.png"
-        if subdir:
-            storage_name = f"{subdir}/{storage_name}"
-        destination_path = Path(settings.MEDIA_ROOT) / storage_name
-        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        # Built from the resolved source, already confirmed inside MEDIA_ROOT,
+        # so an admin-edited storage_filename cannot place it elsewhere.
+        destination_path = resolved.parent / f"{uuid.uuid4().hex}.png"
+        storage_name = destination_path.relative_to(media_root).as_posix()
         destination_path.write_bytes(content)
 
         with transaction.atomic():
