@@ -111,7 +111,7 @@ it("sends the rotated copy of a Cover upload in its place", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: "Rotate image" }));
   fireEvent.load(screen.getByAltText("Image to rotate"));
-  fireEvent.click(screen.getByRole("button", { name: /Rotate right/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Turn 90° right/ }));
   fireEvent.click(screen.getByRole("button", { name: "Save rotation" }));
   await waitFor(() => expect(screen.queryByAltText("Image to rotate")).toBeNull());
 

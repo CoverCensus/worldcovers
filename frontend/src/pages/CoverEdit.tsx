@@ -736,8 +736,9 @@ export default function CoverEdit() {
   };
 
   // Swap a new upload for its turned copy, keeping its place, key, Tracing flag
-  // and caption. A quarter turn keeps the image's size and shape, so the
-  // marking-closeup and resolution flags measured on pick still hold.
+  // and caption. A turn only moves the same pixels (and may add white
+  // corners), so the marking-closeup and resolution flags measured on pick
+  // still describe the image.
   // Object URLs are made and revoked here, not in the updater, which React may
   // run twice.
   const replacePendingUpload = (key: string, file: File) => {

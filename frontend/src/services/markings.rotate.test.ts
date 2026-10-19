@@ -1,4 +1,4 @@
-/** Trello T66 -- rotateImage posts the clockwise quarter turns and relays the server's reason. */
+/** Trello T66 / issue #193 -- rotateImage posts the clockwise angle and relays the server's reason. */
 import { rotateImage } from "./markings";
 import apiClient from "@/lib/api";
 
@@ -12,13 +12,13 @@ const mockedPost = apiClient.post as jest.Mock;
 
 beforeEach(() => mockedPost.mockReset());
 
-it("posts the quarter turns to the image's rotate action", async () => {
+it("posts where the handle ended up, however many times it went round", async () => {
   mockedPost.mockResolvedValueOnce({ data: { image_id: 5 } });
-  expect(await rotateImage(5, 3)).toEqual({ ok: true });
-  expect(mockedPost).toHaveBeenCalledWith("/images/5/rotate/", { quarter_turns: 3 });
+  expect(await rotateImage(5, -737)).toEqual({ ok: true });
+  expect(mockedPost).toHaveBeenCalledWith("/images/5/rotate/", { angle: -17 });
 });
 
 it("surfaces the server's reason when the rotation is refused", async () => {
-  mockedPost.mockRejectedValueOnce({ response: { data: { detail: "Rotation is only available for Marking images." } } });
-  expect(await rotateImage(5, 1)).toEqual({ ok: false, message: "Rotation is only available for Marking images." });
+  mockedPost.mockRejectedValueOnce({ response: { data: { detail: "Source image file is missing." } } });
+  expect(await rotateImage(5, 90)).toEqual({ ok: false, message: "Source image file is missing." });
 });

@@ -1,6 +1,7 @@
 """Helpers for computing Image metadata from image bytes or files on disk."""
 import hashlib
 import io
+import math
 import mimetypes
 import struct
 from pathlib import Path
@@ -144,10 +145,68 @@ def normalize_image_upload(content: bytes, mime_type: str) -> bytes:
         raise ValueError("Could not process the source image.") from exc
 
 
+def normalize_angle(angle: float) -> float:
+    """Clockwise degrees in (-180, 180], to a tenth of a degree.
+
+    The rotate handle lets an editor turn an image round as many times as they
+    like; only where it ends up matters.
+    """
+    turned = round(float(angle) % 360.0, 1) % 360.0
+    if turned > 180.0:
+        turned -= 360.0
+    return turned + 0.0  # -0.0 -> 0.0
+
+
+# Corners uncovered by a turn that is not a right angle, per image mode.
+# CMYK white is no ink: (0, 0, 0, 0).
+_WHITE = {"L": 255, "LA": (255, 255), "RGB": (255, 255, 255), "RGBA": (255, 255, 255, 255),
+          "CMYK": (0, 0, 0, 0)}
+
+
+def _rotated(image: PILImage.Image, angle: float) -> PILImage.Image:
+    """Turn ``image`` clockwise by ``angle`` degrees about its centre.
+
+    The canvas grows to hold the whole turned image (Pillow ``expand``) and the
+    uncovered corners are white, like scan paper. Right angles are exact pixel
+    moves (``transpose``), so a sideways scan is never resampled. The browser
+    mirrors this geometry in frontend/src/lib/imageRotation.ts, so a crop box
+    drawn on its preview lands on the same pixels here.
+    """
+    angle = normalize_angle(angle)
+    if angle == 0:
+        return image
+    quarter_turns = round(angle / 90) % 4
+    if angle % 90 == 0:
+        turned = image.transpose(_CLOCKWISE_TRANSPOSE[quarter_turns])
+        turned.info = image.info.copy()
+        if quarter_turns % 2:
+            _swap_resolution_axes(turned)
+        return turned
+    # BICUBIC needs a continuous-tone mode; a palette or 1-bit image would
+    # silently fall back to nearest-neighbour.
+    if image.mode not in _WHITE:
+        has_alpha = image.mode in ("PA", "RGBa", "La") or "transparency" in image.info
+        image = image.convert("RGBA" if has_alpha else "RGB")
+    turned = image.rotate(
+        -angle,  # Pillow turns counter-clockwise.
+        resample=PILImage.Resampling.BICUBIC,
+        expand=True,
+        fillcolor=_WHITE[image.mode],
+    )
+    turned.info = {k: v for k, v in image.info.items() if k != "transparency"}
+    return turned
+
+
+# A crop box drawn in the browser may overshoot the turned bounds by a pixel or
+# two where its float geometry and Pillow's rounding disagree.
+_CROP_OVERSHOOT_PX = 2
+
+
 def crop_image_bytes(
     content: bytes,
     mime_type: str,
     box: tuple[int, int, int, int],
+    angle: float = 0.0,
 ) -> bytes:
     """Crop ``content`` to ``box`` = (x, y, width, height) and re-encode it.
 
@@ -156,8 +215,11 @@ def crop_image_bytes(
     a 400: an undecodable source, or a rectangle that is empty or reaches
     outside the image.
 
-    The box uses the displayed pixels, after EXIF rotation or reflection.
-    The output is PNG so faint strikes have no additional compression loss.
+    The box uses the displayed pixels, after EXIF rotation or reflection and
+    after turning the image clockwise by ``angle`` degrees (workspace issue
+    #193: straighten a tilted strike while cropping it). The source is never
+    changed. The output is PNG so faint strikes have no additional compression
+    loss.
     """
     if mime_type not in ALLOWED_MIME_TYPES:
         raise CropError("Unsupported image format.")
@@ -170,33 +232,36 @@ def crop_image_bytes(
     try:
         img = PILImage.open(io.BytesIO(content))
         img.load()
-        img = _oriented_image(img)
+        img = _rotated(_oriented_image(img), angle)
     except Exception as exc:
         raise CropError("Could not read the source image.") from exc
 
-    if x + width > img.width or y + height > img.height:
+    if x + width > img.width + _CROP_OVERSHOOT_PX or y + height > img.height + _CROP_OVERSHOOT_PX:
         raise CropError(
             f"Crop reaches outside the {img.width}x{img.height} source image."
         )
+    width = min(width, img.width - x)
+    height = min(height, img.height - y)
+    if width <= 0 or height <= 0:
+        raise CropError("Crop origin must be inside the image.")
 
     cropped = img.crop((x, y, x + width, y + height))
     return _png_bytes(cropped)
 
 
-def rotate_image_bytes(content: bytes, mime_type: str, quarter_turns: int) -> bytes:
-    """Turn ``content`` clockwise by ``quarter_turns`` (1, 2 or 3) and re-encode it.
+def rotate_image_bytes(content: bytes, mime_type: str, angle: float) -> bytes:
+    """Turn ``content`` clockwise by ``angle`` degrees and re-encode it.
 
-    Used by the editor Rotate tool (Trello T66) for a Marking or Cover image
-    stored on its side. Quarter turns are exact pixel moves, so nothing is resampled.
-    The turn starts from the displayed orientation, after EXIF rotation or
-    reflection. The output is PNG, like a crop. Raises RotateError for anything
-    the caller should turn into a 400.
+    Used by the editor Rotate tool (Trello T66; free angles since workspace
+    issue #193) for a Marking or Cover image stored on its side or tilted. The
+    turn starts from the displayed orientation, after EXIF rotation or
+    reflection; see ``_rotated`` for the geometry. The output is PNG, like a
+    crop. Raises RotateError for anything the caller should turn into a 400.
     """
     if mime_type not in ALLOWED_MIME_TYPES:
         raise RotateError("Unsupported image format.")
-    method = _CLOCKWISE_TRANSPOSE.get(quarter_turns)
-    if method is None:
-        raise RotateError("quarter_turns must be 1, 2 or 3.")
+    if not math.isfinite(angle) or normalize_angle(angle) == 0:
+        raise RotateError("Turn the image before saving.")
 
     try:
         img = PILImage.open(io.BytesIO(content))
@@ -205,8 +270,4 @@ def rotate_image_bytes(content: bytes, mime_type: str, quarter_turns: int) -> by
     except Exception as exc:
         raise RotateError("Could not read the source image.") from exc
 
-    rotated = img.transpose(method)
-    rotated.info = img.info.copy()
-    if quarter_turns % 2:
-        _swap_resolution_axes(rotated)
-    return _png_bytes(rotated)
+    return _png_bytes(_rotated(img, angle))

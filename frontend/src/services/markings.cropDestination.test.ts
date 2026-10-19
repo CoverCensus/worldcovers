@@ -30,6 +30,12 @@ describe("cropImage destination", () => {
     expect(mockedPost.mock.calls[0][1]).toMatchObject({ subject_type: "MARKING", subject_id: 42, image_view: "FULL" });
   });
 
+  it("sends the turn the box was drawn on, normalised (issue #193)", async () => {
+    mockedPost.mockResolvedValueOnce({ data: { image_id: 9 } });
+    await cropImage(5, { x: 0, y: 0, width: 10, height: 8 }, undefined, 367.5);
+    expect(mockedPost.mock.calls[0][1]).toEqual({ x: 0, y: 0, width: 10, height: 8, angle: 7.5 });
+  });
+
   it("surfaces the server's reason when the destination is refused", async () => {
     mockedPost.mockRejectedValueOnce({ response: { data: { detail: "Marking 42 already has an image." } } });
     const result = await cropImage(5, { x: 0, y: 0, width: 10, height: 8 }, { subjectType: "MARKING", subjectId: 42 });

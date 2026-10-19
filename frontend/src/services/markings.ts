@@ -1,5 +1,6 @@
 import apiClient, { ensureCsrfToken } from "@/lib/api";
 import { sortCoversEarliestFirst } from "@/lib/associatedCoverSort";
+import { normalizeAngle } from "@/lib/imageRotation";
 import { listContributions } from "@/services/contributions";
 import {
   coverContributionDisplayLabel,
@@ -294,7 +295,13 @@ export async function cropImage(
    * validates the destination; the client only offers eligible ones.
    */
   destination?: CropDestination,
+  /**
+   * Clockwise degrees to turn the image before cutting the rect, which is in
+   * the turned image's pixels (workspace issue #193). Sent only when non-zero.
+   */
+  angle = 0,
 ): Promise<{ ok: true; imageId: number } | { ok: false; message: string }> {
+  const turn = normalizeAngle(angle);
   await ensureCsrfToken();
   try {
     const { data } = await apiClient.post(`/images/${imageId}/crop/`, {
@@ -309,6 +316,7 @@ export async function cropImage(
             image_view: destination.imageView ?? "FULL",
           }
         : {}),
+      ...(turn !== 0 ? { angle: turn } : {}),
     });
     return { ok: true, imageId: data.image_id };
   } catch (err: unknown) {
@@ -326,16 +334,17 @@ export async function cropImage(
 
 /**
  * POST /api/v2/images/{image_id}/rotate/ -- turn a Marking or Cover image clockwise in
- * place (Trello T66). The server writes the turned pixels to a new file, so the
- * refreshed record carries a new URL; the previous file is kept.
+ * place by any angle (Trello T66, workspace issue #193). The server writes the
+ * turned pixels to a new file, so the refreshed record carries a new URL; the
+ * previous file is kept.
  */
 export async function rotateImage(
   imageId: number,
-  quarterTurns: 1 | 2 | 3,
+  angle: number,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   await ensureCsrfToken();
   try {
-    await apiClient.post(`/images/${imageId}/rotate/`, { quarter_turns: quarterTurns });
+    await apiClient.post(`/images/${imageId}/rotate/`, { angle: normalizeAngle(angle) });
     return { ok: true };
   } catch (err: unknown) {
     const message = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail;
