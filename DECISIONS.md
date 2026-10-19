@@ -118,8 +118,10 @@ values as empty can erase information the Contributor never changed.
 [submission tests](backend/common/tests/test_submission_citations.py) and
 [form tests](frontend/src/pages/SubmissionCitations.test.tsx).
 
-**Open work:** [T39](ISSUE.md#other-follow-ups) covers comparing proposed and
-current values during review.
+**Open work:** The cover date is the one exception: approval rebuilds it from
+the edit, so an edit without a date clears it (Trello T88 asks Michael whether
+it should keep it instead). The review comparison is below in "Compare An Edit
+Against The Current Entry Before Approval".
 [T72](ISSUE.md#t72---preserve-all-citations-in-multipart-submissions) tracks
 hosted verification and acceptance of Citation preservation and explicit
 clearing through the form workflow. [T40](ISSUE.md#other-follow-ups) covers
@@ -540,3 +542,31 @@ change, and drafts already keep metas as they are. Django does not enforce
 text should not repeat a caption. Reese chose new uploads only and showing the
 v1 labels as they are on 2026-10-19; changing that data is Michael's call.
 Evidence: `test_image_captions.py`, `ImageCaptions.test.tsx`.
+
+## Compare An Edit Against The Current Entry Before Approval
+
+**Do:** On the review page of a pending (or returned-for-revision) Marking or
+Cover edit, show the Editor a Field | Current | Proposed table. The
+contribution detail API sends `edit_baseline`: the target as it stands now, in
+the same keys the edit forms submit and built from what those forms prefill
+from (`backend/common/edit_baseline.py`). `lib/editComparison.ts` lays the
+edit's fields over that baseline the way approval does: an omitted field keeps
+its value, `""` clears it, a manuscript drops shape and lettering, marking
+ERD/LRD are added as recorded dates, an empty Cover type or flag keeps its
+value, and an edit with no Cover date clears that date. Both columns go through
+the same formatter. Changed rows carry a "Changed" badge as well as a tint, and
+every compared row stays listed.
+
+**Don't:** Format the live record with the record-page helpers and compare
+those strings with the submission (state name vs abbreviation, `28.00` vs
+`28`, and the description field differ). Don't run approval code to work out a
+preview, and don't send the baseline to anyone but a reviewer or for a decided
+edit.
+
+**Why:** Trello T39: "an Editor can identify changed and unchanged values
+before deciding." Mirroring approval's merge rules is what makes the table tell
+the truth about the Approve button. WCAG 1.4.1 asks that colour not be the only
+signal of a change.
+Evidence: `test_contribution_edit_baseline.py`, `editComparison.test.ts`,
+`EditComparisonCard.test.tsx`.
+
