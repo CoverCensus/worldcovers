@@ -3432,6 +3432,11 @@ def _resolve_collection_for_submission(
     return region, collection, effective_state
 
 
+# Image.image_description is a TextField, whose max_length Django does not
+# enforce, so the submit boundary caps contributor captions (T43).
+MAX_IMAGE_DESCRIPTION_LENGTH = 500
+
+
 MARKING_DATE_BOUNDARY_KEYS = (
     (
         "marking_erd",
@@ -4176,15 +4181,11 @@ def _parse_existing_image_tags(raw):
     return {}
 
 
-# Image.image_description is a TextField, whose max_length Django does not
-# enforce, so the submit boundary caps contributor captions (T43).
-MAX_IMAGE_DESCRIPTION_LENGTH = 500
-
-
 def _parse_image_descriptions(raw):
     """Parse positional captions for newly uploaded files (*_image_descriptions)
     from a JSON string or list into stripped strings. A non-string entry
-    becomes "" so it keeps its position; anything unparseable returns []."""
+    becomes "" so it keeps its position; anything unparseable returns []. The
+    forms omit the key when no upload has a caption, so absent means none."""
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)

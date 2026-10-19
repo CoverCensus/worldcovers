@@ -783,10 +783,10 @@ export default function CoverEdit() {
     );
   };
 
-  const setPendingDescriptionAt = (index: number, description: string) => {
+  const setPendingDescription = (key: string, description: string) => {
     setGallery((prev) =>
-      prev.map((item, i) =>
-        i === index && item.kind === "pending"
+      prev.map((item) =>
+        item.key === key && item.kind === "pending"
           ? { ...item, upload: { ...item.upload, description } }
           : item,
       ),
@@ -1348,7 +1348,7 @@ export default function CoverEdit() {
                                       <ImageCaptionInput
                                         id={`cover-caption-${idx}`}
                                         value={item.upload.description}
-                                        onChange={(value) => setPendingDescriptionAt(idx, value)}
+                                        onChange={(value) => setPendingDescription(item.key, value)}
                                       />
                                     ) : (
                                       item.img.imageDescription && (
