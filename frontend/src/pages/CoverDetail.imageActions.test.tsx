@@ -14,7 +14,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import CoverDetailPage from "./CoverDetail";
 import { useAuth } from "@/hooks/useAuth";
 import {
-  getCoverChangelog, getCoverMarkingsByCover, loadAssociatedMarkingsForCover, rotateImage, updateImageCaption,
+  getCoverChangelog, getCoverMarkingsByCover, getImagesForSubject, loadAssociatedMarkingsForCover, rotateImage,
+  updateImageCaption,
 } from "@/services/markings";
 
 jest.mock("@/assets/image-not-available.jpg", () => "image-not-available.jpg");
@@ -174,5 +175,7 @@ describe("Cover page image actions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save rotation" }));
     await waitFor(() => expect(rotateImage).toHaveBeenCalledWith(10916, 1));
     await waitFor(() => expect(getCoverChangelog).toHaveBeenCalledTimes(2));
+    expect(getImagesForSubject).toHaveBeenLastCalledWith({ subjectType: "COVER", subjectId: 7 });
+    expect((getImagesForSubject as jest.Mock).mock.calls.length).toBeGreaterThan(1);
   });
 });

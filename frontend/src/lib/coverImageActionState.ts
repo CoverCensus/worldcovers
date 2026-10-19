@@ -14,7 +14,7 @@
  * "Move to another marking" stays removed (ISSUE.md T33/T35).
  */
 
-/** Mirrors the marking-side wording; delete is included because the cover card gates it too. */
+/** Names every action the cover card gates on a saved image, so it differs from the marking side's. */
 export const UNSAVED_IMAGE_REASON =
   "This image has not been saved to the catalog yet, so it cannot be moved, rotated or deleted.";
 

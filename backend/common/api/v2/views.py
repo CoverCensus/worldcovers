@@ -1104,7 +1104,8 @@ class ImageViewSet(viewsets.ModelViewSet):
                 or (image.subject_type, image.subject_id) != previous_subject
             ):
                 # Another editor changed or moved this image while it was being
-                # turned; a move would log the turn on the wrong Entry.
+                # turned. A move would log the turn on the wrong Entry, and the
+                # permission check above was made against the old one.
                 destination_path.unlink(missing_ok=True)
                 return Response(
                     {"detail": "This image changed while it was being rotated. Reload and try again."},

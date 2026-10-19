@@ -738,13 +738,19 @@ export default function CoverEdit() {
   // Swap a new upload for its turned copy, keeping its place, key, Tracing flag
   // and caption. A quarter turn keeps the image's size and shape, so the
   // marking-closeup and resolution flags measured on pick still hold.
+  // Object URLs are made and revoked here, not in the updater, which React may
+  // run twice.
   const replacePendingUpload = (key: string, file: File) => {
+    const target = gallery.find((item) => item.kind === "pending" && item.key === key);
+    if (target?.kind !== "pending") return;
+    URL.revokeObjectURL(target.upload.previewUrl);
+    const previewUrl = URL.createObjectURL(file);
     setGallery((prev) =>
-      prev.map((item) => {
-        if (item.kind !== "pending" || item.key !== key) return item;
-        URL.revokeObjectURL(item.upload.previewUrl);
-        return { ...item, upload: { ...item.upload, file, previewUrl: URL.createObjectURL(file) } };
-      }),
+      prev.map((item) =>
+        item.kind === "pending" && item.key === key
+          ? { ...item, upload: { ...item.upload, file, previewUrl } }
+          : item,
+      ),
     );
   };
   const rotateTarget = gallery.find(
