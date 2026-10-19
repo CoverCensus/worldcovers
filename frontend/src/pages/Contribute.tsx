@@ -1242,6 +1242,7 @@ const Contribute = () => {
   useEffect(() => {
     if (copySourceId == null) return;
     let cancelled = false;
+    copyAppliedRef.current = false;
     setCopySourceError(null);
     getMarkingByIdRaw(copySourceId)
       .then((data) => {
@@ -1261,7 +1262,12 @@ const Contribute = () => {
   useEffect(() => {
     if (!copySource || copyAppliedRef.current || loadingShapes || catalogOptionsLoading) return;
     copyAppliedRef.current = true;
-    prefillMarkingFields(copySource);
+    try {
+      prefillMarkingFields(copySource);
+    } catch {
+      setCopySourceError("The Marking to start from could not be loaded. Fill in the form from scratch.");
+      return;
+    }
     const place = [copySource.town, copySource.state].filter((v) => typeof v === "string" && v).join(", ");
     const inscription = typeof copySource.inscription_txt === "string" ? copySource.inscription_txt.trim() : "";
     setCopySourceLabel(inscription ? `${place} - "${inscription}"` : place || `Marking ${copySourceId}`);
