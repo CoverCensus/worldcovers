@@ -7,4 +7,6 @@ export type EntryGalleryImage = {
   isDefault: boolean;
   isTracing: boolean;
   imageId: number | null;
+  /** Caption (Image.image_description); empty or absent shows none. */
+  description?: string;
 };

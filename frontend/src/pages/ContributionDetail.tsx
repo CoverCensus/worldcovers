@@ -42,6 +42,7 @@ import { submittedDataToFieldInput } from "@/lib/contributionToFields";
 import { readVphcProvenance } from "@/lib/vphcProvenance";
 import { VphcProvenanceCard } from "@/components/VphcProvenanceCard";
 import { EntryCitationsCard } from "@/components/entry-detail/EntryCitationsCard";
+import { ImageFigcaption } from "@/components/entry-detail/ImageFigcaption";
 import { submissionCitations } from "@/lib/submissionCitations";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
 import type { MarkingFieldInput } from "@/lib/markingFields";
@@ -61,6 +62,7 @@ type ContributionImageMeta = {
   original_filename?: string;
   storageFilename?: string;
   originalFilename?: string;
+  image_description?: string;
 };
 
 function buildContributionCatalogFields(input: MarkingFieldInput): CatalogFieldValues {
@@ -412,7 +414,7 @@ const ContributionDetail = () => {
     normalizeImageUrl(`${imageRoot}/${storageFilename.replace(/^\/+/, "")}`);
   const imageMetasRaw = (sd.image_metas ?? sd.imageMetas) as ContributionImageMeta[] | undefined;
   const imageMetaSingle = sd.image_meta as ContributionImageMeta | undefined;
-  const imageMetaList: Array<{ imageUrl: string; originalFilename?: string }> = [];
+  const imageMetaList: Array<{ imageUrl: string; originalFilename?: string; description?: string }> = [];
   const asImageUrlArray = (raw: unknown): string[] => {
     if (!Array.isArray(raw)) return [];
     return raw
@@ -448,6 +450,7 @@ const ContributionDetail = () => {
           imageMetaList.push({
             imageUrl,
             originalFilename: meta.original_filename ?? meta.originalFilename,
+            description: meta.image_description,
           });
         }
       }
@@ -461,6 +464,7 @@ const ContributionDetail = () => {
         imageMetaList.push({
           imageUrl,
           originalFilename: imageMetaSingle.original_filename ?? imageMetaSingle.originalFilename,
+          description: imageMetaSingle.image_description,
         });
       }
     }
@@ -594,21 +598,24 @@ const ContributionDetail = () => {
                           const alt = img.originalFilename || `Submission image ${index + 1}`;
                           return (
                             <CarouselItem key={index}>
-                              <a
-                                href={img.imageUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                aria-label={`Open ${alt} in new tab`}
-                                className="block"
-                              >
-                                <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
-                                  <img
-                                    src={img.imageUrl}
-                                    alt={alt}
-                                    className="w-full h-full object-contain"
-                                  />
-                                </div>
-                              </a>
+                              <figure>
+                                <a
+                                  href={img.imageUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  aria-label={`Open ${alt} in new tab`}
+                                  className="block"
+                                >
+                                  <div className="flex w-full aspect-[4/3] items-center justify-center rounded border border-border bg-muted overflow-hidden">
+                                    <img
+                                      src={img.imageUrl}
+                                      alt={alt}
+                                      className="w-full h-full object-contain"
+                                    />
+                                  </div>
+                                </a>
+                                <ImageFigcaption text={img.description} />
+                              </figure>
                             </CarouselItem>
                           );
                         })
