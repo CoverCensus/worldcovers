@@ -57,3 +57,9 @@ export function formatDiffValue(value: unknown): string {
 
   return String(value);
 }
+
+/** An "Image caption changed" entry's old and new caption (Trello T87). */
+export function formatCaptionChange(change: { previous: string; caption: string }): string {
+  const show = (text: string) => (text ? `"${text}"` : "(none)");
+  return `${show(change.previous)} -> ${show(change.caption)}`;
+}

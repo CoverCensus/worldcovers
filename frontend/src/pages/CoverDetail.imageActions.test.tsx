@@ -7,13 +7,16 @@
  * Mocks follow CoverDetail.linking.test.tsx, minus its stub of the thumbnails
  * card: this test needs the real card to see the control.
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import CoverDetailPage from "./CoverDetail";
 import { useAuth } from "@/hooks/useAuth";
-import { getCoverMarkingsByCover, loadAssociatedMarkingsForCover } from "@/services/markings";
+import {
+  getCoverChangelog, getCoverMarkingsByCover, getImagesForSubject, loadAssociatedMarkingsForCover, rotateImage,
+  updateImageCaption,
+} from "@/services/markings";
 
 jest.mock("@/assets/image-not-available.jpg", () => "image-not-available.jpg");
 jest.mock("@/hooks/useAuth", () => ({ useAuth: jest.fn() }));
@@ -42,6 +45,9 @@ jest.mock("@/components/ui/dialog", () => ({
   DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 jest.mock("@/services/markings", () => ({
+  getCoverChangelog: jest.fn().mockResolvedValue({ id: 7, events: [], versions: [] }),
+  updateImageCaption: jest.fn().mockResolvedValue({ ok: true }),
+  rotateImage: jest.fn().mockResolvedValue({ ok: true }),
   getImagesForSubject: jest.fn().mockResolvedValue([
     {
       imageId: 10916,
@@ -142,5 +148,34 @@ describe("Cover page image actions", () => {
     const crop = await screen.findByRole("button", { name: "Crop into marking" });
     await waitFor(() => expect(screen.getByText(/already has an image/)).toBeTruthy());
     expect(crop.hasAttribute("disabled")).toBe(true);
+  });
+
+  // Trello T87: an editor recaptions a saved image; the Cover's own history reloads.
+  it("saves an edited caption and reloads the Cover's own history", async () => {
+    links.mockResolvedValue({ links: [], error: null });
+    markings.mockResolvedValue([]);
+    openPage();
+    await waitFor(() => expect(getCoverChangelog).toHaveBeenCalledWith(7));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit this image's caption" }));
+    fireEvent.change(screen.getByLabelText("Caption"), { target: { value: " Front of the cover " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save caption" }));
+    await waitFor(() => expect(updateImageCaption).toHaveBeenCalledWith(10916, "Front of the cover"));
+    await waitFor(() => expect(getCoverChangelog).toHaveBeenCalledTimes(2));
+  });
+
+  // Trello T66, extended to Covers (Ian, 2026-10-19): the turn is logged on the Cover.
+  it("rotates a saved Cover image and reloads the Cover's own history", async () => {
+    links.mockResolvedValue({ links: [], error: null });
+    markings.mockResolvedValue([]);
+    openPage();
+    await waitFor(() => expect(getCoverChangelog).toHaveBeenCalledWith(7));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate this image" }));
+    fireEvent.load(screen.getByAltText("Image to rotate"));
+    fireEvent.click(screen.getByRole("button", { name: /Turn 90° right/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save rotation" }));
+    await waitFor(() => expect(rotateImage).toHaveBeenCalledWith(10916, 90));
+    await waitFor(() => expect(getCoverChangelog).toHaveBeenCalledTimes(2));
+    expect(getImagesForSubject).toHaveBeenLastCalledWith({ subjectType: "COVER", subjectId: 7 });
+    expect((getImagesForSubject as jest.Mock).mock.calls.length).toBeGreaterThan(1);
   });
 });

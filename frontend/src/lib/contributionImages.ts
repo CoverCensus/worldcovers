@@ -97,7 +97,7 @@ export function markingImagesFromContributionMetas(
       imageView: "FRONT",
       originalFilename,
       storageFilename,
-      imageDescription: "",
+      imageDescription: typeof obj.image_description === "string" ? obj.image_description : "",
       isTracing: false,
       displayOrder: idx,
       imageWidth: metaDimension(obj.image_width ?? obj.imageWidth),

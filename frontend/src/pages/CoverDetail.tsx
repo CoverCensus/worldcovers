@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { CheckCircle, Info, Loader2, MessageSquare, Pencil, Plus, Trash2, XCircle } from "lucide-react";
+import { CheckCircle, Copy, Info, Loader2, MessageSquare, Pencil, Plus, Trash2, XCircle } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,8 @@ import {
   moveToMarkingDisabledReason,
 } from "@/lib/coverImageActionState";
 import { CropImageDialog } from "@/components/CropImageDialog";
+import { ImageCaptionDialog } from "@/components/ImageCaptionDialog";
+import { RotateImageDialog } from "@/components/RotateImageDialog";
 import { EntryRecordHistoryCard } from "@/components/entry-detail/EntryRecordHistoryCard";
 import { EntryCitationsCard, type EntryCitationItem } from "@/components/entry-detail/EntryCitationsCard";
 import { CoverRecordDetailFields } from "@/components/entry-detail/CoverRecordDetailFields";
@@ -35,7 +37,8 @@ import {
   getImagesForSubject,
   getMarkingById,
   getMarkingsPage,
-  getMarkingChangelog,
+  getCoverChangelog,
+  updateImageCaption,
   getCoverMarkingsByCover,
   deleteImage,
   loadAssociatedMarkingsForCover,
@@ -43,6 +46,7 @@ import {
   normalizeImageUrl,
   postCoverMarkingReview,
   reorderImages,
+  rotateImage,
   type AssociatedMarkingOnCover,
   type CoverMarkingLink,
   type CoverMarkingReviewActionApi,
@@ -105,6 +109,7 @@ function buildCoverGalleryImages(images: MarkingImage[]): EntryGalleryImage[] {
     isDefault: img.displayOrder === 0,
     isTracing: img.isTracing,
     imageId: img.imageId > 0 ? img.imageId : null,
+    description: img.imageDescription,
   }));
 }
 
@@ -164,6 +169,10 @@ const CoverDetailPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [cover, setCover] = useState<CoverDetail | null>(null);
   const [images, setImages] = useState<MarkingImage[]>([]);
+  const [captionImageTarget, setCaptionImageTarget] = useState<MarkingImage | null>(null);
+  const [rotateImageTarget, setRotateImageTarget] = useState<MarkingImage | null>(null);
+  // Bumped after an action that writes history, so the panel refetches.
+  const [historyReloadKey, setHistoryReloadKey] = useState(0);
   const [reorderingImages, setReorderingImages] = useState(false);
   const [coverMarkingLink, setCoverMarkingLink] = useState<CoverMarkingLink | null>(null);
   const [coverMarkingLinks, setCoverMarkingLinks] = useState<CoverMarkingLink[]>([]);
@@ -466,8 +475,9 @@ const CoverDetailPage = () => {
     };
   }, [coverPk, markingId]);
 
+  // The Cover's own history (Trello T87); it used to show the parent Marking's.
   useEffect(() => {
-    if (markingId == null || Number.isNaN(markingId) || !canViewHistory) {
+    if (coverPk == null || Number.isNaN(coverPk) || !canViewHistory) {
       setHistoryEvents([]);
       setHistoryError(null);
       return;
@@ -476,7 +486,7 @@ const CoverDetailPage = () => {
     setHistoryLoading(true);
     setHistoryError(null);
     setHistoryExpanded(false);
-    getMarkingChangelog(markingId)
+    getCoverChangelog(coverPk)
       .then((data) => {
         if (cancelled) return;
         if (!data) {
@@ -499,7 +509,7 @@ const CoverDetailPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [markingId, canViewHistory]);
+  }, [coverPk, canViewHistory, historyReloadKey]);
 
   useEffect(() => {
     if (!api) return;
@@ -726,6 +736,16 @@ const CoverDetailPage = () => {
     });
   };
 
+  // Create Similar (Trello T44): a NEW cover under the same marking, prefilled
+  // from this one.
+  const openCreateSimilarCover = () => {
+    if (markingId == null || coverPk == null) return;
+    if (!requireAuth()) return;
+    navigate(`/record/${markingId}/cover/new?copy=${coverPk}`, {
+      state: { from: location.pathname + location.search },
+    });
+  };
+
   const goMarkingView = (markingIdTarget: number) => {
     navigate(`/record/${markingIdTarget}`, {
       state: { from: location.pathname + location.search },
@@ -910,6 +930,12 @@ const CoverDetailPage = () => {
               onCropImage={canManageImages ? beginCropIntoMarking : undefined}
               cropImageLabel="Crop into marking"
               cropImageDisabledReason={cropIntoMarkingReason}
+              onRotateImage={
+                canManageImages ? (index) => setRotateImageTarget(images[index] ?? null) : undefined
+              }
+              onEditCaption={
+                canManageImages ? (index) => setCaptionImageTarget(images[index] ?? null) : undefined
+              }
             />
             {canViewHistory && (
               <EntryRecordHistoryCard
@@ -940,10 +966,16 @@ const CoverDetailPage = () => {
                 <div className="flex items-center justify-between gap-3">
                   <CardTitle className="font-heading text-lg">Cover Details</CardTitle>
                   {canSubmitEdit && (
-                    <Button variant="outline" size="sm" onClick={openEditCover}>
-                      <Pencil className="mr-2 h-4 w-4" />
-                      {SUBMISSION_LABELS.action.submitEditToCover}
-                    </Button>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Button variant="outline" size="sm" onClick={openCreateSimilarCover}>
+                        <Copy className="mr-2 h-4 w-4" />
+                        {SUBMISSION_LABELS.action.createSimilarCover}
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={openEditCover}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        {SUBMISSION_LABELS.action.submitEditToCover}
+                      </Button>
+                    </div>
                   )}
                 </div>
               </CardHeader>
@@ -1394,6 +1426,47 @@ const CoverDetailPage = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ImageCaptionDialog
+        open={captionImageTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setCaptionImageTarget(null);
+        }}
+        caption={captionImageTarget?.imageDescription ?? ""}
+        onSave={async (caption) => {
+          const imageId = captionImageTarget?.imageId;
+          if (imageId == null || imageId <= 0 || coverPk == null) {
+            return "This image has not been saved to the catalog yet.";
+          }
+          const result = await updateImageCaption(imageId, caption);
+          if (result.ok === false) return result.message;
+          toast({ title: "Caption saved" });
+          setImages(await getImagesForSubject({ subjectType: "COVER", subjectId: coverPk }));
+          setHistoryReloadKey((key) => key + 1);
+          return null;
+        }}
+      />
+
+      <RotateImageDialog
+        open={rotateImageTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setRotateImageTarget(null);
+        }}
+        imageUrl={rotateImageTarget?.imageUrl ?? null}
+        description="Turn the image until the cover reads upright, then save. It replaces this image; the original file is kept."
+        onSave={async (angle) => {
+          const imageId = rotateImageTarget?.imageId;
+          if (imageId == null || imageId <= 0 || coverPk == null) {
+            return "This image has not been saved to the catalog yet.";
+          }
+          const result = await rotateImage(imageId, angle);
+          if (result.ok === false) return result.message;
+          toast({ title: "Rotation saved" });
+          setImages(await getImagesForSubject({ subjectType: "COVER", subjectId: coverPk }));
+          setHistoryReloadKey((key) => key + 1);
+          return null;
+        }}
+      />
 
       <AlertDialog open={restoreOpen} onOpenChange={(open) => !restoring && setRestoreOpen(open)}>
         <AlertDialogContent>

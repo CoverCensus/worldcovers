@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import uuid
@@ -44,7 +45,15 @@ from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
 
-from common.images import CropError, crop_image_bytes, extract_image_metadata
+from common.images import (
+    MAX_IMAGE_DESCRIPTION_LENGTH,
+    CropError,
+    RotateError,
+    crop_image_bytes,
+    extract_image_metadata,
+    normalize_angle,
+    rotate_image_bytes,
+)
 from common.catalog_codes import (
     CATALOG_CODE_KEYS,
     CatalogCodeError,
@@ -778,6 +787,47 @@ class FAQEntryViewSet(viewsets.ReadOnlyModelViewSet):
 ###################################################################################################
 ## Image (polymorphic over COVER | MARKING)
 ###################################################################################################
+def _caption_change(txn):
+    """The old and new caption of an "Image caption changed" changelog entry
+    (Trello T87), or None. Only these two strings leave extra_payload, which
+    for other actions holds storage details the history panel does not need."""
+    if txn.action != SubmissionTransaction.ACTION_IMAGE_CAPTION_CHANGED:
+        return None
+    extra = txn.extra_payload or {}
+    return {
+        "previous": str(extra.get("previous_caption") or ""),
+        "caption": str(extra.get("caption") or ""),
+    }
+
+
+def _parse_angle(raw):
+    """A rotation in clockwise degrees, normalised to (-180, 180], or None.
+
+    Any finite number is accepted (the rotate handle can go round many times);
+    a boolean, an empty value or anything non-numeric is a client bug.
+    """
+    if isinstance(raw, bool) or raw is None or raw == "":
+        return None
+    try:
+        angle = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return normalize_angle(angle) if math.isfinite(angle) else None
+
+
+def _image_entry(image):
+    """The Marking or Cover an image belongs to, with its snapshot/version writers.
+
+    Default managers on purpose: a recycle-binned Entry is read-only, so its
+    image actions get no subject (None) and the caller refuses them.
+    """
+    if image.subject_type == Image.SUBJECT_COVER:
+        subject = Cover.objects.filter(pk=image.subject_id).first()
+        return subject, build_cover_snapshot, create_cover_version
+    subject = Marking.objects.filter(pk=image.subject_id).first()
+    return subject, build_marking_snapshot, create_marking_version
+
+
 class ImageViewSet(viewsets.ModelViewSet):
     """
     Polymorphic image API. Filter by `?subject_type=MARKING&subject_id=<id>`
@@ -834,7 +884,8 @@ class ImageViewSet(viewsets.ModelViewSet):
 
         Body: {"x": int, "y": int, "width": int, "height": int,
                "image_view": optional, "image_description": optional,
-               "subject_type": optional "MARKING", "subject_id": optional int}
+               "subject_type": optional "MARKING", "subject_id": optional int,
+               "angle": optional clockwise degrees, applied before the box}
         """
         source = self.get_object()
         self.check_object_permissions(request, source)
@@ -901,6 +952,18 @@ class ImageViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Optional turn applied before the box (workspace issue #193); the box
+        # is in the turned image's pixels.
+        angle = 0.0
+        raw_angle = request.data.get("angle")
+        if raw_angle is not None:
+            angle = _parse_angle(raw_angle)
+            if angle is None:
+                return Response(
+                    {"detail": "angle must be a number of degrees."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         source_path = Path(settings.MEDIA_ROOT) / source.storage_filename.lstrip("/")
         # storage_filename is editable in the admin, so confirm the resolved
         # path is still inside MEDIA_ROOT before reading it.
@@ -915,7 +978,7 @@ class ImageViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            content = crop_image_bytes(resolved.read_bytes(), source.mime_type, box)
+            content = crop_image_bytes(resolved.read_bytes(), source.mime_type, box, angle)
         except CropError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -993,6 +1056,189 @@ class ImageViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(cropped)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsEditorOrAdminWrite, IsResponsibleForImageSubject],
+    )
+    def rotate(self, request, pk=None):
+        """Turn a Marking or Cover image clockwise by any angle, in place.
+
+        Trello T66: Editors asked for an easy way to fix a marking scanned on
+        its side; Ian extended it to Cover images on 2026-10-19. Unlike a crop,
+        the rotated image takes the original's place (same row, position, view
+        and caption), so a sideways default image is fixed rather than joined
+        by a second copy. The pixels go to a new file so the new URL defeats
+        the 30-day /media/ cache; the previous file is never deleted and is
+        named in the audit row on the image's Marking or Cover.
+
+        Workspace issue #193 (Reese, 2026-10-19) replaced quarter turns with a
+        free angle set by dragging a rotate handle. Right angles stay exact
+        pixel moves; any other angle grows the canvas with white corners.
+
+        Body: {"angle": number} -- clockwise degrees, any finite value; only
+        where it ends up (normalised to -180..180) matters.
+        """
+        image = self.get_object()
+        self.check_object_permissions(request, image)
+
+        angle = _parse_angle(request.data.get("angle"))
+        if angle is None:
+            return Response(
+                {"detail": "angle must be a number of degrees."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if angle == 0:
+            return Response(
+                {"detail": "Turn the image before saving."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        subject, snapshot, create_version = _image_entry(image)
+        if subject is None:
+            return Response(
+                {"detail": "This image's Entry is not in the catalog."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        previous_subject = (image.subject_type, image.subject_id)
+        previous_storage_filename = image.storage_filename
+        source_path = Path(settings.MEDIA_ROOT) / previous_storage_filename.lstrip("/")
+        # storage_filename is editable in the admin, so confirm the resolved
+        # path is still inside MEDIA_ROOT before reading it.
+        media_root = Path(settings.MEDIA_ROOT).resolve()
+        try:
+            resolved = source_path.resolve(strict=True)
+            resolved.relative_to(media_root)
+        except (OSError, ValueError):
+            return Response(
+                {"detail": "Source image file is missing."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            content = rotate_image_bytes(resolved.read_bytes(), image.mime_type, angle)
+        except RotateError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        metadata = extract_image_metadata(content, "image/png")
+        if metadata is None:
+            return Response(
+                {"detail": "Rotated image could not be encoded."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Keep the rotated file beside its source so media stays sorted by state.
+        # Built from the resolved source, already confirmed inside MEDIA_ROOT,
+        # so an admin-edited storage_filename cannot place it elsewhere.
+        destination_path = resolved.parent / f"{uuid.uuid4().hex}.png"
+        storage_name = destination_path.relative_to(media_root).as_posix()
+        destination_path.write_bytes(content)
+
+        with transaction.atomic():
+            image = Image.objects.select_for_update().get(pk=image.pk)
+            if (
+                image.storage_filename != previous_storage_filename
+                or (image.subject_type, image.subject_id) != previous_subject
+            ):
+                # Another editor changed or moved this image while it was being
+                # turned. A move would log the turn on the wrong Entry, and the
+                # permission check above was made against the old one.
+                destination_path.unlink(missing_ok=True)
+                return Response(
+                    {"detail": "This image changed while it was being rotated. Reload and try again."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            before = snapshot(subject)
+            image.storage_filename = storage_name
+            for field, value in metadata.items():
+                setattr(image, field, value)
+            image.modified_by = request.user
+            image.save()
+            txn = log_submission_transaction(
+                action=SubmissionTransaction.ACTION_IMAGE_ROTATED,
+                actor=request.user,
+                marking=subject if isinstance(subject, Marking) else None,
+                cover=subject if isinstance(subject, Cover) else None,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload=before,
+                after_payload=snapshot(subject),
+                extra_payload={
+                    "image_id": image.pk,
+                    "angle": angle,
+                    "previous_storage_filename": previous_storage_filename,
+                },
+            )
+            create_version(subject, txn, request.user)
+
+        serializer = self.get_serializer(image)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsEditorOrAdminWrite, IsResponsibleForImageSubject],
+    )
+    def caption(self, request, pk=None):
+        """Change a saved image's caption (Trello T87).
+
+        Its own action rather than a PATCH so the change is logged: PATCH also
+        carries reorder and set-default, and writes no history. The Marking or
+        Cover the image belongs to gets an "Image caption changed" entry with
+        the previous and new caption, plus a version snapshot.
+
+        Body: {"image_description": "<caption>"}; an empty value clears it.
+        """
+        image = self.get_object()
+        self.check_object_permissions(request, image)
+
+        raw = request.data.get("image_description", "")
+        if not isinstance(raw, str):
+            return Response(
+                {"detail": "image_description must be text."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        caption = raw.strip()
+        if len(caption) > MAX_IMAGE_DESCRIPTION_LENGTH:
+            return Response(
+                {"detail": f"Caption is longer than {MAX_IMAGE_DESCRIPTION_LENGTH} characters."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        with transaction.atomic():
+            # Lock first, then check and resolve against the locked row, so a
+            # concurrent move cannot log this change on the wrong Entry.
+            image = Image.objects.select_for_update().get(pk=image.pk)
+            self.check_object_permissions(request, image)
+            subject, snapshot, create_version = _image_entry(image)
+            if subject is None:
+                return Response(
+                    {"detail": "This image's Entry is not in the catalog."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            previous = image.image_description or ""
+            if previous != caption:
+                before = snapshot(subject)
+                image.image_description = caption
+                image.modified_by = request.user
+                image.save(update_fields=["image_description", "modified_by", "modified_date"])
+                txn = log_submission_transaction(
+                    action=SubmissionTransaction.ACTION_IMAGE_CAPTION_CHANGED,
+                    actor=request.user,
+                    marking=subject if isinstance(subject, Marking) else None,
+                    cover=subject if isinstance(subject, Cover) else None,
+                    source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                    before_payload=before,
+                    after_payload=snapshot(subject),
+                    extra_payload={
+                        "image_id": image.pk,
+                        "previous_caption": previous,
+                        "caption": caption,
+                    },
+                )
+                create_version(subject, txn, request.user)
+
+        serializer = self.get_serializer(image)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     def perform_update(self, serializer):
         # Moving an image to another subject (issue #48) has the same
@@ -1312,6 +1558,7 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
                     "contribution_id": txn.contribution_id,
                     "version_no": version_no_by_txn_id.get(txn.id),
                     "diff": txn.diff_payload or [],
+                    "caption_change": _caption_change(txn),
                     "summary": f"{action_labels.get(txn.action, txn.action)} by {actor_email or actor_name or 'system'}",
                 }
             )
@@ -2352,6 +2599,7 @@ class MarkingViewSet(viewsets.ModelViewSet):
                     "contribution_id": txn.contribution_id,
                     "version_no": version_no_by_txn_id.get(txn.id),
                     "diff": txn.diff_payload or [],
+                    "caption_change": _caption_change(txn),
                     "summary": f"{action_labels.get(txn.action, txn.action)} by {actor_email or actor_name or 'system'}",
                 }
             )
@@ -3557,6 +3805,36 @@ class ContributionSubmitView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        # Per-upload captions (T43), positional over the uploaded files like
+        # *_image_tags. Checked before any file is written so a rejected
+        # caption cannot leave orphan files under MEDIA_ROOT.
+        image_descriptions = _parse_image_descriptions(
+            data.get(
+                "cover_image_descriptions"
+                if is_cover_submission
+                else "marking_image_descriptions"
+            )
+        )
+        for number, text in enumerate(image_descriptions, start=1):
+            if len(text) > MAX_IMAGE_DESCRIPTION_LENGTH:
+                return Response(
+                    {"detail": (
+                        f"Caption for image {number} is longer than "
+                        f"{MAX_IMAGE_DESCRIPTION_LENGTH} characters."
+                    )},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        # Changed captions of images already saved with a resumed draft (T87),
+        # keyed by image URL; applied to the draft's stored metas below.
+        saved_image_descriptions = _parse_saved_image_descriptions(
+            data.get("existing_image_descriptions")
+        )
+        if any(len(text) > MAX_IMAGE_DESCRIPTION_LENGTH for text in saved_image_descriptions.values()):
+            return Response(
+                {"detail": f"A caption is longer than {MAX_IMAGE_DESCRIPTION_LENGTH} characters."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Save uploaded image files under MEDIA_ROOT/<region_abbrev>/.
         # Marking flow uses `marking_image`; cover draft flow uses `cover_image`.
         # stash the resulting metadata on Contribution.submitted_data so the
@@ -3577,9 +3855,14 @@ class ContributionSubmitView(APIView):
         except AttributeError:
             uploaded_files = []
         image_metas = []
-        for uploaded in uploaded_files:
+        for index, uploaded in enumerate(uploaded_files):
             meta = _save_contribution_image(uploaded, region_abbrev)
             if meta:
+                # Index over the uploads, not the saved metas, so a file that
+                # fails to save cannot shift later captions onto the wrong image.
+                # Approval copies meta["image_description"] onto the Image row.
+                if index < len(image_descriptions) and image_descriptions[index]:
+                    meta["image_description"] = image_descriptions[index]
                 image_metas.append(meta)
 
         # Contributor-chosen final image order: a list of tokens, one per
@@ -3599,6 +3882,10 @@ class ContributionSubmitView(APIView):
             "referenceWorkDetails",
             "marking_image",
             "cover_image",
+            # Captions are copied into the image metas above.
+            "marking_image_descriptions",
+            "cover_image_descriptions",
+            "existing_image_descriptions",
             "edit_contribution_id",
             "editContributionId",
             "removed_existing_image_keys",
@@ -3747,6 +4034,8 @@ class ContributionSubmitView(APIView):
             # (Contribute.tsx -> removeExistingImageAt) sends a JSON list of the
             # displayed URLs the user removed from the edit form; the helper
             # drops matching entries and merges any newly uploaded files.
+            # Before the merge, so merged meta lists carry the new captions.
+            _apply_saved_image_descriptions(existing_sd, saved_image_descriptions)
             image_updates = _apply_existing_image_reconciliation(
                 existing_sd, data, image_metas, is_cover_submission, image_order
             )
@@ -4007,6 +4296,49 @@ def _validate_final_submission_image_choice(submitted_data, is_cover):
     return "Add at least one {} or confirm no image is available.".format(label)
 
 
+def _parse_saved_image_descriptions(raw):
+    """Parse existing_image_descriptions ({image URL: caption}) from a JSON
+    string or dict into stripped captions. Non-text values are dropped; anything
+    unparseable returns {}."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(url): text.strip() for url, text in raw.items() if isinstance(text, str)}
+
+
+def _apply_saved_image_descriptions(existing_sd, descriptions):
+    """Set the caption of images already saved with a draft (Trello T87).
+
+    Matches each URL against the stored metas' storage_filename with the same
+    URL-tail rule as removals. Approval copies a meta's caption onto the Image
+    row it creates, so nothing else changes. A Marking-edit draft's current
+    Marking images are rebuilt from the catalog afterwards, so they stay
+    add-only and keep their captions.
+    """
+    if not descriptions:
+        return
+    metas = [
+        meta
+        for key in ("marking_image_metas", "cover_image_metas", "image_metas")
+        for meta in (existing_sd.get(key) or [])
+        if isinstance(meta, dict)
+    ]
+    if isinstance(existing_sd.get("image_meta"), dict):
+        metas.append(existing_sd["image_meta"])
+    for meta in metas:
+        for url, caption in descriptions.items():
+            if _storage_filename_removed(meta.get("storage_filename"), {url}):
+                if caption:
+                    meta["image_description"] = caption
+                else:
+                    meta.pop("image_description", None)
+                break
+
+
 def _storage_filename_removed(storage_filename, removed_set):
     """True when storage_filename matches one of the removed URL keys. Mirrors
     the _meta_was_removed matcher: normalize both (strip leading slash) and test
@@ -4032,6 +4364,21 @@ def _parse_existing_image_tags(raw):
     if isinstance(raw, dict):
         return {str(k): str(v) for k, v in raw.items()}
     return {}
+
+
+def _parse_image_descriptions(raw):
+    """Parse positional captions for newly uploaded files (*_image_descriptions)
+    from a JSON string or list into stripped strings. A non-string entry
+    becomes "" so it keeps its position; anything unparseable returns []. The
+    forms omit the key when no upload has a caption, so absent means none."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(raw, list):
+        return []
+    return [item.strip() if isinstance(item, str) else "" for item in raw]
 
 
 def _existing_image_tag_value(storage_filename, existing_tags):

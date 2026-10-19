@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Crop, History, Info, Loader2, MessageSquare, Pencil, Plus, Recycle, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, Copy, Crop, History, Info, Loader2, MessageSquare, Pencil, Plus, Recycle, Star, Trash2 } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { AdminEditLink } from "@/components/AdminEditLink";
 import { Footer } from "@/components/Footer";
@@ -19,6 +19,9 @@ import {
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { ImageOrPlaceholder } from "@/components/ImageOrPlaceholder";
 import { CropImageDialog } from "@/components/CropImageDialog";
+import { RotateImageDialog } from "@/components/RotateImageDialog";
+import { ImageCaptionDialog } from "@/components/ImageCaptionDialog";
+import { formatCaptionChange } from "@/components/entry-detail/historyDiffFormatting";
 import {
   formatDateSeen,
   formatDatesSeenList,
@@ -34,6 +37,7 @@ import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
 import { MarkingFieldsDisplay } from "@/components/MarkingFieldsDisplay";
 import { ThumbnailImageActions } from "@/components/entry-detail/ThumbnailImageActions";
 import { CoverFromImagePrompt } from "@/components/entry-detail/CoverFromImagePrompt";
+import { ImageFigcaption } from "@/components/entry-detail/ImageFigcaption";
 import {
   coverLikeMarkingImages,
   isLastMarkingImage,
@@ -50,6 +54,8 @@ import {
   removeMarking,
   reorderImages,
   restoreMarking,
+  rotateImage,
+  updateImageCaption,
   updateMarkingReviewed,
   type AssociatedCover,
   type AssociatedDateSeen,
@@ -111,6 +117,8 @@ type GalleryImage = {
    * "image not available" placeholder slide.
    */
   imageId: number | null;
+  /** Caption (Image.image_description); empty shows none. */
+  description?: string;
 };
 
 const EMPTY = "-";
@@ -284,6 +292,7 @@ function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
     isDefault: img.displayOrder === 0,
     isTracing: img.subjectType === "MARKING" && img.isTracing,
     imageId: img.imageId > 0 ? img.imageId : null,
+    description: img.imageDescription,
   }));
 }
 
@@ -343,6 +352,11 @@ const RecordDetail = () => {
   const [restoring, setRestoring] = useState(false);
   // Image whose marking an editor is cropping out of a whole-cover scan (#77).
   const [cropImageTarget, setCropImageTarget] = useState<MarkingImage | null>(null);
+  // Image an editor is turning a quarter at a time (Trello T66).
+  const [rotateImageTarget, setRotateImageTarget] = useState<MarkingImage | null>(null);
+  const [captionImageTarget, setCaptionImageTarget] = useState<MarkingImage | null>(null);
+  // Bumped after an action that writes history, so the panel refetches.
+  const [historyReloadKey, setHistoryReloadKey] = useState(0);
   // issues.md 167 / Trello T37: create a cover from a marking image.
   // Own busy/error pair rather than sharing the move-to-cover one: they are
   // two independent dialogs, and shared state lets a failure in one surface
@@ -501,7 +515,7 @@ const RecordDetail = () => {
     return () => {
       cancelled = true;
     };
-  }, [markingId, canViewHistory]);
+  }, [markingId, canViewHistory, historyReloadKey]);
 
   useEffect(() => {
     if (!api) return;
@@ -646,6 +660,12 @@ const RecordDetail = () => {
         fromDashboardViaDetail: !!fromDashboard,
         mode: "suggestion",
       },
+    });
+
+  // Create Similar (Trello T44): a NEW submission prefilled from this marking.
+  const goCreateSimilar = () =>
+    navigate(`/contribute?copy=${record.id}`, {
+      state: { from: location.pathname + location.search },
     });
 
   // Re-pull the marking after a remove/restore so the buttons toggle in place
@@ -967,49 +987,52 @@ const RecordDetail = () => {
                         );
                         return (
                           <CarouselItem key={index}>
-                            <div className="relative">
-                              {img.imageUrl ? (
-                                <a
-                                  href={img.imageUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  aria-label={`Open ${alt} in new tab`}
-                                  className="block"
-                                >
-                                  {imageFrame}
-                                </a>
-                              ) : (
-                                imageFrame
-                              )}
-                              {canSetDefaultImage && (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="icon"
-                                      className={
-                                        img.isDefault
-                                          ? "absolute right-2 top-2 h-8 w-8 border-amber-400 bg-amber-100 text-amber-700 hover:bg-amber-100 hover:text-amber-700 disabled:opacity-100"
-                                          : "absolute right-2 top-2 h-8 w-8 bg-background/90"
-                                      }
-                                      aria-label={
-                                        img.isDefault
-                                          ? "Default catalog image"
-                                          : "Set as default catalog image"
-                                      }
-                                      disabled={reorderingImages || img.isDefault}
-                                      onClick={() => setImageAsDefault(index)}
-                                    >
-                                      <Star className={`h-4 w-4 ${img.isDefault ? "fill-amber-500 text-amber-500" : ""}`} />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    {img.isDefault ? "Default catalog image" : "Set as default catalog image"}
-                                  </TooltipContent>
-                                </Tooltip>
-                              )}
-                            </div>
+                            <figure>
+                              <div className="relative">
+                                {img.imageUrl ? (
+                                  <a
+                                    href={img.imageUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    aria-label={`Open ${alt} in new tab`}
+                                    className="block"
+                                  >
+                                    {imageFrame}
+                                  </a>
+                                ) : (
+                                  imageFrame
+                                )}
+                                {canSetDefaultImage && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="icon"
+                                        className={
+                                          img.isDefault
+                                            ? "absolute right-2 top-2 h-8 w-8 border-amber-400 bg-amber-100 text-amber-700 hover:bg-amber-100 hover:text-amber-700 disabled:opacity-100"
+                                            : "absolute right-2 top-2 h-8 w-8 bg-background/90"
+                                        }
+                                        aria-label={
+                                          img.isDefault
+                                            ? "Default catalog image"
+                                            : "Set as default catalog image"
+                                        }
+                                        disabled={reorderingImages || img.isDefault}
+                                        onClick={() => setImageAsDefault(index)}
+                                      >
+                                        <Star className={`h-4 w-4 ${img.isDefault ? "fill-amber-500 text-amber-500" : ""}`} />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      {img.isDefault ? "Default catalog image" : "Set as default catalog image"}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                )}
+                              </div>
+                              <ImageFigcaption text={img.description} />
+                            </figure>
                           </CarouselItem>
                         );
                       })}
@@ -1103,6 +1126,16 @@ const RecordDetail = () => {
                                 if (!rawImg?.imageId) return;
                                 setCropImageTarget(rawImg);
                               }}
+                              onRotate={() => {
+                                const rawImg = record.images[idx];
+                                if (!rawImg?.imageId) return;
+                                setRotateImageTarget(rawImg);
+                              }}
+                              onEditCaption={() => {
+                                const rawImg = record.images[idx];
+                                if (!rawImg?.imageId) return;
+                                setCaptionImageTarget(rawImg);
+                              }}
                               onCreateCoverFromImage={() => {
                                 const rawImg = record.images[idx];
                                 if (rawImg) openCreateCoverFromImage(rawImg);
@@ -1156,6 +1189,12 @@ const RecordDetail = () => {
                               <div className="mt-1 text-xs text-muted-foreground break-all">
                                 {historyActorDisplay(event)}
                               </div>
+                              {event.caption_change && (
+                                <p className="mt-2 text-xs text-muted-foreground break-all">
+                                  <span className="font-medium text-foreground">Caption</span>
+                                  {`: ${formatCaptionChange(event.caption_change)}`}
+                                </p>
+                              )}
                             </li>
                           ))}
                         </ul>
@@ -1199,10 +1238,16 @@ const RecordDetail = () => {
                     <CardTitle className="font-heading text-lg">Marking Details</CardTitle>
                     {/* A removed marking is read-only: no edits until it is restored. */}
                     {!record.isRemoved && (
-                      <Button variant="outline" size="sm" onClick={goEdit}>
-                        <Pencil className="mr-2 h-4 w-4" />
-                        {SUBMISSION_LABELS.action.submitEditToMarking}
-                      </Button>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Button variant="outline" size="sm" onClick={goCreateSimilar}>
+                          <Copy className="mr-2 h-4 w-4" />
+                          {SUBMISSION_LABELS.action.createSimilarMarking}
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={goEdit}>
+                          <Pencil className="mr-2 h-4 w-4" />
+                          {SUBMISSION_LABELS.action.submitEditToMarking}
+                        </Button>
+                      </div>
                     )}
                   </div>
                 </CardHeader>
@@ -1610,6 +1655,45 @@ const RecordDetail = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <RotateImageDialog
+        open={rotateImageTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setRotateImageTarget(null);
+        }}
+        imageUrl={rotateImageTarget?.imageUrl ?? null}
+        description="Turn the image until the marking reads upright, then save. It replaces this image; the original file is kept."
+        onSave={async (angle) => {
+          const imageId = rotateImageTarget?.imageId;
+          if (imageId == null) return "This image has not been saved to the catalog yet.";
+          const result = await rotateImage(imageId, angle);
+          if (result.ok === false) return result.message;
+          toast({ title: "Rotation saved" });
+          if (markingId != null) {
+            const refreshed = await getMarkingById(markingId);
+            if (refreshed) setRecord(refreshed);
+          }
+          return null;
+        }}
+      />
+
+      <ImageCaptionDialog
+        open={captionImageTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setCaptionImageTarget(null);
+        }}
+        caption={captionImageTarget?.imageDescription ?? ""}
+        onSave={async (caption) => {
+          const imageId = captionImageTarget?.imageId;
+          if (imageId == null) return "This image has not been saved to the catalog yet.";
+          const result = await updateImageCaption(imageId, caption);
+          if (result.ok === false) return result.message;
+          toast({ title: "Caption saved" });
+          await refetchRecord();
+          setHistoryReloadKey((key) => key + 1);
+          return null;
+        }}
+      />
 
       <CropImageDialog
         open={cropImageTarget != null}

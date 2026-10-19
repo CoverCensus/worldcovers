@@ -21,6 +21,7 @@ import {
   ArrowRight,
   ChevronDown,
   Loader2,
+  RotateCw,
   Star,
   Trash2,
   Upload,
@@ -35,6 +36,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ImageCaptionInput } from "@/components/ImageCaptionInput";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -50,6 +52,7 @@ import { cn } from "@/lib/utils";
 import { PartialDateFields } from "@/components/PartialDateFields";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
 import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
+import { LocalRotateImageDialog } from "@/components/LocalRotateImageDialog";
 import { CoverReviewBanner } from "@/components/CoverReviewBanner";
 import { looksLikeWrongKind, measureImageFile } from "@/lib/imageShape";
 import { isBelowPreferredImageDpi, measureImageDpi } from "@/lib/imageResolution";
@@ -57,6 +60,7 @@ import { COVER_SUBMISSION_GUIDELINES } from "@/labels/guidelines";
 import { isCoverContributionData } from "@/lib/contributionDisplay";
 import {
   contributionImageMetasFromSubmittedData,
+  isDraftContributionImage,
   markingImagesFromContributionMetas,
 } from "@/lib/contributionImages";
 
@@ -87,6 +91,8 @@ type PendingUpload = {
   file: File;
   tracing: boolean;
   previewUrl: string;
+  /** Caption (T43), saved as the image's description on approval. */
+  description: string;
 };
 
 // One entry in the combined image gallery. "existing" wraps an already-saved
@@ -228,12 +234,24 @@ export default function CoverEdit() {
     editContributionIdRaw && /^\d+$/.test(editContributionIdRaw)
       ? parseInt(editContributionIdRaw, 10)
       : null;
+  // Create Similar (Trello T44): ?copy=<coverId> on the new-cover route starts a
+  // NEW Cover under this Marking from that cover's fields and citations. No
+  // edit_cover_* key is sent, so approval creates a separate Cover.
+  const copyParam = searchParams.get("copy");
+  const copySourceCoverId =
+    mode === "create" && editContributionId == null && copyParam && /^\d+$/.test(copyParam)
+      ? parseInt(copyParam, 10)
+      : null;
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draftLoadDone, setDraftLoadDone] = useState(editContributionId == null);
   const [draftLoadError, setDraftLoadError] = useState<string | null>(null);
   const [coverRow, setCoverRow] = useState<AssociatedCover | null>(null);
+  const [copySource, setCopySource] = useState<AssociatedCover | null>(null);
+  // Captions typed on images already saved with a resumed draft (T87), by tile key.
+  const [savedCaptionEdits, setSavedCaptionEdits] = useState<Record<string, string>>({});
+  const [copySourceError, setCopySourceError] = useState<string | null>(null);
   const [markingRecord, setMarkingRecord] = useState<MarkingRecord | null>(null);
   // Review state of a contribution resumed via ?edit=<id>. `mode` is "edit" only when the
   // route carries a coverId, but the dashboard sends a needs-revision cover to
@@ -291,6 +309,8 @@ export default function CoverEdit() {
   // an image drops it from the count for free.
   const [markingLikeImageKeys, setMarkingLikeImageKeys] = useState<string[]>([]);
   const [lowResolutionImageKeys, setLowResolutionImageKeys] = useState<string[]>([]);
+  // The new upload whose Rotate dialog is open (Trello T66, Cover form).
+  const [rotateTargetKey, setRotateTargetKey] = useState<string | null>(null);
   const markingLikeImageCount = useMemo(
     () => gallery.filter((item) => markingLikeImageKeys.includes(item.key)).length,
     [gallery, markingLikeImageKeys],
@@ -510,6 +530,11 @@ export default function CoverEdit() {
         if (cancelled) return;
         if (mode === "create") {
           setCoverRow(null);
+          if (copySourceCoverId != null) {
+            const source = covers.find((c) => c.coverDetails?.id === copySourceCoverId) ?? null;
+            if (source) setCopySource(source);
+            else setCopySourceError("The Cover to start from is not linked to this Marking. Fill in the form from scratch.");
+          }
           return;
         }
         const found = covers.find((c) => c.coverDetails?.id === routeCoverId) ?? null;
@@ -530,18 +555,31 @@ export default function CoverEdit() {
     return () => {
       cancelled = true;
     };
-  }, [markingId, routeCoverId, mode]);
+  }, [markingId, routeCoverId, mode, copySourceCoverId]);
 
+  // Only the fields a sibling Cover shares; its date, images, comment and
+  // submitter-name choice describe the source itself and stay behind.
+  useEffect(() => {
+    if (!copySource) return;
+    const shared = buildEditState(copySource);
+    setType(shared.type);
+    setIsInstitutional(shared.isInstitutional);
+    setIsBackstamp(shared.isBackstamp);
+    setDescription(shared.description);
+  }, [copySource]);
+
+  // Citations come from the cover being edited, or from the Create Similar source.
+  const citationSourceCoverId =
+    mode === "edit" ? coverRow?.coverDetails?.id ?? null : copySource?.coverDetails?.id ?? null;
   useEffect(() => {
     if (
-      mode !== "edit" ||
-      !coverRow?.coverDetails?.id ||
+      citationSourceCoverId == null ||
       referenceWorksLoading || referenceWorksError ||
       citationsLoadedRef.current
     ) {
       return;
     }
-    const cid = coverRow.coverDetails.id;
+    const cid = citationSourceCoverId;
     let cancelled = false;
     void listCitationsForSubject({ subjectType: "COVER", subjectId: cid }).then((rows) => {
       if (cancelled) return;
@@ -564,7 +602,7 @@ export default function CoverEdit() {
     return () => {
       cancelled = true;
     };
-  }, [mode, coverRow, referenceWorks, referenceWorksLoading, referenceWorksError]);
+  }, [citationSourceCoverId, referenceWorks, referenceWorksLoading, referenceWorksError]);
 
   const refreshImages = async () => {
     if (coverId == null) {
@@ -658,7 +696,13 @@ export default function CoverEdit() {
       next.push({
         kind: "pending",
         key,
-        upload: { key, file, tracing: false, previewUrl: URL.createObjectURL(file) },
+        upload: {
+          key,
+          file,
+          tracing: false,
+          previewUrl: URL.createObjectURL(file),
+          description: "",
+        },
       });
     }
     if (next.length === 0) return;
@@ -690,6 +734,30 @@ export default function CoverEdit() {
       });
     }
   };
+
+  // Swap a new upload for its turned copy, keeping its place, key, Tracing flag
+  // and caption. A turn only moves the same pixels (and may add white
+  // corners), so the marking-closeup and resolution flags measured on pick
+  // still describe the image.
+  // Object URLs are made and revoked here, not in the updater, which React may
+  // run twice.
+  const replacePendingUpload = (key: string, file: File) => {
+    const target = gallery.find((item) => item.kind === "pending" && item.key === key);
+    if (target?.kind !== "pending") return;
+    URL.revokeObjectURL(target.upload.previewUrl);
+    const previewUrl = URL.createObjectURL(file);
+    setGallery((prev) =>
+      prev.map((item) =>
+        item.kind === "pending" && item.key === key
+          ? { ...item, upload: { ...item.upload, file, previewUrl } }
+          : item,
+      ),
+    );
+  };
+  const rotateTarget = gallery.find(
+    (item): item is Extract<GalleryItem, { kind: "pending" }> =>
+      item.kind === "pending" && item.key === rotateTargetKey,
+  );
 
   // Reorder + set-default + tracing + remove all act on the single combined
   // gallery, so they work uniformly across already-saved and newly-picked images.
@@ -771,6 +839,16 @@ export default function CoverEdit() {
           ? { ...item, upload: { ...item.upload, tracing } }
           : { ...item, img: { ...item.img, isTracing: tracing } };
       }),
+    );
+  };
+
+  const setPendingDescription = (key: string, description: string) => {
+    setGallery((prev) =>
+      prev.map((item) =>
+        item.key === key && item.kind === "pending"
+          ? { ...item, upload: { ...item.upload, description } }
+          : item,
+      ),
     );
   };
 
@@ -975,17 +1053,32 @@ export default function CoverEdit() {
       // rebuilds the saved metas list in this order so display_order at approval
       // matches the on-screen order (and index 0 becomes the catalog default).
       const tracingTags: string[] = [];
+      const descriptions: string[] = [];
       const imageOrder: string[] = [];
       for (const item of gallery) {
         if (item.kind === "pending") {
           form.append("cover_image", item.upload.file, item.upload.file.name);
           tracingTags.push(item.upload.tracing ? "tracing" : "photograph");
+          descriptions.push(item.upload.description.trim());
           imageOrder.push("__new__");
         } else {
           imageOrder.push(item.key);
         }
       }
       form.append("cover_image_tags", JSON.stringify(tracingTags));
+      // Changed captions of images saved with this draft (T87), by image URL.
+      const changedSavedCaptions: Record<string, string> = {};
+      for (const item of gallery) {
+        if (item.kind !== "existing" || !(item.key in savedCaptionEdits)) continue;
+        const caption = savedCaptionEdits[item.key].trim();
+        if (caption !== item.img.imageDescription.trim()) changedSavedCaptions[item.key] = caption;
+      }
+      if (editContributionId != null && Object.keys(changedSavedCaptions).length > 0) {
+        form.append("existing_image_descriptions", JSON.stringify(changedSavedCaptions));
+      }
+      if (descriptions.some(Boolean)) {
+        form.append("cover_image_descriptions", JSON.stringify(descriptions));
+      }
       form.append("image_order", JSON.stringify(imageOrder));
 
       // Existing-image removals apply on approval in both flows: the fresh
@@ -1127,6 +1220,19 @@ export default function CoverEdit() {
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <CoverReviewBanner status={reviewStatus} notes={reviewNotes} />
+                  {copySourceCoverId != null && (
+                    copySourceError ? (
+                      <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+                        {copySourceError}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
+                        {copySource
+                          ? `Started from Cover ${copySource.coverDetails?.code || copySourceCoverId}. Change what differs; images, the date and the catalog code are not copied.`
+                          : "Loading the Cover to start from..."}
+                      </div>
+                    )
+                  )}
 
                   <form onSubmit={handleFormSubmit} className="space-y-6" noValidate>
                     <div className="space-y-2">
@@ -1300,6 +1406,20 @@ export default function CoverEdit() {
                                       >
                                         <Star className={cn("h-4 w-4", isDefault && "fill-current")} />
                                       </Button>
+                                      {item.kind === "pending" && (
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-8 w-8"
+                                          aria-label="Rotate image"
+                                          title="Rotate this image"
+                                          disabled={submitting}
+                                          onClick={() => setRotateTargetKey(item.key)}
+                                        >
+                                          <RotateCw className="h-4 w-4" />
+                                        </Button>
+                                      )}
                                       <Button
                                         type="button"
                                         variant="destructive"
@@ -1320,6 +1440,25 @@ export default function CoverEdit() {
                                       />
                                       Tracing
                                     </label>
+                                    {item.kind === "pending" ? (
+                                      <ImageCaptionInput
+                                        id={`cover-caption-${idx}`}
+                                        value={item.upload.description}
+                                        onChange={(value) => setPendingDescription(item.key, value)}
+                                      />
+                                    ) : isDraftContributionImage(item.img.imageId) ? (
+                                      <ImageCaptionInput
+                                        id={`cover-caption-${idx}`}
+                                        value={savedCaptionEdits[item.key] ?? item.img.imageDescription}
+                                        onChange={(value) =>
+                                          setSavedCaptionEdits((prev) => ({ ...prev, [item.key]: value }))
+                                        }
+                                      />
+                                    ) : (
+                                      item.img.imageDescription && (
+                                        <p className="w-full text-xs break-words">{item.img.imageDescription}</p>
+                                      )
+                                    )}
                                     {item.kind === "pending" && (
                                       <p className="text-xs text-muted-foreground truncate max-w-[200px]">{item.upload.file.name}</p>
                                     )}
@@ -1599,6 +1738,17 @@ export default function CoverEdit() {
           </div>
         </div>
       </div>
+      <LocalRotateImageDialog
+        open={rotateTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setRotateTargetKey(null);
+        }}
+        file={rotateTarget?.upload.file ?? null}
+        description="Turn the image until the cover reads upright. The turned image replaces this upload."
+        onRotated={(file) => {
+          if (rotateTarget) replacePendingUpload(rotateTarget.key, file);
+        }}
+      />
       <Footer />
     </div>
   );

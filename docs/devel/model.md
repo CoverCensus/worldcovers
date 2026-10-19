@@ -205,7 +205,7 @@ Polymorphic image metadata for a file attached to either a cover or a marking.
 * display_order - Subject-local display position for gallery ordering.
 * file_checksum - SHA-256 checksum of the stored file.
 * file_size_bytes - Stored file size in bytes.
-* image_description (nullable) - Editorial or contributor description.
+* image_description - Caption: contributor text from the upload forms (blank when none; never null). v1 imports store their view label here (Front, Back, Details).
 * image_height - Pixel height.
 * image_view - View type appropriate to the subject.
 * image_width - Pixel width.

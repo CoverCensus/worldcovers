@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ImageCaptionInput } from "@/components/ImageCaptionInput";
 import { FieldHelp } from "@/components/FieldHelp";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -21,8 +22,8 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Trash2, Crop } from "lucide-react";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Trash2, Crop, RotateCw } from "lucide-react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import type { FormEvent, MouseEvent } from "react";
 import { Link, useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
 import { getColors, type ColorOption } from "@/services/colors";
@@ -59,6 +60,7 @@ import {
 } from "@/labels/guidelines";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
 import { LocalCropImageDialog } from "@/components/LocalCropImageDialog";
+import { LocalRotateImageDialog } from "@/components/LocalRotateImageDialog";
 import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
 import { looksLikeWrongKind, measureImageFile } from "@/lib/imageShape";
 import { formatRateNumber } from "@/lib/rateDisplay";
@@ -506,9 +508,26 @@ const Contribute = () => {
   const [noMarkingImage, setNoMarkingImage] = useState(false);
   // One entry in the combined image gallery: "existing" wraps an already-saved
   // image (edit-marking or draft-resume); "new" wraps a freshly-picked file.
+  // `description` is the caption (T43), editable on new uploads and (T87) on
+  // images saved with a resumed draft; `savedDescription` is what the draft
+  // holds, so only changed captions are sent.
   type MarkingGalleryItem =
-    | { kind: "existing"; key: string; url: string; tracing: boolean }
-    | { kind: "new"; key: string; file: File; previewUrl: string; tracing: boolean };
+    | {
+        kind: "existing";
+        key: string;
+        url: string;
+        tracing: boolean;
+        description?: string;
+        savedDescription?: string;
+      }
+    | {
+        kind: "new";
+        key: string;
+        file: File;
+        previewUrl: string;
+        tracing: boolean;
+        description: string;
+      };
   // Single ordered gallery: already-saved images interleaved with new uploads.
   // Reorder + set-default work across the whole list; the chosen order is sent as
   // image_order and applied at approval (see backend _reorder_metas_by_image_order
@@ -530,6 +549,7 @@ const Contribute = () => {
   const [coverLikeImageKeys, setCoverLikeImageKeys] = useState<string[]>([]);
   // Key of the new upload open in the crop dialog, if any.
   const [cropTargetKey, setCropTargetKey] = useState<string | null>(null);
+  const [rotateTargetKey, setRotateTargetKey] = useState<string | null>(null);
   const [lowResolutionImageKeys, setLowResolutionImageKeys] = useState<string[]>([]);
   // Timestamp of the marking record as observed when this edit session loaded
   // (Marking.modified_date). Stamped into save-as-draft payloads so a later
@@ -932,29 +952,43 @@ const Contribute = () => {
         const submittedMarkingImages = submittedArray(sd, "marking_images", "markingImages")
           .map((v) => (typeof v === "string" ? v.trim() : ""))
           .filter((v) => v.length > 0);
+        const metas = submittedArray(sd, "marking_image_metas", "markingImageMetas") as Array<{
+          storage_filename?: string;
+          storageFilename?: string;
+          image_description?: string;
+        }>;
+        const metaFilename = (m: (typeof metas)[number]) =>
+          (m?.storage_filename ?? m?.storageFilename ?? "").replace(/^\/+/, "");
         let existingUrls: string[] = submittedMarkingImages;
         if (existingUrls.length === 0) {
-          const metas = submittedArray(sd, "marking_image_metas", "markingImageMetas") as Array<{
-            storage_filename?: string;
-            storageFilename?: string;
-          }>;
           const baseUrl =
             (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "") || "/media";
           existingUrls = metas
             .map((m) => {
-              const sf = m?.storage_filename ?? m?.storageFilename;
-              return sf ? `${baseUrl}/${sf.replace(/^\/+/, "")}` : "";
+              const sf = metaFilename(m);
+              return sf ? `${baseUrl}/${sf}` : "";
             })
             .filter((u) => u.length > 0);
         }
+        // Captions live on the metas; match each saved image by filename tail.
+        const savedDescription = (url: string) =>
+          metas.find((m) => {
+            const sf = metaFilename(m);
+            return sf && url.endsWith(`/${sf}`);
+          })?.image_description ?? "";
         if (!loadedNoMarkingImage && existingUrls.length > 0) {
           setGallery(
-            existingUrls.map((url) => ({
-              kind: "existing" as const,
-              key: url,
-              url,
-              tracing: false,
-            })),
+            existingUrls.map((url) => {
+              const caption = savedDescription(url);
+              return {
+                kind: "existing" as const,
+                key: url,
+                url,
+                tracing: false,
+                description: caption,
+                savedDescription: caption,
+              };
+            }),
           );
           setRemovedExistingImageKeys([]);
         }
@@ -1039,6 +1073,69 @@ const Contribute = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editContributionId]);
 
+  // The Marking fields a Contributor may change, set from a catalog record
+  // (getMarkingByIdRaw). Submit Edit uses it and then adds its edit-only state;
+  // Create Similar (T44) uses it alone, so nothing tying a submission to the
+  // source -- catalog code, submitter-name choice, images, dates -- comes along.
+  const prefillMarkingFields = useCallback((data: Record<string, unknown>) => {
+    const typeRaw = String(data.type ?? "").trim().toUpperCase();
+    if (typeRaw === "RATEMARK") setMarkingType("RATEMARK");
+    else if (typeRaw === "AUXMARK") setMarkingType("AUXMARK");
+    else if (typeRaw === "TOWNMARK") setMarkingType("TOWNMARK");
+
+    setState(typeof data.state === "string" ? data.state : "");
+    setTown(sanitizeTown(typeof data.town === "string" ? data.town : ""));
+
+    const shapeName = typeof data.shape_name === "string" ? data.shape_name : "";
+    if (shapeName) {
+      setShape(shapeName);
+    } else if (data.shape != null) {
+      const shapeById = shapeOptions.find((opt) => String(opt.id) === String(data.shape));
+      setShape(shapeById?.name ?? "");
+    } else {
+      setShape("");
+    }
+    setColor(typeof data.color_name === "string" ? data.color_name : "");
+    setWidthMm(String(data.width ?? "").replace(/[^0-9.]/g, ""));
+    setHeightMm(String(data.height ?? "").replace(/[^0-9.]/g, ""));
+    setIsManuscript(Boolean(data.is_manuscript));
+    setIsIrregular(Boolean(data.is_irreg));
+    const impressionRaw = String(data.impression ?? "").trim();
+    const normalizedImpression = impressionRaw
+      ? IMPRESSION_OPTIONS.find((opt) => opt.value.toLowerCase() === impressionRaw.toLowerCase())?.value
+      : undefined;
+    setImpression(normalizedImpression ?? "Normal");
+    setInscriptionText(typeof data.inscription_txt === "string" ? data.inscription_txt : "");
+    setDescription(typeof data.desc === "string" ? data.desc : "");
+    setRateValue(formatRateNumber(String(data.rate_val ?? "")));
+
+    const citations = Array.isArray(data.citations) ? data.citations : [];
+    const referenceIds: number[] = [];
+    const referenceDetails: Record<number, ReferenceDetailInput> = {};
+    for (const citation of citations) {
+      const id = Number(citation.reference_work);
+      if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid Citation Reference Work");
+      referenceIds.push(id);
+      referenceDetails[id] = parseCitationDetail(String(citation.citation_detail ?? ""));
+    }
+    setPendingReferenceWorkIds(referenceIds);
+    setSelectedReferenceWorks([]);
+    setReferenceDetailsById(referenceDetails);
+
+    setLetteringId(data.lettering != null ? String(data.lettering) : "");
+    const dateFmt = String(data.date_fmt ?? "").trim();
+    if (dateFmt) {
+      const byCode = dateFormatOptions.find(
+        (opt) =>
+          String(opt.description ?? "").trim().toLowerCase() === dateFmt.toLowerCase() ||
+          String(opt.name).trim().toLowerCase() === dateFmt.toLowerCase(),
+      );
+      setDateFormatIds(byCode ? [String(byCode.id)] : []);
+    } else {
+      setDateFormatIds([]);
+    }
+  }, [dateFormatOptions, shapeOptions]);
+
   // Load Marking record for edit-marking mode (from /edit/:id).
   //
   // Before loading, dedupe against any existing open draft this user has
@@ -1085,68 +1182,13 @@ const Contribute = () => {
         setMarkingModifiedAtBaseline(modifiedDate);
         setMarkingChangedSinceDraft(false);
 
-        const typeRaw = String(data.type ?? "").trim().toUpperCase();
-        if (typeRaw === "RATEMARK") setMarkingType("RATEMARK");
-        else if (typeRaw === "AUXMARK") setMarkingType("AUXMARK");
-        else if (typeRaw === "TOWNMARK") setMarkingType("TOWNMARK");
-
-        setState(typeof data.state === "string" ? data.state : "");
-        setTown(sanitizeTown(typeof data.town === "string" ? data.town : ""));
+        prefillMarkingFields(data);
         if (typeof data.code === "string" && data.code.trim()) {
           setCatalogCode(data.code.trim());
           setCatalogCodeTouched(true);
         }
-
-        const shapeName = typeof data.shape_name === "string" ? data.shape_name : "";
-        if (shapeName) {
-          setShape(shapeName);
-        } else if (data.shape != null) {
-          const shapeById = shapeOptions.find((opt) => String(opt.id) === String(data.shape));
-          setShape(shapeById?.name ?? "");
-        } else {
-          setShape("");
-        }
-        setColor(typeof data.color_name === "string" ? data.color_name : "");
-        setWidthMm(String(data.width ?? "").replace(/[^0-9.]/g, ""));
-        setHeightMm(String(data.height ?? "").replace(/[^0-9.]/g, ""));
-        setIsManuscript(Boolean(data.is_manuscript));
-        setIsIrregular(Boolean(data.is_irreg));
-        const impressionRaw = String(data.impression ?? "").trim();
-        const normalizedImpression = impressionRaw
-          ? IMPRESSION_OPTIONS.find((opt) => opt.value.toLowerCase() === impressionRaw.toLowerCase())?.value
-          : undefined;
-        setImpression(normalizedImpression ?? "Normal");
-        setInscriptionText(typeof data.inscription_txt === "string" ? data.inscription_txt : "");
-        setDescription(typeof data.desc === "string" ? data.desc : "");
         setDisplaySubmitterName(Boolean(data.display_submitter_name));
         setCanChangeSubmitterName(data.can_change_submitter_name === true);
-        setRateValue(formatRateNumber(String(data.rate_val ?? "")));
-
-        const citations = Array.isArray(data.citations) ? data.citations : [];
-        const referenceIds: number[] = [];
-        const referenceDetails: Record<number, ReferenceDetailInput> = {};
-        for (const citation of citations) {
-          const id = Number(citation.reference_work);
-          if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid Citation Reference Work");
-          referenceIds.push(id);
-          referenceDetails[id] = parseCitationDetail(String(citation.citation_detail ?? ""));
-        }
-        setPendingReferenceWorkIds(referenceIds);
-        setSelectedReferenceWorks([]);
-        setReferenceDetailsById(referenceDetails);
-
-        setLetteringId(data.lettering != null ? String(data.lettering) : "");
-        const dateFmt = String(data.date_fmt ?? "").trim();
-        if (dateFmt) {
-          const byCode = dateFormatOptions.find(
-            (opt) =>
-              String(opt.description ?? "").trim().toLowerCase() === dateFmt.toLowerCase() ||
-              String(opt.name).trim().toLowerCase() === dateFmt.toLowerCase(),
-          );
-          setDateFormatIds(byCode ? [String(byCode.id)] : []);
-        } else {
-          setDateFormatIds([]);
-        }
 
         // Prefill ERD/LRD from the marking's current earliest/latest. Baselines
         // let submit send a boundary only when the user actually changes it, so
@@ -1197,7 +1239,51 @@ const Contribute = () => {
     return () => {
       cancelled = true;
     };
-  }, [isEditMarking, editMarkingId, dateFormatOptions, shapeOptions, navigate]);
+  }, [isEditMarking, editMarkingId, prefillMarkingFields, navigate]);
+
+  // Create Similar (Trello T44): /contribute?copy=<markingId> starts a NEW
+  // submission from an existing Marking's fields and citations. Only the
+  // ordinary new-submission keys are sent, so approval creates a separate Entry
+  // with its own catalog code and review; the source is never touched.
+  const copySourceRaw = mode === "new" ? Number(searchParams.get("copy")) : NaN;
+  const copySourceId = Number.isInteger(copySourceRaw) && copySourceRaw > 0 ? copySourceRaw : null;
+  const [copySource, setCopySource] = useState<Record<string, unknown> | null>(null);
+  const [copySourceLabel, setCopySourceLabel] = useState<string | null>(null);
+  const [copySourceError, setCopySourceError] = useState<string | null>(null);
+  const copyAppliedRef = useRef(false);
+  useEffect(() => {
+    if (copySourceId == null) return;
+    let cancelled = false;
+    copyAppliedRef.current = false;
+    setCopySourceError(null);
+    getMarkingByIdRaw(copySourceId)
+      .then((data) => {
+        if (cancelled) return;
+        if (data) setCopySource(data);
+        else setCopySourceError("The Marking to start from was not found. Fill in the form from scratch.");
+      })
+      .catch(() => {
+        if (!cancelled) setCopySourceError("The Marking to start from could not be loaded. Fill in the form from scratch.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [copySourceId]);
+  // Prefill once, after the shape and date-format options have loaded, so the
+  // lookups resolve and nothing the Contributor types afterwards is overwritten.
+  useEffect(() => {
+    if (!copySource || copyAppliedRef.current || loadingShapes || catalogOptionsLoading) return;
+    copyAppliedRef.current = true;
+    try {
+      prefillMarkingFields(copySource);
+    } catch {
+      setCopySourceError("The Marking to start from could not be loaded. Fill in the form from scratch.");
+      return;
+    }
+    const place = [copySource.town, copySource.state].filter((v) => typeof v === "string" && v).join(", ");
+    const inscription = typeof copySource.inscription_txt === "string" ? copySource.inscription_txt.trim() : "";
+    setCopySourceLabel(inscription ? `${place} - "${inscription}"` : place || `Marking ${copySourceId}`);
+  }, [copySource, copySourceId, loadingShapes, catalogOptionsLoading, prefillMarkingFields]);
 
   const noAssignedStates = false;
 
@@ -1346,6 +1432,7 @@ const Contribute = () => {
       file,
       previewUrl: "",
       tracing: false,
+      description: "",
     }));
     setGallery((prev) => [...prev, ...items]);
     items.forEach((item) => {
@@ -1386,9 +1473,9 @@ const Contribute = () => {
 
   // Reorder + set-default + tracing + remove all act on the single combined
   // gallery, so they work uniformly across already-saved and newly-picked images.
-  // Swap a new upload for its crop, keeping its key, position and Tracing
-  // flag. The cover-shape check runs again on the crop; the DPI flag is left
-  // as measured on the original, because a canvas crop carries no DPI.
+  // Swap a new upload for its crop or rotation, keeping its key, position and
+  // Tracing flag. The cover-shape check runs again on the result; the DPI flag
+  // is left as measured on the original, because a canvas carries no DPI.
   const replaceGalleryFile = (key: string, file: File) => {
     setGallery((prev) =>
       prev.map((g) => (g.kind === "new" && g.key === key ? { ...g, file, previewUrl: "" } : g)),
@@ -1478,6 +1565,12 @@ const Contribute = () => {
   const setGalleryTracingAt = (index: number, tracing: boolean) => {
     setGallery((prev) =>
       prev.map((item, i) => (i === index ? { ...item, tracing } : item)),
+    );
+  };
+
+  const setGalleryDescription = (key: string, description: string) => {
+    setGallery((prev) =>
+      prev.map((item) => (item.key === key ? { ...item, description } : item)),
     );
   };
 
@@ -1672,11 +1765,13 @@ const Contribute = () => {
     // display_order at approval matches the on-screen order (index 0 = default).
     const allImageFiles: File[] = [];
     const orderedNewTags: string[] = [];
+    const orderedNewDescriptions: string[] = [];
     const imageOrder: string[] = [];
     for (const item of gallery) {
       if (item.kind === "new") {
         allImageFiles.push(item.file);
         orderedNewTags.push(tracingToTag(item.tracing));
+        orderedNewDescriptions.push(item.description.trim());
         imageOrder.push("__new__");
       } else {
         imageOrder.push(item.url);
@@ -1688,6 +1783,14 @@ const Contribute = () => {
     const existingTagMapEntries = gallery
       .filter((item) => item.kind === "existing")
       .map((item) => [item.url, tracingToTag(item.tracing)] as const);
+    // Changed captions of images saved with a resumed draft (T87), by URL.
+    const changedSavedCaptions: Record<string, string> = {};
+    for (const item of gallery) {
+      if (item.kind !== "existing") continue;
+      const caption = (item.description ?? "").trim();
+      if (caption !== (item.savedDescription ?? "").trim()) changedSavedCaptions[item.url] = caption;
+    }
+    const sendSavedCaptions = isEditContribution && Object.keys(changedSavedCaptions).length > 0;
     const oversized = allImageFiles.filter((f) => f.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
     if (oversized.length) {
       toast({
@@ -1803,6 +1906,9 @@ const Contribute = () => {
           form.append("marking_image", file, file.name);
         }
         form.append("marking_image_tags", JSON.stringify(orderedNewTags));
+        if (orderedNewDescriptions.some(Boolean)) {
+          form.append("marking_image_descriptions", JSON.stringify(orderedNewDescriptions));
+        }
         if (imageOrder.length > 0) {
           form.append("image_order", JSON.stringify(imageOrder));
         }
@@ -1821,6 +1927,9 @@ const Contribute = () => {
           const existingTagMap: Record<string, UploadedImageTag> =
             Object.fromEntries(existingTagMapEntries);
           form.append("existing_image_tags", JSON.stringify(existingTagMap));
+        }
+        if (sendSavedCaptions) {
+          form.append("existing_image_descriptions", JSON.stringify(changedSavedCaptions));
         }
         body = form;
         // Do not set Content-Type so browser sets multipart/form-data with boundary
@@ -1888,6 +1997,7 @@ const Contribute = () => {
           ...(isEditMarking && Object.keys(existingTagMap).length > 0
             ? { existing_image_tags: existingTagMap }
             : {}),
+          ...(sendSavedCaptions ? { existing_image_descriptions: changedSavedCaptions } : {}),
           ...(saveAsDraft ? { save_as_draft: true } : {}),
           ...(saveAsDraft && isEditMarking && markingModifiedAtBaseline
             ? { marking_modified_at_baseline: markingModifiedAtBaseline }
@@ -1985,6 +2095,10 @@ const Contribute = () => {
     const cropTarget = gallery.find(
       (g): g is Extract<MarkingGalleryItem, { kind: "new" }> =>
         g.kind === "new" && g.key === cropTargetKey,
+    );
+    const rotateTarget = gallery.find(
+      (g): g is Extract<MarkingGalleryItem, { kind: "new" }> =>
+        g.kind === "new" && g.key === rotateTargetKey,
     );
     const firstCoverLikeUploadKey = gallery.find(
       (g) => g.kind === "new" && coverLikeImageKeys.includes(g.key),
@@ -2099,6 +2213,11 @@ const Contribute = () => {
                           </span>
                         )}
                       </div>
+                      <ImageCaptionInput
+                        id={`gallery-caption-${item.key}`}
+                        value={item.description ?? ""}
+                        onChange={(value) => setGalleryDescription(item.key, value)}
+                      />
                       <div className="flex items-center gap-2 px-2 pb-2">
                         <input
                           id={`gallery-tracing-${item.key}`}
@@ -2159,6 +2278,22 @@ const Contribute = () => {
                             }}
                           >
                             <Crop className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {item.kind === "new" && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            aria-label="Rotate image"
+                            title="Rotate this image"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRotateTargetKey(item.key);
+                            }}
+                          >
+                            <RotateCw className="h-3.5 w-3.5" />
                           </Button>
                         )}
                         {!currentImagesLead && (
@@ -2261,6 +2396,16 @@ const Contribute = () => {
             if (cropTarget) replaceGalleryFile(cropTarget.key, file);
           }}
         />
+        <LocalRotateImageDialog
+          open={rotateTarget != null}
+          onOpenChange={(open) => {
+            if (!open) setRotateTargetKey(null);
+          }}
+          file={rotateTarget?.file ?? null}
+          onRotated={(file) => {
+            if (rotateTarget) replaceGalleryFile(rotateTarget.key, file);
+          }}
+        />
         <LowResolutionImageWarning count={lowResolutionImageCount} />
       </div>
     );
@@ -2341,6 +2486,19 @@ const Contribute = () => {
                   <CardTitle className="font-heading text-xl">{copy.card}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
+                  {copySourceId != null && (
+                    copySourceError ? (
+                      <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+                        {copySourceError}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
+                        {copySourceLabel
+                          ? `Started from ${copySourceLabel}. Change what differs; images, dates and the catalog code are not copied.`
+                          : "Loading the Marking to start from..."}
+                      </div>
+                    )
+                  )}
                   {noAssignedStates && (
                     <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
                       You are signed in but do not have any states assigned to your account. Please contact an

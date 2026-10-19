@@ -32,6 +32,7 @@ jest.mock("@/components/ui/dialog", () => ({
   DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 jest.mock("@/services/markings", () => ({
+  getCoverChangelog: jest.fn().mockResolvedValue({ id: 7, events: [], versions: [] }),
   getImagesForSubject: jest.fn().mockResolvedValue([]),
   getCoverMarkingsByCover: jest.fn(),
   loadAssociatedMarkingsForCover: jest.fn().mockResolvedValue([]),

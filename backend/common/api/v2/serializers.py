@@ -20,8 +20,13 @@ from common.catalog_codes import (
     strip_catalog_code_keys,
     validate_unique_catalog_code,
 )
-from common.contribution_apply import _source_marking_image_id, _source_marking_image_position
+from common.contribution_apply import (
+    _parse_int,
+    _source_marking_image_id,
+    _source_marking_image_position,
+)
 from common.contribution_consolidation import contribution_target
+from common.edit_baseline import cover_edit_baseline, marking_edit_baseline
 from common.models import (
     Citation,
     Collection,
@@ -51,6 +56,7 @@ from .permissions import (
     _user_is_responsible_for_cover,
     _user_is_responsible_for_marking,
     REVIEW_CONTRIBUTION_PERM,
+    user_can_review_contributions,
 )
 
 
@@ -1522,6 +1528,7 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
     marking_id = serializers.SerializerMethodField()
     cover_id = serializers.SerializerMethodField()
     source_marking_image = serializers.SerializerMethodField()
+    edit_baseline = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField(source="created_date", read_only=True)
     updated_at = serializers.DateTimeField(source="modified_date", read_only=True)
 
@@ -1535,6 +1542,7 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
             "marking_id",
             "cover_id",
             "source_marking_image",
+            "edit_baseline",
             "collection",
             "submitted_data",
             "status",
@@ -1551,9 +1559,9 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
         request = self.context.get("request") if self.context else None
         user = getattr(request, "user", None)
         if not _viewer_may_see_catalog_code(user):
-            submitted = data.get("submitted_data")
-            if isinstance(submitted, dict):
-                data["submitted_data"] = strip_catalog_code_keys(submitted)
+            for key in ("submitted_data", "edit_baseline"):
+                if isinstance(data.get(key), dict):
+                    data[key] = strip_catalog_code_keys(data[key])
         return data
 
     def get_marking_id(self, obj):
@@ -1598,6 +1606,40 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
             # the form and the review page place it there, approval too.
             "position": _source_marking_image_position(sd),
         }
+
+    def get_edit_baseline(self, obj):
+        """
+        The edit's target as it stands now, in the submit keys (Trello T39).
+
+        The review page lays it beside the submission so an Editor sees what
+        approval will change. Only for a reviewer looking at an edit still
+        awaiting a decision: once approved, the target already holds the
+        change. A target that has since been recycle-binned still compares,
+        since approval still applies to it; one that no longer exists gives
+        None, as does any other submission.
+        """
+        request = self.context.get("request") if self.context else None
+        if obj.status not in (Contribution.STATUS_PENDING, Contribution.STATUS_NEEDS_REVISION):
+            return None
+        if not user_can_review_contributions(getattr(request, "user", None)):
+            return None
+        sd = obj.submitted_data or {}
+        cover_id = _parse_int(sd.get("edit_cover_id"))
+        if cover_id is not None:
+            cover = Cover.all_objects.filter(pk=cover_id).first()
+            if cover is None:
+                return None
+            link = CoverMarking.objects.filter(
+                pk=_parse_int(sd.get("edit_cover_marking_id")), cover_id=cover_id
+            ).first()
+            return cover_edit_baseline(cover, link)
+        marking_id = _parse_int(sd.get("edit_marking_id"))
+        if marking_id is None:
+            return None
+        marking = Marking.all_objects.filter(pk=marking_id).first()
+        if marking is None:
+            return None
+        return marking_edit_baseline(MarkingSerializer(marking, context=self.context).data)
 
 
 class ContributionApproveRejectSerializer(serializers.Serializer):

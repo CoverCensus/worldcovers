@@ -118,8 +118,10 @@ values as empty can erase information the Contributor never changed.
 [submission tests](backend/common/tests/test_submission_citations.py) and
 [form tests](frontend/src/pages/SubmissionCitations.test.tsx).
 
-**Open work:** [T39](ISSUE.md#other-follow-ups) covers comparing proposed and
-current values during review.
+**Open work:** The cover date is the one exception: approval rebuilds it from
+the edit, so an edit without a date clears it (Trello T88 asks Michael whether
+it should keep it instead). The review comparison is below in "Compare An Edit
+Against The Current Entry Before Approval".
 [T72](ISSUE.md#t72---preserve-all-citations-in-multipart-submissions) tracks
 hosted verification and acceptance of Citation preservation and explicit
 clearing through the form workflow. [T40](ISSUE.md#other-follow-ups) covers
@@ -488,3 +490,180 @@ Michael chose PNG storage over further JPEG compression on 2026-10-18.
 Normalization and pixel preservation are covered by
 `ImageUploadNormalizationTests` and `ImageCropOrientationTests`; multipart
 storage is covered by `ImageWritePermissionTests`.
+
+## Rotate Marking And Cover Images Freely, In Place And While Cropping
+
+**Do:** Offer Rotate beside Crop for an editor on the Marking page
+(`ThumbnailImageActions`) and on the Cover page (`EntryAssociatedThumbnailsCard`),
+and for a contributor on each new upload in the Marking form and the Cover
+form. All four use `RotateImageDialog`: drag the image (or the round rotate
+handle, `RotateControls`) round its centre to any angle, as many turns as you
+like in either direction, then save once. The angle snaps to 0/90/180/270
+within 3 degrees (hold Alt to turn it off); "Turn 90° left/right" are
+shortcuts; the handle is a keyboard slider. Only the final angle, normalised
+to (-180, 180] at 0.1 degrees, is sent. On either page,
+`POST /images/{id}/rotate/ {angle}` (clockwise degrees) writes the turned
+pixels to a new PNG file beside the original and points the same Image row at
+it, keeping its position, view, caption and Tracing flag. It logs
+`image_rotated` (with `angle` and the previous `storage_filename`) on the
+image's own Marking or Cover and writes that Entry's MarkingVersion or
+CoverVersion; a move of the image during the turn returns 409. On the forms,
+`lib/rotateImageFile.ts` turns the upload in the browser and replaces it in
+place.
+
+The three crop screens (`CropSelectionDialog`) get the same handle above the
+image, so a tilted strike can be straightened before it is cut out; dragging
+on the image still draws the box, and turning clears it. The box is in the
+turned image's pixels: the server's `crop` takes an optional `angle` and
+turns before cutting; an upload crop draws only the cropped area of the
+turned image. The source is never changed.
+
+Right angles are exact pixel moves (`transpose`). Any other angle is BICUBIC
+with the canvas grown to hold the whole turned image (Pillow `expand`) and
+white corners. `lib/imageRotation.ts` `rotatedSize` repeats Pillow's expand
+arithmetic so the browser preview and the server agree; a crop box that
+overshoots the turned bounds by up to 2 px is clamped.
+
+**Don't:** cut off the edges of a turned image, overwrite the original file or
+reuse its filename, delete the previous file, store the running (unbounded)
+handle angle, or rotate a pending submission's image on the review page.
+
+**Why:** Ian, 2026-10-16: "After a marking image (only markings and not
+covers) is there an easy way to allow for rotation"; on 2026-10-19 he agreed
+Cover images can rotate too and asked to "rotate the cover slightly to crop
+the marking so it's in the right orientation". T66 first shipped quarter
+turns; Reese replaced them the same evening with free mouse rotation "360
+degrees, in either direction, indefinitely, until you hit crop or save", and
+chose the snap, the white corners and the crop handle. A rotated copy added
+like a crop would leave the sideways image as the default. `/media/` is
+served with `expires 30d`, so only a new filename shows the turn at once,
+and `storage_filename` can be shared by several rows, so the old file stays.
+The review page has no pending-image edit path; an editor approves, then
+rotates. Evidence: `test_image_rotate.py`, `test_image_crop.py`,
+`imageRotation.test.ts`, `rotateImageFile.test.ts`, `cropImageFile.test.ts`,
+`markings.rotate.test.ts`, `markings.cropDestination.test.ts`,
+`CoverDetail.imageActions.test.tsx`, `ImageCaptions.test.tsx`.
+
+## Caption New Uploads Through Their Image Metas
+
+**Do:** Give each new upload on the Marking and Cover forms an optional
+"Caption (optional)" field (`ImageCaptionInput`). The form sends the captions as
+`marking_image_descriptions` / `cover_image_descriptions`, a JSON list
+positional over the uploaded files like `*_image_tags`. The submit view strips
+each one, rejects any over 500 characters before writing a file, and stores it
+as that upload's `image_description` meta; approval already copies the meta
+onto `Image.image_description`. Show a caption as a `<figcaption>` under the
+main image on the Marking and Cover pages and both review pages; show a
+draft's saved caption read-only on its tile.
+
+**Don't:** Edit the caption of a catalog image through a Marking or Cover edit
+(Marking edits stay add-only; a Cover edit's kept rows keep their caption) --
+saved captions change through "Edit A Saved Image's Caption As An Audited
+Action" below. Don't copy the caption into `alt`, or hide the
+"Front"/"Back"/"Details" view labels that v1 imports wrote into the same field.
+
+**Why:** Trello T43 asks for editable per-upload captions and reuse of
+`image_description`. Riding the metas needs no model change and no approval
+change, and drafts already keep metas as they are. Django does not enforce
+`max_length` on a `TextField`, so the API sets the cap. WAI advises that alt
+text should not repeat a caption. Reese chose new uploads only and showing the
+v1 labels as they are on 2026-10-19; changing that data is Michael's call.
+Evidence: `test_image_captions.py`, `ImageCaptions.test.tsx`.
+
+## Compare An Edit Against The Current Entry Before Approval
+
+**Do:** On the review page of a pending (or returned-for-revision) Marking or
+Cover edit, show the Editor a Field | Current | Proposed table. The
+contribution detail API sends `edit_baseline`: the target as it stands now, in
+the same keys the edit forms submit and built from what those forms prefill
+from (`backend/common/edit_baseline.py`). `lib/editComparison.ts` lays the
+edit's fields over that baseline the way approval does: an omitted field keeps
+its value, `""` clears it, a manuscript drops shape and lettering, marking
+ERD/LRD are added as recorded dates, an empty Cover type or flag keeps its
+value, and an edit with no Cover date clears that date. Both columns go through
+the same formatter. Changed rows carry a "Changed" badge as well as a tint, and
+every compared row stays listed.
+
+**Don't:** Format the live record with the record-page helpers and compare
+those strings with the submission (state name vs abbreviation, `28.00` vs
+`28`, and the description field differ). Don't run approval code to work out a
+preview, and don't send the baseline to anyone but a reviewer or for a decided
+edit.
+
+**Why:** Trello T39: "an Editor can identify changed and unchanged values
+before deciding." Mirroring approval's merge rules is what makes the table tell
+the truth about the Approve button. WCAG 1.4.1 asks that colour not be the only
+signal of a change.
+Evidence: `test_contribution_edit_baseline.py`, `editComparison.test.ts`,
+`EditComparisonCard.test.tsx`.
+
+
+## Start A Submission From A Similar Entry
+
+**Do:** Offer "Create Similar Marking" and "Create Similar Cover" beside Submit
+Edit on the Marking and Cover pages (same gating: signed in, Entry not
+removed). They open the ordinary new-submission form with `?copy=<id>`
+(`/contribute?copy=<markingId>`, `/record/<markingId>/cover/new?copy=<coverId>`),
+which prefills only what a sibling Entry plausibly shares:
+- Marking: type, state, town, inscription, manuscript, shape, lettering,
+  irregular, color, size, impression, rate, date format, description and
+  Citations, through the same `prefillMarkingFields` the Submit Edit form uses.
+- Cover: type, institutionally owned, backstamp, description and Citations,
+  under the same parent Marking.
+
+The prefill runs once, after the option lists load.
+
+**Don't:**
+- Copy the catalog code, the submitter-name choice, images, the Marking's
+  ERD/LRD, the Cover's date or the contributor comment.
+- Send any key that targets an Entry: `edit_marking_id`, `edit_cover_*`,
+  `original_marking_id`, `marking_id` or `cover_id`.
+- Record a "copied from" key.
+
+**Why:** Trello T44 asks for a new submission that "never updates the source
+Entry or inherits approval/identity". Leaving out the target keys makes the
+backend treat a copy as a plain create: a new row, a new catalog code and a
+fresh review. The catalog code is unique, so carrying it would fail approval.
+The submitter-name choice belongs to the source's creator. Images, dates and
+the comment describe the source item itself. The provenance keys the code
+already reads are target keys, so recording a source through them would turn a
+copy into an edit and remove the copier's pending edits of the source.
+Similar-entry warnings belong to T48. Reese chose this scope on 2026-10-19.
+Evidence: `CreateSimilar.test.tsx`.
+
+## Edit A Saved Image's Caption As An Audited Action
+
+**Do:** Let a responsible editor change a saved image's caption from the
+Marking page (`ThumbnailImageActions`) or the Cover page
+(`EntryAssociatedThumbnailsCard`) with "Edit caption". It calls
+`POST /api/v2/images/{id}/caption/ {image_description}`, which is guarded like
+rotate (`IsEditorOrAdminWrite` + `IsResponsibleForImageSubject`), strips the
+text and caps it at `MAX_IMAGE_DESCRIPTION_LENGTH` (500, `common/images.py`).
+In one `transaction.atomic` it logs an `image_caption_changed` transaction on
+the image's Marking or Cover, with the previous and new caption in
+`extra_payload`, and writes a Marking or Cover version. An unchanged caption
+logs nothing. Both changelogs expose the two strings as `caption_change`, and
+Record History shows `Caption: "old" -> "new"`. The Cover page's Record History
+now reads the Cover's own changelog rather than its parent Marking's.
+
+On a resumed draft, images saved with the draft also take an editable caption.
+The form sends only changed ones as `existing_image_descriptions`
+({image URL: caption}), and the submit view writes them into the draft's
+stored metas before merging, so approval copies them as for a new upload.
+
+**Don't:** Audit caption edits through `PATCH /images/{id}/`: reorder and
+set-default use it, and it logs nothing. Don't recaption a Marking's current
+images through a Marking-edit draft (they are rebuilt from the catalog,
+add-only), a Cover edit's kept images, or the image carried by "Create cover
+from this image" (none of these were in scope). Don't return a transaction's
+whole `extra_payload` from the changelog; rotate stores storage details there.
+
+**Why:** Trello T87 (split from T43). Its acceptance: "a caption changed through
+each chosen route is saved, appears in Record History, and shows on the detail
+page." Reese chose the editor action and drafts, the Cover's own history and
+old -> new in history on 2026-10-19. "Marking Edits Add Images Only" already
+says existing images change on the Marking page, where editor responsibility is
+checked. Migration `0021_image_caption_changed_action` adds the choice only.
+Evidence: `test_image_caption_edit.py`, `CoverDetail.imageActions.test.tsx`,
+`EntryRecordHistoryCard.caption.test.tsx`, `ImageCaptions.test.tsx`.
+
