@@ -1,4 +1,4 @@
-"""Rotate a Marking or Cover image in quarter turns (Trello T66).
+"""Rotate a Marking or Cover image by any angle (Trello T66, issue #193).
 
 Editors asked for an easy way to fix a marking scanned on its side; Ian
 extended it to Cover images on 2026-10-19. The
@@ -50,12 +50,18 @@ def _source_png() -> bytes:
 
 
 class RotateImageBytesTests(SimpleTestCase):
-    def test_quarter_turns_are_clockwise(self):
-        # Where the green top-right quarter lands after each turn.
-        expected = {1: ((60, 80), "bottom-right"), 2: ((80, 60), "bottom-left"), 3: ((60, 80), "top-left")}
-        for turns, (size, corner) in expected.items():
-            with self.subTest(turns=turns):
-                with PILImage.open(io.BytesIO(rotate_image_bytes(_source_png(), "image/png", turns))) as out:
+    def test_right_angles_are_clockwise_and_exact(self):
+        # Where the green top-right quarter lands. -90 and 450 show that only
+        # where the handle ends up matters, however far it went round.
+        expected = {
+            90: ((60, 80), "bottom-right"),
+            450: ((60, 80), "bottom-right"),
+            180: ((80, 60), "bottom-left"),
+            -90: ((60, 80), "top-left"),
+        }
+        for angle, (size, corner) in expected.items():
+            with self.subTest(angle=angle):
+                with PILImage.open(io.BytesIO(rotate_image_bytes(_source_png(), "image/png", angle))) as out:
                     self.assertEqual(out.size, size)
                     self.assertEqual(out.format, "PNG")
                     w, h = out.size
@@ -66,18 +72,27 @@ class RotateImageBytesTests(SimpleTestCase):
                         "bottom-right": (w - 3, h - 3),
                     }
                     for name, xy in corners.items():
+                        # Exact colours: a right angle is never resampled.
                         self.assertEqual(out.getpixel(xy), GREEN if name == corner else RED, name)
 
+    def test_other_angles_grow_the_canvas_with_white_corners(self):
+        with PILImage.open(io.BytesIO(rotate_image_bytes(_source_png(), "image/png", 30))) as out:
+            # Pillow's expand: ceil/floor of the turned corners.
+            self.assertEqual(out.size, (100, 92))
+            self.assertEqual(out.getpixel((0, 0)), (255, 255, 255))
+            # 24 px below the centre comes from the red lower half of the source.
+            self.assertEqual(out.getpixel((50, 70)), RED)
+
     def test_odd_turn_swaps_resolution_axes(self):
-        with PILImage.open(io.BytesIO(rotate_image_bytes(_source_png(), "image/png", 1))) as out:
+        with PILImage.open(io.BytesIO(rotate_image_bytes(_source_png(), "image/png", 90))) as out:
             x_dpi, y_dpi = out.info["dpi"]
             self.assertAlmostEqual(x_dpi, 150, delta=1)
             self.assertAlmostEqual(y_dpi, 300, delta=1)
 
-    def test_bad_turns_are_rejected(self):
-        for turns in (0, 4, -1):
-            with self.subTest(turns=turns), self.assertRaises(RotateError):
-                rotate_image_bytes(_source_png(), "image/png", turns)
+    def test_no_turn_or_a_non_finite_angle_is_rejected(self):
+        for angle in (0, 360, -720, float("nan"), float("inf")):
+            with self.subTest(angle=angle), self.assertRaises(RotateError):
+                rotate_image_bytes(_source_png(), "image/png", angle)
 
 
 @override_settings(MEDIA_ROOT=MEDIA_ROOT)
@@ -134,7 +149,7 @@ class ImageRotateTests(TestCase):
         )
 
     def _rotate(self, image=None, **body):
-        payload = {"quarter_turns": 1}
+        payload = {"angle": 90}
         payload.update(body)
         image = image or self.image
         return self.client.post(f"/api/v2/images/{image.pk}/rotate/", payload, format="json")
@@ -164,7 +179,7 @@ class ImageRotateTests(TestCase):
         txn = SubmissionTransaction.objects.get(action=SubmissionTransaction.ACTION_IMAGE_ROTATED)
         self.assertEqual(txn.marking_id, self.marking.pk)
         self.assertEqual(txn.extra_payload["previous_storage_filename"], "va/sideways.png")
-        self.assertEqual(txn.extra_payload["quarter_turns"], 1)
+        self.assertEqual(txn.extra_payload["angle"], 90)
         self.assertEqual(self.marking.versions.count(), 1)
 
     def test_a_later_crop_uses_the_rotated_orientation(self):
@@ -180,11 +195,11 @@ class ImageRotateTests(TestCase):
 
         self.assertEqual(response.status_code, 201, response.data)
 
-    def test_invalid_turns_are_rejected_without_writing(self):
+    def test_invalid_angles_are_rejected_without_writing(self):
         self.client.force_authenticate(self.editor)
-        for turns in (0, 4, 1.5, True, "left", None):
-            with self.subTest(turns=turns):
-                self.assertEqual(self._rotate(quarter_turns=turns).status_code, 400)
+        for angle in (0, 360, True, "left", None, "nan"):
+            with self.subTest(angle=angle):
+                self.assertEqual(self._rotate(angle=angle).status_code, 400)
         self.image.refresh_from_db()
         self.assertEqual(self.image.storage_filename, "va/sideways.png")
 
