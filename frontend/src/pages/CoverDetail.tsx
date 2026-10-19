@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { CheckCircle, Info, Loader2, MessageSquare, Pencil, Plus, Trash2, XCircle } from "lucide-react";
+import { CheckCircle, Copy, Info, Loader2, MessageSquare, Pencil, Plus, Trash2, XCircle } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
@@ -727,6 +727,16 @@ const CoverDetailPage = () => {
     });
   };
 
+  // Create Similar (Trello T44): a NEW cover under the same marking, prefilled
+  // from this one.
+  const openCreateSimilarCover = () => {
+    if (markingId == null || coverPk == null) return;
+    if (!requireAuth()) return;
+    navigate(`/record/${markingId}/cover/new?copy=${coverPk}`, {
+      state: { from: location.pathname + location.search },
+    });
+  };
+
   const goMarkingView = (markingIdTarget: number) => {
     navigate(`/record/${markingIdTarget}`, {
       state: { from: location.pathname + location.search },
@@ -941,10 +951,16 @@ const CoverDetailPage = () => {
                 <div className="flex items-center justify-between gap-3">
                   <CardTitle className="font-heading text-lg">Cover Details</CardTitle>
                   {canSubmitEdit && (
-                    <Button variant="outline" size="sm" onClick={openEditCover}>
-                      <Pencil className="mr-2 h-4 w-4" />
-                      {SUBMISSION_LABELS.action.submitEditToCover}
-                    </Button>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Button variant="outline" size="sm" onClick={openCreateSimilarCover}>
+                        <Copy className="mr-2 h-4 w-4" />
+                        {SUBMISSION_LABELS.action.createSimilarCover}
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={openEditCover}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        {SUBMISSION_LABELS.action.submitEditToCover}
+                      </Button>
+                    </div>
                   )}
                 </div>
               </CardHeader>
