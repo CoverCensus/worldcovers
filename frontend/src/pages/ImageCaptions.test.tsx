@@ -26,6 +26,10 @@ jest.mock("@/services/referenceWorks", () => ({
   ...jest.requireActual("@/services/referenceWorks"), getReferenceWorks: jest.fn().mockResolvedValue([]),
 }));
 jest.mock("@/services/citations", () => ({ listCitationsForSubject: jest.fn().mockResolvedValue([]) }));
+// jsdom has no canvas; the turn itself is covered by rotateImageFile.test.ts.
+jest.mock("@/lib/rotateImageFile", () => ({
+  rotateImageFile: jest.fn(async () => new File(["png"], "strike-rotated.png", { type: "image/png" })),
+}));
 jest.mock("@/services/markings", () => ({
   getMarkingByIdRaw: jest.fn(),
   routingStateFromMarkingRecord: () => "VA",
@@ -95,6 +99,28 @@ it.each(["marking", "cover"] as const)(
     expect(JSON.parse(String(payload.get(`${kind}_image_descriptions`)))).toEqual(["Strike on the front"]);
   },
 );
+
+// Trello T66 on the Cover form: the turned file replaces the upload and keeps its caption.
+it("sends the rotated copy of a Cover upload in its place", async () => {
+  const { container } = resumeDraft("cover");
+  await screen.findByRole("button", { name: /save as draft/i }, { timeout: 5000 });
+  fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, {
+    target: { files: [new File(["png"], "strike.png", { type: "image/png" })] },
+  });
+  fireEvent.change(await screen.findByLabelText("Caption (optional)"), { target: { value: "Front" } });
+
+  fireEvent.click(screen.getByRole("button", { name: "Rotate image" }));
+  fireEvent.load(screen.getByAltText("Image to rotate"));
+  fireEvent.click(screen.getByRole("button", { name: /Rotate right/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Save rotation" }));
+  await waitFor(() => expect(screen.queryByAltText("Image to rotate")).toBeNull());
+
+  fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+  await waitFor(() => expect(createContribution).toHaveBeenCalled());
+  const payload = (createContribution as jest.Mock).mock.calls[0][0] as FormData;
+  expect((payload.getAll("cover_image") as File[]).map((f) => f.name)).toEqual(["strike-rotated.png"]);
+  expect(JSON.parse(String(payload.get("cover_image_descriptions")))).toEqual(["Front"]);
+});
 
 it("lets a resumed Marking draft change a saved image's caption and sends only that change", async () => {
   resumeDraft("marking", {

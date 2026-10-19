@@ -25,6 +25,7 @@ import {
 } from "@/lib/coverImageActionState";
 import { CropImageDialog } from "@/components/CropImageDialog";
 import { ImageCaptionDialog } from "@/components/ImageCaptionDialog";
+import { RotateImageDialog } from "@/components/RotateImageDialog";
 import { EntryRecordHistoryCard } from "@/components/entry-detail/EntryRecordHistoryCard";
 import { EntryCitationsCard, type EntryCitationItem } from "@/components/entry-detail/EntryCitationsCard";
 import { CoverRecordDetailFields } from "@/components/entry-detail/CoverRecordDetailFields";
@@ -45,6 +46,7 @@ import {
   normalizeImageUrl,
   postCoverMarkingReview,
   reorderImages,
+  rotateImage,
   type AssociatedMarkingOnCover,
   type CoverMarkingLink,
   type CoverMarkingReviewActionApi,
@@ -168,6 +170,7 @@ const CoverDetailPage = () => {
   const [cover, setCover] = useState<CoverDetail | null>(null);
   const [images, setImages] = useState<MarkingImage[]>([]);
   const [captionImageTarget, setCaptionImageTarget] = useState<MarkingImage | null>(null);
+  const [rotateImageTarget, setRotateImageTarget] = useState<MarkingImage | null>(null);
   // Bumped after an action that writes history, so the panel refetches.
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
   const [reorderingImages, setReorderingImages] = useState(false);
@@ -927,6 +930,9 @@ const CoverDetailPage = () => {
               onCropImage={canManageImages ? beginCropIntoMarking : undefined}
               cropImageLabel="Crop into marking"
               cropImageDisabledReason={cropIntoMarkingReason}
+              onRotateImage={
+                canManageImages ? (index) => setRotateImageTarget(images[index] ?? null) : undefined
+              }
               onEditCaption={
                 canManageImages ? (index) => setCaptionImageTarget(images[index] ?? null) : undefined
               }
@@ -1435,6 +1441,27 @@ const CoverDetailPage = () => {
           const result = await updateImageCaption(imageId, caption);
           if (result.ok === false) return result.message;
           toast({ title: "Caption saved" });
+          setImages(await getImagesForSubject({ subjectType: "COVER", subjectId: coverPk }));
+          setHistoryReloadKey((key) => key + 1);
+          return null;
+        }}
+      />
+
+      <RotateImageDialog
+        open={rotateImageTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setRotateImageTarget(null);
+        }}
+        imageUrl={rotateImageTarget?.imageUrl ?? null}
+        description="Turn the image until the cover reads upright, then save. It replaces this image; the original file is kept."
+        onSave={async (quarterTurns) => {
+          const imageId = rotateImageTarget?.imageId;
+          if (imageId == null || imageId <= 0 || coverPk == null) {
+            return "This image has not been saved to the catalog yet.";
+          }
+          const result = await rotateImage(imageId, quarterTurns);
+          if (result.ok === false) return result.message;
+          toast({ title: "Rotation saved" });
           setImages(await getImagesForSubject({ subjectType: "COVER", subjectId: coverPk }));
           setHistoryReloadKey((key) => key + 1);
           return null;

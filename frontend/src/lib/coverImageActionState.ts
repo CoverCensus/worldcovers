@@ -16,7 +16,7 @@
 
 /** Mirrors the marking-side wording; delete is included because the cover card gates it too. */
 export const UNSAVED_IMAGE_REASON =
-  "This image has not been saved to the catalog yet, so it cannot be moved or deleted.";
+  "This image has not been saved to the catalog yet, so it cannot be moved, rotated or deleted.";
 
 export const NO_ASSOCIATED_MARKING_REASON =
   "This cover has no associated Marking to move the image to. Link an existing Marking first.";

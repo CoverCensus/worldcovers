@@ -21,6 +21,7 @@ import {
   ArrowRight,
   ChevronDown,
   Loader2,
+  RotateCw,
   Star,
   Trash2,
   Upload,
@@ -51,6 +52,7 @@ import { cn } from "@/lib/utils";
 import { PartialDateFields } from "@/components/PartialDateFields";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
 import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
+import { LocalRotateImageDialog } from "@/components/LocalRotateImageDialog";
 import { CoverReviewBanner } from "@/components/CoverReviewBanner";
 import { looksLikeWrongKind, measureImageFile } from "@/lib/imageShape";
 import { isBelowPreferredImageDpi, measureImageDpi } from "@/lib/imageResolution";
@@ -307,6 +309,8 @@ export default function CoverEdit() {
   // an image drops it from the count for free.
   const [markingLikeImageKeys, setMarkingLikeImageKeys] = useState<string[]>([]);
   const [lowResolutionImageKeys, setLowResolutionImageKeys] = useState<string[]>([]);
+  // The new upload whose Rotate dialog is open (Trello T66, Cover form).
+  const [rotateTargetKey, setRotateTargetKey] = useState<string | null>(null);
   const markingLikeImageCount = useMemo(
     () => gallery.filter((item) => markingLikeImageKeys.includes(item.key)).length,
     [gallery, markingLikeImageKeys],
@@ -730,6 +734,23 @@ export default function CoverEdit() {
       });
     }
   };
+
+  // Swap a new upload for its turned copy, keeping its place, key, Tracing flag
+  // and caption. A quarter turn keeps the image's size and shape, so the
+  // marking-closeup and resolution flags measured on pick still hold.
+  const replacePendingUpload = (key: string, file: File) => {
+    setGallery((prev) =>
+      prev.map((item) => {
+        if (item.kind !== "pending" || item.key !== key) return item;
+        URL.revokeObjectURL(item.upload.previewUrl);
+        return { ...item, upload: { ...item.upload, file, previewUrl: URL.createObjectURL(file) } };
+      }),
+    );
+  };
+  const rotateTarget = gallery.find(
+    (item): item is Extract<GalleryItem, { kind: "pending" }> =>
+      item.kind === "pending" && item.key === rotateTargetKey,
+  );
 
   // Reorder + set-default + tracing + remove all act on the single combined
   // gallery, so they work uniformly across already-saved and newly-picked images.
@@ -1378,6 +1399,20 @@ export default function CoverEdit() {
                                       >
                                         <Star className={cn("h-4 w-4", isDefault && "fill-current")} />
                                       </Button>
+                                      {item.kind === "pending" && (
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-8 w-8"
+                                          aria-label="Rotate image"
+                                          title="Rotate this image"
+                                          disabled={submitting}
+                                          onClick={() => setRotateTargetKey(item.key)}
+                                        >
+                                          <RotateCw className="h-4 w-4" />
+                                        </Button>
+                                      )}
                                       <Button
                                         type="button"
                                         variant="destructive"
@@ -1696,6 +1731,17 @@ export default function CoverEdit() {
           </div>
         </div>
       </div>
+      <LocalRotateImageDialog
+        open={rotateTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setRotateTargetKey(null);
+        }}
+        file={rotateTarget?.upload.file ?? null}
+        description="Turn the image until the cover reads upright. The turned image replaces this upload."
+        onRotated={(file) => {
+          if (rotateTarget) replacePendingUpload(rotateTarget.key, file);
+        }}
+      />
       <Footer />
     </div>
   );

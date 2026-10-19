@@ -14,7 +14,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import CoverDetailPage from "./CoverDetail";
 import { useAuth } from "@/hooks/useAuth";
 import {
-  getCoverChangelog, getCoverMarkingsByCover, loadAssociatedMarkingsForCover, updateImageCaption,
+  getCoverChangelog, getCoverMarkingsByCover, loadAssociatedMarkingsForCover, rotateImage, updateImageCaption,
 } from "@/services/markings";
 
 jest.mock("@/assets/image-not-available.jpg", () => "image-not-available.jpg");
@@ -46,6 +46,7 @@ jest.mock("@/components/ui/dialog", () => ({
 jest.mock("@/services/markings", () => ({
   getCoverChangelog: jest.fn().mockResolvedValue({ id: 7, events: [], versions: [] }),
   updateImageCaption: jest.fn().mockResolvedValue({ ok: true }),
+  rotateImage: jest.fn().mockResolvedValue({ ok: true }),
   getImagesForSubject: jest.fn().mockResolvedValue([
     {
       imageId: 10916,
@@ -158,6 +159,20 @@ describe("Cover page image actions", () => {
     fireEvent.change(screen.getByLabelText("Caption"), { target: { value: " Front of the cover " } });
     fireEvent.click(screen.getByRole("button", { name: "Save caption" }));
     await waitFor(() => expect(updateImageCaption).toHaveBeenCalledWith(10916, "Front of the cover"));
+    await waitFor(() => expect(getCoverChangelog).toHaveBeenCalledTimes(2));
+  });
+
+  // Trello T66, extended to Covers (Ian, 2026-10-19): the turn is logged on the Cover.
+  it("rotates a saved Cover image and reloads the Cover's own history", async () => {
+    links.mockResolvedValue({ links: [], error: null });
+    markings.mockResolvedValue([]);
+    openPage();
+    await waitFor(() => expect(getCoverChangelog).toHaveBeenCalledWith(7));
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate this image" }));
+    fireEvent.load(screen.getByAltText("Image to rotate"));
+    fireEvent.click(screen.getByRole("button", { name: /Rotate right/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save rotation" }));
+    await waitFor(() => expect(rotateImage).toHaveBeenCalledWith(10916, 1));
     await waitFor(() => expect(getCoverChangelog).toHaveBeenCalledTimes(2));
   });
 });

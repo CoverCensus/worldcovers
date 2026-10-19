@@ -325,7 +325,7 @@ export async function cropImage(
 }
 
 /**
- * POST /api/v2/images/{image_id}/rotate/ -- turn a Marking image clockwise in
+ * POST /api/v2/images/{image_id}/rotate/ -- turn a Marking or Cover image clockwise in
  * place (Trello T66). The server writes the turned pixels to a new file, so the
  * refreshed record carries a new URL; the previous file is kept.
  */

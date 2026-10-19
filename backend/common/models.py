@@ -328,8 +328,8 @@ class SubmissionTransaction(models.Model):
     ACTION_DATE_SEEN_ADDED = "date_seen_added"
     ACTION_DATE_SEEN_CHANGED = "date_seen_changed"
     ACTION_DATE_SEEN_REMOVED = "date_seen_removed"
-    # A Marking image turned in place by an editor (Trello T66). The previous
-    # file stays on disk and is named in extra_payload.
+    # A Marking or Cover image turned in place by an editor (Trello T66). The
+    # previous file stays on disk and is named in extra_payload.
     ACTION_IMAGE_ROTATED = "image_rotated"
     # An editor changed a saved image's caption (Trello T87); the previous and
     # new caption are in extra_payload.
