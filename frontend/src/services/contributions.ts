@@ -51,6 +51,10 @@ export interface ContributionApiItem {
   // submission's carried-over marking image (Trello T37); list rows omit it.
   source_marking_image?: unknown;
   sourceMarkingImage?: unknown;
+  // ContributionDetailSerializer: a pending edit's target as it stands now,
+  // in the submit keys (Trello T39); null otherwise and on list rows.
+  edit_baseline?: unknown;
+  editBaseline?: unknown;
   [k: string]: unknown;
 }
 
@@ -86,6 +90,12 @@ export interface Contribution {
    * since moved off the marking, or on list rows (Trello T37).
    */
   sourceMarkingImage: SourceMarkingImage | null;
+  /**
+   * The edit's target as it stands now, in the same keys as submittedData, for
+   * the review page's current-vs-proposed table. Null unless a reviewer is
+   * viewing an edit that awaits a decision (Trello T39).
+   */
+  editBaseline: Record<string, unknown> | null;
 }
 
 export interface CatalogCodeSuggestion {
@@ -103,6 +113,10 @@ function toNumberOrNull(v: unknown): number | null {
     return Number.isFinite(n) ? n : null;
   }
   return null;
+}
+
+function plainObjectOrNull(v: unknown): Record<string, unknown> | null {
+  return v != null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 
 /** First value that is neither null nor undefined, else null. */
@@ -135,6 +149,7 @@ export function mapApiItemToContribution(item: ContributionApiItem): Contributio
     markingId: toNumberOrNull(firstDefined(item.marking_id, item.markingId, item.marking)),
     coverId: toNumberOrNull(firstDefined(item.cover_id, item.coverId)),
     sourceMarkingImage: sourceMarkingImageFromContribution(item),
+    editBaseline: plainObjectOrNull(firstDefined(item.edit_baseline, item.editBaseline)),
   };
 }
 

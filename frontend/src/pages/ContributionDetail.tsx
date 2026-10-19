@@ -43,6 +43,8 @@ import { readVphcProvenance } from "@/lib/vphcProvenance";
 import { VphcProvenanceCard } from "@/components/VphcProvenanceCard";
 import { EntryCitationsCard } from "@/components/entry-detail/EntryCitationsCard";
 import { ImageFigcaption } from "@/components/entry-detail/ImageFigcaption";
+import { EditComparisonCard } from "@/components/entry-detail/EditComparisonCard";
+import { compareMarkingEdit, type ComparisonRow } from "@/lib/editComparison";
 import { submissionCitations } from "@/lib/submissionCitations";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
 import type { MarkingFieldInput } from "@/lib/markingFields";
@@ -57,6 +59,11 @@ import {
 
 
 /** Shape of the per-image metadata blobs stored in a contribution's submitted_data. */
+function toPositiveInt(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 type ContributionImageMeta = {
   storage_filename?: string;
   original_filename?: string;
@@ -242,7 +249,8 @@ const ContributionDetail = () => {
     getDirectCatalogCodeSuggestion({
       subjectType: "MARKING",
       state: typeof sd.state === "string" ? sd.state : undefined,
-      markingId: typeof sd.edit_marking_id === "number" ? sd.edit_marking_id : null,
+      // Form edits post the id as a string; VPHC payloads carry a number.
+      markingId: toPositiveInt(sd.edit_marking_id),
       referenceWorkIds,
     })
       .then((suggestion) => {
@@ -516,6 +524,22 @@ const ContributionDetail = () => {
   } catch (err) {
     fieldRowsError = err instanceof Error ? err.message : String(err);
   }
+  // Trello T39: an edit under review is set beside the marking as it is now.
+  let editComparison: ComparisonRow[] | null = null;
+  let editComparisonError: string | null = null;
+  if (contribution.editBaseline) {
+    try {
+      editComparison = compareMarkingEdit(
+        contribution.editBaseline,
+        sd,
+        { letteringOptions, dateFormatOptions },
+        referenceWorks,
+        contribution.id,
+      );
+    } catch (err) {
+      editComparisonError = err instanceof Error ? err.message : String(err);
+    }
+  }
   const showEditorFeedbackCard =
     contribution.status !== "pending" || !!(contribution.reviewNotes && contribution.reviewNotes.trim());
   // Unified edit/remove buttons (mirror the entry detail page). Edit is offered
@@ -776,6 +800,13 @@ const ContributionDetail = () => {
               <div>
                 <h1 className="font-heading text-3xl font-bold text-foreground mb-2">{displayName}</h1>
               </div>
+
+              {editComparison && <EditComparisonCard entryLabel="marking" rows={editComparison} />}
+              {editComparisonError && (
+                <p className="text-sm text-destructive rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2">
+                  Could not compare this edit with the current marking: {editComparisonError}
+                </p>
+              )}
 
               <Card className="shadow-archival-md border-primary/10">
                 <CardHeader>
