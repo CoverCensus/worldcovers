@@ -10,6 +10,8 @@ interface LocalRotateImageDialogProps {
   file: File | null;
   /** Receives the turned file, which replaces the upload. */
   onRotated: (file: File) => void;
+  /** Dialog text; the default is the Marking form's wording. */
+  description?: string;
 }
 
 /**
@@ -18,7 +20,13 @@ interface LocalRotateImageDialogProps {
  * replaces the upload in the form, so the reviewer sees the image that would
  * be published.
  */
-export function LocalRotateImageDialog({ open, onOpenChange, file, onRotated }: LocalRotateImageDialogProps) {
+export function LocalRotateImageDialog({
+  open,
+  onOpenChange,
+  file,
+  onRotated,
+  description = "Turn the image until the marking reads upright. The turned image replaces this upload.",
+}: LocalRotateImageDialogProps) {
   const [url, setUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -36,7 +44,7 @@ export function LocalRotateImageDialog({ open, onOpenChange, file, onRotated }: 
       open={open}
       onOpenChange={onOpenChange}
       imageUrl={url}
-      description="Turn the image until the marking reads upright. The turned image replaces this upload."
+      description={description}
       onSave={async (quarterTurns, image) => {
         if (!file) return "Image unavailable.";
         try {

@@ -798,6 +798,19 @@ def _caption_change(txn):
     }
 
 
+def _image_entry(image):
+    """The Marking or Cover an image belongs to, with its snapshot/version writers.
+
+    Default managers on purpose: a recycle-binned Entry is read-only, so its
+    image actions get no subject (None) and the caller refuses them.
+    """
+    if image.subject_type == Image.SUBJECT_COVER:
+        subject = Cover.objects.filter(pk=image.subject_id).first()
+        return subject, build_cover_snapshot, create_cover_version
+    subject = Marking.objects.filter(pk=image.subject_id).first()
+    return subject, build_marking_snapshot, create_marking_version
+
+
 class ImageViewSet(viewsets.ModelViewSet):
     """
     Polymorphic image API. Filter by `?subject_type=MARKING&subject_id=<id>`
@@ -1020,26 +1033,21 @@ class ImageViewSet(viewsets.ModelViewSet):
         permission_classes=[IsEditorOrAdminWrite, IsResponsibleForImageSubject],
     )
     def rotate(self, request, pk=None):
-        """Turn a Marking image clockwise in quarter turns, in place.
+        """Turn a Marking or Cover image clockwise in quarter turns, in place.
 
         Trello T66: Editors asked for an easy way to fix a marking scanned on
-        its side. Unlike a crop, the rotated image takes the original's place
-        (same row, position, view and caption), so a sideways default image
-        is fixed rather than joined by a second copy. The pixels go to a new
-        file so the new URL defeats the 30-day /media/ cache; the previous
-        file is never deleted and is named in the audit row.
-        Covers are out of scope.
+        its side; Ian extended it to Cover images on 2026-10-19. Unlike a crop,
+        the rotated image takes the original's place (same row, position, view
+        and caption), so a sideways default image is fixed rather than joined
+        by a second copy. The pixels go to a new file so the new URL defeats
+        the 30-day /media/ cache; the previous file is never deleted and is
+        named in the audit row on the image's Marking or Cover.
 
         Body: {"quarter_turns": 1 | 2 | 3}
         """
         image = self.get_object()
         self.check_object_permissions(request, image)
 
-        if image.subject_type != Image.SUBJECT_MARKING:
-            return Response(
-                {"detail": "Rotation is only available for Marking images."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         # Exactly 1, 2 or 3: a float such as 1.5 or a boolean is a client bug.
         raw_turns = str(request.data.get("quarter_turns")).strip()
         quarter_turns = int(raw_turns) if raw_turns in ("1", "2", "3") else None
@@ -1048,14 +1056,14 @@ class ImageViewSet(viewsets.ModelViewSet):
                 {"detail": "quarter_turns must be 1, 2 or 3."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Default manager on purpose: a recycle-binned marking is read-only.
-        marking = Marking.objects.filter(pk=image.subject_id).first()
-        if marking is None:
+        subject, snapshot, create_version = _image_entry(image)
+        if subject is None:
             return Response(
-                {"detail": "This image's marking is not in the catalog."},
+                {"detail": "This image's Entry is not in the catalog."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        previous_subject = (image.subject_type, image.subject_id)
         previous_storage_filename = image.storage_filename
         source_path = Path(settings.MEDIA_ROOT) / previous_storage_filename.lstrip("/")
         # storage_filename is editable in the admin, so confirm the resolved
@@ -1091,14 +1099,19 @@ class ImageViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             image = Image.objects.select_for_update().get(pk=image.pk)
-            if image.storage_filename != previous_storage_filename:
-                # Another editor changed this image while it was being turned.
+            if (
+                image.storage_filename != previous_storage_filename
+                or (image.subject_type, image.subject_id) != previous_subject
+            ):
+                # Another editor changed or moved this image while it was being
+                # turned. A move would log the turn on the wrong Entry, and the
+                # permission check above was made against the old one.
                 destination_path.unlink(missing_ok=True)
                 return Response(
                     {"detail": "This image changed while it was being rotated. Reload and try again."},
                     status=status.HTTP_409_CONFLICT,
                 )
-            before = build_marking_snapshot(marking)
+            before = snapshot(subject)
             image.storage_filename = storage_name
             for field, value in metadata.items():
                 setattr(image, field, value)
@@ -1107,17 +1120,18 @@ class ImageViewSet(viewsets.ModelViewSet):
             txn = log_submission_transaction(
                 action=SubmissionTransaction.ACTION_IMAGE_ROTATED,
                 actor=request.user,
-                marking=marking,
+                marking=subject if isinstance(subject, Marking) else None,
+                cover=subject if isinstance(subject, Cover) else None,
                 source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
                 before_payload=before,
-                after_payload=build_marking_snapshot(marking),
+                after_payload=snapshot(subject),
                 extra_payload={
                     "image_id": image.pk,
                     "quarter_turns": quarter_turns,
                     "previous_storage_filename": previous_storage_filename,
                 },
             )
-            create_marking_version(marking, txn, request.user)
+            create_version(subject, txn, request.user)
 
         serializer = self.get_serializer(image)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -1157,13 +1171,7 @@ class ImageViewSet(viewsets.ModelViewSet):
             # concurrent move cannot log this change on the wrong Entry.
             image = Image.objects.select_for_update().get(pk=image.pk)
             self.check_object_permissions(request, image)
-            # Default managers on purpose: a recycle-binned Entry is read-only.
-            if image.subject_type == Image.SUBJECT_COVER:
-                subject = Cover.objects.filter(pk=image.subject_id).first()
-                snapshot, create_version = build_cover_snapshot, create_cover_version
-            else:
-                subject = Marking.objects.filter(pk=image.subject_id).first()
-                snapshot, create_version = build_marking_snapshot, create_marking_version
+            subject, snapshot, create_version = _image_entry(image)
             if subject is None:
                 return Response(
                     {"detail": "This image's Entry is not in the catalog."},
