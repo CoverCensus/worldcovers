@@ -328,6 +328,9 @@ class SubmissionTransaction(models.Model):
     ACTION_DATE_SEEN_ADDED = "date_seen_added"
     ACTION_DATE_SEEN_CHANGED = "date_seen_changed"
     ACTION_DATE_SEEN_REMOVED = "date_seen_removed"
+    # A Marking image turned in place by an editor (Trello T66). The previous
+    # file stays on disk and is named in extra_payload.
+    ACTION_IMAGE_ROTATED = "image_rotated"
     ACTION_CHOICES = [
         (ACTION_SUBMIT, "Record submitted"),
         (ACTION_EDIT_SUBMISSION, "Edited submission"),
@@ -350,6 +353,7 @@ class SubmissionTransaction(models.Model):
         (ACTION_DATE_SEEN_ADDED, "Date added"),
         (ACTION_DATE_SEEN_CHANGED, "Date changed"),
         (ACTION_DATE_SEEN_REMOVED, "Date removed"),
+        (ACTION_IMAGE_ROTATED, "Image rotated"),
     ]
 
     SOURCE_CONTRIBUTOR_PORTAL = "contributor_portal"

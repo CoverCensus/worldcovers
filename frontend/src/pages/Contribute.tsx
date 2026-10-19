@@ -21,7 +21,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Trash2, Crop } from "lucide-react";
+import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Trash2, Crop, RotateCw } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import type { FormEvent, MouseEvent } from "react";
 import { Link, useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
@@ -59,6 +59,7 @@ import {
 } from "@/labels/guidelines";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
 import { LocalCropImageDialog } from "@/components/LocalCropImageDialog";
+import { LocalRotateImageDialog } from "@/components/LocalRotateImageDialog";
 import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
 import { looksLikeWrongKind, measureImageFile } from "@/lib/imageShape";
 import { formatRateNumber } from "@/lib/rateDisplay";
@@ -530,6 +531,7 @@ const Contribute = () => {
   const [coverLikeImageKeys, setCoverLikeImageKeys] = useState<string[]>([]);
   // Key of the new upload open in the crop dialog, if any.
   const [cropTargetKey, setCropTargetKey] = useState<string | null>(null);
+  const [rotateTargetKey, setRotateTargetKey] = useState<string | null>(null);
   const [lowResolutionImageKeys, setLowResolutionImageKeys] = useState<string[]>([]);
   // Timestamp of the marking record as observed when this edit session loaded
   // (Marking.modified_date). Stamped into save-as-draft payloads so a later
@@ -1386,9 +1388,9 @@ const Contribute = () => {
 
   // Reorder + set-default + tracing + remove all act on the single combined
   // gallery, so they work uniformly across already-saved and newly-picked images.
-  // Swap a new upload for its crop, keeping its key, position and Tracing
-  // flag. The cover-shape check runs again on the crop; the DPI flag is left
-  // as measured on the original, because a canvas crop carries no DPI.
+  // Swap a new upload for its crop or rotation, keeping its key, position and
+  // Tracing flag. The cover-shape check runs again on the result; the DPI flag
+  // is left as measured on the original, because a canvas carries no DPI.
   const replaceGalleryFile = (key: string, file: File) => {
     setGallery((prev) =>
       prev.map((g) => (g.kind === "new" && g.key === key ? { ...g, file, previewUrl: "" } : g)),
@@ -1986,6 +1988,10 @@ const Contribute = () => {
       (g): g is Extract<MarkingGalleryItem, { kind: "new" }> =>
         g.kind === "new" && g.key === cropTargetKey,
     );
+    const rotateTarget = gallery.find(
+      (g): g is Extract<MarkingGalleryItem, { kind: "new" }> =>
+        g.kind === "new" && g.key === rotateTargetKey,
+    );
     const firstCoverLikeUploadKey = gallery.find(
       (g) => g.kind === "new" && coverLikeImageKeys.includes(g.key),
     )?.key;
@@ -2161,6 +2167,22 @@ const Contribute = () => {
                             <Crop className="h-3.5 w-3.5" />
                           </Button>
                         )}
+                        {item.kind === "new" && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            aria-label="Rotate image"
+                            title="Rotate this image"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRotateTargetKey(item.key);
+                            }}
+                          >
+                            <RotateCw className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                         {!currentImagesLead && (
                           <Button
                             type="button"
@@ -2259,6 +2281,16 @@ const Contribute = () => {
           file={cropTarget?.file ?? null}
           onCropped={(file) => {
             if (cropTarget) replaceGalleryFile(cropTarget.key, file);
+          }}
+        />
+        <LocalRotateImageDialog
+          open={rotateTarget != null}
+          onOpenChange={(open) => {
+            if (!open) setRotateTargetKey(null);
+          }}
+          file={rotateTarget?.file ?? null}
+          onRotated={(file) => {
+            if (rotateTarget) replaceGalleryFile(rotateTarget.key, file);
           }}
         />
         <LowResolutionImageWarning count={lowResolutionImageCount} />
