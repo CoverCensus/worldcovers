@@ -50,6 +50,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import { PartialDateFields } from "@/components/PartialDateFields";
+import { SimilarEntriesPanel } from "@/components/SimilarEntriesPanel";
+import { findSimilarCovers } from "@/lib/similarEntries";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
 import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
 import { LocalRotateImageDialog } from "@/components/LocalRotateImageDialog";
@@ -249,6 +251,10 @@ export default function CoverEdit() {
   const [draftLoadError, setDraftLoadError] = useState<string | null>(null);
   const [coverRow, setCoverRow] = useState<AssociatedCover | null>(null);
   const [copySource, setCopySource] = useState<AssociatedCover | null>(null);
+  // T48: every sibling cover of the parent Marking, for the advisory
+  // "similar existing Covers" panel; the edited cover is excluded below.
+  const [siblingCovers, setSiblingCovers] = useState<AssociatedCover[]>([]);
+  const [resumedEditCoverId, setResumedEditCoverId] = useState<number | null>(null);
   // Captions typed on images already saved with a resumed draft (T87), by tile key.
   const [savedCaptionEdits, setSavedCaptionEdits] = useState<Record<string, string>>({});
   const [copySourceError, setCopySourceError] = useState<string | null>(null);
@@ -379,6 +385,7 @@ export default function CoverEdit() {
         setIsBackstamp(String(sd.is_backstamp ?? sd.isBackstamp) === "true");
         setDisplaySubmitterName(String(sd.display_submitter_name ?? sd.displaySubmitterName) === "true");
         const editedCoverId = Number(sd.edit_cover_id ?? sd.editCoverId);
+        setResumedEditCoverId(Number.isInteger(editedCoverId) && editedCoverId > 0 ? editedCoverId : null);
         const editedCover = Number.isInteger(editedCoverId) && editedCoverId > 0
           ? await getCoverById(editedCoverId)
           : null;
@@ -528,6 +535,7 @@ export default function CoverEdit() {
     getMarkingCovers(markingId)
       .then(({ covers }) => {
         if (cancelled) return;
+        setSiblingCovers(covers);
         if (mode === "create") {
           setCoverRow(null);
           if (copySourceCoverId != null) {
@@ -1276,6 +1284,17 @@ export default function CoverEdit() {
                         showUnknown
                       />
                     </div>
+
+                    <SimilarEntriesPanel
+                      noun="Covers"
+                      rows={findSimilarCovers(
+                        siblingCovers,
+                        { type, coverDate },
+                        markingId,
+                        mode === "edit" ? routeCoverId : resumedEditCoverId,
+                      )}
+                      showThumbnails={false}
+                    />
 
                     <div className="space-y-2" id="cover-images-zone">
                       <Label>
