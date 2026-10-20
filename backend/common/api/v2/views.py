@@ -20,7 +20,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, ProgrammingError, transaction
 from django.db.models import (
-    Exists, F, Min, Max, OuterRef, Q, Subquery, TextField, Value,
+    Exists, F, Min, Max, OuterRef, Q, TextField, Value,
 )
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import ExtractYear, NullIf
@@ -67,10 +67,20 @@ from common.contribution_apply import (
     ContributionApplyError,
     MARKING_DATE_SUBMIT_KEYS,
     _CITATION_ID_KEYS,
+    _parse_decimal,
     _parse_int,
     _source_marking_image_id,
     strip_marking_date_keys,
     normalize_marking_dates_seen,
+)
+from common.matching import (
+    SCAN_FIELDS,
+    inscription_key,
+    near_key,
+    primary_region_subquery as _primary_region_subquery,
+    related_key,
+    sizes_compatible,
+    town_match_key,
 )
 from common.contribution_consolidation import (
     ContributionTarget,
@@ -114,6 +124,7 @@ from common.models import (
     Image,
     Lettering,
     Marking,
+    MarkingType,
     MarkingRecycleBin,
     MarkingVersion,
     PostOffice,
@@ -149,6 +160,8 @@ from .serializers import (
     # silent way for the two to disagree.
     _contribution_submitted_data_is_cover,
     _contribution_target_marking_id,
+    _format_decimal,
+    image_public_url,
     CitationSerializer,
     CollectionSerializer,
     ColorSerializer,
@@ -410,48 +423,6 @@ class IsResponsibleForRegion(BasePermission):
             return True
         marking = obj if isinstance(obj, Marking) else getattr(obj, "marking", None)
         return _user_is_responsible_for_marking(request.user, marking)
-
-
-def _primary_region_subquery(field):
-    """A marking's primary-jurisdiction Region `field`, as a scalar subquery.
-
-    Deliberately a correlated subquery and NOT a join. Ordering across the
-    post_office_regions junction multiplies rows -- Django's own order_by()
-    docs warn that a multi-valued field "could return more items than you were
-    working on to begin with" -- and since the VPHC ingest gave every VA/WV
-    town a county link alongside its state, that is exactly what happened:
-    502 markings emitted twice and 502 different ones pushed off the end by
-    LIMIT/OFFSET, while count() stayed correct because Django strips ordering
-    when it counts (issue #103, LEFT_OFF.md B2).
-
-    .distinct() does not fix it. Ordering by a related field puts that field in
-    the SELECT list, so the Virginia row and the Accomack row of the same
-    marking are not duplicates to DISTINCT -- measured live on woco.dev, where
-    ?state=VA already had .distinct() and still returned 2,309 rows for 1,947
-    markings. It is also the slow path: the issue #59 load test measured 723 of
-    11,493 temp tables spilling to disk at 4,000 rows.
-
-    The ordering mirrors PostOffice.region's tie-break exactly so the sort key
-    and the displayed state can never disagree.
-
-    Cost, measured (EXPLAIN + timings, 3,155 local markings / 1,569 county
-    links): the subquery is `ref` on the unique post_office_region index plus
-    an `eq_ref` PK lookup -- two bounded index lookups per candidate row, so
-    O(1) per row, not a scan. A deep-offset page costs ~17.5 ms against
-    ~15.0 ms for the old (wrong) junction sort. Paying ~2.5 ms for pages that
-    are actually complete. The planned denormalized state_region_id column
-    removes even that; this is its no-migration precursor.
-    """
-    return Subquery(
-        PostOfficeRegion.objects
-        .filter(post_office_id=OuterRef("post_office_id"))
-        .exclude(region__region_tier__in=Region.SUBREGION_TIERS)
-        .order_by(
-            F("region__defunct_date").desc(nulls_first=True),
-            F("region__established_date").desc(nulls_last=True),
-        )
-        .values(f"region__{field}")[:1]
-    )
 
 
 def _marking_list_queryset():
@@ -2516,6 +2487,139 @@ class MarkingViewSet(viewsets.ModelViewSet):
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
         return Response(self.get_serializer(qs, many=True).data)
+
+    @action(detail=False, methods=["get"], url_path="similar")
+    def similar(self, request):
+        """Existing Markings that look like the one a Contributor is typing (T48).
+
+        Advisory input for the submission forms, so it never answers 4xx on
+        content: an incomplete or unrecognised form is an empty 200. Read-only
+        and public like the list; `/contribute` itself sits behind sign-in.
+
+        Two tiers, from common.matching, the same key as T47's report:
+          match    the full NEAR key (state, town key, type, inscription key,
+                   shape, colour family) with width/height within 0.5 mm,
+                   and the same manuscript flag when the form sent one
+          related  same state, town key, type and inscription key only
+        `?exclude=<id>` drops the Marking being edited; it is not checked
+        against the caller because Marking ids are public already (the list
+        endpoint) and excluding one changes nothing but this advisory answer.
+
+        Cost is bounded by resolving the typed town first: the region's post
+        offices whose town key matches (the #129 spelling variants meet here,
+        exactly as approval's _resolve_post_office does), then only Markings on
+        those offices. Richmond, the worst case, is ~150 rows. The primary-
+        region annotation then drops a town only historically linked to the
+        state ("Account For Historical Regions"); pre-statehood WV listings are
+        deliberately not surfaced under VA (#94), as in T47. Marking.objects
+        hides recycle-binned rows. No throttle classes are configured; the
+        town bound is what keeps this cheap.
+        """
+        empty = {"results": [], "match_count": 0, "related_count": 0}
+        params = request.query_params
+        type_ = (params.get("type") or "").strip().upper()
+        town = (params.get("town") or "").strip()
+        typed_inscription = inscription_key(params.get("inscription"))
+        typed_town_key = town_match_key(town)
+        if (type_ not in MarkingType.values or not typed_town_key
+                or not typed_inscription):
+            return Response(empty)
+        region = Region.primary_for_state_term(params.get("state"))
+        if region is None:
+            return Response(empty)
+
+        # The town key is punctuation-blind, which SQL cannot express, so the
+        # region's offices (id, name only; ~2,000 rows for VA) are keyed here.
+        # Approval's _resolve_post_office pays the same cost per submission.
+        office_ids = [
+            office_id for office_id, name in
+            PostOffice.objects.filter(post_office_regions__region=region)
+            .values_list("id", "name")
+            if town_match_key(name or "") == typed_town_key
+        ]
+        if not office_ids:
+            return Response(empty)
+
+        rows = Marking.objects.filter(post_office_id__in=office_ids, type=type_)
+        exclude_id = _parse_int(params.get("exclude"))
+        if exclude_id is not None:
+            rows = rows.exclude(pk=exclude_id)
+        # Every row of the town is read on purpose: the counts in the response
+        # are the whole picture, only the rows are capped.
+        rows = rows.annotate(
+            primary_region_id=_primary_region_subquery("id"),
+            state_abbrev=_primary_region_subquery("abbrev"),
+            state_code=_primary_region_subquery("code"),
+        ).filter(
+            primary_region_id=region.pk,
+        ).values(
+            *SCAN_FIELDS, "color__hex_val",
+        ).order_by("id")
+
+        typed = {
+            "state_code": region.code,
+            "post_office__name": town,
+            "type": type_,
+            "inscription_txt": params.get("inscription"),
+            "shape_id": _parse_int(params.get("shape")),
+            "color__name": (params.get("color") or "").strip() or None,
+            "width": _parse_decimal(params.get("width")),
+            "height": _parse_decimal(params.get("height")),
+        }
+        typed_near = near_key(typed)
+        typed_related = related_key(typed)
+        manuscript_sent = (params.get("is_manuscript") or "").strip().lower()
+        typed_manuscript = {"true": True, "false": False}.get(manuscript_sent)
+
+        matches, related = [], []
+        for row in rows:
+            if related_key(row) != typed_related:
+                continue
+            is_match = (
+                near_key(row) == typed_near
+                and sizes_compatible(row, typed)
+                and (typed_manuscript is None or row["is_manuscript"] == typed_manuscript)
+            )
+            (matches if is_match else related).append(row)
+
+        chosen = (matches + related)[:10]
+        thumbnails = {}
+        if chosen:
+            for image in Image.objects.filter(
+                subject_type=Image.SUBJECT_MARKING,
+                subject_id__in=[row["id"] for row in chosen],
+            ).order_by("subject_id", "display_order", "image_id"):
+                thumbnails.setdefault(image.subject_id, image_public_url(image, request))
+
+        def _row(row, tier):
+            return {
+                "id": row["id"],
+                "tier": tier,
+                "town": row["post_office__name"],
+                "state_abbrev": row["state_abbrev"],
+                "type": row["type"],
+                "inscription": row["inscription_txt"],
+                "is_manuscript": row["is_manuscript"],
+                "shape_name": row["shape__name"],
+                "color_name": row["color__name"],
+                "color_hex": row["color__hex_val"],
+                "width": _format_decimal(row["width"]),
+                "height": _format_decimal(row["height"]),
+                "earliest_seen": row["earliest_seen"],
+                "latest_seen": row["latest_seen"],
+                "main_image_url": thumbnails.get(row["id"]),
+            }
+
+        match_ids = {row["id"] for row in matches}
+        results = [
+            _row(row, "match" if row["id"] in match_ids else "related")
+            for row in chosen
+        ]
+        return Response({
+            "results": results,
+            "match_count": len(matches),
+            "related_count": len(related),
+        })
 
     @action(detail=True, methods=["get"], url_path="changelog", permission_classes=[IsAuthenticated])
     def changelog(self, request, pk=None):

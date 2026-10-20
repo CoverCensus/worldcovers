@@ -78,6 +78,9 @@ import {
   submittedDataToWidthHeightStrings,
 } from "@/lib/dimensionsMm";
 import { isTrueCircleShapeName, shapeCodeFromName } from "@/lib/shapeDisplay";
+import { useSimilarMarkings } from "@/hooks/useSimilarMarkings";
+import { SimilarEntriesPanel } from "@/components/SimilarEntriesPanel";
+import { describeSimilarMarking } from "@/lib/similarEntries";
 
 const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 100;
@@ -820,6 +823,23 @@ const Contribute = () => {
       setCatalogCodeLoading(false);
     }
   };
+
+  // T48: advisory "similar existing Markings" panel, fed by the key fields.
+  // Reads only; Submit is never gated on it.
+  const similar = useSimilarMarkings({
+    state,
+    town,
+    type: markingType,
+    inscription: inscriptionText,
+    shapeId: shapeOptions.find((opt) => opt.name === shape)?.id ?? null,
+    color,
+    isManuscript,
+    widthMm,
+    heightMm,
+    excludeId: editMarkingId ?? resumedEditMarkingId ?? null,
+  });
+  const similarRows = similar.rows.map(describeSimilarMarking);
+  const similarHint = !shape.trim() || !color.trim() ? "Choose a shape and colour to narrow this list." : null;
 
   useEffect(() => {
     if (!canEditCatalogCode) return;
@@ -2844,6 +2864,13 @@ const Contribute = () => {
                         <p className="text-sm text-destructive">{fieldErrors.color}</p>
                       )}
                     </div>
+                    <SimilarEntriesPanel
+                      noun="Markings"
+                      rows={similarRows}
+                      totalCount={similar.matchCount + similar.relatedCount}
+                      loading={similar.loading}
+                      hint={similarHint}
+                    />
                     {showDateFormatField && <div className="space-y-2">
                       <Label>Date format</Label>
                       <p className="text-sm text-muted-foreground">{DATE_FORMAT_HELP}</p>

@@ -41,34 +41,23 @@ from __future__ import annotations
 
 import csv
 import os
-import re
 from collections import defaultdict
 from datetime import date
-from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
-from common.api.v2.views import _primary_region_subquery
-from common.contribution_apply import _town_match_key
+from common.matching import (
+    SCAN_FIELDS,
+    exact_key,
+    near_key,
+    primary_region_subquery,
+    sizes_compatible,
+)
 from common.models import Marking, Region
 
-SIZE_TOLERANCE_MM = Decimal("0.5")
 DEFAULT_OUT_DIR = os.path.join("tools", "wip", "out")
 
-# Every Marking column except code, catalog_txt, audit, review and cache
-# columns. Mirrors the munger's "all emitted attributes agree" rule.
-EXACT_FIELDS = (
-    "post_office_id", "type", "inscription_txt", "desc", "is_manuscript",
-    "shape_id", "lettering_id", "color_id", "is_irreg", "width", "height",
-    "date_fmt", "impression", "rate_val",
-)
-# Built on EXACT_FIELDS on purpose: exact_key() reads every EXACT field from
-# the scanned row, so the scan must fetch at least those.
-SCAN_FIELDS = EXACT_FIELDS + (
-    "id", "code", "shape__name", "color__name", "post_office__name",
-    "earliest_seen", "latest_seen", "state_abbrev", "state_code",
-)
 REPORT_FIELDS = [
     "group_id", "tier", "group_size", "dates_overlap", "marking_id", "code",
     "exact_match_ids", "state", "state_code", "post_office_id", "town",
@@ -78,45 +67,7 @@ REPORT_FIELDS = [
 ]
 
 
-# ------------------------------------------------------------------ keys
-
-def inscription_key(text: str | None) -> str:
-    """Case, spacing and punctuation blind; word boundaries kept."""
-    return " ".join(re.sub(r"[^A-Z0-9]+", " ", (text or "").upper()).split())
-
-
-def color_key(name: str | None) -> str | None:
-    """Colour family: BLUE BLACK == BLACK-BLUE == blue black; GRAY == GREY."""
-    if name is None:
-        return None
-    words = ("GREY" if w == "GRAY" else w
-             for w in name.upper().replace("-", " ").split())
-    return " ".join(sorted(words))
-
-
-def near_key(row: dict) -> tuple:
-    return (
-        row["state_code"],
-        _town_match_key(row["post_office__name"] or ""),
-        row["type"],
-        inscription_key(row["inscription_txt"]),
-        row["shape_id"],
-        color_key(row["color__name"]),
-    )
-
-
-def exact_key(row: dict) -> tuple:
-    return tuple(row[field] for field in EXACT_FIELDS)
-
-
-def sizes_compatible(a: dict, b: dict) -> bool:
-    """Unknown on either side is not evidence of a difference."""
-    for field in ("width", "height"):
-        x, y = a[field], b[field]
-        if x is not None and y is not None and abs(x - y) > SIZE_TOLERANCE_MM:
-            return False
-    return True
-
+# ------------------------------------------------------------ grouping
 
 def cluster_by_size(rows: list[dict]) -> list[list[dict]]:
     """Split one NEAR bucket into clusters whose sizes are mutually close.
@@ -237,8 +188,8 @@ class Command(BaseCommand):
     @staticmethod
     def _scan(region_codes: list[str]):
         queryset = Marking.objects.annotate(
-            state_abbrev=_primary_region_subquery("abbrev"),
-            state_code=_primary_region_subquery("code"),
+            state_abbrev=primary_region_subquery("abbrev"),
+            state_code=primary_region_subquery("code"),
         )
         if region_codes:
             queryset = queryset.filter(state_code__in=region_codes)

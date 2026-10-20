@@ -673,9 +673,9 @@ Evidence: `test_image_caption_edit.py`, `CoverDetail.imageActions.test.tsx`,
 **Do:** Find candidate duplicate Markings with the read-only
 `report_duplicate_markings` command and let a person decide. It scans
 `Marking.objects` (recycle bin excluded), takes each Marking's state from
-`_primary_region_subquery` (a correlated subquery, never a join across
+`primary_region_subquery` (a correlated subquery, never a join across
 `post_office_regions`), and groups on a NEAR key: primary state, town key
-(`_town_match_key`: letters and digits only, uppercased), type, inscription
+(`town_match_key`: letters and digits only, uppercased), type, inscription
 key (same normalisation, so ornaments such as `*` are ignored), shape, and
 colour family (uppercased, hyphens to spaces, GRAY to GREY, words sorted).
 Within a NEAR bucket, width and height must agree within 0.5 mm where both
@@ -685,7 +685,9 @@ which is the pipeline's `merge_equal_v1_markings` rule on database rows;
 otherwise it is NEAR, and each row names its identical twins. Dates are
 shown per row with a group `dates_overlap` verdict and only filtered on
 `--require-date-overlap`. T48's submission-time "similar Entries" warning
-reuses this key rather than inventing a second one.
+reuses this key rather than inventing a second one. Since T48 the keys,
+`primary_region_subquery` and `town_match_key` live in `common/matching.py`;
+the report, the API and approval all import them from there.
 
 **Don't:** Merge, archive, or recycle-bin anything from the report; the card
 says matches do not authorize it. Don't group by `post_office_id` alone: the
@@ -705,3 +707,45 @@ staging-shaped database (3,155 Markings) reports 227 groups, 159 of them
 EXACT, which is the review workload the tiers were sized for. Evidence:
 `test_report_duplicate_markings.py`; `docs/devel/TOOLS.md`
 "report_duplicate_markings".
+
+## Warn About Similar Entries, Never Block
+
+**Do:** While a Contributor fills in the Marking form, ask
+`GET /api/v2/markings/similar/` 800 ms after the key fields settle and show
+what comes back in an amber advisory panel (`SimilarEntriesPanel`,
+`role="status"`) directly under the Colour field. The endpoint resolves the
+typed town to the state's post offices by `town_match_key` (so the #129
+spelling variants meet, exactly as approval does), reads only Markings on
+those offices, keeps the ones whose primary region is that state, and labels
+each as **match** (T47's full NEAR key with width/height within 0.5 mm and
+the same manuscript flag when the form sent one) or **related** (same state,
+town key, type and inscription key; other details differ). Match rows first,
+ten at most, with the uncapped counts so the heading stays honest. Rows carry
+no catalog code and no user identity, link to `/record/<id>` in a new tab so
+unsaved input survives, and `?exclude=` drops the Marking being edited. An
+incomplete or unrecognised form is an empty `200`, never a `4xx`: the panel is
+advice, not validation. On the Cover form the same panel is fed client-side
+from the parent Marking's sibling covers (`findSimilarCovers`): same type
+where both are known (`UNK` is unknown, not different), compatible date on
+every component both sides know, and nothing at all until a year is typed.
+
+**Don't:** Disable Submit, require an acknowledgement, or record in the
+submission that candidates were shown. Don't hide the `?copy=` source: only
+the Entry being edited is excluded, and an unchanged copy is exactly what the
+panel exists to flag. Don't reuse `GET /markings/` for this (its `town` is
+`icontains`, `color` is `iexact`, sizes are exact, `state` pulls in
+cross-listed WV and there is no inscription filter), and don't introduce
+react-query into the forms: their tests render without a provider, and the
+catalog-code suggestion effect already shows the effect-and-cancel pattern.
+Don't flash a "checking…" box on every settled keystroke; the panel renders
+only when it has rows and keeps them while a refresh is in flight.
+
+**Why:** Trello T48. Its acceptance: "useful candidate previews without false
+claims of identity." Reese chose the two tiers, advisory only, the placement
+and client-side Covers on 2026-10-20, following the repo's own precedent
+(`alert.tsx` warning is "advisory, not an error"; image warnings say "you can
+still submit"; T34 keeps acknowledge-and-continue). The office-first lookup
+bounds the cost to one town (Richmond, the largest, is ~150 rows) on a public
+endpoint with no throttle classes. Evidence: `test_similar_markings_api.py`,
+`SimilarEntriesPanel.test.tsx`, `Contribute.similar.test.tsx`,
+`lib/similarEntries.test.ts`.

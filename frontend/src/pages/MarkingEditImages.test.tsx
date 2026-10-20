@@ -16,6 +16,7 @@ jest.mock("@/services/datesSeen", () => ({
 }));
 jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: jest.fn() }) }));
 jest.mock("@/services/colors", () => ({ getColors: jest.fn().mockResolvedValue([]) }));
+jest.mock("@/services/similarEntries", () => ({ getSimilarMarkings: jest.fn().mockResolvedValue({ rows: [], matchCount: 0, relatedCount: 0 }) }));
 jest.mock("@/services/shapes", () => ({ getShapes: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/services/postOffices", () => ({ getPostOffices: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/services/regions", () => ({ getRegions: jest.fn().mockResolvedValue([{ value: "VA", label: "Virginia" }]) }));
