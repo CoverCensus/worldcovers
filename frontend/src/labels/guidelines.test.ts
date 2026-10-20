@@ -10,6 +10,7 @@ import {
   INSCRIPTION_TEXT_HELP,
   DATE_FORMAT_HELP,
   LETTERING_HELP,
+  MARKING_TYPE_GUIDELINE,
 } from "./guidelines";
 
 const bodyFor = (list: { label: string; body: string }[], label: string) =>
@@ -26,21 +27,18 @@ describe("submission guidelines copy", () => {
     );
   });
 
-  it("explains Rate vs. Auxiliary markings on the marking form only", () => {
-    const marking = bodyFor(MARKING_SUBMISSION_GUIDELINES, "Rate vs. Auxiliary markings");
-    expect(marking).toMatch(/rate mark/i);
-    expect(marking).toMatch(/auxiliary/i);
-    // Shipped #23 copy uses the number heuristic: Rate examples are
-    // numerals/"PAID 3"; Auxiliary examples are word handstamps; and the
-    // "a marking bearing a number is a Rate Mark" rule of thumb is stated.
-    expect(marking).toMatch(/"3".*"5"/);
-    expect(marking).toMatch(/"PAID 3"/);
-    expect(marking).toMatch(/"FORWARDED"/);
-    expect(marking).toMatch(/"MISSENT"/);
-    expect(marking).toMatch(/bearing a number is a Rate Mark/i);
-    // Cover form must NOT carry the marking-type explanation.
+  it("explains Ratemark vs. Auxmark on the marking form only", () => {
+    const marking = bodyFor(MARKING_SUBMISSION_GUIDELINES, "Ratemark vs. Auxmark");
+    // The project's one-word names (docs/devel/vocab.md): a Ratemark states
+    // the rate, an Auxmark is any other instructional marking; the rule of
+    // thumb and the "add a note" fallback stay.
+    expect(marking).toMatch(/Ratemark/);
+    expect(marking).toMatch(/Auxmark/);
+    expect(marking).toMatch(/rule of thumb/i);
+    expect(marking).toMatch(/note for the editor/i);
+    expect(marking).not.toMatch(/Rate Mark|town mark|Auxiliary marking/);
     expect(
-      COVER_SUBMISSION_GUIDELINES.some((g) => g.label === "Rate vs. Auxiliary markings"),
+      COVER_SUBMISSION_GUIDELINES.some((g) => g.label === "Ratemark vs. Auxmark"),
     ).toBe(false);
   });
 
@@ -73,11 +71,19 @@ describe("field help copy", () => {
   });
 
   it("explains the date-format codes by example", () => {
-    expect(DATE_FORMAT_HELP).toMatch(/MD/);
+    expect(DATE_FORMAT_HELP).toMatch(/MD = Month date only/);
   });
 
   it("explains the lettering field and its manuscript exception", () => {
     expect(LETTERING_HELP).toMatch(/letter/i);
     expect(LETTERING_HELP).toMatch(/manuscript/i);
+  });
+});
+
+describe("MARKING_TYPE_GUIDELINE", () => {
+  it("uses the project's one-word marking names", () => {
+    expect(MARKING_TYPE_GUIDELINE.body).not.toMatch(/Rate Mark|town mark|Auxiliary marking/);
+    expect(MARKING_TYPE_GUIDELINE.body).toMatch(/Ratemark/);
+    expect(MARKING_TYPE_GUIDELINE.body).toMatch(/Auxmark/);
   });
 });

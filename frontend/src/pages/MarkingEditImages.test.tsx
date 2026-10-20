@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import Contribute from "./Contribute";
 import { createContribution, getContribution } from "@/services/contributions";
 import { getMarkingByIdRaw } from "@/services/markings";
@@ -58,11 +59,11 @@ beforeEach(() => {
 });
 
 function openForm(path: string) {
-  render(<MemoryRouter initialEntries={[path]}><Routes>
+  render(<TooltipProvider><MemoryRouter initialEntries={[path]}><Routes>
     <Route path="/contribute" element={<Contribute />} />
     <Route path="/edit/:id" element={<Contribute />} />
     <Route path="/dashboard" element={null} />
-  </Routes></MemoryRouter>);
+  </Routes></MemoryRouter></TooltipProvider>);
 }
 
 it("shows a marking's current images read-only on Submit Edit", async () => {

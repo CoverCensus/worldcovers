@@ -704,7 +704,18 @@ The Color palette utility follows the project's commit-by-default rule:
   using the glossary meanings and the existing tooltip component. Existing
   visible Lettering guidance remains. The keyboard check covers focus,
   accessible description, Escape dismissal, and no accidental form submit.
-  This bounded part is implemented; the broader tooltip story remains To Do.
+  October 20 (branch `reese/33-field-help`): the same `FieldHelp` now sits
+  beside every remaining textual field on both submission forms (Marking:
+  Type, Manuscript, State, Town, Inscription, Shape, Color, Description,
+  Rate Value, Catalog code, Width/Height, Reference Works; Cover: Type, Date,
+  No image, Institutionally Owned, Backstamp, Description, Reference Works),
+  with wording taken from the glossary. Tooltips define, visible text
+  instructs, and help sits outside the checkbox labels. Three in-app strings
+  that contradicted the glossary were corrected (date-format example,
+  Ratemark/Auxmark names, lettering), and the glossary Cover entry now names
+  the envelope types. Deliberately without help: image zones, captions,
+  tracing, submitter name, and the Editor-only Dates seen card. The Search
+  page filters remain for a follow-up under this story.
 - **[T1](https://trello.com/c/AvISZKlp):** README.md and BUILD.md now explain
   custom database setup, matching `WOCO_DB_NAME` to `DB_NAME`, environment
   precedence, and existing `mysql.cnf` handling. Checked against `tools/setup.sh`,

@@ -58,7 +58,17 @@ import { LocalRotateImageDialog } from "@/components/LocalRotateImageDialog";
 import { CoverReviewBanner } from "@/components/CoverReviewBanner";
 import { looksLikeWrongKind, measureImageFile } from "@/lib/imageShape";
 import { isBelowPreferredImageDpi, measureImageDpi } from "@/lib/imageResolution";
-import { COVER_SUBMISSION_GUIDELINES } from "@/labels/guidelines";
+import {
+  COVER_SUBMISSION_GUIDELINES,
+  COVER_TYPE_HELP,
+  COVER_DATE_HELP,
+  INSTITUTIONAL_HELP,
+  BACKSTAMP_HELP,
+  NO_COVER_IMAGE_HELP,
+  COVER_DESCRIPTION_HELP,
+  REFERENCE_WORKS_HELP,
+} from "@/labels/guidelines";
+import { FieldHelp } from "@/components/FieldHelp";
 import { isCoverContributionData } from "@/lib/contributionDisplay";
 import {
   contributionImageMetasFromSubmittedData,
@@ -1244,9 +1254,12 @@ export default function CoverEdit() {
 
                   <form onSubmit={handleFormSubmit} className="space-y-6" noValidate>
                     <div className="space-y-2">
-                      <Label htmlFor="cover-type">
-                        Type <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="cover-type">
+                          Type <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label="Type">{COVER_TYPE_HELP}</FieldHelp>
+                      </div>
                       <Select
                         value={type || undefined}
                         onValueChange={(v) => {
@@ -1269,9 +1282,12 @@ export default function CoverEdit() {
                     </div>
 
                     <div className="space-y-3" id="cover-date">
-                      <Label>
-                        Date <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label>
+                          Date <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label="Date">{COVER_DATE_HELP}</FieldHelp>
+                      </div>
                       <PartialDateFields
                         idPrefix="cover-date"
                         value={coverDate}
@@ -1494,14 +1510,17 @@ export default function CoverEdit() {
                           the star to set the default; check Tracing on hand-traced or computer-traced diagrams.
                         </p>
                       )}
-                      <label className="flex items-center gap-2 text-sm">
-                        <Checkbox
-                          checked={noCoverImage}
-                          onCheckedChange={(v) => setNoCoverImageChecked(v === true)}
-                          disabled={submitting}
-                        />
-                        No image is available to upload
-                      </label>
+                      <div className="flex items-center gap-1">
+                        <label className="flex items-center gap-2 text-sm">
+                          <Checkbox
+                            checked={noCoverImage}
+                            onCheckedChange={(v) => setNoCoverImageChecked(v === true)}
+                            disabled={submitting}
+                          />
+                          No image is available to upload
+                        </label>
+                        <FieldHelp label="No image available">{NO_COVER_IMAGE_HELP}</FieldHelp>
+                      </div>
                       {fieldErrors.images && <p className="text-sm text-destructive">{fieldErrors.images}</p>}
                       <WrongImageKindWarning
                         expected="COVER"
@@ -1511,18 +1530,24 @@ export default function CoverEdit() {
                     </div>
 
                     <div className="space-y-3 pt-1">
-                      <label className="flex items-center gap-2 text-sm">
-                        <Checkbox
-                          checked={isInstitutional}
-                          onCheckedChange={(v) => setIsInstitutional(v === true)}
-                          disabled={submitting}
-                        />
-                        Institutionally Owned
-                      </label>
-                      <label className="flex items-center gap-2 text-sm">
-                        <Checkbox checked={isBackstamp} onCheckedChange={(v) => setIsBackstamp(v === true)} disabled={submitting} />
-                        Backstamp
-                      </label>
+                      <div className="flex items-center gap-1">
+                        <label className="flex items-center gap-2 text-sm">
+                          <Checkbox
+                            checked={isInstitutional}
+                            onCheckedChange={(v) => setIsInstitutional(v === true)}
+                            disabled={submitting}
+                          />
+                          Institutionally Owned
+                        </label>
+                        <FieldHelp label="Institutionally Owned">{INSTITUTIONAL_HELP}</FieldHelp>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <label className="flex items-center gap-2 text-sm">
+                          <Checkbox checked={isBackstamp} onCheckedChange={(v) => setIsBackstamp(v === true)} disabled={submitting} />
+                          Backstamp
+                        </label>
+                        <FieldHelp label="Backstamp">{BACKSTAMP_HELP}</FieldHelp>
+                      </div>
                       {canChangeSubmitterName ? <label className="flex items-center gap-2 text-sm">
                         <Checkbox
                           checked={displaySubmitterName}
@@ -1536,7 +1561,10 @@ export default function CoverEdit() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="cover-description">Description</Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="cover-description">Description</Label>
+                        <FieldHelp label="Description">{COVER_DESCRIPTION_HELP}</FieldHelp>
+                      </div>
                       <Textarea
                         id="cover-description"
                         rows={3}
@@ -1549,7 +1577,10 @@ export default function CoverEdit() {
 
                     <div className="space-y-3" id="cover-reference-works">
                       <div className="space-y-2">
-                        <Label>Reference Works</Label>
+                        <div className="flex items-center gap-1">
+                          <Label>Reference Works</Label>
+                          <FieldHelp label="Reference Works">{REFERENCE_WORKS_HELP}</FieldHelp>
+                        </div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button type="button" variant="outline" className="w-full justify-between" disabled={referenceWorksLoading}>
