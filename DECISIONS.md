@@ -667,3 +667,41 @@ checked. Migration `0021_image_caption_changed_action` adds the choice only.
 Evidence: `test_image_caption_edit.py`, `CoverDetail.imageActions.test.tsx`,
 `EntryRecordHistoryCard.caption.test.tsx`, `ImageCaptions.test.tsx`.
 
+
+## Report Duplicate Markings, Never Merge Them
+
+**Do:** Find candidate duplicate Markings with the read-only
+`report_duplicate_markings` command and let a person decide. It scans
+`Marking.objects` (recycle bin excluded), takes each Marking's state from
+`_primary_region_subquery` (a correlated subquery, never a join across
+`post_office_regions`), and groups on a NEAR key: primary state, town key
+(`_town_match_key`: letters and digits only, uppercased), type, inscription
+key (same normalisation, so ornaments such as `*` are ignored), shape, and
+colour family (uppercased, hyphens to spaces, GRAY to GREY, words sorted).
+Within a NEAR bucket, width and height must agree within 0.5 mm where both
+are known; an unknown size never separates two rows. A group is EXACT when
+every column except `code`, `catalog_txt`, and the audit columns is equal,
+which is the pipeline's `merge_equal_v1_markings` rule on database rows;
+otherwise it is NEAR, and each row names its identical twins. Dates are
+shown per row with a group `dates_overlap` verdict and only filtered on
+`--require-date-overlap`. T48's submission-time "similar Entries" warning
+reuses this key rather than inventing a second one.
+
+**Don't:** Merge, archive, or recycle-bin anything from the report; the card
+says matches do not authorize it. Don't group by `post_office_id` alone: the
+catalog holds spelling variants of one town on different PostOffice rows
+(issue #129). Don't group across primary states: Martinsburg VA and
+Martinsburg WV are different towns (#94), and one Marking cross-listed under
+two Regions is one Marking ("Account For Historical Regions In Search").
+Don't resolve `--state` with a bare abbreviation lookup; county rows carry
+the state's abbrev (#103), so use `Region.primary_for_state_term`.
+
+**Why:** Trello T47. The colour repair left "markings that become
+colour-identical after a merge" for T47, and the munger's own merge rule
+needs the raw v1 source row, which the database does not hold, so only its
+attribute half carries over. Reese chose two tiers, dates shown and filtered
+by flag, and CSV plus console with live rows only on 2026-10-20. The local
+staging-shaped database (3,155 Markings) reports 227 groups, 159 of them
+EXACT, which is the review workload the tiers were sized for. Evidence:
+`test_report_duplicate_markings.py`; `docs/devel/TOOLS.md`
+"report_duplicate_markings".
