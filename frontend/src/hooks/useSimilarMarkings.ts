@@ -11,7 +11,7 @@
  * Advisory only: a failed request is an empty panel, never an error the form
  * has to handle.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useDebounce } from "@/hooks/useDebounce";
 import { getSimilarMarkings, type SimilarMarking, type SimilarMarkingsParams } from "@/services/similarEntries";
@@ -28,13 +28,8 @@ export interface SimilarMarkingsState {
 
 const IDLE: SimilarMarkingsState = { rows: [], matchCount: 0, relatedCount: 0, loading: false, error: false };
 
-function isComplete(params: SimilarMarkingsParams): boolean {
-  return [params.state, params.town, params.type, params.inscription].every((v) => v.trim().length > 0);
-}
-
-export function useSimilarMarkings(params: SimilarMarkingsParams): SimilarMarkingsState {
-  // One string so the debounce and the effect key on value, not identity.
-  const key = JSON.stringify({
+function normalise(params: SimilarMarkingsParams): SimilarMarkingsParams {
+  return {
     state: params.state.trim(),
     town: params.town.trim(),
     type: params.type.trim(),
@@ -45,19 +40,33 @@ export function useSimilarMarkings(params: SimilarMarkingsParams): SimilarMarkin
     widthMm: params.widthMm?.trim() || null,
     heightMm: params.heightMm?.trim() || null,
     excludeId: params.excludeId ?? null,
-  });
+  };
+}
+
+function isComplete(params: SimilarMarkingsParams): boolean {
+  return [params.state, params.town, params.type, params.inscription].every((v) => v.length > 0);
+}
+
+export function useSimilarMarkings(params: SimilarMarkingsParams): SimilarMarkingsState {
+  const settled = normalise(params);
+  // The effect keys on a value, not an object identity, so the debounce sees
+  // one change per real edit. It reads the latest params from the ref rather
+  // than parsing the key back.
+  const key = Object.values(settled).join("\u001f");
+  const latest = useRef(settled);
+  latest.current = settled;
   const debouncedKey = useDebounce(key, SIMILAR_LOOKUP_DEBOUNCE_MS);
   const [state, setState] = useState<SimilarMarkingsState>(IDLE);
 
   useEffect(() => {
-    const settled = JSON.parse(debouncedKey) as SimilarMarkingsParams;
-    if (!isComplete(settled)) {
+    const current = latest.current;
+    if (!isComplete(current)) {
       setState(IDLE);
       return;
     }
     let ignore = false;
     setState((prev) => ({ ...prev, loading: true, error: false }));
-    getSimilarMarkings(settled)
+    getSimilarMarkings(current)
       .then((result) => {
         if (!ignore) setState({ ...result, loading: false, error: false });
       })

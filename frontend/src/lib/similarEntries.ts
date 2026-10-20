@@ -70,6 +70,7 @@ function knownType(raw: string | null | undefined): string | null {
   return code && code !== DEFAULT_COVER_TYPE ? code : null;
 }
 
+/** A typed date part, or null; zero is rejected on purpose (no year, month or day 0). */
 function toInt(raw: string | number | null | undefined): number | null {
   if (raw == null || raw === "") return null;
   const n = Number(raw);

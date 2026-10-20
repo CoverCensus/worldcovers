@@ -425,7 +425,6 @@ class IsResponsibleForRegion(BasePermission):
         return _user_is_responsible_for_marking(request.user, marking)
 
 
-
 def _marking_list_queryset():
     """Optimized queryset for Marking list-style endpoints.
 
@@ -2502,7 +2501,9 @@ class MarkingViewSet(viewsets.ModelViewSet):
                    shape, colour family) with width/height within 0.5 mm,
                    and the same manuscript flag when the form sent one
           related  same state, town key, type and inscription key only
-        `?exclude=<id>` drops the Marking being edited.
+        `?exclude=<id>` drops the Marking being edited; it is not checked
+        against the caller because Marking ids are public already (the list
+        endpoint) and excluding one changes nothing but this advisory answer.
 
         Cost is bounded by resolving the typed town first: the region's post
         offices whose town key matches (the #129 spelling variants meet here,
@@ -2527,6 +2528,9 @@ class MarkingViewSet(viewsets.ModelViewSet):
         if region is None:
             return Response(empty)
 
+        # The town key is punctuation-blind, which SQL cannot express, so the
+        # region's offices (id, name only; ~2,000 rows for VA) are keyed here.
+        # Approval's _resolve_post_office pays the same cost per submission.
         office_ids = [
             office_id for office_id, name in
             PostOffice.objects.filter(post_office_regions__region=region)
@@ -2540,12 +2544,16 @@ class MarkingViewSet(viewsets.ModelViewSet):
         exclude_id = _parse_int(params.get("exclude"))
         if exclude_id is not None:
             rows = rows.exclude(pk=exclude_id)
+        # Every row of the town is read on purpose: the counts in the response
+        # are the whole picture, only the rows are capped.
         rows = rows.annotate(
             primary_region_id=_primary_region_subquery("id"),
             state_abbrev=_primary_region_subquery("abbrev"),
             state_code=_primary_region_subquery("code"),
+        ).filter(
+            primary_region_id=region.pk,
         ).values(
-            *SCAN_FIELDS, "primary_region_id", "color__hex_val",
+            *SCAN_FIELDS, "color__hex_val",
         ).order_by("id")
 
         typed = {
@@ -2565,8 +2573,6 @@ class MarkingViewSet(viewsets.ModelViewSet):
 
         matches, related = [], []
         for row in rows:
-            if row["primary_region_id"] != region.pk:
-                continue
             if related_key(row) != typed_related:
                 continue
             is_match = (

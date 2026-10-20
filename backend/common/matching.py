@@ -31,7 +31,10 @@ EXACT_FIELDS = (
     "date_fmt", "impression", "rate_val",
 )
 # Built on EXACT_FIELDS on purpose: exact_key() reads every EXACT field from
-# the scanned row, so the scan must fetch at least those.
+# the scanned row, so the scan must fetch at least those. The last two names
+# are not columns: the queryset must annotate state_abbrev and state_code with
+# primary_region_subquery() before .values(*SCAN_FIELDS), or Django raises
+# FieldError.
 SCAN_FIELDS = EXACT_FIELDS + (
     "id", "code", "shape__name", "color__name", "post_office__name",
     "earliest_seen", "latest_seen", "state_abbrev", "state_code",
