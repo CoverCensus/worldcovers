@@ -58,6 +58,18 @@ import {
   LETTERING_HELP,
   IMPRESSION_HELP,
   IRREGULAR_HELP,
+  MARKING_TYPE_HELP,
+  MANUSCRIPT_HELP,
+  STATE_HELP,
+  TOWN_HELP,
+  INSCRIPTION_DEFINITION_HELP,
+  SHAPE_HELP,
+  COLOR_HELP,
+  DESCRIPTION_HELP,
+  RATE_VALUE_HELP,
+  CATALOG_CODE_HELP,
+  DIMENSIONS_HELP,
+  REFERENCE_WORKS_HELP,
 } from "@/labels/guidelines";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
 import { LocalCropImageDialog } from "@/components/LocalCropImageDialog";
@@ -2615,9 +2627,12 @@ const Contribute = () => {
                       noValidate
                     >
                     <div className="space-y-2">
-                      <Label htmlFor="marking-type">
-                        Marking Type <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="marking-type">
+                          Marking Type <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label="Marking Type">{MARKING_TYPE_HELP}</FieldHelp>
+                      </div>
                       <Select
                         value={markingType}
                         onValueChange={(value) => {
@@ -2672,12 +2687,16 @@ const Contribute = () => {
                         }}
                       />
                       <Label htmlFor="manuscript">Manuscript</Label>
+                      <FieldHelp label="Manuscript">{MANUSCRIPT_HELP}</FieldHelp>
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="state">
-                        State <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="state">
+                          State <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label="State">{STATE_HELP}</FieldHelp>
+                      </div>
                       <SearchableSelect
                         id="state"
                         value={state}
@@ -2703,9 +2722,12 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="town">
-                        Town/City <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="town">
+                          Town/City <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label="Town/City">{TOWN_HELP}</FieldHelp>
+                      </div>
                       <div className="relative">
                         <Input
                           id="town"
@@ -2783,9 +2805,12 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="inscription-text">
-                        {inscriptionLabel} <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="inscription-text">
+                          {inscriptionLabel} <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label={inscriptionLabel}>{INSCRIPTION_DEFINITION_HELP}</FieldHelp>
+                      </div>
                       <Textarea
                         id="inscription-text"
                         placeholder="Exact text inscribed on the marking device (abbreviations/annotations)."
@@ -2805,12 +2830,15 @@ const Contribute = () => {
                       )}
                     </div>
                     {showShapeField && <div className="space-y-2">
-                      <Label htmlFor="shape">
-                        Shape
-                        {!isManuscript ? (
-                          <span className="text-destructive" aria-hidden="true">*</span>
-                        ) : null}
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="shape">
+                          Shape
+                          {!isManuscript ? (
+                            <span className="text-destructive" aria-hidden="true">*</span>
+                          ) : null}
+                        </Label>
+                        <FieldHelp label="Shape">{SHAPE_HELP}</FieldHelp>
+                      </div>
                       <SearchableSelect
                         id="shape"
                         value={shape}
@@ -2836,7 +2864,10 @@ const Contribute = () => {
                     </div>}
 
                     <div className="space-y-2">
-                      <Label htmlFor="color">Color</Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="color">Color</Label>
+                        <FieldHelp label="Color">{COLOR_HELP}</FieldHelp>
+                      </div>
                       <Select
                         value={color}
                         onValueChange={(value) => {
@@ -2972,7 +3003,10 @@ const Contribute = () => {
                       </div>
                     </div>}
                     <div className="space-y-2">
-                      <Label htmlFor="description">Description</Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="description">Description</Label>
+                        <FieldHelp label="Description">{DESCRIPTION_HELP}</FieldHelp>
+                      </div>
                       <Textarea
                         id="description"
                         placeholder="Details about the marking..."
@@ -2983,9 +3017,12 @@ const Contribute = () => {
                     </div>
 
                     {showRateValueField && <div className="space-y-2">
-                      <Label htmlFor="rate-value">
-                        Rate Value (cents) <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="rate-value">
+                          Rate Value (cents) <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label="Rate Value">{RATE_VALUE_HELP}</FieldHelp>
+                      </div>
                       <Input
                         id="rate-value"
                         type="text"
@@ -3006,7 +3043,10 @@ const Contribute = () => {
 
                     {canEditCatalogCode && (
                       <div className="space-y-2">
-                        <Label htmlFor="catalog-code">Catalog Marking code</Label>
+                        <div className="flex items-center gap-1">
+                          <Label htmlFor="catalog-code">Catalog Marking code</Label>
+                          <FieldHelp label="Catalog Marking code">{CATALOG_CODE_HELP}</FieldHelp>
+                        </div>
                         <Input
                           id="catalog-code"
                           value={catalogCode}
@@ -3034,9 +3074,12 @@ const Contribute = () => {
                       <>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="space-y-2">
-                            <Label htmlFor="width-mm">
-                              {isCircularShape ? "Diameter (mm)" : "Width (mm)"}
-                            </Label>
+                            <div className="flex items-center gap-1">
+                              <Label htmlFor="width-mm">
+                                {isCircularShape ? "Diameter (mm)" : "Width (mm)"}
+                              </Label>
+                              <FieldHelp label={isCircularShape ? "Diameter" : "Width"}>{DIMENSIONS_HELP}</FieldHelp>
+                            </div>
                             <Input
                               id="width-mm"
                               type="text"
@@ -3098,7 +3141,10 @@ const Contribute = () => {
 
                     <div className="space-y-3">
                       <div className="space-y-2">
-                        <Label>Reference Works</Label>
+                        <div className="flex items-center gap-1">
+                          <Label>Reference Works</Label>
+                          <FieldHelp label="Reference Works">{REFERENCE_WORKS_HELP}</FieldHelp>
+                        </div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button

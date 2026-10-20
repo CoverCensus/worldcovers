@@ -22,7 +22,7 @@ A reference for the terminology used in WorldCovers data, interface, and support
 
 **Contributor.** Authenticated user. Can submit entries, edits, and comments. Inherits Guest capabilities.
 
-**Cover.** A folded letter or folded cover that carries one or more recorded Markings. The Cover record holds the cover type, physical details, and date observations.
+**Cover.** A folded letter, folded cover, envelope, or envelope front that carries one or more recorded Markings. The Cover record holds the cover type (FL, FLF, ENV, ENVF, FC, or UNK), physical details, and date observations.
 
 **Dates.** Marking date ranges combine direct Marking observations and dates on linked Covers. Direct observations can come from imported catalog text or authorized Editor changes. Editors may add, correct, or remove Marking-level dates on the Marking page. Contributors supply dates only through Covers.
 

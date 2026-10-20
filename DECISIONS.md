@@ -749,3 +749,37 @@ bounds the cost to one town (Richmond, the largest, is ~150 rows) on a public
 endpoint with no throttle classes. Evidence: `test_similar_markings_api.py`,
 `SimilarEntriesPanel.test.tsx`, `Contribute.similar.test.tsx`,
 `lib/similarEntries.test.ts`.
+
+## Tooltips Define, Visible Text Instructs
+
+**Do:** Give every textual field on the Marking and Cover submission forms a
+`FieldHelp` tooltip (Trello S33) whose text is the glossary's definition of
+the term (`docs/glossary.md`, served at `/help/glossary`), kept in
+`labels/guidelines.ts` as one named export per field. Place it as a sibling
+of the field's `Label` inside a `flex items-center gap-1` row, the way
+`f9351f3` placed Lettering, Impression and Is Irregular. For a checkbox
+named by a wrapping `<label>`, put the help outside that label. Keep the
+existing visible helper text where a field needs an instruction (Inscription,
+Town, Date format, dimensions): persistent text for touch and screen-reader
+users, never hover-only. Keep in-app wording in step with the glossary; it is
+the project's defined terms.
+
+**Don't:** Put a help button inside a wrapping `<label>` (it renames the
+control to "… Help for …" and toggles it on click), inside an image drop zone
+(the click opens the file picker), or on the current-images strip, captions,
+tracing or submitter-name controls. Don't repeat visible helper text in a
+tooltip beside it. Don't change `FieldHelp`'s contract (it describes its own
+button through `aria-describedby`; linking the input itself is a possible
+later refinement). Don't let in-app help drift from the glossary: the
+date-format example once said "MD = Month / Day" against the glossary's
+"Month date only", and the marking-type guideline used the retired "Rate
+Mark" / "town mark" names.
+
+**Why:** Trello S33 ("add concise help to textual fields using the project's
+defined terms"; "do not close S33 on the basis of these three fields alone").
+Reese chose both forms and the string corrections on 2026-10-20, leaving the
+Search filters for a follow-up. `MarkingEditImages.test.tsx` rendered the form
+without a `TooltipProvider` and only passed because its fixture was a
+manuscript Marking; always-visible help made the provider mandatory.
+Evidence: `FieldHelpCoverage.test.tsx`, `guidelines.test.ts`,
+`FieldHelp.test.tsx`.
