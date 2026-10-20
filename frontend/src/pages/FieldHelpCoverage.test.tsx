@@ -48,7 +48,7 @@ beforeAll(() => {
 });
 beforeEach(() => jest.clearAllMocks());
 
-function open(path: string, route: string, page: React.ReactNode) {
+function open(path: string, route: string, page: React.ReactElement) {
   render(<TooltipProvider delayDuration={0}><MemoryRouter initialEntries={[path]}><Routes>
     <Route path={route} element={page} />
   </Routes></MemoryRouter></TooltipProvider>);
@@ -64,8 +64,11 @@ describe("Marking form field help (S33)", () => {
     for (const label of ["Marking Type", "Manuscript", "State", "Town/City", "Color", "Description", "Reference Works"]) {
       expect(help(label)).toBeInTheDocument();
     }
+    // A new Marking is handstamped until Manuscript is ticked, whatever its
+    // type, so Shape and the dimensions (and their help) are visible at once.
     expect(help("Shape")).toBeInTheDocument();
     expect(help("Width")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Help for Height" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Help for Catalog Marking code" })).toBeNull();
 
     fireEvent.click(screen.getByLabelText("Manuscript"));

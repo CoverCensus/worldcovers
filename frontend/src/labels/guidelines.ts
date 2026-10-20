@@ -92,7 +92,9 @@ export const IMPRESSION_HELP =
 export const IRREGULAR_HELP =
   "Select when the handstamp outline is non-uniform. Not used for Manuscript Markings.";
 
-// Definitions for the FieldHelp tooltips, one per form field (S33).
+// ── FieldHelp tooltip definitions (Trello S33) ───────────────────────────
+// One export per form field; the wording mirrors docs/glossary.md.
+// Marking form first, then the Cover form.
 export const MARKING_TYPE_HELP =
   "Townmark: identifies the origin Post Office and bears the town name, often with a date. Ratemark: states a postal rate. Auxmark: an auxiliary or instructional Marking such as PAID, FREE, ADVERTISED, MISSENT, or FORWARDED.";
 
@@ -114,6 +116,7 @@ export const SHAPE_HELP =
 export const COLOR_HELP =
   "Ink color of the Marking, identified by name. Leave blank when the source does not state a color.";
 
+// Marking form only; the Cover form has COVER_DESCRIPTION_HELP below.
 export const DESCRIPTION_HELP =
   "Free-text annotations about this Marking: anything the structured fields cannot hold.";
 
@@ -144,6 +147,7 @@ export const BACKSTAMP_HELP =
 export const NO_COVER_IMAGE_HELP =
   "Tick when no image of this cover can be supplied. An image is otherwise required as evidence.";
 
+// Cover form only; its description is public on the cover detail page.
 export const COVER_DESCRIPTION_HELP =
   "Free-text notes about the cover, shown on the public cover detail page.";
 

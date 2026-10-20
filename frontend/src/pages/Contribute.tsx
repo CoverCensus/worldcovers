@@ -3105,10 +3105,7 @@ const Contribute = () => {
                           </div>
                           {!isCircularShape && (
                             <div className="space-y-2">
-                              <div className="flex items-center gap-1">
-                                <Label htmlFor="height-mm">Height (mm)</Label>
-                                <FieldHelp label="Height">{DIMENSIONS_HELP}</FieldHelp>
-                              </div>
+                              <Label htmlFor="height-mm">Height (mm)</Label>
                               <Input
                                 id="height-mm"
                                 type="text"
