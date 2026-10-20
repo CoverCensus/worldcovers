@@ -54,6 +54,13 @@ describe("buildMarkingFields — Dates Seen row (issue #25)", () => {
   });
 });
 
+it.each(["TOWNMARK", "RATEMARK", "AUXMARK"] as const)("omits Shape and Dimensions from manuscript %s details", (type) => {
+  const rows = buildMarkingFields(baseInput({
+    type, isManuscript: true, shapeName: "Circle", dimensions: "25 mm diameter",
+  }), { isStaff: false });
+  expect(rows.some((row) => row.label === "Shape" || row.label === "Dimensions")).toBe(false);
+});
+
 describe("buildMarkingFields - boundary date links", () => {
   it("attaches cover detail targets to earliest and latest rows when supplied", () => {
     const rows = buildMarkingFields(
