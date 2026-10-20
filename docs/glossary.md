@@ -24,7 +24,7 @@ A reference for the terminology used in WorldCovers data, interface, and support
 
 **Cover.** A folded letter or folded cover that carries one or more recorded Markings. The Cover record holds the cover type, physical details, and date observations.
 
-**Dates.** Marking date ranges combine direct Marking observations and dates on linked Covers. Direct observations can come from imported catalog text or authorized Editor changes. Editors may add, correct, or remove Marking-level dates on the Marking page. Contributors supply dates only through Covers.
+**Dates.** Marking date ranges combine direct Marking observations and dates on linked Covers. Direct observations can come from imported catalog text or authorized Editor changes. Editors manage direct dates on the new and edit Marking forms. New Marking dates are applied on approval; authorized changes to saved Marking dates save immediately. Contributors supply dates only through Covers.
 
 **Editor.** Approves or rejects submissions and comments on assigned Collections, provides feedback, manages Reference Works. Inherits Contributor capabilities.
 

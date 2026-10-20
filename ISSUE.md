@@ -7,10 +7,10 @@ the full current engineering queue. Completed work is archived in
 Keep original issue numbers when removing completed entries. Later work also appears
 in GitHub PRs and Reese's workspace-local `docs/issues.md`.
 
-**Latest focused review:** 2026-10-18, removed completed work after checking
-live Trello, including archived cards. Open work and the T8-T10 production
-reviews remain below. The October 18 quick-fix notes retain implementation
-and verification evidence for work still awaiting acceptance.
+**Latest focused review:** 2026-10-19, checked Dates Seen and Manuscript
+display/search changes against live Trello, including archived cards.
+The October 19 notes below record implementation and remaining verification.
+The October 18 cleanup and T8-T10 production reviews remain recorded below.
 
 **Last full review:** 2026-10-17, clean published `staging` at
 `972f3b7d24e2ae27874e52fc0b021f8b28affca0`, upstream `origin/staging`.
@@ -718,6 +718,36 @@ not establish hosted acceptance. T82/T83 remain in their current To Do lane
 with no members; the board policy requires an assigned member before moving
 to Testing. The connector cannot assign card members. Their descriptions
 record local implementation separately from that board-state limitation.
+
+## October 19 Dates Seen and Manuscript updates
+
+Reviewed clean local `staging` at `106e4b4983d715de4dc657ab7e2da614caae5ba7`.
+GitHub staging was `b58d6ae6e0fc30997a64353d758ff01f6c917bad`; the later
+Manuscript commit was local only. Deployment and hosted acceptance were not
+verified. No application tests were rerun for this documentation review.
+
+- **[T89 - Verify Dates Seen on new and edit Marking forms](https://trello.com/c/DrMz2Wnj):** implemented in
+  [b58d6ae](https://github.com/CoverCensus/worldcovers/commit/b58d6ae6e0fc30997a64353d758ff01f6c917bad).
+  Dates Seen is inline above ERD/LRD on both forms. ERD/LRD is hidden until
+  the direct Dates Seen list has a date. New Marking dates save with drafts,
+  appear in review, and are applied on approval. Authorized changes to saved
+  Marking dates save immediately. Contributor restrictions and partial-date
+  precision remain. Local checks passed: 511 frontend tests, 68 focused
+  backend tests, type checking, and build. Remaining: verify placement, range
+  visibility, draft persistence, approval, and permissions on woco.dev and
+  hellowoco.app after confirming each site's deployed revision. T89 is To Do
+  and unassigned; assign a reviewer before moving it to Testing. Evidence:
+  [form tests](frontend/src/pages/MarkingEditImages.test.tsx) and
+  [submission tests](backend/common/tests/test_contribution_submit.py).
+  T75 remains Done; T25's source-data checks remain separate.
+- **Manuscript display and search:** local commit `106e4b4` hides Shape and
+  Dimensions in catalog search results; Marking detail already omitted them.
+  Manuscripts: Only hides and clears Shape and Dimensions filters, including
+  values from saved search URLs. Local checks passed: 45 display tests, two
+  search tests, type checking, lint on changed files, and build. Publication
+  and hosted verification remain unconfirmed. No separate verification card
+  was requested for this change. Evidence: [display tests](frontend/src/components/CatalogRecordFields.test.tsx)
+  and [search tests](frontend/src/pages/Search.manuscripts.test.tsx).
 
 # MD/MI editor-review batch (Ian email, 18 Jun 2026)
 
