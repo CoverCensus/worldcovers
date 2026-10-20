@@ -63,6 +63,8 @@ EXACT_FIELDS = (
     "shape_id", "lettering_id", "color_id", "is_irreg", "width", "height",
     "date_fmt", "impression", "rate_val",
 )
+# Built on EXACT_FIELDS on purpose: exact_key() reads every EXACT field from
+# the scanned row, so the scan must fetch at least those.
 SCAN_FIELDS = EXACT_FIELDS + (
     "id", "code", "shape__name", "color__name", "post_office__name",
     "earliest_seen", "latest_seen", "state_abbrev", "state_code",
@@ -183,7 +185,8 @@ class Command(BaseCommand):
             help="Scan only this state (name or abbreviation). Repeatable.")
         parser.add_argument(
             "--require-date-overlap", action="store_true",
-            help="Drop groups whose known date ranges do not overlap.")
+            help="Drop groups whose known date ranges do not overlap. Groups "
+                 "with fewer than two dated members are unknown and kept.")
         parser.add_argument(
             "--min-group-size", type=int, default=2,
             help="Smallest group to report (default 2).")
@@ -224,8 +227,11 @@ class Command(BaseCommand):
     @staticmethod
     def _region_code(term: str) -> str:
         region = Region.primary_for_state_term(term)
-        if region is None or not region.code:
+        if region is None:
             raise CommandError(f"unknown state: {term!r}")
+        if not region.code:
+            raise CommandError(
+                f"region {region.name!r} (id {region.pk}) has no code to scan by")
         return region.code
 
     @staticmethod
@@ -259,7 +265,9 @@ class Command(BaseCommand):
                     "id": f"G{len(groups) + 1:04d}",
                     "tier": "EXACT" if len(exact_keys) == 1 else "NEAR",
                     "state": members[0]["state_abbrev"],
-                    "town": members[0]["post_office__name"],
+                    # Every spelling in the group; NEAR groups span offices.
+                    "town": " / ".join(sorted(
+                        {m["post_office__name"] or "" for m in members})),
                     "type": members[0]["type"],
                     "dates": dates,
                     "members": members,
