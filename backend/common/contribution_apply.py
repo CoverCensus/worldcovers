@@ -54,6 +54,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from common.catalog_codes import code_value_from_payload
+from common.matching import town_match_key
 from common.models import (
     Citation,
     Color,
@@ -952,14 +953,6 @@ def _read_nested_id(value: Any, snake: str, camel: str) -> int | None:
         return None
 
 
-def _town_match_key(name: str) -> str:
-    """Comparison key for a town name: blind to case, spacing and punctuation.
-
-    "ACCOMACK C.H.", "Accomack C. H." and "ACCOMACK CH" are one town; iexact
-    matching treated them as three. Letters and digits only, uppercased.
-    """
-    return re.sub(r"[^A-Z0-9]+", "", name.upper())
-
 
 def _next_post_office_code(region) -> str | None:
     """Continue the region's code series, e.g. USA-VA1-1005.
@@ -1013,7 +1006,7 @@ def _resolve_post_office(state_name: str, town_name: str, actor) -> PostOffice:
         # the catalog holds "ACCOMACK C.H". Fall back to a punctuation-blind
         # match -- scoped to the region, because Martinsburg VA and
         # Martinsburg WV are different towns (#94) and must never cross-match.
-        key = _town_match_key(town_name)
+        key = town_match_key(town_name)
         if key:
             candidates = PostOffice.objects.filter(
                 post_office_regions__region=region
@@ -1022,7 +1015,7 @@ def _resolve_post_office(state_name: str, town_name: str, actor) -> PostOffice:
                 # over a fanned-out join multiplies (ISSUE-2026-08-13-05).
                 marking_count=Count("markings", distinct=True),
             )
-            matches = [c for c in candidates if _town_match_key(c.name) == key]
+            matches = [c for c in candidates if town_match_key(c.name) == key]
             if matches:
                 # The catalog already holds spelling variants of one town
                 # (69 fragmented VA/WV names, issue #129), so the pick must be
