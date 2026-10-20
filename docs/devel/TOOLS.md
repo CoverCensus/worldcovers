@@ -43,6 +43,7 @@ which is exactly when you need it).
 | `apply_vphc_ledger` | Apply reviewed VPHC actions and queue marking contributions | `backend/common/management/commands/apply_vphc_ledger.py` |
 | `repair_vphc_rate` | Repair rates derived from VPHC drawing numbers | `backend/common/management/commands/repair_vphc_rate.py` |
 | `repair_catalog_colors` | Apply an operator-reviewed Color correction map | `backend/common/management/commands/repair_catalog_colors.py` |
+| `report_duplicate_markings` | Read-only census of candidate duplicate Markings (T47) | `backend/common/management/commands/report_duplicate_markings.py` |
 | `check_catalog_colors.py` | Verify Color repair before, dry-run, and after states | `tools/check_catalog_colors.py` |
 | `repair_ascc_child_inscriptions` | Remove added Townmark prefixes from Ratemarks and Auxmarks | `backend/common/management/commands/repair_ascc_child_inscriptions.py` |
 | `wipe_user_data` | Clear submission/version/recycle-bin data | `backend/common/management/commands/wipe_user_data.py` |
@@ -389,6 +390,52 @@ does not prune django-reversion history.
 Use this when removed catalog records should no longer be restorable from the
 editor recycle bin. The dry run reports what would be deleted and rolls back.
 Expected exit code: `0`.
+
+### `report_duplicate_markings`
+
+Report candidate duplicate Markings for human review (Trello T47). Read-only:
+it never merges, archives, or deletes, and a match is evidence, not an
+authorisation. Recycle-binned Markings are not scanned.
+
+```sh
+./woco report_duplicate_markings
+./woco report_duplicate_markings --state VA --state WV --require-date-overlap
+./woco report_duplicate_markings --state VA --out tools/wip/out/dupes_va.csv
+```
+
+The default output is `tools/wip/out/duplicate_markings_<YYYYMMDD>.csv`, one
+row per group member. Expected exit code: `0`. The same groups are printed to
+the console, so a CSV that cannot be written is a warning, not a failure.
+
+Two tiers, in one report:
+
+- `EXACT`: every attribute equal except `code`, `catalog_txt`, and the audit
+  columns. This is the pipeline's own merge rule applied to database rows.
+- `NEAR`: same primary state, same town key (case, spacing, and punctuation
+  ignored, so the fragmented spellings of issue #129 meet), same type, same
+  inscription key (same normalisation, so ornament characters such as `*` are
+  ignored; the raw inscription is in the row), same shape, same colour family
+  (word order ignored, GRAY and GREY equal), and width and height within
+  0.5 mm where both are known. An unknown size never separates two rows.
+
+Every EXACT twin is also a NEAR twin, so no Marking appears twice. A group is
+`EXACT` only when all of its members are identical; `exact_match_ids` lists a
+row's identical twins inside a `NEAR` group. Markings under different primary
+states never group, so Martinsburg VA and Martinsburg WV stay apart, and one
+Marking cross-listed under two Regions is not a duplicate.
+
+`earliest_seen` and `latest_seen` are each row's cached date range.
+`dates_overlap` is `yes` or `no` for the group's known ranges and `unknown`
+with fewer than two dated members. `--require-date-overlap` drops the `no`
+groups; the default keeps them, because a date typo is itself a finding.
+
+Options:
+
+- `--state TERM`: a state name or abbreviation, repeatable. Abbreviations
+  resolve to the primary jurisdiction, never a county (issue #103).
+- `--require-date-overlap`: keep only groups whose known dates overlap.
+- `--min-group-size N`: smallest group to report (default `2`).
+- `--out PATH`: the CSV path.
 
 ### `backup_marking` And `restore_marking`
 
