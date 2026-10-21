@@ -994,10 +994,11 @@ def _resolve_post_office(state_name: str, town_name: str, actor) -> PostOffice:
     # "Aylett'S". A trailing 'S is a possessive, never a name continuation;
     # O'BRIEN -> "O'Brien" has no word-final 'S and is untouched.
     normalized_name = re.sub(r"'S\b", "'s", normalized_name)
+    regions = Region.including_counties(Region.objects.filter(pk=region.pk))
 
     po = (
         PostOffice.objects
-        .filter(name__iexact=normalized_name, post_office_regions__region=region)
+        .filter(name__iexact=normalized_name, post_office_regions__region__in=regions)
         .first()
     )
     if po is None:
@@ -1009,7 +1010,7 @@ def _resolve_post_office(state_name: str, town_name: str, actor) -> PostOffice:
         key = town_match_key(town_name)
         if key:
             candidates = PostOffice.objects.filter(
-                post_office_regions__region=region
+                post_office_regions__region__in=regions
             ).annotate(
                 # distinct=True: the junction join fans out, and a plain Count
                 # over a fanned-out join multiplies (ISSUE-2026-08-13-05).
@@ -1034,11 +1035,12 @@ def _resolve_post_office(state_name: str, town_name: str, actor) -> PostOffice:
             created_by=actor,
             modified_by=actor,
         )
-    PostOfficeRegion.objects.get_or_create(
-        post_office=po,
-        region=region,
-        defaults={"created_by": actor, "modified_by": actor},
-    )
+    if po.region != region:
+        PostOfficeRegion.objects.get_or_create(
+            post_office=po,
+            region=region,
+            defaults={"created_by": actor, "modified_by": actor},
+        )
     return po
 
 

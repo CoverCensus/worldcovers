@@ -53,7 +53,8 @@ def user_can_review_contributions(user) -> bool:
 def _get_user_assigned_regions(user):
     if not user or not user.is_authenticated:
         return Region.objects.none()
-    return Region.objects.filter(collection__editor_assignments__user=user).distinct()
+    assigned = Region.objects.filter(collection__editor_assignments__user=user)
+    return Region.including_counties(assigned)
 
 
 def _user_is_responsible_for_marking(user, marking):
@@ -97,8 +98,9 @@ def _user_is_responsible_for_cover(user, cover):
         post_office = cm.marking.post_office if cm.marking else None
         # PostOffice.region is a property resolving the most-recent active region.
         region = post_office.region if post_office else None
-        if region is not None:
-            region_ids.add(region.pk)
+        if region is None:
+            return False
+        region_ids.add(region.pk)
     if not region_ids:
         return False
     return region_ids.issubset(assigned_ids)

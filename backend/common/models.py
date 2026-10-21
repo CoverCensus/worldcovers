@@ -791,6 +791,14 @@ class Region(TimestampedModel):
         return self.name
 
     @classmethod
+    def including_counties(cls, regions: models.QuerySet) -> models.QuerySet:
+        """Include Counties whose parent is one of the given Regions."""
+        return cls.objects.filter(
+            Q(pk__in=regions)
+            | Q(region_tier="COUNTY", parent_region__in=regions)
+        )
+
+    @classmethod
     def matching_state_term(cls, value):
         """Regions a user or a payload means by `value` in a "state" field.
 
@@ -896,7 +904,26 @@ class PostOffice(TimestampedModel):
             )
             .first()
         )
-        return link.region if link is not None else None
+        if link is not None:
+            return link.region
+
+        # A County-only link inherits its containing State's responsibility.
+        # Keep direct primary links first to preserve historical routing.
+        county_link = (
+            self.post_office_regions
+            .filter(
+                region__region_tier="COUNTY",
+                region__parent_region__region_tier__in=("STATE", "TERRITORY", "DISTRICT"),
+            )
+            .select_related("region__parent_region")
+            .order_by(
+                F("region__parent_region__defunct_date").desc(nulls_first=True),
+                F("region__parent_region__established_date").desc(nulls_last=True),
+                "pk",
+            )
+            .first()
+        )
+        return county_link.region.parent_region if county_link is not None else None
 
     @property
     def regions(self):

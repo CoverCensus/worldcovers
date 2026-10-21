@@ -143,7 +143,7 @@ def _load_dataset(path):
 
 def _ensure_collections_for_regions(stdout):
     """
-    Auto-create a Collection for every Region that does not already have one.
+    Create missing Collections for State, Territory, and District Regions.
 
     Collection has a OneToOneField to Region (on_delete=PROTECT), and the
     admin Editor-assignment form filters Collection.objects.filter(is_active=True)
@@ -169,7 +169,10 @@ def _ensure_collections_for_regions(stdout):
             "Cannot auto-create Collections: no User exists to attribute creation to."
         )
 
-    missing = Region.objects.filter(collection__isnull=True).order_by("pk")
+    missing = Region.objects.filter(
+        collection__isnull=True,
+        region_tier__in=("STATE", "TERRITORY", "DISTRICT"),
+    ).order_by("pk")
     created = 0
     for region in missing:
         Collection.objects.create(
@@ -184,7 +187,7 @@ def _ensure_collections_for_regions(stdout):
     if created:
         stdout.write(f"  collections      auto-created={created:>5d}")
     else:
-        stdout.write("  collections      auto-created=    0  (all Regions already have one)")
+        stdout.write("  collections      auto-created=    0  (no eligible Regions need one)")
     return created
 
 
@@ -491,7 +494,7 @@ class Command(BaseCommand):
                             f"{stem}: import failed with errors; bundle rolled back."
                         )
 
-                # Post-import: ensure every Region has a Collection wrapper.
+                # Create missing State, Territory, and District Collections.
                 # The munger bundle does not emit collections.csv, so we
                 # backfill here. Only runs when regions were part of this
                 # import (otherwise --only markings, etc. would do unrelated
