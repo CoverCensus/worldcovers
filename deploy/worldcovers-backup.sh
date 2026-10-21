@@ -76,7 +76,10 @@ name_to_epoch() {
   local n="$1" d t s
   [[ "$n" =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})?Z ]] || return 0
   d="${BASH_REMATCH[1]}"; t="${BASH_REMATCH[2]}:${BASH_REMATCH[3]}"; s="${BASH_REMATCH[4]:-00}"
-  date -u -d "${d} ${t}:${s} UTC" +%s 2>/dev/null || true
+  # GNU date on Linux; BSD date on macOS for local retention tests.
+  date -u -d "${d} ${t}:${s} UTC" +%s 2>/dev/null \
+    || date -j -u -f '%Y-%m-%d %H:%M:%S' "${d} ${t}:${s}" +%s 2>/dev/null \
+    || true
 }
 
 name_to_tag() {
@@ -124,7 +127,8 @@ select_prunable() {
 
     # rule 2: newest untagged per ISO week, for the last 4 weeks
     if (( age <= 28 * 86400 )); then
-      local wk; wk="$(date -u -d "@$ep" +%G-%V)"
+      local wk
+      wk="$(date -u -d "@$ep" +%G-%V 2>/dev/null || date -u -r "$ep" +%G-%V)"
       local cur="${week_best[$wk]:-}"
       if [[ -z "$cur" || "$ep" -gt "${cur%%|*}" ]]; then week_best["$wk"]="$ep|$n"; fi
     fi
