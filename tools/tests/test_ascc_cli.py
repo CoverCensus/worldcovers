@@ -605,6 +605,19 @@ class AsccCliTests(unittest.TestCase):
             "--dry-run",
         ])
 
+    def test_drop_passes_collection_transfer_guard(self):
+        args = ascc_cli.build_parser().parse_args([
+            "drop", "USA-HI1", "--bundle", "tools/wip/out/hawaii",
+            "--verification-report", "tools/wip/in/verified.json", "--dry-run",
+        ])
+        with patch.object(ascc_cli, "run_command") as run_command:
+            ascc_cli.command_drop(args)
+        self.assertEqual(run_command.call_args.args[0][2:], [
+            "drop_ascc_state", "--region-code", "USA-HI1", "--dry-run",
+            "--bundle", "tools/wip/out/hawaii",
+            "--verification-report", "tools/wip/in/verified.json",
+        ])
+
     def test_import_check_uses_additive_dry_run(self):
         with tempfile.TemporaryDirectory() as td:
             with _PatchedRoots(td):

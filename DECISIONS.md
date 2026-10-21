@@ -278,6 +278,9 @@ do not establish privacy on other endpoints.
 Django admin, or operator tools. Follow the existing
 [runbook](docs/devel/RUNBOOK.md), [backup guide](docs/devel/BACKUP.md), and
 [deployment guide](docs/devel/DEPLOY.md) for server work.
+For a Collection transfer, verify its complete records and media on the
+destination before source removal. Follow the
+[Collection transfer procedure](docs/devel/RUNBOOK.md#collection-transfer-between-instances).
 
 **Don't:** Count a command-line backup as the application backup feature,
 or build an application update screen to satisfy S27. Do not copy server

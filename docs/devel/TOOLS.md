@@ -53,6 +53,9 @@ which is exactly when you need it).
 | `prune_revisions` | Prune django-reversion rows safely | `backend/common/management/commands/prune_revisions.py` |
 | `backup_marking` | Export one marking graph to JSON | `backend/common/management/commands/backup_marking.py` |
 | `restore_marking` | Restore one marking graph from JSON | `backend/common/management/commands/restore_marking.py` |
+| `backup_collection` | Export a complete Collection and referenced media | `backend/common/management/commands/backup_collection.py` |
+| `restore_collection` | Restore a Collection bundle without overwriting conflicts | `backend/common/management/commands/restore_collection.py` |
+| `verify_collection` | Compare restored records, relationships, and media with a bundle | `backend/common/management/commands/verify_collection.py` |
 | `backup_auth` | Export users and auth/collection config | `backend/common/management/commands/backup_auth.py` |
 | `restore_auth` | Restore users and auth/collection config | `backend/common/management/commands/restore_auth.py` |
 | `set_user_password` | Set a user's password from the CLI | `backend/common/management/commands/set_user_password.py` |
@@ -490,6 +493,60 @@ The exported data contains email addresses and password hashes. Store it as
 a sensitive artifact. For the full host-to-host sync procedure, see
 [RUNBOOK.md](RUNBOOK.md#auth-sync-between-hosts).
 
+### Collection Backup And Restore
+
+Use a Collection ID, not a Region code. The command resolves the Collection's
+Region internally. Apply migrations on the destination before restore.
+
+```sh
+./woco backup_collection <collection-id> tools/wip/out/collection-backup
+./woco restore_collection tools/wip/in/collection-backup --dry-run
+./woco restore_collection tools/wip/in/collection-backup
+./woco verify_collection tools/wip/in/collection-backup --report tools/wip/out/collection-verification.json
+```
+
+The bundle directory must not exist. It contains `manifest.json`,
+`records.json`, and `media/`. The manifest records the source instance,
+Collection, Region, code revision, migrations, counts, and file checksums.
+Keep the completed directory together when copying it between instances.
+
+Scope includes recycled Entries, all Collection Contribution statuses,
+archived Contributions, Cover links, Citations, dates, valuations, images,
+crop sources, Post Office and Postmaster data, lookup records, transactions,
+versions, and relevant django-reversion history. Files referenced by pending
+submissions and history are included. A missing file fails the backup.
+Storage paths must be relative ASCII paths without symlinks. Text values
+are preserved through JSON escaping.
+
+Users must already exist on the destination with matching usernames. The
+bundle preserves credit and audit actors but copies no passwords, account
+permissions, or Editor assignments. It contains private submissions, review
+notes, and usernames; keep it private and transfer it over SSH.
+
+Restore adds missing records and reuses identical records. Differences,
+ambiguous identities, absent users, missing external Entries, and filename
+conflicts stop the restore. There is no overwrite option. Shared Covers keep
+all their links; Markings outside the Collection must already match on the
+destination. Transfer mappings retain identities for uncoded Entries and
+pending Contributions. Repeating the same restore creates no duplicates.
+
+Foreign keys and known submission/history IDs are remapped. References to
+records already deleted in the source's history are kept as explicit
+`source_reference` objects, with source instance, model, and ID. They are
+historical evidence, not pointers to live destination records. Required live
+references must resolve. Original history remains in the retained bundle.
+
+Dry-run rolls back database work and leaves live media unchanged. Image
+files are staged and checked before publication. A failed restore rolls
+back database changes and removes files it installed. An interrupted restore
+can leave complete unreferenced files or temporary files; retry reuses
+complete files by checksum. It never overwrites a differing live file.
+
+Verification checks record values, relationships, history, and referenced
+file bytes. Extra destination Entries or related records also fail the
+comparison. Write its report outside the bundle. See the
+[transfer procedure](RUNBOOK.md#collection-transfer-between-instances).
+
 ### `ascc drop`
 
 Delete imported catalog data using an exact `Region.code`.
@@ -498,6 +555,18 @@ Delete imported catalog data using an exact `Region.code`.
 ./woco ascc drop USA-VA1 --dry-run
 ./woco ascc drop USA-VA1
 ```
+
+If the Region has a Collection, removal follows its relationships and
+includes pending and archived Contributions. Shared Covers and Post Offices
+are retained. Without a Collection, the existing Post Office code-prefix
+selection applies. Neither path removes image files or account data.
+
+For source cleanup after a Collection transfer, pass both `--bundle` and
+`--verification-report`; see the runbook. The report must be a passing
+comparison from another instance, and the source must still match the
+bundle. Another Collection's Contributions or crop dependencies can block
+removal. A passing report is evidence from the operator, not a signature or
+an automatic authorization to delete data.
 
 Expected exit code: `0`. The region code is positional. The dry run reports
 delete counts and rolls back. The legacy top-level command remains available

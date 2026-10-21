@@ -19,6 +19,24 @@ class TimestampedModel(models.Model):
     class Meta:
         abstract = True
 
+
+class CollectionTransferMap(models.Model):
+    """Keep source record identities stable across Collection restores."""
+
+    source_instance = models.CharField(max_length=255)
+    source_model = models.CharField(max_length=100)
+    source_id = models.CharField(max_length=64)
+    target_id = models.CharField(max_length=64)
+    record_digest = models.CharField(max_length=64)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source_instance", "source_model", "source_id"],
+                name="collection_transfer_source_unique",
+            ),
+        ]
+
 class Color(TimestampedModel):
     """
     Value table of ink or cover material colors.
