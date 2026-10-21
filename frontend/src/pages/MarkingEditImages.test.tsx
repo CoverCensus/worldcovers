@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import Contribute from "./Contribute";
 import { createContribution, getContribution } from "@/services/contributions";
 import { getMarkingByIdRaw } from "@/services/markings";
@@ -16,6 +17,7 @@ jest.mock("@/services/datesSeen", () => ({
 }));
 jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: jest.fn() }) }));
 jest.mock("@/services/colors", () => ({ getColors: jest.fn().mockResolvedValue([]) }));
+jest.mock("@/services/similarEntries", () => ({ getSimilarMarkings: jest.fn().mockResolvedValue({ rows: [], matchCount: 0, relatedCount: 0 }) }));
 jest.mock("@/services/shapes", () => ({ getShapes: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/services/postOffices", () => ({ getPostOffices: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/services/regions", () => ({ getRegions: jest.fn().mockResolvedValue([{ value: "VA", label: "Virginia" }]) }));
@@ -57,11 +59,11 @@ beforeEach(() => {
 });
 
 function openForm(path: string) {
-  render(<MemoryRouter initialEntries={[path]}><Routes>
+  render(<TooltipProvider><MemoryRouter initialEntries={[path]}><Routes>
     <Route path="/contribute" element={<Contribute />} />
     <Route path="/edit/:id" element={<Contribute />} />
     <Route path="/dashboard" element={null} />
-  </Routes></MemoryRouter>);
+  </Routes></MemoryRouter></TooltipProvider>);
 }
 
 it("shows a marking's current images read-only on Submit Edit", async () => {

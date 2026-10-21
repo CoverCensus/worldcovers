@@ -667,3 +667,119 @@ checked. Migration `0021_image_caption_changed_action` adds the choice only.
 Evidence: `test_image_caption_edit.py`, `CoverDetail.imageActions.test.tsx`,
 `EntryRecordHistoryCard.caption.test.tsx`, `ImageCaptions.test.tsx`.
 
+
+## Report Duplicate Markings, Never Merge Them
+
+**Do:** Find candidate duplicate Markings with the read-only
+`report_duplicate_markings` command and let a person decide. It scans
+`Marking.objects` (recycle bin excluded), takes each Marking's state from
+`primary_region_subquery` (a correlated subquery, never a join across
+`post_office_regions`), and groups on a NEAR key: primary state, town key
+(`town_match_key`: letters and digits only, uppercased), type, inscription
+key (same normalisation, so ornaments such as `*` are ignored), shape, and
+colour family (uppercased, hyphens to spaces, GRAY to GREY, words sorted).
+Within a NEAR bucket, width and height must agree within 0.5 mm where both
+are known; an unknown size never separates two rows. A group is EXACT when
+every column except `code`, `catalog_txt`, and the audit columns is equal,
+which is the pipeline's `merge_equal_v1_markings` rule on database rows;
+otherwise it is NEAR, and each row names its identical twins. Dates are
+shown per row with a group `dates_overlap` verdict and only filtered on
+`--require-date-overlap`. T48's submission-time "similar Entries" warning
+reuses this key rather than inventing a second one. Since T48 the keys,
+`primary_region_subquery` and `town_match_key` live in `common/matching.py`;
+the report, the API and approval all import them from there.
+
+**Don't:** Merge, archive, or recycle-bin anything from the report; the card
+says matches do not authorize it. Don't group by `post_office_id` alone: the
+catalog holds spelling variants of one town on different PostOffice rows
+(issue #129). Don't group across primary states: Martinsburg VA and
+Martinsburg WV are different towns (#94), and one Marking cross-listed under
+two Regions is one Marking ("Account For Historical Regions In Search").
+Don't resolve `--state` with a bare abbreviation lookup; county rows carry
+the state's abbrev (#103), so use `Region.primary_for_state_term`.
+
+**Why:** Trello T47. The colour repair left "markings that become
+colour-identical after a merge" for T47, and the munger's own merge rule
+needs the raw v1 source row, which the database does not hold, so only its
+attribute half carries over. Reese chose two tiers, dates shown and filtered
+by flag, and CSV plus console with live rows only on 2026-10-20. The local
+staging-shaped database (3,155 Markings) reports 227 groups, 159 of them
+EXACT, which is the review workload the tiers were sized for. Evidence:
+`test_report_duplicate_markings.py`; `docs/devel/TOOLS.md`
+"report_duplicate_markings".
+
+## Warn About Similar Entries, Never Block
+
+**Do:** While a Contributor fills in the Marking form, ask
+`GET /api/v2/markings/similar/` 800 ms after the key fields settle and show
+what comes back in an amber advisory panel (`SimilarEntriesPanel`,
+`role="status"`) directly under the Colour field. The endpoint resolves the
+typed town to the state's post offices by `town_match_key` (so the #129
+spelling variants meet, exactly as approval does), reads only Markings on
+those offices, keeps the ones whose primary region is that state, and labels
+each as **match** (T47's full NEAR key with width/height within 0.5 mm and
+the same manuscript flag when the form sent one) or **related** (same state,
+town key, type and inscription key; other details differ). Match rows first,
+ten at most, with the uncapped counts so the heading stays honest. Rows carry
+no catalog code and no user identity, link to `/record/<id>` in a new tab so
+unsaved input survives, and `?exclude=` drops the Marking being edited. An
+incomplete or unrecognised form is an empty `200`, never a `4xx`: the panel is
+advice, not validation. On the Cover form the same panel is fed client-side
+from the parent Marking's sibling covers (`findSimilarCovers`): same type
+where both are known (`UNK` is unknown, not different), compatible date on
+every component both sides know, and nothing at all until a year is typed.
+
+**Don't:** Disable Submit, require an acknowledgement, or record in the
+submission that candidates were shown. Don't hide the `?copy=` source: only
+the Entry being edited is excluded, and an unchanged copy is exactly what the
+panel exists to flag. Don't reuse `GET /markings/` for this (its `town` is
+`icontains`, `color` is `iexact`, sizes are exact, `state` pulls in
+cross-listed WV and there is no inscription filter), and don't introduce
+react-query into the forms: their tests render without a provider, and the
+catalog-code suggestion effect already shows the effect-and-cancel pattern.
+Don't flash a "checking…" box on every settled keystroke; the panel renders
+only when it has rows and keeps them while a refresh is in flight.
+
+**Why:** Trello T48. Its acceptance: "useful candidate previews without false
+claims of identity." Reese chose the two tiers, advisory only, the placement
+and client-side Covers on 2026-10-20, following the repo's own precedent
+(`alert.tsx` warning is "advisory, not an error"; image warnings say "you can
+still submit"; T34 keeps acknowledge-and-continue). The office-first lookup
+bounds the cost to one town (Richmond, the largest, is ~150 rows) on a public
+endpoint with no throttle classes. Evidence: `test_similar_markings_api.py`,
+`SimilarEntriesPanel.test.tsx`, `Contribute.similar.test.tsx`,
+`lib/similarEntries.test.ts`.
+
+## Tooltips Define, Visible Text Instructs
+
+**Do:** Give every textual field on the Marking and Cover submission forms a
+`FieldHelp` tooltip (Trello S33) whose text is the glossary's definition of
+the term (`docs/glossary.md`, served at `/help/glossary`), kept in
+`labels/guidelines.ts` as one named export per field. Place it as a sibling
+of the field's `Label` inside a `flex items-center gap-1` row, the way
+`f9351f3` placed Lettering, Impression and Is Irregular. For a checkbox
+named by a wrapping `<label>`, put the help outside that label. Keep the
+existing visible helper text where a field needs an instruction (Inscription,
+Town, Date format, dimensions): persistent text for touch and screen-reader
+users, never hover-only. Keep in-app wording in step with the glossary; it is
+the project's defined terms.
+
+**Don't:** Put a help button inside a wrapping `<label>` (it renames the
+control to "… Help for …" and toggles it on click), inside an image drop zone
+(the click opens the file picker), or on the current-images strip, captions,
+tracing or submitter-name controls. Don't repeat visible helper text in a
+tooltip beside it. Don't change `FieldHelp`'s contract (it describes its own
+button through `aria-describedby`; linking the input itself is a possible
+later refinement). Don't let in-app help drift from the glossary: the
+date-format example once said "MD = Month / Day" against the glossary's
+"Month date only", and the marking-type guideline used the retired "Rate
+Mark" / "town mark" names.
+
+**Why:** Trello S33 ("add concise help to textual fields using the project's
+defined terms"; "do not close S33 on the basis of these three fields alone").
+Reese chose both forms and the string corrections on 2026-10-20, leaving the
+Search filters for a follow-up. `MarkingEditImages.test.tsx` rendered the form
+without a `TooltipProvider` and only passed because its fixture was a
+manuscript Marking; always-visible help made the provider mandatory.
+Evidence: `FieldHelpCoverage.test.tsx`, `guidelines.test.ts`,
+`FieldHelp.test.tsx`.
