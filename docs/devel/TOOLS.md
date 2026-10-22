@@ -408,6 +408,10 @@ delete starts; a damaged archive stops the purge with nothing deleted. A
 binned Image row with no file on disk also stops it; `--allow-missing-media`
 records those names in the manifest instead.
 
+Run a real purge while editors are not working: the archive and the delete
+are two steps, and the command re-checks the recycle bin after the
+confirmation prompt but not between the archive and the delete.
+
 The dry run reports the scope (rows per model, files and bytes, files shared
 with other Image rows) and rolls back. With `--archive-dir` it also writes and
 verifies the archive as a rehearsal. Without it, nothing is written.

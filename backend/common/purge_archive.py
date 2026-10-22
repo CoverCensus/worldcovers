@@ -69,6 +69,9 @@ def collect_scope(marking_ids, cover_ids) -> list[ScopeEntry]:
          catalog.MarkingRecycleBin.objects.filter(marking_id__in=marking_ids)),
         ("common.coverrecyclebin", DELETED,
          catalog.CoverRecycleBin.objects.filter(cover_id__in=cover_ids)),
+        # Contribution's only catalog foreign key is its Marking; a Cover
+        # submission names its Cover inside submitted_data, which no delete
+        # follows, so cover_ids add no Contribution rows here.
         ("common.contribution", DELETED,
          catalog.Contribution.objects.filter(marking_id__in=marking_ids)),
         ("common.contributionrecyclebin", DELETED,
@@ -92,6 +95,7 @@ def collect_scope(marking_ids, cover_ids) -> list[ScopeEntry]:
 
 
 def scope_keys(scope: list[ScopeEntry]) -> set[tuple[str, Any]]:
+    """(label, pk) of every row in scope. A row is deleted or relinked, never both."""
     return {
         (label, pk)
         for label, _kind, queryset in scope

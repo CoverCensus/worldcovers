@@ -21,6 +21,7 @@ Restore from the archive (same instance; rows return to the recycle bin):
 
 Expected exit code: 0.
 """
+import shlex
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
@@ -83,14 +84,7 @@ class Command(BaseCommand):
         dry_run = bool(options["dry_run"])
         no_input = bool(options["no_input"])
 
-        marking_ids = list(
-            MarkingRecycleBin.objects.order_by()
-            .values_list("marking_id", flat=True)
-        )
-        cover_ids = list(
-            CoverRecycleBin.objects.order_by()
-            .values_list("cover_id", flat=True)
-        )
+        marking_ids, cover_ids = self._binned_ids()
         if not marking_ids and not cover_ids:
             self.stdout.write(self.style.SUCCESS("Recycle bin is empty; nothing to purge."))
             return
@@ -112,6 +106,13 @@ class Command(BaseCommand):
             answer = input("Type 'yes' to proceed: ").strip().lower()
             if answer != "yes":
                 raise CommandError("Aborted; nothing was deleted.")
+            # The operator confirmed the scope they were shown. An editor may
+            # have restored or removed an Entry while the prompt waited.
+            if self._binned_ids() != (marking_ids, cover_ids):
+                raise CommandError(
+                    "The recycle bin changed while waiting for confirmation; "
+                    "nothing was deleted. Run the command again."
+                )
 
         archive_dir = options["archive_dir"]
         if archive_dir is None and not dry_run:
@@ -128,6 +129,11 @@ class Command(BaseCommand):
                 f"Archive written and verified: {archive_dir} "
                 f"({manifest['records']} records, {len(manifest['files'])} files)"
             ))
+            if manifest["application_revision"] == "unknown":
+                self.stdout.write(self.style.WARNING(
+                    "  The manifest could not record the git revision (git or the "
+                    "repository is unavailable); note the deployed revision by hand."
+                ))
 
         try:
             with transaction.atomic():
@@ -167,10 +173,20 @@ class Command(BaseCommand):
         self.stdout.write("")
         self.stdout.write(self.style.SUCCESS(summary))
         if not dry_run:
+            quoted = shlex.quote(str(archive_dir))
             self.stdout.write(
-                f"Restore: ./woco loaddata {archive_dir}/records.json "
-                f"&& cp -rn {archive_dir}/media/. backend/media/"
+                f"Restore: ./woco loaddata {quoted}/records.json "
+                f"&& cp -rn {quoted}/media/. backend/media/"
             )
+
+    def _binned_ids(self):
+        marking_ids = sorted(
+            MarkingRecycleBin.objects.order_by().values_list("marking_id", flat=True)
+        )
+        cover_ids = sorted(
+            CoverRecycleBin.objects.order_by().values_list("cover_id", flat=True)
+        )
+        return marking_ids, cover_ids
 
     def _report_scope(self, scope, media):
         self.stdout.write("Purge scope (rows the purge deletes or relinks):")

@@ -86,6 +86,20 @@ class PurgeRecycleBinCommandTests(TestCase):
         self.assertFalse(Marking.objects.filter(pk=binned_marking.pk).exists())
         self.assertFalse(Cover.objects.filter(pk=binned_cover.pk).exists())
 
+    def test_confirmed_purge_aborts_when_the_bin_changed_while_waiting(self):
+        binned_marking = self._marking("BINNED MARKING")
+        sidecar = self._bin_marking(binned_marking)
+
+        def restore_then_confirm(_prompt):
+            sidecar.delete()
+            return "yes"
+
+        with patch("builtins.input", side_effect=restore_then_confirm):
+            with self.assertRaisesMessage(CommandError, "recycle bin changed"):
+                call_command("purge_recycle_bin", stdout=StringIO())
+
+        self.assertTrue(Marking.objects.filter(pk=binned_marking.pk).exists())
+
     def test_default_command_aborts_without_exact_confirmation(self):
         binned_marking = self._marking("BINNED MARKING")
         self._bin_marking(binned_marking)
@@ -362,6 +376,8 @@ class PurgeArchiveTests(TestCase):
 
         manifest = json.loads((bundle / "manifest.json").read_text())
         self.assertEqual(manifest["schema"], "worldcovers.purge_archive.v1")
+        # Built by mkdtemp, so only the operator can read the review notes inside.
+        self.assertEqual(bundle.stat().st_mode & 0o777, 0o700)
         self.assertEqual(set(manifest["files"]), {"va/shared.jpg"})
         self.assertEqual(manifest["shared_files"], ["va/shared.jpg"])
         self.assertEqual(manifest["counts"]["deleted"]["common.marking"], 1)
@@ -418,6 +434,8 @@ class PurgeArchiveTests(TestCase):
         (self.media / "va/shared.jpg").unlink()
         with self.assertRaisesMessage(CommandError, "Missing source media"):
             write_bundle(scope, self.root / "bundle-2")
+        self.assertFalse((self.root / "bundle-2").exists())
+        self.assertEqual([p.name for p in self.root.iterdir() if p.name.startswith(".purge-")], [])
         manifest = write_bundle(scope, self.root / "bundle-3", allow_missing_media=True)
         self.assertEqual(manifest["missing_files"], ["va/shared.jpg"])
 
