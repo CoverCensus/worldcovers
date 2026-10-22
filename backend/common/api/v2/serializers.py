@@ -10,6 +10,7 @@
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
 
 import re
 
@@ -186,10 +187,69 @@ class ShapeSerializer(serializers.ModelSerializer):
 
 
 class ReferenceWorkSerializer(serializers.ModelSerializer):
+    """
+    Editors add and edit Reference Works from the SPA (Trello S19).
+
+    Text is trimmed; an empty code is stored as NULL so the unique index on
+    `code` never collides on blanks. A work whose title and edition match an
+    existing one is refused (T15: never duplicate VPHC1). A code that existing
+    Citations rely on cannot change, because catalog codes are generated from
+    the first cited work's code (common/catalog_codes.py).
+    """
+
+    TEXT_FIELDS = ("code", "title", "authorship", "publisher", "edition", "volume", "isbn", "url")
+    MIN_YEAR = 1000
+
     class Meta:
         model = ReferenceWork
-        fields = "__all__"
+        fields = [
+            "id", "code", "title", "authorship", "publisher", "publication_year",
+            "edition", "volume", "isbn", "url",
+            "created_date", "modified_date", "created_by", "modified_by",
+        ]
         read_only_fields = ["id", "created_date", "modified_date", "created_by", "modified_by"]
+
+    def validate_publication_year(self, value):
+        latest = timezone.now().year + 1
+        if value is None or value < self.MIN_YEAR or value > latest:
+            raise serializers.ValidationError(
+                f"Publication year must be between {self.MIN_YEAR} and {latest}."
+            )
+        return value
+
+    def validate(self, attrs):
+        for name in self.TEXT_FIELDS:
+            if name in attrs and isinstance(attrs[name], str):
+                attrs[name] = attrs[name].strip()
+        if "code" in attrs and not attrs["code"]:
+            attrs["code"] = None
+        instance = self.instance
+        title = attrs.get("title", instance.title if instance else "")
+        edition = attrs.get("edition", instance.edition if instance else "") or ""
+        candidates = ReferenceWork.objects.filter(title__iexact=title)
+        if instance is not None:
+            candidates = candidates.exclude(pk=instance.pk)
+        for other in candidates:
+            if (other.edition or "").strip().lower() == edition.strip().lower():
+                raise serializers.ValidationError({
+                    "title": (
+                        "A Reference Work with this title and edition already exists "
+                        f"({other.code or f'id {other.pk}'}). Edit that one instead."
+                    )
+                })
+        if (
+            instance is not None
+            and "code" in attrs
+            and attrs["code"] != instance.code
+            and instance.citations.exists()
+        ):
+            raise serializers.ValidationError({
+                "code": (
+                    "This code is cited by existing Entries and their catalog codes are "
+                    "generated from it; it cannot be changed."
+                )
+            })
+        return attrs
 
 
 class FAQEntrySerializer(serializers.ModelSerializer):

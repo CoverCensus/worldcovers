@@ -339,7 +339,10 @@ class IsOwnDeletableContribution(BasePermission):
 class CanManageReferenceWorks(BasePermission):
     """
     Reads: anyone authenticated.
-    Writes: anyone with `add_referencework` / `change_referencework` (Editors group, superuser).
+    Writes (POST/PUT/PATCH): Editors and Administrators by the project's Editor
+    rule (a CollectionAssignment, the review permission, or superuser), the same
+    rule the Color, Shape and Lettering endpoints use. Trello S19.
+    DELETE: refused except for a superuser -- the story is "add and edit".
     Closes the F6 gap where reference works were writable by any contributor.
     """
 
@@ -351,11 +354,6 @@ class CanManageReferenceWorks(BasePermission):
             return True
         if user.is_superuser:
             return True
-        if request.method == "POST":
-            return user.has_perm("common.add_referencework")
-        if request.method in ("PUT", "PATCH"):
-            return user.has_perm("common.change_referencework")
-        if request.method == "DELETE":
-            # Spec says "add and edit" only -- delete is admin-only.
-            return False
+        if request.method in ("POST", "PUT", "PATCH"):
+            return user_can_review_contributions(user)
         return False
