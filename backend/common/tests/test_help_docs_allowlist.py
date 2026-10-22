@@ -55,7 +55,7 @@ class HelpDocsAllowlistTests(TestCase):
     def test_rights_and_attribution_is_published_with_content(self):
         # Trello T69: Guests must be able to read the rights and credit guidance.
         response = self.client.get(URL)
-        docs = [i for i in response.data["results"] if i["slug"] == "rights-and-attribution"]
+        docs = [doc for doc in response.data["results"] if doc["slug"] == "rights-and-attribution"]
         self.assertEqual(len(docs), 1)
         self.assertEqual(docs[0]["title"], "Rights and Attribution")
         self.assertIn("Not yet confirmed", docs[0]["markdown"])

@@ -45,9 +45,11 @@ Submitting is a proposal: an Editor reviews it before anything is published. A f
 
 Creative Commons recommends four elements in a credit: the title, the author, the source and the license, plus a note of any changes. Here is that pattern for the two kinds of material you might take from this site.
 
+In both examples, replace [record number] with the address shown in your browser for that record.
+
 **A catalog record (data).** Suppose you copy a Marking's details into an article and reformat its dates.
 
-> Marking ASCC6-VA-M0001, Richmond, Va. townmark. WorldCovers, American Postal Markings Catalog, https://hellowoco.app/record/[record number] (use the address shown in your browser). License: CC BY 4.0, https://creativecommons.org/licenses/by/4.0/, as stated by WorldCovers. Changes: dates rewritten as day-month-year; converted to a table.
+> Marking ASCC6-VA-M0001, Richmond, Va. townmark. WorldCovers, American Postal Markings Catalog, https://hellowoco.app/record/[record number]. License: CC BY 4.0, https://creativecommons.org/licenses/by/4.0/, as stated by WorldCovers. Changes: dates rewritten as day-month-year; converted to a table.
 
 If the record also cites a printed catalog, keep that Citation in your credit, for example "after the American Stampless Cover Catalog, 6th edition, page 123", so your readers can find the original listing.
 
