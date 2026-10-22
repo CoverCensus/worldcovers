@@ -6,8 +6,10 @@ import re
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, get_user_model
+from django.contrib.auth.hashers import UNUSABLE_PASSWORD_PREFIX
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core.mail import send_mail
+from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
@@ -18,6 +20,8 @@ from rest_framework.authentication import SessionAuthentication
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from common.api.v2.permissions import IsSuperuser
 
 from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
 
@@ -363,6 +367,80 @@ class LoginRequestView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class SiteInfoView(APIView):
+    """
+    GET /site/ -- which site this is (Trello T84).
+
+    The SPA bundle is identical on woco.dev and hellowoco.app, so it cannot
+    tell a visitor "this is the test site" without asking. The answer comes from
+    settings (DJANGO_APP_HOSTNAME, WOCO_SITE_ROLE, WOCO_PRODUCTION_URL), all of
+    which are already visible in the address bar or public, so this is open to
+    anyone.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response(
+            {
+                "hostname": settings.DJANGO_APP_HOSTNAME,
+                "role": settings.WOCO_SITE_ROLE,
+                "production_url": settings.WOCO_PRODUCTION_URL,
+            }
+        )
+
+
+PENDING_LOGIN_REQUESTS_LIMIT = 200
+
+
+class PendingLoginRequestsView(APIView):
+    """
+    GET /login-requests/pending/ -- login requests nobody has acted on (Trello T84).
+
+    A login request is what LoginRequestView creates: an inactive User with no
+    usable password that has never signed in (issue #150). Approval is the
+    Administrator ticking Active in Django admin. Nothing notified anyone of a
+    new row, which is how eight requests on woco.dev went unnoticed. This lists
+    them for the Dashboard. A deactivated member (inactive with a last_login) or
+    an admin-created account that was never activated (usable password) is not
+    a request and is left out.
+
+    The public form has no throttle, so the list is capped at the newest
+    PENDING_LOGIN_REQUESTS_LIMIT rows and the true total travels as "count";
+    a flood cannot turn the Administrator's Dashboard into a multi-megabyte load.
+
+    Superuser only: the rows carry names and email addresses. Relaxing this
+    permission would hand that PII to a wider audience; do not.
+
+    `admin_url` is a path, not an absolute URL: the SPA and Django admin are
+    served from the same origin on both sites (nginx proxies /admin/ and /api/
+    to the same backend), so a path is correct and does not depend on proxy
+    headers. Revisit if the admin ever moves to another host.
+    """
+    permission_classes = [IsSuperuser]
+
+    def get(self, request):
+        User = get_user_model()
+        pending = User.objects.filter(
+            is_active=False,
+            last_login__isnull=True,
+            password__startswith=UNUSABLE_PASSWORD_PREFIX,
+        ).order_by("-date_joined", "-pk")
+        total = pending.count()
+        rows = [
+            {
+                "id": user.pk,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "email": user.email,
+                "requested_at": user.date_joined,
+                "admin_url": reverse("admin:auth_user_change", args=[user.pk]),
+            }
+            for user in pending[:PENDING_LOGIN_REQUESTS_LIMIT]
+        ]
+        return Response({"count": total, "results": rows})
 
 
 @method_decorator(csrf_exempt, name="dispatch")

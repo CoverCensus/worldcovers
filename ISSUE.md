@@ -709,6 +709,28 @@ Source: Michael's approved sync plan and Ian's requests relayed on 2026-10-17.
   and return-navigation behavior remains. Service/API defaults and intentional
   picker/background-fetch sizes were reviewed and retained: these list views
   send their selected page size explicitly. Hosted verification remains open.
+- **[T84](https://trello.com/c/smLXK7tJ), F1:** decided and built on branch
+  `reese/84-login-requests` (October 22). Decision: do not move accounts
+  between sites and do not depend on mail. The backend now answers
+  `GET /api/v2/site/` (hostname, role, production URL, derived from
+  `DJANGO_APP_HOSTNAME`; `WOCO_SITE_ROLE` overrides) so the shared SPA bundle
+  knows which site it is on. On the test site the sign-in page's "Request a
+  login" becomes a link to hellowoco.app/auth with a notice, and the footer
+  shows a "Test site" badge; on production nothing changes. Administrators
+  get a "Pending login requests" card on the Dashboard, fed by the
+  superuser-only `GET /api/v2/login-requests/pending/` (inactive accounts
+  with no usable password that never signed in; newest 200 plus the true
+  count, since the public form is unthrottled), each row linking to the
+  account in Django admin, where approval already happens. Each site reports
+  its own requests; the eight stranded woco.dev accounts stay where they are
+  until Michael decides. Not done: email notification (T30/T68), an approve
+  action outside the admin, disabling the staging endpoint. Pre-existing and
+  left as found: the public form answers "A user with this email already
+  exists", so anyone can test whether an address has an account. Evidence:
+  [site and pending views](backend/common/api/auth.py),
+  [tests](backend/common/tests/test_site_and_pending_requests.py),
+  [Auth page](frontend/src/pages/Auth.tsx),
+  [Dashboard card](frontend/src/components/PendingLoginRequestsCard.tsx).
 
 The design still describes social ratings as deferred. Align that wording
 with the declined request recorded in Trello; this cleanup does not edit the design.

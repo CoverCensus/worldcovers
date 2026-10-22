@@ -10,8 +10,10 @@ Role mapping (see plan in
                       `common.review_contribution`
     Administrator  -> `is_superuser` (single-person admin per design)
 
-`IsAdminUser` (DRF built-in) is used directly in views for Administrator-only
-endpoints -- there is no separate Administrator group.
+There is no separate Administrator group. `IsSuperuser` below is the
+Administrator check for new endpoints (Trello T84). `CollectionViewSet` writes
+still use DRF's `IsAdminUser`, which tests `is_staff`, a looser pre-existing
+definition left as found.
 """
 from __future__ import annotations
 
@@ -104,6 +106,20 @@ def _user_is_responsible_for_cover(user, cover):
     if not region_ids:
         return False
     return region_ids.issubset(assigned_ids)
+
+
+class IsSuperuser(BasePermission):
+    """
+    Administrator only: `is_superuser` (there is no Administrator group).
+
+    Used for the pending login-request list (Trello T84), which carries the
+    requesters' names and email addresses -- the same rows the Administrator
+    already sees in Django admin, and never part of a public response.
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated and user.is_superuser)
 
 
 class IsEditor(BasePermission):

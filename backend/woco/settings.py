@@ -10,6 +10,8 @@ from pathlib import Path
 
 from decouple import config
 
+from woco.site_role import derive_site_role, validate_site_role
+
 
 ###
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -47,6 +49,19 @@ INTERNAL_IPS = [
 ]
 
 DJANGO_APP_HOSTNAME = config("DJANGO_APP_HOSTNAME", default="hellowoco.app")
+
+# Which site this install is (Trello T84). The SPA is the same bundle on both
+# sites, so it asks GET /api/v2/site/ and the backend answers from these. The
+# role is derived from the hostname (see woco/site_role.py), so neither server
+# needs a new .env entry; WOCO_SITE_ROLE overrides it with exactly "production"
+# or "staging" and anything else refuses to start.
+WOCO_PRODUCTION_URL = config("WOCO_PRODUCTION_URL", default="https://hellowoco.app")
+WOCO_SITE_ROLE = validate_site_role(
+    config(
+        "WOCO_SITE_ROLE",
+        default=derive_site_role(DJANGO_APP_HOSTNAME, WOCO_PRODUCTION_URL),
+    )
+)
 
 ALLOWED_HOSTS = [
     DJANGO_APP_HOSTNAME, 
