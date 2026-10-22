@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -145,6 +146,8 @@ def check_cascades(scope: list[ScopeEntry]) -> None:
     """
     deleted = scope_keys(scope, DELETED)
     relinked = scope_keys(scope, RELINKED)
+    if deleted & relinked:
+        raise CommandError("Purge scope lists a row as both deleted and relinked.")
     would_delete: set[tuple[str, Any]] = set()
     would_relink: set[tuple[str, Any]] = set()
     for label in ("common.marking", "common.cover"):
@@ -160,7 +163,11 @@ def check_cascades(scope: list[ScopeEntry]) -> None:
                 (queryset.model._meta.label_lower, pk)
                 for pk in queryset.values_list("pk", flat=True)
             )
+        # Django 5.2 keys field_updates by (field, value) with a list of
+        # instance collections; older releases nested a dict per model.
         for batches in collector.field_updates.values():
+            if isinstance(batches, dict):
+                batches = batches.values()
             for objs in batches:
                 would_relink.update((obj._meta.label_lower, obj.pk) for obj in objs)
     extra = (would_delete - deleted) | (would_relink - deleted - relinked)
@@ -215,9 +222,10 @@ def write_bundle(
     """Write the fixtures, media/ and manifest.json, verify, then publish.
 
     The bundle is built in a hidden sibling directory (mode 0700, from
-    mkdtemp) and renamed into place only after it verifies, so an operator
-    never finds a half-written archive at the destination. `media` is a
-    describe_media() result the caller has already computed.
+    mkdtemp; every file inside 0600) and renamed into place only after it
+    verifies, so an operator never finds a half-written archive at the
+    destination. `media` is a describe_media() result the caller has
+    already computed.
     """
     if destination.exists() or destination.is_symlink():
         raise CommandError(f"Archive destination already exists: {destination}")
@@ -241,6 +249,7 @@ def write_bundle(
             ]
             text = serializers.serialize("json", objects, indent=2)
             (staging / filename).write_text(text, encoding="utf-8")
+            os.chmod(staging / filename, 0o600)
             fixtures[kind] = {
                 "file": filename, "records": len(objects),
                 "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
@@ -249,6 +258,7 @@ def write_bundle(
             target = safe_path(staging / "media", name)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(safe_path(Path(settings.MEDIA_ROOT), name), target)
+            os.chmod(target, 0o600)
         manifest = {
             "schema": SCHEMA,
             "complete": True,
@@ -274,6 +284,7 @@ def write_bundle(
             ],
         }
         (staging / "manifest.json").write_text(json_text(manifest), encoding="ascii")
+        os.chmod(staging / "manifest.json", 0o600)
         verify_bundle(staging, scope)
         try:
             staging.rename(destination)

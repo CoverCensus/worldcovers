@@ -380,6 +380,8 @@ class PurgeArchiveTests(TestCase):
         self.assertEqual(manifest["fixtures"]["relinked"]["records"], 2)
         # Built by mkdtemp, so only the operator can read the review notes inside.
         self.assertEqual(bundle.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((bundle / "records.json").stat().st_mode & 0o777, 0o600)
+        self.assertEqual((bundle / "media" / "va" / "shared.jpg").stat().st_mode & 0o777, 0o600)
         self.assertEqual(set(manifest["files"]), {"va/shared.jpg"})
         self.assertEqual(manifest["shared_files"], ["va/shared.jpg"])
         self.assertEqual(manifest["counts"]["deleted"]["common.marking"], 1)

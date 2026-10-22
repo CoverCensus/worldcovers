@@ -287,6 +287,8 @@ class Command(BaseCommand):
 
     @staticmethod
     def _record_deleted(deleted, details):
+        # QuerySet.delete() reports Model._meta.label ("common.Marking");
+        # the manifest uses label_lower, which is the same string lowercased.
         for label, count in details.items():
             key = label.lower()
             deleted[key] = deleted.get(key, 0) + count
