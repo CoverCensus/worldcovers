@@ -48,6 +48,17 @@ INTERNAL_IPS = [
 
 DJANGO_APP_HOSTNAME = config("DJANGO_APP_HOSTNAME", default="hellowoco.app")
 
+# Which site this install is (Trello T84). The SPA is the same bundle on both
+# sites, so it asks GET /api/v2/site/ and the backend answers from these. The
+# role is derived from the hostname, so neither server needs a new .env entry;
+# WOCO_SITE_ROLE overrides it ("production" or "staging") for a local checkout
+# that wants to look like one or the other.
+WOCO_PRODUCTION_URL = config("WOCO_PRODUCTION_URL", default="https://hellowoco.app")
+WOCO_SITE_ROLE = config(
+    "WOCO_SITE_ROLE",
+    default="production" if DJANGO_APP_HOSTNAME == "hellowoco.app" else "staging",
+)
+
 ALLOWED_HOSTS = [
     DJANGO_APP_HOSTNAME, 
     f"www.{DJANGO_APP_HOSTNAME}",

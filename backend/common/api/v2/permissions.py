@@ -106,6 +106,20 @@ def _user_is_responsible_for_cover(user, cover):
     return region_ids.issubset(assigned_ids)
 
 
+class IsSuperuser(BasePermission):
+    """
+    Administrator only: `is_superuser` (there is no Administrator group).
+
+    Used for the pending login-request list (Trello T84), which carries the
+    requesters' names and email addresses -- the same rows the Administrator
+    already sees in Django admin, and never part of a public response.
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated and user.is_superuser)
+
+
 class IsEditor(BasePermission):
     """
     Granted to assigned editors, users with the review permission, or superusers.

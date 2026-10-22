@@ -19,6 +19,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from common.api.v2.permissions import IsSuperuser
+
 from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
 
 
@@ -363,6 +365,66 @@ class LoginRequestView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class SiteInfoView(APIView):
+    """
+    GET /site/ -- which site this is (Trello T84).
+
+    The SPA bundle is identical on woco.dev and hellowoco.app, so it cannot
+    tell a visitor "this is the test site" without asking. The answer comes from
+    settings (DJANGO_APP_HOSTNAME, WOCO_SITE_ROLE, WOCO_PRODUCTION_URL), all of
+    which are already visible in the address bar or public, so this is open to
+    anyone.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response(
+            {
+                "hostname": settings.DJANGO_APP_HOSTNAME,
+                "role": settings.WOCO_SITE_ROLE,
+                "production_url": settings.WOCO_PRODUCTION_URL,
+            }
+        )
+
+
+class PendingLoginRequestsView(APIView):
+    """
+    GET /login-requests/pending/ -- login requests nobody has acted on (Trello T84).
+
+    A login request is an inactive User that has never signed in (issue #150):
+    LoginRequestView creates it with is_active=False and no usable password, and
+    approval is the Administrator ticking Active in Django admin. Nothing
+    notified anyone of a new row, which is how eight requests on woco.dev went
+    unnoticed. This lists them for the Dashboard. A deactivated account (inactive
+    but with a last_login) is not a request and is left out.
+
+    Superuser only: the rows carry names and email addresses.
+    """
+    permission_classes = [IsSuperuser]
+
+    def get(self, request):
+        from django.urls import reverse
+
+        User = get_user_model()
+        pending = (
+            User.objects.filter(is_active=False, last_login__isnull=True)
+            .order_by("-date_joined", "pk")
+        )
+        rows = [
+            {
+                "id": user.pk,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "email": user.email,
+                "requested_at": user.date_joined,
+                "admin_url": reverse("admin:auth_user_change", args=[user.pk]),
+            }
+            for user in pending
+        ]
+        return Response(rows)
 
 
 @method_decorator(csrf_exempt, name="dispatch")
