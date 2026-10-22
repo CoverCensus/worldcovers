@@ -26,6 +26,7 @@ const CoverEdit = lazy(() => import("./pages/CoverEdit"));
 const EntryDetail = lazy(() => import("./pages/EntryDetail"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const PostOfficeDetail = lazy(() => import("./pages/PostOfficeDetail"));
+const ReferenceWorks = lazy(() => import("./pages/ReferenceWorks"));
 
 const queryClient = new QueryClient();
 // Scroll to top on every route change so pages open at the top.
@@ -127,6 +128,14 @@ const App = () => (
               element={
                 <RequireEditor>
                   <EditorRoster />
+                </RequireEditor>
+              }
+            />
+            <Route
+              path="/reference-works"
+              element={
+                <RequireEditor>
+                  <ReferenceWorks />
                 </RequireEditor>
               }
             />

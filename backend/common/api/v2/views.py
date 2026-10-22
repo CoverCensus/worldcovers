@@ -20,7 +20,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, ProgrammingError, transaction
 from django.db.models import (
-    Exists, F, Min, Max, OuterRef, Q, TextField, Value,
+    Exists, F, Min, Max, OuterRef, ProtectedError, Q, TextField, Value,
 )
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import ExtractYear, NullIf
@@ -662,10 +662,32 @@ class ReferenceWorkViewSet(viewsets.ModelViewSet):
     ordering = ["title"]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        self._save_or_400(serializer, created_by=self.request.user, modified_by=self.request.user)
 
     def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
+        self._save_or_400(serializer, modified_by=self.request.user)
+
+    @staticmethod
+    def _save_or_400(serializer, **stamps):
+        # Two Editors saving the same code at once pass validation and race on
+        # the unique index; report it as a field error, not a server error.
+        try:
+            with transaction.atomic():
+                serializer.save(**stamps)
+        except IntegrityError as exc:
+            raise serializers.ValidationError(
+                {"code": "A Reference Work with this code already exists."}
+            ) from exc
+
+    def destroy(self, request, *args, **kwargs):
+        # Only a superuser reaches this; a cited work is protected at the database.
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {"detail": "This Reference Work is cited by existing Entries and cannot be deleted."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
     @staticmethod
     def _ordinal_suffix(raw):

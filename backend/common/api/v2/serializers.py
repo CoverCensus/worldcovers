@@ -10,6 +10,7 @@
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
 
 import re
 
@@ -186,10 +187,87 @@ class ShapeSerializer(serializers.ModelSerializer):
 
 
 class ReferenceWorkSerializer(serializers.ModelSerializer):
+    """
+    Editors add and edit Reference Works from the SPA (Trello S19).
+
+    DRF trims text; an empty code is stored as NULL so the unique index on
+    `code` never collides on blanks and codes are folded to upper case. A work whose title and edition match an
+    existing one is refused (T15: never duplicate VPHC1). A code that existing
+    Citations rely on cannot change, because catalog codes are generated from
+    the first cited work's code (common/catalog_codes.py).
+    """
+
+    MIN_YEAR = 1000
+
     class Meta:
         model = ReferenceWork
-        fields = "__all__"
+        fields = [
+            "id", "code", "title", "authorship", "publisher", "publication_year",
+            "edition", "volume", "isbn", "url",
+            "created_date", "modified_date", "created_by", "modified_by",
+        ]
         read_only_fields = ["id", "created_date", "modified_date", "created_by", "modified_by"]
+
+    def validate_publication_year(self, value):
+        latest = timezone.now().year + 1
+        if value < self.MIN_YEAR or value > latest:
+            raise serializers.ValidationError(
+                f"Publication year must be between {self.MIN_YEAR} and {latest}."
+            )
+        return value
+
+    def validate(self, attrs):
+        if "code" in attrs:
+            # Codes are upper-case identifiers (ASCC6, VPHC1); fold case so the
+            # unique index cannot hold both spellings on a case-sensitive database.
+            attrs["code"] = attrs["code"].upper() if attrs["code"] else None
+        instance = self.instance
+        if attrs.get("code"):
+            clash = ReferenceWork.objects.filter(code__iexact=attrs["code"])
+            if instance is not None:
+                clash = clash.exclude(pk=instance.pk)
+            if clash.exists():
+                raise serializers.ValidationError({"code": "A Reference Work with this code already exists."})
+        title = attrs.get("title", instance.title if instance else "")
+        edition = attrs.get("edition", instance.edition if instance else "") or ""
+        candidates = ReferenceWork.objects.filter(title__iexact=title)
+        if instance is not None:
+            candidates = candidates.exclude(pk=instance.pk)
+        for other in candidates:
+            if (other.edition or "").strip().lower() == edition.strip().lower():
+                raise serializers.ValidationError({
+                    "title": (
+                        "A Reference Work with this title and edition already exists "
+                        f"({other.code or f'id {other.pk}'}). Edit that one instead."
+                    )
+                })
+        # A work that never had a code may be given one; only a code that
+        # Entries already carry is frozen.
+        if (
+            instance is not None
+            and instance.code
+            and "code" in attrs
+            and attrs["code"] != instance.code
+        ):
+            if instance.citations.exists() or self._entries_carry_prefix(instance.code):
+                raise serializers.ValidationError({
+                    "code": (
+                        "This code is cited by existing Entries or appears in their catalog "
+                        "codes; it cannot be changed."
+                    )
+                })
+        return attrs
+
+    @staticmethod
+    def _entries_carry_prefix(code):
+        """Catalog codes keep the prefix after a Citation is deleted; guard those too."""
+        if not code:
+            return False
+        prefix = f"{code}-"
+        return (
+            Marking.all_objects.filter(code__startswith=prefix).exists()
+            or Cover.all_objects.filter(code__startswith=prefix).exists()
+        )
 
 
 class FAQEntrySerializer(serializers.ModelSerializer):

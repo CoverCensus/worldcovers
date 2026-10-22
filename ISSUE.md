@@ -271,11 +271,29 @@ are recorded below.
   [staging](https://woco.dev/api/v2/reference-works/options/), checked during
   this follow-up. Retain the check of the signed-in Reference Works list and
   Marking/Cover form selectors, including saving the Citation. Do not create
-  a duplicate VPHC record. `getReferenceWorks()` reads only the first page;
-  check pagination if an existing work is missing from a form. The VPHC
-  ledger requires an existing VPHC1 row; `import_vphc_reference` loads places
-  and postmasters, not the bibliographic Reference Work.
+  a duplicate VPHC record. `getReferenceWorks()` follows every page of the
+  list, so a work missing from a form is a data question, not pagination. The
+  VPHC ledger requires an existing VPHC1 row; `import_vphc_reference` loads
+  places and postmasters, not the bibliographic Reference Work.
 Evidence: [Reference Work service](frontend/src/services/referenceWorks.ts).
+
+### Follow-up: Editors add and edit Reference Works (S19)
+
+Implemented on branch `reese/19-reference-works` (October 22): Editors and
+Administrators reach a Reference Works page (`/reference-works`, linked from
+the navigation and the Dashboard) that lists every work, adds one, and edits
+one; there is no delete. The API's write rule now follows the project's
+Editor definition (a Collection assignment, the review permission, or
+superuser), the same rule the Color, Shape and Lettering endpoints use, and
+the serializer refuses a duplicate title and edition, an out-of-range year,
+and a change to a code that existing Citations rely on. The citation cards on
+the Marking and Cover forms show the title first, then the first author plus
+"et al." when the authorship names several people, with edition, volume and
+year; a single person's comma-containing name is never split and the full
+authorship is unchanged in storage. Rules in DECISIONS.md "Manage Reference
+Works Through The Editor Page". Remaining: a browser check on each site as an
+Editor and as a Contributor, and acceptance. Source-choice verification stays
+with Issue 13/T15.
 
 ### Follow-up: Email Editors about pending submissions
 
@@ -1204,7 +1222,7 @@ evidence; the September board snapshot remains dated history.
 | F3 Submission Workflow | SPA contribution and editor review flows, including bulk approval/rejection (see notes below) | Testing: T72; To Do: S35 (implemented; verification and acceptance remain) |
 | F4 Comment Workflow | Deferred: standalone Entry comments; existing notes to the Editor are part of Submissions | Backlog: S16, S17 |
 | F5 Image Attachments | SPA (image upload inside contribution forms) | Testing: T73 |
-| F6 Reference Work Management | Editor/admin add/edit through `/api/v2/reference-works/` and Django `/admin/`; the SPA has citation lookup but no management UI | To Do: S19 |
+| F6 Reference Work Management | Editors add and edit through the SPA Reference Works page (`/reference-works`, October 22) and `/api/v2/reference-works/`; Django `/admin/` remains; no delete in the application | Testing: S19 |
 | F7 Collection Administration | SPA `/admin/collections` (superuser only), Editor-only `/editors` roster, and Django `/admin/` | Backlog: S20 |
 | F8 Audit Trail | SPA submission transactions and editor/admin record-history views; django-reversion history in Django `/admin/` | To Do: S23 (history viewing implemented; verification and acceptance remain), T74 (restoration scope) |
 | F9 Documentation & Help | SPA (`/help`, `/help/:docSlug`); articles authored as repo Markdown | Testing: S24, S34; To Do: S33 |
