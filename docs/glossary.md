@@ -62,7 +62,7 @@ A reference for the terminology used in WorldCovers data, interface, and support
 
 **Townmark** (`TOWNMARK`). A Marking whose function is to identify the origin Post Office. Bears the town name, and frequently a date.
 
-**VPHC.** *Virginia Postal History Catalog.* The next Reference Work scheduled for incorporation into the APMC.
+**VPHC.** *Virginia Postal History Catalog.* The second Reference Work incorporated into the APMC, after the ASCC; its listings carry the VPHC1 Citation.
 
 ---
 
