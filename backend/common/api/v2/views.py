@@ -3883,11 +3883,23 @@ def _parse_pending_cover_fields(raw):
         else:
             fields[key] = str(value).strip()
     if "type" in fields:
-        fields["type"] = fields["type"].upper()[:16]
+        fields["type"] = fields["type"].upper()
+    return fields
+
+
+def _pending_cover_request_error(data, request):
+    """Bounds that refuse the request outright rather than trimming it silently."""
+    fields = _parse_pending_cover_fields(data.get("pending_cover")) or {}
     for key, value in fields.items():
         if isinstance(value, str) and len(value) > PENDING_COVER_MAX_TEXT:
-            fields[key] = value[:PENDING_COVER_MAX_TEXT]
-    return fields
+            return f"The cover's {key} is too long (at most {PENDING_COVER_MAX_TEXT} characters)."
+    try:
+        count = len(request.FILES.getlist("pending_cover_image"))
+    except AttributeError:
+        count = 0
+    if count > PENDING_COVER_MAX_IMAGES:
+        return f"At most {PENDING_COVER_MAX_IMAGES} cover images can be added in one request."
+    return None
 
 
 def _resolve_pending_cover(data, existing):
@@ -3923,10 +3935,9 @@ def _resolve_pending_cover(data, existing):
 
 def _pending_cover_uploads(request):
     try:
-        uploads = request.FILES.getlist("pending_cover_image")
+        return list(request.FILES.getlist("pending_cover_image"))
     except AttributeError:
-        uploads = []
-    return list(uploads)[:PENDING_COVER_MAX_IMAGES]
+        return []
 
 
 def _save_pending_cover_uploads(pending_cover, uploads, region_abbrev):
@@ -4411,6 +4422,9 @@ class ContributionSubmitView(APIView):
                 # A row that became a Marking edit cannot carry a cover.
                 existing_sd.pop("pending_cover", None)
             elif not is_cover_submission:
+                bound_error = _pending_cover_request_error(data, request)
+                if bound_error:
+                    return Response({"detail": bound_error}, status=status.HTTP_400_BAD_REQUEST)
                 pending_cover = _resolve_pending_cover(data, existing_sd.get("pending_cover"))
                 cover_uploads = _pending_cover_uploads(request)
                 # A row that is (or stays) pending must carry a complete cover:
@@ -4501,6 +4515,9 @@ class ContributionSubmitView(APIView):
             submitted_data["image_meta"] = image_metas[0]
 
         if not is_cover_submission and edit_marking_marker is None:
+            bound_error = _pending_cover_request_error(data, request)
+            if bound_error:
+                return Response({"detail": bound_error}, status=status.HTTP_400_BAD_REQUEST)
             pending_cover = _resolve_pending_cover(data, None)
             cover_uploads = _pending_cover_uploads(request)
             if not is_draft:
