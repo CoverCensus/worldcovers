@@ -8,15 +8,38 @@ GET /login-requests/pending/ shows Administrators the rows waiting on them.
 """
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
-from django.test import TestCase, override_settings
+from django.core.exceptions import ImproperlyConfigured
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
+
+from common.api.auth import PENDING_LOGIN_REQUESTS_LIMIT
+from woco.site_role import derive_site_role, validate_site_role
 
 User = get_user_model()
 
 SITE_URL = "/api/v2/site/"
 PENDING_URL = "/api/v2/login-requests/pending/"
 REQUEST_URL = "/api/v2/login-requests/"
+
+
+class SiteRoleDerivationTests(SimpleTestCase):
+    """The load-bearing rule: which hostnames count as production."""
+
+    def test_production_host_with_or_without_www_is_production(self):
+        self.assertEqual(derive_site_role("hellowoco.app", "https://hellowoco.app"), "production")
+        self.assertEqual(derive_site_role("www.hellowoco.app", "https://hellowoco.app"), "production")
+        self.assertEqual(derive_site_role("hellowoco.app", "https://www.hellowoco.app/"), "production")
+
+    def test_any_other_host_is_staging(self):
+        self.assertEqual(derive_site_role("woco.dev", "https://hellowoco.app"), "staging")
+        self.assertEqual(derive_site_role("localhost", "https://hellowoco.app"), "staging")
+        self.assertEqual(derive_site_role("", "https://hellowoco.app"), "staging")
+
+    def test_override_must_be_a_known_role(self):
+        self.assertEqual(validate_site_role("staging"), "staging")
+        with self.assertRaises(ImproperlyConfigured):
+            validate_site_role("development")
 
 
 class SiteInfoTests(TestCase):
@@ -59,10 +82,14 @@ class PendingLoginRequestsTests(TestCase):
         )
         self.pending.set_unusable_password()
         self.pending.save()
-        # Not requests: a deactivated former member, and an ordinary active account.
+        # Not requests: a deactivated former member, an admin-created account that
+        # has a password but was never activated, and the active accounts above.
         User.objects.create_user(
             "former", email="former@example.com", password="pw",
             is_active=False, last_login=timezone.now(),
+        )
+        User.objects.create_user(
+            "drafted", email="drafted@example.com", password="pw", is_active=False,
         )
 
     def _get(self, user=None):
@@ -80,8 +107,9 @@ class PendingLoginRequestsTests(TestCase):
         response = self._get(self.admin)
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual([row["email"] for row in response.data], ["newcomer@example.com"])
-        row = response.data[0]
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual([row["email"] for row in response.data["results"]], ["newcomer@example.com"])
+        row = response.data["results"][0]
         self.assertEqual(row["id"], self.pending.pk)
         self.assertEqual((row["first_name"], row["last_name"]), ("Nina", "Newcomer"))
         self.assertEqual(row["admin_url"], f"/admin/auth/user/{self.pending.pk}/change/")
@@ -100,5 +128,19 @@ class PendingLoginRequestsTests(TestCase):
         self.assertFalse(user.is_active)
         self.assertFalse(user.has_usable_password())
         self.assertIsNone(user.last_login)
-        emails = [row["email"] for row in self._get(self.admin).data]
+        emails = [row["email"] for row in self._get(self.admin).data["results"]]
         self.assertEqual(emails, ["rob@example.com", "newcomer@example.com"])
+
+    def test_a_flood_is_capped_but_counted(self):
+        """The public form is unthrottled; the Administrator's page must stay small."""
+        flood = []
+        for i in range(PENDING_LOGIN_REQUESTS_LIMIT):
+            user = User(username=f"spam{i}@example.com", email=f"spam{i}@example.com", is_active=False)
+            user.set_unusable_password()
+            flood.append(user)
+        User.objects.bulk_create(flood)
+
+        response = self._get(self.admin)
+
+        self.assertEqual(response.data["count"], PENDING_LOGIN_REQUESTS_LIMIT + 1)
+        self.assertEqual(len(response.data["results"]), PENDING_LOGIN_REQUESTS_LIMIT)

@@ -10,8 +10,10 @@ Role mapping (see plan in
                       `common.review_contribution`
     Administrator  -> `is_superuser` (single-person admin per design)
 
-`IsAdminUser` (DRF built-in) is used directly in views for Administrator-only
-endpoints -- there is no separate Administrator group.
+There is no separate Administrator group. `IsSuperuser` below is the
+Administrator check for new endpoints (Trello T84). `CollectionViewSet` writes
+still use DRF's `IsAdminUser`, which tests `is_staff`, a looser pre-existing
+definition left as found.
 """
 from __future__ import annotations
 

@@ -6,6 +6,7 @@ import re
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, get_user_model
+from django.contrib.auth.hashers import UNUSABLE_PASSWORD_PREFIX
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core.mail import send_mail
 from django.urls import reverse
@@ -391,16 +392,24 @@ class SiteInfoView(APIView):
         )
 
 
+PENDING_LOGIN_REQUESTS_LIMIT = 200
+
+
 class PendingLoginRequestsView(APIView):
     """
     GET /login-requests/pending/ -- login requests nobody has acted on (Trello T84).
 
-    A login request is an inactive User that has never signed in (issue #150):
-    LoginRequestView creates it with is_active=False and no usable password, and
-    approval is the Administrator ticking Active in Django admin. Nothing
-    notified anyone of a new row, which is how eight requests on woco.dev went
-    unnoticed. This lists them for the Dashboard. A deactivated account (inactive
-    but with a last_login) is not a request and is left out.
+    A login request is what LoginRequestView creates: an inactive User with no
+    usable password that has never signed in (issue #150). Approval is the
+    Administrator ticking Active in Django admin. Nothing notified anyone of a
+    new row, which is how eight requests on woco.dev went unnoticed. This lists
+    them for the Dashboard. A deactivated member (inactive with a last_login) or
+    an admin-created account that was never activated (usable password) is not
+    a request and is left out.
+
+    The public form has no throttle, so the list is capped at the newest
+    PENDING_LOGIN_REQUESTS_LIMIT rows and the true total travels as "count";
+    a flood cannot turn the Administrator's Dashboard into a multi-megabyte load.
 
     Superuser only: the rows carry names and email addresses. Relaxing this
     permission would hand that PII to a wider audience; do not.
@@ -414,10 +423,12 @@ class PendingLoginRequestsView(APIView):
 
     def get(self, request):
         User = get_user_model()
-        pending = (
-            User.objects.filter(is_active=False, last_login__isnull=True)
-            .order_by("-date_joined", "pk")
-        )
+        pending = User.objects.filter(
+            is_active=False,
+            last_login__isnull=True,
+            password__startswith=UNUSABLE_PASSWORD_PREFIX,
+        ).order_by("-date_joined", "-pk")
+        total = pending.count()
         rows = [
             {
                 "id": user.pk,
@@ -427,9 +438,9 @@ class PendingLoginRequestsView(APIView):
                 "requested_at": user.date_joined,
                 "admin_url": reverse("admin:auth_user_change", args=[user.pk]),
             }
-            for user in pending
+            for user in pending[:PENDING_LOGIN_REQUESTS_LIMIT]
         ]
-        return Response(rows)
+        return Response({"count": total, "results": rows})
 
 
 @method_decorator(csrf_exempt, name="dispatch")

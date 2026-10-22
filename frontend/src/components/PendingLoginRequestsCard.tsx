@@ -9,7 +9,11 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { getPendingLoginRequests, type PendingLoginRequest } from "@/services/loginRequests";
+import {
+  getPendingLoginRequests,
+  type PendingLoginRequest,
+  type PendingLoginRequests,
+} from "@/services/loginRequests";
 
 function requestedOn(iso: string): string {
   const date = new Date(iso);
@@ -22,25 +26,21 @@ function displayName(row: PendingLoginRequest): string {
 }
 
 export function PendingLoginRequestsCard() {
-  const [rows, setRows] = useState<PendingLoginRequest[] | null>(null);
+  const [data, setData] = useState<PendingLoginRequests | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const rows = data?.results ?? null;
 
   useEffect(() => {
     let cancelled = false;
     getPendingLoginRequests()
-      .then((data) => {
-        if (!cancelled) setRows(data);
+      .then((result) => {
+        if (!cancelled) setData(result);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-        setError(
-          typeof detail === "string"
-            ? detail
-            : err instanceof Error
-              ? err.message
-              : "Could not load pending login requests.",
-        );
+        // The API client rejects with an Error whose message already carries
+        // the server's "detail" (lib/api.ts response interceptor).
+        setError(err instanceof Error ? err.message : "Could not load pending login requests.");
       });
     return () => {
       cancelled = true;
@@ -51,7 +51,7 @@ export function PendingLoginRequestsCard() {
     <Card className="shadow-archival-md mb-6" aria-labelledby="pending-login-requests-title">
       <CardHeader>
         <CardTitle id="pending-login-requests-title" className="font-heading text-lg">
-          Pending login requests{rows ? ` (${rows.length})` : ""}
+          Pending login requests{data ? ` (${data.count})` : ""}
         </CardTitle>
         <CardDescription>
           People who asked for an account on this site and are waiting for an Administrator.
@@ -72,6 +72,11 @@ export function PendingLoginRequestsCard() {
         )}
         {!error && rows !== null && rows.length === 0 && (
           <p className="text-sm text-muted-foreground">No requests are waiting.</p>
+        )}
+        {data && rows && data.count > rows.length && (
+          <p className="text-sm text-muted-foreground mb-2">
+            Showing the newest {rows.length} of {data.count}.
+          </p>
         )}
         {rows && rows.length > 0 && (
           <ul className="divide-y divide-border">

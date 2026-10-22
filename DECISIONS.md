@@ -316,15 +316,21 @@ role, production URL, derived from `DJANGO_APP_HOSTNAME`, overridable with
 non-production site, turn the sign-in page's "Request a login" into a link to
 production's `/auth` with a one-sentence notice, and badge the footer "Test
 site". Give Administrators a Dashboard card listing login requests (inactive
-accounts that have never signed in, issue #150's definition) with a link to
-each account in Django admin, where approval already happens. Keep that list
-superuser-only, because it carries names and email addresses. Treat an
-unknown or failed site answer as production, and never let the lookup break
+accounts with no usable password that have never signed in, which is what
+the public form creates) with a link to each account in Django admin, where
+approval already happens. Keep that list superuser-only, because it carries
+names and email addresses; cap it at the newest 200 rows and send the true
+count, because the public form has no throttle. Derive the role by comparing
+the hostname with the host of the production URL (with or without "www."),
+validate any `WOCO_SITE_ROLE` override at start-up, treat an unknown or
+failed site answer as production in the SPA, and never let the lookup break
 a page.
 
 **Don't:** Post a request from one site to the other, or copy accounts
 between sites through this feature; a stranded account moves only on
-Michael's say-so. Don't refuse requests on staging (testers need the form).
+Michael's say-so. Don't disable `POST /login-requests/` on staging: the
+public button is redirected, but the endpoint keeps working for tests and
+hand-made requests, and the staging card still lists whatever lands there.
 Don't make the approval depend on mail (dead on both sites until T30), and
 don't add an approve or activate API; the single home for approval stays
 the admin. Don't put requester emails in any public or Editor-level response.

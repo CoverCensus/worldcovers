@@ -43,12 +43,20 @@ describe("Auth page request path (T84)", () => {
     expect(screen.queryByRole("button", { name: "Request a login" })).toBeNull();
   });
 
-  it("on production (or before the site is known) opens the request dialog", () => {
+  it("on production opens the request dialog", () => {
     mockSite = { isProduction: true, productionUrl: "https://hellowoco.app", productionHost: "hellowoco.app" };
     renderAuth();
 
     expect(screen.queryByRole("note")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Request a login" }));
     screen.getByRole("dialog");
+  });
+
+  it("before the site is known behaves as production, so nothing flashes on hellowoco.app", () => {
+    mockSite = null;
+    renderAuth();
+
+    expect(screen.queryByRole("note")).toBeNull();
+    screen.getByRole("button", { name: "Request a login" });
   });
 });

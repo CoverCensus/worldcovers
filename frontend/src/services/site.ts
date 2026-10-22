@@ -43,7 +43,10 @@ function hostOf(url: string): string {
 
 export function mapSiteInfo(raw: SiteApiResponse): SiteInfo {
   const role: SiteRole = text(raw.role) === "staging" ? "staging" : "production";
-  const productionUrl = (text(raw.production_url) || DEFAULT_PRODUCTION_URL).replace(/\/+$/, "");
+  // Only an http(s) origin may become an href; anything else falls back to the
+  // known production address.
+  const given = text(raw.production_url).trim().replace(/\/+$/, "");
+  const productionUrl = /^https?:\/\/[^\s/]+$/i.test(given) ? given : DEFAULT_PRODUCTION_URL;
   return {
     hostname: text(raw.hostname),
     role,

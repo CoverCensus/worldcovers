@@ -29,12 +29,24 @@ function text(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
-export async function getPendingLoginRequests(): Promise<PendingLoginRequest[]> {
-  const res = await apiClient.get<PendingLoginRequestApi[]>("/login-requests/pending/");
-  const rows = Array.isArray(res.data) ? res.data : [];
+interface PendingLoginRequestsApi {
+  count?: unknown;
+  results?: unknown;
+}
+
+export interface PendingLoginRequests {
+  /** Every request waiting on this site, even those beyond the server's cap. */
+  count: number;
+  /** The newest requests, capped by the server. */
+  results: PendingLoginRequest[];
+}
+
+export async function getPendingLoginRequests(): Promise<PendingLoginRequests> {
+  const res = await apiClient.get<PendingLoginRequestsApi>("/login-requests/pending/");
+  const raw = Array.isArray(res.data?.results) ? (res.data.results as PendingLoginRequestApi[]) : [];
   // A row without a numeric id has no admin page to open; leave it out rather
   // than render a key of NaN and a broken link.
-  return rows
+  const results = raw
     .filter((r) => Number.isFinite(Number(r.id)))
     .map((r) => ({
       id: Number(r.id),
@@ -44,4 +56,6 @@ export async function getPendingLoginRequests(): Promise<PendingLoginRequest[]> 
       requestedAt: text(r.requested_at),
       adminUrl: text(r.admin_url),
     }));
+  const count = Number(res.data?.count);
+  return { count: Number.isFinite(count) ? count : results.length, results };
 }

@@ -719,11 +719,14 @@ Source: Michael's approved sync plan and Ian's requests relayed on 2026-10-17.
   shows a "Test site" badge; on production nothing changes. Administrators
   get a "Pending login requests" card on the Dashboard, fed by the
   superuser-only `GET /api/v2/login-requests/pending/` (inactive accounts
-  that never signed in), each row linking to the account in Django admin,
-  where approval already happens. Each site reports its own requests; the
-  eight stranded woco.dev accounts stay where they are until Michael decides.
-  Not done: email notification (T30/T68), an approve action outside the
-  admin, refusing requests on staging. Evidence:
+  with no usable password that never signed in; newest 200 plus the true
+  count, since the public form is unthrottled), each row linking to the
+  account in Django admin, where approval already happens. Each site reports
+  its own requests; the eight stranded woco.dev accounts stay where they are
+  until Michael decides. Not done: email notification (T30/T68), an approve
+  action outside the admin, disabling the staging endpoint. Pre-existing and
+  left as found: the public form answers "A user with this email already
+  exists", so anyone can test whether an address has an account. Evidence:
   [site and pending views](backend/common/api/auth.py),
   [tests](backend/common/tests/test_site_and_pending_requests.py),
   [Auth page](frontend/src/pages/Auth.tsx),

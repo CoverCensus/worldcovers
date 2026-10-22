@@ -202,7 +202,7 @@ const Auth = () => {
                 <>
                   <p className="text-sm text-muted-foreground" role="note">
                     This is the test site. Accounts are requested and approved on{" "}
-                    {site.productionHost}; a request made here would not be seen.
+                    {site.productionHost}, so please ask there.
                   </p>
                   <Button asChild variant="outline" className="w-full">
                     <a href={`${site.productionUrl}/auth`}>Request a login on {site.productionHost}</a>
