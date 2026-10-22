@@ -49,7 +49,8 @@ which is exactly when you need it).
 | `wipe_user_data` | Clear submission/version/recycle-bin data | `backend/common/management/commands/wipe_user_data.py` |
 | `drop_ascc_state` | Delete one state's imported catalog data | `backend/common/management/commands/drop_ascc_state.py` |
 | `consolidate_superseded_contributions` | Delete superseded non-draft contributions | `backend/common/management/commands/consolidate_superseded_contributions.py` |
-| `purge_recycle_bin` | Permanently delete recycle-bin catalog rows | `backend/common/management/commands/purge_recycle_bin.py` |
+| `purge_recycle_bin` | Archive, verify, then permanently delete recycle-bin catalog rows | `backend/common/management/commands/purge_recycle_bin.py` |
+| `verify_media_integrity` | Check Image rows against files; report orphan files and orphan rows | `backend/common/management/commands/verify_media_integrity.py` |
 | `prune_revisions` | Prune django-reversion rows safely | `backend/common/management/commands/prune_revisions.py` |
 | `backup_marking` | Export one marking graph to JSON | `backend/common/management/commands/backup_marking.py` |
 | `restore_marking` | Restore one marking graph from JSON | `backend/common/management/commands/restore_marking.py` |
@@ -381,17 +382,89 @@ recycle-bin data before a separate destructive catalog refresh.
 ### `purge_recycle_bin`
 
 Permanently hard-delete catalog markings and covers that are currently hidden
-by recycle-bin rows. The command also deletes polymorphic image, date, and
-citation rows for those subjects. It does not remove image files from disk and
-does not prune django-reversion history.
+by recycle-bin rows, after writing and verifying an archive of them (T51).
+The command deletes the polymorphic image, date, and citation rows for those
+subjects, and the ORM cascades to approved Contributions and their archive
+sidecars, version snapshots, valuations, and cover links. Transactions and
+crop Images that point at the deleted rows keep their rows and lose the link.
+It does not remove image files from disk and does not prune django-reversion
+history.
 
 ```sh
 ./woco purge_recycle_bin --dry-run
+./woco purge_recycle_bin --dry-run --archive-dir tools/wip/out/purge-rehearsal
 ./woco purge_recycle_bin --no-input
+./woco purge_recycle_bin --no-input --archive-dir tools/wip/out/purge-2026-10-22
 ```
 
-Use this when removed catalog records should no longer be restorable from the
-editor recycle bin. The dry run reports what would be deleted and rolls back.
+Every real purge writes a new archive directory first, by default
+`tools/wip/out/recycle-bin-purge-<UTC stamp>`, and refuses to delete anything
+the archive does not cover. The archive holds `records.json` (a Django JSON
+fixture of every deleted row, primary keys included), `relinked.json` (the
+transactions and crop Images that survive the purge and only lose a link),
+`media/` (the image files of the deleted Image rows), and `manifest.json`
+(source instance, code revision, migrations, per-model counts, file
+checksums, and the restore commands). Before the delete the command asks
+Django's deletion collector whether its scope still matches the model's
+cascade rules, re-reads the archive, and re-hashes every file; inside the
+delete transaction it locks the recycle-bin rows, checks that the bin and
+the scope are unchanged, and compares the rows actually deleted per model
+with the manifest, rolling back on any difference. A damaged archive, a
+changed bin, or a mismatch stops the purge with nothing deleted. After the
+delete commits the command writes a `PURGED` marker into the archive; an
+archive without one was a rehearsal or an aborted purge.
+
+A binned Image row with no file on disk, or with a storage name the archive
+cannot use, also stops the purge; `--allow-missing-media` records those
+names in the manifest instead. A file whose bytes differ from its row's
+checksum stops it too: run `verify_media_integrity --check-checksums` and
+repair the row first. An interrupted run can leave a hidden `.purge-*`
+directory beside the destination; it holds private data and can be deleted.
+
+The dry run reports the scope (rows per model, files and bytes, files shared
+with other Image rows) and rolls back. It hashes every binned image file to
+report sizes, so it takes as long as the archive step. With `--archive-dir`
+it also writes and verifies the archive as a rehearsal. Without it, nothing
+is written.
+
+Restore on the same instance only (the manifest names the instance, and
+`loaddata` cannot check it), for example after a purge that should not have
+happened:
+
+```sh
+./woco loaddata tools/wip/out/recycle-bin-purge-<stamp>/records.json
+cp -rn tools/wip/out/recycle-bin-purge-<stamp>/media/. backend/media/
+./woco loaddata tools/wip/out/recycle-bin-purge-<stamp>/relinked.json
+```
+
+Rows return with their original primary keys and are still in the recycle
+bin. `loaddata` overwrites a row that has the same primary key, so load
+`relinked.json` only when those transactions and crop Images have not
+changed since the purge; otherwise restore their links by hand. This is an
+operator recovery, separate from the editor recycle-bin restore, version
+restore, and the S25/S26 application backup. The archive contains
+Contribution review notes; it is created readable by its owner only, lives
+under `tools/wip/out/`, which is not committed, and must be treated as
+private. Expected exit code: `0`.
+
+### `verify_media_integrity`
+
+Check that every Image row resolves to a file under `MEDIA_ROOT`, optionally
+with matching sha256, and report files with no Image row (orphan files) and
+Image, Citation, or DateSeen rows whose Marking or Cover no longer exists
+(orphan rows, T51). A row on a recycle-binned subject is not an orphan.
+
+```sh
+./woco verify_media_integrity
+./woco verify_media_integrity --check-checksums --json tools/wip/out/media-integrity.json
+./woco verify_media_integrity --fail-on-orphans
+```
+
+Missing or corrupt files fail the check. Orphan files and orphan rows are
+reported and fail only with `--fail-on-orphans`. The JSON report lists orphan
+rows per table with their subject and row IDs. The command deletes nothing;
+what to do with orphans is a separate decision. `--media-root` checks a
+restored snapshot instead of the live tree (see [BACKUP.md](BACKUP.md)).
 Expected exit code: `0`.
 
 ### `report_duplicate_markings`

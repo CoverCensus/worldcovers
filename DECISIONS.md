@@ -239,6 +239,40 @@ fields and Citations, but not images or date observations.
 [T74](ISSUE.md#t74---define-and-verify-entry-version-restoration) tracks the
 restoration scope and verification separately from history viewing.
 
+## Archive Before A Permanent Purge
+
+**Do:** Write and verify a restorable archive before `purge_recycle_bin`
+hard-deletes anything. The archive covers every row the delete removes or
+alters, as the ORM's on_delete rules define it: the binned Markings and
+Covers and their sidecars, the cascaded Contributions, archive sidecars,
+version snapshots, valuations and cover links, the polymorphic image, date
+and citation rows, the transactions and crop Images whose link is set to
+NULL, and the image bytes of the deleted Image rows. Keep the rows that
+survive the purge in their own fixture so a restore never overwrites a live
+row by accident. Before deleting, ask Django's deletion collector whether
+the hand-kept scope is still complete, re-read the archive and re-hash its
+files; inside the delete transaction lock the recycle-bin rows, confirm the
+bin and the scope are unchanged, and compare the rows deleted per model
+with the manifest. Report the scope in dry-run, and write the archive in
+dry-run only when asked. Put archives under `tools/wip/out/` and mark them
+`PURGED` only after the delete commits.
+
+**Don't:** Delete a row the archive does not hold, delete image files during
+a purge (storage filenames are shared across Image rows and pending
+submissions reference files that have no row yet), or treat the archive
+restore (`loaddata` plus a media copy) as the editor recycle-bin restore, a
+version restore, or the S25/S26 application backup. Do not sweep orphan rows
+or files from `verify_media_integrity`'s report; it only reports.
+
+**Why:** Trello T51: "restorable archive is verified before erasure;
+dry-run reports scope." A purge used to cascade through Contributions and
+versions it never mentioned, and a database dump carries none of the image
+bytes (BACKUP.md, "both halves, always"). Orphan rows were invisible because
+the polymorphic subject link is not a foreign key. Evidence:
+`common/purge_archive.py`, `test_purge_recycle_bin.py` (round trip through
+`loaddata`, damaged-archive refusal, per-model count coverage),
+`test_verify_media_integrity.py`.
+
 ## Publish Help Content Explicitly
 
 **Do:** Publish Help articles only through the explicit document-name

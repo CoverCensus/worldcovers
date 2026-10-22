@@ -23,7 +23,7 @@ from pathlib import Path
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from common.models import Image
+from common.models import Citation, Cover, DateSeen, Image, Marking
 
 CHUNK = 1024 * 1024
 
@@ -38,8 +38,9 @@ def _sha256(path: Path) -> str:
 
 class Command(BaseCommand):
     help = (
-        "Verify that every Image row resolves to a file under MEDIA_ROOT, and "
-        "optionally that each file's sha256 matches the recorded checksum."
+        "Verify that every Image row resolves to a file under MEDIA_ROOT, "
+        "optionally that each file's sha256 matches the recorded checksum, and "
+        "report orphan files and orphan Image/Citation/DateSeen rows."
     )
 
     def add_arguments(self, parser):
@@ -62,7 +63,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--fail-on-orphans",
             action="store_true",
-            help="Exit non-zero if files exist on disk with no Image row (off by default).",
+            help="Exit non-zero on orphan files (no Image row) or orphan rows (no subject). Off by default.",
         )
 
     def handle(self, *args, **options):
@@ -132,6 +133,7 @@ class Command(BaseCommand):
             if p.is_file() and p.name not in (".DS_Store", "_DELETE.ME")
         }
         orphans = sorted(on_disk - referenced)
+        orphan_rows = self._orphan_rows()
 
         report = {
             "media_root": str(media_root),
@@ -143,6 +145,7 @@ class Command(BaseCommand):
             "corrupt": corrupt,
             "size_drift": size_drift,
             "orphans": orphans,
+            "orphan_rows": orphan_rows,
         }
 
         if options["json_out"]:
@@ -166,6 +169,14 @@ class Command(BaseCommand):
         _report("corrupt (sha256 mismatch)", corrupt, self.style.ERROR)
         _report("size drift", size_drift, self.style.WARNING)
         _report("orphans (file, no DB row)", orphans, self.style.WARNING)
+        # A child row whose Marking or Cover is gone (T51). The polymorphic
+        # subject link is not a foreign key, so nothing cascades or protects.
+        for table, rows in orphan_rows.items():
+            flat = [
+                f"{row['subject_type']} #{row['subject_id']} ({len(row['ids'])} row(s))"
+                for row in rows
+            ]
+            _report(f"orphan rows ({table}: row, no subject)", flat, self.style.WARNING)
 
         if not check_sums:
             self.stdout.write(
@@ -175,9 +186,45 @@ class Command(BaseCommand):
             )
 
         failed = bool(missing or corrupt)
-        if options["fail_on_orphans"] and orphans:
+        if options["fail_on_orphans"] and (orphans or any(orphan_rows.values())):
             failed = True
         if failed:
             raise CommandError("media integrity check FAILED")
 
         self.stdout.write(self.style.SUCCESS("media integrity OK"))
+
+    def _orphan_rows(self):
+        """Image, Citation and DateSeen rows whose subject no longer exists.
+
+        Recycle-binned subjects still exist (all_objects), so a row on a
+        binned Marking is not an orphan. Two queries per model at most: the
+        distinct subjects, then the rows of the subjects that are gone.
+        """
+        live = {
+            "MARKING": set(Marking.all_objects.values_list("pk", flat=True)),
+            "COVER": set(Cover.all_objects.values_list("pk", flat=True)),
+        }
+        result = {}
+        for model in (Image, Citation, DateSeen):
+            gone = {}
+            for subject_type, subject_id in (
+                model.objects.order_by().values_list("subject_type", "subject_id").distinct()
+            ):
+                if subject_id not in live.get(subject_type, set()):
+                    gone.setdefault(subject_type, []).append(subject_id)
+            rows = []
+            for subject_type, subject_ids in gone.items():
+                by_subject = {}
+                for pk, subject_id in (
+                    model.objects.filter(subject_type=subject_type, subject_id__in=subject_ids)
+                    .order_by("pk").values_list("pk", "subject_id")
+                ):
+                    by_subject.setdefault(subject_id, []).append(pk)
+                for subject_id in sorted(by_subject):
+                    rows.append({
+                        "subject_type": subject_type,
+                        "subject_id": subject_id,
+                        "ids": by_subject[subject_id],
+                    })
+            result[model._meta.db_table] = rows
+        return result
