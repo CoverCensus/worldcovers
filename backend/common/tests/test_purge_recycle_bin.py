@@ -33,7 +33,7 @@ from common.models import (
     Region,
     SubmissionTransaction,
 )
-from common.purge_archive import collect_scope, verify_bundle, write_bundle
+from common.purge_archive import check_cascades, collect_scope, verify_bundle, write_bundle
 
 
 User = get_user_model()
@@ -69,7 +69,7 @@ class PurgeRecycleBinCommandTests(TestCase):
         self._bin_cover(binned_cover)
 
         out = StringIO()
-        with patch("common.purge_archive.write_bundle") as write_bundle_mock:
+        with patch("common.management.commands.purge_recycle_bin.write_bundle") as write_bundle_mock:
             call_command("purge_recycle_bin", dry_run=True, no_input=True, stdout=out)
 
         # Scope is reported; no archive is written unless --archive-dir asks for one.
@@ -376,6 +376,8 @@ class PurgeArchiveTests(TestCase):
 
         manifest = json.loads((bundle / "manifest.json").read_text())
         self.assertEqual(manifest["schema"], "worldcovers.purge_archive.v1")
+        self.assertTrue((bundle / "PURGED").is_file())
+        self.assertEqual(manifest["fixtures"]["relinked"]["records"], 2)
         # Built by mkdtemp, so only the operator can read the review notes inside.
         self.assertEqual(bundle.stat().st_mode & 0o777, 0o700)
         self.assertEqual(set(manifest["files"]), {"va/shared.jpg"})
@@ -406,6 +408,7 @@ class PurgeArchiveTests(TestCase):
         # Restore: rows return with their original keys, still in the bin.
         (self.media / "va/shared.jpg").unlink()
         call_command("loaddata", str(bundle / "records.json"), verbosity=0)
+        call_command("loaddata", str(bundle / "relinked.json"), verbosity=0)
         shutil.copytree(bundle / "media", self.media, dirs_exist_ok=True)
 
         self.assertEqual(self._counts(), before)
@@ -432,12 +435,25 @@ class PurgeArchiveTests(TestCase):
             verify_bundle(bundle, scope)
 
         (self.media / "va/shared.jpg").unlink()
-        with self.assertRaisesMessage(CommandError, "Missing source media"):
+        with self.assertRaisesMessage(CommandError, "1 missing"):
             write_bundle(scope, self.root / "bundle-2")
         self.assertFalse((self.root / "bundle-2").exists())
         self.assertEqual([p.name for p in self.root.iterdir() if p.name.startswith(".purge-")], [])
         manifest = write_bundle(scope, self.root / "bundle-3", allow_missing_media=True)
         self.assertEqual(manifest["missing_files"], ["va/shared.jpg"])
+
+        escaped = Image.objects.create(
+            subject_type="MARKING", subject_id=self.binned.pk, original_filename="x.jpg",
+            storage_filename="../escape.jpg", file_checksum="", file_size_bytes=0,
+            mime_type="image/jpeg", image_width=1, image_height=1, image_view="FULL",
+            uploaded_by=self.user, **self.stamp,
+        )
+        scope = collect_scope([self.binned.pk], [self.binned_cover.pk])
+        with self.assertRaisesMessage(CommandError, "invalid names"):
+            write_bundle(scope, self.root / "bundle-4")
+        manifest = write_bundle(scope, self.root / "bundle-4", allow_missing_media=True)
+        self.assertEqual(manifest["invalid_files"], ["../escape.jpg"])
+        escaped.delete()
 
         with patch(
             "common.management.commands.purge_recycle_bin.write_bundle",
@@ -448,11 +464,41 @@ class PurgeArchiveTests(TestCase):
         self.assertTrue(Marking.all_objects.filter(pk=self.binned.pk).exists())
         self.assertTrue(Contribution.objects.filter(pk=self.contribution.pk).exists())
 
+    def test_scope_missing_a_cascade_is_refused(self):
+        scope = [
+            entry for entry in collect_scope([self.binned.pk], [self.binned_cover.pk])
+            if entry[0] != "common.covermarking"
+        ]
+        with self.assertRaisesMessage(CommandError, "common.covermarking"):
+            check_cascades(scope)
+
+    def test_change_between_archive_and_delete_rolls_back(self):
+        real_write_bundle = write_bundle
+
+        def write_then_add_a_citation(*args, **kwargs):
+            manifest = real_write_bundle(*args, **kwargs)
+            Citation.objects.create(
+                reference_work=ReferenceWork.objects.get(code="REF1"), subject_type="MARKING",
+                subject_id=self.binned.pk, citation_detail="late", **self.stamp,
+            )
+            return manifest
+
+        with patch(
+            "common.management.commands.purge_recycle_bin.write_bundle",
+            side_effect=write_then_add_a_citation,
+        ):
+            with self.assertRaisesMessage(CommandError, "changed after the archive"):
+                call_command("purge_recycle_bin", no_input=True, archive_dir=str(self.root / "late"), stdout=StringIO())
+        self.assertTrue(Marking.all_objects.filter(pk=self.binned.pk).exists())
+        self.assertEqual(Citation.objects.filter(subject_type="MARKING", subject_id=self.binned.pk).count(), 2)
+        self.assertFalse((self.root / "late" / "PURGED").exists())
+
     def test_dry_run_with_archive_dir_rehearses_the_archive(self):
         bundle = self.root / "rehearsal"
         out = StringIO()
         call_command("purge_recycle_bin", dry_run=True, no_input=True, archive_dir=str(bundle), stdout=out)
         self.assertTrue((bundle / "manifest.json").is_file())
+        self.assertFalse((bundle / "PURGED").exists())
         self.assertIn("[DRY RUN]", out.getvalue())
         self.assertTrue(Marking.all_objects.filter(pk=self.binned.pk).exists())
         self.assertTrue(Contribution.objects.filter(pk=self.contribution.pk).exists())

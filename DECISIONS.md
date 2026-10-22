@@ -247,10 +247,15 @@ alters, as the ORM's on_delete rules define it: the binned Markings and
 Covers and their sidecars, the cascaded Contributions, archive sidecars,
 version snapshots, valuations and cover links, the polymorphic image, date
 and citation rows, the transactions and crop Images whose link is set to
-NULL, and the image bytes of the deleted Image rows. Re-read the archive and
-re-hash its files before the first delete. Report the scope in dry-run, and
-write the archive in dry-run only when asked. Put archives under
-`tools/wip/out/`.
+NULL, and the image bytes of the deleted Image rows. Keep the rows that
+survive the purge in their own fixture so a restore never overwrites a live
+row by accident. Before deleting, ask Django's deletion collector whether
+the hand-kept scope is still complete, re-read the archive and re-hash its
+files; inside the delete transaction lock the recycle-bin rows, confirm the
+bin and the scope are unchanged, and compare the rows deleted per model
+with the manifest. Report the scope in dry-run, and write the archive in
+dry-run only when asked. Put archives under `tools/wip/out/` and mark them
+`PURGED` only after the delete commits.
 
 **Don't:** Delete a row the archive does not hold, delete image files during
 a purge (storage filenames are shared across Image rows and pending

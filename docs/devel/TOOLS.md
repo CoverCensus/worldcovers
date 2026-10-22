@@ -400,35 +400,52 @@ history.
 Every real purge writes a new archive directory first, by default
 `tools/wip/out/recycle-bin-purge-<UTC stamp>`, and refuses to delete anything
 the archive does not cover. The archive holds `records.json` (a Django JSON
-fixture of every deleted or relinked row, primary keys included), `media/`
-(the image files of the deleted Image rows), and `manifest.json` (source
-instance, code revision, migrations, per-model counts, file checksums, and the
-restore commands). The archive is re-read and every file re-hashed before the
-delete starts; a damaged archive stops the purge with nothing deleted. A
-binned Image row with no file on disk also stops it; `--allow-missing-media`
-records those names in the manifest instead.
+fixture of every deleted row, primary keys included), `relinked.json` (the
+transactions and crop Images that survive the purge and only lose a link),
+`media/` (the image files of the deleted Image rows), and `manifest.json`
+(source instance, code revision, migrations, per-model counts, file
+checksums, and the restore commands). Before the delete the command asks
+Django's deletion collector whether its scope still matches the model's
+cascade rules, re-reads the archive, and re-hashes every file; inside the
+delete transaction it locks the recycle-bin rows, checks that the bin and
+the scope are unchanged, and compares the rows actually deleted per model
+with the manifest, rolling back on any difference. A damaged archive, a
+changed bin, or a mismatch stops the purge with nothing deleted. After the
+delete commits the command writes a `PURGED` marker into the archive; an
+archive without one was a rehearsal or an aborted purge.
 
-Run a real purge while editors are not working: the archive and the delete
-are two steps, and the command re-checks the recycle bin after the
-confirmation prompt but not between the archive and the delete.
+A binned Image row with no file on disk, or with a storage name the archive
+cannot use, also stops the purge; `--allow-missing-media` records those
+names in the manifest instead. A file whose bytes differ from its row's
+checksum stops it too: run `verify_media_integrity --check-checksums` and
+repair the row first. An interrupted run can leave a hidden `.purge-*`
+directory beside the destination; it holds private data and can be deleted.
 
 The dry run reports the scope (rows per model, files and bytes, files shared
-with other Image rows) and rolls back. With `--archive-dir` it also writes and
-verifies the archive as a rehearsal. Without it, nothing is written.
+with other Image rows) and rolls back. It hashes every binned image file to
+report sizes, so it takes as long as the archive step. With `--archive-dir`
+it also writes and verifies the archive as a rehearsal. Without it, nothing
+is written.
 
-Restore on the same instance, for example after a purge that should not have
+Restore on the same instance only (the manifest names the instance, and
+`loaddata` cannot check it), for example after a purge that should not have
 happened:
 
 ```sh
 ./woco loaddata tools/wip/out/recycle-bin-purge-<stamp>/records.json
 cp -rn tools/wip/out/recycle-bin-purge-<stamp>/media/. backend/media/
+./woco loaddata tools/wip/out/recycle-bin-purge-<stamp>/relinked.json
 ```
 
 Rows return with their original primary keys and are still in the recycle
-bin. This is an operator recovery, separate from the editor recycle-bin
-restore, version restore, and the S25/S26 application backup. The archive
-contains Contribution review notes; keep it under `tools/wip/out/`, which is
-not committed, and treat it as private. Expected exit code: `0`.
+bin. `loaddata` overwrites a row that has the same primary key, so load
+`relinked.json` only when those transactions and crop Images have not
+changed since the purge; otherwise restore their links by hand. This is an
+operator recovery, separate from the editor recycle-bin restore, version
+restore, and the S25/S26 application backup. The archive contains
+Contribution review notes; it is created readable by its owner only, lives
+under `tools/wip/out/`, which is not committed, and must be treated as
+private. Expected exit code: `0`.
 
 ### `verify_media_integrity`
 
