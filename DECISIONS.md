@@ -273,6 +273,38 @@ the polymorphic subject link is not a foreign key. Evidence:
 `loaddata`, damaged-archive refusal, per-model count coverage),
 `test_verify_media_integrity.py`.
 
+## Manage Reference Works Through The Editor Page
+
+**Do:** Let Editors and Administrators add and edit Reference Works on the
+Reference Works page, and make the API's write rule the project's Editor
+definition (a Collection assignment, the review permission, or superuser),
+the same rule the Color, Shape and Lettering endpoints use. Trim text, store
+a blank code as NULL, refuse a title and edition that already exist, bound
+the year, and refuse a change to a code that existing Citations rely on,
+because catalog codes are generated from it. Show a Reference Work on the
+submission forms as its title, then the first author plus "et al." when the
+authorship names several people, with edition, volume and year.
+
+**Don't:** Offer delete in the application (the API refuses it; a Citation
+protects its Reference Work). Don't rely on Django model permissions that no
+code grants to the Editors group. Don't split an authorship string on a
+comma: only a semicolon or an "and" / "&" between names separates people,
+so a single person written "Briggs, Deane R." stays whole; the full
+authorship is unchanged in storage and on the detail pages. Don't create a
+second VPHC1 or ASCC row; edit the existing one.
+
+**Why:** Trello S19: "permitted writes work and unauthorized writes fail;
+the Entry edit displays the first author plus et al. when applicable, with
+room for volume, edition, and date; preserve full authorship and
+comma-containing personal names; API/admin access alone does not satisfy
+the workflow." The previous permission class checked model permissions that
+nothing assigned, so Editors got 403 while admin and superusers could write.
+Reese chose the Editor rule, the year as the date, the inline page, and the
+separator-only author rule on 2026-10-22. Evidence:
+`common/api/v2/permissions.py` (`CanManageReferenceWorks`),
+`test_reference_work_api.py`, `frontend/src/lib/referenceWorkDisplay.ts` and
+its test, `frontend/src/pages/ReferenceWorks.tsx` and its test.
+
 ## Publish Help Content Explicitly
 
 **Do:** Publish Help articles only through the explicit document-name
