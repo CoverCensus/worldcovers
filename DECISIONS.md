@@ -308,6 +308,35 @@ separator-only author rule on 2026-10-22. Evidence:
 `test_reference_work_api.py`, `frontend/src/lib/referenceWorkDisplay.ts` and
 its test, `frontend/src/pages/ReferenceWorks.tsx` and its test.
 
+## Point Test-Site Login Requests At Production, Show Pending Requests To Administrators
+
+**Do:** Let the backend say which site it is (`GET /api/v2/site/`: hostname,
+role, production URL, derived from `DJANGO_APP_HOSTNAME`, overridable with
+`WOCO_SITE_ROLE`) and let the SPA ask it once per page load. On a
+non-production site, turn the sign-in page's "Request a login" into a link to
+production's `/auth` with a one-sentence notice, and badge the footer "Test
+site". Give Administrators a Dashboard card listing login requests (inactive
+accounts that have never signed in, issue #150's definition) with a link to
+each account in Django admin, where approval already happens. Keep that list
+superuser-only, because it carries names and email addresses. Treat an
+unknown or failed site answer as production, and never let the lookup break
+a page.
+
+**Don't:** Post a request from one site to the other, or copy accounts
+between sites through this feature; a stranded account moves only on
+Michael's say-so. Don't refuse requests on staging (testers need the form).
+Don't make the approval depend on mail (dead on both sites until T30), and
+don't add an approve or activate API; the single home for approval stays
+the admin. Don't put requester emails in any public or Editor-level response.
+
+**Why:** Trello T84: eight sign-ups made on woco.dev went unnoticed because
+the two sites look identical and a login request is only an inactive User
+row that nothing reports. Reese chose on 2026-10-22 to do both halves
+(route and report) with the site signal from the backend rather than
+hostname sniffing in the SPA. Evidence:
+`test_site_and_pending_requests.py`, `Auth.testSite.test.tsx`,
+`PendingLoginRequestsCard.test.tsx`, `Footer.test.tsx`.
+
 ## State Rights As Stated, Never As Verified
 
 **Do:** In public Help, report the rights statements the project has

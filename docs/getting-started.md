@@ -19,7 +19,9 @@ Request your account on **hellowoco.app**. The project team copies approved acco
 **woco.dev** for review work. This is a one-way operator task, not an instant sync.
 
 > **Do not create an account directly on woco.dev.** It will not carry back to hellowoco.app, and
-> later account copies can replace its settings. Start at hellowoco.app every time.
+> later account copies can replace its settings. Start at hellowoco.app every time. woco.dev says
+> so itself: its pages carry a "Test site" badge and its "Request a login" button sends you to
+> hellowoco.app.
 
 ---
 
