@@ -61,6 +61,21 @@ class HelpDocsAllowlistTests(TestCase):
         self.assertIn("Not yet confirmed", docs[0]["markdown"])
         self.assertIn("creativecommons.org/licenses/by/4.0", docs[0]["markdown"])
 
+    def test_acknowledgements_ends_with_the_funding_lines(self):
+        # Trello T91 (Ian, 2026-10-19): the page ends with the IanThom Foundation
+        # funding line and its link, below the Beals Trust line from PR #166.
+        response = self.client.get(URL)
+        docs = [doc for doc in response.data["results"] if doc["slug"] == "acknowledgements"]
+        self.assertEqual(len(docs), 1)
+        markdown = docs[0]["markdown"].rstrip()
+        self.assertIn("David T. Beals Charitable Trust", markdown)
+        self.assertTrue(
+            markdown.endswith(
+                "Funding was provided by The IanThom Foundation, [www.IanThom.org](https://www.ianthom.org)."
+            ),
+            markdown[-200:],
+        )
+
     def test_new_doc_dropped_in_docs_is_not_published(self):
         # The actual failure mode: someone adds a markdown file to docs/ and it
         # goes public without anyone deciding that it should.
