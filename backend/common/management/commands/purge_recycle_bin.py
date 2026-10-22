@@ -1,16 +1,28 @@
 """
-Permanently delete catalog records currently hidden by recycle-bin sidecars.
+Permanently delete catalog records currently hidden by recycle-bin sidecars,
+after writing and verifying a restorable archive of them (Trello T51).
 
 This command deletes the binned Marking and Cover rows themselves. Deleting
 only MarkingRecycleBin or CoverRecycleBin rows would restore those records, so
 the command starts from sidecar IDs and then hard-deletes the catalog rows.
+The ORM cascades from those rows to approved Contributions, version
+snapshots, valuations and cover links, and nulls the links that transactions
+and crop Images hold on them; the archive covers all of those rows and the
+image bytes of the deleted Image rows. Files on disk are never deleted.
 
 Usage from repo root, with mysql.cnf and backend/.env present:
     ./woco purge_recycle_bin --dry-run
+    ./woco purge_recycle_bin --dry-run --archive-dir tools/wip/out/purge-rehearsal
     ./woco purge_recycle_bin --no-input
+
+Restore from the archive (same instance; rows return to the recycle bin):
+    ./woco loaddata <archive>/records.json
+    cp -rn <archive>/media/. backend/media/
 
 Expected exit code: 0.
 """
+from pathlib import Path
+
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
@@ -23,20 +35,27 @@ from common.models import (
     Marking,
     MarkingRecycleBin,
 )
+from common.purge_archive import (
+    DELETED,
+    collect_scope,
+    default_archive_dir,
+    describe_media,
+    write_bundle,
+)
 
 
 class Command(BaseCommand):
     help = (
         "Permanently delete all Marking and Cover records currently in the "
-        "recycle bin. Polymorphic image, date, and citation rows are also "
-        "deleted for those subjects."
+        "recycle bin, after archiving them. Polymorphic image, date, and "
+        "citation rows are also deleted for those subjects."
     )
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="Report what would be deleted, then roll back.",
+            help="Report the purge scope, then roll back. Writes an archive only with --archive-dir.",
         )
         parser.add_argument(
             "--no-input",
@@ -44,10 +63,41 @@ class Command(BaseCommand):
             dest="no_input",
             help="Do not prompt for confirmation (for use in scripts).",
         )
+        parser.add_argument(
+            "--archive-dir",
+            type=Path,
+            default=None,
+            help=(
+                "New directory for the verified archive. Default: "
+                "tools/wip/out/recycle-bin-purge-<UTC stamp>. A real purge always archives."
+            ),
+        )
+        parser.add_argument(
+            "--allow-missing-media",
+            action="store_true",
+            dest="allow_missing_media",
+            help="Archive even when a binned Image row has no file on disk; the names are recorded.",
+        )
 
     def handle(self, *args, **options):
         dry_run = bool(options["dry_run"])
         no_input = bool(options["no_input"])
+
+        marking_ids = list(
+            MarkingRecycleBin.objects.order_by()
+            .values_list("marking_id", flat=True)
+        )
+        cover_ids = list(
+            CoverRecycleBin.objects.order_by()
+            .values_list("cover_id", flat=True)
+        )
+        if not marking_ids and not cover_ids:
+            self.stdout.write(self.style.SUCCESS("Recycle bin is empty; nothing to purge."))
+            return
+
+        scope = collect_scope(marking_ids, cover_ids)
+        media = describe_media(scope)
+        self._report_scope(scope, media)
 
         if dry_run:
             self.stdout.write(self.style.NOTICE("DRY RUN: no rows will be committed."))
@@ -63,14 +113,21 @@ class Command(BaseCommand):
             if answer != "yes":
                 raise CommandError("Aborted; nothing was deleted.")
 
-        marking_ids = list(
-            MarkingRecycleBin.objects.order_by()
-            .values_list("marking_id", flat=True)
-        )
-        cover_ids = list(
-            CoverRecycleBin.objects.order_by()
-            .values_list("cover_id", flat=True)
-        )
+        archive_dir = options["archive_dir"]
+        if archive_dir is None and not dry_run:
+            archive_dir = default_archive_dir()
+        if archive_dir is None:
+            self.stdout.write(self.style.NOTICE(
+                "DRY RUN: no archive written; pass --archive-dir to rehearse the archive."
+            ))
+        else:
+            manifest = write_bundle(
+                scope, Path(archive_dir), options["allow_missing_media"], media=media,
+            )
+            self.stdout.write(self.style.SUCCESS(
+                f"Archive written and verified: {archive_dir} "
+                f"({manifest['records']} records, {len(manifest['files'])} files)"
+            ))
 
         try:
             with transaction.atomic():
@@ -109,6 +166,31 @@ class Command(BaseCommand):
             summary = "[DRY RUN] " + summary + " (rolled back)"
         self.stdout.write("")
         self.stdout.write(self.style.SUCCESS(summary))
+        if not dry_run:
+            self.stdout.write(
+                f"Restore: ./woco loaddata {archive_dir}/records.json "
+                f"&& cp -rn {archive_dir}/media/. backend/media/"
+            )
+
+    def _report_scope(self, scope, media):
+        self.stdout.write("Purge scope (rows the purge deletes or relinks):")
+        for label, kind, queryset in scope:
+            self.stdout.write(f"  {label:<34s} {kind:<9s} rows={queryset.count():>6d}")
+        total_bytes = sum(info["size"] for info in media["files"].values())
+        self.stdout.write(
+            f"  {'image files to archive':<34s} {DELETED:<9s} "
+            f"files={len(media['files']):>5d} bytes={total_bytes}"
+        )
+        if media["shared"]:
+            self.stdout.write(
+                f"  {len(media['shared'])} file(s) are also referenced by Image rows "
+                "outside the purge; files on disk are never deleted."
+            )
+        if media["missing"]:
+            self.stdout.write(self.style.WARNING(
+                f"  {len(media['missing'])} binned Image row(s) have no file on disk: "
+                + ", ".join(ascii(name) for name in media["missing"][:10])
+            ))
 
     def _delete_polymorphic_rows(self, subject_type, subject_ids):
         total = 0
