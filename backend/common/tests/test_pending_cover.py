@@ -168,6 +168,14 @@ class PendingCoverTests(TestCase):
         self.assertNotIn("pending_cover_contribution_id", sd)
         self.assertNotIn("created_from_contribution_id", sd)
 
+    def test_a_pending_row_cannot_be_saved_with_an_incomplete_cover(self):
+        created = self._submit(pending_cover=_cover(), pending_cover_image=[_png("c.png")])
+        pk = created.data["id"]
+        # Draft-style save on a pending row keeps it pending, so the cover rules still apply.
+        saved = self._submit(edit_contribution_id=pk, save_as_draft="true", pending_cover=_cover(type=""), marking_image=[])
+        self.assertEqual(saved.status_code, 400, saved.data)
+        self.assertEqual(Contribution.objects.get(pk=pk).submitted_data["pending_cover"]["type"], "ENV")
+
     def test_a_draft_that_becomes_a_marking_edit_sheds_its_cover(self):
         audit = {"created_by": self.editor, "modified_by": self.editor}
         office = PostOffice.objects.get(name="Richmond")

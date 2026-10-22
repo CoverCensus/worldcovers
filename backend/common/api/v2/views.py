@@ -4413,7 +4413,9 @@ class ContributionSubmitView(APIView):
             elif not is_cover_submission:
                 pending_cover = _resolve_pending_cover(data, existing_sd.get("pending_cover"))
                 cover_uploads = _pending_cover_uploads(request)
-                if transition_to_pending:
+                # A row that is (or stays) pending must carry a complete cover:
+                # a draft-style save on a pending row keeps it in the queue.
+                if transition_to_pending or contrib.status == Contribution.STATUS_PENDING:
                     cover_error = _validate_pending_cover(pending_cover, len(cover_uploads))
                     if cover_error:
                         return Response({"detail": cover_error}, status=status.HTTP_400_BAD_REQUEST)

@@ -93,7 +93,7 @@ it("refuses a final submit whose Cover section is incomplete, before any request
   fireEvent.click(screen.getByRole("button", { name: /^submit/i }));
   await waitFor(() => expect(screen.getByText("Cover type is required")).toBeTruthy());
   expect(screen.getByText("Add a cover date or mark it unknown")).toBeTruthy();
-  expect(screen.getByText("Add at least one cover image")).toBeTruthy();
+  expect(screen.getByText("Add at least one cover image or confirm no image is available")).toBeTruthy();
   expect(createContribution).not.toHaveBeenCalled();
 });
 
@@ -108,7 +108,8 @@ it("resumes a draft's Cover and drops it when the section is turned off", async 
   } });
   open("/contribute?edit=1", "/contribute");
   const toggle = await screen.findByRole("checkbox", { name: toggleName }, { timeout: 5000 });
-  await waitFor(() => expect((toggle as HTMLInputElement).getAttribute("aria-checked") ?? (toggle as HTMLInputElement).checked).toBeTruthy());
+  // Radix renders the checkbox as a button with aria-checked; "false" is truthy, so compare the string.
+  await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
   expect(screen.getByDisplayValue("Saved cover")).toBeTruthy();
   expect(screen.getByAltText("Saved cover image")).toBeTruthy();
 

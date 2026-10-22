@@ -1022,6 +1022,7 @@ const Contribute = () => {
             isInstitutional: String(pc.is_institutional) === "true",
             isBackstamp: String(pc.is_backstamp) === "true",
             description: String(pc.description ?? ""),
+            noImage: String(pc.no_cover_image) === "true",
           });
           setPendingCoverSavedImages(
             pcMetas
@@ -1587,6 +1588,16 @@ const Contribute = () => {
   // Tracing flag. The cover-shape check runs again on the result; the DPI flag
   // is left as measured on the original, because a canvas carries no DPI.
   const replaceGalleryFile = (key: string, file: File) => {
+    // Trello T37: the first version of the upload is the whole scan the Cover
+    // wants. If the Cover section is already on, add it there now rather than
+    // only when the section is turned on.
+    const replaced = gallery.find(
+      (g): g is Extract<MarkingGalleryItem, { kind: "new" }> => g.kind === "new" && g.key === key,
+    );
+    const original = replaced ? (replaced.originalFile ?? replaced.file) : null;
+    if (original && pendingCoverOn) {
+      setPendingCoverFiles((prev) => (prev.includes(original) ? prev : [...prev, original]));
+    }
     setGallery((prev) =>
       prev.map((g) =>
         g.kind === "new" && g.key === key
@@ -1863,8 +1874,8 @@ const Contribute = () => {
           if (parsed.ok === false) nextPendingCoverErrors.date = parsed.error;
         }
       }
-      if (pendingCoverFiles.length + pendingCoverSavedImages.length === 0) {
-        nextPendingCoverErrors.images = "Add at least one cover image";
+      if (pendingCoverFiles.length + pendingCoverSavedImages.length === 0 && !pendingCoverFields.noImage) {
+        nextPendingCoverErrors.images = "Add at least one cover image or confirm no image is available";
       }
     }
     setPendingCoverErrors(nextPendingCoverErrors);
@@ -2088,6 +2099,7 @@ const Contribute = () => {
               is_institutional: pendingCoverFields.isInstitutional,
               is_backstamp: pendingCoverFields.isBackstamp,
               description: pendingCoverFields.description.trim(),
+              no_cover_image: pendingCoverFields.noImage,
             }),
           );
           for (const file of pendingCoverFiles) {

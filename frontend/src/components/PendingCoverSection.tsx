@@ -236,6 +236,16 @@ export function PendingCoverSection({
               </label>
             </Button>
             {errors.images && <p className="text-sm text-destructive">{errors.images}</p>}
+            {imageCount === 0 && (
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={fields.noImage}
+                  onCheckedChange={(v) => set({ noImage: v === true })}
+                  disabled={disabled}
+                />
+                No cover image is available
+              </label>
+            )}
           </div>
         </div>
       )}

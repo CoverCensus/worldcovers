@@ -11,6 +11,9 @@ import { formatPartialDateInput } from "@/lib/partialDate";
 import { type PendingCoverSummary } from "@/lib/contributionDisplay";
 import { normalizeImageUrl } from "@/services/markings";
 
+// Same root the review page uses for saved uploads (VITE_IMAGE_URL, else /media).
+const MEDIA_BASE = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "") || "/media";
+
 interface PendingCoverCardProps {
   summary: PendingCoverSummary;
   createdContributionId: number | null;
@@ -61,7 +64,7 @@ export function PendingCoverCard({ summary, createdContributionId, approved }: P
             {summary.imageStorageFilenames.map((sf) => (
               <li key={sf}>
                 <img
-                  src={normalizeImageUrl(`/media/${sf}`) ?? ""}
+                  src={normalizeImageUrl(`${MEDIA_BASE}/${sf}`) ?? ""}
                   alt="Cover image submitted with the marking"
                   className="h-24 w-full object-contain bg-muted rounded"
                 />

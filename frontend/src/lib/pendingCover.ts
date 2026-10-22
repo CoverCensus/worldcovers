@@ -10,6 +10,8 @@ export interface PendingCoverFields {
   isInstitutional: boolean;
   isBackstamp: boolean;
   description: string;
+  /** The contributor confirmed no cover image is available. */
+  noImage: boolean;
 }
 
 export const EMPTY_PENDING_COVER: PendingCoverFields = {
@@ -18,6 +20,7 @@ export const EMPTY_PENDING_COVER: PendingCoverFields = {
   isInstitutional: false,
   isBackstamp: false,
   description: "",
+  noImage: false,
 };
 
 export interface PendingCoverErrors {

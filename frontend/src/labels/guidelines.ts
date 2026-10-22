@@ -182,7 +182,7 @@ export const PENDING_COVER_SECTION = {
     "Cover's image.",
   imagesLabel: "Cover Images",
   imagesHelp:
-    "The original scan of each cropped upload is added here automatically. " +
+    "When you crop an upload above, its uncropped original is added here. " +
     "Add or remove images as needed.",
   addImage: "Add cover image",
   warningAction: "Also submit it as the Cover",
