@@ -3890,13 +3890,16 @@ def _parse_pending_cover_fields(raw):
     return fields
 
 
-def _resolve_pending_cover(data, request, existing, region_abbrev):
-    """Merge the request's pending-cover parts over what the row already holds.
+def _resolve_pending_cover(data, existing):
+    """Merge the request's pending-cover fields over what the row already holds.
 
-    Returns the dict to store, or None when there is no cover (absent and
-    nothing saved, or explicitly dropped). New uploads are saved like marking
-    uploads; saved images survive a resubmit unless named in
-    pending_cover_removed_image_keys.
+    Returns the dict to store (without this request's new uploads, which
+    _save_pending_cover_uploads adds after validation), or None when there is
+    no cover: absent and nothing saved, or explicitly dropped. Saved images
+    survive a resubmit unless named in pending_cover_removed_image_keys; keys
+    arrive as the URLs the form displayed (".../media/<storage_filename>") or
+    as bare storage filenames, and are matched exactly against this row's own
+    metas, never by suffix.
     """
     if _truthy(data.get("drop_pending_cover")):
         return None
@@ -3906,13 +3909,7 @@ def _resolve_pending_cover(data, request, existing, region_abbrev):
         return None
     merged = dict(existing or {})
     merged.update(fields or {})
-    kept = [
-        m for m in (merged.get("image_metas") or [])
-        if isinstance(m, dict)
-    ]
-    # Keys arrive as the URLs the form displayed (".../media/<storage_filename>")
-    # or as bare storage filenames; both reduce to the storage filename, matched
-    # exactly against this row's own metas, never by suffix.
+    kept = [m for m in (merged.get("image_metas") or []) if isinstance(m, dict)]
     removed = {
         key.split("/media/", 1)[-1].lstrip("/")
         for key in (_parse_removed_image_keys(data.get("pending_cover_removed_image_keys")) or [])
@@ -3920,20 +3917,36 @@ def _resolve_pending_cover(data, request, existing, region_abbrev):
     }
     if removed:
         kept = [m for m in kept if str(m.get("storage_filename", "")).lstrip("/") not in removed]
-    try:
-        uploads = request.FILES.getlist("pending_cover_image")
-    except AttributeError:
-        uploads = []
-    for uploaded in uploads[:PENDING_COVER_MAX_IMAGES]:
-        meta = _save_contribution_image(uploaded, region_abbrev)
-        if meta:
-            kept.append(meta)
     merged["image_metas"] = kept
     return merged
 
 
-def _validate_pending_cover(pending_cover):
-    """The same three rules the Cover form enforces at final submit."""
+def _pending_cover_uploads(request):
+    try:
+        uploads = request.FILES.getlist("pending_cover_image")
+    except AttributeError:
+        uploads = []
+    return list(uploads)[:PENDING_COVER_MAX_IMAGES]
+
+
+def _save_pending_cover_uploads(pending_cover, uploads, region_abbrev):
+    """Write this request's cover uploads and append their metas. Called only
+    after the field checks passed, so a refused request leaves no new files."""
+    if pending_cover is None or not uploads:
+        return pending_cover
+    kept = list(pending_cover.get("image_metas") or [])
+    for uploaded in uploads:
+        meta = _save_contribution_image(uploaded, region_abbrev)
+        if meta:
+            kept.append(meta)
+    pending_cover["image_metas"] = kept[:PENDING_COVER_MAX_IMAGES]
+    return pending_cover
+
+
+def _validate_pending_cover(pending_cover, pending_upload_count=0):
+    """The same three rules the Cover form enforces at final submit. Runs before
+    this request's uploads are written, so it counts them rather than reading
+    them back."""
     if not pending_cover:
         return None
     cover_type = (pending_cover.get("type") or "").strip().upper()
@@ -3945,7 +3958,11 @@ def _validate_pending_cover(pending_cover):
     )
     if not has_date:
         return "Add a date for the cover submitted with this marking, or mark it unknown."
-    if not pending_cover.get("image_metas") and not pending_cover.get("no_cover_image"):
+    if (
+        not pending_cover.get("image_metas")
+        and pending_upload_count <= 0
+        and not pending_cover.get("no_cover_image")
+    ):
         return "Add at least one cover image or confirm no image is available."
     return None
 
@@ -3963,6 +3980,10 @@ def _create_pending_cover_child(contrib, marking, actor):
     sd = contrib.submitted_data or {}
     pending = sd.get("pending_cover")
     if not isinstance(pending, dict) or not pending:
+        return None
+    # New Markings only: a Marking edit has a published Marking whose Covers
+    # are managed from its record page (Trello T92 for the edit-form offer).
+    if _parse_int(sd.get("edit_marking_id")) is not None:
         return None
     metas = [m for m in (pending.get("image_metas") or []) if isinstance(m, dict)]
     child_sd = {
@@ -4223,7 +4244,11 @@ class ContributionSubmitView(APIView):
             "status",
             # Trello T37: the cover submitted with a new marking travels as
             # pending_cover (JSON) + pending_cover_image files; resolved below.
+            # The two provenance stamps are written by the approval, never taken
+            # from the request.
             *_PENDING_COVER_TRANSPORT_KEYS,
+            "pending_cover_contribution_id",
+            "created_from_contribution_id",
         }
         user_can_submit_catalog_code = user_can_review_contributions(request.user)
         if not user_can_submit_catalog_code:
@@ -4382,18 +4407,21 @@ class ContributionSubmitView(APIView):
             draft_edit_marking_id = _parse_int(existing_sd.get("edit_marking_id"))
             if not is_cover_submission and draft_edit_marking_id is not None:
                 _keep_marking_images_on_edit(existing_sd, draft_edit_marking_id)
-            if not is_cover_submission and draft_edit_marking_id is None:
-                pending_cover = _resolve_pending_cover(
-                    data, request, existing_sd.get("pending_cover"), region_abbrev
-                )
+            if not is_cover_submission and draft_edit_marking_id is not None:
+                # A row that became a Marking edit cannot carry a cover.
+                existing_sd.pop("pending_cover", None)
+            elif not is_cover_submission:
+                pending_cover = _resolve_pending_cover(data, existing_sd.get("pending_cover"))
+                cover_uploads = _pending_cover_uploads(request)
+                if transition_to_pending:
+                    cover_error = _validate_pending_cover(pending_cover, len(cover_uploads))
+                    if cover_error:
+                        return Response({"detail": cover_error}, status=status.HTTP_400_BAD_REQUEST)
+                pending_cover = _save_pending_cover_uploads(pending_cover, cover_uploads, region_abbrev)
                 if pending_cover is None:
                     existing_sd.pop("pending_cover", None)
                 else:
                     existing_sd["pending_cover"] = pending_cover
-                if transition_to_pending:
-                    cover_error = _validate_pending_cover(existing_sd.get("pending_cover"))
-                    if cover_error:
-                        return Response({"detail": cover_error}, status=status.HTTP_400_BAD_REQUEST)
             if transition_to_pending:
                 image_error = _validate_final_submission_image_choice(
                     existing_sd, is_cover_submission
@@ -4471,13 +4499,15 @@ class ContributionSubmitView(APIView):
             submitted_data["image_meta"] = image_metas[0]
 
         if not is_cover_submission and edit_marking_marker is None:
-            pending_cover = _resolve_pending_cover(data, request, None, region_abbrev)
-            if pending_cover is not None:
-                submitted_data["pending_cover"] = pending_cover
+            pending_cover = _resolve_pending_cover(data, None)
+            cover_uploads = _pending_cover_uploads(request)
             if not is_draft:
-                cover_error = _validate_pending_cover(submitted_data.get("pending_cover"))
+                cover_error = _validate_pending_cover(pending_cover, len(cover_uploads))
                 if cover_error:
                     return Response({"detail": cover_error}, status=status.HTTP_400_BAD_REQUEST)
+            pending_cover = _save_pending_cover_uploads(pending_cover, cover_uploads, region_abbrev)
+            if pending_cover is not None:
+                submitted_data["pending_cover"] = pending_cover
 
         if not is_draft:
             image_error = _validate_final_submission_image_choice(

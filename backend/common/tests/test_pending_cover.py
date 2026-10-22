@@ -155,6 +155,38 @@ class PendingCoverTests(TestCase):
         self.assertEqual(dropped.status_code, 200, dropped.data)
         self.assertNotIn("pending_cover", Contribution.objects.get(pk=pk).submitted_data)
 
+    def test_a_refused_submit_writes_no_cover_file_and_stamps_cannot_be_forged(self):
+        import os
+        before = sum(len(files) for _, _, files in os.walk(MEDIA_ROOT))
+        refused = self._submit(pending_cover=_cover(type=""), pending_cover_image=[_png("c.png")], marking_image=[])
+        self.assertEqual(refused.status_code, 400)
+        self.assertEqual(sum(len(files) for _, _, files in os.walk(MEDIA_ROOT)), before)
+
+        forged = self._submit(pending_cover_contribution_id=999, created_from_contribution_id=998)
+        self.assertEqual(forged.status_code, 201, forged.data)
+        sd = Contribution.objects.get(pk=forged.data["id"]).submitted_data
+        self.assertNotIn("pending_cover_contribution_id", sd)
+        self.assertNotIn("created_from_contribution_id", sd)
+
+    def test_a_draft_that_becomes_a_marking_edit_sheds_its_cover(self):
+        audit = {"created_by": self.editor, "modified_by": self.editor}
+        office = PostOffice.objects.get(name="Richmond")
+        existing = Marking.objects.create(type="TOWNMARK", inscription_txt="RICHMOND", is_manuscript=True, post_office=office, **audit)
+        draft = self._submit(save_as_draft="true", pending_cover=_cover(), pending_cover_image=[_png("c.png")])
+        pk = draft.data["id"]
+
+        turned = self._submit(edit_contribution_id=pk, edit_marking_id=existing.pk, marking_image=[])
+        self.assertEqual(turned.status_code, 200, turned.data)
+        self.assertNotIn("pending_cover", Contribution.objects.get(pk=pk).submitted_data)
+
+        # Belt and braces: a stored cover on an edit row never produces a child on approval.
+        edit_row = Contribution.objects.get(pk=pk)
+        edit_row.submitted_data["pending_cover"] = {"type": "ENV", "image_metas": []}
+        edit_row.save(update_fields=["submitted_data"])
+        approved = self._approve(pk)
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.assertNotIn("pendingCoverContributionId", approved.data)
+
     # ------------------------------------------------------------ approve
 
     def test_approving_the_marking_creates_a_pending_cover_submission(self):
