@@ -1,8 +1,12 @@
 import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { useSiteInfo } from "@/hooks/useSiteInfo";
+import { Badge } from "@/components/ui/badge";
 
 export const Footer = () => {
   const user = useAuth();
+  // T84: mark the test site on every page so nobody mistakes it for production.
+  const site = useSiteInfo();
   return (
     <footer className="bg-card border-t border-border mt-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -56,8 +60,13 @@ export const Footer = () => {
             Rights and attribution
           </Link>
         </div>
-        <div className="pt-2 text-center text-xs text-muted-foreground/60">
-          v{__APP_VERSION__}
+        <div className="pt-2 flex items-center justify-center gap-2 text-center text-xs text-muted-foreground/60">
+          <span>v{__APP_VERSION__}</span>
+          {site && !site.isProduction && (
+            <Badge variant="outline" className="uppercase tracking-wide">
+              Test site
+            </Badge>
+          )}
         </div>
       </div>
     </footer>

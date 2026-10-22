@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getStoredUser, setStoredUser } from "@/lib/auth";
 import apiClient, { ensureCsrfToken } from "@/lib/api";
 import { getRedirectPath } from "@/lib/authRedirect";
+import { useSiteInfo } from "@/hooks/useSiteInfo";
 
 interface AuthValues {
   email: string;
@@ -45,6 +46,11 @@ const Auth = () => {
   const location = useLocation();
   const { toast } = useToast();
   const redirectPath = getRedirectPath(location.state);
+  // T84: the same bundle serves woco.dev and hellowoco.app. On the test site the
+  // request path points at production instead of creating an account here that
+  // nobody would see. null (unknown or still loading) reads as production.
+  const site = useSiteInfo();
+  const onTestSite = site !== null && !site.isProduction;
 
   useEffect(() => {
     if (getStoredUser()) {
@@ -192,17 +198,31 @@ const Auth = () => {
                 buried under the submit button. */}
             <div className="mt-6 border-t pt-4 space-y-2 text-center">
               <p className="text-sm font-medium">New to the catalog?</p>
-              <p className="text-sm text-muted-foreground">
-                Editor accounts are created for you — request one and we will set it up.
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full"
-                onClick={() => setRequestDialogOpen(true)}
-              >
-                Request a login
-              </Button>
+              {onTestSite ? (
+                <>
+                  <p className="text-sm text-muted-foreground" role="note">
+                    This is the test site. Accounts are requested and approved on{" "}
+                    {site.productionHost}; a request made here would not be seen.
+                  </p>
+                  <Button asChild variant="outline" className="w-full">
+                    <a href={`${site.productionUrl}/auth`}>Request a login on {site.productionHost}</a>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Editor accounts are created for you — request one and we will set it up.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setRequestDialogOpen(true)}
+                  >
+                    Request a login
+                  </Button>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>

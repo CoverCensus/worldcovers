@@ -7,6 +7,10 @@ import { MemoryRouter } from "react-router-dom";
 
 jest.mock("@/hooks/useAuth", () => ({ useAuth: () => null }));
 
+// T84: the footer carries a "Test site" badge when the server says this is not production.
+let mockSite: { isProduction: boolean } | null = null;
+jest.mock("@/hooks/useSiteInfo", () => ({ useSiteInfo: () => mockSite }));
+
 import { Footer } from "./Footer";
 
 describe("Footer", () => {
@@ -25,5 +29,24 @@ describe("Footer", () => {
     screen.getByText(/All catalog data is freely available under CC BY 4\.0\./);
     const link = screen.getByRole("link", { name: "Rights and attribution" }) as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe("/help/rights-and-attribution");
+  });
+
+  it("marks the test site, and only the test site", () => {
+    mockSite = { isProduction: false };
+    const { unmount } = render(
+      <MemoryRouter>
+        <Footer />
+      </MemoryRouter>,
+    );
+    screen.getByText("Test site");
+    unmount();
+
+    mockSite = { isProduction: true };
+    render(
+      <MemoryRouter>
+        <Footer />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText("Test site")).toBeNull();
   });
 });

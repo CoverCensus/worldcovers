@@ -53,6 +53,7 @@ import {
   restoreContribution,
 } from "@/services/contributions";
 import { BulkReviewBar } from "@/components/BulkReviewBar";
+import { PendingLoginRequestsCard } from "@/components/PendingLoginRequestsCard";
 import { withReturnTo } from "@/lib/returnTo";
 import { catalogHref } from "@/lib/catalogParams";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1399,6 +1400,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               </div>
             )}
           </div>
+
+          {/* T84: Administrators see who is waiting for an account; approval stays in the admin. */}
+          {isSuperuser && <PendingLoginRequestsCard />}
 
           {activeTab === "submissions" && (
             <div className="flex flex-col lg:flex-row gap-6">
