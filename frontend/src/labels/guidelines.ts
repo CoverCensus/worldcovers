@@ -163,8 +163,29 @@ export const COVER_DESCRIPTION_HELP =
 export const MARKING_FORM_COVER_IMAGE_WARNING = {
   title: "This image may show a whole Cover",
   body:
-    "This form collects a close-up of a Marking. Create a new Cover record " +
-    "for the full image, or use an existing Cover record if it is already catalogued.",
+    "This form collects a close-up of a Marking. Crop the marking out, and if the " +
+    "cover is not catalogued yet, submit it with this marking using the Cover section " +
+    "below; otherwise use an existing Cover record.",
+} as const;
+
+/**
+ * The Cover section on the new-Marking form (Trello T37). Ian, 2026-10-19:
+ * "When adding a NEW marking, give the opportunity to add the corresponding
+ * cover at that time to be approved." Both Entries are reviewed separately.
+ */
+export const PENDING_COVER_SECTION = {
+  toggle: "Also submit the Cover this marking is on",
+  help:
+    "Fill in the Cover here instead of waiting for the Marking to be approved. " +
+    "The Marking is reviewed first; when it is approved, the Cover becomes its own " +
+    "submission for the same Editors to review. The uncropped scan becomes the " +
+    "Cover's image.",
+  imagesLabel: "Cover Images",
+  imagesHelp:
+    "When you crop an upload above, its uncropped original is added here. " +
+    "Add or remove images as needed.",
+  addImage: "Add cover image",
+  warningAction: "Also submit it as the Cover",
 } as const;
 
 export const COVER_FORM_MARKING_IMAGE_WARNING = {

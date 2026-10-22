@@ -443,7 +443,14 @@ from that intake or Reese's report, not checks repeated in this reconciliation.
   Those catalog crops preserve the Cover's original image.
   [PR #181](https://github.com/CoverCensus/worldcovers/pull/181) adds browser
   cropping of new uploads on Marking forms; the crop replaces that pending
-  upload and the uncropped original is not submitted. Production rollout is
+  upload and the uncropped original is not submitted. October 22: the
+  new-Marking form gains an "Also submit the Cover this marking is on"
+  section (type, date or unknown, flags, description, cover images seeded
+  with the uncropped original of a cropped upload); the submission stores it
+  as `pending_cover`, and approving the Marking creates an ordinary pending
+  Cover submission for the new Marking in the same transaction, reviewed on
+  the existing cover page. Two approvals, one form, no model change; the
+  provisional-Cover-from-an-edit item is split to T92. Production rollout is
   recorded in the October 15 card comment after PR #182 and the successful
   October 14 deploy. Verify the remaining shipped cases separately from
   the unresolved combined Marking/Cover and provisional Cover workflow.
@@ -565,7 +572,7 @@ to Reese. Source observations below describe code, not deployed behaviour.
 
 | Task | Outcome | Feature | Responsibility | Scope and acceptance |
 | --- | --- | --- | --- | --- |
-| [T37](https://trello.com/c/u1f8iyjw) | Create image destinations from crop and move workflows | F5 | Reese; Michael for model changes | Shipped: carried-image flow, ordered approval, Cover-edit transfer, visible disabled actions, catalog crops into associated imageless Markings, and upload crops on Marking forms (PRs #173-#175, #181). Catalog crops keep the original; upload crops replace it. Testing under Reese. Combined Marking/Cover and provisional Cover states remain unresolved; retain both Entries' review and links. Existing-record linking remains restricted to Editors and Administrators. |
+| [T37](https://trello.com/c/u1f8iyjw) | Create image destinations from crop and move workflows | F5 | Reese; Michael for model changes | Shipped: carried-image flow, ordered approval, Cover-edit transfer, visible disabled actions, catalog crops into associated imageless Markings, and upload crops on Marking forms (PRs #173-#175, #181). Catalog crops keep the original; upload crops replace it. Testing under Reese. October 22 (branch `reese/37-marking-with-cover`): a new-Marking submission may carry its Cover (`pending_cover`); approving the Marking creates a pending Cover submission for it, reviewed separately; both Entries' review and links retained; no model change. Provisional Cover states from a Marking edit split to T92. Existing-record linking remains restricted to Editors and Administrators. |
 | [T39](https://trello.com/c/YtcnoRop) | Compare proposed changes beside the current Entry | F3 | Reese | Show current and proposed values side by side during Marking and Cover submission review. Existing history is not this comparison. Acceptance: an Editor can identify changed and unchanged values before deciding. |
 | [T40](https://trello.com/c/vqYH3R2Z) | Preserve contributor credit preferences across edits | F3 | Michael: model; Reese: application | Preference protection is implemented and locally verified in `c0e09f3`, published through PR #176, for Markings and Covers, including older drafts, direct API edits, and admin forms. Only the original Contributor can change their choice; public credit still uses `created_by`. Cumulative credit and each person's opt-in remain unresolved. Hosted verification and acceptance remain. Preserve existing opt-in credit display for Markings and Covers. Evidence: [preference tests](backend/common/tests/test_submitter_name_preference.py) and [form tests](frontend/src/pages/SubmitterNamePreference.test.tsx). |
 | [T41](https://trello.com/c/LI10JpcC) | Define rescind and inactivity handling for submissions | F3 | Reese; Michael for model changes | Keep existing pending approve/reject/revision and owner withdrawal. Define rescind, the inactivity interval, and whether the request concerns submissions or published Entries before implementing additional actions. Acceptance: agreed transitions and permissions, then verified behaviour; no arbitrary deletion policy. |

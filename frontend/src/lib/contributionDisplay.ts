@@ -3,6 +3,7 @@ import {
   formatPartialDateInput,
   partialDateInputFromPayload,
   partialDateInputFromSubmittedData,
+  type PartialDateInput,
 } from "@/lib/partialDate";
 import { formatSizeFromSubmittedData } from "@/lib/dimensionsMm";
 import { ENTRY_LABELS } from "@/labels/entry";
@@ -208,4 +209,64 @@ export function contributionCardPresentation({
   }
 
   return { entryKind, title, fields };
+}
+
+/**
+ * The Cover a contributor submitted together with a new Marking (Trello T37),
+ * read from submitted_data.pending_cover. Approval turns it into its own cover
+ * contribution; until then it travels inside the Marking submission.
+ */
+export interface PendingCoverSummary {
+  type: string;
+  date: PartialDateInput;
+  isInstitutional: boolean;
+  isBackstamp: boolean;
+  description: string;
+  /** storage_filename of each saved upload, relative to the media root. */
+  imageStorageFilenames: string[];
+  noImage: boolean;
+}
+
+function truthy(v: unknown): boolean {
+  return v === true || String(v ?? "").trim().toLowerCase() === "true";
+}
+
+export function pendingCoverFromSubmittedData(
+  sd: Record<string, unknown> | null | undefined,
+): PendingCoverSummary | null {
+  const raw = sd?.pending_cover;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const pc = raw as Record<string, unknown>;
+  const metas = Array.isArray(pc.image_metas) ? (pc.image_metas as Array<Record<string, unknown>>) : [];
+  return {
+    type: String(pc.type ?? "").trim().toUpperCase(),
+    date: partialDateInputFromSubmittedData(pc),
+    isInstitutional: truthy(pc.is_institutional),
+    isBackstamp: truthy(pc.is_backstamp),
+    description: String(pc.description ?? ""),
+    imageStorageFilenames: metas
+      .map((m) => String(m?.storage_filename ?? "").replace(/^\/+/, ""))
+      .filter((v) => v.length > 0),
+    noImage: truthy(pc.no_cover_image),
+  };
+}
+
+/** Set on the Marking submission once approval created its Cover submission. */
+export function pendingCoverContributionIdFromSubmittedData(
+  sd: Record<string, unknown> | null | undefined,
+): number | null {
+  const raw = sd?.pending_cover_contribution_id;
+  if (raw == null || raw === "") return null;
+  const n = parseInt(String(raw), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Set on a cover contribution that approval created from a Marking submission. */
+export function createdFromContributionIdFromSubmittedData(
+  sd: Record<string, unknown> | null | undefined,
+): number | null {
+  const raw = sd?.created_from_contribution_id;
+  if (raw == null || raw === "") return null;
+  const n = parseInt(String(raw), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }

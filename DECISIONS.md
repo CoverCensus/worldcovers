@@ -515,6 +515,39 @@ delete for an unsaved image. Evidence: workspace `docs/issues.md` #180;
 `EntryAssociatedThumbnailsCard.test.tsx`, `CoverDetail.imageActions.test.tsx`,
 `coverImageActionState.test.ts`.
 
+## Submit A Marking And Its Cover Together, Approve Each
+
+**Do:** Let a contributor submitting a NEW Marking also submit the Cover it is
+on, in the same form. The Cover's fields and uploads travel inside the
+Marking contribution as `submitted_data["pending_cover"]` (type, date or
+unknown, institutional and backstamp flags, description, its own image
+metas). Enforce the Cover form's three rules at final submit (type, date or
+unknown, image or affirmation); let a draft be incomplete; keep saved cover
+images across a resubmit unless the contributor removes them. When the
+Marking is approved, singly or in bulk, create an ordinary pending cover
+contribution for the new Marking in the same transaction (same contributor
+and Collection, real `parent_marking_id`, `created_from_contribution_id`),
+stamp `pending_cover_contribution_id` on the parent, and return it. Review
+the Cover on the existing cover page. On the form, keep the uncropped
+original of a cropped upload and seed the Cover's images with it; offer the
+section on every new-Marking form and point the whole-cover warning at it.
+
+**Don't:** Add a parent FK, a kind column or any migration for this; the
+link is the two stamped ids. Don't create the Cover row before the Marking
+exists, approve both with one click, or let a Marking edit carry a cover (a
+published Marking's Covers are managed from its record page; see T92).
+Don't cascade a rejection: rejecting or returning the Marking creates
+nothing, and a rejected Marking's cover scan stays only on that row. Don't
+crop on the server or link the two uploads with `cropped_from`.
+
+**Why:** Trello T37 and ISSUE.md say both Entries require approval; the 23 Sep
+triage said one approval; this follows the card. Michael did not answer the
+7 Oct memo's five questions, and model changes are his lane, so Reese chose
+the no-migration design on 2026-10-22 (Ian asked for the flow on 10-16, 10-19
+and 10-22). The parent-FK design in the memo remains the upgrade path if
+side-by-side review is wanted. Evidence: `test_pending_cover.py`,
+`Contribute.pendingCover.test.tsx`, `contributionDisplay.pendingCover.test.ts`.
+
 ## Approve Images In The Order The Contributor Arranged
 
 **Do:** Record the carried marking image's gallery index as

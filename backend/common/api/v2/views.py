@@ -361,6 +361,14 @@ def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_cod
         if not Contribution.objects.filter(marking=marking).exclude(pk=contrib.pk).exists():
             contrib.marking = marking
             update_fields.append("marking")
+        # Trello T37: a Cover submitted together with this Marking becomes its
+        # own pending cover contribution now that the Marking exists.
+        pending_cover_child = _create_pending_cover_child(contrib, marking, actor)
+        if pending_cover_child is not None:
+            sd = dict(contrib.submitted_data or {})
+            sd["pending_cover_contribution_id"] = pending_cover_child.pk
+            contrib.submitted_data = sd
+            update_fields.append("submitted_data")
         contrib.save(update_fields=update_fields)
         after_snapshot = build_marking_snapshot(marking)
         txn = log_submission_transaction(
@@ -374,7 +382,10 @@ def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_cod
             extra_payload={"review_notes": review_notes},
         )
         create_marking_version(marking, txn, actor)
-        return {"detail": "Contribution approved.", "markingId": marking.pk}
+        body = {"detail": "Contribution approved.", "markingId": marking.pk}
+        if pending_cover_child is not None:
+            body["pendingCoverContributionId"] = pending_cover_child.pk
+        return body
 
 
 def _reject_contribution(contrib, *, actor, review_notes):
@@ -3808,6 +3819,223 @@ def _submission_citations(data) -> dict:
     return result
 
 
+# ---------------------------------------------------------------------------
+# A Cover submitted together with a new Marking (Trello T37).
+#
+# Ian, 2026-10-19: "When adding a NEW marking, give the opportunity to add the
+# corresponding cover at that time." The Cover cannot exist before its Marking
+# does, so the Marking contribution carries the Cover's fields and uploads under
+# submitted_data["pending_cover"]; approving the Marking turns that into an
+# ordinary pending cover contribution for the new Marking (see
+# _create_pending_cover_child). Both Entries are approved separately, as the
+# card and ISSUE.md require. No model change: the link is the stamped ids.
+# ---------------------------------------------------------------------------
+
+PENDING_COVER_FIELDS = (
+    "type",
+    "cover_date_unknown",
+    "cover_date_year",
+    "cover_date_month",
+    "cover_date_day",
+    "is_institutional",
+    "is_backstamp",
+    "description",
+    "no_cover_image",
+)
+# Bounds for what one request may carry: the Cover form's description is free
+# text, and nothing else on this path caps a multipart request's file count.
+PENDING_COVER_MAX_TEXT = 4000
+PENDING_COVER_MAX_IMAGES = 12
+_PENDING_COVER_TRANSPORT_KEYS = (
+    "pending_cover",
+    "drop_pending_cover",
+    "pending_cover_removed_image_keys",
+    "pending_cover_image",
+)
+
+
+def _truthy(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_pending_cover_fields(raw):
+    """The cover fields from the request: a JSON string or a dict; None when absent."""
+    if raw in (None, ""):
+        return None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(raw, dict):
+        return None
+    fields = {}
+    for key in PENDING_COVER_FIELDS:
+        if key not in raw:
+            continue
+        value = raw.get(key)
+        if key in ("cover_date_unknown", "is_institutional", "is_backstamp", "no_cover_image"):
+            fields[key] = _truthy(value)
+        elif value is None:
+            fields[key] = ""
+        else:
+            fields[key] = str(value).strip()
+    if "type" in fields:
+        fields["type"] = fields["type"].upper()
+    return fields
+
+
+def _pending_cover_request_error(data, request):
+    """Bounds that refuse the request outright rather than trimming it silently."""
+    fields = _parse_pending_cover_fields(data.get("pending_cover")) or {}
+    for key, value in fields.items():
+        if isinstance(value, str) and len(value) > PENDING_COVER_MAX_TEXT:
+            return f"The cover's {key} is too long (at most {PENDING_COVER_MAX_TEXT} characters)."
+    try:
+        count = len(request.FILES.getlist("pending_cover_image"))
+    except AttributeError:
+        count = 0
+    if count > PENDING_COVER_MAX_IMAGES:
+        return f"At most {PENDING_COVER_MAX_IMAGES} cover images can be added in one request."
+    return None
+
+
+def _resolve_pending_cover(data, existing):
+    """Merge the request's pending-cover fields over what the row already holds.
+
+    Returns the dict to store (without this request's new uploads, which
+    _save_pending_cover_uploads adds after validation), or None when there is
+    no cover: absent and nothing saved, or explicitly dropped. Saved images
+    survive a resubmit unless named in pending_cover_removed_image_keys; keys
+    arrive as the URLs the form displayed (".../media/<storage_filename>") or
+    as bare storage filenames, and are matched exactly against this row's own
+    metas, never by suffix.
+    """
+    if _truthy(data.get("drop_pending_cover")):
+        return None
+    fields = _parse_pending_cover_fields(data.get("pending_cover"))
+    existing = existing if isinstance(existing, dict) else None
+    if fields is None and existing is None:
+        return None
+    merged = dict(existing or {})
+    merged.update(fields or {})
+    kept = [m for m in (merged.get("image_metas") or []) if isinstance(m, dict)]
+    removed = {
+        key.split("/media/", 1)[-1].lstrip("/")
+        for key in (_parse_removed_image_keys(data.get("pending_cover_removed_image_keys")) or [])
+        if isinstance(key, str) and key.strip()
+    }
+    if removed:
+        kept = [m for m in kept if str(m.get("storage_filename", "")).lstrip("/") not in removed]
+    merged["image_metas"] = kept
+    return merged
+
+
+def _pending_cover_uploads(request):
+    try:
+        return list(request.FILES.getlist("pending_cover_image"))
+    except AttributeError:
+        return []
+
+
+def _save_pending_cover_uploads(pending_cover, uploads, region_abbrev):
+    """Write this request's cover uploads and append their metas. Called only
+    after the field checks passed, so a refused request leaves no new files."""
+    if pending_cover is None or not uploads:
+        return pending_cover
+    kept = list(pending_cover.get("image_metas") or [])
+    for uploaded in uploads:
+        meta = _save_contribution_image(uploaded, region_abbrev)
+        if meta:
+            kept.append(meta)
+    pending_cover["image_metas"] = kept[:PENDING_COVER_MAX_IMAGES]
+    return pending_cover
+
+
+def _validate_pending_cover(pending_cover, pending_upload_count=0):
+    """The same three rules the Cover form enforces at final submit. Runs before
+    this request's uploads are written, so it counts them rather than reading
+    them back."""
+    if not pending_cover:
+        return None
+    cover_type = (pending_cover.get("type") or "").strip().upper()
+    if cover_type not in Cover.COVER_TYPE_CODES:
+        return "Choose a type for the cover submitted with this marking."
+    has_date = pending_cover.get("cover_date_unknown") or any(
+        str(pending_cover.get(k) or "").strip()
+        for k in ("cover_date_year", "cover_date_month", "cover_date_day")
+    )
+    if not has_date:
+        return "Add a date for the cover submitted with this marking, or mark it unknown."
+    if (
+        not pending_cover.get("image_metas")
+        and pending_upload_count <= 0
+        and not pending_cover.get("no_cover_image")
+    ):
+        return "Add at least one cover image or confirm no image is available."
+    return None
+
+
+def _create_pending_cover_child(contrib, marking, actor):
+    """On Marking approval, turn submitted_data["pending_cover"] into a pending
+    cover contribution for the new Marking. Returns the child or None.
+
+    Runs inside the approval's transaction.atomic(), so a failure here rolls the
+    whole approval back rather than leaving a Marking whose promised Cover never
+    reached the queue. The child is an ordinary cover submission: same
+    contributor, same Collection, real parent_marking_id, reviewed on the
+    existing cover page.
+    """
+    sd = contrib.submitted_data or {}
+    pending = sd.get("pending_cover")
+    if not isinstance(pending, dict) or not pending:
+        return None
+    # New Markings only: a Marking edit has a published Marking whose Covers
+    # are managed from its record page (Trello T92 for the edit-form offer).
+    if _parse_int(sd.get("edit_marking_id")) is not None:
+        return None
+    metas = [m for m in (pending.get("image_metas") or []) if isinstance(m, dict)]
+    child_sd = {
+        "submission_kind": "cover",
+        "entity_type": "cover",
+        "parent_marking_id": marking.pk,
+        "marking_id": marking.pk,
+        "created_from_contribution_id": contrib.pk,
+    }
+    if sd.get("state"):
+        child_sd["state"] = sd["state"]
+    for key in PENDING_COVER_FIELDS:
+        if key in pending:
+            child_sd[key] = pending[key]
+    if "display_submitter_name" in sd:
+        child_sd["display_submitter_name"] = sd["display_submitter_name"]
+    if metas:
+        child_sd["cover_image_metas"] = metas
+        child_sd["image_metas"] = metas
+        child_sd["image_meta"] = metas[0]
+    child = Contribution.objects.create(
+        contributor=contrib.contributor,
+        collection=contrib.collection,
+        submitted_data=child_sd,
+        status=Contribution.STATUS_PENDING,
+        created_by=contrib.contributor,
+        modified_by=actor,
+    )
+    log_submission_transaction(
+        action=SubmissionTransaction.ACTION_SUBMIT,
+        actor=actor,
+        contribution=child,
+        marking=marking,
+        source=SubmissionTransaction.SOURCE_SYSTEM,
+        before_payload={},
+        after_payload=child_sd,
+        extra_payload={"created_from_contribution_id": contrib.pk},
+    )
+    return child
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class ContributionSubmitView(APIView):
     """
@@ -4025,6 +4253,13 @@ class ContributionSubmitView(APIView):
             "save_as_draft",
             "saveAsDraft",
             "status",
+            # Trello T37: the cover submitted with a new marking travels as
+            # pending_cover (JSON) + pending_cover_image files; resolved below.
+            # The two provenance stamps are written by the approval, never taken
+            # from the request.
+            *_PENDING_COVER_TRANSPORT_KEYS,
+            "pending_cover_contribution_id",
+            "created_from_contribution_id",
         }
         user_can_submit_catalog_code = user_can_review_contributions(request.user)
         if not user_can_submit_catalog_code:
@@ -4183,6 +4418,26 @@ class ContributionSubmitView(APIView):
             draft_edit_marking_id = _parse_int(existing_sd.get("edit_marking_id"))
             if not is_cover_submission and draft_edit_marking_id is not None:
                 _keep_marking_images_on_edit(existing_sd, draft_edit_marking_id)
+            if not is_cover_submission and draft_edit_marking_id is not None:
+                # A row that became a Marking edit cannot carry a cover.
+                existing_sd.pop("pending_cover", None)
+            elif not is_cover_submission:
+                bound_error = _pending_cover_request_error(data, request)
+                if bound_error:
+                    return Response({"detail": bound_error}, status=status.HTTP_400_BAD_REQUEST)
+                pending_cover = _resolve_pending_cover(data, existing_sd.get("pending_cover"))
+                cover_uploads = _pending_cover_uploads(request)
+                # A row that is (or stays) pending must carry a complete cover:
+                # a draft-style save on a pending row keeps it in the queue.
+                if transition_to_pending or contrib.status == Contribution.STATUS_PENDING:
+                    cover_error = _validate_pending_cover(pending_cover, len(cover_uploads))
+                    if cover_error:
+                        return Response({"detail": cover_error}, status=status.HTTP_400_BAD_REQUEST)
+                pending_cover = _save_pending_cover_uploads(pending_cover, cover_uploads, region_abbrev)
+                if pending_cover is None:
+                    existing_sd.pop("pending_cover", None)
+                else:
+                    existing_sd["pending_cover"] = pending_cover
             if transition_to_pending:
                 image_error = _validate_final_submission_image_choice(
                     existing_sd, is_cover_submission
@@ -4258,6 +4513,20 @@ class ContributionSubmitView(APIView):
                 submitted_data["cover_image_metas"] = image_metas
             submitted_data["image_metas"] = image_metas
             submitted_data["image_meta"] = image_metas[0]
+
+        if not is_cover_submission and edit_marking_marker is None:
+            bound_error = _pending_cover_request_error(data, request)
+            if bound_error:
+                return Response({"detail": bound_error}, status=status.HTTP_400_BAD_REQUEST)
+            pending_cover = _resolve_pending_cover(data, None)
+            cover_uploads = _pending_cover_uploads(request)
+            if not is_draft:
+                cover_error = _validate_pending_cover(pending_cover, len(cover_uploads))
+                if cover_error:
+                    return Response({"detail": cover_error}, status=status.HTTP_400_BAD_REQUEST)
+            pending_cover = _save_pending_cover_uploads(pending_cover, cover_uploads, region_abbrev)
+            if pending_cover is not None:
+                submitted_data["pending_cover"] = pending_cover
 
         if not is_draft:
             image_error = _validate_final_submission_image_choice(

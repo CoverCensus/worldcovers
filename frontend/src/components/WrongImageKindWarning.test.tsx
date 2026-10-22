@@ -24,7 +24,7 @@ describe("WrongImageKindWarning (issue #76)", () => {
       />,
     );
     expect(screen.getByText(/may show a whole Cover/)).toBeTruthy();
-    expect(screen.getByText(/Create a new Cover record/)).toBeTruthy();
+    expect(screen.getByText(/submit it with this marking using the Cover section/)).toBeTruthy();
     expect(screen.getByText(/use an existing Cover record/)).toBeTruthy();
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
