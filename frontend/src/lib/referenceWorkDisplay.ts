@@ -8,11 +8,14 @@
  * semicolon or an "and" / "&" between names. A comma never splits, so a
  * single person written "Briggs, Deane R." is shown whole; the price is
  * that "Deane R. Briggs, Francis Ferguson and Thomas M. Lera" shows its
- * first two names before "et al.", which is long but never wrong.
+ * first two names before "et al.", which is long but never wrong. A
+ * corporate name with "and" in it ("Harrison and Sons") reads as two
+ * authors; the help text tells Editors to prefer a semicolon between people.
  */
 import { withOrdinalSuffix, type ReferenceWorkRecord } from "@/services/referenceWorks";
 
 const AUTHOR_SEPARATOR = /\s*;\s*|\s+and\s+|\s*&\s*/i;
+const LEADING_SEPARATORS = /^(?:\s*;\s*|\s*&\s*|and\s+)+/i;
 
 export interface FirstAuthor {
   name: string;
@@ -20,10 +23,10 @@ export interface FirstAuthor {
 }
 
 export function firstAuthor(authorship: string | null | undefined): FirstAuthor {
-  const text = (authorship ?? "").trim();
+  const text = (authorship ?? "").trim().replace(LEADING_SEPARATORS, "").trim();
   if (!text) return { name: "", etAl: false };
   const match = AUTHOR_SEPARATOR.exec(text);
-  if (!match || match.index === 0) return { name: text, etAl: false };
+  if (!match) return { name: text, etAl: false };
   const name = text.slice(0, match.index).trim();
   const rest = text.slice(match.index + match[0].length).trim();
   return { name: name || text, etAl: rest !== "" && name !== "" };

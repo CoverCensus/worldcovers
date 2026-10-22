@@ -190,14 +190,13 @@ class ReferenceWorkSerializer(serializers.ModelSerializer):
     """
     Editors add and edit Reference Works from the SPA (Trello S19).
 
-    Text is trimmed; an empty code is stored as NULL so the unique index on
-    `code` never collides on blanks. A work whose title and edition match an
+    DRF trims text; an empty code is stored as NULL so the unique index on
+    `code` never collides on blanks and codes are folded to upper case. A work whose title and edition match an
     existing one is refused (T15: never duplicate VPHC1). A code that existing
     Citations rely on cannot change, because catalog codes are generated from
     the first cited work's code (common/catalog_codes.py).
     """
 
-    TEXT_FIELDS = ("code", "title", "authorship", "publisher", "edition", "volume", "isbn", "url")
     MIN_YEAR = 1000
 
     class Meta:
@@ -211,19 +210,24 @@ class ReferenceWorkSerializer(serializers.ModelSerializer):
 
     def validate_publication_year(self, value):
         latest = timezone.now().year + 1
-        if value is None or value < self.MIN_YEAR or value > latest:
+        if value < self.MIN_YEAR or value > latest:
             raise serializers.ValidationError(
                 f"Publication year must be between {self.MIN_YEAR} and {latest}."
             )
         return value
 
     def validate(self, attrs):
-        for name in self.TEXT_FIELDS:
-            if name in attrs and isinstance(attrs[name], str):
-                attrs[name] = attrs[name].strip()
-        if "code" in attrs and not attrs["code"]:
-            attrs["code"] = None
+        if "code" in attrs:
+            # Codes are upper-case identifiers (ASCC6, VPHC1); fold case so the
+            # unique index cannot hold both spellings on a case-sensitive database.
+            attrs["code"] = attrs["code"].upper() if attrs["code"] else None
         instance = self.instance
+        if attrs.get("code"):
+            clash = ReferenceWork.objects.filter(code__iexact=attrs["code"])
+            if instance is not None:
+                clash = clash.exclude(pk=instance.pk)
+            if clash.exists():
+                raise serializers.ValidationError({"code": "A Reference Work with this code already exists."})
         title = attrs.get("title", instance.title if instance else "")
         edition = attrs.get("edition", instance.edition if instance else "") or ""
         candidates = ReferenceWork.objects.filter(title__iexact=title)
@@ -237,19 +241,33 @@ class ReferenceWorkSerializer(serializers.ModelSerializer):
                         f"({other.code or f'id {other.pk}'}). Edit that one instead."
                     )
                 })
+        # A work that never had a code may be given one; only a code that
+        # Entries already carry is frozen.
         if (
             instance is not None
+            and instance.code
             and "code" in attrs
             and attrs["code"] != instance.code
-            and instance.citations.exists()
         ):
-            raise serializers.ValidationError({
-                "code": (
-                    "This code is cited by existing Entries and their catalog codes are "
-                    "generated from it; it cannot be changed."
-                )
-            })
+            if instance.citations.exists() or self._entries_carry_prefix(instance.code):
+                raise serializers.ValidationError({
+                    "code": (
+                        "This code is cited by existing Entries or appears in their catalog "
+                        "codes; it cannot be changed."
+                    )
+                })
         return attrs
+
+    @staticmethod
+    def _entries_carry_prefix(code):
+        """Catalog codes keep the prefix after a Citation is deleted; guard those too."""
+        if not code:
+            return False
+        prefix = f"{code}-"
+        return (
+            Marking.all_objects.filter(code__startswith=prefix).exists()
+            or Cover.all_objects.filter(code__startswith=prefix).exists()
+        )
 
 
 class FAQEntrySerializer(serializers.ModelSerializer):

@@ -80,7 +80,7 @@ describe("ReferenceWorks page", () => {
   it("lists every work with the compact author line and no delete control", async () => {
     renderPage();
     expect(await screen.findByText("ASCC6 - American Stampless Cover Catalog (6th Ed.)")).toBeTruthy();
-    expect(screen.getByText("Deane R. Briggs et al. | 2nd Ed. | 2021")).toBeTruthy();
+    expect(screen.getByText("On submission forms: Deane R. Briggs et al. | 2nd Ed. | 2021")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Edit / }).length).toBe(2);
     expect(screen.queryByRole("button", { name: /delete|remove/i })).toBeNull();
   });
@@ -98,6 +98,7 @@ describe("ReferenceWorks page", () => {
     await user.type(within(form).getByLabelText(/^Title/), "Boston Postal Markings to 1890");
     await user.type(within(form).getByLabelText(/^Code/), " BPM2 ");
     await user.type(within(form).getByLabelText(/^Authorship/), "Blake, Maurice C. and Davis, Wilbur W.");
+    expect(screen.getByTestId("authorship-preview").textContent).toContain("Blake, Maurice C. et al.");
     await user.type(within(form).getByLabelText(/^Publisher/), "Philatelic Foundation");
     await user.type(within(form).getByLabelText(/^Publication year/), "1949");
     await user.type(within(form).getByLabelText(/^Edition/), "2");

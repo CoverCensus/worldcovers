@@ -4,7 +4,7 @@
  * refuses it. The route is wrapped in RequireEditor and the API enforces the
  * same Editor rule, so the page is a convenience, not the guard.
  */
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
@@ -26,7 +26,7 @@ import {
   REFERENCE_WORK_VOLUME_HELP,
   REFERENCE_WORK_YEAR_HELP,
 } from "@/labels/guidelines";
-import { compactReferenceWorkLine } from "@/lib/referenceWorkDisplay";
+import { compactReferenceWorkLine, formatAuthorsCompact } from "@/lib/referenceWorkDisplay";
 import {
   createReferenceWork,
   formatReferenceWorkLabel,
@@ -139,6 +139,12 @@ const ReferenceWorks = () => {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+
+  // Keyboard and screen-reader users land on the error instead of hunting for it.
+  useEffect(() => {
+    if (formError) errorRef.current?.focus();
+  }, [formError]);
 
   const { data: works = [], isLoading, error } = useQuery({
     queryKey: REFERENCE_WORKS_QUERY_KEY,
@@ -234,8 +240,8 @@ const ReferenceWorks = () => {
                 existing works can be edited but not removed.
               </p>
             </div>
-            <Button onClick={formOpen && editingId === null ? closeForm : openNew}>
-              {formOpen && editingId === null ? "Cancel" : "New Reference Work"}
+            <Button onClick={formOpen ? closeForm : openNew}>
+              {formOpen ? "Cancel" : "New Reference Work"}
             </Button>
           </div>
 
@@ -243,12 +249,19 @@ const ReferenceWorks = () => {
             <Card className="p-4 mb-6">
               <form onSubmit={onSubmit} noValidate aria-label={editingId === null ? "New Reference Work" : "Edit Reference Work"}>
                 <h2 className="font-semibold mb-3">
-                  {editingWork ? `Edit ${formatReferenceWorkLabel(editingWork)}` : "New Reference Work"}
+                  {editingId === null
+                    ? "New Reference Work"
+                    : `Edit ${editingWork ? formatReferenceWorkLabel(editingWork) : "Reference Work"}`}
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Field id="title" label="Title" help={REFERENCE_WORK_TITLE_HELP} form={form} onChange={onFieldChange} required />
                   <Field id="code" label="Code" help={REFERENCE_WORK_CODE_HELP} form={form} onChange={onFieldChange} />
-                  <Field id="authorship" label="Authorship" help={REFERENCE_WORK_AUTHORSHIP_HELP} form={form} onChange={onFieldChange} required />
+                  <div className="space-y-1">
+                    <Field id="authorship" label="Authorship" help={REFERENCE_WORK_AUTHORSHIP_HELP} form={form} onChange={onFieldChange} required />
+                    <p className="text-xs text-muted-foreground" data-testid="authorship-preview">
+                      Shown on submission forms as: {formatAuthorsCompact(form.authorship) || "(first author)"}
+                    </p>
+                  </div>
                   <Field id="publisher" label="Publisher" help={REFERENCE_WORK_PUBLISHER_HELP} form={form} onChange={onFieldChange} required />
                   <Field id="publicationYear" label="Publication year" help={REFERENCE_WORK_YEAR_HELP} form={form} onChange={onFieldChange} required inputMode="numeric" />
                   <Field id="edition" label="Edition" help={REFERENCE_WORK_EDITION_HELP} form={form} onChange={onFieldChange} />
@@ -257,7 +270,7 @@ const ReferenceWorks = () => {
                   <Field id="url" label="URL" help={REFERENCE_WORK_URL_HELP} form={form} onChange={onFieldChange} />
                 </div>
                 {formError && (
-                  <p role="alert" className="mt-3 text-sm text-destructive">
+                  <p ref={errorRef} tabIndex={-1} role="alert" className="mt-3 text-sm text-destructive">
                     {formError}
                   </p>
                 )}
@@ -304,11 +317,15 @@ const ReferenceWorks = () => {
                   <li key={work.id} className="py-3 flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-foreground">{formatReferenceWorkLabel(work)}</p>
-                      <p className="text-xs text-muted-foreground">{compactReferenceWorkLine(work)}</p>
                       <p className="text-xs text-muted-foreground">
                         {work.authorship}
                         {work.publisher ? ` -- ${work.publisher}` : ""}
                       </p>
+                      {compactReferenceWorkLine(work) !== work.authorship && (
+                        <p className="text-xs text-muted-foreground">
+                          On submission forms: {compactReferenceWorkLine(work)}
+                        </p>
+                      )}
                     </div>
                     <Button type="button" variant="outline" size="sm" onClick={() => openEdit(work)} aria-label={`Edit ${formatReferenceWorkLabel(work)}`}>
                       Edit

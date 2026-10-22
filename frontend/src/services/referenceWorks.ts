@@ -1,5 +1,6 @@
 /**
- * Reference works (v2 ReferenceWork entity): GET /reference-works/.
+ * Reference works (v2 ReferenceWork entity): GET /reference-works/ for every
+ * signed-in user; POST and PATCH for Editors and Administrators (S19).
  */
 import apiClient, { ensureCsrfToken } from "@/lib/api";
 
@@ -185,7 +186,7 @@ export async function createReferenceWork(payload: ReferenceWorkPayload): Promis
   return mapApiResultToRecord(res.data);
 }
 
-/** PATCH /reference-works/{id}/ with the changed fields only. */
+/** PATCH /reference-works/{id}/ with the fields to change (the page sends the whole form). */
 export async function updateReferenceWork(
   id: number,
   payload: Partial<ReferenceWorkPayload>,

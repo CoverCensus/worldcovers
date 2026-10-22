@@ -285,9 +285,12 @@ because catalog codes are generated from it. Show a Reference Work on the
 submission forms as its title, then the first author plus "et al." when the
 authorship names several people, with edition, volume and year.
 
-**Don't:** Offer delete in the application (the API refuses it; a Citation
-protects its Reference Work). Don't rely on Django model permissions that no
-code grants to the Editors group. Don't split an authorship string on a
+**Don't:** Offer delete in the application (the API refuses it for everyone
+but a superuser, and a Citation protects its Reference Work at the database).
+Don't rely on Django model permissions that no code grants to the Editors
+group. Any Editor may edit a Reference Work that every Collection cites; that
+is the project's Editor definition, the same as for Colors and Shapes, and the
+code guard is what keeps generated catalog codes stable. Don't split an authorship string on a
 comma: only a semicolon or an "and" / "&" between names separates people,
 so a single person written "Briggs, Deane R." stays whole; the full
 authorship is unchanged in storage and on the detail pages. Don't create a

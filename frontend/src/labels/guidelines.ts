@@ -182,7 +182,7 @@ export const REFERENCE_WORK_TITLE_HELP =
   "The publication's title as printed. A title that already exists with the same edition is refused; edit that Reference Work instead.";
 
 export const REFERENCE_WORK_AUTHORSHIP_HELP =
-  "All authors or editors, as printed. Separate people with a semicolon or 'and'; a comma inside one person's name is kept, so 'Briggs, Deane R.' stays whole.";
+  "All authors or editors, as printed. Separate people with a semicolon; 'and' or '&' between names also separates, so a firm such as 'Harrison and Sons' reads as two authors. A comma inside one person's name is kept, so 'Briggs, Deane R.' stays whole.";
 
 export const REFERENCE_WORK_PUBLISHER_HELP =
   "The publishing body, society, or press.";

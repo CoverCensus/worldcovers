@@ -26,6 +26,10 @@ describe("firstAuthor", () => {
     });
   });
 
+  it("drops a leading separator", () => {
+    expect(firstAuthor("; Smith")).toEqual({ name: "Smith", etAl: false });
+  });
+
   it("handles blanks", () => {
     expect(firstAuthor("")).toEqual({ name: "", etAl: false });
     expect(firstAuthor(null)).toEqual({ name: "", etAl: false });

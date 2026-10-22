@@ -4,7 +4,15 @@ from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from common.models import Citation, Collection, CollectionAssignment, ReferenceWork, Region
+from common.models import (
+    Citation,
+    Collection,
+    CollectionAssignment,
+    Marking,
+    PostOffice,
+    ReferenceWork,
+    Region,
+)
 
 User = get_user_model()
 
@@ -136,3 +144,64 @@ class ReferenceWorkApiTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.ascc.refresh_from_db()
         self.assertEqual(self.ascc.code, "ASCC6")
+
+    def test_code_cannot_change_while_entry_codes_carry_it(self):
+        # Deleting the Citations does not rewrite the Markings' catalog codes.
+        office = PostOffice.objects.create(name="Richmond", **self.stamp)
+        Marking.objects.create(
+            code="ASCC6-VA-M0001", type="TOWNMARK", inscription_txt="RICHMOND",
+            is_manuscript=True, post_office=office, **self.stamp,
+        )
+        self.client.force_authenticate(self.group_editor)
+        response = self.client.patch(
+            f"/api/v2/reference-works/{self.ascc.pk}/", {"code": "ASCC7"}, format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("code", response.data)
+
+    def test_code_is_upper_cased_and_unique_ignoring_case(self):
+        self.client.force_authenticate(self.group_editor)
+        response = self.client.post(
+            "/api/v2/reference-works/", dict(self.payload, code="ascc6"), format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("code", response.data)
+        response = self.client.post(
+            "/api/v2/reference-works/", dict(self.payload, code="fphc2"), format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["code"], "FPHC2")
+
+    def test_uncoded_cited_work_can_be_given_a_code(self):
+        uncoded = ReferenceWork.objects.create(
+            code=None, title="County Notes", authorship="Anon", publisher="Local",
+            publication_year=1950, **self.stamp,
+        )
+        Citation.objects.create(
+            reference_work=uncoded, subject_type="MARKING", subject_id=2,
+            citation_detail="p. 9", **self.stamp,
+        )
+        self.client.force_authenticate(self.group_editor)
+        response = self.client.patch(
+            f"/api/v2/reference-works/{uncoded.pk}/", {"code": "cn1"}, format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["code"], "CN1")
+
+    def test_superuser_delete_is_refused_with_409_when_cited(self):
+        self.client.force_authenticate(self.admin)
+        Citation.objects.create(
+            reference_work=self.ascc, subject_type="COVER", subject_id=3,
+            citation_detail="p. 2", **self.stamp,
+        )
+        response = self.client.delete(f"/api/v2/reference-works/{self.ascc.pk}/")
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertTrue(ReferenceWork.objects.filter(pk=self.ascc.pk).exists())
+
+        spare = ReferenceWork.objects.create(
+            code="SPARE1", title="Spare", authorship="Anon", publisher="Local",
+            publication_year=1950, **self.stamp,
+        )
+        response = self.client.delete(f"/api/v2/reference-works/{spare.pk}/")
+        self.assertEqual(response.status_code, 204)
+
