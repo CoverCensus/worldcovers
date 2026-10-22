@@ -44,8 +44,18 @@ interface PendingCoverSectionProps {
 }
 
 function FilePreview({ file }: { file: File }) {
-  const url = useMemo(() => URL.createObjectURL(file), [file]);
-  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  // Object URLs are the only way to preview a File; a runtime without them
+  // (or a revoked one) just shows the file name.
+  const url = useMemo(() => {
+    try {
+      return URL.createObjectURL(file);
+    } catch {
+      return "";
+    }
+  }, [file]);
+  useEffect(() => () => {
+    if (url) URL.revokeObjectURL(url);
+  }, [url]);
   return <img src={url} alt={file.name} className="h-20 w-full object-contain bg-muted rounded" />;
 }
 

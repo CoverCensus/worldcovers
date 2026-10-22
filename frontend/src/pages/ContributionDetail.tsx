@@ -522,6 +522,8 @@ const ContributionDetail = () => {
   // header/details intentionally mirror Catalog Search cards so the same entry
   // is recognizable before and after approval.
   let contributionCatalogFields: CatalogFieldValues | null = null;
+  // Trello T37: the Cover carried inside this Marking submission, if any.
+  const pendingCover = pendingCoverFromSubmittedData(contribution.submittedData);
   let displayName = `Submission #${contribution.id}`;
   let fieldRowsError: string | null = null;
   try {
@@ -821,9 +823,9 @@ const ContributionDetail = () => {
               </div>
 
               {editComparison && <EditComparisonCard entryLabel="marking" rows={editComparison} />}
-              {pendingCoverFromSubmittedData(contribution.submittedData) && (
+              {pendingCover && (
                 <PendingCoverCard
-                  summary={pendingCoverFromSubmittedData(contribution.submittedData)!}
+                  summary={pendingCover}
                   createdContributionId={pendingCoverContributionIdFromSubmittedData(contribution.submittedData)}
                   approved={contribution.status === "approved"}
                 />

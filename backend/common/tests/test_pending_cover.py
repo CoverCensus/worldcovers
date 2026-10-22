@@ -140,6 +140,16 @@ class PendingCoverTests(TestCase):
         self.assertEqual(pc["type"], "FC")
         self.assertEqual(pc["image_metas"], [saved_meta])
 
+        # Removing the saved image by its displayed URL and adding a new one swaps them.
+        swapped = self._submit(
+            edit_contribution_id=pk, pending_cover=_cover(type="FC"), marking_image=[],
+            pending_cover_removed_image_keys=json.dumps([f"/media/{saved_meta['storage_filename']}"]),
+            pending_cover_image=[_png("replacement.png")],
+        )
+        self.assertEqual(swapped.status_code, 200, swapped.data)
+        metas = Contribution.objects.get(pk=pk).submitted_data["pending_cover"]["image_metas"]
+        self.assertEqual([m["original_filename"] for m in metas], ["replacement.png"])
+
         # Dropping the section removes the stored cover entirely.
         dropped = self._submit(edit_contribution_id=pk, drop_pending_cover="true", marking_image=[])
         self.assertEqual(dropped.status_code, 200, dropped.data)

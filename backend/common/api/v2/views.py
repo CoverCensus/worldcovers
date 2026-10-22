@@ -3842,6 +3842,10 @@ PENDING_COVER_FIELDS = (
     "description",
     "no_cover_image",
 )
+# Bounds for what one request may carry: the Cover form's description is free
+# text, and nothing else on this path caps a multipart request's file count.
+PENDING_COVER_MAX_TEXT = 4000
+PENDING_COVER_MAX_IMAGES = 12
 _PENDING_COVER_TRANSPORT_KEYS = (
     "pending_cover",
     "drop_pending_cover",
@@ -3879,7 +3883,10 @@ def _parse_pending_cover_fields(raw):
         else:
             fields[key] = str(value).strip()
     if "type" in fields:
-        fields["type"] = fields["type"].upper()
+        fields["type"] = fields["type"].upper()[:16]
+    for key, value in fields.items():
+        if isinstance(value, str) and len(value) > PENDING_COVER_MAX_TEXT:
+            fields[key] = value[:PENDING_COVER_MAX_TEXT]
     return fields
 
 
@@ -3903,17 +3910,21 @@ def _resolve_pending_cover(data, request, existing, region_abbrev):
         m for m in (merged.get("image_metas") or [])
         if isinstance(m, dict)
     ]
-    removed = set(_parse_removed_image_keys(data.get("pending_cover_removed_image_keys")) or [])
+    # Keys arrive as the URLs the form displayed (".../media/<storage_filename>")
+    # or as bare storage filenames; both reduce to the storage filename, matched
+    # exactly against this row's own metas, never by suffix.
+    removed = {
+        key.split("/media/", 1)[-1].lstrip("/")
+        for key in (_parse_removed_image_keys(data.get("pending_cover_removed_image_keys")) or [])
+        if isinstance(key, str) and key.strip()
+    }
     if removed:
-        kept = [
-            m for m in kept
-            if not any(str(m.get("storage_filename", "")).endswith(key.split("/media/")[-1].lstrip("/")) for key in removed)
-        ]
+        kept = [m for m in kept if str(m.get("storage_filename", "")).lstrip("/") not in removed]
     try:
         uploads = request.FILES.getlist("pending_cover_image")
     except AttributeError:
         uploads = []
-    for uploaded in uploads:
+    for uploaded in uploads[:PENDING_COVER_MAX_IMAGES]:
         meta = _save_contribution_image(uploaded, region_abbrev)
         if meta:
             kept.append(meta)
