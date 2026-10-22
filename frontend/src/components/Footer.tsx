@@ -51,7 +51,10 @@ export const Footer = () => {
           </div>
         </div>
         <div className="mt-8 pt-6 border-t border-border text-center text-sm text-muted-foreground">
-          © {new Date().getFullYear()} WorldCovers. All catalog data is freely available under CC BY 4.0.
+          © {new Date().getFullYear()} WorldCovers. All catalog data is freely available under CC BY 4.0.{" "}
+          <Link to="/help/rights-and-attribution" className="underline hover:text-foreground transition-colors">
+            Rights and attribution
+          </Link>
         </div>
         <div className="pt-2 text-center text-xs text-muted-foreground/60">
           v{__APP_VERSION__}

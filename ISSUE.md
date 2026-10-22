@@ -351,6 +351,21 @@ Evidence: [Help publication](backend/common/api/help.py),
 [acknowledgements](docs/acknowledgements.md). This intake records the work;
 it does not select a new license or publish a rights policy.
 
+Published on branch `reese/69-rights-help` (October 22): a new Help article,
+[Rights and Attribution](docs/rights-and-attribution.md), added to the
+allowlist. It reports what the site already states (GPL-3.0 for the
+software; the footer's CC BY 4.0 statement for catalog records; listings
+accepted on their catalog's authority; the Contributor name opt-in), gives a
+worked credit line for a record and for an image with "changes made", explains
+corrections, and lists under "Not yet confirmed" the terms the project has not
+written down: whether CC BY 4.0 covers catalog-derived listings, reuse of
+source text or page images, per-image creator and rights records, and credit
+for later editors. No licence was selected and no policy was published; the
+footer keeps its sentence and gains a link to the article; the FAQ points to
+it; the glossary's VPHC entry no longer calls VPHC forthcoming. Remaining:
+Michael and Ian answer the open questions on the card so the last section
+can shrink; acceptance.
+
 ### Follow-up: Region type and county entry on new/edit pages
 
 Michael requested Region type controls on new/edit pages so users can enter
@@ -1225,7 +1240,7 @@ evidence; the September board snapshot remains dated history.
 | F6 Reference Work Management | Editors add and edit through the SPA Reference Works page (`/reference-works`, October 22) and `/api/v2/reference-works/`; Django `/admin/` remains; no delete in the application | Testing: S19 |
 | F7 Collection Administration | SPA `/admin/collections` (superuser only), Editor-only `/editors` roster, and Django `/admin/` | Backlog: S20 |
 | F8 Audit Trail | SPA submission transactions and editor/admin record-history views; django-reversion history in Django `/admin/` | To Do: S23 (history viewing implemented; verification and acceptance remain), T74 (restoration scope) |
-| F9 Documentation & Help | SPA (`/help`, `/help/:docSlug`); articles authored as repo Markdown | Testing: S24, S34; To Do: S33 |
+| F9 Documentation & Help | SPA (`/help`, `/help/:docSlug`); articles authored as repo Markdown; Rights and Attribution article published October 22 | Testing: S24, S33, S34, T69 |
 | F10 System Maintenance | Operator CLI and deployment workflows -- see `docs/devel/RUNBOOK.md`; no application interface | Testing: S27; To Do: S25, S26 |
 | F11 Catalog Data Pipeline | Offline tooling -- see `docs/devel/TOOLS.md` and `docs/devel/PIPELINE.md` | State-specific data tasks remain open; see Data & ingestion and Other follow-ups. |
 | F12 Engineering | Shared developer docs, test coverage, accessibility, performance, and dependency checks | To Do: T1, T4-T6; Backlog: T2, T29, T61 |

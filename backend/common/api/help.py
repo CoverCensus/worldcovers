@@ -29,6 +29,8 @@ PUBLISHED_DOCS = frozenset({
     "glossary",
     "vision",
     "acknowledgements",
+    # Trello T69: public guidance on data and image rights, credit and reuse.
+    "rights-and-attribution",
 })
 
 

@@ -52,6 +52,15 @@ class HelpDocsAllowlistTests(TestCase):
         self.assertEqual(len(guide), 1)
         self.assertGreater(len(guide[0]["markdown"]), 0)
 
+    def test_rights_and_attribution_is_published_with_content(self):
+        # Trello T69: Guests must be able to read the rights and credit guidance.
+        response = self.client.get(URL)
+        docs = [doc for doc in response.data["results"] if doc["slug"] == "rights-and-attribution"]
+        self.assertEqual(len(docs), 1)
+        self.assertEqual(docs[0]["title"], "Rights and Attribution")
+        self.assertIn("Not yet confirmed", docs[0]["markdown"])
+        self.assertIn("creativecommons.org/licenses/by/4.0", docs[0]["markdown"])
+
     def test_new_doc_dropped_in_docs_is_not_published(self):
         # The actual failure mode: someone adds a markdown file to docs/ and it
         # goes public without anyone deciding that it should.
