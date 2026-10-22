@@ -75,17 +75,20 @@ export function PendingLoginRequestsCard() {
         )}
         {rows && rows.length > 0 && (
           <ul className="divide-y divide-border">
-            {rows.map((row) => (
-              <li key={row.id} className="py-2 flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between">
-                <a href={row.adminUrl} className="text-primary underline hover:no-underline">
-                  {displayName(row)}
-                </a>
-                <span className="text-sm text-muted-foreground break-all">
-                  {row.email}
-                  {requestedOn(row.requestedAt) && ` - requested ${requestedOn(row.requestedAt)}`}
-                </span>
-              </li>
-            ))}
+            {rows.map((row) => {
+              const requested = requestedOn(row.requestedAt);
+              return (
+                <li key={row.id} className="py-2 flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between">
+                  <a href={row.adminUrl} className="text-primary underline hover:no-underline">
+                    {displayName(row)}
+                  </a>
+                  <span className="text-sm text-muted-foreground break-all">
+                    {row.email}
+                    {requested && ` - requested ${requested}`}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </CardContent>

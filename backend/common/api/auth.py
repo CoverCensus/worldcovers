@@ -8,6 +8,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core.mail import send_mail
+from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
@@ -401,13 +402,17 @@ class PendingLoginRequestsView(APIView):
     unnoticed. This lists them for the Dashboard. A deactivated account (inactive
     but with a last_login) is not a request and is left out.
 
-    Superuser only: the rows carry names and email addresses.
+    Superuser only: the rows carry names and email addresses. Relaxing this
+    permission would hand that PII to a wider audience; do not.
+
+    `admin_url` is a path, not an absolute URL: the SPA and Django admin are
+    served from the same origin on both sites (nginx proxies /admin/ and /api/
+    to the same backend), so a path is correct and does not depend on proxy
+    headers. Revisit if the admin ever moves to another host.
     """
     permission_classes = [IsSuperuser]
 
     def get(self, request):
-        from django.urls import reverse
-
         User = get_user_model()
         pending = (
             User.objects.filter(is_active=False, last_login__isnull=True)

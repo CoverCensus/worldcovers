@@ -32,12 +32,16 @@ function text(v: unknown): string {
 export async function getPendingLoginRequests(): Promise<PendingLoginRequest[]> {
   const res = await apiClient.get<PendingLoginRequestApi[]>("/login-requests/pending/");
   const rows = Array.isArray(res.data) ? res.data : [];
-  return rows.map((r) => ({
-    id: typeof r.id === "number" ? r.id : Number(r.id),
-    firstName: text(r.first_name),
-    lastName: text(r.last_name),
-    email: text(r.email),
-    requestedAt: text(r.requested_at),
-    adminUrl: text(r.admin_url),
-  }));
+  // A row without a numeric id has no admin page to open; leave it out rather
+  // than render a key of NaN and a broken link.
+  return rows
+    .filter((r) => Number.isFinite(Number(r.id)))
+    .map((r) => ({
+      id: Number(r.id),
+      firstName: text(r.first_name),
+      lastName: text(r.last_name),
+      email: text(r.email),
+      requestedAt: text(r.requested_at),
+      adminUrl: text(r.admin_url),
+    }));
 }
