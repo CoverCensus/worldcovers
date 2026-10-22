@@ -308,6 +308,31 @@ separator-only author rule on 2026-10-22. Evidence:
 `test_reference_work_api.py`, `frontend/src/lib/referenceWorkDisplay.ts` and
 its test, `frontend/src/pages/ReferenceWorks.tsx` and its test.
 
+## State Rights As Stated, Never As Verified
+
+**Do:** In public Help, report the rights statements the project has
+actually made (the software licence, the footer's CC BY 4.0 sentence for
+catalog records, the source catalogs cited on their own authority, the
+Contributor name opt-in) and attribute each to where it is stated. Keep a
+"Not yet confirmed" section that names the terms nobody has written down,
+and tell readers to ask before reusing those. Give worked credit lines in
+the Creative Commons title / author / source / licence form, with the
+changes made.
+
+**Don't:** Choose a licence, promise a permission, or describe a reuse right
+in Help that the owner of the material has not granted. Don't quote private
+correspondence or publish contact details beyond the public address. Don't
+change the footer's rights sentence through a Help card; a change to a public
+rights claim is Michael's and Ian's decision.
+
+**Why:** Trello T69 asked for rights and attribution guidance while saying
+"this task does not select a new license or publish a rights policy", and
+the repo holds no confirmed terms for ASCC, VPHC or FPHC listings or for
+uploaded images. Reese chose on 2026-10-22 to publish the facts and mark the
+gaps rather than wait. Evidence: `docs/rights-and-attribution.md`,
+`backend/common/api/help.py` allowlist, `test_help_docs_allowlist.py`,
+`Footer.test.tsx`.
+
 ## Publish Help Content Explicitly
 
 **Do:** Publish Help articles only through the explicit document-name
