@@ -42,6 +42,7 @@ import {
 import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getDateFormats, type DateFormatOption } from "@/constants/markingEnums";
 import { formatReferenceWorkLabel, getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
+import { compactReferenceWorkLine } from "@/lib/referenceWorkDisplay";
 import {
   getContribution,
   listContributions,
@@ -3232,9 +3233,7 @@ const Contribute = () => {
                                     {formatReferenceWorkLabel(work, "Untitled")}
                                   </p>
                                   <p className="text-xs text-muted-foreground truncate">
-                                    {[work.authorship, work.publisher]
-                                      .filter((x) => (x ?? "").trim() !== "")
-                                      .join(" -- ")}
+                                    {compactReferenceWorkLine(work)}
                                   </p>
                                 </div>
                                 <Button

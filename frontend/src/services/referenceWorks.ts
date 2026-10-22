@@ -1,7 +1,7 @@
 /**
  * Reference works (v2 ReferenceWork entity): GET /reference-works/.
  */
-import apiClient from "@/lib/api";
+import apiClient, { ensureCsrfToken } from "@/lib/api";
 
 /** User object in createdBy/modifiedBy */
 export interface ReferenceWorkUser {
@@ -87,7 +87,7 @@ function mapApiResultToRecord(item: ReferenceWorkApiResultItem): ReferenceWorkRe
  * when it is not a plain non-negative integer (so editions already typed as
  * "5th" or "Revised" pass through verbatim).
  */
-function withOrdinalSuffix(raw: string): string {
+export function withOrdinalSuffix(raw: string): string {
   const t = raw.trim();
   if (!/^\d+$/.test(t)) return t;
   const n = parseInt(t, 10);
@@ -160,4 +160,37 @@ export async function getReferenceWorkOptions(): Promise<ReferenceWorkOption[]> 
       title: typeof item.title === "string" ? item.title : "",
       label: typeof item.label === "string" && item.label.trim() ? item.label.trim() : item.code.trim(),
     }));
+}
+
+/** Fields an Editor may set when adding or editing a Reference Work (S19). */
+export interface ReferenceWorkPayload {
+  code: string | null;
+  title: string;
+  authorship: string;
+  publisher: string;
+  publication_year: number;
+  edition: string | null;
+  volume: string | null;
+  isbn: string | null;
+  url: string | null;
+}
+
+/**
+ * POST /reference-works/ (Editors and Administrators). Throws the api-client
+ * Error, whose message is the server's field error, on failure.
+ */
+export async function createReferenceWork(payload: ReferenceWorkPayload): Promise<ReferenceWorkRecord> {
+  await ensureCsrfToken();
+  const res = await apiClient.post<ReferenceWorkApiResultItem>("/reference-works/", payload);
+  return mapApiResultToRecord(res.data);
+}
+
+/** PATCH /reference-works/{id}/ with the changed fields only. */
+export async function updateReferenceWork(
+  id: number,
+  payload: Partial<ReferenceWorkPayload>,
+): Promise<ReferenceWorkRecord> {
+  await ensureCsrfToken();
+  const res = await apiClient.patch<ReferenceWorkApiResultItem>(`/reference-works/${id}/`, payload);
+  return mapApiResultToRecord(res.data);
 }

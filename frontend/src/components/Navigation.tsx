@@ -121,6 +121,15 @@ export const Navigation = () => {
                 Editors
               </NavLink>
             )}
+            {hasEditorAccess && (
+              <NavLink
+                to="/reference-works"
+                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                activeClassName="text-primary font-semibold"
+              >
+                Reference Works
+              </NavLink>
+            )}
             {!user && (
               <NavLink
                 to="/auth"
@@ -220,6 +229,16 @@ export const Navigation = () => {
                 onClick={() => setMobileMenuOpen(false)}
               >
                 Editors
+              </NavLink>
+            )}
+            {hasEditorAccess && (
+              <NavLink
+                to="/reference-works"
+                className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
+                activeClassName="text-primary bg-secondary font-semibold"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                Reference Works
               </NavLink>
             )}
             {!user && (

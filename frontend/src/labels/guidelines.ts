@@ -174,3 +174,30 @@ export const COVER_FORM_MARKING_IMAGE_WARNING = {
     "interior. A close-up of the marking belongs on the marking record.",
 } as const;
 
+/** Reference Work fields on the Editors' Reference Works page (Trello S19). */
+export const REFERENCE_WORK_CODE_HELP =
+  "Short public identifier for this Reference Work, such as ASCC6 or VPHC1. Catalog codes of cited Entries are generated from it, so it cannot change once Entries cite the work.";
+
+export const REFERENCE_WORK_TITLE_HELP =
+  "The publication's title as printed. A title that already exists with the same edition is refused; edit that Reference Work instead.";
+
+export const REFERENCE_WORK_AUTHORSHIP_HELP =
+  "All authors or editors, as printed. Separate people with a semicolon or 'and'; a comma inside one person's name is kept, so 'Briggs, Deane R.' stays whole.";
+
+export const REFERENCE_WORK_PUBLISHER_HELP =
+  "The publishing body, society, or press.";
+
+export const REFERENCE_WORK_YEAR_HELP =
+  "Four-digit year of publication for this edition.";
+
+export const REFERENCE_WORK_EDITION_HELP =
+  "Edition number or name, such as 2 or Revised. A number is shown as 2nd Ed.";
+
+export const REFERENCE_WORK_VOLUME_HELP =
+  "Volume number or name when the work has several volumes.";
+
+export const REFERENCE_WORK_ISBN_HELP =
+  "ISBN as printed, when the work has one.";
+
+export const REFERENCE_WORK_URL_HELP =
+  "Web address of a digital edition or catalogue record, starting with http or https.";

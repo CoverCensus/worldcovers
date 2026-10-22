@@ -1333,6 +1333,14 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               State editors
             </Link>
           )}
+          {isEditor && (
+            <Link
+              to="/reference-works"
+              className="mb-4 ml-6 inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
+            >
+              Reference Works
+            </Link>
+          )}
           <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div className="min-w-0 md:flex-1">
               <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">
