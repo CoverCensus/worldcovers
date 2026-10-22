@@ -10,6 +10,8 @@ import { getSiteInfo, type SiteInfo } from "@/services/site";
 export function useSiteInfo(): SiteInfo | null {
   const [site, setSite] = useState<SiteInfo | null>(null);
 
+  // Empty deps on purpose: getSiteInfo() is a module-level cached promise and
+  // runs once per mount, never per render.
   useEffect(() => {
     let cancelled = false;
     getSiteInfo()

@@ -144,3 +144,7 @@ class PendingLoginRequestsTests(TestCase):
 
         self.assertEqual(response.data["count"], PENDING_LOGIN_REQUESTS_LIMIT + 1)
         self.assertEqual(len(response.data["results"]), PENDING_LOGIN_REQUESTS_LIMIT)
+        # Newest first: the one that falls off the end is the oldest, self.pending.
+        emails = {row["email"] for row in response.data["results"]}
+        self.assertNotIn("newcomer@example.com", emails)
+        self.assertIn("spam0@example.com", emails)

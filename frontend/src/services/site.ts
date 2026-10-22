@@ -37,7 +37,9 @@ function hostOf(url: string): string {
   try {
     return new URL(url).host;
   } catch {
-    return url.replace(/^https?:\/\//, "");
+    // mapSiteInfo only passes a validated http(s) origin or the default, so
+    // this is unreachable in practice; an empty host is the honest fallback.
+    return "";
   }
 }
 

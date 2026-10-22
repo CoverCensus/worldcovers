@@ -48,6 +48,7 @@ describe("Auth page request path (T84)", () => {
     renderAuth();
 
     expect(screen.queryByRole("note")).toBeNull();
+    expect(screen.queryByRole("link", { name: /Request a login on/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Request a login" }));
     screen.getByRole("dialog");
   });
