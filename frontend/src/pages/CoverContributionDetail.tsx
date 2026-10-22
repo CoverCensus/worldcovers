@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { CheckCircle, ExternalLink, Loader2, MessageSquare, Pencil, Trash2, XCircle } from "lucide-react";
 import {
   AlertDialog,
@@ -38,6 +38,7 @@ import {
   coverContributionDisplayName,
   isCoverContributionData,
   parentMarkingIdFromContribution,
+  createdFromContributionIdFromSubmittedData,
 } from "@/lib/contributionDisplay";
 import {
   formatPartialDateInput,
@@ -190,6 +191,8 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     [contribution?.submittedData],
   );
   const parentMarkingId = parentMarkingIdFromContribution(sd);
+  // Trello T37: this cover row was created when a Marking submission that carried it was approved.
+  const createdFromContributionId = createdFromContributionIdFromSubmittedData(sd);
   const displayName =
     contribution?.displayName?.trim() ||
     coverContributionDisplayName(sd, contribution?.id ?? 0, {
@@ -743,6 +746,15 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">No parent marking linked to this cover submission.</p>
+              )}
+              {createdFromContributionId != null && (
+                <p className="text-sm text-muted-foreground" data-testid="created-from-note">
+                  Created when{" "}
+                  <Link to={`/contribution/${createdFromContributionId}`} className="text-primary underline">
+                    Marking submission #{createdFromContributionId}
+                  </Link>{" "}
+                  was approved; the contributor submitted both together.
+                </p>
               )}
             </CardContent>
           </Card>

@@ -29,7 +29,13 @@ import { normalizeImageUrl } from "@/services/markings";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getDateFormats, type DateFormatOption } from "@/constants/markingEnums";
-import { entryKindForContribution, isCoverContributionData } from "@/lib/contributionDisplay";
+import {
+  entryKindForContribution,
+  isCoverContributionData,
+  pendingCoverContributionIdFromSubmittedData,
+  pendingCoverFromSubmittedData,
+} from "@/lib/contributionDisplay";
+import { PendingCoverCard } from "@/components/PendingCoverCard";
 import CoverContributionDetail from "@/pages/CoverContributionDetail";
 import { CatalogRecordFields } from "@/components/CatalogRecordFields";
 import {
@@ -311,8 +317,21 @@ const ContributionDetail = () => {
       toast({
         title: actionLabel,
         description: "Your comment was saved for the contributor.",
+        // Trello T37: a Marking that carried a Cover has just produced a Cover
+        // submission; the queue the editor returns to lists it, and the toast
+        // offers it directly.
+        ...(kind === "approve" && result.pendingCoverContributionId != null
+          ? { description: "Your comment was saved. A Cover submission was created for review." }
+          : {}),
         action:
-          kind === "approve" && result.markingId != null ? (
+          kind === "approve" && result.pendingCoverContributionId != null ? (
+            <ToastAction
+              altText="Review the Cover submission created with this marking"
+              onClick={() => navigate(`/contribution/${result.pendingCoverContributionId}`)}
+            >
+              Review the Cover
+            </ToastAction>
+          ) : kind === "approve" && result.markingId != null ? (
             <ToastAction
               altText="View the approved record"
               onClick={() => navigate(`/record/${result.markingId}`)}
@@ -802,6 +821,13 @@ const ContributionDetail = () => {
               </div>
 
               {editComparison && <EditComparisonCard entryLabel="marking" rows={editComparison} />}
+              {pendingCoverFromSubmittedData(contribution.submittedData) && (
+                <PendingCoverCard
+                  summary={pendingCoverFromSubmittedData(contribution.submittedData)!}
+                  createdContributionId={pendingCoverContributionIdFromSubmittedData(contribution.submittedData)}
+                  approved={contribution.status === "approved"}
+                />
+              )}
               {editComparisonError && (
                 <p className="text-sm text-destructive rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2">
                   Could not compare this edit with the current marking: {editComparisonError}

@@ -345,6 +345,8 @@ export interface DecideOptions {
 export interface DecideResult {
   markingId: number | null;
   coverId: number | null;
+  /** Trello T37: the Cover submission approval created from a Marking that carried one. */
+  pendingCoverContributionId: number | null;
   raw: Record<string, unknown>;
 }
 
@@ -467,6 +469,9 @@ export async function decideContribution(
   return {
     markingId: toNumberOrNull(firstDefined(o.marking_id, o.markingId)),
     coverId: toNumberOrNull(firstDefined(o.cover_id, o.coverId)),
+    pendingCoverContributionId: toNumberOrNull(
+      firstDefined(o.pendingCoverContributionId, o.pending_cover_contribution_id),
+    ),
     raw: o,
   };
 }

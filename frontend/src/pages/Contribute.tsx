@@ -32,9 +32,18 @@ import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
 import { getRegions } from "@/services/regions";
 import { getMarkingByIdRaw, mapApiMarkingToRecord, normalizeImageUrl, type MarkingRecord, type AssociatedDateSeen } from "@/services/markings";
 import { DatesSeenCard } from "@/components/DatesSeenCard";
+import { PendingCoverSection } from "@/components/PendingCoverSection";
+import {
+  EMPTY_PENDING_COVER,
+  type PendingCoverErrors,
+  type PendingCoverFields,
+  type PendingCoverSavedImage,
+} from "@/lib/pendingCover";
+import { PENDING_COVER_SECTION } from "@/labels/guidelines";
 import {
   partialDateInputFromDateSeen,
   partialDateInputFromPayload,
+  partialDateInputFromSubmittedData,
   validatePartialDate,
   type PartialDateInput,
   type PartialDateValue,
@@ -546,6 +555,9 @@ const Contribute = () => {
         previewUrl: string;
         tracing: boolean;
         description: string;
+        /** The file as picked, before any crop or rotation (Trello T37): it
+         *  becomes the Cover's image when the Cover is submitted alongside. */
+        originalFile?: File;
       };
   // Single ordered gallery: already-saved images interleaved with new uploads.
   // Reorder + set-default work across the whole list; the chosen order is sent as
@@ -568,6 +580,15 @@ const Contribute = () => {
   const [coverLikeImageKeys, setCoverLikeImageKeys] = useState<string[]>([]);
   // Key of the new upload open in the crop dialog, if any.
   const [cropTargetKey, setCropTargetKey] = useState<string | null>(null);
+  // Trello T37: the Cover submitted together with a new Marking. Staged here and
+  // sent as pending_cover + pending_cover_image; the server turns it into a
+  // cover submission when the Marking is approved. Never offered on a Marking edit.
+  const [pendingCoverOn, setPendingCoverOn] = useState(false);
+  const [pendingCoverFields, setPendingCoverFields] = useState<PendingCoverFields>({ ...EMPTY_PENDING_COVER });
+  const [pendingCoverFiles, setPendingCoverFiles] = useState<File[]>([]);
+  const [pendingCoverSavedImages, setPendingCoverSavedImages] = useState<PendingCoverSavedImage[]>([]);
+  const [pendingCoverRemovedKeys, setPendingCoverRemovedKeys] = useState<string[]>([]);
+  const [pendingCoverErrors, setPendingCoverErrors] = useState<PendingCoverErrors>({});
   const [rotateTargetKey, setRotateTargetKey] = useState<string | null>(null);
   const [lowResolutionImageKeys, setLowResolutionImageKeys] = useState<string[]>([]);
   // Timestamp of the marking record as observed when this edit session loaded
@@ -988,6 +1009,31 @@ const Contribute = () => {
         setNewMarkingDates(mapApiMarkingToRecord({
           dates_seen: submittedDates.map((date, index) => ({ ...date, id: index + 1 })),
         }).datesSeen);
+        // Trello T37: a saved Cover rides the draft as pending_cover.
+        const savedPendingCover = sd.pending_cover;
+        if (savedPendingCover && typeof savedPendingCover === "object" && !Array.isArray(savedPendingCover)) {
+          const pc = savedPendingCover as Record<string, unknown>;
+          const mediaBase = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "") || "/media";
+          const pcMetas = Array.isArray(pc.image_metas) ? (pc.image_metas as Array<{ storage_filename?: string }>) : [];
+          setPendingCoverOn(true);
+          setPendingCoverFields({
+            type: String(pc.type ?? "").trim().toUpperCase(),
+            date: partialDateInputFromSubmittedData(pc),
+            isInstitutional: String(pc.is_institutional) === "true",
+            isBackstamp: String(pc.is_backstamp) === "true",
+            description: String(pc.description ?? ""),
+          });
+          setPendingCoverSavedImages(
+            pcMetas
+              .map((m) => String(m?.storage_filename ?? "").replace(/^\/+/, ""))
+              .filter((sf) => sf.length > 0)
+              .map((sf) => ({ key: sf, url: `${mediaBase}/${sf}` })),
+          );
+          setPendingCoverFiles([]);
+          setPendingCoverRemovedKeys([]);
+        } else {
+          setPendingCoverOn(false);
+        }
         // Load prior images as "existing" gallery items (same path used by the
         // edit-marking flow) so the remove button records removals in
         // `removedExistingImageKeys` and the contributor can reorder / set the
@@ -1422,6 +1468,25 @@ const Contribute = () => {
     return `${selectedCodes.slice(0, 2).join(", ")} +${selectedCodes.length - 2} more`;
   }, [dateFormatIds, dateFormatOptions]);
 
+  // The Cover section is for new Markings only: a Marking edit has a published
+  // Marking whose Covers are managed from its record page.
+  const showPendingCoverSection = !isEditMarking && resumedEditMarkingId == null;
+  // Turning the section on seeds its images with the uncropped originals of
+  // cropped uploads and with any upload that looks like a whole cover, so the
+  // scan the contributor already has becomes the Cover's image without a second
+  // pick. Files already listed are not added twice.
+  const enablePendingCover = () => {
+    setPendingCoverOn(true);
+    setPendingCoverFiles((prev) => {
+      const next = [...prev];
+      for (const item of gallery) {
+        if (item.kind !== "new") continue;
+        const candidate = item.originalFile ?? (coverLikeImageKeys.includes(item.key) ? item.file : null);
+        if (candidate && !next.includes(candidate)) next.push(candidate);
+      }
+      return next;
+    });
+  };
   // Only counts images still in the gallery, so removing the offending file
   // clears the warning without any extra bookkeeping.
   const coverLikeImageCount = useMemo(
@@ -1523,7 +1588,11 @@ const Contribute = () => {
   // is left as measured on the original, because a canvas carries no DPI.
   const replaceGalleryFile = (key: string, file: File) => {
     setGallery((prev) =>
-      prev.map((g) => (g.kind === "new" && g.key === key ? { ...g, file, previewUrl: "" } : g)),
+      prev.map((g) =>
+        g.kind === "new" && g.key === key
+          ? { ...g, file, previewUrl: "", originalFile: g.originalFile ?? g.file }
+          : g,
+      ),
     );
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -1778,11 +1847,42 @@ const Contribute = () => {
     }
     setReferenceDetailErrorsById(referenceDetailErrors);
 
+    // Trello T37: the Cover submitted with this marking follows the Cover
+    // form's three rules at final submit; a draft may be incomplete.
+    const nextPendingCoverErrors: PendingCoverErrors = {};
+    if (showPendingCoverSection && pendingCoverOn && !saveAsDraft) {
+      if (!pendingCoverFields.type.trim()) {
+        nextPendingCoverErrors.type = "Cover type is required";
+      }
+      const pcDate = pendingCoverFields.date;
+      if (!pcDate.unknown) {
+        if (!pcDate.year.trim() && !pcDate.month.trim() && !pcDate.day.trim()) {
+          nextPendingCoverErrors.date = "Add a cover date or mark it unknown";
+        } else {
+          const parsed = validatePartialDate(pcDate);
+          if (parsed.ok === false) nextPendingCoverErrors.date = parsed.error;
+        }
+      }
+      if (pendingCoverFiles.length + pendingCoverSavedImages.length === 0) {
+        nextPendingCoverErrors.images = "Add at least one cover image";
+      }
+    }
+    setPendingCoverErrors(nextPendingCoverErrors);
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       scrollToFirstError(errors);
       return;
     }
+    if (Object.keys(nextPendingCoverErrors).length > 0) {
+      toast({
+        title: "Finish the Cover section",
+        description: "The Cover submitted with this marking needs a type, a date and an image.",
+        variant: "destructive",
+      });
+      document.getElementById("pending-cover-title")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+
 
     if (!saveAsDraft && Object.keys(referenceDetailErrors).length > 0) {
       toast({
@@ -1891,7 +1991,9 @@ const Contribute = () => {
         date_year: date.dateYear, date_month: date.dateMonth, date_day: date.dateDay,
       }));
 
-      if (allImageFiles.length > 0 || isEditMarking) {
+      const sendPendingCover = showPendingCoverSection && pendingCoverOn;
+      const dropPendingCover = showPendingCoverSection && !pendingCoverOn && isEditContribution;
+      if (allImageFiles.length > 0 || isEditMarking || sendPendingCover) {
         const form = new FormData();
         if (isStateEditor && !isMarkingEditAction) {
           form.append("marking_dates_seen", JSON.stringify(datesToSend));
@@ -1974,6 +2076,29 @@ const Contribute = () => {
         if (noMarkingImage) {
           form.append("no_marking_image", "true");
         }
+        if (sendPendingCover) {
+          form.append(
+            "pending_cover",
+            JSON.stringify({
+              type: pendingCoverFields.type.trim().toUpperCase(),
+              cover_date_unknown: pendingCoverFields.date.unknown,
+              cover_date_year: pendingCoverFields.date.year.trim(),
+              cover_date_month: pendingCoverFields.date.month.trim(),
+              cover_date_day: pendingCoverFields.date.day.trim(),
+              is_institutional: pendingCoverFields.isInstitutional,
+              is_backstamp: pendingCoverFields.isBackstamp,
+              description: pendingCoverFields.description.trim(),
+            }),
+          );
+          for (const file of pendingCoverFiles) {
+            form.append("pending_cover_image", file, file.name);
+          }
+          if (pendingCoverRemovedKeys.length > 0) {
+            form.append("pending_cover_removed_image_keys", JSON.stringify(pendingCoverRemovedKeys));
+          }
+        } else if (dropPendingCover) {
+          form.append("drop_pending_cover", "true");
+        }
         if (isEditMarking && existingTagMapEntries.length > 0) {
           const existingTagMap: Record<string, UploadedImageTag> =
             Object.fromEntries(existingTagMapEntries);
@@ -2054,6 +2179,8 @@ const Contribute = () => {
           ...(saveAsDraft && isEditMarking && markingModifiedAtBaseline
             ? { marking_modified_at_baseline: markingModifiedAtBaseline }
             : {}),
+          // The section is off (a resumed draft may still hold a cover): clear it.
+          ...(dropPendingCover ? { drop_pending_cover: true } : {}),
         };
       }
 
@@ -2427,15 +2554,22 @@ const Contribute = () => {
           expected="MARKING"
           count={coverLikeImageCount}
           action={firstCoverLikeUploadKey ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setCropTargetKey(firstCoverLikeUploadKey)}
-            >
-              <Crop className="mr-1 h-3.5 w-3.5" />
-              Crop to the marking
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCropTargetKey(firstCoverLikeUploadKey)}
+              >
+                <Crop className="mr-1 h-3.5 w-3.5" />
+                Crop to the marking
+              </Button>
+              {showPendingCoverSection && !pendingCoverOn && (
+                <Button type="button" variant="outline" size="sm" onClick={enablePendingCover}>
+                  {PENDING_COVER_SECTION.warningAction}
+                </Button>
+              )}
+            </div>
           ) : null}
         />
         <LocalCropImageDialog
@@ -3408,6 +3542,26 @@ const Contribute = () => {
                       isMarkingEditAction ? "Add Marking Images" : "Marking Images",
                       `PNG or JPG up to ${MAX_IMAGE_SIZE_MB}MB each`,
                       !isMarkingEditAction,
+                    )}
+
+                    {showPendingCoverSection && (
+                      <PendingCoverSection
+                        enabled={pendingCoverOn}
+                        onEnabledChange={(on) => (on ? enablePendingCover() : setPendingCoverOn(false))}
+                        fields={pendingCoverFields}
+                        onFieldsChange={setPendingCoverFields}
+                        files={pendingCoverFiles}
+                        onAddFiles={(picked) => setPendingCoverFiles((prev) => [...prev, ...picked])}
+                        onRemoveFile={(index) => setPendingCoverFiles((prev) => prev.filter((_, i) => i !== index))}
+                        savedImages={pendingCoverSavedImages}
+                        onRemoveSavedImage={(key) => {
+                          setPendingCoverSavedImages((prev) => prev.filter((img) => img.key !== key));
+                          setPendingCoverRemovedKeys((prev) => (prev.includes(key) ? prev : [...prev, key]));
+                        }}
+                        errors={pendingCoverErrors}
+                        disabled={submitting}
+                        highlight={coverLikeImageCount > 0}
+                      />
                     )}
 
                     {canChangeSubmitterName ? <label className="flex items-center gap-2 text-sm">
