@@ -16,7 +16,9 @@ from common.models import (
 )
 
 
-class CountyLinkOnApprovalTests(TestCase):
+class CountyFixture(TestCase):
+    """Virginia with two counties, Maryland with one; Lynchburg (VA + Campbell), Richmond (VA only)."""
+
     @classmethod
     def setUpTestData(cls):
         cls.user = get_user_model().objects.create_user("editor")
@@ -55,6 +57,8 @@ class CountyLinkOnApprovalTests(TestCase):
         )
         return apply_contribution_to_catalog(contrib)
 
+
+class CountyLinkOnApprovalTests(CountyFixture):
     def test_new_town_gets_the_state_and_the_county(self):
         marking = self.apply(**self.payload("Onancock", county_id=str(self.accomack.pk)))
         self.assertEqual(self.links(marking.post_office), {self.va.pk, self.accomack.pk})
@@ -100,7 +104,7 @@ class CountyLinkOnApprovalTests(TestCase):
         self.assertFalse(PostOfficeRegion.objects.filter(region=self.accomack).exists())
 
 
-class DescribeCountyIntentTests(CountyLinkOnApprovalTests):
+class DescribeCountyIntentTests(CountyFixture):
     """The review verdict runs the same validation approval does, read-only."""
 
     def intent(self, town, **extra):
