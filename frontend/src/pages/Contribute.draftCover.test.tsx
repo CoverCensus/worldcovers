@@ -84,7 +84,8 @@ async function uploadWholeCover() {
 }
 
 it("turns the upload into a Cover draft for the Marking and drops it from the edit", async () => {
-  (createContribution as jest.Mock).mockResolvedValue({ contributionId: 55, markingId: null, coverId: null, raw: {} });
+  let finishCreate!: (value: unknown) => void;
+  (createContribution as jest.Mock).mockImplementation(() => new Promise((resolve) => { finishCreate = resolve; }));
   open("/edit/7", "/edit/:id");
   await screen.findByRole("button", { name: /save as draft/i });
   await uploadWholeCover();
@@ -92,6 +93,12 @@ it("turns the upload into a Cover draft for the Marking and drops it from the ed
 
   fireEvent.click(screen.getByRole("button", { name: offer }));
   await waitFor(() => expect(createContribution).toHaveBeenCalledTimes(1));
+  // While the request is in flight the offer is disabled and announced busy,
+  // so a second click cannot create a second draft.
+  const busy = screen.getByRole("button", { name: offer }) as HTMLButtonElement;
+  expect(busy.disabled).toBe(true);
+  expect(busy.getAttribute("aria-busy")).toBe("true");
+  finishCreate({ contributionId: 55, markingId: null, coverId: null, raw: {} });
   const payload = (createContribution as jest.Mock).mock.calls[0][0] as FormData;
   expect(payload instanceof FormData).toBe(true);
   expect(payload.get("submission_kind")).toBe("cover");

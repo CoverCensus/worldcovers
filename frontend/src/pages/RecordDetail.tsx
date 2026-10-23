@@ -1353,7 +1353,9 @@ const RecordDetail = () => {
                               (c?.id != null && c.id > 0));
                           return (
                             <Card
-                              key={cover.contributionDraftId ?? cover.id}
+                              // Draft ids (Contribution) and link ids (CoverMarking) are
+                              // independent sequences, so prefix them (T92).
+                              key={cover.contributionDraftId != null ? `draft-${cover.contributionDraftId}` : `link-${cover.id}`}
                               className={`relative shadow-archival-md hover:shadow-archival-lg transition-shadow ${
                                 canOpenCover ? "cursor-pointer" : ""
                               }`}

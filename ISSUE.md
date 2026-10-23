@@ -774,7 +774,9 @@ The Color palette utility follows the project's commit-by-default rule:
   rows at page size 100 instead of the unfiltered first ten. Decisions
   (Reese, memo questions 11-13): draft rather than pending; drafts only on
   the record page; image moved, not copied. No backend code change; a test
-  pins draft visibility. Hosted verification remains open.
+  pins draft visibility. Limitation: an image already saved with an edit
+  draft is not re-measured on resume and gets no offer. Hosted verification
+  remains open.
 - **[S33](https://trello.com/c/9TH4dywm):** the Marking new/edit form now has
   keyboard-accessible help for Lettering style, Impression, and Is Irregular,
   using the glossary meanings and the existing tooltip component. Existing

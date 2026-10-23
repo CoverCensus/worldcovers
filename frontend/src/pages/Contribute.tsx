@@ -2655,6 +2655,7 @@ const Contribute = () => {
                   variant="outline"
                   size="sm"
                   disabled={draftCoverSaving || submitting}
+                  aria-busy={draftCoverSaving}
                   onClick={() => void makeDraftCoverFromUpload(firstCoverLikeUploadKey)}
                 >
                   {draftCoverSaving && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}

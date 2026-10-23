@@ -974,7 +974,10 @@ contributions list is owner-scoped and `?mode=editor` excludes drafts, which
 an Administrator can still open a draft by id, as before; that retrieve rule
 is Michael's to change). Don't add a server filter by parent
 marking, a model field, or an Editor path for this; linking existing
-Entries stays Editor-only (T20).
+Entries stays Editor-only (T20). The offer measures uploads made in the
+current session: an image already saved with an edit draft comes back as a
+URL, is not re-measured, and gets no offer; the contributor removes it from
+the resumed edit and uploads it on Submit New Cover instead.
 
 **Why:** Trello T92, part (c) of the 7 Oct T37 memo; its three open questions
 were answered by Reese on 2026-10-23 (draft, drafts only, moved). This
