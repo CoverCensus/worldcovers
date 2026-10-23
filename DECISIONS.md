@@ -948,3 +948,38 @@ without a `TooltipProvider` and only passed because its fixture was a
 manuscript Marking; always-visible help made the provider mandatory.
 Evidence: `FieldHelpCoverage.test.tsx`, `guidelines.test.ts`,
 `FieldHelp.test.tsx`.
+
+## Offer A Draft Cover From A Marking Edit
+
+**Do:** On a Marking edit, when an upload looks like a whole cover, offer
+"Make this a Cover for this Marking" in the whole-cover warning. Taking it
+posts a cover DRAFT through the ordinary submit path (`submission_kind=cover`,
+`save_as_draft`, `parent_marking_id`, the file as `cover_image`, the
+uncropped original when the contributor already cropped), removes the tile
+from the edit once the server holds the draft, and names the draft in a
+notice that links to the cover editor. On the record page, list the
+signed-in viewer's own cover drafts for the Marking under Associated Covers
+with a "Draft - not yet submitted" badge, outside the count; fetch them as
+draft rows at the largest page the API allows. Keep the edit-mode warning
+copy separate from the new-Marking copy, which points at the Cover section.
+
+**Don't:** Create the Cover as pending from the edit form (final submit needs
+a type, a date or unknown, and an image; the edit has only the image). Don't
+copy the image so it stays on the Marking edit; it moves, or stays only when
+the draft request failed. Don't show pending or returned cover submissions
+on the record page (they live on the Dashboard until approval, like every
+other submission), and never show a draft to anyone but its author: the
+contributions list is owner-scoped and `?mode=editor` excludes drafts, which
+`test_cover_draft_visibility.py` pins. Don't add a server filter by parent
+marking, a model field, or an Editor path for this; linking existing
+Entries stays Editor-only (T20).
+
+**Why:** Trello T92, part (c) of the 7 Oct T37 memo; its three open questions
+were answered by Reese on 2026-10-23 (draft, drafts only, moved). This
+reverses the May 2026 choice (`19374cd`) that kept drafts off the record
+panel: a draft made from an edit has no other natural home, and the owner
+must be able to find and finish it. Evidence:
+`frontend/src/pages/Contribute.draftCover.test.tsx`,
+`frontend/src/services/markings.coverDrafts.test.ts`,
+`frontend/src/components/WrongImageKindWarning.test.tsx`,
+`backend/common/tests/test_cover_draft_visibility.py`.
