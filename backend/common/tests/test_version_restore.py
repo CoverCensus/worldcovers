@@ -70,6 +70,7 @@ class VersionRestoreTests(TestCase):
             collection = Collection.objects.create(name=name, region=region, **self.audit)
             CollectionAssignment.objects.create(user=editor, collection=collection, **self.audit)
             offices[abbrev] = PostOffice.objects.create(name=f"{name} Town", **self.audit)
+            self.offices = offices
             PostOfficeRegion.objects.create(post_office=offices[abbrev], region=region, **self.audit)
         self.marking = Marking.objects.create(
             type="TOWNMARK", inscription_txt="RICHMOND", is_manuscript=False,
@@ -153,9 +154,11 @@ class VersionRestoreTests(TestCase):
         self.assertIn(LIMIT_IMAGE_FILE_MISSING.format(original="x", storage="../../etc/passwd"), plan.limitations)
         with self.assertRaises(RestorePlanError):
             plan_marking_restore(self.marking, {**snapshot, "citations": [{"reference_work_id": "abc"}]})
-        gone = plan_marking_restore(self.marking, {**snapshot, "citations": [{"reference_work_id": 999999}]})
-        self.assertEqual(gone.relations["citations"].counts()["skipped"], 1)
-        self.assertIn(LIMIT_CITATION_WORK_MISSING.format(work_id=999999), gone.limitations)
+        gone = plan_marking_restore(self.marking, {**snapshot, "citations": [
+            {"reference_work_id": 999999, "citation_detail": "a"}, {"reference_work_id": 999999, "citation_detail": "b"},
+        ]})
+        self.assertEqual(gone.relations["citations"].counts()["skipped"], 2)
+        self.assertEqual(gone.limitations.count(LIMIT_CITATION_WORK_MISSING.format(work_id=999999)), 1)
 
     def test_snapshot_without_relationship_keys_leaves_them_unchanged(self):
         before = self.counts()
@@ -184,6 +187,8 @@ class VersionRestoreTests(TestCase):
         self.assertIn(LIMIT_MARKING_COVER_LINKS, response.data["limitations"])
         self.assertTrue(response.data["has_changes"])
         self.assertEqual(self.counts(), before)
+        self.marking.refresh_from_db()
+        self.assertEqual(self.marking.inscription_txt, "CHANGED")
 
     def test_marking_restore_reconciles_scalars_images_dates_citations_in_one_version(self):
         expected_before = build_marking_snapshot(self.marking)
@@ -275,6 +280,33 @@ class VersionRestoreTests(TestCase):
         self.client.force_authenticate(self.admin)
         self.assertEqual(self.client.get(f"{urls['marking'][0]}?version_no=1").status_code, 404)
         self.assertEqual(self.client.post(urls["marking"][1], {"version_no": 1}, format="json").status_code, 404)
+
+    def test_version_under_an_outside_office_is_forbidden(self):
+        snapshot = {**self.marking_v1.snapshot, "post_office_id": self.offices["MD"].pk}
+        MarkingVersion.objects.create(marking=self.marking, version_no=3, snapshot=snapshot, created_by=self.admin)
+        before = self.counts()
+        self.client.force_authenticate(self.editor)
+        self.assertEqual(self.client.get(f"/api/v2/markings/{self.marking.pk}/restore-preview/?version_no=3").status_code, 403)
+        self.assertEqual(self.client.post(f"/api/v2/markings/{self.marking.pk}/restore-version/", {"version_no": 3}, format="json").status_code, 403)
+        self.marking.refresh_from_db()
+        self.assertEqual(self.marking.post_office_id, self.offices["VA"].pk)
+        self.assertEqual(self.counts(), before)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.get(f"/api/v2/markings/{self.marking.pk}/restore-preview/?version_no=3").status_code, 200)
+
+    def test_constraint_refusal_answers_409_and_writes_nothing(self):
+        from django.db import IntegrityError
+        before = self.counts()
+        self.client.force_authenticate(self.editor)
+        with mock.patch("common.version_restore.Image.objects.create", side_effect=IntegrityError("dup")):
+            response = self.client.post(
+                f"/api/v2/markings/{self.marking.pk}/restore-version/", {"version_no": 1}, format="json"
+            )
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(response.data["detail"], "Restore could not be completed; nothing was changed.")
+        self.marking.refresh_from_db()
+        self.assertEqual(self.marking.inscription_txt, "CHANGED")
+        self.assertEqual(self.counts(), before)
 
     def test_failure_after_restore_rolls_back_everything(self):
         before = self.counts()

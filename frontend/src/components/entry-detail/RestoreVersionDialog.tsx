@@ -53,11 +53,13 @@ export function RestoreVersionDialog({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open || versionNo == null) return;
-    let cancelled = false;
+    // Clear on close too, so reopening on another version never shows the
+    // previous rows with the confirm button enabled.
     setPreview(null);
     setLoadError(null);
     setError(null);
+    if (!open || versionNo == null) return;
+    let cancelled = false;
     setLoading(true);
     loadPreview()
       .then((result) => {
@@ -128,8 +130,8 @@ export function RestoreVersionDialog({
               <div>
                 <h3 className="text-sm font-medium text-foreground">What this restore cannot bring back</h3>
                 <ul className="mt-1 list-disc pl-5 text-sm text-muted-foreground space-y-0.5">
-                  {preview.limitations.map((line) => (
-                    <li key={line}>{line}</li>
+                  {preview.limitations.map((line, index) => (
+                    <li key={index}>{line}</li>
                   ))}
                 </ul>
               </div>
