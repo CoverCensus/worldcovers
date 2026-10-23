@@ -1233,3 +1233,24 @@ class ContributionSubmitCountyKeysTests(TestCase):
         self.assertEqual(self.post(county_proposed=["x" * 5000]).status_code, 400)
         self.assertEqual(self.post(county="x" * 201).status_code, 400)
         self.assertEqual(self.post(county_proposed="x" * 200).status_code, 201)
+
+    def test_a_county_outside_the_submitted_state_is_refused_at_submit(self):
+        audit = {"created_by": self.user, "modified_by": self.user}
+        md = Region.objects.create(name="Maryland", abbrev="MD", region_tier="STATE", **audit)
+        montgomery = Region.objects.create(
+            name="Montgomery", abbrev="MD", region_tier="COUNTY", parent_region=md, **audit)
+        response = self.post(county_id=str(montgomery.pk))
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["detail"], "county_id is not a county in Virginia.")
+        self.assertEqual(self.post(county_id=str(self.county.pk + 1000)).status_code, 400)
+
+    def test_detail_carries_the_server_county_verdict(self):
+        response = self.post(county_id=str(self.county.pk), county="Henrico")
+        self.assertEqual(response.status_code, 201, response.data)
+        detail = self.client.get(f"/api/v2/contributions/{response.data['id']}/")
+        self.assertEqual(detail.status_code, 200, detail.data)
+        verdict = detail.data["county_intent"]
+        self.assertEqual((verdict["county_name"], verdict["valid"], verdict["will_link"]), ("Henrico", True, True))
+        self.assertEqual(verdict["note"], "Approval links the town to this county")
+        plain = self.post()
+        self.assertIsNone(self.client.get(f"/api/v2/contributions/{plain.data['id']}/").data["county_intent"])

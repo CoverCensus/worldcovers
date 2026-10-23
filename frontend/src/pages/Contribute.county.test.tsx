@@ -20,7 +20,10 @@ jest.mock("@/services/similarEntries", () => ({ getSimilarMarkings: jest.fn().mo
 jest.mock("@/services/shapes", () => ({ getShapes: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/services/postOffices", () => ({ getPostOffices: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/services/regions", () => ({
-  getRegions: jest.fn().mockResolvedValue([{ value: "Virginia", label: "Virginia", id: 5, abbrev: "VA" }]),
+  getRegions: jest.fn().mockResolvedValue([
+    { value: "Virginia", label: "Virginia", id: 5, abbrev: "VA" },
+    { value: "Maryland", label: "Maryland", id: 6, abbrev: "MD" },
+  ]),
   getCountyRegions: jest.fn().mockResolvedValue([{ id: 9, name: "Accomack" }, { id: 4, name: "Albemarle" }]),
 }));
 jest.mock("@/services/letterings", () => ({ getLetterings: jest.fn().mockResolvedValue([]) }));
@@ -94,11 +97,35 @@ it("prefills the county from the marking's region links on edit and disables the
   expect((screen.getByLabelText("County not listed") as HTMLInputElement).disabled).toBe(true);
 });
 
-it("keeps the County selector off until a state is chosen", async () => {
+it("keeps the County selector and the typed county off until a state is chosen", async () => {
   open("/contribute", "/contribute");
   await screen.findByRole("button", { name: /save as draft/i });
   expect((screen.getByRole("combobox", { name: "County" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByLabelText("County not listed") as HTMLInputElement).disabled).toBe(true);
   expect(getCountyRegions).not.toHaveBeenCalled();
+});
+
+it("changing the state empties the picked county and sends both county keys empty", async () => {
+  (getContribution as jest.Mock).mockResolvedValue({
+    id: 1, status: "draft", submittedData: { state: "VA", town: "Onancock", county_id: 9, county: "Accomack", submission_kind: "marking" },
+  });
+  open("/contribute?edit=1", "/contribute");
+  await waitFor(() => expect(getCountyRegions).toHaveBeenCalledWith(5));
+  await screen.findByText("Accomack");
+
+  fireEvent.click(screen.getByRole("combobox", { name: "State" }));
+  fireEvent.click(await screen.findByText("Maryland"));
+  await waitFor(() => expect(getCountyRegions).toHaveBeenCalledWith(6));
+  expect(screen.queryByText("Accomack")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+  await waitFor(() => expect(createContribution).toHaveBeenCalled());
+  const payload = (createContribution as jest.Mock).mock.calls[0][0];
+  const get = (key: string) => (payload instanceof FormData ? payload.get(key) : payload[key]);
+  expect(String(get("state"))).toBe("Maryland");
+  expect(String(get("county_id"))).toBe("");
+  expect(String(get("county"))).toBe("");
+  expect(String(get("county_proposed"))).toBe("");
 });
 
 it("sends a typed county that is not in the list, with no county id", async () => {

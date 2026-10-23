@@ -8,7 +8,9 @@ says nothing about the county (absent key or "") changes no links at all.
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from common.contribution_apply import ContributionApplyError, apply_contribution_to_catalog
+from common.contribution_apply import (
+    ContributionApplyError, apply_contribution_to_catalog, describe_county_intent,
+)
 from common.models import (
     Collection, Contribution, Marking, PostOffice, PostOfficeRegion, Region,
 )
@@ -90,3 +92,50 @@ class CountyLinkOnApprovalTests(TestCase):
         )
         self.apply(**self.payload("Richmond", edit_marking_id=marking.pk, county_id=self.accomack.pk))
         self.assertEqual(self.links(self.richmond), {self.va.pk, self.accomack.pk})
+
+    def test_a_county_name_that_disagrees_with_the_id_is_refused(self):
+        with self.assertRaisesMessage(ContributionApplyError, "does not match"):
+            self.apply(**self.payload("Onancock", county_id=self.accomack.pk, county="Campbell"))
+        # The approval view's transaction rolls the town back; here, no county link was written.
+        self.assertFalse(PostOfficeRegion.objects.filter(region=self.accomack).exists())
+
+
+class DescribeCountyIntentTests(CountyLinkOnApprovalTests):
+    """The review verdict runs the same validation approval does, read-only."""
+
+    def intent(self, town, **extra):
+        return describe_county_intent(self.payload(town, **extra))
+
+    def test_no_county_keys_means_no_verdict(self):
+        self.assertIsNone(self.intent("Onancock"))
+        self.assertIsNone(self.intent("Onancock", county_id="", county="", county_proposed=""))
+
+    def test_new_town_will_link(self):
+        verdict = self.intent("Onancock", county_id=str(self.accomack.pk), county="")
+        self.assertEqual(
+            {k: verdict[k] for k in ("county_name", "valid", "town_found", "current_county", "will_link", "note")},
+            {"county_name": "Accomack", "valid": True, "town_found": False, "current_county": None,
+             "will_link": True, "note": "Approval links the town to this county"},
+        )
+        self.assertFalse(PostOffice.objects.filter(name="Onancock").exists())
+
+    def test_existing_county_is_reported_and_left_alone(self):
+        verdict = self.intent("Lynchburg", county_id=self.accomack.pk, county="Accomack")
+        self.assertEqual((verdict["town_found"], verdict["current_county"], verdict["will_link"]),
+                         (True, "Campbell", False))
+        self.assertEqual(verdict["note"], "Differs from the catalog's Campbell; approval leaves the county link unchanged")
+        same = self.intent("Lynchburg", county_id=self.campbell.pk)
+        self.assertEqual((same["will_link"], same["note"]), (False, "The town is already linked to this county"))
+
+    def test_wrong_state_and_name_mismatch_are_errors(self):
+        wrong = self.intent("Onancock", county_id=self.montgomery.pk)
+        self.assertFalse(wrong["valid"])
+        self.assertIn("not in 'Virginia'", wrong["error"])
+        mismatch = self.intent("Onancock", county_id=self.accomack.pk, county="Campbell")
+        self.assertFalse(mismatch["valid"])
+        self.assertIn("does not match", mismatch["note"])
+
+    def test_typed_county_only(self):
+        verdict = self.intent("Onancock", county_proposed="Nansemond")
+        self.assertEqual((verdict["county_id"], verdict["valid"], verdict["county_proposed"], verdict["note"]),
+                         (None, False, "Nansemond", "Approval does not link a typed county"))

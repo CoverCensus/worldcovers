@@ -383,8 +383,14 @@ Office only when the town has no county link yet, never replaces or deletes
 one, and refuses a county outside the resolved state. The Editor's review
 shows the county and, on an edit, whether approval will link it or leave a
 differing existing link unchanged; a typed county is shown with a reminder to
-create the Region first. Hosted verification on woco.dev and acceptance
-remain. Not done here: the Post Office page still shows only the state.
+create the Region first. The review page's county facts (name, whether the
+town is known, its current county, what approval will do) come from the
+server (`county_intent`), never from the client-sent name. Hosted
+verification on woco.dev and acceptance remain. Not done here: the Post
+Office page still shows only the state. Refinement to consider later: a
+county link whose `valid_to` has passed still counts as "the town has a
+county" for the add-only rule; a dated-jurisdiction aware rule would need a
+decision on which county is current.
 
 The Region model already supports COUNTY and parent Regions, and
 PostOfficeRegion has dated jurisdiction links. Marking detail displays
