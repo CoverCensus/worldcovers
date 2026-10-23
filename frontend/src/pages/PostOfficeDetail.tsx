@@ -110,9 +110,10 @@ const PostOfficeDetail = () => {
     [tenures]
   );
 
+  // Refetch first, then close: the list changes once, not twice.
   const onSaved = async () => {
-    setEditing(null);
     await queryClient.invalidateQueries({ queryKey: tenuresKey(postOfficeId) });
+    setEditing(null);
   };
 
   const title = office?.name ? office.name : "Post office";

@@ -78,6 +78,9 @@ export function PostmasterEventForm({
       if (person.kind === "new") {
         const created = await createPostmaster(person.name, person.sortName);
         postmasterId = created.id;
+        // The person now exists; a retry after a failed event save reuses it
+        // instead of creating a second row with the same name.
+        setPerson({ kind: "existing", person: created });
       }
       const body = { ...payload, postmaster: postmasterId };
       return existing ? updateTenure(existing.id, body) : createTenure(body);
@@ -138,7 +141,9 @@ export function PostmasterEventForm({
         <div className="space-y-4">
           <div className="space-y-1">
             <div className="flex items-center gap-1">
-              <Label>Person</Label>
+              {/* Heading only: the picker labels its own input (sr-only), so
+                  there is exactly one accessible name for the field. */}
+              <span className="text-sm font-medium leading-none">Person</span>
               <FieldHelp label="Person">{POSTMASTER_PERSON_HELP}</FieldHelp>
             </div>
             <PostmasterPicker value={person} onChange={setPerson} disabled={save.isPending} />

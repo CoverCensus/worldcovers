@@ -825,8 +825,12 @@ class PostmasterTenureViewSet(viewsets.ModelViewSet):
     def _assert_responsible(self, post_office):
         """Region check for CREATE and for a PATCH that moves the row.
 
-        DRF only shows has_object_permission the existing row, so the office a
-        request points at is checked here (the same hole #128 closed for dates).
+        Two guards, two offices: IsResponsibleForTenureOffice.has_object_permission
+        checks the row's EXISTING office on every PATCH (an editor outside that
+        region is refused before this method runs); this method checks the
+        office a request POINTS AT, which DRF never sees on create and never
+        re-checks when a PATCH changes post_office (the hole #128 closed for
+        dates). test_postmaster_api covers both.
         """
         if user_is_responsible_for_post_office(self.request.user, post_office):
             return

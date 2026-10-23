@@ -29,7 +29,9 @@ export function PostmasterPicker({
   disabled?: boolean;
 }) {
   const idPrefix = useId();
-  const [query, setQuery] = useState("");
+  // The typed name IS the search needle: one source of truth, so toggling the
+  // office-level box or pressing Change never leaves stale text in the input.
+  const query = value.kind === "new" ? value.name : "";
   const [matches, setMatches] = useState<PostmasterPerson[]>([]);
   const [searching, setSearching] = useState(false);
 
@@ -90,16 +92,15 @@ export function PostmasterPicker({
           {value.kind === "new" && (
             <div className="space-y-2">
               <div className="space-y-1">
-                <Label htmlFor={`${idPrefix}-search`}>Person</Label>
+                <Label htmlFor={`${idPrefix}-search`} className="sr-only">
+                  Person
+                </Label>
                 <Input
                   id={`${idPrefix}-search`}
                   placeholder="Type a name to search"
                   value={query}
                   disabled={disabled}
-                  onChange={(event) => {
-                    setQuery(event.target.value);
-                    onChange({ kind: "new", name: event.target.value, sortName: value.sortName });
-                  }}
+                  onChange={(event) => onChange({ kind: "new", name: event.target.value, sortName: value.sortName })}
                   autoComplete="off"
                 />
               </div>
@@ -114,7 +115,6 @@ export function PostmasterPicker({
                           className="w-full text-left px-3 py-2 hover:bg-muted"
                           onClick={() => {
                             onChange({ kind: "existing", person });
-                            setQuery("");
                             setMatches([]);
                           }}
                         >

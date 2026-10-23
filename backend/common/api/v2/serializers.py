@@ -53,6 +53,7 @@ from common.models import (
     Region,
     Shape,
 )
+from common.postmaster_names import postmaster_sort_name
 
 from .permissions import (
     _user_is_responsible_for_cover,
@@ -168,11 +169,8 @@ class PostmasterSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         if not (attrs.get("sort_name") or "").strip():
-            # Local import: the management command owns the rule and importing
-            # it at module load would pull the importer into every API request.
-            from common.management.commands.import_vphc_reference import sort_name
             name = attrs.get("name") or (self.instance.name if self.instance else "")
-            attrs["sort_name"] = sort_name(name)
+            attrs["sort_name"] = postmaster_sort_name(name)
         return attrs
 
 

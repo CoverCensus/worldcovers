@@ -30,9 +30,12 @@ export function tenurePayloadDate(parts: PartialDateInput): TenureDateResult {
 }
 
 /** The reverse mapping, for editing an existing row. */
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
 export function partsFromTenureDate(date: string | null, granularity: string): PartialDateInput {
-  if (!date) return { unknown: true, year: "", month: "", day: "" };
-  const [year, month, day] = date.split("-");
+  const match = date ? ISO_DATE.exec(date) : null;
+  if (!match) return { unknown: true, year: "", month: "", day: "" };
+  const [, year, month, day] = match;
   if (granularity === "YEAR") return { unknown: false, year, month: "", day: "" };
   if (granularity === "MONTH") return { unknown: false, year, month: String(Number(month)), day: "" };
   return { unknown: false, year, month: String(Number(month)), day: String(Number(day)) };
