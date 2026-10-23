@@ -1084,7 +1084,7 @@ def _link_county(post_office: PostOffice, payload: dict, state_name: str, actor)
     # Lock the town for the rest of the approval transaction: two approvals
     # for the same town must not both pass the check below and each add a
     # county link (the junction's uniqueness ignores NULL valid_from).
-    PostOffice.objects.select_for_update().filter(pk=post_office.pk).exists()
+    PostOffice.objects.select_for_update().get(pk=post_office.pk)
     # A positive EXISTS on the junction, not .exclude(): excluding across a
     # to-many relation compiles to NOT EXISTS over the whole parent row
     # (ISSUE-2026-08-25-02).

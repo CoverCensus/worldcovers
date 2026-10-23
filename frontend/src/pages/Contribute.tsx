@@ -1232,9 +1232,9 @@ const Contribute = () => {
     setTown(sanitizeTown(typeof data.town === "string" ? data.town : ""));
     // T70: the town's county, from its region links (current-first).
     const regionRows = Array.isArray(data.regions) ? (data.regions as Array<Record<string, unknown>>) : [];
-    const countyRow = regionRows.find((r) => String(r.region_tier ?? "").toUpperCase() === "COUNTY");
-    setCountyId(countyRow && countyRow.id != null ? String(countyRow.id) : "");
-    setCountyLabel(countyRow ? String(countyRow.name ?? "") : "");
+    const countyRegion = regionRows.find((r) => String(r.region_tier ?? "").toUpperCase() === "COUNTY");
+    setCountyId(countyRegion && countyRegion.id != null ? String(countyRegion.id) : "");
+    setCountyLabel(countyRegion ? String(countyRegion.name ?? "") : "");
     setCountyProposed("");
 
     const shapeName = typeof data.shape_name === "string" ? data.shape_name : "";
@@ -3009,10 +3009,12 @@ const Contribute = () => {
                         value={state}
                         onValueChange={(value) => {
                           setState(value);
-                          // A county belongs to one state; a new state empties the pick.
+                          // A county belongs to one state; a new state empties the
+                          // pick and a county typed for the old state.
                           if (value !== state) {
                             setCountyId("");
                             setCountyLabel("");
+                            setCountyProposed("");
                           }
                           if (fieldErrors.state) {
                             setFieldErrors((prev) => ({ ...prev, state: undefined }));
