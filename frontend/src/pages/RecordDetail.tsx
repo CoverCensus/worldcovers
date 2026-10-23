@@ -47,6 +47,7 @@ import {
   countyDisplay,
   getMarkingById,
   getMarkingChangelog,
+  getCoverContributionDraftsForMarking,
   loadAssociatedCoversForMarking,
   normalizeImageUrl,
   primaryRegions,
@@ -298,7 +299,7 @@ function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
 function coverLinkReviewBadgeLabel(cover: AssociatedCover): string {
   if (cover.contributionDraftId != null) {
     const st = (cover.contributionStatus ?? "draft").toLowerCase();
-    if (st === "draft") return "Draft";
+    if (st === "draft") return "Draft - not yet submitted";
     if (st === "needs_revision") return "Needs revision";
     if (st === "pending") return "Pending review";
     return st.charAt(0).toUpperCase() + st.slice(1);
@@ -332,6 +333,12 @@ const RecordDetail = () => {
   const [error, setError] = useState<string | null>(null);
   const [record, setRecord] = useState<MarkingRecord | null>(null);
   const [associatedCovers, setAssociatedCovers] = useState<AssociatedCover[]>([]);
+  // Trello T92: the signed-in user's own unsubmitted cover drafts for this
+  // marking (a cover-like upload moved off a Marking edit, or a draft saved
+  // from Submit New Cover). Listed under Associated Covers so the owner can
+  // find and finish them; never counted, never fetched for anonymous visitors,
+  // and the API only ever returns the caller's own rows.
+  const [ownCoverDrafts, setOwnCoverDrafts] = useState<AssociatedCover[]>([]);
   const [coversLoadError, setCoversLoadError] = useState<string | null>(null);
   const [historyEvents, setHistoryEvents] = useState<MarkingChangelogEvent[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -414,15 +421,25 @@ const RecordDetail = () => {
   useEffect(() => {
     if (markingId == null || Number.isNaN(markingId)) {
       setAssociatedCovers([]);
+      setOwnCoverDrafts([]);
       setCoversLoadError(null);
       return;
     }
     let cancelled = false;
+    const viewerId = user?.id;
+    // A new marking (or a sign-out) must not show the previous one's drafts
+    // while the fetch below is in flight.
+    setOwnCoverDrafts([]);
     void (async () => {
       const { covers: rows, error: coversErr } = await loadAssociatedCoversForMarking(markingId);
       if (cancelled) return;
       setCoversLoadError(coversErr);
       setAssociatedCovers(rows);
+      // Own drafts ride behind the approved list so the public panel never
+      // waits on them; `cancelled` keeps a stale answer off a newer page.
+      const drafts = viewerId != null ? await getCoverContributionDraftsForMarking(markingId) : [];
+      if (cancelled) return;
+      setOwnCoverDrafts(drafts);
     })();
     return () => {
       cancelled = true;
@@ -868,6 +885,9 @@ const RecordDetail = () => {
   );
 
   const coverCount = associatedCovers.length;
+  // Approved links first, then the viewer's own drafts (T92); the count above
+  // stays the public number.
+  const coverRows = ownCoverDrafts.length > 0 ? [...associatedCovers, ...ownCoverDrafts] : associatedCovers;
   // Unauthenticated visitors clicking a write-action button get bounced to
   // /auth with `from` state so the auth page can return them here after
   // login. Matches the pattern used in App.tsx for protected routes.
@@ -1310,13 +1330,13 @@ const RecordDetail = () => {
                       {coversLoadError}
                     </p>
                   )}
-                  {coverCount === 0 && !coversLoadError && (
+                  {coverRows.length === 0 && !coversLoadError && (
                     <p className="text-sm text-muted-foreground">No covers linked to this marking yet.</p>
                   )}
-                  {coverCount > 0 && (
+                  {coverRows.length > 0 && (
                     <>
                     <div className="space-y-4">
-                        {associatedCovers.map((cover) => {
+                        {coverRows.map((cover) => {
                           const c = cover.coverDetails;
                           const thumb = cover.defaultImageUrl ?? null;
                           const earliestLabel = associatedCoverEarliestDisplay(c);
@@ -1333,7 +1353,9 @@ const RecordDetail = () => {
                               (c?.id != null && c.id > 0));
                           return (
                             <Card
-                              key={cover.contributionDraftId ?? cover.id}
+                              // Draft ids (Contribution) and link ids (CoverMarking) are
+                              // independent sequences, so prefix them (T92).
+                              key={cover.contributionDraftId != null ? `draft-${cover.contributionDraftId}` : `link-${cover.id}`}
                               className={`relative shadow-archival-md hover:shadow-archival-lg transition-shadow ${
                                 canOpenCover ? "cursor-pointer" : ""
                               }`}

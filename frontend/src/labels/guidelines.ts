@@ -169,6 +169,32 @@ export const MARKING_FORM_COVER_IMAGE_WARNING = {
 } as const;
 
 /**
+ * The same warning on a Marking EDIT (Trello T92). An edit has no Cover
+ * section: the published Marking's Covers live on its record page, so the
+ * offer is to turn the upload into a Cover draft for that Marking instead.
+ */
+export const MARKING_EDIT_FORM_COVER_IMAGE_WARNING = {
+  title: MARKING_FORM_COVER_IMAGE_WARNING.title,
+  body:
+    "This form collects a close-up of a Marking. Crop the marking out, or make " +
+    "this image a Cover for this Marking: it becomes a Cover draft you finish " +
+    "and submit separately, and it leaves this edit.",
+} as const;
+
+/** The offer and its outcomes on a Marking edit (Trello T92). */
+export const DRAFT_COVER_FROM_EDIT = {
+  action: "Make this a Cover for this Marking",
+  savedTitle: "Cover draft saved",
+  savedBody:
+    "The image is now a Cover draft for this Marking and is no longer part of this edit. " +
+    "Finish the draft to submit it; until then it is not in the review queue and is " +
+    "listed only to you, under Associated Covers on the record page and in your Dashboard.",
+  finish: "Finish the Cover draft",
+  failedTitle: "Could not save the Cover draft",
+  failedBody: "The image stays on this edit.",
+} as const;
+
+/**
  * The Cover section on the new-Marking form (Trello T37). Ian, 2026-10-19:
  * "When adding a NEW marking, give the opportunity to add the corresponding
  * cover at that time to be approved." Both Entries are reviewed separately.

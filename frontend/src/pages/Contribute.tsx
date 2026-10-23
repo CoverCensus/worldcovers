@@ -30,7 +30,7 @@ import { getColors, type ColorOption } from "@/services/colors";
 import { getShapes, type ShapeOption } from "@/services/shapes";
 import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
 import { getRegions } from "@/services/regions";
-import { getMarkingByIdRaw, mapApiMarkingToRecord, normalizeImageUrl, type MarkingRecord, type AssociatedDateSeen } from "@/services/markings";
+import { getMarkingByIdRaw, mapApiMarkingToRecord, normalizeImageUrl, resolveMarkingRoutingState, routingStateFromMarkingRecord, type MarkingRecord, type AssociatedDateSeen } from "@/services/markings";
 import { DatesSeenCard } from "@/components/DatesSeenCard";
 import { PendingCoverSection } from "@/components/PendingCoverSection";
 import {
@@ -39,7 +39,7 @@ import {
   type PendingCoverFields,
   type PendingCoverSavedImage,
 } from "@/lib/pendingCover";
-import { PENDING_COVER_SECTION } from "@/labels/guidelines";
+import { DRAFT_COVER_FROM_EDIT, PENDING_COVER_SECTION } from "@/labels/guidelines";
 import {
   partialDateInputFromDateSeen,
   partialDateInputFromPayload,
@@ -82,6 +82,7 @@ import {
   REFERENCE_WORKS_HELP,
 } from "@/labels/guidelines";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { LocalCropImageDialog } from "@/components/LocalCropImageDialog";
 import { LocalRotateImageDialog } from "@/components/LocalRotateImageDialog";
 import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
@@ -580,6 +581,12 @@ const Contribute = () => {
   const [coverLikeImageKeys, setCoverLikeImageKeys] = useState<string[]>([]);
   // Key of the new upload open in the crop dialog, if any.
   const [cropTargetKey, setCropTargetKey] = useState<string | null>(null);
+  // Trello T92: on a Marking edit, a whole-cover upload can become a Cover
+  // draft for the published Marking. The request is in flight while `saving`
+  // is true; the notice names the draft the server created so the contributor
+  // can go and finish it.
+  const [draftCoverSaving, setDraftCoverSaving] = useState(false);
+  const [draftCoverNotice, setDraftCoverNotice] = useState<{ draftId: number; markingId: number } | null>(null);
   // Trello T37: the Cover submitted together with a new Marking. Staged here and
   // sent as pending_cover + pending_cover_image; the server turns it into a
   // cover submission when the Marking is approved. Never offered on a Marking edit.
@@ -1487,6 +1494,66 @@ const Contribute = () => {
       }
       return next;
     });
+  };
+  // Trello T92: the Marking being edited, whether opened from its record page
+  // (/edit/:id) or resumed as an edit draft. Null on a new-Marking form.
+  const draftCoverTargetId = isEditMarking ? editMarkingId : resumedEditMarkingId;
+  // Trello T92: turn a whole-cover upload on a Marking edit into a Cover draft
+  // for the published Marking. This is the same request the cover editor's
+  // Save Draft sends (CoverEdit.tsx submitCoverContribution), with the file
+  // the contributor picked -- the uncropped original when they already cropped.
+  // The tile leaves this edit only once the server holds the draft, so a
+  // failed request loses nothing; the draft is then the contributor's to
+  // finish from the record page or the Dashboard, and nobody else sees it.
+  const makeDraftCoverFromUpload = async (key: string) => {
+    const item = gallery.find(
+      (g): g is Extract<MarkingGalleryItem, { kind: "new" }> => g.kind === "new" && g.key === key,
+    );
+    if (!item || draftCoverTargetId == null || draftCoverSaving) return;
+    const file = item.originalFile ?? item.file;
+    setDraftCoverSaving(true);
+    try {
+      const form = new FormData();
+      form.append("submission_kind", "cover");
+      form.append("save_as_draft", "true");
+      // State routes the draft to its Collection. The loaded record usually has
+      // it; before it has loaded, ask the server the way CoverEdit.tsx does. A
+      // draft without state is still accepted (fallback Collection, routed on
+      // submit), so neither path blocks the offer.
+      let stateRoute = routingStateFromMarkingRecord(dateRecord);
+      if (!stateRoute) {
+        try {
+          stateRoute = await resolveMarkingRoutingState(draftCoverTargetId);
+        } catch {
+          stateRoute = "";
+        }
+      }
+      if (stateRoute) form.append("state", stateRoute);
+      form.append("parent_marking_id", String(draftCoverTargetId));
+      form.append("marking_id", String(draftCoverTargetId));
+      form.append("cover_image", file, file.name);
+      form.append("cover_image_tags", JSON.stringify(["photograph"]));
+      form.append("image_order", JSON.stringify(["__new__"]));
+      const result = await createContribution(form);
+      setGallery((prev) => prev.filter((g) => g.key !== key));
+      setCoverLikeImageKeys((prev) => prev.filter((k) => k !== key));
+      setLowResolutionImageKeys((prev) => prev.filter((k) => k !== key));
+      setDraftCoverNotice(
+        result.contributionId != null
+          ? { draftId: result.contributionId, markingId: draftCoverTargetId }
+          : null,
+      );
+      toast({ title: DRAFT_COVER_FROM_EDIT.savedTitle, description: DRAFT_COVER_FROM_EDIT.savedBody });
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.message ? `${err.message} ` : "";
+      toast({
+        title: DRAFT_COVER_FROM_EDIT.failedTitle,
+        description: `${reason}${DRAFT_COVER_FROM_EDIT.failedBody}`,
+        variant: "destructive",
+      });
+    } finally {
+      setDraftCoverSaving(false);
+    }
   };
   // Only counts images still in the gallery, so removing the offending file
   // clears the warning without any extra bookkeeping.
@@ -2565,6 +2632,7 @@ const Contribute = () => {
         <WrongImageKindWarning
           expected="MARKING"
           count={coverLikeImageCount}
+          editing={isMarkingEditAction}
           action={firstCoverLikeUploadKey ? (
             <div className="flex flex-wrap gap-2">
               <Button
@@ -2581,9 +2649,37 @@ const Contribute = () => {
                   {PENDING_COVER_SECTION.warningAction}
                 </Button>
               )}
+              {isMarkingEditAction && draftCoverTargetId != null && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={draftCoverSaving || submitting}
+                  aria-busy={draftCoverSaving}
+                  onClick={() => void makeDraftCoverFromUpload(firstCoverLikeUploadKey)}
+                >
+                  {draftCoverSaving && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                  {DRAFT_COVER_FROM_EDIT.action}
+                </Button>
+              )}
             </div>
           ) : null}
         />
+        {draftCoverNotice && (
+          <Alert className="mt-3" role="status" data-testid="draft-cover-notice">
+            <AlertTitle>{DRAFT_COVER_FROM_EDIT.savedTitle}</AlertTitle>
+            <AlertDescription>
+              <p>{DRAFT_COVER_FROM_EDIT.savedBody}</p>
+              <Link
+                className="mt-2 inline-block underline"
+                to={`/record/${draftCoverNotice.markingId}/cover/new?edit=${draftCoverNotice.draftId}`}
+                state={{ from: location.pathname + location.search }}
+              >
+                {DRAFT_COVER_FROM_EDIT.finish}
+              </Link>
+            </AlertDescription>
+          </Alert>
+        )}
         <LocalCropImageDialog
           open={cropTarget != null}
           onOpenChange={(open) => {

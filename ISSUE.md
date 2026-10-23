@@ -450,7 +450,8 @@ from that intake or Reese's report, not checks repeated in this reconciliation.
   as `pending_cover`, and approving the Marking creates an ordinary pending
   Cover submission for the new Marking in the same transaction, reviewed on
   the existing cover page. Two approvals, one form, no model change; the
-  provisional-Cover-from-an-edit item is split to T92. Production rollout is
+  provisional-Cover-from-an-edit item is split to T92 (built October 23, see
+  the T92 entry below). Production rollout is
   recorded in the October 15 card comment after PR #182 and the successful
   October 14 deploy. Verify the remaining shipped cases separately from
   the unresolved combined Marking/Cover and provisional Cover workflow.
@@ -761,6 +762,21 @@ The Color palette utility follows the project's commit-by-default rule:
   Direct checks covered missing and duplicate codes for both Entry types and
   missing generation context. T32 stays in Testing for hosted acceptance,
   including the separate legacy Entry-kind check at contribution 91.
+- **[T92](https://trello.com/c/GRCAFvqL), F5:** built on branch
+  `reese/92-draft-cover-from-edit` (October 23), part (c) of the October 7
+  T37 memo. On a Marking edit, a whole-cover upload is offered as a Cover
+  draft for that published Marking: the form posts the draft through the
+  existing cover submit path with the file (uncropped original if cropped),
+  removes the tile once the server holds it, and links to the cover editor.
+  The record page lists the signed-in user's own cover drafts for the
+  Marking under Associated Covers as "Draft - not yet submitted", outside
+  the count and only to their author; the drafts fetch now asks for draft
+  rows at page size 100 instead of the unfiltered first ten. Decisions
+  (Reese, memo questions 11-13): draft rather than pending; drafts only on
+  the record page; image moved, not copied. No backend code change; a test
+  pins draft visibility. Limitation: an image already saved with an edit
+  draft is not re-measured on resume and gets no offer. Hosted verification
+  remains open.
 - **[S33](https://trello.com/c/9TH4dywm):** the Marking new/edit form now has
   keyboard-accessible help for Lettering style, Impression, and Is Irregular,
   using the glossary meanings and the existing tooltip component. Existing

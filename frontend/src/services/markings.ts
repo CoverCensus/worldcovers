@@ -1615,12 +1615,26 @@ function mapCoverContributionToAssociatedCover(
   };
 }
 
-/** Cover contribution drafts for a marking (not yet materialized as CoverMarking rows). */
+/**
+ * The signed-in user's own cover drafts for a marking (not yet CoverMarking
+ * rows). The contributions list is owner-scoped by the API, so nobody else's
+ * drafts can come back. Trello T92: asks for draft rows only, at the largest
+ * page the API allows (100), instead of the unfiltered default page of 10 that
+ * used to hide a draft behind ten newer submissions. Anything past the page
+ * is unreachable here, which is acceptable: a contributor with more than a
+ * hundred open drafts has the Dashboard.
+ */
+export const COVER_DRAFTS_PAGE_SIZE = 100;
+
 export async function getCoverContributionDraftsForMarking(
   markingId: number,
 ): Promise<AssociatedCover[]> {
   try {
-    const { rawItems } = await listContributions();
+    const { rawItems } = await listContributions({
+      status: "draft",
+      pageSize: COVER_DRAFTS_PAGE_SIZE,
+      ordering: "-created_at",
+    });
     return rawItems
       .map((row) =>
         mapCoverContributionToAssociatedCover(row as Record<string, unknown>, markingId),
@@ -1639,9 +1653,11 @@ export async function loadAssociatedCoversForMarking(
   // Only editor-approved cover-marking links appear on the record's Associated
   // Covers panel (and its count). Covers still pending review (or rejected /
   // returned-for-revision) are hidden, mirroring how an unapproved marking
-  // contribution does not appear on the record. The contributor's own cover
-  // drafts -- pending, returned, or unsubmitted -- are reached from Dashboard /
-  // My Submissions, NOT from this panel.
+  // contribution does not appear on the record. Pending and returned cover
+  // submissions are reached from Dashboard / My Submissions. The signed-in
+  // user's own unsubmitted cover DRAFTS are the one exception (Trello T92):
+  // the record page fetches them separately with
+  // getCoverContributionDraftsForMarking and lists them outside the count.
   const approved = covers.filter((c) => c.reviewStatus === "approved");
   // Earliest observed date first, undated last (issues.md 174). The API
   // orders by link id, which is the order editors happened to attach them.

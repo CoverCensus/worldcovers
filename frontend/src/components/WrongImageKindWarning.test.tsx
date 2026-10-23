@@ -29,6 +29,21 @@ describe("WrongImageKindWarning (issue #76)", () => {
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
+  it("offers a Cover draft instead of the Cover section on a Marking edit (T92)", () => {
+    render(
+      <WrongImageKindWarning
+        expected="MARKING"
+        count={1}
+        editing
+        action={<button type="button">Make this a Cover for this Marking</button>}
+      />,
+    );
+    expect(screen.getByText(/may show a whole Cover/)).toBeTruthy();
+    expect(screen.getByText(/becomes a Cover draft you finish and submit separately/)).toBeTruthy();
+    expect(screen.queryByText(/using the Cover section/)).toBeNull();
+    expect(screen.getByRole("button", { name: /Make this a Cover for this Marking/ })).toBeTruthy();
+  });
+
   it("reverses the message on the cover form", () => {
     render(
       <WrongImageKindWarning
