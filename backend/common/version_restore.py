@@ -35,7 +35,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import SuspiciousFileOperation, ValidationError
 from django.core.files.storage import default_storage
 
 from common.models import (
@@ -204,6 +204,22 @@ def _row(key: str, label: str, current: Any, proposed: Any, formatter, *, compar
     return FieldRow(key, label, formatter(current), formatter(proposed), changed)
 
 
+def _file_in_storage(storage: str) -> bool:
+    """Whether the image file is still under MEDIA_ROOT; a name the storage
+    refuses to resolve (absolute, or escaping the root) counts as missing."""
+    try:
+        return bool(default_storage.exists(storage))
+    except (SuspiciousFileOperation, ValueError):
+        return False
+
+
+def _int_id(value: Any, what: str) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise RestorePlanError(f"Snapshot {what} is not a number.") from None
+
+
 def _keep_if_missing(snapshot: dict[str, Any], key: str, current: Any) -> Any:
     """A field the version did not record keeps its current value."""
     value = snapshot.get(key)
@@ -345,7 +361,7 @@ def _plan_images(subject_type: str, subject_id: int, snapshot: dict[str, Any], l
             changed = {k: v for k, v in updates.items() if getattr(live, k) != v}
             (plan.update.append((live, changed)) if changed else plan.keep.append(live))
             continue
-        if not default_storage.exists(storage):
+        if not _file_in_storage(storage):
             plan.skipped.append(row)
             limitations.append(
                 LIMIT_IMAGE_FILE_MISSING.format(
@@ -445,7 +461,7 @@ def _plan_citations(subject_type: str, subject_id: int, snapshot: dict[str, Any]
         ref_id = row.get("reference_work_id")
         if not ref_id:
             continue
-        identity = (int(ref_id), (row.get("citation_detail") or "").strip())
+        identity = (_int_id(ref_id, "reference_work_id"), (row.get("citation_detail") or "").strip())
         if identity in seen:
             continue
         seen.add(identity)
@@ -477,7 +493,7 @@ def _plan_cover_markings(cover: Cover, snapshot: dict[str, Any], limitations: li
         marking_id = row.get("marking_id")
         if marking_id is None:
             continue
-        marking_id = int(marking_id)
+        marking_id = _int_id(marking_id, "marking_id")
         if marking_id in seen:
             continue
         seen.add(marking_id)

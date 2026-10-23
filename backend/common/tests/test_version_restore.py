@@ -39,6 +39,7 @@ from common.version_restore import (
     LIMIT_IMAGE_FILE_MISSING,
     LIMIT_MARKING_COVER_LINKS,
     LIMIT_NOT_RECORDED,
+    RestorePlanError,
     apply_restore_plan,
     plan_marking_restore,
 )
@@ -142,6 +143,15 @@ class VersionRestoreTests(TestCase):
         self.assertEqual(Image.objects.filter(subject_type="MARKING", subject_id=self.marking.pk).count(), 1)
         self.marking.refresh_from_db()
         self.assertEqual(self.marking.inscription_txt, "RICHMOND")
+
+    def test_unresolvable_image_path_counts_as_missing_and_bad_ids_are_refused(self):
+        snapshot = dict(self.marking_v1.snapshot)
+        snapshot["images"] = [{**snapshot["images"][0], "storage_filename": "../../etc/passwd", "original_filename": "x"}]
+        plan = plan_marking_restore(self.marking, snapshot)
+        self.assertEqual(plan.relations["images"].counts()["skipped"], 1)
+        self.assertIn(LIMIT_IMAGE_FILE_MISSING.format(original="x", storage="../../etc/passwd"), plan.limitations)
+        with self.assertRaises(RestorePlanError):
+            plan_marking_restore(self.marking, {**snapshot, "citations": [{"reference_work_id": "abc"}]})
 
     def test_snapshot_without_relationship_keys_leaves_them_unchanged(self):
         before = self.counts()
