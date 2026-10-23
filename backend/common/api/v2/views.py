@@ -811,6 +811,7 @@ def _caption_change(txn):
 
 
 RESTORE_FAILED_DETAIL = "Restore could not be completed; nothing was changed."
+MAX_VERSION_NO = 2**31 - 1  # version_no is an IntegerField
 RESTORE_OUTSIDE_REGION_DETAIL = "This version links markings in a region you are not responsible for."
 
 
@@ -824,6 +825,11 @@ def _version_for_restore(version_model, entry_filter, raw_version_no):
     except (TypeError, ValueError):
         return None, Response(
             {"detail": "version_no must be an integer."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not 1 <= version_no <= MAX_VERSION_NO:
+        return None, Response(
+            {"detail": "version_no is out of range."},
             status=status.HTTP_400_BAD_REQUEST,
         )
     version = version_model.objects.filter(version_no=version_no, **entry_filter).first()
@@ -1706,12 +1712,13 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
         )
         if error:
             return error
+        # Planning only reads; the write and its history rows share one transaction.
+        plan, error = _restore_plan_response(plan_cover_restore, cover, restore_from, request.user)
+        if error:
+            return error
         try:
             with transaction.atomic():
                 before_snapshot = build_cover_snapshot(cover)
-                plan, error = _restore_plan_response(plan_cover_restore, cover, restore_from, request.user)
-                if error:
-                    return error
                 apply_restore_plan(plan, request.user)
                 cover.refresh_from_db()
                 after_snapshot = build_cover_snapshot(cover)
@@ -2899,12 +2906,13 @@ class MarkingViewSet(viewsets.ModelViewSet):
         )
         if error:
             return error
+        # Planning only reads; the write and its history rows share one transaction.
+        plan, error = _restore_plan_response(plan_marking_restore, marking, restore_from, request.user)
+        if error:
+            return error
         try:
             with transaction.atomic():
                 before_snapshot = build_marking_snapshot(marking)
-                plan, error = _restore_plan_response(plan_marking_restore, marking, restore_from, request.user)
-                if error:
-                    return error
                 apply_restore_plan(plan, request.user)
                 marking.refresh_from_db()
                 after_snapshot = build_marking_snapshot(marking)

@@ -263,6 +263,7 @@ class VersionRestoreTests(TestCase):
             with self.subTest(kind=kind, case="bad version"):
                 self.assertEqual(self.client.get(f"{preview_url}?version_no=abc").status_code, 400)
                 self.assertEqual(self.client.post(restore_url, {"version_no": "abc"}, format="json").status_code, 400)
+                self.assertEqual(self.client.get(f"{preview_url}?version_no=99999999999").status_code, 400)
                 self.assertEqual(self.client.get(f"{preview_url}?version_no=99").status_code, 404)
                 self.assertEqual(self.client.post(restore_url, {"version_no": 99}, format="json").status_code, 404)
         self.assertEqual(self.counts(), before)

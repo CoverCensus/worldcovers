@@ -525,11 +525,11 @@ def _plan_valuations(cover: Cover, snapshot: dict[str, Any], limitations: list[s
         limitations.append(LIMIT_NOT_RECORDED.format(what=RELATION_LABELS["valuations"]))
         return plan
     current = {
-        (_decimal_text(row.amt), _text(row.appraisal_date)): row for row in cover.valuations.all()
+        (_decimal_text(row.amt), _text(_date(row.appraisal_date))): row for row in cover.valuations.all()
     }
     seen: set[tuple[str, str]] = set()
     for row in wanted:
-        identity = (_decimal_text(row.get("amt")), _text(row.get("appraisal_date")))
+        identity = (_decimal_text(row.get("amt")), _text(_date(row.get("appraisal_date"))))
         if identity in seen:
             continue
         seen.add(identity)
@@ -634,7 +634,7 @@ def apply_restore_plan(plan: RestorePlan, actor) -> None:
             if kind == "images":
                 extra["uploaded_by"] = user
                 extra["is_tracing"] = False
-            model.objects.create(**fields, **extra)
+            model.objects.create(**{**fields, **extra})
 
 
 # -- preview --------------------------------------------------------------------------------------
