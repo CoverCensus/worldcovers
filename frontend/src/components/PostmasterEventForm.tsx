@@ -121,7 +121,7 @@ export function PostmasterEventForm({
       fail(dateResult.error);
       return;
     }
-    if (!existing && !sourceNote.trim()) {
+    if ((!existing || existing.origin === "MANUAL") && !sourceNote.trim()) {
       fail("Say where this event comes from (the source note is required).");
       return;
     }

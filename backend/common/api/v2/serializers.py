@@ -170,10 +170,11 @@ class PostmasterSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         # Derive on create, or when the caller sends a blank sort_name. A PATCH
         # that omits the field leaves the stored value alone.
-        if self.instance is None or ("sort_name" in attrs and not (attrs["sort_name"] or "").strip()):
-            if not (attrs.get("sort_name") or "").strip():
-                name = attrs.get("name") or (self.instance.name if self.instance else "")
-                attrs["sort_name"] = postmaster_sort_name(name)
+        blank_sort_name = not (attrs.get("sort_name") or "").strip()
+        derive = blank_sort_name and (self.instance is None or "sort_name" in attrs)
+        if derive:
+            name = attrs.get("name") or (self.instance.name if self.instance else "")
+            attrs["sort_name"] = postmaster_sort_name(name)
         if "sort_name" in attrs:
             # ", " inserted into a 255-character name would overflow the column.
             attrs["sort_name"] = attrs["sort_name"][:255]
