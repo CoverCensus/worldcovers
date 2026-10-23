@@ -30,7 +30,7 @@ import { getColors, type ColorOption } from "@/services/colors";
 import { getShapes, type ShapeOption } from "@/services/shapes";
 import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
 import { getRegions } from "@/services/regions";
-import { getMarkingByIdRaw, mapApiMarkingToRecord, normalizeImageUrl, routingStateFromMarkingRecord, type MarkingRecord, type AssociatedDateSeen } from "@/services/markings";
+import { getMarkingByIdRaw, mapApiMarkingToRecord, normalizeImageUrl, resolveMarkingRoutingState, routingStateFromMarkingRecord, type MarkingRecord, type AssociatedDateSeen } from "@/services/markings";
 import { DatesSeenCard } from "@/components/DatesSeenCard";
 import { PendingCoverSection } from "@/components/PendingCoverSection";
 import {
@@ -1516,7 +1516,18 @@ const Contribute = () => {
       const form = new FormData();
       form.append("submission_kind", "cover");
       form.append("save_as_draft", "true");
-      const stateRoute = routingStateFromMarkingRecord(dateRecord);
+      // State routes the draft to its Collection. The loaded record usually has
+      // it; before it has loaded, ask the server the way CoverEdit.tsx does. A
+      // draft without state is still accepted (fallback Collection, routed on
+      // submit), so neither path blocks the offer.
+      let stateRoute = routingStateFromMarkingRecord(dateRecord);
+      if (!stateRoute) {
+        try {
+          stateRoute = await resolveMarkingRoutingState(draftCoverTargetId);
+        } catch {
+          stateRoute = "";
+        }
+      }
       if (stateRoute) form.append("state", stateRoute);
       form.append("parent_marking_id", String(draftCoverTargetId));
       form.append("marking_id", String(draftCoverTargetId));
