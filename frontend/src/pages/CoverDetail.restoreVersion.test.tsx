@@ -83,7 +83,8 @@ function openPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      {/* Opened from a marking record: the history card is unavailable on the bare /covers/:coverId route. */}
+      {/* The cover is opened from a marking record (/record/:id/cover/:coverId), where the history
+          card renders its events; on the bare /covers/:coverId route it shows an unavailable message. */}
       <MemoryRouter initialEntries={["/record/42/cover/7"]}>
         <Routes><Route path="/record/:id/cover/:coverId" element={<CoverDetailPage />} /></Routes>
       </MemoryRouter>

@@ -52,6 +52,7 @@ from common.models import (
     Marking,
     MarkingType,
     PostOffice,
+    ReferenceWork,
     Shape,
 )
 
@@ -74,6 +75,9 @@ LIMIT_LINKS_REATTACHED = (
     "Re-added marking links have no reviewer notes or contributor comment; the version does not record them."
 )
 LIMIT_NOT_RECORDED = "This version did not record {what}; the current ones are left unchanged."
+LIMIT_CITATION_WORK_MISSING = (
+    "Citation of reference work #{work_id} is not restored: that reference work no longer exists."
+)
 LIMIT_DATE_UNREADABLE = "A recorded date could not be read and is not restored."
 
 RELATION_LABELS = {
@@ -353,7 +357,7 @@ def _plan_images(subject_type: str, subject_id: int, snapshot: dict[str, Any], l
             continue
         seen.add(storage)
         updates = {
-            "display_order": int(row.get("display_order") or 0),
+            "display_order": _int_id(row.get("display_order") or 0, "display_order"),
             "image_view": row.get("image_view") or "",
             "image_description": row.get("image_description") or "",
         }
@@ -381,9 +385,9 @@ def _plan_images(subject_type: str, subject_id: int, snapshot: dict[str, Any], l
                 "storage_filename": row.get("storage_filename") or storage,
                 "file_checksum": row.get("file_checksum") or "",
                 "mime_type": row.get("mime_type") or "",
-                "image_width": int(row.get("image_width") or 0),
-                "image_height": int(row.get("image_height") or 0),
-                "file_size_bytes": int(row.get("file_size_bytes") or 0),
+                "image_width": _int_id(row.get("image_width") or 0, "image_width"),
+                "image_height": _int_id(row.get("image_height") or 0, "image_height"),
+                "file_size_bytes": _int_id(row.get("file_size_bytes") or 0, "file_size_bytes"),
                 **updates,
             }
         )
@@ -459,6 +463,8 @@ def _plan_citations(subject_type: str, subject_id: int, snapshot: dict[str, Any]
         (row.reference_work_id, (row.citation_detail or "").strip()): row
         for row in Citation.objects.filter(subject_type=subject_type, subject_id=subject_id)
     }
+    wanted_ids = {_int_id(row["reference_work_id"], "reference_work_id") for row in wanted if row.get("reference_work_id")}
+    existing_ids = set(ReferenceWork.objects.filter(pk__in=wanted_ids).values_list("pk", flat=True))
     seen: set[tuple[int, str]] = set()
     for row in wanted:
         ref_id = row.get("reference_work_id")
@@ -471,6 +477,9 @@ def _plan_citations(subject_type: str, subject_id: int, snapshot: dict[str, Any]
         live = current.get(identity)
         if live is not None:
             plan.keep.append(live)
+        elif identity[0] not in existing_ids:
+            plan.skipped.append(row)
+            limitations.append(LIMIT_CITATION_WORK_MISSING.format(work_id=identity[0]))
         else:
             plan.add.append(
                 {

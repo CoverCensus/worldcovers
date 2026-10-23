@@ -36,6 +36,7 @@ from common.models import (
     SubmissionTransaction,
 )
 from common.version_restore import (
+    LIMIT_CITATION_WORK_MISSING,
     LIMIT_IMAGE_FILE_MISSING,
     LIMIT_MARKING_COVER_LINKS,
     LIMIT_NOT_RECORDED,
@@ -152,6 +153,9 @@ class VersionRestoreTests(TestCase):
         self.assertIn(LIMIT_IMAGE_FILE_MISSING.format(original="x", storage="../../etc/passwd"), plan.limitations)
         with self.assertRaises(RestorePlanError):
             plan_marking_restore(self.marking, {**snapshot, "citations": [{"reference_work_id": "abc"}]})
+        gone = plan_marking_restore(self.marking, {**snapshot, "citations": [{"reference_work_id": 999999}]})
+        self.assertEqual(gone.relations["citations"].counts()["skipped"], 1)
+        self.assertIn(LIMIT_CITATION_WORK_MISSING.format(work_id=999999), gone.limitations)
 
     def test_snapshot_without_relationship_keys_leaves_them_unchanged(self):
         before = self.counts()
