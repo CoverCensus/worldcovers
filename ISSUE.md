@@ -421,9 +421,17 @@ Evidence: [Region and PostOfficeRegion](backend/common/models.py),
 ### Follow-up: Manual Postmaster entry
 
 Michael reported that the application does not expose manual Postmaster
-entry. [T71](https://trello.com/c/By0kwVmn) is To Do, unassigned,
+entry. [T71](https://trello.com/c/By0kwVmn) is Doing (Reese, 2026-10-23),
 F3 - Submission Workflow. Reese owns the
 application work; Michael owns any required model/data changes.
+
+Status 2026-10-23: built. Migration `0023_postmaster_manual_entry` adds
+`origin` (IMPORT/MANUAL) and `source_note` to `PostmasterTenure`; Editors
+add and correct people and events through the API (POST/PATCH, no DELETE)
+and from the Post Office page; each write is one Submission Transaction;
+roles, review and later-import handling are recorded in
+[VPHC-DECISIONS.md](docs/devel/VPHC-DECISIONS.md). Hosted verification
+and acceptance remain.
 
 Current Postmaster and PostmasterTenure APIs are read-only, and the frontend
 fetches appointment events for display. The source-import command is not a
