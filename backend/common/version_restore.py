@@ -209,10 +209,11 @@ def _row(key: str, label: str, current: Any, proposed: Any, formatter, *, compar
 
 
 def _file_in_storage(storage: str) -> bool:
-    """Whether the image file is still under MEDIA_ROOT. A name that is absolute
-    or climbs out of the root counts as missing, checked here as well as by the
-    storage backend so the rule does not depend on which backend is configured."""
-    if storage.startswith("/") or ".." in storage.split("/"):
+    """Whether the image file is still under MEDIA_ROOT. The name arrives with
+    its leading "/" stripped; one that climbs out of the root counts as missing,
+    checked here as well as by the storage backend so the rule does not depend
+    on which backend is configured."""
+    if ".." in storage.split("/"):
         return False
     try:
         return bool(default_storage.exists(storage))
@@ -382,7 +383,7 @@ def _plan_images(subject_type: str, subject_id: int, snapshot: dict[str, Any], l
                 "subject_type": subject_type,
                 "subject_id": subject_id,
                 "original_filename": row.get("original_filename") or storage.rsplit("/", 1)[-1],
-                "storage_filename": row.get("storage_filename") or storage,
+                "storage_filename": storage,
                 "file_checksum": row.get("file_checksum") or "",
                 "mime_type": row.get("mime_type") or "",
                 "image_width": _int_id(row.get("image_width") or 0, "image_width"),
@@ -563,6 +564,12 @@ def _plan_valuations(cover: Cover, snapshot: dict[str, Any], limitations: list[s
 # -- plans ----------------------------------------------------------------------------------------
 
 
+def _unique(lines: list[str]) -> list[str]:
+    """One line per limitation, in first-seen order (two citations of one
+    vanished reference work say it once)."""
+    return list(dict.fromkeys(lines))
+
+
 def _check_snapshot(snapshot: Any) -> dict[str, Any]:
     if not isinstance(snapshot, dict):
         raise RestorePlanError("Version snapshot is not readable.")
@@ -580,7 +587,7 @@ def plan_marking_restore(marking: Marking, snapshot: Any) -> RestorePlan:
         "citations": _plan_citations("MARKING", marking.pk, snapshot, limitations),
     }
     limitations.append(LIMIT_MARKING_COVER_LINKS)
-    return RestorePlan("marking", marking, scalars, fields, relations, limitations)
+    return RestorePlan("marking", marking, scalars, fields, relations, _unique(limitations))
 
 
 def plan_cover_restore(cover: Cover, snapshot: Any) -> RestorePlan:
@@ -596,7 +603,7 @@ def plan_cover_restore(cover: Cover, snapshot: Any) -> RestorePlan:
         "valuations": _plan_valuations(cover, snapshot, limitations),
     }
     limitations.append(LIMIT_COVER_DESCRIPTION)
-    return RestorePlan("cover", cover, scalars, fields, relations, limitations)
+    return RestorePlan("cover", cover, scalars, fields, relations, _unique(limitations))
 
 
 # -- apply ----------------------------------------------------------------------------------------
@@ -620,9 +627,12 @@ _RELATION_MODELS = {
 def apply_restore_plan(plan: RestorePlan, actor) -> None:
     """Write the plan: scalars, then per relationship remove, update, add.
 
-    Opens no transaction. Removes come before adds so a row that changes
-    identity (for example an image that was re-ordered) never collides with
-    a unique constraint on the way in.
+    Opens no transaction; the caller holds one and has locked the subject row.
+    Only the planned scalar columns are written, so a concurrent edit to a
+    column the version does not record (a Cover's description, for example)
+    survives. Removes come before adds so a row that changes identity (for
+    example an image that was re-ordered) never collides with a unique
+    constraint on the way in.
     """
     subject = plan.subject
     for key, value in plan.scalars.items():
@@ -630,7 +640,7 @@ def apply_restore_plan(plan: RestorePlan, actor) -> None:
     user = _audit_user(actor, subject)
     if user is not None:
         subject.modified_by = user
-    subject.save()
+    subject.save(update_fields=[*plan.scalars, "modified_by", "modified_date"])
 
     for kind, relation in plan.relations.items():
         model = _RELATION_MODELS[kind]

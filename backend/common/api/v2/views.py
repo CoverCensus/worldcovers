@@ -18,7 +18,7 @@ from pathlib import Path
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import IntegrityError, ProgrammingError, transaction
+from django.db import DatabaseError, IntegrityError, ProgrammingError, transaction
 from django.db.models import (
     Exists, F, Min, Max, OuterRef, ProtectedError, Q, TextField, Value,
 )
@@ -851,16 +851,35 @@ def _version_action_label(version) -> str | None:
 def _restore_links_outside_scope(user, plan) -> bool:
     """True when a cover restore would link markings in regions the editor is
     not assigned to; _user_is_responsible_for_cover forbids acting on such a
-    cover, so the restore must not create one."""
+    cover, so the restore must not create one. Denies unless every added
+    marking is found and proven in scope."""
     marking_ids = plan.added_marking_ids()
     if not marking_ids or user.is_superuser:
         return False
     assigned = set(_get_user_assigned_regions(user).values_list("pk", flat=True))
-    for marking in Marking.objects.filter(pk__in=marking_ids).select_related("post_office"):
+    rows = list(Marking.all_objects.filter(pk__in=marking_ids).select_related("post_office"))
+    if len(rows) != len(set(marking_ids)):
+        return True
+    for marking in rows:
         region = marking.post_office.region if marking.post_office_id else None
         if region is None or region.pk not in assigned:
             return True
     return False
+
+
+def _restore_office_outside_scope(user, entry, plan) -> bool:
+    """True when a marking restore would move the marking to a post office in a
+    region the editor is not assigned to (or to one with no region)."""
+    if plan.entry_type != "marking" or user.is_superuser:
+        return False
+    target_id = plan.scalars.get("post_office_id")
+    if target_id is None or target_id == entry.post_office_id:
+        return False
+    office = PostOffice.objects.filter(pk=target_id).first()
+    region = office.region if office else None
+    if region is None:
+        return True
+    return not _get_user_assigned_regions(user).filter(pk=region.pk).exists()
 
 
 def _restore_plan_response(plan_fn, entry, version, user):
@@ -869,7 +888,7 @@ def _restore_plan_response(plan_fn, entry, version, user):
         plan = plan_fn(entry, version.snapshot or {})
     except RestorePlanError as exc:
         return None, Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-    if _restore_links_outside_scope(user, plan):
+    if _restore_links_outside_scope(user, plan) or _restore_office_outside_scope(user, entry, plan):
         return None, Response({"detail": RESTORE_OUTSIDE_REGION_DETAIL}, status=status.HTTP_403_FORBIDDEN)
     return plan, None
 
@@ -1712,14 +1731,17 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
         )
         if error:
             return error
-        # Planning only reads; the write and its history rows share one transaction.
-        # A concurrent write to this cover between planning and applying surfaces
-        # as a constraint error (409) and the editor retries from a fresh preview.
-        plan, error = _restore_plan_response(plan_cover_restore, cover, restore_from, request.user)
-        if error:
-            return error
+        # One transaction holds the row lock, the plan, the before-snapshot, the
+        # apply and the history rows, so they all describe one consistent state;
+        # a concurrent request waits for the lock and then plans against the
+        # restored row. A constraint refusing the restored rows rolls everything
+        # back and answers 409.
         try:
             with transaction.atomic():
+                cover = Cover.objects.select_for_update().get(pk=cover.pk)
+                plan, error = _restore_plan_response(plan_cover_restore, cover, restore_from, request.user)
+                if error:
+                    return error
                 before_snapshot = build_cover_snapshot(cover)
                 apply_restore_plan(plan, request.user)
                 cover.refresh_from_db()
@@ -1738,7 +1760,7 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
                     },
                 )
                 new_version = create_cover_version(cover, txn, request.user)
-        except (IntegrityError, DjangoValidationError):
+        except (DatabaseError, DjangoValidationError):
             return Response({"detail": RESTORE_FAILED_DETAIL}, status=status.HTTP_409_CONFLICT)
         return Response(
             {
@@ -2908,14 +2930,17 @@ class MarkingViewSet(viewsets.ModelViewSet):
         )
         if error:
             return error
-        # Planning only reads; the write and its history rows share one transaction.
-        # A concurrent write to this marking between planning and applying surfaces
-        # as a constraint error (409) and the editor retries from a fresh preview.
-        plan, error = _restore_plan_response(plan_marking_restore, marking, restore_from, request.user)
-        if error:
-            return error
+        # One transaction holds the row lock, the plan, the before-snapshot, the
+        # apply and the history rows, so they all describe one consistent state;
+        # a concurrent request waits for the lock and then plans against the
+        # restored row. A constraint refusing the restored rows rolls everything
+        # back and answers 409.
         try:
             with transaction.atomic():
+                marking = Marking.objects.select_for_update().get(pk=marking.pk)
+                plan, error = _restore_plan_response(plan_marking_restore, marking, restore_from, request.user)
+                if error:
+                    return error
                 before_snapshot = build_marking_snapshot(marking)
                 apply_restore_plan(plan, request.user)
                 marking.refresh_from_db()
@@ -2935,7 +2960,7 @@ class MarkingViewSet(viewsets.ModelViewSet):
                     },
                 )
                 new_version = create_marking_version(marking, txn, request.user)
-        except (IntegrityError, DjangoValidationError):
+        except (DatabaseError, DjangoValidationError):
             return Response({"detail": RESTORE_FAILED_DETAIL}, status=status.HTTP_409_CONFLICT)
         return Response(
             {
