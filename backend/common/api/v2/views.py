@@ -89,6 +89,8 @@ from common.contribution_consolidation import (
 from common.audit import (
     build_cover_snapshot,
     build_marking_snapshot,
+    build_postmaster_snapshot,
+    build_postmaster_tenure_snapshot,
     create_cover_version,
     create_marking_version,
     log_cover_removed,
@@ -151,11 +153,13 @@ from .permissions import (
     IsEditorOrAdminWrite,
     IsResponsibleForDateSeenSubject,
     IsResponsibleForImageSubject,
+    IsResponsibleForTenureOffice,
     _get_user_assigned_regions,
     _user_is_responsible_for_cover,
     _user_is_responsible_for_marking,
     user_assigned_collection_ids,
     user_can_review_contributions,
+    user_is_responsible_for_post_office,
     user_is_responsible_for_subject,
 )
 from .serializers import (
@@ -753,32 +757,145 @@ class ReferenceWorkViewSet(viewsets.ModelViewSet):
         return Response(out, status=status.HTTP_200_OK)
 
 
-class PostmasterViewSet(viewsets.ReadOnlyModelViewSet):
-    """Postmasters, read-only. Editing belongs to the source catalogs."""
+class PostmasterViewSet(viewsets.ModelViewSet):
+    """People. Public reads; Editors add and rename (Trello T71).
+
+    A person has no region of their own (the same name serves in several
+    states), so the write rule is the plain Editor rule and every write is
+    logged with its before/after. No PUT, no DELETE: a person referenced by
+    tenures is PROTECTed anyway, and renames are the only correction needed.
+    """
     queryset = Postmaster.objects.all()
     serializer_class = PostmasterSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsEditorOrAdminWrite]
+    http_method_names = ["get", "head", "options", "post", "patch"]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["name", "sort_name"]
     ordering_fields = ["sort_name", "name"]
     ordering = ["sort_name"]
 
+    def perform_create(self, serializer):
+        with transaction.atomic():
+            person = serializer.save(created_by=self.request.user, modified_by=self.request.user)
+            log_submission_transaction(
+                action=SubmissionTransaction.ACTION_POSTMASTER_ADDED,
+                actor=self.request.user,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload={},
+                after_payload=build_postmaster_snapshot(person),
+                extra_payload={"postmaster_id": person.pk},
+            )
 
-class PostmasterTenureViewSet(viewsets.ReadOnlyModelViewSet):
+    def perform_update(self, serializer):
+        with transaction.atomic():
+            before = build_postmaster_snapshot(serializer.instance)
+            person = serializer.save(modified_by=self.request.user)
+            log_submission_transaction(
+                action=SubmissionTransaction.ACTION_POSTMASTER_CHANGED,
+                actor=self.request.user,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload=before,
+                after_payload=build_postmaster_snapshot(person),
+                extra_payload={"postmaster_id": person.pk},
+            )
+
+
+class PostmasterTenureViewSet(viewsets.ModelViewSet):
     """Appointment events, filterable by office or by person.
 
     Ordered by date with undated events last, so a town's list reads as a
     succession rather than starting with the rows nobody could date.
+
+    Writes (Trello T71) follow the DateSeen shape: public reads, Editor role
+    plus responsibility for the office's region, one audited transaction per
+    write, no DELETE. A row created here is a MANUAL row; editing an IMPORT
+    row keeps its origin and is logged rather than re-keyed.
     """
     queryset = PostmasterTenure.objects.select_related(
         "postmaster", "post_office"
     ).order_by(F("date_appointed").asc(nulls_last=True), "tenure_id")
     serializer_class = PostmasterTenureSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsEditorOrAdminWrite, IsResponsibleForTenureOffice]
+    http_method_names = ["get", "head", "options", "post", "patch"]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = {"post_office": ["exact"], "postmaster": ["exact"],
                         "event": ["exact"]}
     ordering_fields = ["date_appointed", "tenure_id"]
+
+    def _assert_responsible(self, post_office):
+        """Region check for CREATE and for a PATCH that moves the row.
+
+        DRF only shows has_object_permission the existing row, so the office a
+        request points at is checked here (the same hole #128 closed for dates).
+        """
+        if user_is_responsible_for_post_office(self.request.user, post_office):
+            return
+        raise PermissionDenied("You are not assigned to the region this post office belongs to.")
+
+    def _log(self, *, action_name, before, after, tenure):
+        log_submission_transaction(
+            action=action_name,
+            actor=self.request.user,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload=before,
+            after_payload=after,
+            extra_payload={
+                "tenure_id": tenure.pk,
+                "post_office_id": tenure.post_office_id,
+                "postmaster_id": tenure.postmaster_id,
+            },
+        )
+
+    # Race backstop for the window between the serializer's duplicate check
+    # and the INSERT, matched on the constraint name as DateSeenViewSet does.
+    def _duplicate_response(self, exc):
+        if "tenure_office_person_date_event_unique" not in str(exc):
+            raise exc
+        return Response(
+            {"non_field_errors": ["This event is already recorded for this office."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except IntegrityError as exc:
+            return self._duplicate_response(exc)
+
+    def update(self, request, *args, **kwargs):
+        try:
+            return super().update(request, *args, **kwargs)
+        except IntegrityError as exc:
+            return self._duplicate_response(exc)
+
+    def perform_create(self, serializer):
+        self._assert_responsible(serializer.validated_data["post_office"])
+        with transaction.atomic():
+            tenure = serializer.save(
+                origin=PostmasterTenure.ORIGIN_MANUAL,
+                created_by=self.request.user,
+                modified_by=self.request.user,
+            )
+            self._log(
+                action_name=SubmissionTransaction.ACTION_POSTMASTER_EVENT_ADDED,
+                before={},
+                after=build_postmaster_tenure_snapshot(tenure),
+                tenure=tenure,
+            )
+
+    def perform_update(self, serializer):
+        new_office = serializer.validated_data.get("post_office")
+        if new_office is not None and new_office.pk != serializer.instance.post_office_id:
+            self._assert_responsible(new_office)
+        with transaction.atomic():
+            before = build_postmaster_tenure_snapshot(serializer.instance)
+            tenure = serializer.save(modified_by=self.request.user)
+            self._log(
+                action_name=SubmissionTransaction.ACTION_POSTMASTER_EVENT_CHANGED,
+                before=before,
+                after=build_postmaster_tenure_snapshot(tenure),
+                tenure=tenure,
+            )
 
 
 class FAQEntryViewSet(viewsets.ReadOnlyModelViewSet):
