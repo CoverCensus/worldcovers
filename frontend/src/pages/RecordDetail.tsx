@@ -22,6 +22,7 @@ import { CropImageDialog } from "@/components/CropImageDialog";
 import { RotateImageDialog } from "@/components/RotateImageDialog";
 import { ImageCaptionDialog } from "@/components/ImageCaptionDialog";
 import { EntryRecordHistoryCard } from "@/components/entry-detail/EntryRecordHistoryCard";
+import { RestoreVersionDialog } from "@/components/entry-detail/RestoreVersionDialog";
 import {
   formatDateSeen,
   formatDatesSeenList,
@@ -47,6 +48,7 @@ import {
   countyDisplay,
   getMarkingById,
   getMarkingChangelog,
+  getMarkingRestorePreview,
   getCoverContributionDraftsForMarking,
   loadAssociatedCoversForMarking,
   normalizeImageUrl,
@@ -55,6 +57,7 @@ import {
   removeMarking,
   reorderImages,
   restoreMarking,
+  restoreMarkingVersion,
   rotateImage,
   updateImageCaption,
   updateMarkingReviewed,
@@ -326,6 +329,8 @@ const RecordDetail = () => {
   const [removing, setRemoving] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  // Version an editor is about to restore the marking to (Trello T74).
+  const [restoreVersionNo, setRestoreVersionNo] = useState<number | null>(null);
   // Image whose marking an editor is cropping out of a whole-cover scan (#77).
   const [cropImageTarget, setCropImageTarget] = useState<MarkingImage | null>(null);
   // Image an editor is turning a quarter at a time (Trello T66).
@@ -1131,6 +1136,7 @@ const RecordDetail = () => {
                   events={historyEvents}
                   expanded={historyExpanded}
                   onToggleExpanded={() => setHistoryExpanded((v) => !v)}
+                  onRestoreVersion={record.isRemoved ? undefined : setRestoreVersionNo}
                 />
               )}
             </div>
@@ -1559,6 +1565,29 @@ const RecordDetail = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <RestoreVersionDialog
+        open={restoreVersionNo != null}
+        onOpenChange={(open) => {
+          if (!open) setRestoreVersionNo(null);
+        }}
+        entryLabel="marking"
+        versionNo={restoreVersionNo}
+        loadPreview={() =>
+          markingId != null && restoreVersionNo != null
+            ? getMarkingRestorePreview(markingId, restoreVersionNo)
+            : Promise.resolve({ ok: false as const, message: "This record has no versions to restore." })
+        }
+        onConfirm={async () => {
+          if (markingId == null || restoreVersionNo == null) return "This record has no versions to restore.";
+          const result = await restoreMarkingVersion(markingId, restoreVersionNo);
+          if (result.ok === false) return result.message;
+          toast({ title: `Restored from version ${restoreVersionNo}` });
+          await refetchRecord();
+          setHistoryReloadKey((key) => key + 1);
+          return null;
+        }}
+      />
 
       <RotateImageDialog
         open={rotateImageTarget != null}
