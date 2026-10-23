@@ -1231,4 +1231,5 @@ class ContributionSubmitCountyKeysTests(TestCase):
         self.assertEqual(self.post(county_proposed="x" * 201).status_code, 400)
         self.assertEqual(self.post(county_id="abc").status_code, 400)
         self.assertEqual(self.post(county_proposed=["x" * 5000]).status_code, 400)
+        self.assertEqual(self.post(county="x" * 201).status_code, 400)
         self.assertEqual(self.post(county_proposed="x" * 200).status_code, 201)

@@ -3875,12 +3875,15 @@ def _county_request_error(data):
             int(str(county_id).strip())
         except (TypeError, ValueError):
             return "county_id must be a Region id."
-    proposed = data.get("county_proposed")
-    if proposed is not None and not isinstance(proposed, str):
-        # A JSON list or object would dodge the length bound and render as noise.
-        return "county_proposed must be text."
-    if proposed is not None and len(proposed) > COUNTY_PROPOSED_MAX_TEXT:
-        return f"The proposed county name is too long (at most {COUNTY_PROPOSED_MAX_TEXT} characters)."
+    for key, label in (("county_proposed", "proposed county name"), ("county", "county name")):
+        value = data.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            # A JSON list or object would dodge the length bound and render as noise.
+            return f"{key} must be text."
+        if len(value) > COUNTY_PROPOSED_MAX_TEXT:
+            return f"The {label} is too long (at most {COUNTY_PROPOSED_MAX_TEXT} characters)."
     return None
 
 

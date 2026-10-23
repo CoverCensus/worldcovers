@@ -3046,6 +3046,8 @@ const Contribute = () => {
                         onValueChange={(value) => {
                           setCountyId(value);
                           setCountyLabel(countyOptions.find((c) => String(c.id) === value)?.name ?? "");
+                          // A pick from the list supersedes a typed county.
+                          if (value) setCountyProposed("");
                         }}
                         placeholder="Select county (optional)..."
                         options={countyOptions.map((c) => ({ value: String(c.id), label: c.name }))}
