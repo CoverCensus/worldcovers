@@ -14,6 +14,7 @@
  * every unsafe verb so a freshly-landed user does not 403 on the first write.
  */
 import apiClient, { ensureCsrfToken } from "@/lib/api";
+import { countyIntentFromApi, type CountyIntent } from "@/lib/contributionDisplay";
 import {
   sourceMarkingImageFromContribution,
   type SourceMarkingImage,
@@ -55,6 +56,7 @@ export interface ContributionApiItem {
   // in the submit keys (Trello T39); null otherwise and on list rows.
   edit_baseline?: unknown;
   editBaseline?: unknown;
+  county_intent?: unknown;
   [k: string]: unknown;
 }
 
@@ -96,6 +98,8 @@ export interface Contribution {
    * viewing an edit that awaits a decision (Trello T39).
    */
   editBaseline: Record<string, unknown> | null;
+  /** The server's verdict on the submission's county, or null (Trello T70). */
+  countyIntent: CountyIntent | null;
 }
 
 export interface CatalogCodeSuggestion {
@@ -150,6 +154,7 @@ export function mapApiItemToContribution(item: ContributionApiItem): Contributio
     coverId: toNumberOrNull(firstDefined(item.cover_id, item.coverId)),
     sourceMarkingImage: sourceMarkingImageFromContribution(item),
     editBaseline: plainObjectOrNull(firstDefined(item.edit_baseline, item.editBaseline)),
+    countyIntent: countyIntentFromApi(item.county_intent),
   };
 }
 

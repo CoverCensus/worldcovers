@@ -14,6 +14,7 @@ import {
 import { coverTypeLabel } from "@/lib/coverTypes";
 import { formatPartialDateInput, partialDateInputFromSubmittedData } from "@/lib/partialDate";
 import { submissionCitations } from "@/lib/submissionCitations";
+import type { CountyIntent } from "@/lib/contributionDisplay";
 import type { ReferenceWorkRecord } from "@/services/referenceWorks";
 
 type Data = Record<string, unknown>;
@@ -50,7 +51,7 @@ const MARKING_FIELDS: FieldKeys[] = [
   { name: "catalogCode", keys: ["catalog_code", "catalogCode"] },
   { name: "state", keys: ["state"] },
   // T70: "" means the edit says nothing about the county (approval leaves links alone).
-  { name: "county", keys: ["county", "county_id", "countyId"], emptyKeeps: true },
+  { name: "county", keys: ["county", "county_id"], emptyKeeps: true },
   { name: "town", keys: ["town"] },
   { name: "type", keys: ["type", "marking_type", "markingType"] },
   { name: "inscription", keys: ["inscription_txt", "inscriptionTxt"] },
@@ -141,17 +142,28 @@ function row(key: string, label: string, current: string, proposed: string, note
 }
 
 // T70: approval links a county only to a town that has none, and never
-// replaces one, so the row says which of the two will happen.
-function countyRow(current: Data, proposed: Data, currentName: string, proposedName: string): ComparisonRow {
-  const proposedId = text(proposed.county_id ?? proposed.countyId);
+// replaces one. The server's verdict (county_intent) is the source of truth:
+// it names the county from the Region and compares against the town the edit
+// now points at, not the old town's baseline. Without a verdict the row only
+// shows the two names.
+function countyRow(
+  current: Data,
+  proposed: Data,
+  currentName: string,
+  proposedName: string,
+  intent: CountyIntent | null | undefined,
+): ComparisonRow {
+  if (intent && (intent.countyId != null || intent.error)) {
+    const shownCurrent = intent.townFound ? intent.currentCounty ?? "" : currentName;
+    const shown = intent.countyName || proposedName;
+    const changed = intent.willLink || (intent.valid && shown.toLowerCase() !== shownCurrent.toLowerCase()) || !!intent.error;
+    return { key: "county", label: "County", current: shownCurrent, proposed: shown, changed, ...(changed ? { note: intent.note } : {}) };
+  }
+  const proposedId = text(proposed.county_id);
   const shown = proposedName || (proposedId ? `County #${proposedId}` : "");
   const sameById = proposedId !== "" && proposedId === text(current.county_id);
   if (sameById) return row("county", "County", currentName, currentName);
-  const note =
-    currentName && shown
-      ? `Differs from the catalog's ${currentName}; approval leaves the county link unchanged`
-      : "Approval links the town to this county";
-  return row("county", "County", currentName, shown, note);
+  return row("county", "County", currentName, shown);
 }
 
 export function compareMarkingEdit(
@@ -160,6 +172,7 @@ export function compareMarkingEdit(
   lookups: ContributionLookups,
   referenceWorks: ReferenceWorkRecord[],
   contributionId: number,
+  countyIntent?: CountyIntent | null,
 ): ComparisonRow[] {
   // state_abbrev is a comparison aid, not a submit key the formatter knows.
   const { state_abbrev: stateAbbrev, ...current } = baseline;
@@ -180,7 +193,7 @@ export function compareMarkingEdit(
   return [
     row("catalogCode", "Catalog code", text(current.catalog_code), text(proposed.catalog_code)),
     { ...row("state", "State", before.state, after.state), ...(sameStateByAbbrev ? { changed: false } : {}) },
-    countyRow(current, proposed, before.county ?? "", after.county ?? ""),
+    countyRow(current, proposed, before.county ?? "", after.county ?? "", countyIntent),
     row("town", "Town", before.town, after.town),
     row("type", "Type", markingTypeLabel(before.type), markingTypeLabel(after.type)),
     row("inscription", "Inscription", before.inscriptionTxt, after.inscriptionTxt),

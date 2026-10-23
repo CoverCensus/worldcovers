@@ -35,9 +35,9 @@ export const KNOWN_SUBMITTED_DATA_KEYS: ReadonlySet<string> = new Set([
   "town",
   // Trello T70: the town's county. county_id is what approval links; county
   // is the display name; county_proposed is a county not in the list, shown
-  // to the Editor and never applied.
-  "county", "county_id", "countyId",
-  "county_proposed", "countyProposed",
+  // to the Editor and never applied. snake_case only: the form sends these
+  // keys itself, and the API bounds exactly these names.
+  "county", "county_id", "county_proposed",
   "type",
   "marking_type", "markingType",
   "is_manuscript", "isManuscript",

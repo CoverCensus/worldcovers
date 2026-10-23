@@ -275,5 +275,35 @@ export function createdFromContributionIdFromSubmittedData(
 export function countyProposedFromSubmittedData(
   sd: Record<string, unknown> | null | undefined,
 ): string {
-  return String(sd?.county_proposed ?? sd?.countyProposed ?? "").trim();
+  return String(sd?.county_proposed ?? "").trim();
+}
+
+/** Trello T70: the server's verdict on a submission's county (ContributionDetailSerializer.county_intent). */
+export interface CountyIntent {
+  countyId: number | null;
+  countyName: string;
+  valid: boolean;
+  error: string | null;
+  townFound: boolean;
+  currentCounty: string | null;
+  willLink: boolean;
+  note: string;
+  countyProposed: string;
+}
+
+export function countyIntentFromApi(raw: unknown): CountyIntent | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const str = (v: unknown) => (v == null ? "" : String(v));
+  return {
+    countyId: typeof o.county_id === "number" ? o.county_id : null,
+    countyName: str(o.county_name),
+    valid: o.valid === true,
+    error: o.error == null ? null : str(o.error),
+    townFound: o.town_found === true,
+    currentCounty: o.current_county == null ? null : str(o.current_county),
+    willLink: o.will_link === true,
+    note: str(o.note),
+    countyProposed: str(o.county_proposed),
+  };
 }

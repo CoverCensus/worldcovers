@@ -3009,9 +3009,11 @@ const Contribute = () => {
                         value={state}
                         onValueChange={(value) => {
                           setState(value);
-                          // A county belongs to one state; a new state empties the
-                          // pick and a county typed for the old state.
-                          if (value !== state) {
+                          // A county belongs to one state: when a chosen state is
+                          // replaced by another, the pick and a county typed for
+                          // the old state are emptied. Prefill sets the state before
+                          // the county and never passes through here.
+                          if (state && value !== state) {
                             setCountyId("");
                             setCountyLabel("");
                             setCountyProposed("");
@@ -3066,7 +3068,7 @@ const Contribute = () => {
                           value={countyProposed}
                           onChange={(e) => setCountyProposed(e.target.value)}
                           maxLength={200}
-                          disabled={countyId !== ""}
+                          disabled={stateRegionId == null || countyId !== ""}
                           placeholder="Type the county's name if it is missing from the list"
                           aria-label="County not listed"
                         />
