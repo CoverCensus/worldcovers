@@ -31,6 +31,7 @@ This module opens no transaction; the caller owns transaction.atomic().
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -164,6 +165,18 @@ def _decimal_text(value: Any) -> str:
     if dec is None:
         return ""
     return format(dec.normalize(), "f")
+
+
+def _date(value: Any) -> date | None:
+    """A snapshot stores dates as ISO strings; models want date objects."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
 
 
 def _bool_text(value: Any) -> str:
@@ -512,7 +525,7 @@ def _plan_valuations(cover: Cover, snapshot: dict[str, Any], limitations: list[s
                 {
                     "cover_id": cover.pk,
                     "amt": _decimal(row.get("amt")),
-                    "appraisal_date": row.get("appraisal_date") or None,
+                    "appraisal_date": _date(row.get("appraisal_date")),
                 }
             )
     plan.remove = [row for identity, row in current.items() if identity not in seen]

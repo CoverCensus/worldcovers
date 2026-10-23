@@ -96,8 +96,13 @@ from common.audit import (
     log_marking_removed,
     log_marking_restored,
     log_submission_transaction,
-    restore_cover_from_snapshot,
-    restore_marking_from_snapshot,
+)
+from common.version_restore import (
+    RestorePlanError,
+    apply_restore_plan,
+    plan_cover_restore,
+    plan_marking_restore,
+    preview_payload,
 )
 from common.filters import (
     AliasedOrderingFilter,
@@ -803,6 +808,64 @@ def _caption_change(txn):
         "previous": str(extra.get("previous_caption") or ""),
         "caption": str(extra.get("caption") or ""),
     }
+
+
+RESTORE_FAILED_DETAIL = "Restore could not be completed; nothing was changed."
+RESTORE_OUTSIDE_REGION_DETAIL = "This version links markings in a region you are not responsible for."
+
+
+def _version_for_restore(version_model, entry_filter, raw_version_no):
+    """Parse a requested version number and find that version row (Trello T74).
+
+    Returns (version, None) or (None, Response) so the four restore actions
+    share one 400/404 path."""
+    try:
+        version_no = int(raw_version_no)
+    except (TypeError, ValueError):
+        return None, Response(
+            {"detail": "version_no must be an integer."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    version = version_model.objects.filter(version_no=version_no, **entry_filter).first()
+    if version is None:
+        return None, Response(
+            {"detail": f"Version {version_no} not found for this record."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    return version, None
+
+
+def _version_action_label(version) -> str | None:
+    txn = version.transaction
+    if txn is None:
+        return None
+    return dict(SubmissionTransaction.ACTION_CHOICES).get(txn.action, txn.action.replace("_", " ").title())
+
+
+def _restore_links_outside_scope(user, plan) -> bool:
+    """True when a cover restore would link markings in regions the editor is
+    not assigned to; _user_is_responsible_for_cover forbids acting on such a
+    cover, so the restore must not create one."""
+    marking_ids = plan.added_marking_ids()
+    if not marking_ids or user.is_superuser:
+        return False
+    assigned = set(_get_user_assigned_regions(user).values_list("pk", flat=True))
+    for marking in Marking.objects.filter(pk__in=marking_ids).select_related("post_office"):
+        region = marking.post_office.region if marking.post_office_id else None
+        if region is None or region.pk not in assigned:
+            return True
+    return False
+
+
+def _restore_plan_response(plan_fn, entry, version, user):
+    """Compute a restore plan, mapping its failures to responses (Trello T74)."""
+    try:
+        plan = plan_fn(entry, version.snapshot or {})
+    except RestorePlanError as exc:
+        return None, Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    if _restore_links_outside_scope(user, plan):
+        return None, Response({"detail": RESTORE_OUTSIDE_REGION_DETAIL}, status=status.HTTP_403_FORBIDDEN)
+    return plan, None
 
 
 def _parse_angle(raw):
@@ -1611,6 +1674,25 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
             }
         )
 
+    @action(detail=True, methods=["get"], url_path="restore-preview", permission_classes=[IsAuthenticated])
+    def restore_preview(self, request, pk=None):
+        """What restoring a version would change, without writing (Trello T74)."""
+        cover = self.get_object()
+        if not _user_is_responsible_for_cover(request.user, cover):
+            return Response(
+                {"detail": "You are not allowed to restore this record."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        version, error = _version_for_restore(
+            CoverVersion, {"cover": cover}, request.query_params.get("version_no")
+        )
+        if error:
+            return error
+        plan, error = _restore_plan_response(plan_cover_restore, cover, version, request.user)
+        if error:
+            return error
+        return Response(preview_payload(plan, version, _version_action_label(version)))
+
     @action(detail=True, methods=["post"], url_path="restore-version", permission_classes=[IsAuthenticated])
     def restore_version(self, request, pk=None):
         cover = self.get_object()
@@ -1619,42 +1701,43 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
                 {"detail": "You are not allowed to restore this record."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        raw_version_no = (request.data or {}).get("version_no")
+        restore_from, error = _version_for_restore(
+            CoverVersion, {"cover": cover}, (request.data or {}).get("version_no")
+        )
+        if error:
+            return error
         try:
-            version_no = int(raw_version_no)
-        except (TypeError, ValueError):
-            return Response(
-                {"detail": "version_no must be an integer."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        restore_from = CoverVersion.objects.filter(
-            cover=cover, version_no=version_no
-        ).first()
-        if not restore_from:
-            return Response(
-                {"detail": f"Version {version_no} not found for this record."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        before_snapshot = build_cover_snapshot(cover)
-        with transaction.atomic():
-            restore_cover_from_snapshot(cover, restore_from.snapshot or {}, request.user)
-            cover.refresh_from_db()
-            after_snapshot = build_cover_snapshot(cover)
-            txn = log_submission_transaction(
-                action=SubmissionTransaction.ACTION_RESTORE_VERSION,
-                actor=request.user,
-                cover=cover,
-                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-                before_payload=before_snapshot,
-                after_payload=after_snapshot,
-                extra_payload={"restored_from_version_no": restore_from.version_no},
-            )
-            new_version = create_cover_version(cover, txn, request.user)
+            with transaction.atomic():
+                before_snapshot = build_cover_snapshot(cover)
+                plan, error = _restore_plan_response(plan_cover_restore, cover, restore_from, request.user)
+                if error:
+                    return error
+                apply_restore_plan(plan, request.user)
+                cover.refresh_from_db()
+                after_snapshot = build_cover_snapshot(cover)
+                txn = log_submission_transaction(
+                    action=SubmissionTransaction.ACTION_RESTORE_VERSION,
+                    actor=request.user,
+                    cover=cover,
+                    source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                    before_payload=before_snapshot,
+                    after_payload=after_snapshot,
+                    extra_payload={
+                        "restored_from_version_no": restore_from.version_no,
+                        "limitations": plan.limitations,
+                        "relationships": plan.relationship_counts(),
+                    },
+                )
+                new_version = create_cover_version(cover, txn, request.user)
+        except (IntegrityError, DjangoValidationError):
+            return Response({"detail": RESTORE_FAILED_DETAIL}, status=status.HTTP_409_CONFLICT)
         return Response(
             {
                 "detail": f"Record restored from version {restore_from.version_no}.",
                 "restored_from_version_no": restore_from.version_no,
                 "new_version_no": new_version.version_no,
+                "limitations": plan.limitations,
+                "relationships": plan.relationship_counts(),
             },
             status=status.HTTP_200_OK,
         )
@@ -1686,11 +1769,10 @@ class DateSeenViewSet(viewsets.ModelViewSet):
       writing one transaction and one version per submit, not per-row
       suppression here. Date events are logged as date_seen_added/changed/
       removed so the changelog never reads "Record deleted" for a date.
-    * Version snapshots *capture* dates_seen (audit.py:69-78) but
-      restore_marking_from_snapshot does not replay them, so restoring a
-      version leaves the current date rows in place. Deliberate and tracked
-      separately -- the same gap covers images, and fixing dates alone would
-      make restore half-correct in a less obvious way.
+    * Version snapshots capture dates_seen (audit.py:69-78) and, since
+      Trello T74, restoring a version reconciles the date rows to the
+      snapshot (common.version_restore), alongside images and citations.
+      Each such restore is one transaction and one version row of its own.
     """
 
     queryset = DateSeen.objects.all()
@@ -2785,6 +2867,25 @@ class MarkingViewSet(viewsets.ModelViewSet):
             }
         )
 
+    @action(detail=True, methods=["get"], url_path="restore-preview", permission_classes=[IsAuthenticated])
+    def restore_preview(self, request, pk=None):
+        """What restoring a version would change, without writing (Trello T74)."""
+        marking = self.get_object()
+        if not _user_is_responsible_for_marking(request.user, marking):
+            return Response(
+                {"detail": "You are not allowed to restore this record."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        version, error = _version_for_restore(
+            MarkingVersion, {"marking": marking}, request.query_params.get("version_no")
+        )
+        if error:
+            return error
+        plan, error = _restore_plan_response(plan_marking_restore, marking, version, request.user)
+        if error:
+            return error
+        return Response(preview_payload(plan, version, _version_action_label(version)))
+
     @action(detail=True, methods=["post"], url_path="restore-version", permission_classes=[IsAuthenticated])
     def restore_version(self, request, pk=None):
         marking = self.get_object()
@@ -2793,43 +2894,44 @@ class MarkingViewSet(viewsets.ModelViewSet):
                 {"detail": "You are not allowed to restore this record."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        raw_version_no = (request.data or {}).get("version_no")
+        restore_from, error = _version_for_restore(
+            MarkingVersion, {"marking": marking}, (request.data or {}).get("version_no")
+        )
+        if error:
+            return error
         try:
-            version_no = int(raw_version_no)
-        except (TypeError, ValueError):
-            return Response(
-                {"detail": "version_no must be an integer."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        restore_from = MarkingVersion.objects.filter(
-            marking=marking, version_no=version_no
-        ).first()
-        if not restore_from:
-            return Response(
-                {"detail": f"Version {version_no} not found for this record."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        before_snapshot = build_marking_snapshot(marking)
-        with transaction.atomic():
-            restore_marking_from_snapshot(marking, restore_from.snapshot or {}, request.user)
-            marking.refresh_from_db()
-            after_snapshot = build_marking_snapshot(marking)
-            txn = log_submission_transaction(
-                action=SubmissionTransaction.ACTION_RESTORE_VERSION,
-                actor=request.user,
-                contribution=getattr(marking, "contribution", None),
-                marking=marking,
-                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-                before_payload=before_snapshot,
-                after_payload=after_snapshot,
-                extra_payload={"restored_from_version_no": restore_from.version_no},
-            )
-            new_version = create_marking_version(marking, txn, request.user)
+            with transaction.atomic():
+                before_snapshot = build_marking_snapshot(marking)
+                plan, error = _restore_plan_response(plan_marking_restore, marking, restore_from, request.user)
+                if error:
+                    return error
+                apply_restore_plan(plan, request.user)
+                marking.refresh_from_db()
+                after_snapshot = build_marking_snapshot(marking)
+                txn = log_submission_transaction(
+                    action=SubmissionTransaction.ACTION_RESTORE_VERSION,
+                    actor=request.user,
+                    contribution=getattr(marking, "contribution", None),
+                    marking=marking,
+                    source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                    before_payload=before_snapshot,
+                    after_payload=after_snapshot,
+                    extra_payload={
+                        "restored_from_version_no": restore_from.version_no,
+                        "limitations": plan.limitations,
+                        "relationships": plan.relationship_counts(),
+                    },
+                )
+                new_version = create_marking_version(marking, txn, request.user)
+        except (IntegrityError, DjangoValidationError):
+            return Response({"detail": RESTORE_FAILED_DETAIL}, status=status.HTTP_409_CONFLICT)
         return Response(
             {
                 "detail": f"Record restored from version {restore_from.version_no}.",
                 "restored_from_version_no": restore_from.version_no,
                 "new_version_no": new_version.version_no,
+                "limitations": plan.limitations,
+                "relationships": plan.relationship_counts(),
             },
             status=status.HTTP_200_OK,
         )

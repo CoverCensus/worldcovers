@@ -102,7 +102,9 @@ class VersionRestoreTests(TestCase):
         self.date(DateSeen.SUBJECT_MARKING, self.marking, 1851, None, None)
         self.marking.inscription_txt = "CHANGED"
         self.marking.save()
-        self.cover.cover_markings.all().delete()
+        # The VA link stays (a cover with no links answers only to a superuser);
+        # version 2 flips its backstamp flag and drops the valuation.
+        self.cover.cover_markings.update(is_backstamp=False)
         self.cover.valuations.all().delete()
         create_marking_version(self.marking, None, self.admin)
         create_cover_version(self.cover, None, self.admin)
@@ -151,3 +153,124 @@ class VersionRestoreTests(TestCase):
         for what in ("images", "dates", "citations"):
             self.assertIn(LIMIT_NOT_RECORDED.format(what=what), plan.limitations)
         self.assertIn(LIMIT_MARKING_COVER_LINKS, plan.limitations)
+
+    # -- API -----------------------------------------------------------------------------
+
+    def test_marking_preview_reports_fields_relationships_and_limitations_without_writing(self):
+        before = self.counts()
+        self.client.force_authenticate(self.editor)
+        response = self.client.get(f"/api/v2/markings/{self.marking.pk}/restore-preview/?version_no=1")
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = {row["key"]: row for row in response.data["fields"]}
+        self.assertEqual((rows["inscription_txt"]["current"], rows["inscription_txt"]["proposed"]), ("CHANGED", "RICHMOND"))
+        self.assertTrue(rows["inscription_txt"]["changed"])
+        self.assertFalse(rows["post_office_id"]["changed"])
+        self.assertEqual(response.data["relationships"]["images"], {"added": 1, "removed": 0, "kept": 1, "skipped": 0})
+        self.assertEqual(response.data["relationships"]["dates_seen"]["removed"], 1)
+        self.assertIn(LIMIT_MARKING_COVER_LINKS, response.data["limitations"])
+        self.assertTrue(response.data["has_changes"])
+        self.assertEqual(self.counts(), before)
+
+    def test_marking_restore_reconciles_scalars_images_dates_citations_in_one_version(self):
+        expected_before = build_marking_snapshot(self.marking)
+        self.client.force_authenticate(self.editor)
+        response = self.client.post(
+            f"/api/v2/markings/{self.marking.pk}/restore-version/", {"version_no": 1}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["new_version_no"], 3)
+        self.marking.refresh_from_db()
+        self.assertEqual(self.marking.inscription_txt, "RICHMOND")
+        images = Image.objects.filter(subject_type="MARKING", subject_id=self.marking.pk).order_by("display_order")
+        self.assertEqual([img.storage_filename for img in images], ["va/one.png", "va/two.png"])
+        self.assertEqual(images[1].uploaded_by, self.editor)
+        dates = DateSeen.objects.filter(subject_type="MARKING", subject_id=self.marking.pk)
+        self.assertEqual([(d.date_year, d.granularity) for d in dates], [(1850, "DAY")])
+        self.assertEqual(Citation.objects.filter(subject_type="MARKING", subject_id=self.marking.pk).count(), 1)
+        txns = SubmissionTransaction.objects.filter(action=SubmissionTransaction.ACTION_RESTORE_VERSION)
+        self.assertEqual(txns.count(), 1)
+        txn = txns.get()
+        self.assertEqual(txn.extra_payload["restored_from_version_no"], 1)
+        self.assertIn(LIMIT_MARKING_COVER_LINKS, txn.extra_payload["limitations"])
+        self.assertEqual(txn.extra_payload["relationships"]["images"]["added"], 1)
+        strip = lambda snap: {k: v for k, v in snap.items() if k != "captured_at"}
+        self.assertEqual(strip(txn.before_payload), strip(expected_before))
+        self.assertEqual(MarkingVersion.objects.filter(marking=self.marking).count(), 3)
+        self.assertEqual(MarkingVersion.objects.get(marking=self.marking, version_no=3).transaction, txn)
+
+    def test_cover_restore_reconciles_links_and_valuation(self):
+        self.client.force_authenticate(self.editor)
+        preview = self.client.get(f"/api/v2/covers/{self.cover.pk}/restore-preview/?version_no=1")
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data["relationships"]["cover_markings"], {"added": 0, "removed": 0, "kept": 1, "skipped": 0})
+        self.assertEqual(preview.data["relationships"]["valuations"]["added"], 1)
+        self.assertTrue(preview.data["has_changes"])
+        response = self.client.post(
+            f"/api/v2/covers/{self.cover.pk}/restore-version/", {"version_no": 1}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["relationships"], preview.data["relationships"])
+        link = CoverMarking.objects.get(cover=self.cover)
+        self.assertEqual((link.marking_id, link.is_backstamp), (self.marking.pk, True))
+        valuation = CoverValuation.objects.get(cover=self.cover)
+        self.assertEqual((valuation.amt, valuation.appraisal_date), (Decimal("25.00"), date(2020, 1, 1)))
+        self.assertEqual(CoverVersion.objects.filter(cover=self.cover).count(), 3)
+
+    def test_cover_restore_that_adds_an_outside_region_link_is_forbidden(self):
+        cover = Cover.objects.create(type="FC", **self.audit)
+        CoverMarking.objects.create(cover=cover, marking=self.marking, **self.audit)
+        CoverMarking.objects.create(cover=cover, marking=self.md_marking, **self.audit)
+        create_cover_version(cover, None, self.admin)
+        cover.cover_markings.filter(marking=self.md_marking).delete()
+        before = self.counts()
+        self.client.force_authenticate(self.editor)
+        preview = self.client.get(f"/api/v2/covers/{cover.pk}/restore-preview/?version_no=1")
+        self.assertEqual(preview.status_code, 403, preview.data)
+        response = self.client.post(f"/api/v2/covers/{cover.pk}/restore-version/", {"version_no": 1}, format="json")
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertEqual(cover.cover_markings.count(), 1)
+        self.assertEqual(self.counts(), before)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.get(f"/api/v2/covers/{cover.pk}/restore-preview/?version_no=1").status_code, 200)
+
+    def test_permissions_and_lookups(self):
+        before = self.counts()
+        urls = {
+            "marking": (f"/api/v2/markings/{self.marking.pk}/restore-preview/", f"/api/v2/markings/{self.marking.pk}/restore-version/"),
+            "cover": (f"/api/v2/covers/{self.cover.pk}/restore-preview/", f"/api/v2/covers/{self.cover.pk}/restore-version/"),
+        }
+        for kind, (preview_url, restore_url) in urls.items():
+            for user, expected in ((self.md_editor, 403), (self.contributor, 403), (None, (401, 403))):
+                with self.subTest(kind=kind, user=getattr(user, "username", "anonymous")):
+                    self.client.force_authenticate(user)
+                    codes = (
+                        self.client.get(f"{preview_url}?version_no=1").status_code,
+                        self.client.post(restore_url, {"version_no": 1}, format="json").status_code,
+                    )
+                    for code in codes:
+                        self.assertIn(code, expected if isinstance(expected, tuple) else (expected,))
+            self.client.force_authenticate(self.editor)
+            with self.subTest(kind=kind, case="bad version"):
+                self.assertEqual(self.client.get(f"{preview_url}?version_no=abc").status_code, 400)
+                self.assertEqual(self.client.post(restore_url, {"version_no": "abc"}, format="json").status_code, 400)
+                self.assertEqual(self.client.get(f"{preview_url}?version_no=99").status_code, 404)
+                self.assertEqual(self.client.post(restore_url, {"version_no": 99}, format="json").status_code, 404)
+        self.assertEqual(self.counts(), before)
+        MarkingRecycleBin.objects.create(marking=self.marking, removed_by=self.admin)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.get(f"{urls['marking'][0]}?version_no=1").status_code, 404)
+        self.assertEqual(self.client.post(urls["marking"][1], {"version_no": 1}, format="json").status_code, 404)
+
+    def test_failure_after_restore_rolls_back_everything(self):
+        before = self.counts()
+        client = APIClient(raise_request_exception=False)
+        client.force_authenticate(self.editor)
+        with mock.patch("common.api.v2.views.create_marking_version", side_effect=RuntimeError("boom")):
+            response = client.post(
+                f"/api/v2/markings/{self.marking.pk}/restore-version/", {"version_no": 1}, format="json"
+            )
+        self.assertEqual(response.status_code, 500)
+        self.marking.refresh_from_db()
+        self.assertEqual(self.marking.inscription_txt, "CHANGED")
+        self.assertEqual(Image.objects.filter(subject_type="MARKING", subject_id=self.marking.pk).count(), 1)
+        self.assertEqual(self.counts(), before)
