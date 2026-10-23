@@ -70,6 +70,8 @@ class CountyLinkOnApprovalTests(TestCase):
     def test_a_non_county_region_is_refused(self):
         with self.assertRaisesMessage(ContributionApplyError, "not a County region"):
             self.apply(**self.payload("Onancock", county_id=self.va.pk))
+        with self.assertRaisesMessage(ContributionApplyError, "not a Region id"):
+            self.apply(**self.payload("Onancock", county_id="abc"))
 
     def test_an_edit_that_says_nothing_about_the_county_changes_no_links(self):
         marking = Marking.objects.create(

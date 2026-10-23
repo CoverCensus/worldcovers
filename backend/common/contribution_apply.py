@@ -1063,19 +1063,28 @@ def _link_county(post_office: PostOffice, payload: dict, state_name: str, actor)
     are never deleted here. County never takes part in resolving the Post
     Office itself; that stays state + town (_resolve_post_office).
     """
-    county_id = _parse_int(payload.get("county_id"))
-    if county_id is None:
+    raw = payload.get("county_id")
+    if raw in (None, ""):
         return
+    county_id = _parse_int(raw)
+    if county_id is None:
+        raise ContributionApplyError("county_id {!r} is not a Region id.".format(raw))
     county = Region.objects.filter(pk=county_id).select_related("parent_region").first()
     if county is None or county.region_tier != "COUNTY":
         raise ContributionApplyError(
             "county_id {} is not a County region.".format(county_id)
         )
     state_region = Region.primary_for_state_term(state_name)
-    if state_region is None or county.parent_region_id != state_region.pk:
+    if state_region is None:
+        raise ContributionApplyError("Unknown state: {}".format(state_name))
+    if county.parent_region_id != state_region.pk:
         raise ContributionApplyError(
             "County {!r} is not in {!r}.".format(county.name, state_name)
         )
+    # Lock the town for the rest of the approval transaction: two approvals
+    # for the same town must not both pass the check below and each add a
+    # county link (the junction's uniqueness ignores NULL valid_from).
+    PostOffice.objects.select_for_update().filter(pk=post_office.pk).exists()
     # A positive EXISTS on the junction, not .exclude(): excluding across a
     # to-many relation compiles to NOT EXISTS over the whole parent row
     # (ISSUE-2026-08-25-02).

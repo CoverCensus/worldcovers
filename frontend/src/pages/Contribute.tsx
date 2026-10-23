@@ -518,6 +518,9 @@ const Contribute = () => {
   // COUNTY-tier Regions under the chosen state; a county that is not listed
   // goes in countyProposed as text for the Editor.
   const [countyId, setCountyId] = useState("");
+  // The picked county's name, kept beside the id so a draft saved before the
+  // county list has loaded still carries a readable name for review.
+  const [countyLabel, setCountyLabel] = useState("");
   const [countyProposed, setCountyProposed] = useState("");
   const [countyOptions, setCountyOptions] = useState<CountyOption[]>([]);
   const [loadingCounties, setLoadingCounties] = useState(false);
@@ -989,6 +992,7 @@ const Contribute = () => {
         setState(stateVal);
         setTown(townVal);
         setCountyId(getStr(sd.county_id));
+        setCountyLabel(getStr(sd.county));
         setCountyProposed(getStr(sd.county_proposed));
         if (loadedCatalogCode) {
           setCatalogCode(loadedCatalogCode);
@@ -1230,6 +1234,7 @@ const Contribute = () => {
     const regionRows = Array.isArray(data.regions) ? (data.regions as Array<Record<string, unknown>>) : [];
     const countyRow = regionRows.find((r) => String(r.region_tier ?? "").toUpperCase() === "COUNTY");
     setCountyId(countyRow && countyRow.id != null ? String(countyRow.id) : "");
+    setCountyLabel(countyRow ? String(countyRow.name ?? "") : "");
     setCountyProposed("");
 
     const shapeName = typeof data.shape_name === "string" ? data.shape_name : "";
@@ -1848,7 +1853,9 @@ const Contribute = () => {
     const stateVal = state.trim();
     const townVal = town.trim();
     // T70: the display name travels with the id so review can print it without a lookup.
-    const countyName = countyOptions.find((c) => String(c.id) === countyId)?.name ?? "";
+    const countyName = countyId
+      ? countyOptions.find((c) => String(c.id) === countyId)?.name ?? countyLabel
+      : "";
     const isManuscriptSelected = isManuscript;
     const shapeVal = isManuscriptSelected ? "" : shape.trim();
     const typeVal = normalizeMarkingTypeValue(markingType.trim()) || markingType.trim();
@@ -3003,7 +3010,10 @@ const Contribute = () => {
                         onValueChange={(value) => {
                           setState(value);
                           // A county belongs to one state; a new state empties the pick.
-                          if (value !== state) setCountyId("");
+                          if (value !== state) {
+                            setCountyId("");
+                            setCountyLabel("");
+                          }
                           if (fieldErrors.state) {
                             setFieldErrors((prev) => ({ ...prev, state: undefined }));
                           }
@@ -3031,7 +3041,10 @@ const Contribute = () => {
                       <SearchableSelect
                         id="county"
                         value={countyId}
-                        onValueChange={(value) => setCountyId(value)}
+                        onValueChange={(value) => {
+                          setCountyId(value);
+                          setCountyLabel(countyOptions.find((c) => String(c.id) === value)?.name ?? "");
+                        }}
                         placeholder="Select county (optional)..."
                         options={countyOptions.map((c) => ({ value: String(c.id), label: c.name }))}
                         disabled={stateRegionId == null}

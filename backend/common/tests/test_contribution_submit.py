@@ -1230,4 +1230,5 @@ class ContributionSubmitCountyKeysTests(TestCase):
     def test_county_bounds_are_refused_at_submit(self):
         self.assertEqual(self.post(county_proposed="x" * 201).status_code, 400)
         self.assertEqual(self.post(county_id="abc").status_code, 400)
+        self.assertEqual(self.post(county_proposed=["x" * 5000]).status_code, 400)
         self.assertEqual(self.post(county_proposed="x" * 200).status_code, 201)
