@@ -139,6 +139,7 @@ def apply_contribution_to_catalog(contrib):
     is_manuscript = _coerce_required_bool(payload, "is_manuscript")
 
     post_office = _resolve_post_office(state, town, actor)
+    _link_county(post_office, payload, state, actor)
 
     if is_manuscript:
         shape = None
@@ -248,6 +249,7 @@ def _apply_marking_edit(contrib, payload: dict, actor, marking_id: int) -> Marki
     inscription = _required_str(payload, "inscription_txt")
     is_manuscript = _coerce_required_bool(payload, "is_manuscript")
     post_office = _resolve_post_office(state, town, actor)
+    _link_county(post_office, payload, state, actor)
 
     # Required by the submission contract, so always restated.
     catalog_code = code_value_from_payload(payload)
@@ -1042,6 +1044,48 @@ def _resolve_post_office(state_name: str, town_name: str, actor) -> PostOffice:
             defaults={"created_by": actor, "modified_by": actor},
         )
     return po
+
+
+def _link_county(post_office: PostOffice, payload: dict, state_name: str, actor) -> None:
+    """
+    Link the submitted county to the Post Office, add-only (Trello T70).
+
+    `county_id` is a Region pk the Marking form sends beside `state`/`town`.
+    Absent or "" means the submission said nothing about the county, so this
+    is a no-op -- the same RFC 7396 silence rule the scalar fields follow. A
+    value must name a COUNTY whose parent is the state the town resolved to;
+    anything else is a payload error, never a silent skip.
+
+    The link is written only when the Post Office has no county link yet. A
+    town is shared by every Marking at it, so a differing county is NOT
+    replaced or added beside the existing one: the Editor sees the difference
+    in the review comparison and an Administrator settles it. Existing links
+    are never deleted here. County never takes part in resolving the Post
+    Office itself; that stays state + town (_resolve_post_office).
+    """
+    county_id = _parse_int(payload.get("county_id"))
+    if county_id is None:
+        return
+    county = Region.objects.filter(pk=county_id).select_related("parent_region").first()
+    if county is None or county.region_tier != "COUNTY":
+        raise ContributionApplyError(
+            "county_id {} is not a County region.".format(county_id)
+        )
+    state_region = Region.primary_for_state_term(state_name)
+    if state_region is None or county.parent_region_id != state_region.pk:
+        raise ContributionApplyError(
+            "County {!r} is not in {!r}.".format(county.name, state_name)
+        )
+    # A positive EXISTS on the junction, not .exclude(): excluding across a
+    # to-many relation compiles to NOT EXISTS over the whole parent row
+    # (ISSUE-2026-08-25-02).
+    if post_office.post_office_regions.filter(region__region_tier="COUNTY").exists():
+        return
+    PostOfficeRegion.objects.get_or_create(
+        post_office=post_office,
+        region=county,
+        defaults={"created_by": actor, "modified_by": actor},
+    )
 
 
 def _normalize_storage(value: Any) -> str:
