@@ -3863,8 +3863,8 @@ def _truthy(value) -> bool:
 # Trello T70: the Marking form's county keys. `county_id` is a Region pk that
 # approval validates and links (contribution_apply._link_county); `county` is
 # the display name; `county_proposed` is free text for a county not in the
-# list, shown to the Editor and never applied. Only shape and length are
-# checked here; the meaning is checked at approval.
+# list, shown to the Editor and never applied. Shape, length, and that the id
+# is a county of the submitted state are checked here; approval re-checks.
 COUNTY_PROPOSED_MAX_TEXT = 200
 
 
@@ -3872,9 +3872,15 @@ def _county_request_error(data):
     county_id = data.get("county_id")
     if county_id not in (None, ""):
         try:
-            int(str(county_id).strip())
+            county_pk = int(str(county_id).strip())
         except (TypeError, ValueError):
             return "county_id must be a Region id."
+        state_name = str(data.get("state") or "").strip()
+        state_region = Region.primary_for_state_term(state_name) if state_name else None
+        if state_region is not None and not Region.objects.filter(
+            pk=county_pk, region_tier="COUNTY", parent_region=state_region
+        ).exists():
+            return f"county_id is not a county in {state_region.name}."
     for key, label in (("county_proposed", "proposed county name"), ("county", "county name")):
         value = data.get(key)
         if value is None:

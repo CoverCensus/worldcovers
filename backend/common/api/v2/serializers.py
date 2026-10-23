@@ -25,6 +25,7 @@ from common.contribution_apply import (
     _parse_int,
     _source_marking_image_id,
     _source_marking_image_position,
+    describe_county_intent,
 )
 from common.contribution_consolidation import contribution_target
 from common.edit_baseline import cover_edit_baseline, marking_edit_baseline
@@ -1607,6 +1608,7 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
     cover_id = serializers.SerializerMethodField()
     source_marking_image = serializers.SerializerMethodField()
     edit_baseline = serializers.SerializerMethodField()
+    county_intent = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField(source="created_date", read_only=True)
     updated_at = serializers.DateTimeField(source="modified_date", read_only=True)
 
@@ -1621,6 +1623,7 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
             "cover_id",
             "source_marking_image",
             "edit_baseline",
+            "county_intent",
             "collection",
             "submitted_data",
             "status",
@@ -1718,6 +1721,22 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
         if marking is None:
             return None
         return marking_edit_baseline(MarkingSerializer(marking, context=self.context).data)
+
+
+    def get_county_intent(self, obj):
+        """
+        What approval would do with the submission's county (Trello T70),
+        computed server-side from the Region and the town's current links
+        so the review page never trusts the client-sent name. For Marking
+        submissions (new and edit) still awaiting a decision; None once
+        approved (the town already carries the result). Cover submissions
+        carry no county keys, so they get None without a special case.
+        """
+        if obj.status not in (
+            Contribution.STATUS_DRAFT, Contribution.STATUS_PENDING, Contribution.STATUS_NEEDS_REVISION
+        ):
+            return None
+        return describe_county_intent(obj.submitted_data or {})
 
 
 class ContributionApproveRejectSerializer(serializers.Serializer):
