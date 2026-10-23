@@ -968,9 +968,11 @@ a type, a date or unknown, and an image; the edit has only the image). Don't
 copy the image so it stays on the Marking edit; it moves, or stays only when
 the draft request failed. Don't show pending or returned cover submissions
 on the record page (they live on the Dashboard until approval, like every
-other submission), and never show a draft to anyone but its author: the
+other submission), and never list a draft to anyone but its author: the
 contributions list is owner-scoped and `?mode=editor` excludes drafts, which
-`test_cover_draft_visibility.py` pins. Don't add a server filter by parent
+`test_cover_draft_visibility.py` pins (an Editor assigned to the Collection or
+an Administrator can still open a draft by id, as before; that retrieve rule
+is Michael's to change). Don't add a server filter by parent
 marking, a model field, or an Editor path for this; linking existing
 Entries stays Editor-only (T20).
 

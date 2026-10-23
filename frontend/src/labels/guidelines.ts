@@ -187,8 +187,8 @@ export const DRAFT_COVER_FROM_EDIT = {
   savedTitle: "Cover draft saved",
   savedBody:
     "The image is now a Cover draft for this Marking and is no longer part of this edit. " +
-    "Finish the draft to submit it; until then only you can see it, under Associated " +
-    "Covers on the record page and in your Dashboard.",
+    "Finish the draft to submit it; until then it is not in the review queue and is " +
+    "listed only to you, under Associated Covers on the record page and in your Dashboard.",
   finish: "Finish the Cover draft",
   failedTitle: "Could not save the Cover draft",
   failedBody: "The image stays on this edit.",

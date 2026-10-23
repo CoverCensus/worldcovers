@@ -160,7 +160,7 @@ does not have, and **Submit Edit to Existing Marking** to correct one that it do
 
 To record an actual cover bearing a marking, use **Submit New Cover** from that marking's record.
 If you upload a whole-cover scan while editing a marking, the form offers to make it a Cover for
-that marking instead: the image becomes a Cover draft that only you can see, under Associated
+that marking instead: the image becomes a Cover draft, listed only to you under Associated
 Covers on the record and in your Dashboard, until you finish and submit it.
 
 ![The Submit New Cover form: Type and Date fields, the Cover images upload area, and the Institutionally Owned, Backstamp and submitter-name checkboxes below it](/assets/guide/10-submit-cover-form.png)
