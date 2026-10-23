@@ -547,19 +547,42 @@ Evidence: [ImageViewSet](backend/common/api/v2/views.py),
 
 [T74 on Trello](https://trello.com/c/eX68bPRW) - F8 Audit Trail.
 
-The Marking and Cover snapshot restore functions restore selected fields
-and Citations, but not images or date observations. S23 covers viewing
-history and does not close this recovery gap.
+Scope defined and built 2026-10-23 (Reese; PR pending on staging, see
+the card). Restoring a version reconciles the Entry to its snapshot:
+scalar fields; Citations by (reference work, detail); Image rows by
+storage filename, re-added only when the file is still in storage (a
+removed row keeps its file on disk); dates seen by their normalised
+(granularity, date key); and, for Covers, marking links by marking id
+(skipping markings now removed) and the valuation. Links between a
+Marking and its Covers are not part of a Marking version and are left
+unchanged; a snapshot that did not record a relationship leaves those
+rows alone; re-added images are not tracings and show the restoring
+Editor as uploader. Every limitation that applies is listed before the
+action by `GET restore-preview` and stored on the RESTORE_VERSION
+transaction.
 
-Define which fields and relationships version restoration must restore,
-including image references and files, dates, and Cover/Marking links. Make
-any limitations explicit before the action. Verify the agreed result for
-both Entry types, including permissions, audit history, and rollback on
-failure. Do not equate a partial snapshot restore with full Entry recovery,
-recycle-bin restoration, or S26 backup restoration.
+Flow: Record History (both Entry types) offers "Restore this version" on
+events that saved a version; the dialog shows current vs version field
+rows, per-relationship counts and "What this restore cannot bring back",
+then confirms through `restore-version`, which runs in one transaction
+(before-snapshot, apply, transaction row, new version) and answers 409
+after a rollback when a constraint refuses the rows. The same
+responsibility check as before applies; a Cover restore that would link
+markings outside a non-superuser Editor's regions is refused. Recycle-
+binned Entries use the recycle-bin restore, not this.
 
-Evidence: [snapshot restore functions](backend/common/audit.py) and
-[restore-version endpoints](backend/common/api/v2/views.py).
+Verify on woco.dev then hellowoco.app: as an Editor, open a record's
+history, click Restore this version on an older version, read the
+comparison and limitations, confirm; the record changes and a
+"Restored version" event appears. Anonymous
+`GET /api/v2/markings/<id>/restore-preview/?version_no=1` answers 401 or
+403. Follow-ups, not in this card: a picker for versions older than the
+10 history events shown; recording `is_tracing` in snapshots.
+
+Evidence: [restore plan](backend/common/version_restore.py),
+[restore-preview and restore-version](backend/common/api/v2/views.py),
+[tests](backend/common/tests/test_version_restore.py),
+[dialog](frontend/src/components/entry-detail/RestoreVersionDialog.tsx).
 
 ## Quick fixes assigned to Michael
 

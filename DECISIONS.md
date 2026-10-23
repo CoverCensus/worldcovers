@@ -264,12 +264,17 @@ entry does not prove that every field and relationship can be restored.
 [bulk audit tests](backend/common/tests/test_bulk_review.py) and
 [date audit tests](backend/common/tests/test_date_seen_permissions.py).
 
-**Open work:** [S23](ISSUE.md#feature-implementation-surfaces-reviewed-2026-09-13)
-is related history work, not a specific plan for full version restoration.
-The current Marking and Cover snapshot restore functions restore selected
-fields and Citations, but not images or date observations.
-[T74](ISSUE.md#t74---define-and-verify-entry-version-restoration) tracks the
-restoration scope and verification separately from history viewing.
+**Version restore (Trello T74, 2026-10-23):** restoring a version
+reconciles the Entry to its snapshot through one plan object
+([version_restore.py](backend/common/version_restore.py)) that both the
+`restore-preview` read and the `restore-version` write use, so the preview
+shows exactly what the restore does. Do list the limitations before the
+action (files no longer in storage, markings since removed, a snapshot that
+did not record a relationship, Marking->Cover links on a Marking version).
+Don't delete image files during a restore, and don't equate this with the
+recycle-bin restore or a backup restore.
+[S23](ISSUE.md#feature-implementation-surfaces-reviewed-2026-09-13) remains
+the history-viewing story; [tests](backend/common/tests/test_version_restore.py).
 
 ## Archive Before A Permanent Purge
 
