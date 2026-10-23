@@ -82,6 +82,22 @@ class EditBaselineTests(TestCase):
         self.assertEqual(baseline["marking_lrd"], "1851-03-01")
         self.assertEqual((baseline["state"], baseline["state_abbrev"]), ("Virginia", "VA"))
 
+    def test_marking_edit_baseline_carries_the_towns_county(self):
+        # Trello T70: no county link -> empty; a county link -> name and id.
+        baseline = self.baseline({"edit_marking_id": str(self.marking.pk)})
+        self.assertEqual((baseline["county"], baseline["county_id"]), ("", None))
+
+        audit = {"created_by": self.editor, "modified_by": self.editor}
+        state = Region.objects.get(name="Virginia")
+        county = Region.objects.create(
+            name="Henrico", abbrev="VA", region_tier="COUNTY", parent_region=state, **audit)
+        PostOfficeRegion.objects.create(
+            post_office=self.marking.post_office, region=county, **audit)
+        baseline = self.baseline({"edit_marking_id": str(self.marking.pk)})
+        self.assertEqual((baseline["county"], baseline["county_id"]), ("Henrico", county.pk))
+        # The county link does not change the town's state.
+        self.assertEqual(baseline["state"], "Virginia")
+
     def test_cover_edit_baseline_reads_the_cover_and_its_link(self):
         baseline = self.baseline({
             "submission_kind": "cover", "edit_cover_id": str(self.cover.pk),
