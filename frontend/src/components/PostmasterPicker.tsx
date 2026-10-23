@@ -36,11 +36,11 @@ export function PostmasterPicker({
   const [searching, setSearching] = useState(false);
 
   useEffect(() => {
+    // Every keystroke drops the previous matches first, so a list for an
+    // older needle never sits under the new text.
+    setMatches([]);
     const needle = query.trim();
-    if (!needle) {
-      setMatches([]);
-      return;
-    }
+    if (!needle) return;
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       setSearching(true);
@@ -56,6 +56,7 @@ export function PostmasterPicker({
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      setSearching(false);
     };
   }, [query]);
 

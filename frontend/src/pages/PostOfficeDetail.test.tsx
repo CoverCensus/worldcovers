@@ -3,14 +3,14 @@
  */
 // Trello T71 -- editor controls on the Post Office page; anonymous view unchanged.
 import "@testing-library/jest-dom";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import PostOfficeDetail from "./PostOfficeDetail";
 import apiClient from "@/lib/api";
-import { getTenuresForPostOffice, type PostmasterTenure } from "@/services/postmasters";
+import { getTenuresForPostOffice, updateTenure, type PostmasterTenure } from "@/services/postmasters";
 
 let mockUser: { id: number; role: string } | null = null;
 jest.mock("@/hooks/useAuth", () => ({ useAuth: () => mockUser }));
@@ -26,6 +26,8 @@ jest.mock("@/services/postmasters", () => ({
   ...jest.requireActual("@/services/postmasters"),
   getTenuresForPostOffice: jest.fn(),
   searchPostmasters: jest.fn().mockResolvedValue([]),
+  createTenure: jest.fn(),
+  updateTenure: jest.fn(),
 }));
 
 const imported: PostmasterTenure = {
@@ -92,5 +94,19 @@ describe("PostOfficeDetail", () => {
     expect(screen.getByLabelText("Year")).toHaveValue("1793");
     // Only one form at a time: the add button hides while a row is being edited.
     expect(screen.queryByRole("button", { name: "Add postmaster event" })).not.toBeInTheDocument();
+
+    (updateTenure as jest.Mock).mockResolvedValue({ ...imported, sourceNote: "Checked against the 1794 register" });
+    const fetchesBeforeSave = (getTenuresForPostOffice as jest.Mock).mock.calls.length;
+    await user.type(screen.getByRole("textbox", { name: /Source note/ }), "Checked against the 1794 register");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateTenure).toHaveBeenCalledWith(1, expect.objectContaining({
+      post_office: 7, postmaster: 3, source_note: "Checked against the 1794 register",
+    })));
+    // Saving refetches the list and closes the form.
+    await waitFor(() =>
+      expect((getTenuresForPostOffice as jest.Mock).mock.calls.length).toBeGreaterThan(fetchesBeforeSave),
+    );
+    await waitFor(() => expect(screen.queryByRole("form", { name: "Edit postmaster event" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Add postmaster event" })).toBeInTheDocument();
   });
 });

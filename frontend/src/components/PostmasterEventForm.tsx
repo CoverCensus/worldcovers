@@ -66,11 +66,19 @@ export function PostmasterEventForm({
   );
   const [sourceNote, setSourceNote] = useState(existing?.sourceNote ?? "");
   const [formError, setFormError] = useState<string | null>(null);
+  // Counts submits so a repeated identical message still re-focuses and is
+  // announced again (the alert element is re-mounted by the key below).
+  const [attempt, setAttempt] = useState(0);
   const errorRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
     if (formError) errorRef.current?.focus();
-  }, [formError]);
+  }, [formError, attempt]);
+
+  const fail = (message: string) => {
+    setAttempt((count) => count + 1);
+    setFormError(message);
+  };
 
   const save = useMutation({
     mutationFn: async (payload: PostmasterTenurePayload) => {
@@ -93,8 +101,7 @@ export function PostmasterEventForm({
       await onSaved(row);
     },
     onError: (err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      setFormError(message);
+      fail(err instanceof Error ? err.message : String(err));
     },
   });
 
@@ -102,20 +109,20 @@ export function PostmasterEventForm({
     submitEvent.preventDefault();
     const named = event === "appointment" || event === "reappointment";
     if (named && person.kind === "none") {
-      setFormError("An appointment names a person. Choose Office-level event for a closure.");
+      fail("An appointment names a person. Choose Office-level event for a closure.");
       return;
     }
     if (person.kind === "new" && !person.name.trim()) {
-      setFormError("Enter the person's name, or pick a matching person.");
+      fail("Enter the person's name, or pick a matching person.");
       return;
     }
     const dateResult = tenurePayloadDate(date);
     if (dateResult.ok === false) {
-      setFormError(dateResult.error);
+      fail(dateResult.error);
       return;
     }
     if (!existing && !sourceNote.trim()) {
-      setFormError("Say where this event comes from (the source note is required).");
+      fail("Say where this event comes from (the source note is required).");
       return;
     }
     setFormError(null);
@@ -166,13 +173,13 @@ export function PostmasterEventForm({
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1">
+          <fieldset className="space-y-1 border-0 p-0 m-0 min-w-0">
             <div className="flex items-center gap-1">
-              <Label>Date</Label>
+              <legend className="text-sm font-medium leading-none float-left">Date</legend>
               <FieldHelp label="Date">{POSTMASTER_DATE_HELP}</FieldHelp>
             </div>
             <PartialDateFields idPrefix="postmaster-date" value={date} onChange={setDate} disabled={save.isPending} showUnknown />
-          </div>
+          </fieldset>
           <div className="space-y-1">
             <div className="flex items-center gap-1">
               <Label htmlFor="postmaster-source-note">
@@ -191,7 +198,7 @@ export function PostmasterEventForm({
           </div>
         </div>
         {formError && (
-          <p ref={errorRef} tabIndex={-1} role="alert" className="mt-3 text-sm text-destructive">
+          <p key={attempt} ref={errorRef} tabIndex={-1} role="alert" className="mt-3 text-sm text-destructive">
             {formError}
           </p>
         )}

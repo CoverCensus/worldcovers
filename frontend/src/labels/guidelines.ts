@@ -260,4 +260,4 @@ export const POSTMASTER_EVENT_HELP =
 export const POSTMASTER_DATE_HELP =
   "Enter only the parts of the date the source gives. A year alone is stored as a year, not as 1 January.";
 export const POSTMASTER_SOURCE_NOTE_HELP =
-  "Where this event comes from: the catalog, register, document or page. Required for a hand-entered event.";
+  "Where this event comes from: the catalog, register, document or page. Required for a hand-entered event. The note is shown publicly on the Post Office page, so cite the document, not a person's contact details.";

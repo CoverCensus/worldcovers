@@ -22,8 +22,11 @@ export function tenurePayloadDate(parts: PartialDateInput): TenureDateResult {
   }
   const checked = validatePartialDate(parts);
   if (checked.ok === false) return { ok: false, error: checked.error };
-  const { legacyDate, legacyGranularity } = checked.value;
+  const { legacyDate, legacyGranularity, granularity } = checked.value;
   if (legacyDate == null || legacyGranularity == null) {
+    if (granularity === "YEAR_DAY") {
+      return { ok: false, error: "A day needs its month. Add the month or clear the day." };
+    }
     return { ok: false, error: "A postmaster date needs a year; add the year or tick Date unknown." };
   }
   return { ok: true, value: { date_appointed: legacyDate, date_appointed_granularity: legacyGranularity } };

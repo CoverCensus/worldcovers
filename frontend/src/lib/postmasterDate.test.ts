@@ -22,7 +22,11 @@ describe("tenurePayloadDate", () => {
   });
   it("refuses a month without a year", () => {
     const result = tenurePayloadDate(parts({ month: "7" }));
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: false, error: expect.stringMatching(/needs a year/) });
+  });
+  it("asks for the month when a year and day come without one", () => {
+    const result = tenurePayloadDate(parts({ year: "1840", day: "4" }));
+    expect(result).toEqual({ ok: false, error: expect.stringMatching(/Add the month or clear the day/) });
   });
   it("sends nulls for an unknown or blank date", () => {
     expect(tenurePayloadDate(parts({ unknown: true }))).toEqual({
