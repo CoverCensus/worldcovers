@@ -76,6 +76,8 @@ function contributionFields(row: CatalogFieldValues): CatalogRecordField[] {
     { label: "Type", value: row.type },
     { label: "Manuscript", value: row.manuscript },
   ];
+  // T70: only when the submission names one; the header already shows town and state.
+  if (row.county && hasValue(row.county)) fields.push({ label: "County", value: row.county });
   const isManuscript = row.manuscript.trim().toLowerCase() === "yes";
   const type = row.type.trim().toLowerCase();
   const isRatemark = type === "ratemark";

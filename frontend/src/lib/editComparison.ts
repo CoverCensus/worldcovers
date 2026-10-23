@@ -49,6 +49,8 @@ const boundaryKeys = (prefix: "marking_erd" | "marking_lrd", camel: string) => [
 const MARKING_FIELDS: FieldKeys[] = [
   { name: "catalogCode", keys: ["catalog_code", "catalogCode"] },
   { name: "state", keys: ["state"] },
+  // T70: "" means the edit says nothing about the county (approval leaves links alone).
+  { name: "county", keys: ["county", "county_id", "countyId"], emptyKeeps: true },
   { name: "town", keys: ["town"] },
   { name: "type", keys: ["type", "marking_type", "markingType"] },
   { name: "inscription", keys: ["inscription_txt", "inscriptionTxt"] },
@@ -138,6 +140,20 @@ function row(key: string, label: string, current: string, proposed: string, note
   return { key, label, current, proposed, changed, ...(changed && note ? { note } : {}) };
 }
 
+// T70: approval links a county only to a town that has none, and never
+// replaces one, so the row says which of the two will happen.
+function countyRow(current: Data, proposed: Data, currentName: string, proposedName: string): ComparisonRow {
+  const proposedId = text(proposed.county_id ?? proposed.countyId);
+  const shown = proposedName || (proposedId ? `County #${proposedId}` : "");
+  const sameById = proposedId !== "" && proposedId === text(current.county_id);
+  if (sameById) return row("county", "County", currentName, currentName);
+  const note =
+    currentName && shown
+      ? `Differs from the catalog's ${currentName}; approval leaves the county link unchanged`
+      : "Approval links the town to this county";
+  return row("county", "County", currentName, shown, note);
+}
+
 export function compareMarkingEdit(
   baseline: Data,
   sd: Data,
@@ -164,6 +180,7 @@ export function compareMarkingEdit(
   return [
     row("catalogCode", "Catalog code", text(current.catalog_code), text(proposed.catalog_code)),
     { ...row("state", "State", before.state, after.state), ...(sameStateByAbbrev ? { changed: false } : {}) },
+    countyRow(current, proposed, before.county ?? "", after.county ?? ""),
     row("town", "Town", before.town, after.town),
     row("type", "Type", markingTypeLabel(before.type), markingTypeLabel(after.type)),
     row("inscription", "Inscription", before.inscriptionTxt, after.inscriptionTxt),

@@ -33,6 +33,11 @@ export const KNOWN_SUBMITTED_DATA_KEYS: ReadonlySet<string> = new Set([
   // consumed: identity / location / type
   "state",
   "town",
+  // Trello T70: the town's county. county_id is what approval links; county
+  // is the display name; county_proposed is a county not in the list, shown
+  // to the Editor and never applied.
+  "county", "county_id", "countyId",
+  "county_proposed", "countyProposed",
   "type",
   "marking_type", "markingType",
   "is_manuscript", "isManuscript",
@@ -326,6 +331,7 @@ export function submittedDataToFieldInput(
     type,
     isManuscript,
     state: toStr(sd.state),
+    county: toStr(sd.county),
     town: toStr(sd.town),
     inscriptionTxt: toStr(sd.inscription_txt ?? sd.inscriptionTxt),
     earliestSeen: earliest,

@@ -34,6 +34,7 @@ import {
   isCoverContributionData,
   pendingCoverContributionIdFromSubmittedData,
   pendingCoverFromSubmittedData,
+  countyProposedFromSubmittedData,
 } from "@/lib/contributionDisplay";
 import { PendingCoverCard } from "@/components/PendingCoverCard";
 import CoverContributionDetail from "@/pages/CoverContributionDetail";
@@ -83,6 +84,7 @@ function buildContributionCatalogFields(input: MarkingFieldInput): CatalogFieldV
     type: displayCatalogField(markingTypeLabel(input.type) || ""),
     town: displayCatalogField(input.town),
     state: displayCatalogField(input.state),
+    ...(input.county ? { county: displayCatalogField(input.county) } : {}),
     regionAbbrev: displayCatalogField(input.state),
     manuscript: displayCatalogField(input.isManuscript ? "Yes" : "No"),
     desc: displayCatalogField(input.catalogTxt),
@@ -433,6 +435,8 @@ const ContributionDetail = () => {
       sd.comment ??
       ""
   ).trim();
+  // Trello T70: a county the contributor could not find in the list.
+  const countyProposed = countyProposedFromSubmittedData(sd);
   // Null for anything that did not come from the VPHC ingest.
   const vphc = readVphcProvenance(sd);
   const baseImageUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
@@ -859,6 +863,18 @@ const ContributionDetail = () => {
                       No submitted data returned for this contribution.
                     </p>
                   )}
+                  {countyProposed ? (
+                    <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">County not listed</p>
+                      <p className="text-sm text-foreground">{countyProposed}</p>
+                      {canReview ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Create this county as a Region (tier County, parent = the state) before approving;
+                          approval does not create Regions.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {contributorComment ? (
                     <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">
                       <p className="text-xs uppercase tracking-wide text-muted-foreground">Comment for editor</p>

@@ -270,3 +270,10 @@ export function createdFromContributionIdFromSubmittedData(
   const n = parseInt(String(raw), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
+
+/** Trello T70: a county the contributor typed because it was not in the list. Never applied by approval. */
+export function countyProposedFromSubmittedData(
+  sd: Record<string, unknown> | null | undefined,
+): string {
+  return String(sd?.county_proposed ?? sd?.countyProposed ?? "").trim();
+}

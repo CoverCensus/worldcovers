@@ -38,6 +38,21 @@ describe("compareMarkingEdit", () => {
     expect(changedKeys(compare({ edit_marking_id: 7, state: "VA" }))).toEqual([]);
   });
 
+  it("T70: a county the town already has is unchanged by id, an added one is noted, a differing one is left alone", () => {
+    const withCounty = { ...marking, county: "Henrico", county_id: 5 };
+    const same = compareMarkingEdit(withCounty, { edit_marking_id: 7, county: "Henrico", county_id: "5" }, lookups, [], 1);
+    expect(changedKeys(same)).toEqual([]);
+    expect(changedKeys(compareMarkingEdit(withCounty, { edit_marking_id: 7, county: "", county_id: "" }, lookups, [], 1))).toEqual([]);
+
+    const added = compare({ edit_marking_id: 7, county: "Accomack", county_id: "9" });
+    expect(added.find((r) => r.key === "county")).toMatchObject({
+      current: "", proposed: "Accomack", changed: true, note: "Approval links the town to this county",
+    });
+
+    const differs = compareMarkingEdit(withCounty, { edit_marking_id: 7, county: "Accomack", county_id: "9" }, lookups, [], 1);
+    expect(differs.find((r) => r.key === "county")?.note).toMatch(/leaves the county link unchanged/);
+  });
+
   it("clears shape for a manuscript and notes that dates are added", () => {
     const rows = compare({
       edit_marking_id: 7, is_manuscript: "true",
