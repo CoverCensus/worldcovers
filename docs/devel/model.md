@@ -395,12 +395,22 @@ An appointment or office event, not a complete term of service.
 * date_appointed (nullable) - Event date; null when no usable date is recorded.
 * date_appointed_granularity (nullable) - DAY, MONTH, or YEAR precision from
   the source. Interpret the date together with this field.
-* source_ref - Source cell locator, such as `T3:r15904`.
+* source_ref - Source cell locator, such as `T3:r15904`; empty on manually
+  entered rows.
+* origin - IMPORT for a row decoded from a source workbook by
+  `import_vphc_reference`, MANUAL for a row an Editor entered in the
+  application.
+* source_note - Citation in words for a manually entered event; empty on
+  imported rows.
 * rules_version (nullable) - Version of the extraction rules used for the row.
 
 *Invariants:*
 
 * Each event references exactly one post office and zero or one postmaster.
+* origin is IMPORT for workbook rows and MANUAL for Editor-entered rows.
+  source_ref is empty on MANUAL rows; source_note is empty on IMPORT rows
+  unless an Editor later corrected the row. Editing an IMPORT row keeps its
+  origin; the change is recorded as a Submission Transaction.
 * No service end date is stored. A displayed end is an inference from a later
   event at the same office, not a date stated by the source.
 * For display, a later appointment, office closure, or named event ends the

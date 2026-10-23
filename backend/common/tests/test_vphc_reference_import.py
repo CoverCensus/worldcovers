@@ -111,6 +111,12 @@ class VphcReferenceImportTests(TestCase):
         # three source rows, but two are the same appointment
         self.assertEqual(PostmasterTenure.objects.count(), 2)
 
+        # Rows the importer writes are IMPORT rows (Trello T71): the model
+        # default applies and no manual citation is attached.
+        self.assertEqual(
+            set(PostmasterTenure.objects.values_list("origin", flat=True)), {"IMPORT"})
+        self.assertEqual(
+            set(PostmasterTenure.objects.values_list("source_note", flat=True)), {""})
         closure = PostmasterTenure.objects.get(event="discontinued")
         self.assertIsNone(closure.date_appointed)
         self.assertEqual(closure.source_ref, "T3:r15905")

@@ -129,6 +129,37 @@ def compute_payload_diff(before_payload: Any, after_payload: Any) -> list[dict[s
     return diff
 
 
+def build_postmaster_snapshot(person) -> dict[str, Any]:
+    """The person as a Postmaster write logs it (Trello T71)."""
+    if person is None:
+        return {}
+    return {"id": person.pk, "name": person.name, "sort_name": person.sort_name}
+
+
+def build_postmaster_tenure_snapshot(tenure) -> dict[str, Any]:
+    """One appointment event as a tenure write logs it (Trello T71).
+
+    SubmissionTransaction has no FK to a tenure, an office or a person, so
+    the before/after payloads carry the whole row and the ids repeat in
+    extra_payload for lookup.
+    """
+    if tenure is None:
+        return {}
+    return {
+        "tenure_id": tenure.pk,
+        "post_office_id": tenure.post_office_id,
+        "post_office_name": tenure.post_office.name if tenure.post_office_id else None,
+        "postmaster_id": tenure.postmaster_id,
+        "postmaster_name": tenure.postmaster.name if tenure.postmaster_id else None,
+        "event": tenure.event,
+        "date_appointed": tenure.date_appointed.isoformat() if tenure.date_appointed else None,
+        "date_appointed_granularity": tenure.date_appointed_granularity,
+        "origin": tenure.origin,
+        "source_ref": tenure.source_ref,
+        "source_note": tenure.source_note,
+    }
+
+
 def log_submission_transaction(
     *,
     action: str,

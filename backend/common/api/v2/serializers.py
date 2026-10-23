@@ -53,6 +53,7 @@ from common.models import (
     Region,
     Shape,
 )
+from common.postmaster_names import postmaster_sort_name
 
 from .permissions import (
     _user_is_responsible_for_cover,
@@ -148,16 +149,45 @@ class PostOfficeSerializer(serializers.ModelSerializer):
 
 
 class PostmasterSerializer(serializers.ModelSerializer):
+    """A person. Editors may add or rename one (Trello T71).
+
+    sort_name is derived when the caller leaves it blank, with the same
+    surname-first rule the importer uses, so manual and imported people sort
+    together. Two people with the same name are two rows: identity is never
+    inferred from the name.
+    """
     class Meta:
         model = Postmaster
         fields = ["id", "name", "sort_name"]
+        extra_kwargs = {"sort_name": {"required": False, "allow_blank": True}}
+
+    def validate_name(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("A name is required.")
+        return value
+
+    def validate(self, attrs):
+        # Derive on create, or when the caller sends a blank sort_name. A PATCH
+        # that omits the field leaves the stored value alone.
+        blank_sort_name = not (attrs.get("sort_name") or "").strip()
+        derive = blank_sort_name and (self.instance is None or "sort_name" in attrs)
+        if derive:
+            name = attrs.get("name") or (self.instance.name if self.instance else "")
+            attrs["sort_name"] = postmaster_sort_name(name)
+        if "sort_name" in attrs:
+            # ", " inserted into a 255-character name would overflow the column.
+            attrs["sort_name"] = attrs["sort_name"][:255]
+        return attrs
 
 
 class PostmasterTenureSerializer(serializers.ModelSerializer):
-    """One appointment event, flattened for display.
+    """One appointment event, flattened for display; writable by Editors (T71).
 
     The office keeps its own name alongside the id so a postmaster's career can
-    be listed without a second round trip per town.
+    be listed without a second round trip per town. origin and source_ref are
+    read-only: the view sets origin on create and only the importer writes a
+    workbook locator. Manual evidence goes in source_note.
     """
     postmaster_name = serializers.CharField(
         source="postmaster.name", read_only=True, default="")
@@ -169,8 +199,67 @@ class PostmasterTenureSerializer(serializers.ModelSerializer):
         fields = [
             "tenure_id", "post_office", "post_office_name", "postmaster",
             "postmaster_name", "event", "date_appointed",
-            "date_appointed_granularity", "source_ref",
+            "date_appointed_granularity", "source_ref", "origin", "source_note",
         ]
+        read_only_fields = ["tenure_id", "source_ref", "origin"]
+        extra_kwargs = {
+            "postmaster": {"required": False, "allow_null": True},
+            "date_appointed": {"required": False, "allow_null": True},
+            "date_appointed_granularity": {"required": False, "allow_null": True},
+            "source_note": {"required": False, "allow_blank": True},
+        }
+
+    def _effective(self, attrs, key):
+        if key in attrs:
+            return attrs[key]
+        return getattr(self.instance, key) if self.instance is not None else None
+
+    def validate(self, attrs):
+        if "source_note" in attrs:
+            attrs["source_note"] = (attrs["source_note"] or "").strip()
+        date = self._effective(attrs, "date_appointed")
+        gran = self._effective(attrs, "date_appointed_granularity") or None
+        if date is not None and gran is None:
+            raise serializers.ValidationError(
+                {"date_appointed_granularity": ["Say how much of the date the source gave: YEAR, MONTH or DAY."]})
+        if date is None and gran is not None:
+            raise serializers.ValidationError(
+                {"date_appointed": ["A date precision needs a date."]})
+        if date is not None:
+            # Store the precision the source stated and nothing finer: a
+            # year-only date is 1 January, a month-only date the 1st.
+            if gran == "YEAR":
+                date = date.replace(month=1, day=1)
+            elif gran == "MONTH":
+                date = date.replace(day=1)
+            attrs["date_appointed"] = date
+            attrs["date_appointed_granularity"] = gran
+        event = self._effective(attrs, "event") or PostmasterTenure.EVENT_APPOINTMENT
+        person = self._effective(attrs, "postmaster")
+        named_event = event in (PostmasterTenure.EVENT_APPOINTMENT, PostmasterTenure.EVENT_REAPPOINTMENT)
+        # On create always; on update only when the payload touches the person
+        # or the event, so an imported person-less row stays patchable for a
+        # source_note-only correction.
+        touches_identity = self.instance is None or "postmaster" in attrs or "event" in attrs
+        if named_event and person is None and touches_identity:
+            raise serializers.ValidationError(
+                {"postmaster": ["An appointment names a person. Use an office-level event for a closure."]})
+        origin = PostmasterTenure.ORIGIN_MANUAL if self.instance is None else self.instance.origin
+        if origin == PostmasterTenure.ORIGIN_MANUAL and not self._effective(attrs, "source_note"):
+            raise serializers.ValidationError(
+                {"source_note": ["Say where this event comes from (a catalog, a document, a page)."]})
+        office = self._effective(attrs, "post_office")
+        # MySQL's unique index lets NULLs repeat, so an undated or office-level
+        # duplicate would otherwise slip past tenure_office_person_date_event_unique.
+        dupes = PostmasterTenure.objects.filter(post_office=office, event=event)
+        dupes = dupes.filter(postmaster=person) if person is not None else dupes.filter(postmaster__isnull=True)
+        dupes = dupes.filter(date_appointed=date) if date is not None else dupes.filter(date_appointed__isnull=True)
+        if self.instance is not None:
+            dupes = dupes.exclude(pk=self.instance.pk)
+        if dupes.exists():
+            raise serializers.ValidationError(
+                {"non_field_errors": ["This event is already recorded for this office."]})
+        return attrs
 
 
 class LetteringSerializer(serializers.ModelSerializer):

@@ -12,6 +12,8 @@ const tenure = (over: Partial<PostmasterTenure>): PostmasterTenure => ({
   dateAppointed: "1793-04-25",
   granularity: "DAY",
   sourceRef: "T3:r15904",
+  origin: "IMPORT",
+  sourceNote: "",
   ...over,
 });
 

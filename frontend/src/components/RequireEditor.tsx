@@ -1,13 +1,7 @@
 import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-
-/** The same editor test every gate in the SPA uses (Navigation, Dashboard, RecordDetail). */
-function isEditorUser(user: ReturnType<typeof useAuth>): boolean {
-  return Boolean(
-    user && (user.role === "editor" || user.role === "administrator" || user.is_superuser),
-  );
-}
+import { isEditorUser } from "@/lib/editorRole";
 
 /**
  * Protect routes that are for editors and administrators (issues.md 177).

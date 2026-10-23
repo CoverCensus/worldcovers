@@ -352,6 +352,13 @@ class SubmissionTransaction(models.Model):
     # An editor changed a saved image's caption (Trello T87); the previous and
     # new caption are in extra_payload.
     ACTION_IMAGE_CAPTION_CHANGED = "image_caption_changed"
+    # Manual Postmaster entry (Trello T71). SubmissionTransaction has no FK to
+    # a person, an office or a tenure, so the row ids live in extra_payload and
+    # the before/after payloads carry the tenure or person snapshot.
+    ACTION_POSTMASTER_ADDED = "postmaster_added"
+    ACTION_POSTMASTER_CHANGED = "postmaster_changed"
+    ACTION_POSTMASTER_EVENT_ADDED = "postmaster_event_added"
+    ACTION_POSTMASTER_EVENT_CHANGED = "postmaster_event_changed"
     ACTION_CHOICES = [
         (ACTION_SUBMIT, "Record submitted"),
         (ACTION_EDIT_SUBMISSION, "Edited submission"),
@@ -376,6 +383,10 @@ class SubmissionTransaction(models.Model):
         (ACTION_DATE_SEEN_REMOVED, "Date removed"),
         (ACTION_IMAGE_ROTATED, "Image rotated"),
         (ACTION_IMAGE_CAPTION_CHANGED, "Image caption changed"),
+        (ACTION_POSTMASTER_ADDED, "Postmaster added"),
+        (ACTION_POSTMASTER_CHANGED, "Postmaster changed"),
+        (ACTION_POSTMASTER_EVENT_ADDED, "Postmaster event added"),
+        (ACTION_POSTMASTER_EVENT_CHANGED, "Postmaster event changed"),
     ]
 
     SOURCE_CONTRIBUTOR_PORTAL = "contributor_portal"
@@ -1049,6 +1060,12 @@ class PostmasterTenure(TimestampedModel):
     source often gives a year alone, and storing 1 January would assert a
     precision nobody has.
 
+    Rows come from two places and say which (Trello T71): ``origin`` is IMPORT
+    for a row the VPHC importer decoded from a workbook cell (``source_ref``
+    names the cell) and MANUAL for a row an Editor typed in, whose evidence is
+    the free-text ``source_note``. Editing an imported row keeps IMPORT; the
+    change is audited, not re-keyed.
+
     model.md domain type: PostmasterTenure
     """
     EVENT_APPOINTMENT = 'appointment'
@@ -1062,6 +1079,12 @@ class PostmasterTenure(TimestampedModel):
         (EVENT_UNKNOWN, 'Unknown'),
     ]
     GRANULARITY_CHOICES = [('DAY', 'Day'), ('MONTH', 'Month'), ('YEAR', 'Year')]
+    ORIGIN_IMPORT = 'IMPORT'
+    ORIGIN_MANUAL = 'MANUAL'
+    ORIGIN_CHOICES = [
+        (ORIGIN_IMPORT, 'Imported from a source workbook'),
+        (ORIGIN_MANUAL, 'Entered by an Editor'),
+    ]
 
     tenure_id = models.AutoField(primary_key=True)
     post_office = models.ForeignKey(
@@ -1078,6 +1101,16 @@ class PostmasterTenure(TimestampedModel):
     source_ref = models.CharField(
         max_length=32, blank=True, default='',
         help_text='Cell reference in the source workbook, e.g. T3:r15904')
+    # Both carry a db_default as well as a default: AddField with only a Python
+    # default backfills existing rows and then drops the database default, so
+    # an INSERT from code that predates the column (the importer or a restore
+    # running during the deploy window) would fail under strict mode.
+    origin = models.CharField(
+        max_length=6, choices=ORIGIN_CHOICES, default=ORIGIN_IMPORT, db_default=ORIGIN_IMPORT,
+        help_text='IMPORT rows came from import_vphc_reference; MANUAL rows were typed by an Editor')
+    source_note = models.CharField(
+        max_length=500, blank=True, default='', db_default='',
+        help_text='Citation in words for a manually entered event; empty for imported rows')
     rules_version = models.PositiveSmallIntegerField(
         null=True, blank=True, help_text='RULES.md version that decoded this row')
 

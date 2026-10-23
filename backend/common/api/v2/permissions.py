@@ -59,19 +59,31 @@ def _get_user_assigned_regions(user):
     return Region.including_counties(assigned)
 
 
-def _user_is_responsible_for_marking(user, marking):
+def user_is_responsible_for_post_office(user, post_office):
+    """Whether ``user`` may write rows that hang off ``post_office``.
+
+    The office's current state/territory region (PostOffice.region, which
+    skips county tiers) must be one of the user's assigned regions. Shared by
+    the marking check below and by PostmasterTenure writes (Trello T71).
+    """
     if not user or not user.is_authenticated:
         return False
     if user.is_superuser:
         return True
     if not user_can_review_contributions(user):
         return False
-    if not marking or not marking.post_office_id:
+    if post_office is None:
         return False
-    region = marking.post_office.region
+    region = post_office.region
     if region is None:
         return False
     return _get_user_assigned_regions(user).filter(pk=region.pk).exists()
+
+
+def _user_is_responsible_for_marking(user, marking):
+    if not marking or not marking.post_office_id:
+        return bool(user and user.is_authenticated and user.is_superuser)
+    return user_is_responsible_for_post_office(user, marking.post_office)
 
 
 def _user_is_responsible_for_cover(user, cover):
@@ -255,6 +267,32 @@ class IsResponsibleForDateSeenSubject(BasePermission):
         return user_is_responsible_for_subject(
             request.user, obj.subject_type, obj.subject_id
         )
+
+
+class IsResponsibleForTenureOffice(BasePermission):
+    """
+    Object-level write check for PostmasterTenure rows, scoped to the office's
+    region (Trello T71). Same shape as IsResponsibleForDateSeenSubject: DRF
+    does not call has_object_permission on create, so
+    PostmasterTenureViewSet.perform_create runs the same predicate by hand,
+    and perform_update re-runs it against a new office when a PATCH moves
+    the row.
+    """
+
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and (user.is_superuser or user_can_review_contributions(user))
+        )
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in SAFE_METHODS:
+            return True
+        return user_is_responsible_for_post_office(request.user, obj.post_office)
 
 
 class CanReviewContribution(BasePermission):

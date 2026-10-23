@@ -251,3 +251,13 @@ export const REFERENCE_WORK_ISBN_HELP =
 
 export const REFERENCE_WORK_URL_HELP =
   "Web address of a digital edition or catalogue record, starting with http or https.";
+
+// Manual Postmaster entry on the Post Office page (Trello T71).
+export const POSTMASTER_PERSON_HELP =
+  "Search for the person by name. Pick a match only when you know it is the same person; otherwise choose Add new person. The same name in two towns is not proof of one person.";
+export const POSTMASTER_EVENT_HELP =
+  "Appointment or reappointment names a person. Office discontinued is an office-level event with no person.";
+export const POSTMASTER_DATE_HELP =
+  "Enter only the parts of the date the source gives. A year alone is stored as a year, not as 1 January.";
+export const POSTMASTER_SOURCE_NOTE_HELP =
+  "Where this event comes from: the catalog, register, document or page. Required for a hand-entered event. The note is shown publicly on the Post Office page, so cite the document, not a person's contact details.";

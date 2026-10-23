@@ -11,6 +11,39 @@ Counts, test results, and pending work describe the state at those dates.
 See [DECISIONS.md](../../DECISIONS.md) for other application and operations
 decisions. Code paths in these entries are relative to the repository root.
 
+## 2026-10-23 -- Manual postmaster events are MANUAL-origin rows beside IMPORT rows; corrections to IMPORT rows are logged, not re-keyed (Trello T71)
+
+**What was decided.** `PostmasterTenure` gains `origin` (IMPORT or MANUAL, default IMPORT) and
+`source_note` (500 characters). Editors add and correct people and appointment events through
+`POST`/`PATCH /api/v2/postmasters/` and `/api/v2/postmaster-tenures/` and from the Post Office
+page; there is no DELETE. A row created through the API is a MANUAL row whose evidence is the
+free-text `source_note`; `source_ref` stays the workbook cell locator the importer writes and is
+empty on manual rows. Editing an imported row keeps `origin = IMPORT` and writes one
+`SubmissionTransaction` (`postmaster_event_changed`) with the before and after row; nothing is
+re-keyed or re-sourced. People writes follow the plain Editor rule (a person has no region);
+tenure writes also require responsibility for the office's current state region, re-checked when
+a PATCH moves a row to another office. A duplicate (office, person, date, event), including the
+NULL-dated and office-level cases MySQL's unique index lets through, is refused with a 400.
+
+**Why.** The card asks for source evidence and for a distinction between imported and
+hand-entered rows; a 32-character cell locator holds neither, and `Citation` only attaches to
+Covers and Markings. Two additive columns are the smallest model change that carries both. A
+person is never matched by name: the picker always offers "Add new person" beside any match.
+
+**Later imports (documented, not coded).** `import_vphc_reference` only adds rows and matches
+events on (office, person, date, event). A manual row never collides with it. A *corrected*
+IMPORT row whose key changed is no longer recognised, so a later re-import re-adds the original
+source row as a duplicate. The fix, when a re-import is actually planned, is for the importer to
+skip rows whose `source_ref` already exists; it is not part of this card.
+
+**Reaffirmed.** No `date_ended`: ends stay derived for display (the entry below).
+
+**Evidence.** `backend/common/migrations/0023_postmaster_manual_entry.py`;
+`backend/common/tests/test_postmaster_api.py`; the serializer and viewsets in
+`backend/common/api/v2/`; `frontend/src/components/PostmasterEventForm.tsx`.
+
+**Date.** 2026-10-23
+
 ## 2026-08-28 -- A postmaster's term of service is derived for display, never stored (#125, #93)
 
 **What was decided.** `PostmasterTenure` continues to hold one row per appointment **event** and
