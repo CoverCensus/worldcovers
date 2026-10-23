@@ -421,11 +421,15 @@ const RecordDetail = () => {
   useEffect(() => {
     if (markingId == null || Number.isNaN(markingId)) {
       setAssociatedCovers([]);
+      setOwnCoverDrafts([]);
       setCoversLoadError(null);
       return;
     }
     let cancelled = false;
     const viewerId = user?.id;
+    // A new marking (or a sign-out) must not show the previous one's drafts
+    // while the fetch below is in flight.
+    setOwnCoverDrafts([]);
     void (async () => {
       const { covers: rows, error: coversErr } = await loadAssociatedCoversForMarking(markingId);
       if (cancelled) return;
