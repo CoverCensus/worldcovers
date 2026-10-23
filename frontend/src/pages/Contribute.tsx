@@ -29,7 +29,7 @@ import { Link, useNavigate, useLocation, useSearchParams, useParams } from "reac
 import { getColors, type ColorOption } from "@/services/colors";
 import { getShapes, type ShapeOption } from "@/services/shapes";
 import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
-import { getRegions } from "@/services/regions";
+import { getCountyRegions, getRegions, type CountyOption, type StateOption } from "@/services/regions";
 import { getMarkingByIdRaw, mapApiMarkingToRecord, normalizeImageUrl, resolveMarkingRoutingState, routingStateFromMarkingRecord, type MarkingRecord, type AssociatedDateSeen } from "@/services/markings";
 import { DatesSeenCard } from "@/components/DatesSeenCard";
 import { PendingCoverSection } from "@/components/PendingCoverSection";
@@ -71,6 +71,7 @@ import {
   MARKING_TYPE_HELP,
   MANUSCRIPT_HELP,
   STATE_HELP,
+  COUNTY_HELP,
   TOWN_HELP,
   INSCRIPTION_DEFINITION_HELP,
   SHAPE_HELP,
@@ -512,7 +513,17 @@ const Contribute = () => {
   const [dateRecord, setDateRecord] = useState<MarkingRecord | null>(null);
   const [newMarkingDates, setNewMarkingDates] = useState<AssociatedDateSeen[]>([]);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
-  const [stateOptions, setStateOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const [stateOptions, setStateOptions] = useState<StateOption[]>([]);
+  // Trello T70: the county of the Post Office, optional. The list is the
+  // COUNTY-tier Regions under the chosen state; a county that is not listed
+  // goes in countyProposed as text for the Editor.
+  const [countyId, setCountyId] = useState("");
+  // The picked county's name, kept beside the id so a draft saved before the
+  // county list has loaded still carries a readable name for review.
+  const [countyLabel, setCountyLabel] = useState("");
+  const [countyProposed, setCountyProposed] = useState("");
+  const [countyOptions, setCountyOptions] = useState<CountyOption[]>([]);
+  const [loadingCounties, setLoadingCounties] = useState(false);
   const [shapeOptions, setShapeOptions] = useState<ShapeOption[]>([]);
   const [postOffices, setPostOffices] = useState<PostOfficeOption[]>([]);
   const [loadingShapes, setLoadingShapes] = useState(true);
@@ -710,7 +721,7 @@ const Contribute = () => {
         if (cancelled) return;
         const seen = new Set<string>();
         const options = regions
-          .map((r) => ({ value: String(r.value || "").trim(), label: String(r.label || "").trim() }))
+          .map((r) => ({ ...r, value: String(r.value || "").trim(), label: String(r.label || "").trim() }))
           .filter((opt) => {
             if (!opt.value) return false;
             const key = opt.value.toLowerCase();
@@ -730,6 +741,39 @@ const Contribute = () => {
       cancelled = true;
     };
   }, []);
+
+  // T70: the chosen state's Region id. Saved drafts and edits may carry the
+  // abbreviation ("VA") where the options carry names, so match either.
+  const stateRegionId = useMemo(() => {
+    const wanted = state.trim().toLowerCase();
+    if (!wanted) return null;
+    const match = stateOptions.find(
+      (opt) => opt.value.toLowerCase() === wanted || (opt.abbrev ?? "").toLowerCase() === wanted,
+    );
+    return match?.id ?? null;
+  }, [state, stateOptions]);
+
+  useEffect(() => {
+    if (stateRegionId == null) {
+      setCountyOptions([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingCounties(true);
+    getCountyRegions(stateRegionId)
+      .then((counties) => {
+        if (!cancelled) setCountyOptions(counties);
+      })
+      .catch(() => {
+        if (!cancelled) setCountyOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCounties(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [stateRegionId]);
 
   useEffect(() => {
     setLoadingShapes(true);
@@ -947,6 +991,9 @@ const Contribute = () => {
         );
         setState(stateVal);
         setTown(townVal);
+        setCountyId(getStr(sd.county_id));
+        setCountyLabel(getStr(sd.county));
+        setCountyProposed(getStr(sd.county_proposed));
         if (loadedCatalogCode) {
           setCatalogCode(loadedCatalogCode);
           setCatalogCodeTouched(true);
@@ -1183,6 +1230,12 @@ const Contribute = () => {
 
     setState(typeof data.state === "string" ? data.state : "");
     setTown(sanitizeTown(typeof data.town === "string" ? data.town : ""));
+    // T70: the town's county, from its region links (current-first).
+    const regionRows = Array.isArray(data.regions) ? (data.regions as Array<Record<string, unknown>>) : [];
+    const countyRegion = regionRows.find((r) => String(r.region_tier ?? "").toUpperCase() === "COUNTY");
+    setCountyId(countyRegion && countyRegion.id != null ? String(countyRegion.id) : "");
+    setCountyLabel(countyRegion ? String(countyRegion.name ?? "") : "");
+    setCountyProposed("");
 
     const shapeName = typeof data.shape_name === "string" ? data.shape_name : "";
     if (shapeName) {
@@ -1799,6 +1852,10 @@ const Contribute = () => {
 
     const stateVal = state.trim();
     const townVal = town.trim();
+    // T70: the display name travels with the id so review can print it without a lookup.
+    const countyName = countyId
+      ? countyOptions.find((c) => String(c.id) === countyId)?.name ?? countyLabel
+      : "";
     const isManuscriptSelected = isManuscript;
     const shapeVal = isManuscriptSelected ? "" : shape.trim();
     const typeVal = normalizeMarkingTypeValue(markingType.trim()) || markingType.trim();
@@ -2091,6 +2148,10 @@ const Contribute = () => {
         if (selectedPostOfficeId != null) form.append("post_office_id", String(selectedPostOfficeId));
         form.append("state", stateVal);
         form.append("town", townVal);
+        // T70: always present; "" means the submission says nothing about the county.
+        form.append("county_id", countyId);
+        form.append("county", countyName);
+        form.append("county_proposed", countyProposed.trim());
         if (typeVal) form.append("type", typeVal);
         if (!isManuscriptSelected) form.append("shape", shapeVal);
         if (!isManuscriptSelected && shapeIdVal != null) form.append("shape_id", String(shapeIdVal));
@@ -2203,6 +2264,9 @@ const Contribute = () => {
           post_office_id: selectedPostOfficeId ?? undefined,
           state: stateVal,
           town: townVal,
+          county_id: countyId,
+          county: countyName,
+          county_proposed: countyProposed.trim(),
           type: typeVal || undefined,
           shape: isManuscriptSelected ? null : shapeVal,
           shape_id: isManuscriptSelected ? null : shapeIdVal ?? null,
@@ -2945,6 +3009,15 @@ const Contribute = () => {
                         value={state}
                         onValueChange={(value) => {
                           setState(value);
+                          // A county belongs to one state: when a chosen state is
+                          // replaced by another, the pick and a county typed for
+                          // the old state are emptied. Prefill sets the state before
+                          // the county and never passes through here.
+                          if (state && value !== state) {
+                            setCountyId("");
+                            setCountyLabel("");
+                            setCountyProposed("");
+                          }
                           if (fieldErrors.state) {
                             setFieldErrors((prev) => ({ ...prev, state: undefined }));
                           }
@@ -2962,6 +3035,47 @@ const Contribute = () => {
                       {fieldErrors.state && (
                         <p className="text-sm text-destructive">{fieldErrors.state}</p>
                       )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="county">County</Label>
+                        <FieldHelp label="County">{COUNTY_HELP}</FieldHelp>
+                      </div>
+                      <SearchableSelect
+                        id="county"
+                        value={countyId}
+                        onValueChange={(value) => {
+                          setCountyId(value);
+                          setCountyLabel(countyOptions.find((c) => String(c.id) === value)?.name ?? "");
+                          // A pick from the list supersedes a typed county.
+                          if (value) setCountyProposed("");
+                        }}
+                        placeholder="Select county (optional)..."
+                        options={countyOptions.map((c) => ({ value: String(c.id), label: c.name }))}
+                        disabled={stateRegionId == null}
+                        loading={loadingCounties}
+                        searchPlaceholder="Search counties..."
+                        emptyMessage="No county found."
+                        aria-label="County"
+                      />
+                      <div className="space-y-1">
+                        <Label htmlFor="county-proposed" className="text-sm text-muted-foreground">
+                          County not listed
+                        </Label>
+                        <Input
+                          id="county-proposed"
+                          value={countyProposed}
+                          onChange={(e) => setCountyProposed(e.target.value)}
+                          maxLength={200}
+                          disabled={stateRegionId == null || countyId !== ""}
+                          placeholder="Type the county's name if it is missing from the list"
+                          aria-label="County not listed"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          An Editor will add a county that is missing from the list before approving.
+                        </p>
+                      </div>
                     </div>
 
                     <div className="space-y-2">

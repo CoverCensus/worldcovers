@@ -52,12 +52,23 @@ def _digits(value):
 def marking_edit_baseline(record):
     """Map a MarkingSerializer representation (what the edit form prefills
     from) to the submit keys of a Marking edit."""
+    counties = [
+        r for r in record.get("regions") or []
+        if str(r.get("region_tier") or "").upper() == "COUNTY"
+    ]
+    county = counties[0] if counties else None
     baseline = {
         "state": record.get("state") or "",
         # A re-picked state may come back as its abbreviation; the page
         # treats either as the same state.
         "state_abbrev": record.get("state_abbrev") or "",
         "town": record.get("town") or "",
+        # Trello T70: the town's county, from its region links (current-first;
+        # a town with several county links shows the first). "" / None when
+        # the town has no county link, so the comparison can say "Approval
+        # links the town to this county".
+        "county": county["name"] if county else "",
+        "county_id": county["id"] if county else None,
         "type": record.get("type") or "",
         "catalog_code": (record.get("code") or "").strip(),
         "inscription_txt": record.get("inscription_txt") or "",

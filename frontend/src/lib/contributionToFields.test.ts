@@ -13,6 +13,14 @@ describe("submittedDataToFieldInput", () => {
     ] }, lookups, { contributionId: 56 });
     expect(fields.datesSeen).toBe("1840, JUN 12 (year unknown)");
   });
+  it("accepts the T70 county keys and maps the county name", () => {
+    const fields = submittedDataToFieldInput(
+      { state: "Virginia", town: "Onancock", county: "Accomack", county_id: "9", county_proposed: "" },
+      lookups,
+      { contributionId: 56 },
+    );
+    expect(fields.county).toBe("Accomack");
+  });
   it("accepts pending marking ERD/LRD keys and formats them by precision", () => {
     const fieldInput = submittedDataToFieldInput(
       {

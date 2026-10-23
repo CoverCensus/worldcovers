@@ -139,6 +139,7 @@ def apply_contribution_to_catalog(contrib):
     is_manuscript = _coerce_required_bool(payload, "is_manuscript")
 
     post_office = _resolve_post_office(state, town, actor)
+    _link_county(post_office, payload, state, actor)
 
     if is_manuscript:
         shape = None
@@ -248,6 +249,7 @@ def _apply_marking_edit(contrib, payload: dict, actor, marking_id: int) -> Marki
     inscription = _required_str(payload, "inscription_txt")
     is_manuscript = _coerce_required_bool(payload, "is_manuscript")
     post_office = _resolve_post_office(state, town, actor)
+    _link_county(post_office, payload, state, actor)
 
     # Required by the submission contract, so always restated.
     catalog_code = code_value_from_payload(payload)
@@ -973,27 +975,21 @@ def _next_post_office_code(region) -> str | None:
     return f"{region.code}-{top + 1}"
 
 
-def _resolve_post_office(state_name: str, town_name: str, actor) -> PostOffice:
-    """
-    Resolve a PostOffice for (state_name, town_name), auto-creating the
-    town if it does not yet exist in that state. Regions are NOT
-    auto-created; an unknown state is a hard error.
-    """
-    # Region.primary_for_state_term, not a bare abbrev lookup: the VPHC ingest
-    # gave all 141 county rows their state's abbrev (#103), so "VA" matched 98
-    # regions and Meta.ordering made this resolve to Accomack County every
-    # time. It then found no Lynchburg linked to Accomack and CREATED a
-    # duplicate post office with no state. Ten of those reached woco.dev on
-    # 2026-08-19 before the queue was restored.
-    region = Region.primary_for_state_term(state_name)
-    if region is None:
-        raise ContributionApplyError("Unknown state: {}".format(state_name))
-
+def _normalize_town_name(town_name: str) -> str:
     normalized_name = " ".join(town_name.strip().split()).title()
     # .title() upcases the letter after EVERY apostrophe, so AYLETT'S became
     # "Aylett'S". A trailing 'S is a possessive, never a name continuation;
     # O'BRIEN -> "O'Brien" has no word-final 'S and is untouched.
-    normalized_name = re.sub(r"'S\b", "'s", normalized_name)
+    return re.sub(r"'S\b", "'s", normalized_name)
+
+
+def _find_post_office(region: Region, town_name: str) -> PostOffice | None:
+    """
+    The existing PostOffice for a town within `region` (a state-tier Region),
+    or None. Read-only: never creates. Shared by approval, which creates on
+    None, and by the review verdict, which only reports.
+    """
+    normalized_name = _normalize_town_name(town_name)
     regions = Region.including_counties(Region.objects.filter(pk=region.pk))
 
     po = (
@@ -1024,6 +1020,26 @@ def _resolve_post_office(state_name: str, town_name: str, actor) -> PostOffice:
                 # uncoded one, then the busiest, then the oldest.
                 matches.sort(key=lambda p: (p.code is None, -p.marking_count, p.pk))
                 po = matches[0]
+    return po
+
+
+def _resolve_post_office(state_name: str, town_name: str, actor) -> PostOffice:
+    """
+    Resolve a PostOffice for (state_name, town_name), auto-creating the
+    town if it does not yet exist in that state. Regions are NOT
+    auto-created; an unknown state is a hard error.
+    """
+    # Region.primary_for_state_term, not a bare abbrev lookup: the VPHC ingest
+    # gave all 141 county rows their state's abbrev (#103), so "VA" matched 98
+    # regions and Meta.ordering made this resolve to Accomack County every
+    # time. It then found no Lynchburg linked to Accomack and CREATED a
+    # duplicate post office with no state. Ten of those reached woco.dev on
+    # 2026-08-19 before the queue was restored.
+    region = Region.primary_for_state_term(state_name)
+    if region is None:
+        raise ContributionApplyError("Unknown state: {}".format(state_name))
+
+    po = _find_post_office(region, town_name)
     if po is None:
         po = PostOffice.objects.create(
             # An uncoded town cannot travel: export_state_bundle and
@@ -1031,7 +1047,7 @@ def _resolve_post_office(state_name: str, town_name: str, actor) -> PostOffice:
             # unique=True column turns a mint race into an IntegrityError,
             # which the approval path already retries.
             code=_next_post_office_code(region),
-            name=normalized_name,
+            name=_normalize_town_name(town_name),
             created_by=actor,
             modified_by=actor,
         )
@@ -1042,6 +1058,157 @@ def _resolve_post_office(state_name: str, town_name: str, actor) -> PostOffice:
             defaults={"created_by": actor, "modified_by": actor},
         )
     return po
+
+
+COUNTY_NOTE_LINKS = "Approval links the town to this county"
+COUNTY_NOTE_SAME = "The town is already linked to this county"
+COUNTY_NOTE_TYPED = "Approval does not link a typed county"
+
+
+def _county_note_differs(current_name: str) -> str:
+    return "Differs from the catalog's {}; approval leaves the county link unchanged".format(current_name)
+
+
+def _validate_county(payload: dict, state_name: str) -> Region | None:
+    """
+    The COUNTY Region a Marking submission names, or None when it names none.
+
+    `county_id` is a Region pk the Marking form sends beside `state`/`town`;
+    `county` is the display name the form sent with it. Absent or "" means
+    the submission said nothing about the county (RFC 7396 silence). A value
+    must be a COUNTY whose parent is the submitted state, and a non-empty
+    `county` name must agree with that Region's name: an id whose
+    client-supplied name disagrees is never linked. Every failure is a
+    ContributionApplyError, never a silent skip.
+    """
+    raw = payload.get("county_id")
+    if raw in (None, ""):
+        return None
+    county_id = _parse_int(raw)
+    if county_id is None:
+        raise ContributionApplyError("county_id {!r} is not a Region id.".format(raw))
+    county = Region.objects.filter(pk=county_id).select_related("parent_region").first()
+    if county is None or county.region_tier != "COUNTY":
+        raise ContributionApplyError(
+            "county_id {} is not a County region.".format(county_id)
+        )
+    state_region = Region.primary_for_state_term(state_name)
+    if state_region is None:
+        raise ContributionApplyError("Unknown state: {}".format(state_name))
+    if county.parent_region_id != state_region.pk:
+        raise ContributionApplyError(
+            "County {!r} is not in {!r}.".format(county.name, state_name)
+        )
+    sent_name = str(payload.get("county") or "").strip()
+    if sent_name and sent_name.lower() != county.name.lower():
+        raise ContributionApplyError(
+            "County name {!r} does not match county #{} ({}).".format(
+                sent_name, county.pk, county.name)
+        )
+    return county
+
+
+def _current_county_name(post_office: PostOffice) -> str | None:
+    """Name of the town's current county link, or None (several: the current-first one)."""
+    for region in post_office.regions:
+        if region.region_tier == "COUNTY":
+            return region.name
+    return None
+
+
+def describe_county_intent(submitted_data: dict) -> dict | None:
+    """
+    What approval would do with a Marking submission's county, for the
+    review page (Trello T70). Pure read; the same validation approval runs.
+
+    None when the submission names no county at all. Otherwise a dict:
+    county_id, county_name (from the Region, the server's truth), valid,
+    error (text when the county is refused), town_found, current_county
+    (the town's existing county link, or None), will_link (approval would
+    add the link), note (one Editor sentence), county_proposed.
+    """
+    payload = submitted_data or {}
+    raw_id = payload.get("county_id")
+    sent_name = str(payload.get("county") or "").strip()
+    proposed = str(payload.get("county_proposed") or "").strip()
+    if raw_id in (None, "") and not sent_name and not proposed:
+        return None
+    result = {
+        "county_id": _parse_int(raw_id),
+        "county_name": "",
+        "valid": False,
+        "error": None,
+        "town_found": False,
+        "current_county": None,
+        "will_link": False,
+        "note": COUNTY_NOTE_TYPED,
+        "county_proposed": proposed,
+    }
+    state_name = str(payload.get("state") or "").strip()
+    town_name = str(payload.get("town") or "").strip()
+    state_region = Region.primary_for_state_term(state_name) if state_name else None
+    post_office = _find_post_office(state_region, town_name) if state_region and town_name else None
+    if post_office is not None:
+        result["town_found"] = True
+        result["current_county"] = _current_county_name(post_office)
+    if raw_id in (None, ""):
+        if sent_name:
+            result["error"] = "County name {!r} was sent without a county id.".format(sent_name)
+            result["note"] = result["error"]
+        return result
+    try:
+        county = _validate_county(payload, state_name)
+    except ContributionApplyError as exc:
+        result["error"] = str(exc)
+        result["note"] = str(exc)
+        return result
+    result["county_name"] = county.name
+    result["valid"] = True
+    current = result["current_county"]
+    if current is None:
+        result["will_link"] = True
+        result["note"] = COUNTY_NOTE_LINKS
+    elif current.lower() == county.name.lower():
+        result["note"] = COUNTY_NOTE_SAME
+    else:
+        result["note"] = _county_note_differs(current)
+    return result
+
+
+def _link_county(post_office: PostOffice, payload: dict, state_name: str, actor) -> None:
+    """
+    Link the submitted county to the Post Office, add-only (Trello T70).
+
+    The link is written only when the Post Office has no county link yet. A
+    town is shared by every Marking at it, so a differing county is NOT
+    replaced or added beside the existing one: the Editor sees the difference
+    in the review verdict and an Administrator settles it. Existing links
+    are never deleted here. County never takes part in resolving the Post
+    Office itself; that stays state + town (_resolve_post_office).
+    """
+    county = _validate_county(payload, state_name)
+    if county is None:
+        return
+    # Serialise concurrent approvals for the same town: lock the Post Office
+    # row, then read its junction rows under the same lock so the "has a
+    # county" decision below and the insert happen as one unit for the rest
+    # of the approval transaction. The junction's own uniqueness cannot do
+    # this (it ignores NULL valid_from). No join under FOR UPDATE: MariaDB
+    # locks every joined table, so the tier check is a second query on
+    # Region by the locked ids.
+    post_office = PostOffice.objects.select_for_update().get(pk=post_office.pk)
+    linked_ids = list(
+        PostOfficeRegion.objects.select_for_update()
+        .filter(post_office=post_office)
+        .values_list("region_id", flat=True)
+    )
+    if Region.objects.filter(pk__in=linked_ids, region_tier="COUNTY").exists():
+        return
+    PostOfficeRegion.objects.get_or_create(
+        post_office=post_office,
+        region=county,
+        defaults={"created_by": actor, "modified_by": actor},
+    )
 
 
 def _normalize_storage(value: Any) -> str:

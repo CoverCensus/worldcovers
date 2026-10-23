@@ -61,7 +61,7 @@ describe("Marking form field help (S33)", () => {
     open("/contribute", "/contribute", <Contribute />);
     await screen.findByRole("button", { name: /save as draft/i });
 
-    for (const label of ["Marking Type", "Manuscript", "State", "Town/City", "Color", "Description", "Reference Works"]) {
+    for (const label of ["Marking Type", "Manuscript", "State", "County", "Town/City", "Color", "Description", "Reference Works"]) {
       expect(help(label)).toBeInTheDocument();
     }
     // A new Marking is handstamped until Manuscript is ticked, whatever its

@@ -127,6 +127,38 @@ hosted verification and acceptance of Citation preservation and explicit
 clearing through the form workflow. [T40](ISSUE.md#other-follow-ups) covers
 cumulative credit; preserve the public-credit rule below when changing edits.
 
+
+## Link A Submitted County To The Town Only When It Has None
+
+**Do:** Let a Marking submission name the county of its Post Office
+(`county_id`, a COUNTY Region under the submitted state) and, at approval,
+link it through `PostOfficeRegion` when the town has no county link yet.
+Treat an absent or empty `county_id` as silence: no link changes. Show the
+Editor, before approval, whether the county will be linked or differs from
+the catalog's, computed on the server (`describe_county_intent`, exposed as
+`county_intent`) from the Region and the town the submission points at. Let
+a county that is not in the list travel as text (`county_proposed`) for an
+Editor to create through the Regions API.
+
+**Don't:** Replace, re-date or delete an existing county link from a
+submission; add a second county beside one the town already has; let the
+county take part in resolving the Post Office (that stays state + town);
+trust the client-sent county name (an id whose sent name disagrees with the
+Region is refused, at submit and at approval); or give Contributors
+Region-creation rights.
+
+**Why:** The Post Office is shared by every Marking at that town, so a
+replaced county would move records the Contributor never saw. Existing
+county links came from the VPHC import and may be right or wrong; that is an
+Administrator's call, surfaced by the review comparison, not an approval
+side effect.
+
+**Evidence:** Trello T70; [`_link_county` and `describe_county_intent`](backend/common/contribution_apply.py);
+[approval and verdict tests](backend/common/tests/test_county_link_on_approval.py);
+[edit baseline](backend/common/edit_baseline.py);
+[review comparison](frontend/src/lib/editComparison.ts) and
+[form](frontend/src/pages/Contribute.tsx).
+
 ## Serialize Only Approved Public Credit, Never User Objects
 
 **Do:** Expose Marking and Cover submitter names only through the opt-in

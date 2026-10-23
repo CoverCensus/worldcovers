@@ -34,6 +34,7 @@ import {
   isCoverContributionData,
   pendingCoverContributionIdFromSubmittedData,
   pendingCoverFromSubmittedData,
+  countyProposedFromSubmittedData,
 } from "@/lib/contributionDisplay";
 import { PendingCoverCard } from "@/components/PendingCoverCard";
 import CoverContributionDetail from "@/pages/CoverContributionDetail";
@@ -78,11 +79,12 @@ type ContributionImageMeta = {
   image_description?: string;
 };
 
-function buildContributionCatalogFields(input: MarkingFieldInput): CatalogFieldValues {
+function buildContributionCatalogFields(input: MarkingFieldInput, countyName: string): CatalogFieldValues {
   return {
     type: displayCatalogField(markingTypeLabel(input.type) || ""),
     town: displayCatalogField(input.town),
     state: displayCatalogField(input.state),
+    ...(countyName ? { county: displayCatalogField(countyName) } : {}),
     regionAbbrev: displayCatalogField(input.state),
     manuscript: displayCatalogField(input.isManuscript ? "Yes" : "No"),
     desc: displayCatalogField(input.catalogTxt),
@@ -433,6 +435,8 @@ const ContributionDetail = () => {
       sd.comment ??
       ""
   ).trim();
+  // Trello T70: a county the contributor could not find in the list.
+  const countyProposed = countyProposedFromSubmittedData(sd);
   // Null for anything that did not come from the VPHC ingest.
   const vphc = readVphcProvenance(sd);
   const baseImageUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
@@ -535,7 +539,12 @@ const ContributionDetail = () => {
       { letteringOptions, dateFormatOptions },
       { contributionId: contribution.id },
     );
-    contributionCatalogFields = buildContributionCatalogFields(fieldInput);
+    // T70: the county name the server resolved from the Region, never the
+    // client-sent text, with the sent text only as a fallback for old rows.
+    contributionCatalogFields = buildContributionCatalogFields(
+      fieldInput,
+      contribution.countyIntent?.countyName || fieldInput.county || "",
+    );
     displayName = buildCatalogSearchTitleFromParts({
       town: fieldInput.town,
       region: fieldInput.state,
@@ -556,11 +565,16 @@ const ContributionDetail = () => {
         { letteringOptions, dateFormatOptions },
         referenceWorks,
         contribution.id,
+        contribution.countyIntent,
       );
     } catch (err) {
       editComparisonError = err instanceof Error ? err.message : String(err);
     }
   }
+  // T70: the server's verdict on the county for a NEW marking; edits show it
+  // in the comparison row instead.
+  const countyIntent = contribution.countyIntent;
+  const showCountyVerdict = !!countyIntent && !contribution.editBaseline && (countyIntent.countyId != null || !!countyIntent.error);
   const showEditorFeedbackCard =
     contribution.status !== "pending" || !!(contribution.reviewNotes && contribution.reviewNotes.trim());
   // Unified edit/remove buttons (mirror the entry detail page). Edit is offered
@@ -859,6 +873,30 @@ const ContributionDetail = () => {
                       No submitted data returned for this contribution.
                     </p>
                   )}
+                  {showCountyVerdict && countyIntent ? (
+                    <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">County</p>
+                      <p className="text-sm text-foreground">
+                        {countyIntent.countyName || `County #${countyIntent.countyId ?? ""}`}
+                        {countyIntent.currentCounty ? ` (the town's catalog county: ${countyIntent.currentCounty})` : ""}
+                      </p>
+                      <p className={`mt-1 text-xs ${countyIntent.error ? "text-destructive" : "text-muted-foreground"}`}>
+                        {countyIntent.note}
+                      </p>
+                    </div>
+                  ) : null}
+                  {countyProposed ? (
+                    <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">County not listed</p>
+                      <p className="text-sm text-foreground">{countyProposed}</p>
+                      {canReview ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Approval does not link a typed county. Create the county Region, then either link the
+                          town to it yourself or return this submission so the Contributor can pick it.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {contributorComment ? (
                     <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">
                       <p className="text-xs uppercase tracking-wide text-muted-foreground">Comment for editor</p>

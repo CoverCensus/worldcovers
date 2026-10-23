@@ -104,6 +104,9 @@ export const MANUSCRIPT_HELP =
 export const STATE_HELP =
   "The Region (state, territory, or district) of the Post Office that produced the Marking. Submitting for a Region submits into that Region's Collection.";
 
+export const COUNTY_HELP =
+  "The county the Post Office sat in, if known. Optional. If the county is missing from the list, type its name under County not listed so an Editor can add it.";
+
 export const TOWN_HELP =
   "The Post Office: a postal facility identified by its town name within a Region. Every Marking belongs to exactly one Post Office.";
 

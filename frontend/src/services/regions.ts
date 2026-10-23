@@ -11,7 +11,8 @@ export interface RegionApiItem {
   abbrev?: string | null;
   name?: string | null;
   region_tier?: string | null;
-  parent_region_id?: number | null;
+  /** The parent Region's id as the API names it (RegionSerializer is fields="__all__"). */
+  parent_region?: number | null;
   established_date?: string | null;
   defunct_date?: string | null;
 }
@@ -31,10 +32,23 @@ type PagedApiResponse<T> = {
   results?: T[];
 };
 
-/** Option for state filter dropdown */
+/**
+ * Option for state filter dropdown. `value` is the region NAME: the submit
+ * path, the catalog filters and stored drafts all speak names. `id` and
+ * `abbrev` ride along for consumers that need the Region itself (T70: the
+ * county list is fetched by the state's id).
+ */
 export interface StateOption {
   value: string;
   label: string;
+  id?: number;
+  abbrev?: string;
+}
+
+/** A county under one state, for the Marking form's County selector (T70). */
+export interface CountyOption {
+  id: number;
+  name: string;
 }
 
 function getResponseRows<T>(data: unknown): { rows: T[]; next: string | null } {
@@ -67,14 +81,8 @@ function getResponseRows<T>(data: unknown): { rows: T[]; next: string | null } {
  */
 export const STATE_SELECTOR_TIERS = ["STATE", "TERRITORY", "DISTRICT"] as const;
 
-async function collectRegionNames(assignedOnly: boolean): Promise<string[]> {
-  const names: string[] = [];
-  const params: Record<string, string> = {
-    page_size: "500",
-    region_tier__in: STATE_SELECTOR_TIERS.join(","),
-  };
-  if (assignedOnly) params.assigned_only = "true";
-
+async function collectRegionRows(params: Record<string, string>): Promise<RegionApiItem[]> {
+  const rows: RegionApiItem[] = [];
   let nextUrl: string | null = "/regions/";
   let useParams: Record<string, string> | undefined = params;
   let safetyCounter = 0;
@@ -84,17 +92,19 @@ async function collectRegionNames(assignedOnly: boolean): Promise<string[]> {
       params: useParams,
       withCredentials: true,
     });
-    const { rows, next } = getResponseRows<RegionApiItem>(res.data);
-    rows.forEach((row) => {
-      const name = String(row.name ?? "").trim();
-      if (name) names.push(name);
-    });
-    nextUrl = next;
+    const page = getResponseRows<RegionApiItem>(res.data);
+    rows.push(...page.rows);
+    nextUrl = page.next;
     useParams = undefined; // next URL already includes cursor/page
     safetyCounter += 1;
   }
 
-  return names;
+  return rows;
+}
+
+function regionId(row: RegionApiItem): number | undefined {
+  const raw = row.id ?? row.region_id;
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
 }
 
 /**
@@ -103,18 +113,45 @@ async function collectRegionNames(assignedOnly: boolean): Promise<string[]> {
  * @param assignedOnly - when true, only regions assigned to the current State Editor.
  */
 export async function getRegions(assignedOnly?: boolean): Promise<StateOption[]> {
-  const collected = await collectRegionNames(Boolean(assignedOnly));
+  const params: Record<string, string> = {
+    page_size: "500",
+    region_tier__in: STATE_SELECTOR_TIERS.join(","),
+  };
+  if (assignedOnly) params.assigned_only = "true";
+  const rows = await collectRegionRows(params);
 
+  // One option per name; the first row supplies the id and abbreviation.
   const seen = new Set<string>();
-  return collected
-    .map((name) => String(name).trim())
-    .filter((name) => {
-      if (!name || seen.has(name)) return false;
-      seen.add(name);
-      return true;
-    })
-    .map((name) => ({ value: name, label: name }))
-    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+  const options: StateOption[] = [];
+  for (const row of rows) {
+    const name = String(row.name ?? "").trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    const abbrev = String(row.abbrev ?? "").trim();
+    options.push({ value: name, label: name, id: regionId(row), ...(abbrev ? { abbrev } : {}) });
+  }
+  return options.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+}
+
+/**
+ * The COUNTY-tier Regions under one state, by the state's Region id (T70).
+ * Asked of the API with the tier and parent filters, so the form never has to
+ * sift the full region list client-side.
+ */
+export async function getCountyRegions(stateRegionId: number): Promise<CountyOption[]> {
+  const rows = await collectRegionRows({
+    page_size: "500",
+    region_tier: "COUNTY",
+    parent_region: String(stateRegionId),
+  });
+  const counties: CountyOption[] = [];
+  for (const row of rows) {
+    const id = regionId(row);
+    const name = String(row.name ?? "").trim();
+    if (id == null || !name) continue;
+    counties.push({ id, name });
+  }
+  return counties.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 }
 
 /**

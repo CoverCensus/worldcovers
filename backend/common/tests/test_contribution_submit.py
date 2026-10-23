@@ -1194,3 +1194,63 @@ class CarriedImagePositionHelperTests(TestCase):
         self.assertIsNone(_carried_image_position(["__new__"], "va/whole-cover.jpg"))
         self.assertIsNone(_carried_image_position(None, "va/whole-cover.jpg"))
         self.assertIsNone(_carried_image_position(order, ""))
+
+
+class ContributionSubmitCountyKeysTests(TestCase):
+    """Trello T70: the county keys ride submitted_data; only shape and length
+    are checked at submit (meaning is checked at approval)."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="county-contributor", password="pw")
+        audit = {"created_by": self.user, "modified_by": self.user}
+        region = Region.objects.create(name="Virginia", abbrev="VA", region_tier="STATE", **audit)
+        Collection.objects.create(name="Virginia", region=region, **audit)
+        self.county = Region.objects.create(
+            name="Henrico", abbrev="VA", region_tier="COUNTY", parent_region=region, **audit)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def post(self, **extra):
+        data = {
+            "state": "VA", "town": "Richmond", "type": "TOWNMARK", "is_manuscript": True,
+            "inscription_txt": "RICHMOND VA", "no_marking_image": True,
+        }
+        data.update(extra)
+        return self.client.post("/api/v2/contributions/", data, format="json")
+
+    def test_county_keys_are_stored_as_submitted(self):
+        response = self.post(county_id=str(self.county.pk), county="Henrico", county_proposed="")
+        self.assertEqual(response.status_code, 201, response.data)
+        stored = Contribution.objects.get(pk=response.data["id"]).submitted_data
+        self.assertEqual(
+            (stored["county_id"], stored["county"], stored["county_proposed"]),
+            (str(self.county.pk), "Henrico", ""),
+        )
+
+    def test_county_bounds_are_refused_at_submit(self):
+        self.assertEqual(self.post(county_proposed="x" * 201).status_code, 400)
+        self.assertEqual(self.post(county_id="abc").status_code, 400)
+        self.assertEqual(self.post(county_proposed=["x" * 5000]).status_code, 400)
+        self.assertEqual(self.post(county="x" * 201).status_code, 400)
+        self.assertEqual(self.post(county_proposed="x" * 200).status_code, 201)
+
+    def test_a_county_outside_the_submitted_state_is_refused_at_submit(self):
+        audit = {"created_by": self.user, "modified_by": self.user}
+        md = Region.objects.create(name="Maryland", abbrev="MD", region_tier="STATE", **audit)
+        montgomery = Region.objects.create(
+            name="Montgomery", abbrev="MD", region_tier="COUNTY", parent_region=md, **audit)
+        response = self.post(county_id=str(montgomery.pk))
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["detail"], "county_id is not a county in Virginia.")
+        self.assertEqual(self.post(county_id=str(self.county.pk + 1000)).status_code, 400)
+
+    def test_detail_carries_the_server_county_verdict(self):
+        response = self.post(county_id=str(self.county.pk), county="Henrico")
+        self.assertEqual(response.status_code, 201, response.data)
+        detail = self.client.get(f"/api/v2/contributions/{response.data['id']}/")
+        self.assertEqual(detail.status_code, 200, detail.data)
+        verdict = detail.data["county_intent"]
+        self.assertEqual((verdict["county_name"], verdict["valid"], verdict["will_link"]), ("Henrico", True, True))
+        self.assertEqual(verdict["note"], "Approval links the town to this county")
+        plain = self.post()
+        self.assertIsNone(self.client.get(f"/api/v2/contributions/{plain.data['id']}/").data["county_intent"])

@@ -369,9 +369,28 @@ can shrink; acceptance.
 ### Follow-up: Region type and county entry on new/edit pages
 
 Michael requested Region type controls on new/edit pages so users can enter
-counties. [T70](https://trello.com/c/u6OfTiMR) is To Do, unassigned,
+counties. [T70](https://trello.com/c/u6OfTiMR) is Doing (Reese, 2026-10-23),
 F3 - Submission Workflow. Reese owns the
 application work; Michael owns any required model/data changes.
+
+Status 2026-10-23: implemented on branch `reese/70-county-controls`, no
+model change. The Marking new/edit form offers a County selector under State
+(the COUNTY Regions under the chosen state, asked of `/regions/` by the
+state's id) and a "County not listed" text field; both survive draft save,
+resume and edit prefill and travel as `county_id`, `county` and
+`county_proposed`. Approval (`_link_county`) links the county to the Post
+Office only when the town has no county link yet, never replaces or deletes
+one, and refuses a county outside the resolved state. The Editor's review
+shows the county and, on an edit, whether approval will link it or leave a
+differing existing link unchanged; a typed county is shown with a reminder to
+create the Region first. The review page's county facts (name, whether the
+town is known, its current county, what approval will do) come from the
+server (`county_intent`), never from the client-sent name. Hosted
+verification on woco.dev and acceptance remain. Not done here: the Post
+Office page still shows only the state. Refinement to consider later: a
+county link whose `valid_to` has passed still counts as "the town has a
+county" for the add-only rule; a dated-jurisdiction aware rule would need a
+decision on which county is current.
 
 The Region model already supports COUNTY and parent Regions, and
 PostOfficeRegion has dated jurisdiction links. Marking detail displays
@@ -662,7 +681,8 @@ that evidence describes the defect before PR #171.
   their completed implementation.
 - Has Covers is implemented in Search and `filter_has_covers`, with dedicated
   tests. Region already represents counties and dated PostOfficeRegion links.
-  County entry through new/edit forms is still missing and is tracked in T70.
+  County entry on the Marking new/edit forms is implemented (T70, 2026-10-23);
+  hosted verification remains.
   New uploads use region folders; older-file cleanup and draft relocation
   remain unverified, not assumed defects. No new implementation cards for
   these already implemented capabilities or unverified file-cleanup concerns.

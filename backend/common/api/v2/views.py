@@ -3860,6 +3860,39 @@ def _truthy(value) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Trello T70: the Marking form's county keys. `county_id` is a Region pk that
+# approval validates and links (contribution_apply._link_county); `county` is
+# the display name; `county_proposed` is free text for a county not in the
+# list, shown to the Editor and never applied. Shape, length, and that the id
+# is a county of the submitted state are checked here; approval re-checks.
+COUNTY_PROPOSED_MAX_TEXT = 200
+
+
+def _county_request_error(data):
+    county_id = data.get("county_id")
+    if county_id not in (None, ""):
+        try:
+            county_pk = int(str(county_id).strip())
+        except (TypeError, ValueError):
+            return "county_id must be a Region id."
+        state_name = str(data.get("state") or "").strip()
+        state_region = Region.primary_for_state_term(state_name) if state_name else None
+        if state_region is not None and not Region.objects.filter(
+            pk=county_pk, region_tier="COUNTY", parent_region=state_region
+        ).exists():
+            return f"county_id is not a county in {state_region.name}."
+    for key, label in (("county_proposed", "proposed county name"), ("county", "county name")):
+        value = data.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            # A JSON list or object would dodge the length bound and render as noise.
+            return f"{key} must be text."
+        if len(value) > COUNTY_PROPOSED_MAX_TEXT:
+            return f"The {label} is too long (at most {COUNTY_PROPOSED_MAX_TEXT} characters)."
+    return None
+
+
 def _parse_pending_cover_fields(raw):
     """The cover fields from the request: a JSON string or a dict; None when absent."""
     if raw in (None, ""):
@@ -4128,6 +4161,9 @@ class ContributionSubmitView(APIView):
                     {"detail": "type must be TOWNMARK, RATEMARK, or AUXMARK."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            county_error = _county_request_error(data)
+            if county_error:
+                return Response({"detail": county_error}, status=status.HTTP_400_BAD_REQUEST)
         elif type_value and type_value not in Cover.COVER_TYPE_CODES:
             # Cover contributions may send the cover type as `type`.
             return Response(
