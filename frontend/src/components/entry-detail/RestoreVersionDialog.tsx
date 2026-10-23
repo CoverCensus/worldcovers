@@ -85,6 +85,9 @@ export function RestoreVersionDialog({
         return;
       }
       onOpenChange(false);
+    } catch {
+      // The restore itself reports failures as a message; this is the reload after it.
+      setError("The restore may have completed, but the page could not reload. Refresh to check.");
     } finally {
       setBusy(false);
     }
