@@ -100,8 +100,9 @@ it("previews, confirms and reloads the cover and its history", async () => {
   fireEvent.click(await screen.findByRole("button", { name: /Restore this version/ }));
   await waitFor(() => expect(getCoverRestorePreview).toHaveBeenCalledWith(7, 2));
   expect(await screen.findByText(/1 of 1 fields change/)).toBeTruthy();
+  const coverLoads = (getCoverById as jest.Mock).mock.calls.length;
   fireEvent.click(screen.getByRole("button", { name: "Restore from version 2" }));
   await waitFor(() => expect(restoreCoverVersion).toHaveBeenCalledWith(7, 2));
   await waitFor(() => expect(getCoverChangelog).toHaveBeenCalledTimes(2));
-  expect((getCoverById as jest.Mock).mock.calls.length).toBeGreaterThan(1);
+  await waitFor(() => expect((getCoverById as jest.Mock).mock.calls.length).toBe(coverLoads + 1));
 });

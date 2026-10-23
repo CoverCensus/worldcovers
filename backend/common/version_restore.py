@@ -205,8 +205,11 @@ def _row(key: str, label: str, current: Any, proposed: Any, formatter, *, compar
 
 
 def _file_in_storage(storage: str) -> bool:
-    """Whether the image file is still under MEDIA_ROOT; a name the storage
-    refuses to resolve (absolute, or escaping the root) counts as missing."""
+    """Whether the image file is still under MEDIA_ROOT. A name that is absolute
+    or climbs out of the root counts as missing, checked here as well as by the
+    storage backend so the rule does not depend on which backend is configured."""
+    if storage.startswith("/") or ".." in storage.split("/"):
+        return False
     try:
         return bool(default_storage.exists(storage))
     except (SuspiciousFileOperation, ValueError):

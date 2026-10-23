@@ -1713,6 +1713,8 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
         if error:
             return error
         # Planning only reads; the write and its history rows share one transaction.
+        # A concurrent write to this cover between planning and applying surfaces
+        # as a constraint error (409) and the editor retries from a fresh preview.
         plan, error = _restore_plan_response(plan_cover_restore, cover, restore_from, request.user)
         if error:
             return error
@@ -2907,6 +2909,8 @@ class MarkingViewSet(viewsets.ModelViewSet):
         if error:
             return error
         # Planning only reads; the write and its history rows share one transaction.
+        # A concurrent write to this marking between planning and applying surfaces
+        # as a constraint error (409) and the editor retries from a fresh preview.
         plan, error = _restore_plan_response(plan_marking_restore, marking, restore_from, request.user)
         if error:
             return error
