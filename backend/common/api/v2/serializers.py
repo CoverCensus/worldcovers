@@ -168,9 +168,15 @@ class PostmasterSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        if not (attrs.get("sort_name") or "").strip():
-            name = attrs.get("name") or (self.instance.name if self.instance else "")
-            attrs["sort_name"] = postmaster_sort_name(name)
+        # Derive on create, or when the caller sends a blank sort_name. A PATCH
+        # that omits the field leaves the stored value alone.
+        if self.instance is None or ("sort_name" in attrs and not (attrs["sort_name"] or "").strip()):
+            if not (attrs.get("sort_name") or "").strip():
+                name = attrs.get("name") or (self.instance.name if self.instance else "")
+                attrs["sort_name"] = postmaster_sort_name(name)
+        if "sort_name" in attrs:
+            # ", " inserted into a 255-character name would overflow the column.
+            attrs["sort_name"] = attrs["sort_name"][:255]
         return attrs
 
 
@@ -229,10 +235,16 @@ class PostmasterTenureSerializer(serializers.ModelSerializer):
             attrs["date_appointed_granularity"] = gran
         event = self._effective(attrs, "event") or PostmasterTenure.EVENT_APPOINTMENT
         person = self._effective(attrs, "postmaster")
-        if event in (PostmasterTenure.EVENT_APPOINTMENT, PostmasterTenure.EVENT_REAPPOINTMENT) and person is None and self.instance is None:
+        named_event = event in (PostmasterTenure.EVENT_APPOINTMENT, PostmasterTenure.EVENT_REAPPOINTMENT)
+        # On create always; on update only when the payload touches the person
+        # or the event, so an imported person-less row stays patchable for a
+        # source_note-only correction.
+        touches_identity = self.instance is None or "postmaster" in attrs or "event" in attrs
+        if named_event and person is None and touches_identity:
             raise serializers.ValidationError(
                 {"postmaster": ["An appointment names a person. Use an office-level event for a closure."]})
-        if self.instance is None and not attrs.get("source_note"):
+        origin = PostmasterTenure.ORIGIN_MANUAL if self.instance is None else self.instance.origin
+        if origin == PostmasterTenure.ORIGIN_MANUAL and not self._effective(attrs, "source_note"):
             raise serializers.ValidationError(
                 {"source_note": ["Say where this event comes from (a catalog, a document, a page)."]})
         office = self._effective(attrs, "post_office")

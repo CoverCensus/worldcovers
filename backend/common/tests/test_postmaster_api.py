@@ -153,21 +153,41 @@ class PostmasterApiTests(TestCase):
         self.assertIn("non_field_errors", response.data)
         self.assertEqual(PostmasterTenure.objects.filter(event="discontinued").count(), 1)
 
+    def _refused(self, payload, field):
+        response = self.client.post(TENURES, payload, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn(field, response.data)
+
     def test_date_source_and_person_rules(self):
         self.client.force_authenticate(self.editor)
-        self.assertEqual(
-            self.client.post(TENURES, self._event(self.richmond, date_appointed_granularity=None), format="json").status_code, 400)
-        self.assertEqual(
-            self.client.post(TENURES, self._event(self.richmond, date_appointed=None), format="json").status_code, 400)
-        self.assertEqual(
-            self.client.post(TENURES, self._event(self.richmond, postmaster=None, event="appointment"), format="json").status_code, 400)
-        self.assertEqual(
-            self.client.post(TENURES, self._event(self.richmond, source_note=""), format="json").status_code, 400)
+        self._refused(self._event(self.richmond, date_appointed_granularity=None), "date_appointed_granularity")
+        self._refused(self._event(self.richmond, date_appointed=None), "date_appointed")
+        self._refused(self._event(self.richmond, postmaster=None, event="appointment"), "postmaster")
+        self._refused(self._event(self.richmond, source_note=""), "source_note")
         # A YEAR-precision date is stored as 1 January, whatever day was sent.
         response = self.client.post(
             TENURES, self._event(self.richmond, date_appointed="1801-06-15", date_appointed_granularity="YEAR"), format="json")
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data["date_appointed"], "1801-01-01")
+
+    def test_update_rules_follow_the_effective_row(self):
+        self.client.force_authenticate(self.editor)
+        # Dropping the person from an appointment is refused on update too.
+        response = self.client.patch(f"{TENURES}{self.imported.pk}/", {"postmaster": None}, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("postmaster", response.data)
+        # A MANUAL row keeps needing its source note.
+        created = self.client.post(TENURES, self._event(self.richmond), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        response = self.client.patch(f"{TENURES}{created.data['tenure_id']}/", {"source_note": ""}, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("source_note", response.data)
+        # An imported person-less row still takes a note-only correction.
+        closure = PostmasterTenure.objects.create(
+            post_office=self.richmond, postmaster=None, event="discontinued",
+            source_ref="T3:r2", rules_version=2, **self.stamp)
+        response = self.client.patch(f"{TENURES}{closure.pk}/", {"source_note": "Checked"}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
 
     def test_any_editor_adds_and_renames_person_never_merging(self):
         self.client.force_authenticate(self.editor)
@@ -177,9 +197,14 @@ class PostmasterApiTests(TestCase):
         # Same name again is a second person: identity is never inferred from a name.
         self.assertEqual(self.client.post(PEOPLE, {"name": "John Q. Public"}, format="json").status_code, 201)
         self.assertEqual(Postmaster.objects.filter(name="John Q. Public").count(), 2)
-        self.assertEqual(
-            self.client.patch(f"{PEOPLE}{response.data['id']}/", {"name": "John Quincy Public"}, format="json").status_code, 200)
-        self.assertEqual(self._txns(SubmissionTransaction.ACTION_POSTMASTER_ADDED).count(), 2)
+        renamed = self.client.patch(f"{PEOPLE}{response.data['id']}/", {"name": "John Quincy Public"}, format="json")
+        self.assertEqual(renamed.status_code, 200)
+        # A PATCH that omits sort_name leaves the stored value alone.
+        self.assertEqual(renamed.data["sort_name"], "Public, John Q.")
+        # A derived sort name never overflows the column.
+        long_name = "A" * 249 + " " + "B" * 5
+        self.assertEqual(len(self.client.post(PEOPLE, {"name": long_name}, format="json").data["sort_name"]), 255)
+        self.assertEqual(self._txns(SubmissionTransaction.ACTION_POSTMASTER_ADDED).count(), 3)
         self.assertEqual(self._txns(SubmissionTransaction.ACTION_POSTMASTER_CHANGED).count(), 1)
         self.assertEqual(self.client.delete(f"{PEOPLE}{self.conn.pk}/").status_code, 405)
         self.assertEqual(self.client.delete(f"{TENURES}{self.imported.pk}/").status_code, 405)
