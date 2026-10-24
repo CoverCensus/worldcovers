@@ -15,6 +15,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { clearStoredUser } from "@/lib/auth";
 import { capitalizeFirst } from "@/lib/utils";
 import { ChangePasswordForm } from "@/components/ChangePasswordForm";
+import sealImage from "@/assets/uspcs-seal.png";
+import { APP_NAME, ORG_NAME } from "@/constants/brand";
 
 export const Navigation = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -80,11 +82,9 @@ export const Navigation = () => {
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
           <NavLink to="/" className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-primary rounded-sm flex items-center justify-center">
-              <span className="text-primary-foreground font-heading font-bold text-lg">W</span>
-            </div>
+            <img src={sealImage} alt={ORG_NAME} width={32} height={32} className="w-8 h-8 rounded-sm" />
             <span className="font-heading text-xl font-semibold text-foreground hidden sm:inline">
-              WorldCovers
+              {APP_NAME}
             </span>
           </NavLink>
 

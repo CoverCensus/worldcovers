@@ -16,6 +16,7 @@ import { getStoredUser } from "@/lib/auth";
 import { signIn } from "@/services/account";
 import { getRedirectPath } from "@/lib/authRedirect";
 import { useSiteInfo } from "@/hooks/useSiteInfo";
+import { APP_NAME } from "@/constants/brand";
 
 interface AuthValues {
   email: string;
@@ -93,7 +94,7 @@ const Auth = () => {
         <Card className="w-full max-w-md shadow-archival-lg">
           <CardHeader className="space-y-1 p-4 sm:p-6">
             <CardTitle className="font-heading text-2xl text-center">
-              WorldCovers Account
+              {APP_NAME} Account
             </CardTitle>
             <CardDescription className="text-center">
               Sign in below, or create an account if you do not have one yet
