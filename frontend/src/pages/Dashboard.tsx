@@ -54,6 +54,8 @@ import {
 } from "@/services/contributions";
 import { BulkReviewBar } from "@/components/BulkReviewBar";
 import { PendingLoginRequestsCard } from "@/components/PendingLoginRequestsCard";
+import { SubmissionCountsBar, type SubmissionCountTarget } from "@/components/SubmissionCountsBar";
+import { getStatusBadge } from "@/lib/statusBadge";
 import { withReturnTo } from "@/lib/returnTo";
 import { catalogHref } from "@/lib/catalogParams";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -814,6 +816,70 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [user, location.pathname]);
 
+  // T96: totals for the signed-in user, from the rows already loaded above.
+  const ownCounts = useMemo(() => {
+    const counts = { needsRevision: 0, drafts: 0, pending: 0 };
+    for (const item of submissions) {
+      switch (String(item.status || "").toLowerCase()) {
+        case "needs_revision":
+        case "revision":
+          counts.needsRevision += 1;
+          break;
+        case "draft":
+          counts.drafts += 1;
+          break;
+        case "pending":
+          counts.pending += 1;
+          break;
+        default:
+          break;
+      }
+    }
+    return counts;
+  }, [submissions]);
+
+  // T96: the Editor's review-queue total. One page_size=1 request; the server
+  // scopes it to the Editor's Collections the same way the queue tab is. Refetched
+  // with My Submissions when the browser tab becomes visible again.
+  const [editorPendingCount, setEditorPendingCount] = useState<number | null>(null);
+  const [editorPendingLoading, setEditorPendingLoading] = useState(false);
+  useEffect(() => {
+    if (!user || !isEditor) {
+      setEditorPendingCount(null);
+      return;
+    }
+    let cancelled = false;
+    setEditorPendingLoading(true);
+    listContributions({ mode: "editor", status: "pending", pageSize: 1 })
+      .then(({ count }) => {
+        if (!cancelled) setEditorPendingCount(count);
+      })
+      .catch(() => {
+        // The queue tab reports its own errors; the tile just shows nothing.
+        if (!cancelled) setEditorPendingCount(null);
+      })
+      .finally(() => {
+        if (!cancelled) setEditorPendingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, isEditor, submissionsRefetchKey]);
+
+  // The tiles are links, so the URL changes; this applies the same view in
+  // place, because the page reads its URL only once on mount (#87).
+  const selectCountTarget = (target: SubmissionCountTarget) => {
+    if (target === "editor_pending") {
+      setActiveTab("editor");
+      setEditorHistoryStatusFilter("pending");
+      setEditorHistoryPage(1);
+      return;
+    }
+    setActiveTab("submissions");
+    setStatusFilter(target);
+    setCurrentPage(1);
+  };
+
   // Load editor history for assigned states.
   useEffect(() => {
     if (!isEditor || activeTab !== "editor") return;
@@ -1161,42 +1227,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     pageEnd = endIndex;
   }
 
-  const getStatusBadge = (status: string) => {
-    switch (String(status || "").toLowerCase()) {
-      case "draft":
-        return (
-          <Badge className="rounded-full border border-amber-900 bg-amber-800 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-amber-800">
-            Draft
-          </Badge>
-        );
-      case "approved":
-        return (
-          <Badge className="rounded-full border border-green-700 bg-green-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-green-600">
-            Approved
-          </Badge>
-        );
-      case "rejected":
-        return (
-          <Badge className="rounded-full border border-red-700 bg-red-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-red-600">
-            Rejected
-          </Badge>
-        );
-      case "needs_revision":
-      case "revision":
-        return (
-          <Badge className="rounded-full border border-orange-600 bg-orange-500 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-orange-500">
-            Needs Revision
-          </Badge>
-        );
-      default:
-        return (
-          <Badge className="rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500">
-            Pending
-          </Badge>
-        );
-    }
-  };
-
   // Reset submissions pagination when filters or page size change. Skipped on
   // the first run so a page restored from the URL is not immediately clobbered
   // back to 1 (Issue #87).
@@ -1400,6 +1430,17 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               </div>
             )}
           </div>
+
+          {/* T96: totals first, each one a link into the matching filtered list. */}
+          {user && (
+            <SubmissionCountsBar
+              counts={ownCounts}
+              isEditor={isEditor}
+              editorPending={editorPendingCount}
+              editorLoading={editorPendingLoading}
+              onSelect={selectCountTarget}
+            />
+          )}
 
           {/* T84: Administrators see who is waiting for an account; approval stays in the admin. */}
           {isSuperuser && <PendingLoginRequestsCard />}
