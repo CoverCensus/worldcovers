@@ -6,6 +6,7 @@
 import logging
 
 from django.conf import settings
+from django.utils.html import escape
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.db.models.signals import post_delete, post_save, pre_save
@@ -67,11 +68,13 @@ def _send_activation_email(to_email):
         frontend_base = f"https://{frontend_base.lstrip('/')}"
     login_url = f"{frontend_base.rstrip('/')}/auth"
 
-    subject = "Your WorldCovers Account Is Now Active"
+    site_name = settings.SITE_NAME
+    site_name_html = escape(site_name)
+    subject = f"Your {site_name} Account Is Now Active"
     message_lines = [
         "Hello,",
         "",
-        "Good news -- your WorldCovers account has just been activated.",
+        f"Good news -- your {site_name} account has just been activated.",
         "",
         f"You can now sign in here: {login_url}",
         "",
@@ -83,21 +86,21 @@ def _send_activation_email(to_email):
     html_message = f"""
             <p>Hello,</p>
 
-            <p>Good news! Your <strong>WorldCovers</strong> account has been successfully activated.</p>
+            <p>Good news! Your <strong>{site_name_html}</strong> account has been successfully activated.</p>
 
             <p>You can now sign in using the link below:</p>
 
             <p>
             <a href="{login_url}" 
                 style="display:inline-block;padding:10px 16px;margin-top:8px;background-color:#7b4b4b;color:#ffffff;text-decoration:none;border-radius:4px;">
-                Sign in to WorldCovers
+                Sign in to {site_name_html}
             </a>
             </p>
 
             <p>If you did not expect this change or believe this was done in error, please contact the site administrator immediately.</p>
 
             <p>Best regards,<br>
-            WorldCovers Team</p>
+            {site_name_html} Team</p>
             """
 
     if not _mail_backend_configured():

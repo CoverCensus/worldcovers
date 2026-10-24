@@ -50,6 +50,11 @@ INTERNAL_IPS = [
 
 DJANGO_APP_HOSTNAME = config("DJANGO_APP_HOSTNAME", default="hellowoco.app")
 
+# Product name shown in email subjects and bodies, the API schema and the admin
+# header. The USPCS decided on 2026-10-23 that the catalog presents as "APMC"
+# (Trello T98); the frontend keeps its own copy in src/constants/brand.ts.
+SITE_NAME = "APMC"
+
 # Which site this install is (Trello T84). The SPA is the same bundle on both
 # sites, so it asks GET /api/v2/site/ and the backend answers from these. The
 # role is derived from the hostname (see woco/site_role.py), so neither server
@@ -185,6 +190,9 @@ ACCOUNT_CONFIRM_EMAIL_ON_GET = False
 ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = False
 ACCOUNT_SIGNUP_FORM_CLASS = "common.account_adapter.SignupForm"
 ACCOUNT_ADAPTER = "common.account_adapter.AccountAdapter"
+# Subjects already carry the product name; without this allauth prepends
+# "[<Site.name>] " from django.contrib.sites (SITE_ID=1, "example.com").
+ACCOUNT_EMAIL_SUBJECT_PREFIX = ""
 HEADLESS_CLIENTS = ("browser",)
 HEADLESS_ONLY = True
 AUTHENTICATION_BACKENDS = [
@@ -264,8 +272,8 @@ REST_FRAMEWORK = {
 
 # API Documentation
 SPECTACULAR_SETTINGS = {
-    "TITLE": "WorldCovers API",
-    "DESCRIPTION": "WorldCovers REST interface for postal marking and stampless cover data",
+    "TITLE": f"{SITE_NAME} API",
+    "DESCRIPTION": f"{SITE_NAME} REST interface for postal marking and stampless cover data",
     "VERSION": "2.0.0",
     "SWAGGER_UI_SETTINGS": {
         "supportedSubmitMethods": [],
@@ -400,7 +408,7 @@ EMAIL_USE_TLS = config("EMAIL_USE_TLS", cast=bool, default=True)
 EMAIL_USE_SSL = config("EMAIL_USE_SSL", cast=bool, default=False)
 DEFAULT_FROM_EMAIL = config(
     "DEFAULT_FROM_EMAIL",
-    default=f"WorldCovers <no-reply@{DJANGO_APP_HOSTNAME}>",
+    default=f"{SITE_NAME} <no-reply@{DJANGO_APP_HOSTNAME}>",
 )
 # Email(s) to notify when a user requests login access. Comma-separated or single.
 # Falls back to ADMINS or staff users if not set.

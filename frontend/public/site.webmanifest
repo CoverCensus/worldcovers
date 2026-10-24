@@ -1,6 +1,6 @@
 {
-  "name": "MyWebSite",
-  "short_name": "MySite",
+  "name": "APMC - American Postal Markings Catalog",
+  "short_name": "APMC",
   "icons": [
     {
       "src": "/web-app-manifest-192x192.png?v=2",

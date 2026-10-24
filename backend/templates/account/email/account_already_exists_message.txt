@@ -1,4 +1,4 @@
-Someone tried to create a WorldCovers account with this email address.
+Someone tried to create a {{ site_name }} account with this email address.
 
 If this was you, sign in to your existing account or use Forgot password:
 {{ signup_url }}
