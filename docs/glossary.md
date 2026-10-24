@@ -1,12 +1,12 @@
-# WorldCovers | Glossary
+# APMC | Glossary
 
-A reference for the terminology used in WorldCovers data, interface, and supporting documentation.
+A reference for the terminology used in APMC data, interface, and supporting documentation.
 
 ---
 
 **Administrator.** Creates Collections, assigns Editors, performs system maintenance and reporting. Inherits Editor capabilities.
 
-**APMC.** *American Postal Markings Catalog.* The aggregate dataset WorldCovers manages. The ASCC was the first Reference Work incorporated; the VPHC and others will follow.
+**APMC.** *American Postal Markings Catalog.* The catalog this site publishes, a project of the U.S. Philatelic Classics Society. The ASCC was the first Reference Work incorporated; the VPHC and others will follow.
 
 **ASCC.** *American Stampless Cover Catalog.* The first Reference Work being digitized.
 
