@@ -1852,11 +1852,9 @@ export async function getRecycleBinMarkings(
   };
 }
 
-/** GET /markings/?page_size=1 - returns total marking count. */
+/** Returns the exact visible Marking count without loading catalog rows. */
 export async function getMarkingCount(): Promise<number> {
-  const res = await apiClient.get<MarkingApiResponse>("/markings/", {
-    params: { page_size: "1" },
-  });
+  const res = await apiClient.get<{ count: number }>("/markings/count/");
   return typeof res.data.count === "number" ? res.data.count : 0;
 }
 

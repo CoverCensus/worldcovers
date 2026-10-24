@@ -923,35 +923,21 @@ class PostOffice(TimestampedModel):
         # state (issue #103). This resolved to the state anyway -- but only by
         # accident, because VA/WV carry an established_date and the counties do
         # not. Give one county a date and the tie-break flips the town's state.
-        link = (
-            self.post_office_regions
-            .exclude(region__region_tier__in=Region.SUBREGION_TIERS)
-            .select_related('region')
-            .order_by(
-                F('region__defunct_date').desc(nulls_first=True),
-                F('region__established_date').desc(nulls_last=True),
-            )
-            .first()
-        )
+        links = getattr(self, '_primary_region_links', None)
+        if links is None:
+            link = PostOfficeRegion.primary_links().filter(post_office=self).first()
+        else:
+            link = links[0] if links else None
         if link is not None:
             return link.region
 
         # A County-only link inherits its containing State's responsibility.
         # Keep direct primary links first to preserve historical routing.
-        county_link = (
-            self.post_office_regions
-            .filter(
-                region__region_tier="COUNTY",
-                region__parent_region__region_tier__in=("STATE", "TERRITORY", "DISTRICT"),
-            )
-            .select_related("region__parent_region")
-            .order_by(
-                F("region__parent_region__defunct_date").desc(nulls_first=True),
-                F("region__parent_region__established_date").desc(nulls_last=True),
-                "pk",
-            )
-            .first()
-        )
+        county_links = getattr(self, '_county_region_links', None)
+        if county_links is None:
+            county_link = PostOfficeRegion.county_links().filter(post_office=self).first()
+        else:
+            county_link = county_links[0] if county_links else None
         return county_link.region.parent_region if county_link is not None else None
 
     @property
@@ -1018,6 +1004,28 @@ class PostOfficeRegion(TimestampedModel):
 
     def __str__(self):
         return f'{self.post_office.name} -- {self.region.name}'
+
+    @classmethod
+    def primary_links(cls) -> models.QuerySet:
+        """Use the same Region order for single offices and catalog pages."""
+        return cls.objects.exclude(
+            region__region_tier__in=Region.SUBREGION_TIERS,
+        ).select_related('region').order_by(
+            F('region__defunct_date').desc(nulls_first=True),
+            F('region__established_date').desc(nulls_last=True),
+        )
+
+    @classmethod
+    def county_links(cls) -> models.QuerySet:
+        """Parent Regions used only when an office has no primary link."""
+        return cls.objects.filter(
+            region__region_tier='COUNTY',
+            region__parent_region__region_tier__in=('STATE', 'TERRITORY', 'DISTRICT'),
+        ).select_related('region__parent_region').order_by(
+            F('region__parent_region__defunct_date').desc(nulls_first=True),
+            F('region__parent_region__established_date').desc(nulls_last=True),
+            'pk',
+        )
 
 
 class Postmaster(TimestampedModel):

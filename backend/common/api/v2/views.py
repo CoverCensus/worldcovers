@@ -20,7 +20,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import DatabaseError, IntegrityError, ProgrammingError, transaction
 from django.db.models import (
-    Exists, F, Min, Max, OuterRef, ProtectedError, Q, TextField, Value,
+    Exists, F, Min, Max, OuterRef, Prefetch, ProtectedError, Q, TextField, Value,
 )
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import ExtractYear, NullIf
@@ -573,6 +573,13 @@ class PostOfficeViewSet(viewsets.ModelViewSet):
     ]
     ordering_fields = ["name", "created_date"]
     ordering = ["name"]
+
+    @extend_schema(responses=inline_serializer(
+        name="PostOfficeCount", fields={"count": serializers.IntegerField(min_value=0)},
+    ))
+    @action(detail=False, methods=["get"])
+    def count(self, request):
+        return Response({"count": PostOffice.objects.count()})
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, modified_by=self.request.user)
@@ -2547,6 +2554,43 @@ class MarkingViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return _marking_list_queryset()
+
+    @extend_schema(responses=inline_serializer(
+        name="MarkingCount", fields={"count": serializers.IntegerField(min_value=0)},
+    ))
+    @action(detail=False, methods=["get"])
+    def count(self, request):
+        return Response({"count": Marking.objects.count()})
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        # Sort only IDs and required sort keys. Display annotations and wide
+        # catalog text must not be computed for every match before LIMIT.
+        page_ids = self.paginate_queryset(queryset.values_list("pk", flat=True))
+        rows = self.get_queryset().filter(pk__in=page_ids).order_by().prefetch_related(None)
+        rows = rows.prefetch_related(
+            Prefetch(
+                "post_office__post_office_regions",
+                queryset=PostOfficeRegion.primary_links(),
+                to_attr="_primary_region_links",
+            ),
+            Prefetch(
+                "post_office__post_office_regions",
+                queryset=PostOfficeRegion.county_links(),
+                to_attr="_county_region_links",
+            ),
+        )
+        by_id = {row.pk: row for row in rows}
+        for row in by_id.values():
+            row._marking_images = []
+        for image in Image.objects.filter(
+            subject_type=Image.SUBJECT_MARKING, subject_id__in=by_id,
+        ).order_by("display_order", "image_id"):
+            by_id[image.subject_id]._marking_images.append(image)
+        # Preserve the selected page's order. A concurrent removal may hide
+        # a selected row before the second query; do not bring it back.
+        page = [by_id[pk] for pk in page_ids if pk in by_id]
+        return self.get_paginated_response(self.get_serializer(page, many=True).data)
 
     def get_object(self):
         try:
