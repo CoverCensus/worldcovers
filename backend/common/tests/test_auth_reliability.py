@@ -187,6 +187,9 @@ class AuthReliabilityTests(TestCase):
             _send_activation_email(self.user.email, password_ready=False)
         self.assertIn("Forgot password", mail.outbox[-1].body)
         self.assertNotIn("You can now sign in", mail.outbox[-1].body)
+        html = mail.outbox[-1].alternatives[0][0]
+        self.assertIn("Forgot password", html)
+        self.assertNotIn("You can now sign in", html)
 
     def test_admin_preserves_password_spaces_and_requires_current_verification(self):
         self.user.is_staff = True

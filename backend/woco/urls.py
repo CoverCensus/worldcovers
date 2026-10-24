@@ -13,6 +13,8 @@ from django.contrib import admin
 from common.account_admin import VerifiedAdminAuthenticationForm
 
 admin.site.login_form = VerifiedAdminAuthenticationForm
+admin.site.site_header = f"{settings.SITE_NAME} administration"
+admin.site.site_title = settings.SITE_NAME
 
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 

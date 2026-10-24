@@ -10,6 +10,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useMemo } from "react";
 import { syncCurrentUser } from "@/lib/auth";
 import { passwordPost } from "@/services/account";
+import { APP_NAME } from "@/constants/brand";
 
 interface ResetPasswordValues {
   password: string;
@@ -113,7 +114,7 @@ const ResetPassword = () => {
               Reset your password
             </CardTitle>
             <CardDescription className="text-center">
-              Choose a new password for your WorldCovers account.
+              Choose a new password for your {APP_NAME} account.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-4 sm:p-6 pt-0">

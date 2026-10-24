@@ -97,3 +97,12 @@ class HelpDocsAllowlistTests(TestCase):
         # Documenting intent: this is deliberately unauthenticated, which is
         # exactly why the allowlist carries the weight it does.
         self.assertEqual(self.client.get(URL).status_code, 200)
+
+    def test_published_doc_titles_use_the_product_name(self):
+        # Trello T98: the catalog presents as APMC; no public Help page may
+        # still be titled for the retired product name.
+        response = self.client.get(URL)
+        self.assertEqual(response.status_code, 200)
+        titles = {doc["slug"]: doc["title"] for doc in response.data["results"]}
+        offenders = {slug: title for slug, title in titles.items() if "WorldCovers" in title}
+        self.assertEqual(offenders, {})

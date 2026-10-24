@@ -1,1 +1,1 @@
-Your WorldCovers account
+Your {{ site_name }} account

@@ -1,4 +1,4 @@
-# WorldCovers | Vision
+# APMC | Vision
 
 ## Background
 
@@ -8,7 +8,7 @@ The *American Postal Markings Catalog* (APMC) is the first dataset to be managed
 
 ## Purpose
 
-*WorldCovers* is a free, open-source software system for cataloging, researching, and collaborating on global postal marking and cover data. It provides a unified, searchable platform that replaces static print catalogs with a living, community-maintained database. Submissions are reviewed by subject-matter experts to maintain the scholarly standards the philatelic community expects.
+The APMC runs on *WorldCovers*, a free, open-source software system for cataloging, researching, and collaborating on global postal marking and cover data. It provides a unified, searchable platform that replaces static print catalogs with a living, community-maintained database. Submissions are reviewed by subject-matter experts to maintain the scholarly standards the philatelic community expects.
 
 ## Why Custom Software?
 
@@ -31,13 +31,13 @@ Custom development allows the system to be purpose-built for structured catalog 
 
 ## Non-Goals
 
-* Not a marketplace -- WoCo will not handle payment transactions or facilitate buying and selling.
-* Not a social network -- WoCo is a collaborative reference platform, not a forum. Its contribution model is closer to a wiki than to social media.
-* Not an archival-grade preservation system -- WoCo supports interoperability with such systems but does not itself implement professional archival standards.
+* Not a marketplace -- the software will not handle payment transactions or facilitate buying and selling.
+* Not a social network -- the software is a collaborative reference platform, not a forum. Its contribution model is closer to a wiki than to social media.
+* Not an archival-grade preservation system -- the software supports interoperability with such systems but does not itself implement professional archival standards.
 * Not a stamp catalog -- The scope is covers and postal markings. Stamp-specific cataloging (designs, issues, values) is out of scope, though stamps appearing on covers may be incidentally recorded.
 
 ## Success Criteria
 
-- [ ] All features provided by the current worldcovers.org application are re-implemented in WoCo.
+- [ ] All features provided by the current worldcovers.org application are re-implemented in the new software.
 - [ ] APMC data (ASCC and VPHC) is searchable and browsable through the new system.
 - [ ] Beta testers from the USPCS community confirm their workflows are matched or improved by the new interface.

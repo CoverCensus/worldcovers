@@ -8,6 +8,7 @@ from django.contrib.auth import login, logout, get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from allauth.account.adapter import get_adapter
 from allauth.core import ratelimit
+from django.utils.html import escape
 from django.contrib.auth.hashers import UNUSABLE_PASSWORD_PREFIX
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core.mail import send_mail
@@ -450,9 +451,11 @@ class ForgotPasswordApiView(APIView):
             frontend_base = f"https://{frontend_base.lstrip('/')}"
         reset_link = f"{frontend_base.rstrip('/')}/reset-password?uid={uid}&token={token}"
 
-        subject = "Reset password for your WorldCovers account"
+        site_name = settings.SITE_NAME
+        site_name_html = escape(site_name)
+        subject = f"Reset password for your {site_name} account"
         message_lines = [
-            "We received a request to reset your WorldCovers account password",
+            f"We received a request to reset your {site_name} account password",
             "",
             "Please click the link to create a new password:",
             reset_link,
@@ -462,7 +465,7 @@ class ForgotPasswordApiView(APIView):
         message = "\n".join(message_lines)
 
         html_message = f"""
-                <p>We received a request to reset your WorldCovers account password.</p>
+                <p>We received a request to reset your {site_name_html} account password.</p>
                 <p>Please click the below link to create a new password.</p>
                 <p>
                 <a href="{reset_link}" style="display:inline-block;padding:10px 16px;margin-top:8px;background-color:#7b4b4b;color:#ffffff;text-decoration:none;border-radius:4px;">

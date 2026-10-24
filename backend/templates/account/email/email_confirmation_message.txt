@@ -1,4 +1,4 @@
-Welcome to WorldCovers.
+Welcome to {{ site_name }}.
 
 Confirm your email address here:
 {{ activate_url }}

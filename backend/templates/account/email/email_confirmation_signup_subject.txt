@@ -1,1 +1,1 @@
-Verify your WorldCovers email address
+Verify your {{ site_name }} email address

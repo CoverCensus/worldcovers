@@ -1,5 +1,6 @@
-"""WorldCovers policy at allauth's supported extension points."""
+"""Project policy at allauth's supported extension points."""
 from django import forms
+from django.conf import settings
 from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
 
@@ -21,6 +22,13 @@ class SignupForm(forms.Form):
 
 
 class AccountAdapter(DefaultAccountAdapter):
+    def render_mail(self, template_prefix, email, context, headers=None):
+        # Every account email names the product once; keep that name in one
+        # setting (SITE_NAME) instead of in six templates.
+        return super().render_mail(
+            template_prefix, email, {**context, "site_name": settings.SITE_NAME}, headers=headers
+        )
+
     def clean_password(self, password, user=None):
         password = super().clean_password(password, user=user)
         error = validate_password_strength(password)

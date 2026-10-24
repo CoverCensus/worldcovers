@@ -6,6 +6,7 @@
 import logging
 
 from django.conf import settings
+from django.utils.html import escape
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.db.models.signals import post_delete, post_save, pre_save
@@ -66,20 +67,28 @@ def _send_activation_email(to_email: str, *, password_ready: bool = True) -> Non
     if not frontend_base.startswith(("http://", "https://")):
         frontend_base = f"https://{frontend_base.lstrip('/')}"
     login_url = f"{frontend_base.rstrip('/')}/auth"
+    site_name = settings.SITE_NAME
+    site_name_html = escape(site_name)
     next_step = ("You can now sign in here:" if password_ready else
                  "Set a password before signing in. Choose Forgot password on this page:")
     message = "\n".join([
-        "Your WorldCovers account has been activated.", "", next_step, login_url, "",
+        f"Your {site_name} account has been activated.", "", next_step, login_url, "",
         "If you did not expect this change, please contact the site Administrator.",
     ])
+    html_message = f"""
+        <p>Your <strong>{site_name_html}</strong> account has been activated.</p>
+        <p>{escape(next_step)}</p>
+        <p><a href="{escape(login_url)}">Open {site_name_html}</a></p>
+        <p>If you did not expect this change, please contact the site Administrator.</p>
+        """
     if not _mail_backend_configured():
         logger.info("Activation email skipped: email backend is not configured.")
         return
     try:
         send_mail(
-            "Your WorldCovers Account Is Now Active", message,
+            f"Your {site_name} Account Is Now Active", message,
             getattr(settings, "DEFAULT_FROM_EMAIL", None) or "no-reply@worldcovers.org",
-            [to_email], fail_silently=False,
+            [to_email], fail_silently=False, html_message=html_message,
         )
     except Exception:
         # Mail failure must not undo an Administrator's activation decision.
