@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Formik, Form, Field, FormikHelpers } from "formik";
+import { passwordPost } from "@/services/account";
 
 interface ForgotPasswordValues {
   email: string;
@@ -36,53 +37,8 @@ export const ForgotPasswordForm = ({ open, onOpenChange }: ForgotPasswordFormPro
     { setSubmitting, resetForm }: FormikHelpers<ForgotPasswordValues>
   ) => {
     try {
-      const base = import.meta.env.VITE_API_URL;
-      if (!base || typeof base !== "string" || base.trim() === "") {
-        toast({
-          title: "Password reset unavailable",
-          description: "API URL is not configured. Please contact support.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const trimmed = base.trim().replace(/\/+$/, "");
-      const url = `${trimmed}/forgot-password/`;
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          email: values.email.trim().toLowerCase(),
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      const anyData = data as { detail?: string; message?: string } | null;
-
-      if (!res.ok) {
-        const message =
-          anyData?.detail ||
-          anyData?.message ;
-
-        toast({
-          title: "Unable to start password reset",
-          description: message,
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const successMessage =
-        anyData?.detail ||
-        anyData?.message;
-
-      toast({
-        title: "Check your email",
-        description: successMessage,
-      });
+      const data = await passwordPost("forgot-password", { email: values.email.trim().toLowerCase() });
+      toast({ title: "Check your email", description: data.detail });
 
       resetForm();
       onOpenChange(false);
@@ -120,6 +76,7 @@ export const ForgotPasswordForm = ({ open, onOpenChange }: ForgotPasswordFormPro
                 <Field
                   as={Input}
                   id="forgot-email"
+                    autoComplete="email"
                   name="email"
                   type="email"
                   placeholder="name@example.com"

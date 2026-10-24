@@ -175,6 +175,7 @@ at the site root.
 
 ```sh
 ./woco migrate
+./woco createcachetable
 ```
 
 If this fails with a connection error, recheck steps 2 and 3. If it fails

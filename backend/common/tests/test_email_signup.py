@@ -122,6 +122,20 @@ class EmailSignupTests(TestCase):
         self.login()
         self.assertEqual(len(mail.outbox), 1)
 
+    def test_logout_ends_the_admin_session_with_csrf(self):
+        user = User.objects.create_user("logout-test", is_staff=True)
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(user)
+        self.assertEqual(client.get("/admin/").status_code, 200)
+        self.assertEqual(client.post("/api/v2/logout/").status_code, 403)
+        self.assertIn("_auth_user_id", client.session)
+        client.get("/api/v2/me/")
+        token = client.cookies["csrftoken"].value
+        response = client.post("/api/v2/logout/", HTTP_X_CSRFTOKEN=token)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("_auth_user_id", client.session)
+        self.assertRedirects(client.get("/admin/"), "/admin/login/?next=/admin/")
+
     def test_csrf_is_required_and_session_primes_cookie(self):
         client = Client(enforce_csrf_checks=True)
         data = {"email": "new@example.com", "password": PASSWORD}
@@ -209,3 +223,29 @@ class EmailSignupTests(TestCase):
         self.assertEqual(self.client.get(AUTH + "account/email").status_code, 404)
         self.assertRedirects(self.client.get("/accounts/login/"), "/auth", fetch_redirect_response=False)
         self.assertRedirects(self.client.get("/accounts/signup/"), "/auth", fetch_redirect_response=False)
+
+    def test_canceling_pending_login_does_not_restore_its_account(self):
+        self.signup()
+        pending_key = self.key()
+        self.assertEqual(self.client.delete(AUTH + "session").status_code, 401)
+        other = User.objects.create_user("other", "other@example.com", PASSWORD)
+        EmailAddress.objects.create(user=other, email=other.email, verified=True, primary=True)
+        self.assertEqual(self.login(other.email).status_code, 200)
+        self.assertEqual(int(self.client.session["_auth_user_id"]), other.pk)
+        self.post(AUTH + "email/verify", {"key": pending_key})
+        self.assertEqual(int(self.client.session["_auth_user_id"]), other.pk)
+        methods = self.client.get(AUTH + "session").json()["data"]["methods"]
+        self.assertEqual([method.get("email") for method in methods], [other.email])
+
+    def test_another_pending_login_replaces_the_canceled_flow(self):
+        self.signup()
+        first_key = self.key()
+        self.signup(email="second@example.com")
+        second_key = self.key()
+        # Confirming the earlier link must not select its account for login.
+        other_browser = Client()
+        self.post(AUTH + "email/verify", {"key": first_key}, other_browser)
+        self.post(AUTH + "email/verify", {"key": second_key}, other_browser)
+        self.assertNotIn("_auth_user_id", self.client.session)
+        self.assertEqual(self.login("second@example.com").status_code, 200)
+        self.assertEqual(self.client.get("/api/v2/me/").json()["user"]["email"], "second@example.com")

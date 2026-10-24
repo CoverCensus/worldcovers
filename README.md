@@ -108,6 +108,7 @@ cp .env.example .env             # then set DJANGO_SECRET_KEY (see below)
 ./woco secretkey                 # prints a fresh secret key
 cd frontend && npm ci && npm run build && cd ..
 ./woco migrate
+./woco createcachetable
 ./woco collectstatic --noinput
 ./woco dev
 ```

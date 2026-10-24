@@ -2,9 +2,9 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { lazy, Suspense, useEffect, type ReactNode } from "react";
-import { useAuth } from "@/hooks/useAuth";
+import { RequireAuth } from "@/components/RequireAuth";
 import { Spinner } from "@/components/ui/spinner";
 import Index from "./pages/Index";
 import Search from "./pages/Search";
@@ -38,28 +38,6 @@ const ScrollToTop = ({ children }: { children: ReactNode }) => {
   }, [location.pathname, location.search]);
   return <>{children}</>;
 };
-// Protect routes that require an authenticated user.
-const RequireAuth = ({ children }: { children: ReactNode }) => {
-  const user = useAuth();
-  const location = useLocation();
-  if (!user) {
-    return <Navigate to="/auth" replace state={{ from: location }} />;
-  }
-  return <>{children}</>;
-};
-// Protect routes that require a superuser (e.g. catalog edit/delete).
-const RequireSuperuser = ({ children }: { children: ReactNode }) => {
-  const user = useAuth();
-  const location = useLocation();
-  if (!user) {
-    return <Navigate to="/auth" replace state={{ from: location }} />;
-  }
-  if (!user.is_superuser) {
-    return <Navigate to="/dashboard" replace />;
-  }
-  return <>{children}</>;
-};
-
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -147,9 +125,9 @@ const App = () => (
             <Route
               path="/admin/collections"
               element={(
-                <RequireSuperuser>
+                <RequireAuth role="administrator">
                   <Collections />
-                </RequireSuperuser>
+                </RequireAuth>
               )}
             />
             <Route path="/post-office/:id" element={<PostOfficeDetail />} />

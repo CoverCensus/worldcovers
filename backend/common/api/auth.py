@@ -4,7 +4,10 @@ from __future__ import annotations
 import logging
 
 from django.conf import settings
-from django.contrib.auth import authenticate, login, logout, get_user_model
+from django.contrib.auth import login, logout, get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
+from allauth.account.adapter import get_adapter
+from allauth.core import ratelimit
 from django.contrib.auth.hashers import UNUSABLE_PASSWORD_PREFIX
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core.mail import send_mail
@@ -12,10 +15,10 @@ from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
-from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
+from django.views.decorators.csrf import csrf_protect, csrf_exempt, ensure_csrf_cookie
 
 from rest_framework import serializers, status
-from rest_framework.authentication import SessionAuthentication
+from rest_framework.exceptions import ParseError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -25,7 +28,8 @@ from common.api.v2.permissions import IsSuperuser
 from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
 
 
-from common.account_access import email_allows_login, has_legacy_access
+from common.account_access import email_allows_login, has_legacy_access, resolve_login_identifier
+from common.account_backend import check_account_password
 from common.passwords import validate_password_strength as _validate_password_strength
 
 
@@ -34,11 +38,23 @@ logger = logging.getLogger(__name__)
 _password_reset_token_generator = PasswordResetTokenGenerator()
 
 
-class SessionAuthenticationNoCSRF(SessionAuthentication):
-    """Session auth without CSRF enforcement. Used by csrf_exempt SPA routes."""
+def _account_fields(data: object, *names: str) -> dict[str, str]:
+    if not isinstance(data, dict):
+        raise ParseError("A JSON object is required.")
+    values = {}
+    for name in names:
+        value = data.get(name, "")
+        if not isinstance(value, str) or len(value) > 4096:
+            raise ParseError(f"{name} must be text of at most 4096 characters.")
+        values[name] = value
+    return values
 
-    def enforce_csrf(self, request):
+
+def _rate_limit(request, action: str, *, key=None):
+    if ratelimit.consume(request, action=action, key=key):
         return None
+    request._request.auth_outcome = "rate_limited"
+    return Response({"detail": "Too many attempts. Please wait before trying again."}, status=429)
 
 
 def _get_user_role(user):
@@ -65,29 +81,7 @@ def _support_email():
     return getattr(settings, "LOGIN_REQUEST_ADMIN_EMAIL", "") or "info@worldcovers.org"
 
 
-def _resolve_login_identifier(identifier):
-    """The single User matching this username-or-email, else None.
-
-    Diagnostic only -- this NEVER grants access, it only decides which error
-    string the caller returns, which is why __iexact is acceptable here.
-    Username first, then email, mirroring ModelBackend running first in
-    settings.AUTHENTICATION_BACKENDS.
-
-    An ambiguous identifier resolves to None rather than raising: nothing
-    enforces email uniqueness on User, so .get() here would 500 the way
-    ForgotPasswordApiView still does. Two matches means we cannot say which
-    account the caller meant, so they get the generic answer.
-    """
-    User = get_user_model()
-    for lookup in ("username__iexact", "email__iexact"):
-        if lookup.startswith("email") and "@" not in identifier:
-            continue
-        matches = list(User.objects.filter(**{lookup: identifier})[:2])
-        if len(matches) == 1:
-            return matches[0]
-        if matches:
-            return None
-    return None
+_resolve_login_identifier = resolve_login_identifier
 
 
 def _account_state_response(account, password_setup_flow=False):
@@ -213,62 +207,39 @@ def _build_user_payload(user):
         ),
     },
 )
-@method_decorator(csrf_exempt, name="dispatch")
+@method_decorator(csrf_protect, name="dispatch")
 class LoginView(APIView):
     """Session login for the SPA. Accepts username or email + password."""
-    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
-        username = (request.data.get("username") or request.data.get("email") or "").strip()
-        password = request.data.get("password") or ""
-        if not username or not password:
-            return Response(
-                {"detail": "Username and password required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        user = authenticate(request, username=username, password=password)
-        if user is None and "@" in username:
-            User = get_user_model()
-            try:
-                u = User.objects.get(email__iexact=username)
-                user = authenticate(request, username=u.username, password=password)
-            except (User.DoesNotExist, User.MultipleObjectsReturned):
-                pass
+        values = _account_fields(request.data, "username", "email", "password")
+        identifier = (values["username"] or values["email"]).strip()
+        password = values["password"]
+        if not identifier or not password:
+            return Response({"detail": "Username and password required."}, status=400)
+        limited = _rate_limit(request, "login")
+        if limited is not None:
+            return limited
+        if request.user.is_authenticated:
+            return Response({"detail": "You are already signed in. Sign out to switch accounts."}, status=409)
+        try:
+            user = get_adapter().authenticate(request._request, username=identifier, password=password)
+        except DjangoValidationError:
+            return Response({"detail": "Too many attempts. Please wait before trying again."}, status=429)
         if user is None:
-            # authenticate() returns None for BOTH "wrong password" and "account
-            # cannot authenticate" -- ModelBackend.user_can_authenticate rejects
-            # inactive users inside authenticate(), and allauth's backend stashes
-            # them rather than returning them. So the real account state has to be
-            # looked up here, on the failure path only, to tell those cases apart.
-            # Everything above this line is deliberately untouched: the email ->
-            # username fallback is the only thing making username != email accounts
-            # work, and it is load-bearing for every editor on the site.
-            account = _resolve_login_identifier(username)
+            account = _resolve_login_identifier(identifier)
             if account is not None:
                 blocked = _account_state_response(account)
                 if blocked is not None:
                     return blocked
-            return Response(
-                {"detail": "Invalid credentials."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+            return Response({"detail": "Invalid credentials."}, status=401)
         if not user.is_active:
-            # Unreachable with the backends in settings.AUTHENTICATION_BACKENDS
-            # today -- both ModelBackend and allauth's AuthenticationBackend
-            # return None for is_active=False, which is why the real handling
-            # lives in the branch above. Kept as an invariant guard: never
-            # login() an inactive user, whatever backend list a future settings
-            # change grows. Costs one boolean on the success path.
-            return _account_state_response(user) or Response(
-                {"detail": "Invalid credentials."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+            return _account_state_response(user)
         if not email_allows_login(user):
             return Response(
                 {"detail": "Verify your email before signing in. Use the sign-in form to resend the link.",
-                 "code": "email_verification_required"},
-                status=status.HTTP_403_FORBIDDEN,
+                 "code": "email_verification_required"}, status=403,
             )
         login(request, user)
         return Response({"user": _build_user_payload(user)})
@@ -280,7 +251,8 @@ class LoginView(APIView):
 )
 @method_decorator(csrf_exempt, name="dispatch")
 class LogoutView(APIView):
-    """Session logout for the SPA."""
+    """Session logout, including an already expired session."""
+    permission_classes = [AllowAny]
 
     def post(self, request):
         logout(request)
@@ -327,8 +299,16 @@ class CurrentUserView(APIView):
 
     def get(self, request):
         if not request.user.is_authenticated:
+            request._request.auth_outcome = "guest"
             return Response(status=status.HTTP_401_UNAUTHORIZED)
-        return Response({"user": _build_user_payload(request.user)})
+        payload = {"user": _build_user_payload(request.user)}
+        identifier = request.query_params.get("login_identifier")
+        if identifier is not None:
+            if len(identifier) > 4096:
+                raise ParseError("Login identifier is too long.")
+            account = resolve_login_identifier(identifier)
+            payload["matches_login_identifier"] = account is not None and account.pk == request.user.pk
+        return Response(payload)
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -418,7 +398,7 @@ class PendingLoginRequestsView(APIView):
         return Response({"count": total, "results": rows})
 
 
-@method_decorator(csrf_exempt, name="dispatch")
+@method_decorator(csrf_protect, name="dispatch")
 class ForgotPasswordApiView(APIView):
     """
     Public API to start a password reset.
@@ -429,12 +409,16 @@ class ForgotPasswordApiView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        email = (request.data.get("email") or "").strip().lower()
+        email = _account_fields(request.data, "email")["email"].strip().lower()
         if not email:
             return Response(
                 {"detail": "Email is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        limited = _rate_limit(request, "reset_password", key=email)
+        if limited is not None:
+            return limited
 
         User = get_user_model()
         try:
@@ -444,6 +428,10 @@ class ForgotPasswordApiView(APIView):
                 {"detail": "No account found for that email address."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        except User.MultipleObjectsReturned:
+            return Response({"detail": "We cannot safely choose an account for this address. "
+                             f"Please contact {_support_email()} for help."}, status=409)
 
         # Before minting anything. A reset cannot fix a blocked account, so
         # issuing a working link here is what closed the issue #150 loop: the
@@ -462,9 +450,9 @@ class ForgotPasswordApiView(APIView):
             frontend_base = f"https://{frontend_base.lstrip('/')}"
         reset_link = f"{frontend_base.rstrip('/')}/reset-password?uid={uid}&token={token}"
 
-        subject = "Reset password for your WordCover account"
+        subject = "Reset password for your WorldCovers account"
         message_lines = [
-            "We received a request to reset your WordCover account password",
+            "We received a request to reset your WorldCovers account password",
             "",
             "Please click the link to create a new password:",
             reset_link,
@@ -474,7 +462,7 @@ class ForgotPasswordApiView(APIView):
         message = "\n".join(message_lines)
 
         html_message = f"""
-                <p>We received a request to reset your WordCover account password.</p>
+                <p>We received a request to reset your WorldCovers account password.</p>
                 <p>Please click the below link to create a new password.</p>
                 <p>
                 <a href="{reset_link}" style="display:inline-block;padding:10px 16px;margin-top:8px;background-color:#7b4b4b;color:#ffffff;text-decoration:none;border-radius:4px;">
@@ -494,39 +482,11 @@ class ForgotPasswordApiView(APIView):
                 html_message=html_message,
             )
         except Exception:
-            # NOTE: A mail-transport failure must not surface as a 500 (issue #162).
-            #
-            # On production this is not an edge case, it is EVERY reset: the
-            # relay authenticates fine and then refuses the sender address
-            # (issue #152), so send_mail raises SMTPSenderRefused for all 26
-            # accounts. The uncaught version told the user nothing, told no
-            # admin anything, and made issue #150's own advice -- "Use 'Forgot
-            # password' to set one" -- lead to an error page.
-            #
-            # `except Exception` rather than SMTPException: a mail backend can
-            # fail with OSError, ConnectionRefusedError or a backend-specific
-            # type, and the try wraps exactly one call, so the breadth costs no
-            # diagnosability. Matches signals.py's activation-mail handler.
-            logger.exception(
-                "Password reset email to %s could not be sent. The reset link was "
-                "generated but NOT delivered; the account is unchanged.",
-                email,
-            )
-            # 503, not 200: a 200 here would claim a link was sent when none
-            # was, which is the same class of lie as the silent activation mail
-            # in signals.py. 503 is also what monitoring should see -- a
-            # dependency is down, and it is retryable once #152 is fixed.
-            return Response(
-                {
-                    "detail": (
-                        "We could not send the reset email. This is a problem on our side, "
-                        "not with your account, and resending will not help until it is "
-                        f"fixed. Email {_support_email()} and someone will set a password "
-                        "for you by hand."
-                    )
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+            request._request.auth_outcome = "mail_failed"
+            logger.error("Password reset email could not be sent. request_id=%s",
+                         getattr(request._request, "auth_request_id", "none"))
+            return Response({"detail": "We could not send the reset email. Please try again later. "
+                             f"If the problem continues, contact {_support_email()}."}, status=503)
 
         return Response(
             {"detail": "If an account exists for that email, a reset link has been sent."},
@@ -534,7 +494,7 @@ class ForgotPasswordApiView(APIView):
         )
 
 
-@method_decorator(csrf_exempt, name="dispatch")
+@method_decorator(csrf_protect, name="dispatch")
 class ResetPasswordApiView(APIView):
     """
     Public API to complete a password reset.
@@ -544,9 +504,11 @@ class ResetPasswordApiView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        uidb64 = (request.data.get("uid") or "").strip()
-        token = (request.data.get("token") or "").strip()
-        password = (request.data.get("password") or "").strip()
+        values = _account_fields(request.data, "uid", "token", "password")
+        uidb64, token, password = values["uid"].strip(), values["token"].strip(), values["password"]
+        limited = _rate_limit(request, "reset_password_from_key")
+        if limited is not None:
+            return limited
 
         if not uidb64 or not token or not password:
             return Response(
@@ -602,22 +564,21 @@ class ResetPasswordApiView(APIView):
             {"detail": "Your password has been reset. You can now sign in with your new password."},
             status=status.HTTP_200_OK,
         )
-@method_decorator(csrf_exempt, name="dispatch")
+@method_decorator(csrf_protect, name="dispatch")
 class ChangePasswordApiView(APIView):
     """
     API for authenticated users to change their password.
     POST JSON: { "current_password": "...", "new_password": "..." }.
     """
-    authentication_classes = [SessionAuthenticationNoCSRF]
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        current_password = (
-            request.data.get("current_password") or request.data.get("currentPassword") or ""
-        ).strip()
-        new_password = (
-            request.data.get("new_password") or request.data.get("newPassword") or ""
-        ).strip()
+        values = _account_fields(request.data, "current_password", "currentPassword", "new_password", "newPassword")
+        current_password = values["current_password"] or values["currentPassword"]
+        new_password = values["new_password"] or values["newPassword"]
+        limited = _rate_limit(request, "change_password")
+        if limited is not None:
+            return limited
 
         if not current_password:
             return Response(
@@ -643,7 +604,7 @@ class ChangePasswordApiView(APIView):
                 {"detail": "Your account does not have a password set yet. Please use 'Forgot password' to set one, or contact an administrator."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if not user.check_password(current_password):
+        if not check_account_password(user, current_password):
             return Response(
                 {"detail": "Current password is incorrect. If you recently switched accounts, try signing out and signing in again."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -654,9 +615,10 @@ class ChangePasswordApiView(APIView):
             return Response({"detail": err}, status=status.HTTP_400_BAD_REQUEST)
 
         user.set_password(new_password)
-        user.save()
+        user.save(update_fields=["password"])
+        logout(request)
 
         return Response(
-            {"detail": "Your password has been changed successfully."},
+            {"detail": "Your password has been changed. Please sign in again with your new password."},
             status=status.HTTP_200_OK,
         )

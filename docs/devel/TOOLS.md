@@ -660,7 +660,9 @@ rolls back.
 
 ### `set_user_password`
 
-Set a password without opening the Django shell.
+Set a password without opening the Django shell. Password characters are
+preserved and strength rules apply. This command does not activate an
+account. An Administrator must make that separate decision in Django admin.
 
 ```sh
 ./woco set_user_password <username> <new_password>

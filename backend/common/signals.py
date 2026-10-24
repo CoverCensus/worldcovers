@@ -57,69 +57,33 @@ def send_activation_email_when_user_activated(sender, instance, **kwargs):
         return
 
     if not previous.is_active and instance.is_active and (instance.email or "").strip():
-        _send_activation_email(instance.email.strip())
+        _send_activation_email(instance.email.strip(), password_ready=instance.has_usable_password())
 
 
-def _send_activation_email(to_email):
-    """Send 'Your account is now active' email to the given address."""
+def _send_activation_email(to_email: str, *, password_ready: bool = True) -> None:
+    """Tell a legacy account holder how to use the newly enabled account."""
     frontend_base = getattr(settings, "FRONTEND_BASE_URL", None) or f"https://{settings.DJANGO_APP_HOSTNAME}"
     if not frontend_base.startswith(("http://", "https://")):
         frontend_base = f"https://{frontend_base.lstrip('/')}"
     login_url = f"{frontend_base.rstrip('/')}/auth"
-
-    subject = "Your WorldCovers Account Is Now Active"
-    message_lines = [
-        "Hello,",
-        "",
-        "Good news -- your WorldCovers account has just been activated.",
-        "",
-        f"You can now sign in here: {login_url}",
-        "",
-        "If you did not expect this change, please contact the site administrator.",
-    ]
-    message = "\n".join(message_lines)
-
-    # HTML version with a clickable login link/button
-    html_message = f"""
-            <p>Hello,</p>
-
-            <p>Good news! Your <strong>WorldCovers</strong> account has been successfully activated.</p>
-
-            <p>You can now sign in using the link below:</p>
-
-            <p>
-            <a href="{login_url}" 
-                style="display:inline-block;padding:10px 16px;margin-top:8px;background-color:#7b4b4b;color:#ffffff;text-decoration:none;border-radius:4px;">
-                Sign in to WorldCovers
-            </a>
-            </p>
-
-            <p>If you did not expect this change or believe this was done in error, please contact the site administrator immediately.</p>
-
-            <p>Best regards,<br>
-            WorldCovers Team</p>
-            """
-
+    next_step = ("You can now sign in here:" if password_ready else
+                 "Set a password before signing in. Choose Forgot password on this page:")
+    message = "\n".join([
+        "Your WorldCovers account has been activated.", "", next_step, login_url, "",
+        "If you did not expect this change, please contact the site Administrator.",
+    ])
     if not _mail_backend_configured():
-        logger.info(
-            "Skipping activation email to %s: email backend not configured (set EMAIL_HOST or use a real backend).",
-            to_email,
-        )
+        logger.info("Activation email skipped: email backend is not configured.")
         return
-
-    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", None) or "no-reply@worldcovers.org"
     try:
         send_mail(
-            subject,
-            message,
-            from_email,
-            [to_email],
-            fail_silently=False,
-            html_message=html_message,
+            "Your WorldCovers Account Is Now Active", message,
+            getattr(settings, "DEFAULT_FROM_EMAIL", None) or "no-reply@worldcovers.org",
+            [to_email], fail_silently=False,
         )
     except Exception:
-        # Best-effort: do not block user save if SMTP is misconfigured or unreachable.
-        logger.exception("Failed to send activation email to %s", to_email)
+        # Mail failure must not undo an Administrator's activation decision.
+        logger.error("Activation email could not be sent.")
 
 
 ###################################################################################################

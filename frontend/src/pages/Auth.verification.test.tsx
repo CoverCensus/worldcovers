@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import Auth from "./Auth";
 import { signIn } from "@/services/account";
 
+jest.mock("@/hooks/useAuth", () => ({ useAuth: () => null, useAuthState: () => ({ user: null, status: "guest", error: null }) }));
 jest.mock("@/components/Navigation", () => ({ Navigation: () => null }));
 jest.mock("@/components/Footer", () => ({ Footer: () => null }));
 jest.mock("@/hooks/useSiteInfo", () => ({ useSiteInfo: () => null }));
@@ -28,7 +29,7 @@ async function login() {
 it("shows a persistent verification notice instead of navigating", async () => {
   (signIn as jest.Mock).mockResolvedValue(false);
   await login();
-  expect((await screen.findByRole("status")).textContent).toContain("Check your email");
+  expect((await screen.findByText("Check your email")).textContent).toContain("Check your email");
   expect(screen.queryByText("Contribution form")).toBeNull();
 });
 

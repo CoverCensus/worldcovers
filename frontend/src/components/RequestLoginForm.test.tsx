@@ -1,4 +1,5 @@
 /** @jest-environment jsdom */
+import { useState } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RequestLoginForm } from "./RequestLoginForm";
@@ -44,4 +45,27 @@ it("shows delivery failure without claiming an email was sent", async () => {
   await fill();
   expect((await screen.findByRole("alert")).textContent).toContain("could not send");
   expect(screen.queryByText("Check your email")).toBeNull();
+});
+
+
+it("starts with a fresh form when signup is reopened", async () => {
+  mockPost.mockResolvedValue({ status: 401, data: { flows: [{ id: "verify_email", is_pending: true }] } });
+  function Parent() {
+    const [open, setOpen] = useState(false);
+    return <><button onClick={() => setOpen(true)}>Open signup</button><RequestLoginForm open={open} onOpenChange={setOpen} /></>;
+  }
+  render(<Parent />);
+  const user = userEvent.setup();
+  await user.click(screen.getByText("Open signup"));
+  await user.type(screen.getByLabelText("First name"), "New");
+  await user.type(screen.getByLabelText("Last name"), "Collector");
+  await user.type(screen.getByLabelText("Email"), "new@example.com");
+  await user.type(screen.getByLabelText("Password"), "StrongPass1!");
+  await user.type(screen.getByLabelText("Confirm password"), "StrongPass1!");
+  await user.click(screen.getByRole("button", { name: "Create account" }));
+  await screen.findByText("Check your email");
+  await user.click(screen.getByText("Back to sign in"));
+  await user.click(screen.getByText("Open signup"));
+  expect(screen.queryByText("Check your email")).toBeNull();
+  expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe("");
 });

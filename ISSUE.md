@@ -22,6 +22,67 @@ rate limits. Mail failures return 503. Legacy login and staff login enforce
 verification or the permissionless legacy exemption seeded by migration 0024.
 The old manual-request POST returns 410; the Administrator pending list stays.
 
+Local follow-up: Michael reported signup returning 409 while the header
+showed Login. The frontend skipped session checks without a cached user and
+cleared its display even when logout failed. It now checks Django regardless
+of localStorage, refreshes after a signup conflict, and clears the displayed
+user only after confirmed logout or an unauthenticated session response.
+Logout now uses the CSRF-aware API client; the missing token caused a 403
+and left the Django session active, including at /admin. A backend regression
+test checks that logout ends admin access. The auth page reacts to a
+discovered session. Regression coverage is in
+[session tests](frontend/src/pages/Auth.session.test.tsx),
+[hook tests](frontend/src/hooks/useAuth.test.tsx), and
+[auth utility tests](frontend/src/lib/auth.test.ts). Hosted verification of
+this follow-up remains pending.
+
+October 24 account audit and local repairs: the published source reviewed was
+`staging` at `7674a07af7c5f2d8dfd20298cfd203fc04e45fba`. Seventeen files already
+held uncommitted signup/session follow-ups. Those changes were preserved.
+The following additional repairs are local and uncommitted; deployment is
+unverified:
+
+- Repeatable expired-session logout, explicit session-check states, route
+  guards that wait, denied-storage fallback, cross-tab request invalidation,
+  and checks on tab return and browser page restoration.
+- Recovery from a lost login response or 409 by checking the session, with
+  no automatic credential replay or silent switch to another account.
+- Exact password characters with one trimmed login fallback for old hashes;
+  username-first matching, including email-shaped usernames; explicit
+  sign-out after password change, with other sessions invalidated.
+- Controlled malformed-input and duplicate-email recovery errors, shared
+  account HTTP handling, fresh signup/verification notices, and signup
+  unavailable while site identity is unknown.
+- Common verification, CSRF, and rate limits across supported aliases and
+  Administrator login; current-address verification; one trusted proxy;
+  MariaDB rate-limit cache setup; allauth 65.20.1; password setting separate
+  from activation. No accounts were repaired or merged.
+- Account request IDs and logs without credentials or email addresses,
+  access logs without query tokens or Referer URLs, a five-second SMTP
+  timeout, and truthful passwordless activation instructions.
+
+The account regressions failed before the corresponding repairs. Additional
+coverage checks canceled and overlapping login flows, stale CSRF, lost
+responses, and rate limits in separate processes. Tests and implementation
+are evidence of local behavior, not proof of hosted acceptance. Local Chromium and WebKit smoke checks used the built SPA with simulated
+API responses in isolated browser contexts. They covered site discovery,
+guards, lost login responses, exact password values, denied storage, two
+tabs, stale responses, page restoration events, and password-change sign-out.
+Firefox failed to start a blank page because of its local sandbox, so no
+application result is claimed for Firefox. Current Chrome, Firefox, desktop
+Safari, and iOS Safari acceptance with real password-manager autofill,
+back/forward cache restoration, and private browsing remains open.
+
+Local verification on October 24: the backend suite ran 711 tests (two
+existing data-dependent tests skipped); all remaining tests passed. The
+frontend passed 643 tests under Node 22, and the tool suite passed 361 tests.
+TypeScript, lint, production build, Django checks, dependency audits, and the
+malware fingerprint scan passed. Lint reported three existing warnings in
+ignored coverage output. The shared-cache regression used separate Python
+processes against the test database. The new account regressions are in
+[test_auth_reliability.py](backend/common/tests/test_auth_reliability.py) and
+[test_auth_shared_cache.py](backend/common/tests/test_auth_shared_cache.py).
+
 Evidence: [backend tests](backend/common/tests/test_email_signup.py),
 [backup/restore tests](backend/common/tests/test_restore_auth.py),
 [signup form tests](frontend/src/components/RequestLoginForm.test.tsx), and
@@ -29,16 +90,22 @@ Evidence: [backend tests](backend/common/tests/test_email_signup.py),
 Local test results are reported with the implementation handoff; they do not
 establish hosted delivery or acceptance.
 
-Remaining: a separate F1 task needs approved Trello mapping. Link it to
+Remaining: propose one unassigned F1 task in To Do, "Repair account flows
+and verify Contributor signup". Confirm an unused T number across active and
+archived cards before creation; the earlier archived search repeated a page. Link it to
 [T30](https://trello.com/c/wDojGejL) for real relay delivery and
 [T84](https://trello.com/c/smLXK7tJ) for staging routing and old requests.
-Preserve S1's accepted status. No board changes or live email sends are part
+The focused October 24 board recheck still places T30 in To Do and T84 in
+Testing; S1 remains accepted. No matching account-repair task was found.
+The highest T number observed was T93, but archived search pagination still
+prevents a complete numbering check. Preserve S1's accepted status. No board changes or live email sends are part
 of this local implementation. With an authorized test recipient, demonstrate
 signup receipt, explicit confirmation, Contributor login, and manual Editor
 assignment on staging before production. Console output is not receipt.
 
 Rollout: back up auth data and pause account creation while installing code
-and migration 0024 together. Existing accounts are exempted once; no bulk
+and migration 0024 together. Create `account_rate_cache` before starting
+workers and apply the nginx access-log change on each host. Existing accounts are exempted once; no bulk
 email or activation is performed. Do not roll back to an unguarded login
 after new unverified accounts exist. Retain verification guards and disable
 signup while correcting a release failure. Publication, deployment, real

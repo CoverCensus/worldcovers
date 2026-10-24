@@ -1,12 +1,13 @@
 ###################################################################################################
 ## Set a user's password (e.g. after forgot or to fix login).
 ###################################################################################################
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.contrib.auth import get_user_model
+from common.passwords import validate_password_strength
 
 
 class Command(BaseCommand):
-    help = "Set password for a user by username. Ensures the user is active."
+    help = "Set a user's password without changing account activation or verification."
 
     def add_arguments(self, parser):
         parser.add_argument("username", help="Username of the user to update")
@@ -16,14 +17,15 @@ class Command(BaseCommand):
         User = get_user_model()
         username = options["username"]
         password = options["password"]
+        error = validate_password_strength(password)
+        if error:
+            raise CommandError(error)
 
         try:
             user = User.objects.get(username=username)
         except User.DoesNotExist:
-            self.stderr.write(self.style.ERROR(f"User with username '{username}' not found."))
-            return
+            raise CommandError("User not found.")
 
         user.set_password(password)
-        user.is_active = True
-        user.save(update_fields=["password", "is_active"])
+        user.save(update_fields=["password"])
         self.stdout.write(self.style.SUCCESS(f"Password updated for user '{username}'."))

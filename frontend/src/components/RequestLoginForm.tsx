@@ -10,7 +10,9 @@ interface RequestLoginFormProps {
   onOpenChange: (open: boolean) => void;
 }
 
-export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) => {
+export const RequestLoginForm = (props: RequestLoginFormProps) => props.open ? <SignupDialog {...props} /> : null;
+
+const SignupDialog = ({ open, onOpenChange }: RequestLoginFormProps) => {
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -43,7 +45,7 @@ export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) 
     }
   }
 
-  return <Dialog open={open} onOpenChange={onOpenChange}>
+  return <Dialog open={open} onOpenChange={next => { if (!busy) onOpenChange(next); }}>
     <DialogContent className="max-w-md p-4 sm:p-6">
       <DialogHeader>
         <DialogTitle>{sent ? "Check your email" : "Create account"}</DialogTitle>

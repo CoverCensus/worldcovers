@@ -6,6 +6,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { Formik, Form, Field, FormikHelpers } from "formik";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { clearStoredUser } from "@/lib/auth";
+import { passwordPost } from "@/services/account";
 import { Eye, EyeOff } from "lucide-react";
 
 interface ChangePasswordValues {
@@ -57,6 +60,7 @@ interface ChangePasswordFormProps {
 
 export const ChangePasswordForm = ({ open, onOpenChange, onSignOut }: ChangePasswordFormProps) => {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -72,69 +76,21 @@ export const ChangePasswordForm = ({ open, onOpenChange, onSignOut }: ChangePass
     { setSubmitting, resetForm }: FormikHelpers<ChangePasswordValues>
   ) => {
     try {
-      // Use relative URL when VITE_API_URL is empty (proxy); otherwise use full API URL
-      const base = import.meta.env.VITE_API_URL || "";
-      const url = base ? `${String(base).replace(/\/+$/, "")}/change-password/` : (import.meta.env.VITE_API_BASE_URL || '/api/v2') + "/change-password/";
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          current_password: values.currentPassword,
-          new_password: values.newPassword,
-        }),
+      const data = await passwordPost("change-password", {
+        current_password: values.currentPassword,
+        new_password: values.newPassword,
       });
-
-      const data = await res.json().catch(() => ({}));
-      const anyData = data as { detail?: string; message?: string } | null;
-      const apiMessage = anyData?.detail || anyData?.message;
-
-      if (!res.ok) {
-        let title = "Unable to change password";
-        let description = apiMessage || "Please try again.";
-
-        if (res.status === 403) {
-          title = "Access denied";
-          description =
-            apiMessage ||
-            "Your session may have expired or you are not signed in. Please sign in again and try changing your password.";
-          setSubmitError(description);
-        } else if (res.status === 401) {
-          title = "Sign in required";
-          description =
-            apiMessage ||
-            "You must be signed in to change your password. Please sign in and try again.";
-          setSubmitError(description);
-        } else if (res.status === 400 && apiMessage?.toLowerCase().includes("incorrect")) {
-          setSubmitError(description);
-        }
-
-        toast({
-          title,
-          description,
-          variant: "destructive",
-        });
-        return;
-      }
-
+      clearStoredUser();
       setSubmitError(null);
-
-      toast({
-        title: "Password changed",
-        description: anyData?.detail || "Your password has been changed successfully.",
-      });
-
+      toast({ title: "Password changed", description: data.detail });
       resetForm();
       onOpenChange(false);
+      navigate("/auth", { replace: true });
     } catch (err) {
-      toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Failed to change password.",
-        variant: "destructive",
-      });
+      const description = err instanceof Error ? err.message : "Failed to change password.";
+      setSubmitError(description);
+      toast({ title: "Unable to change password", description, variant: "destructive" });
+
     } finally {
       setSubmitting(false);
     }
@@ -164,6 +120,7 @@ export const ChangePasswordForm = ({ open, onOpenChange, onSignOut }: ChangePass
                   <Field
                     as={Input}
                     id="current-password"
+                    autoComplete="current-password"
                     name="currentPassword"
                     type={showCurrentPassword ? "text" : "password"}
                     placeholder="Enter your current password"
@@ -188,6 +145,7 @@ export const ChangePasswordForm = ({ open, onOpenChange, onSignOut }: ChangePass
                   <Field
                     as={Input}
                     id="new-password"
+                    autoComplete="new-password"
                     name="newPassword"
                     type={showNewPassword ? "text" : "password"}
                     placeholder="Enter a new password"
@@ -223,6 +181,7 @@ export const ChangePasswordForm = ({ open, onOpenChange, onSignOut }: ChangePass
                   <Field
                     as={Input}
                     id="confirm-password"
+                    autoComplete="new-password"
                     name="confirmPassword"
                     type={showConfirmPassword ? "text" : "password"}
                     placeholder="Re-enter your new password"

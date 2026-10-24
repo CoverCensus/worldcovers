@@ -10,12 +10,14 @@ import apiClient from "@/lib/api";
 
 const mockToast = jest.fn();
 
+jest.mock("@/hooks/useAuth", () => ({ useAuth: () => null, useAuthState: () => ({ user: null, status: "guest", error: null }) }));
 jest.mock("@/components/Navigation", () => ({ Navigation: () => null }));
 jest.mock("@/components/Footer", () => ({ Footer: () => null }));
 jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mockToast }) }));
 jest.mock("@/lib/auth", () => ({
   getStoredUser: () => null,
   setStoredUser: jest.fn(),
+  beginAuthChange: () => 1, isCurrentAuthChange: () => true, fetchCurrentUser: jest.fn().mockResolvedValue(null),
 }));
 jest.mock("@/lib/api", () => ({
   __esModule: true,

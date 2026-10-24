@@ -8,7 +8,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Formik, Form, Field, FormikHelpers } from "formik";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useMemo } from "react";
-import { setStoredUser, type AuthUser } from "@/lib/auth";
+import { syncCurrentUser } from "@/lib/auth";
+import { passwordPost } from "@/services/account";
 
 interface ResetPasswordValues {
   password: string;
@@ -85,77 +86,11 @@ const ResetPassword = () => {
     }
 
     try {
-      const base = import.meta.env.VITE_API_URL;
-      if (!base || typeof base !== "string" || base.trim() === "") {
-        toast({
-          title: "Password reset unavailable",
-          description: "API URL is not configured. Please contact support.",
-          variant: "destructive",
-        });
-        return;
-      }
+      const data = await passwordPost("reset-password", { uid, token, password: values.password });
+      await syncCurrentUser().catch(() => {});
+      toast({ title: "Password updated", description: data.detail });
+      navigate("/auth", { replace: true });
 
-      const trimmed = base.trim().replace(/\/+$/, "");
-      const url = `${trimmed}/reset-password/`;
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          uid,
-          token,
-          password: values.password,
-        }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        const anyData = data as { detail?: string; message?: string } | null;
-        const message =
-          anyData?.detail ||
-          anyData?.message ;
-
-        toast({
-          title: "Unable to reset password",
-          description: message,
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const anyData = data as {
-        data?: {
-          user?: Partial<AuthUser> & {
-            id?: number;
-            display?: string;
-            has_usable_password?: boolean;
-          };
-        };
-      };
-
-      const user = anyData.data?.user;
-      if (user && typeof user.id === "number") {
-        setStoredUser({
-          id: user.id,
-          username: user.username || user.display || user.email || "User",
-          email: user.email || "",
-          is_staff: Boolean(user.is_staff),
-        });
-      }
-
-      const successDetail =
-        (data as { detail?: string; message?: string }).detail ||
-        (data as { detail?: string; message?: string }).message;
-
-      toast({
-        title: "Password updated",
-        description: successDetail,
-      });
-      navigate("/");
     } catch (err) {
       toast({
         title: "Unable to reset password",
@@ -195,6 +130,7 @@ const ResetPassword = () => {
                     <Field
                       as={Input}
                       id="new-password"
+                    autoComplete="new-password"
                       name="password"
                       type="password"
                       placeholder="Enter a new password"
@@ -214,6 +150,7 @@ const ResetPassword = () => {
                     <Field
                       as={Input}
                       id="confirm-password"
+                    autoComplete="new-password"
                       name="confirmPassword"
                       type="password"
                       placeholder="Re-enter your new password"

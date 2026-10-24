@@ -355,6 +355,35 @@ days and confirmation does not sign the user in. Share password rules with
 the existing reset and change APIs. Verification grants Contributor access;
 an Administrator selects Editor and assigns Collections separately.
 
+Use the Django session as the source of truth. Check it even without browser
+storage. Route guards wait for the initial check and offer retry when the
+server is unavailable. Only a confirmed Guest response clears an uncertain
+session. Logout is repeatable; an active session still requires CSRF. Ignore
+requests that started before an account change, including changes in another
+tab. Recheck on tab return and browser page restoration. A lost login response
+or conflict requires a session check; never repeat credentials automatically
+or accept a different account as the requested login.
+
+Preserve password characters exactly. At login, try the exact value first,
+then one trimmed value for passwords saved by older forms. Do not rewrite
+hashes for this compatibility check. Match username first, then one current
+email address, without case sensitivity. This includes usernames containing
+`@`. Refuse ambiguous email recovery with a support message; do not merge
+accounts. Require verification of the current address, not a former address.
+
+After a successful password change, end the current session and invalidate
+other sessions. Clear the displayed identity and require a new sign-in. A
+password reset does not sign anyone in. Setting a password in operator tools
+does not activate an account; activation is an explicit Administrator action.
+
+Keep verification, CSRF, and allauth rate limits on every supported login
+alias and the Administrator login form. For nginx -> Gunicorn, trust one
+proxy hop and use the shared MariaDB cache table. Create that table during
+setup and deployment. Record an account operation, outcome, status, duration,
+and server request ID; exclude credentials, tokens, bodies, and email
+addresses. Keep query tokens and Referer URLs out of access logs. Bound SMTP
+waits below the browser request timeout and report mail failure truthfully.
+
 **Don't:** Treat `is_active` as email verification, restore a suspended
 account by verifying or resetting a password, or mark old addresses verified.
 The permissionless `Legacy email verification exemption` group preserves
@@ -363,7 +392,9 @@ requests. Only migration 0024 seeds it; new signup never grants it. Preserve
 this group in auth backups. Do not reopen the retired manual-request API or
 an authentication route that bypasses the verification check.
 
-**Why:** Michael chose self-service Contributor signup on 2026-10-23, with
+**Why:** Michael approved these account repairs on 2026-10-24 after local
+regressions exposed inconsistent sessions, password handling, and protections.
+He chose self-service Contributor signup on 2026-10-23, with
 verification required only for new accounts and manual handling retained for
 old pending requests. Address ownership and administrative suspension are
 separate facts. Existing accounts must not lose access or receive fabricated
@@ -372,7 +403,9 @@ verification records.
 **Evidence:** [account adapter](backend/common/account_adapter.py),
 [browser endpoints](backend/common/api/account.py),
 [verification tests](backend/common/tests/test_email_signup.py), and
-[auth restore tests](backend/common/tests/test_restore_auth.py).
+[auth restore tests](backend/common/tests/test_restore_auth.py),
+[account regressions](backend/common/tests/test_auth_reliability.py), and
+[shared-cache test](backend/common/tests/test_auth_shared_cache.py).
 
 **Open work:** [email signup rollout](ISSUE.md#contributor-email-verification)
 tracks real mail receipt, staged release, and acceptance. Back up auth data
@@ -395,8 +428,8 @@ names and email addresses; cap it at the newest 200 rows and send the true
 count. New signups use allauth's rate limits. Derive the role by comparing
 the hostname with the host of the production URL (with or without "www."),
 validate any `WOCO_SITE_ROLE` override at start-up, treat an unknown or
-failed site answer as production in the SPA, and never let the lookup break
-a page.
+failed site answer as unknown in the SPA, and keep signup unavailable with
+a retry control until the site is known.
 
 **Don't:** Post a request from one site to the other, or copy accounts
 between sites through this feature; a stranded account moves only on
@@ -735,7 +768,7 @@ and for a contributor on each new upload in the Marking form and the Cover
 form. All four use `RotateImageDialog`: drag the image (or the round rotate
 handle, `RotateControls`) round its centre to any angle, as many turns as you
 like in either direction, then save once. The angle snaps to 0/90/180/270
-within 3 degrees (hold Alt to turn it off); "Turn 90° left/right" are
+within 3 degrees (hold Alt to turn it off); "Turn 90 degrees left/right" are
 shortcuts; the handle is a keyboard slider. Only the final angle, normalised
 to (-180, 180] at 0.1 degrees, is sent. On either page,
 `POST /images/{id}/rotate/ {angle}` (clockwise degrees) writes the turned
@@ -973,7 +1006,7 @@ panel exists to flag. Don't reuse `GET /markings/` for this (its `town` is
 cross-listed WV and there is no inscription filter), and don't introduce
 react-query into the forms: their tests render without a provider, and the
 catalog-code suggestion effect already shows the effect-and-cancel pattern.
-Don't flash a "checking…" box on every settled keystroke; the panel renders
+Don't flash a "checking..." box on every settled keystroke; the panel renders
 only when it has rows and keeps them while a refresh is in flight.
 
 **Why:** Trello T48. Its acceptance: "useful candidate previews without false
@@ -1001,7 +1034,7 @@ users, never hover-only. Keep in-app wording in step with the glossary; it is
 the project's defined terms.
 
 **Don't:** Put a help button inside a wrapping `<label>` (it renames the
-control to "… Help for …" and toggles it on click), inside an image drop zone
+control to "... Help for ..." and toggles it on click), inside an image drop zone
 (the click opens the file picker), or on the current-images strip, captions,
 tracing or submitter-name controls. Don't repeat visible helper text in a
 tooltip beside it. Don't change `FieldHelp`'s contract (it describes its own

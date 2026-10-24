@@ -104,6 +104,7 @@ if not TESTING:
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
+    "common.auth_diagnostics.AuthRequestLogMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -188,12 +189,27 @@ ACCOUNT_ADAPTER = "common.account_adapter.AccountAdapter"
 HEADLESS_CLIENTS = ("browser",)
 HEADLESS_ONLY = True
 AUTHENTICATION_BACKENDS = [
+    "common.account_backend.AccountAuthenticationBackend",
+    # Keep these paths so pre-release sessions remain readable. New failed
+    # authentication stops in AccountAuthenticationBackend.
     "django.contrib.auth.backends.ModelBackend",
     "allauth.account.auth_backends.AuthenticationBackend",
 ]
 
 LOGIN_REDIRECT_URL = '/'
 ACCOUNT_LOGOUT_REDIRECT_URL = '/'
+
+# nginx is the one trusted hop; it appends the actual peer to X-Forwarded-For.
+ALLAUTH_TRUSTED_PROXY_COUNT = 1
+# All five Gunicorn workers must see the same rate-limit history.
+CACHES = {"default": {
+    "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+    "LOCATION": "account_rate_cache",
+    "OPTIONS": {"MAX_ENTRIES": 100000},
+}}
+if TESTING:
+    # The cross-process cache test separately exercises the database backend.
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
@@ -326,6 +342,7 @@ if _use_file_handler:
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {"omit_access_query": {"()": "common.auth_diagnostics.OmitAccessQuery"}},
     "formatters": {
         "verbose": {
             "format": "{levelname} {asctime} {module} {message}",
@@ -340,6 +357,12 @@ LOGGING = {
         **_file_handler_config,
     },
     "loggers": {
+        "django.server": {
+            "handlers": _log_handlers,
+            "filters": ["omit_access_query"],
+            "level": "INFO",
+            "propagate": False,
+        },
         "django": {
             "handlers": _log_handlers,
             "level": DJANGO_LOG_LEVEL,
@@ -355,6 +378,7 @@ LOGGING = {
 
 # CORS (adjust for frontend). Session auth requires credentials.
 CORS_ALLOW_CREDENTIALS = True
+CORS_EXPOSE_HEADERS = ["X-Request-ID"]
 # 8080 = common dev port; 5173 = Vite default
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:8080",
@@ -398,6 +422,7 @@ EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
 EMAIL_USE_TLS = config("EMAIL_USE_TLS", cast=bool, default=True)
 EMAIL_USE_SSL = config("EMAIL_USE_SSL", cast=bool, default=False)
+EMAIL_TIMEOUT = 5
 DEFAULT_FROM_EMAIL = config(
     "DEFAULT_FROM_EMAIL",
     default=f"WorldCovers <no-reply@{DJANGO_APP_HOSTNAME}>",

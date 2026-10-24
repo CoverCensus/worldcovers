@@ -12,7 +12,8 @@ import { Eye, EyeOff } from "lucide-react";
 import { Formik, Form, Field, FormikHelpers } from "formik";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import { getStoredUser } from "@/lib/auth";
+import { useAuthState } from "@/hooks/useAuth";
+import { signOut, syncCurrentUser } from "@/lib/auth";
 import { signIn } from "@/services/account";
 import { getRedirectPath } from "@/lib/authRedirect";
 import { useSiteInfo } from "@/hooks/useSiteInfo";
@@ -38,6 +39,11 @@ const validateAuth = (values: AuthValues): Partial<Record<keyof AuthValues, stri
 };
 
 const Auth = () => {
+  const { user, status, error: sessionError } = useAuthState();
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [accountConflict, setAccountConflict] = useState(false);
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [siteRetry, setSiteRetry] = useState(0);
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -46,22 +52,23 @@ const Auth = () => {
   const location = useLocation();
   const { toast } = useToast();
   const redirectPath = getRedirectPath(location.state);
-  // T84: the same bundle serves woco.dev and hellowoco.app. On the test site the
-  // request path points at production instead of creating an account here that
-  // nobody would see. null (unknown or still loading) reads as production.
-  const site = useSiteInfo();
+  const site = useSiteInfo(siteRetry);
   const onTestSite = site !== null && !site.isProduction;
 
   useEffect(() => {
-    if (getStoredUser()) {
+    if (status === "authenticated" && user && !loginBusy && !loginError) {
       navigate(redirectPath, { replace: true });
     }
-  }, [navigate, redirectPath]);
+  }, [user, status, loginBusy, loginError, navigate, redirectPath]);
 
   const handleSubmit = async (
     values: AuthValues,
     { setSubmitting }: FormikHelpers<AuthValues>
   ) => {
+    setVerificationPending(false);
+    setLoginError(null);
+    setAccountConflict(false);
+    setLoginBusy(true);
     try {
       const signedIn = await signIn(values.email.trim(), values.password);
       if (!signedIn) {
@@ -75,12 +82,15 @@ const Auth = () => {
       });
       navigate(redirectPath, { replace: true });
     } catch (err) {
+      setLoginError(err instanceof Error ? err.message : "Network error");
+      setAccountConflict((err as { status?: number }).status === 409);
       toast({
         title: "Sign in failed",
         description: err instanceof Error ? err.message : "Network error",
         variant: "destructive",
       });
     } finally {
+      setLoginBusy(false);
       setSubmitting(false);
     }
   };
@@ -100,9 +110,29 @@ const Auth = () => {
             </CardDescription>
           </CardHeader>
           <CardContent className="p-4 sm:p-6 pt-0">
+            {status === "checking" && <p role="status">Checking your session...</p>}
+            {status === "unavailable" && <div role="alert" className="mb-4">
+              <p>{sessionError || "Your session could not be checked."}</p>
+              <Button onClick={() => void syncCurrentUser().catch(() => {})}>Retry session check</Button>
+            </div>}
+            {loginError && <div role="alert" className="mb-4">
+              <p>{loginError}</p>
+              {accountConflict && <Button disabled={loginBusy} onClick={async () => {
+                setLoginBusy(true);
+                try {
+                  await signOut();
+                  setAccountConflict(false);
+                  setLoginError(null);
+                } catch (error) {
+                  setLoginError(error instanceof Error ? error.message : "Sign out failed. Please retry.");
+                } finally {
+                  setLoginBusy(false);
+                }
+              }}>Sign out of the current account</Button>}
+            </div>}
             {verificationPending && <div role="status" className="mb-4 space-y-2">
               <h2 className="font-semibold">Check your email</h2>
-              <p>Verify your email before signing in. Check your spam folder. To request another link, wait a minute and sign in again with your password.</p>
+              <p>Signing in before confirming your email automatically sends a new confirmation link, unless one was sent recently. Check your inbox and spam folder, then follow the link before signing in again.</p>
             </div>}
             <Formik
               initialValues={{ email: "", password: "" }}
@@ -111,12 +141,13 @@ const Auth = () => {
               onSubmit={handleSubmit}
             >
               {({ errors, touched, isSubmitting, isValid }) => (
-                <Form className="space-y-2 sm:space-y-4 pt-2 sm:pt-4">
+                <Form className="space-y-2 sm:space-y-4 pt-2 sm:pt-4" onChange={() => setVerificationPending(false)}>
                   <div className="space-y-1 sm:space-y-2">
                     <Label htmlFor="signin-email">Email or username</Label>
                     <Field
                       as={Input}
                       id="signin-email"
+                      autoComplete="username"
                       name="email"
                       type="text"
                       placeholder="name@example.com"
@@ -136,6 +167,7 @@ const Auth = () => {
                       <Field
                         as={Input}
                         id="signin-password"
+                        autoComplete="current-password"
                         name="password"
                         type={showPassword ? "text" : "password"}
                         placeholder="Enter your password"
@@ -175,7 +207,7 @@ const Auth = () => {
                   <Button
                     type="submit"
                     className="w-full"
-                    disabled={!isValid || isSubmitting}
+                    disabled={!isValid || isSubmitting || status === "checking" || status === "unavailable"}
                   >
                     {isSubmitting ? "Signing in..." : "Sign In"}
                   </Button>
@@ -188,7 +220,12 @@ const Auth = () => {
                 buried under the submit button. */}
             <div className="mt-6 border-t pt-4 space-y-2 text-center">
               <p className="text-sm font-medium">New to the catalog?</p>
-              {onTestSite ? (
+              {site === null ? (
+                <>
+                  <p role="status">Signup is unavailable until we can identify this site.</p>
+                  <Button variant="outline" onClick={() => setSiteRetry((value) => value + 1)}>Retry site check</Button>
+                </>
+              ) : onTestSite ? (
                 <>
                   <p className="text-sm text-muted-foreground" role="note">
                     This is the test site. Create your account on{" "}

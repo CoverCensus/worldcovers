@@ -7,6 +7,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Auth from "./Auth";
 
+jest.mock("@/hooks/useAuth", () => ({ useAuth: () => null, useAuthState: () => ({ user: null, status: "guest", error: null }) }));
 jest.mock("@/components/Navigation", () => ({ Navigation: () => null }));
 jest.mock("@/components/Footer", () => ({ Footer: () => null }));
 jest.mock("@/components/ForgotPasswordForm", () => ({ ForgotPasswordForm: () => null }));
@@ -53,11 +54,12 @@ describe("Auth page request path (T84)", () => {
     screen.getByRole("dialog");
   });
 
-  it("before the site is known behaves as production, so nothing flashes on hellowoco.app", () => {
+  it("does not allow local signup before the site is known", () => {
     mockSite = null;
     renderAuth();
 
     expect(screen.queryByRole("note")).toBeNull();
-    screen.getByRole("button", { name: "Create account" });
+    expect(screen.queryByRole("button", { name: "Create account" })).toBeNull();
+    screen.getByRole("button", { name: /Retry/ });
   });
 });

@@ -256,6 +256,7 @@ echo "[4/6] Building frontend (npm ci && npm run build)..."
 
 echo "[5/6] Running database migrations..."
 "$REPO_ROOT/woco" migrate
+"$REPO_ROOT/woco" createcachetable
 
 echo "[6/6] Collecting static files..."
 "$REPO_ROOT/woco" collectstatic --noinput

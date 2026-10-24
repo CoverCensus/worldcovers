@@ -10,9 +10,9 @@ describe("mapSiteInfo", () => {
     expect(info.productionHost).toBe("hellowoco.app");
   });
 
-  it("treats an unknown role as production", () => {
-    expect(mapSiteInfo({ role: "development" }).isProduction).toBe(true);
-    expect(mapSiteInfo({}).isProduction).toBe(true);
+  it("rejects an unknown site role", () => {
+    expect(() => mapSiteInfo({ role: "development" })).toThrow();
+    expect(() => mapSiteInfo({})).toThrow();
   });
 
   it("refuses a non-http production url and falls back to the known address", () => {

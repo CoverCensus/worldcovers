@@ -17,6 +17,7 @@ from django.contrib.auth.models import Group
 from common.account_access import LEGACY_EMAIL_GROUP
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import mail
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
@@ -32,6 +33,7 @@ RESET_URL = "/api/v2/reset-password/"
 
 class AuthAccountStateTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.client = APIClient()
 
     def _pending(self, email="pending@example.com"):
@@ -187,7 +189,7 @@ class AuthAccountStateTests(TestCase):
         # The user must be given a human to contact, not just a failure.
         self.assertIn("@", response.data["detail"])
 
-    def test_forgot_password_logs_the_failed_address_at_error(self):
+    def test_forgot_password_logs_a_reference_without_the_address(self):
         """A silent failure is how #152 went unnoticed. Someone must be able to see it."""
         User.objects.create_user(
             username="editor5", email="editor5@example.com", password="CorrectHorse1!"
@@ -201,10 +203,8 @@ class AuthAccountStateTests(TestCase):
                     FORGOT_URL, {"email": "editor5@example.com"}, format="json"
                 )
 
-        self.assertTrue(
-            any("editor5@example.com" in line for line in captured.output),
-            f"the attempted address must be in the log: {captured.output}",
-        )
+        self.assertIn("request_id=", "\n".join(captured.output))
+        self.assertNotIn("editor5@example.com", "\n".join(captured.output))
 
     def test_forgot_password_still_returns_200_when_mail_works(self):
         """The positive control -- the new handler must not swallow the happy path."""

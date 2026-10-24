@@ -9,6 +9,8 @@ import Auth from "./Auth";
 
 // Auth pulls in the site chrome, the API client and toasts; none of that is what
 // issue #70 is about, so keep the test to the page's own content.
+jest.mock("@/hooks/useAuth", () => ({ useAuth: () => null, useAuthState: () => ({ user: null, status: "guest", error: null }) }));
+jest.mock("@/hooks/useSiteInfo", () => ({ useSiteInfo: () => ({ isProduction: true, productionUrl: "https://hellowoco.app", productionHost: "hellowoco.app" }) }));
 jest.mock("@/components/Navigation", () => ({ Navigation: () => null }));
 jest.mock("@/components/Footer", () => ({ Footer: () => null }));
 jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: jest.fn() }) }));

@@ -4,9 +4,7 @@ from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
 
 from allauth.account.adapter import DefaultAccountAdapter
-from allauth.account.stages import EmailVerificationStage
 
-from common.account_access import has_legacy_access
 from common.passwords import validate_password_strength
 
 
@@ -22,13 +20,6 @@ class SignupForm(forms.Form):
         user.groups.add(group)
 
 
-class ContributorEmailVerificationStage(EmailVerificationStage):
-    def handle(self):
-        if self.login.user is not None and has_legacy_access(self.login.user):
-            return None, True
-        return super().handle()
-
-
 class AccountAdapter(DefaultAccountAdapter):
     def clean_password(self, password, user=None):
         password = super().clean_password(password, user=user)
@@ -39,7 +30,7 @@ class AccountAdapter(DefaultAccountAdapter):
 
     def get_login_stages(self):
         return [
-            "common.account_adapter.ContributorEmailVerificationStage"
+            "common.account_stages.ContributorEmailVerificationStage"
             if stage == "allauth.account.stages.EmailVerificationStage" else stage
             for stage in super().get_login_stages()
         ]

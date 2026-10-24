@@ -12,7 +12,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { clearStoredUser } from "@/lib/auth";
+import { signOut } from "@/lib/auth";
 import { capitalizeFirst } from "@/lib/utils";
 import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 
@@ -23,8 +23,6 @@ export const Navigation = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const apiBase = (import.meta.env.VITE_API_URL ?? "").trim().replace(/\/+$/, "");
-  const logoutUrl = apiBase ? `${apiBase}/logout/` : (import.meta.env.VITE_API_BASE_URL || '/api/v2') + "/logout/";
   const hasEditorAccess =
     user?.role === "editor" || user?.role === "administrator" || user?.is_superuser;
   const dashboardLabel = hasEditorAccess ? "Dashboard" : "My Submissions";
@@ -32,8 +30,7 @@ export const Navigation = () => {
 
   const handleLogout = async () => {
     try {
-      await fetch(logoutUrl, { method: "POST", credentials: "include" });
-      clearStoredUser();
+      await signOut();
 
       toast({
         title: "Signed out",
@@ -43,7 +40,6 @@ export const Navigation = () => {
       navigate("/");
       setMobileMenuOpen(false);
     } catch (error: unknown) {
-      clearStoredUser();
       toast({
         title: "Error signing out",
         description: error instanceof Error ? error.message : "Could not sign out",
@@ -55,8 +51,7 @@ export const Navigation = () => {
   const handleSignOutAndSignIn = async () => {
     setChangePasswordOpen(false);
     try {
-      await fetch(logoutUrl, { method: "POST", credentials: "include" });
-      clearStoredUser();
+      await signOut();
       toast({
         title: "Signed out",
         description: "Please sign in again with your correct account.",
@@ -64,8 +59,6 @@ export const Navigation = () => {
       navigate("/auth");
       setMobileMenuOpen(false);
     } catch (error: unknown) {
-      clearStoredUser();
-      navigate("/auth");
       toast({
         title: "Error signing out",
         description: error instanceof Error ? error.message : "Could not sign out",

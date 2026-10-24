@@ -4,8 +4,7 @@
  * The same bundle is served on woco.dev (the test site) and hellowoco.app
  * (production), so the SPA cannot tell them apart on its own. The backend
  * answers from its settings. The answer is fetched once per page load and
- * shared by every caller; an unknown or failed answer reads as production, so
- * the "test site" notice appears only when the server says so.
+ * shared by every caller. Unknown or failed answers must not enable signup.
  */
 import apiClient from "@/lib/api";
 
@@ -44,7 +43,8 @@ function hostOf(url: string): string {
 }
 
 export function mapSiteInfo(raw: SiteApiResponse): SiteInfo {
-  const role: SiteRole = text(raw.role) === "staging" ? "staging" : "production";
+  if (raw.role !== "staging" && raw.role !== "production") throw new Error("Could not confirm which site this is.");
+  const role: SiteRole = raw.role;
   // Only an http(s) origin may become an href; anything else falls back to the
   // known production address.
   const given = text(raw.production_url).trim().replace(/\/+$/, "");

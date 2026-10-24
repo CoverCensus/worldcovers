@@ -3,7 +3,6 @@
 ## MPC: 2025/10/24
 ###################################################################################################
 from django.urls import include, path, re_path
-from django.views.decorators.csrf import csrf_exempt
 from django.views.static import serve
 from django.views.generic import RedirectView
 
@@ -49,11 +48,11 @@ urlpatterns = [
 
     path("api/v2/", include("common.api.v2.urls")),
 
-    # Login/logout with CSRF exempt so SPA can POST without token.
-    path("api/login/", csrf_exempt(LoginView.as_view()), name="api-login"),
-    path("api/logout/", csrf_exempt(LogoutView.as_view()), name="api-logout"),
-    path("api/login", csrf_exempt(LoginView.as_view()), name="api-login-no-slash"),
-    path("api/logout", csrf_exempt(LogoutView.as_view()), name="api-logout-no-slash"),
+    # Preserve older account URLs with the same session and CSRF rules.
+    path("api/login/", LoginView.as_view(), name="api-login"),
+    path("api/logout/", LogoutView.as_view(), name="api-logout"),
+    path("api/login", LoginView.as_view(), name="api-login-no-slash"),
+    path("api/logout", LogoutView.as_view(), name="api-logout-no-slash"),
 
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
