@@ -163,3 +163,19 @@ describe("dashboard return href", () => {
     expect(dashboardHrefForTab("submissions")).toBe("/dashboard");
   });
 });
+
+describe("submission count links (T96)", () => {
+  it("parse to the view each tile promises", () => {
+    expect(parseDashboardParams(new URLSearchParams("status=needs_revision"))).toMatchObject({
+      tab: "submissions",
+      submissions: { status: "needs_revision", page: 1 },
+    });
+    expect(parseDashboardParams(new URLSearchParams("status=draft")).submissions.status).toBe("draft");
+    expect(parseDashboardParams(new URLSearchParams("status=pending")).submissions.status).toBe("pending");
+    expect(parseDashboardParams(new URLSearchParams("tab=editor&e_status=pending"))).toMatchObject({
+      tab: "editor",
+      editor: { status: "pending", page: 1 },
+      submissions: { status: "all" },
+    });
+  });
+});
