@@ -17,6 +17,7 @@
   },
   "jest": {
     "moduleNameMapper": {
+      "\\.(png|jpe?g|gif|svg|webp)$": "<rootDir>/src/test/fileMock.js",
       "^@/(.*)$": "<rootDir>/src/$1",
       "\\.css$": "<rootDir>/src/test/styleMock.js"
     }
