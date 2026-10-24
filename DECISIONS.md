@@ -345,19 +345,54 @@ separator-only author rule on 2026-10-22. Evidence:
 `test_reference_work_api.py`, `frontend/src/lib/referenceWorkDisplay.ts` and
 its test, `frontend/src/pages/ReferenceWorks.tsx` and its test.
 
-## Point Test-Site Login Requests At Production, Show Pending Requests To Administrators
+## Verify New Contributor Accounts With Allauth
+
+**Do:** Collect name, email, and password at signup. Use django-allauth's
+browser APIs, verification records, signed links, and rate limits. Require
+email verification before a new account can sign in through any supported
+login route. Require an explicit confirmation POST; links expire after three
+days and confirmation does not sign the user in. Share password rules with
+the existing reset and change APIs. Verification grants Contributor access;
+an Administrator selects Editor and assigns Collections separately.
+
+**Don't:** Treat `is_active` as email verification, restore a suspended
+account by verifying or resetting a password, or mark old addresses verified.
+The permissionless `Legacy email verification exemption` group preserves
+pre-rollout accounts' access, including later manual activation of old pending
+requests. Only migration 0024 seeds it; new signup never grants it. Preserve
+this group in auth backups. Do not reopen the retired manual-request API or
+an authentication route that bypasses the verification check.
+
+**Why:** Michael chose self-service Contributor signup on 2026-10-23, with
+verification required only for new accounts and manual handling retained for
+old pending requests. Address ownership and administrative suspension are
+separate facts. Existing accounts must not lose access or receive fabricated
+verification records.
+
+**Evidence:** [account adapter](backend/common/account_adapter.py),
+[browser endpoints](backend/common/api/account.py),
+[verification tests](backend/common/tests/test_email_signup.py), and
+[auth restore tests](backend/common/tests/test_restore_auth.py).
+
+**Open work:** [email signup rollout](ISSUE.md#contributor-email-verification)
+tracks real mail receipt, staged release, and acceptance. Back up auth data
+and pause account creation while applying the migration and code together.
+After new signups exist, retain the verification guards during rollback;
+disable signup if needed rather than restoring an unguarded login route.
+
+## Point Test-Site Signup At Production, Show Legacy Pending Requests To Administrators
 
 **Do:** Let the backend say which site it is (`GET /api/v2/site/`: hostname,
 role, production URL, derived from `DJANGO_APP_HOSTNAME`, overridable with
 `WOCO_SITE_ROLE`) and let the SPA ask it once per page load. On a
-non-production site, turn the sign-in page's "Request a login" into a link to
+non-production site, turn the sign-in page's "Create account" into a link to
 production's `/auth` with a one-sentence notice, and badge the footer "Test
 site". Give Administrators a Dashboard card listing login requests (inactive
-accounts with no usable password that have never signed in, which is what
-the public form creates) with a link to each account in Django admin, where
-approval already happens. Keep that list superuser-only, because it carries
+accounts with no usable password that have never signed in, left from the
+old request flow) with a link to each account in Django admin, where manual
+activation still happens. Keep that list superuser-only, because it carries
 names and email addresses; cap it at the newest 200 rows and send the true
-count, because the public form has no throttle. Derive the role by comparing
+count. New signups use allauth's rate limits. Derive the role by comparing
 the hostname with the host of the production URL (with or without "www."),
 validate any `WOCO_SITE_ROLE` override at start-up, treat an unknown or
 failed site answer as production in the SPA, and never let the lookup break
@@ -365,12 +400,11 @@ a page.
 
 **Don't:** Post a request from one site to the other, or copy accounts
 between sites through this feature; a stranded account moves only on
-Michael's say-so. Don't disable `POST /login-requests/` on staging: the
-public button is redirected, but the endpoint keeps working for tests and
-hand-made requests, and the staging card still lists whatever lands there.
-Don't make the approval depend on mail (dead on both sites until T30), and
-don't add an approve or activate API; the single home for approval stays
-the admin. Don't put requester emails in any public or Editor-level response.
+Michael's say-so. The old `POST /login-requests/` now returns 410 on both
+sites. New Contributor signup depends on verification email; old pending
+requests still use manual activation in admin. Do not send bulk activation
+email or move old requests into the new flow. Do not put requester emails
+in any public or Editor-level response.
 
 **Why:** Trello T84: eight sign-ups made on woco.dev went unnoticed because
 the two sites look identical and a login request is only an inactive User

@@ -10,8 +10,9 @@ Source of truth for command availability:
 - Run `./woco help` from repo root to list commands in the current checkout.
 
 Use `./woco <command>` from repo root for Django management commands. The
-`./woco` shim wraps `uv run woco`, which calls `woco_cli.py` and then Django's
-`execute_from_command_line`. Several shortcuts bypass Django entirely:
+`./woco` shim runs `woco_cli.py` with the installed `.venv/bin/python`, then
+calls Django's `execute_from_command_line`. It does not sync or rebuild
+the environment for normal commands. Several shortcuts bypass Django entirely:
 `./woco setup dev` and `./woco setup prod` run the environment setup in
 `tools/setup.sh` (see [BUILD.md](BUILD.md) and [DEPLOY.md](DEPLOY.md)),
 `./woco push [args]` runs `tools/push_data.sh`, `./woco refresh [args]`

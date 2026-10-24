@@ -7,7 +7,46 @@ the full current engineering queue. Completed work is archived in
 Keep original issue numbers when removing completed entries. Later work also appears
 in GitHub PRs and Reese's workspace-local `docs/issues.md`.
 
-**Latest focused review:** 2026-10-19, checked Dates Seen and Manuscript
+## Contributor email verification
+
+Michael approved self-service Contributor signup on 2026-10-23: collect
+name, email, and password, verify the address, then allow sign-in. Editor
+selection and Collection assignments stay manual. Existing accounts retain
+access without fabricated verification; old pending requests remain manual.
+
+Implemented locally using the installed django-allauth browser views:
+`/api/v2/auth/signup`, `login`, `email/verify`, and `session`. React handles
+pending verification and explicit confirmation at `/verify-email`. Links
+expire in three days. Signing in again resends a link subject to framework
+rate limits. Mail failures return 503. Legacy login and staff login enforce
+verification or the permissionless legacy exemption seeded by migration 0024.
+The old manual-request POST returns 410; the Administrator pending list stays.
+
+Evidence: [backend tests](backend/common/tests/test_email_signup.py),
+[backup/restore tests](backend/common/tests/test_restore_auth.py),
+[signup form tests](frontend/src/components/RequestLoginForm.test.tsx), and
+[confirmation tests](frontend/src/pages/VerifyEmail.test.tsx).
+Local test results are reported with the implementation handoff; they do not
+establish hosted delivery or acceptance.
+
+Remaining: a separate F1 task needs approved Trello mapping. Link it to
+[T30](https://trello.com/c/wDojGejL) for real relay delivery and
+[T84](https://trello.com/c/smLXK7tJ) for staging routing and old requests.
+Preserve S1's accepted status. No board changes or live email sends are part
+of this local implementation. With an authorized test recipient, demonstrate
+signup receipt, explicit confirmation, Contributor login, and manual Editor
+assignment on staging before production. Console output is not receipt.
+
+Rollout: back up auth data and pause account creation while installing code
+and migration 0024 together. Existing accounts are exempted once; no bulk
+email or activation is performed. Do not roll back to an unguarded login
+after new unverified accounts exist. Retain verification guards and disable
+signup while correcting a release failure. Publication, deployment, real
+mail delivery, and acceptance remain pending.
+
+## Previous review baseline
+
+**Latest focused review before email signup:** 2026-10-19, checked Dates Seen and Manuscript
 display/search changes against live Trello, including archived cards.
 The October 19 notes below record implementation and remaining verification.
 The October 18 cleanup and T8-T10 production reviews remain recorded below.
@@ -768,7 +807,12 @@ Source: Michael's approved sync plan and Ian's requests relayed on 2026-10-17.
   and return-navigation behavior remains. Service/API defaults and intentional
   picker/background-fetch sizes were reviewed and retained: these list views
   send their selected page size explicitly. Hosted verification remains open.
-- **[T84](https://trello.com/c/smLXK7tJ), F1:** decided and built on branch
+- **[T84](https://trello.com/c/smLXK7tJ), F1:** historical October 22 behavior
+  follows. The local October 23
+  [email signup change](#contributor-email-verification) replaces new manual
+  requests with verification and retires the old POST on both sites. The
+  test-site link and Administrator list of old pending requests remain.
+  Earlier implementation, decided and built on branch
   `reese/84-login-requests` (October 22). Decision: do not move accounts
   between sites and do not depend on mail. The backend now answers
   `GET /api/v2/site/` (hostname, role, production URL, derived from

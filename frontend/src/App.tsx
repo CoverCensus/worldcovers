@@ -12,6 +12,7 @@ import ContributionDetail from "./pages/ContributionDetail";
 import Contribute from "./pages/Contribute";
 import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
+import VerifyEmail from "./pages/VerifyEmail";
 import Help from "./pages/Help";
 import Collections from "./pages/Collections";
 import EditorRoster from "./pages/EditorRoster";
@@ -122,6 +123,7 @@ const App = () => (
               )}
             />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route
               path="/editors"

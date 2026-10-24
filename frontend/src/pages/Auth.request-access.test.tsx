@@ -29,22 +29,22 @@ const renderAuth = () =>
     </MemoryRouter>,
   );
 
-describe("Auth page — request-access path (issue #70)", () => {
+describe("Auth page -- request-access path (issue #70)", () => {
   it("tells a visitor with no account what to do, without them having to be told", async () => {
     renderAuth();
 
     // The card must not imply signing in is the only way in.
     // findBy* lets Formik's validate-on-mount settle before we assert.
-    expect(await screen.findByText(/request access if you do not have an account/i)).toBeTruthy();
+    expect(await screen.findByText(/create an account if you do not have one/i)).toBeTruthy();
     expect(screen.getByText(/new to the catalog/i)).toBeTruthy();
-    expect(screen.getByText(/accounts are created for you/i)).toBeTruthy();
+    expect(screen.getByText(/verify your email to contribute/i)).toBeTruthy();
   });
 
   it("opens the request-a-login dialog", async () => {
     const user = userEvent.setup();
     renderAuth();
 
-    await user.click(screen.getByRole("button", { name: /request a login/i }));
+    await user.click(screen.getByRole("button", { name: /create account/i }));
 
     expect(await screen.findByRole("dialog")).toBeTruthy();
   });
@@ -59,7 +59,7 @@ describe("Auth page — request-access path (issue #70)", () => {
       expect(signIn.disabled).toBe(true);
     });
 
-    const request = screen.getByRole("button", { name: /request a login/i }) as HTMLButtonElement;
+    const request = screen.getByRole("button", { name: /create account/i }) as HTMLButtonElement;
     expect(request.disabled).toBe(false);
   });
 });

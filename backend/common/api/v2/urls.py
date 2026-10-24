@@ -53,6 +53,7 @@ router.register(r"collections", views.CollectionViewSet, basename="collection")
 
 urlpatterns = [
     # Auth
+    path("auth/", include("common.api.account")),
     path("login/", csrf_exempt(LoginView.as_view()), name="login"),
     path("logout/", csrf_exempt(LogoutView.as_view()), name="logout"),
     path("me/", CurrentUserView.as_view(), name="current-user"),

@@ -1,35 +1,9 @@
+import { useState, type FormEvent } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
-import { Formik, Form, Field, FormikHelpers } from "formik";
-
-interface RequestLoginFormValues {
-  firstName: string;
-  lastName: string;
-  email: string;
-}
-
-const validateRequestLogin = (values: RequestLoginFormValues): Partial<Record<keyof RequestLoginFormValues, string>> => {
-  const errors: Partial<Record<keyof RequestLoginFormValues, string>> = {};
-
-  if (!values.firstName?.trim()) {
-    errors.firstName = "First name is required";
-  }
-
-  if (!values.lastName?.trim()) {
-    errors.lastName = "Last name is required";
-  }
-
-  if (!values.email?.trim()) {
-    errors.email = "Email is required";
-  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email.trim())) {
-    errors.email = "Please enter a valid email address";
-  }
-
-  return errors;
-};
+import { accountPost, needsEmailVerification } from "@/services/account";
 
 interface RequestLoginFormProps {
   open: boolean;
@@ -37,155 +11,64 @@ interface RequestLoginFormProps {
 }
 
 export const RequestLoginForm = ({ open, onOpenChange }: RequestLoginFormProps) => {
-  const { toast } = useToast();
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
-  const handleSubmit = async (
-    values: RequestLoginFormValues,
-    { setSubmitting, resetForm }: FormikHelpers<RequestLoginFormValues>
-  ) => {
-    try {
-      const base = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '/api/v2').replace(/\/+$/, "");
-      const res = await fetch(`${base}/login-requests/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          first_name: values.firstName.trim(),
-          last_name: values.lastName.trim(),
-          email: values.email.trim().toLowerCase(),
-        }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        const message =
-          (data as { email?: string[] }).email?.[0] ||
-          (data as { detail?: string }).detail ||
-          (data as { message?: string }).message ||
-          (typeof data === "string" ? data : "Failed to submit request");
-        toast({
-          title: "Error",
-          description: message,
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // Prefer the server's copy, the way the error branch above and the
-      // sibling auth forms already do. This screen used to hard-code its own
-      // success line, so the backend's wording never reached anyone -- and the
-      // hard-coded version promised a follow-up nobody owns (issue #151).
-      toast({
-        title: "Request submitted!",
-        description:
-          (data as { detail?: string }).detail ||
-          "We'll review your request and get back to you soon.",
-      });
-
-      resetForm();
-      onOpenChange(false);
-    } catch (err) {
-      toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Failed to submit request",
-        variant: "destructive",
-      });
-    } finally {
-      setSubmitting(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const fields = new FormData(form);
+    const password = String(fields.get("password") || "");
+    if (password !== fields.get("confirmation")) {
+      setError("Passwords do not match.");
+      return;
     }
-  };
+    setBusy(true);
+    setError("");
+    try {
+      const response = await accountPost("signup", {
+        first_name: String(fields.get("first_name") || "").trim(),
+        last_name: String(fields.get("last_name") || "").trim(),
+        email: String(fields.get("email") || "").trim(),
+        password,
+      });
+      if (!needsEmailVerification(response)) throw new Error("Unable to complete signup. Please try signing in.");
+      form.reset();
+      setSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to create the account.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md p-4 sm:p-6">
-        <DialogHeader>
-          <DialogTitle>Request Login Access</DialogTitle>
-          <DialogDescription>
-            Fill out this form to request access to contribute to the catalog.
-          </DialogDescription>
-        </DialogHeader>
-
-        <Formik
-          initialValues={{ firstName: "", lastName: "", email: "" }}
-          validate={validateRequestLogin}
-          validateOnMount
-          onSubmit={handleSubmit}
-        >
-          {({ errors, touched, isSubmitting, isValid }) => (
-            <Form className="space-y-2 sm:space-y-4">
-                <div className="space-y-1 sm:space-y-2">
-                  <Label htmlFor="request-firstName">First Name</Label>
-                  <Field
-                    as={Input}
-                    id="request-firstName"
-                    name="firstName"
-                    placeholder="First name"
-                    aria-invalid={!!(touched.firstName && errors.firstName)}
-                    aria-describedby={touched.firstName && errors.firstName ? "request-firstName-error" : undefined}
-                    className={touched.firstName && errors.firstName ? "border-destructive" : ""}
-                  />
-                  {touched.firstName && errors.firstName && (
-                    <p id="request-firstName-error" className="text-sm text-destructive">
-                      {errors.firstName}
-                    </p>
-                  )}
-                </div>
-
-                <div className="space-y-1 sm:space-y-2">
-                  <Label htmlFor="request-lastName">Last Name</Label>
-                  <Field
-                    as={Input}
-                    id="request-lastName"
-                    name="lastName"
-                    placeholder="Last name"
-                    aria-invalid={!!(touched.lastName && errors.lastName)}
-                    aria-describedby={touched.lastName && errors.lastName ? "request-lastName-error" : undefined}
-                    className={touched.lastName && errors.lastName ? "border-destructive" : ""}
-                  />
-                  {touched.lastName && errors.lastName && (
-                    <p id="request-lastName-error" className="text-sm text-destructive">
-                      {errors.lastName}
-                    </p>
-                  )}
-                </div>
-
-              <div className="space-y-1 sm:space-y-2">
-                <Label htmlFor="request-email">Email</Label>
-                <Field
-                  as={Input}
-                  id="request-email"
-                  name="email"
-                  type="email"
-                  placeholder="name@example.com"
-                  aria-invalid={!!(touched.email && errors.email)}
-                  aria-describedby={touched.email && errors.email ? "request-email-error" : undefined}
-                  className={touched.email && errors.email ? "border-destructive" : ""}
-                />
-                {touched.email && errors.email && (
-                  <p id="request-email-error" className="text-sm text-destructive">
-                    {errors.email}
-                  </p>
-                )}
-              </div>
-
-              <div className="flex justify-end gap-3 pt-2 sm:pt-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => onOpenChange(false)}
-                  disabled={isSubmitting}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={!isValid || isSubmitting}>
-                  {isSubmitting ? "Submitting..." : "Submit Request"}
-                </Button>
-              </div>
-            </Form>
-          )}
-        </Formik>
-      </DialogContent>
-    </Dialog>
-  );
+  return <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent className="max-w-md p-4 sm:p-6">
+      <DialogHeader>
+        <DialogTitle>{sent ? "Check your email" : "Create account"}</DialogTitle>
+        <DialogDescription>{sent
+          ? "Follow the verification link, then sign in with your password. Check your spam folder too."
+          : "Verify your email to contribute to the catalog. Editor access is assigned separately."}</DialogDescription>
+      </DialogHeader>
+      {sent ? <>
+        <p role="status">If you already have an account, sign in or use Forgot password. To request another verification link, sign in again with your password.</p>
+        <Button onClick={() => onOpenChange(false)}>Back to sign in</Button>
+      </> : <form onSubmit={submit} className="space-y-3">
+        <Label htmlFor="signup-first">First name</Label>
+        <Input id="signup-first" name="first_name" autoComplete="given-name" maxLength={150} required />
+        <Label htmlFor="signup-last">Last name</Label>
+        <Input id="signup-last" name="last_name" autoComplete="family-name" maxLength={150} required />
+        <Label htmlFor="signup-email">Email</Label>
+        <Input id="signup-email" name="email" type="email" autoComplete="email" required />
+        <Label htmlFor="signup-password">Password</Label>
+        <Input id="signup-password" name="password" type="password" autoComplete="new-password" minLength={8} required aria-describedby="signup-password-help" />
+        <p id="signup-password-help" className="text-sm text-muted-foreground">Use at least eight characters, with an uppercase letter, a lowercase letter, a number, and a symbol.</p>
+        <Label htmlFor="signup-confirm">Confirm password</Label>
+        <Input id="signup-confirm" name="confirmation" type="password" autoComplete="new-password" required />
+        {error && <p role="alert">{error}</p>}
+        <Button type="submit" disabled={busy}>{busy ? "Creating account..." : "Create account"}</Button>
+      </form>}
+    </DialogContent>
+  </Dialog>;
 };

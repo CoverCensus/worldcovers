@@ -12,8 +12,8 @@ import { Eye, EyeOff } from "lucide-react";
 import { Formik, Form, Field, FormikHelpers } from "formik";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import { getStoredUser, setStoredUser } from "@/lib/auth";
-import apiClient, { ensureCsrfToken } from "@/lib/api";
+import { getStoredUser } from "@/lib/auth";
+import { signIn } from "@/services/account";
 import { getRedirectPath } from "@/lib/authRedirect";
 import { useSiteInfo } from "@/hooks/useSiteInfo";
 
@@ -26,9 +26,8 @@ const validateAuth = (values: AuthValues): Partial<Record<keyof AuthValues, stri
   const errors: Partial<Record<keyof AuthValues, string>> = {};
 
   if (!values.email?.trim()) {
-    errors.email = "Email is required";
-  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email.trim())) {
-    errors.email = "Please enter a valid email address";
+    errors.email = "Email or username is required";
+
   }
 
   if (!values.password) {
@@ -42,6 +41,7 @@ const Auth = () => {
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [verificationPending, setVerificationPending] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
@@ -63,24 +63,10 @@ const Auth = () => {
     { setSubmitting }: FormikHelpers<AuthValues>
   ) => {
     try {
-      try {
-        await ensureCsrfToken();
-      } catch {
-        // Best-effort only; login may still succeed (e.g. CSRF-exempt view or token already present).
-      }
-      const res = await apiClient.post<{
-        user?: { id: number; username: string; email: string; is_staff: boolean; role?: string };
-        message?: string;
-        detail?: string;
-      }>("/login/", {
-        email: values.email.trim(),
-        password: values.password,
-      });
-
-      const data = res.data;
-      const userData = data?.user;
-      if (userData) {
-        setStoredUser(userData);
+      const signedIn = await signIn(values.email.trim(), values.password);
+      if (!signedIn) {
+        setVerificationPending(true);
+        return;
       }
 
       toast({
@@ -110,10 +96,14 @@ const Auth = () => {
               WorldCovers Account
             </CardTitle>
             <CardDescription className="text-center">
-              Sign in below, or request access if you do not have an account yet
+              Sign in below, or create an account if you do not have one yet
             </CardDescription>
           </CardHeader>
           <CardContent className="p-4 sm:p-6 pt-0">
+            {verificationPending && <div role="status" className="mb-4 space-y-2">
+              <h2 className="font-semibold">Check your email</h2>
+              <p>Verify your email before signing in. Check your spam folder. To request another link, wait a minute and sign in again with your password.</p>
+            </div>}
             <Formik
               initialValues={{ email: "", password: "" }}
               validate={validateAuth}
@@ -123,12 +113,12 @@ const Auth = () => {
               {({ errors, touched, isSubmitting, isValid }) => (
                 <Form className="space-y-2 sm:space-y-4 pt-2 sm:pt-4">
                   <div className="space-y-1 sm:space-y-2">
-                    <Label htmlFor="signin-email">Email</Label>
+                    <Label htmlFor="signin-email">Email or username</Label>
                     <Field
                       as={Input}
                       id="signin-email"
                       name="email"
-                      type="email"
+                      type="text"
                       placeholder="name@example.com"
                       aria-invalid={!!(touched.email && errors.email)}
                       aria-describedby={touched.email && errors.email ? "signin-email-error" : undefined}
@@ -201,17 +191,17 @@ const Auth = () => {
               {onTestSite ? (
                 <>
                   <p className="text-sm text-muted-foreground" role="note">
-                    This is the test site. Accounts are requested and approved on{" "}
-                    {site.productionHost}, so please ask there.
+                    This is the test site. Create your account on{" "}
+                    {site.productionHost}, then verify your email.
                   </p>
                   <Button asChild variant="outline" className="w-full">
-                    <a href={`${site.productionUrl}/auth`}>Request a login on {site.productionHost}</a>
+                    <a href={`${site.productionUrl}/auth`}>Create an account on {site.productionHost}</a>
                   </Button>
                 </>
               ) : (
                 <>
                   <p className="text-sm text-muted-foreground">
-                    Editor accounts are created for you — request one and we will set it up.
+                    Create an account and verify your email to contribute.
                   </p>
                   <Button
                     type="button"
@@ -219,7 +209,7 @@ const Auth = () => {
                     className="w-full"
                     onClick={() => setRequestDialogOpen(true)}
                   >
-                    Request a login
+                    Create account
                   </Button>
                 </>
               )}

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import re
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, get_user_model
@@ -24,6 +23,10 @@ from rest_framework.views import APIView
 from common.api.v2.permissions import IsSuperuser
 
 from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
+
+
+from common.account_access import email_allows_login, has_legacy_access
+from common.passwords import validate_password_strength as _validate_password_strength
 
 
 logger = logging.getLogger(__name__)
@@ -101,20 +104,16 @@ def _account_state_response(account, password_setup_flow=False):
     reported as a password failure precisely because every endpoint described
     the problem differently.
 
-    ⛔ Do NOT gate these messages on a correct password ("only tell them if
+    NOTE: Do NOT gate these messages on a correct password ("only tell them if
     they'd otherwise have logged in"). It is the natural review suggestion and
-    it is a null fix here: LoginRequestView calls set_unusable_password(), so
+    it is a null fix here: legacy requests used set_unusable_password(), so
     check_password() returns False for every possible input and 100% of pending
     users would still get "Invalid credentials." That ships the bug unchanged
     while looking like a fix.
 
-    On disclosure: this reveals that an account exists and cannot sign in. The
-    codebase already concedes far more from unauthenticated endpoints -- see
-    LoginRequestSerializer.validate_email ("A user with this email already
-    exists.") and ForgotPasswordApiView's "No account found for that email
-    address." Both are complete membership oracles. This adds one bit about
-    accounts that cannot be logged into at all, so it shortens no password
-    search.
+    Legacy account-state messages disclose blocked accounts so applicants
+    with unusable passwords can get help. New signup uses allauth's
+    duplicate-account privacy handling.
     """
     if not account.is_active:
         # last_login, NOT has_usable_password(), is the discriminator. A user
@@ -123,7 +122,7 @@ def _account_state_response(account, password_setup_flow=False):
         # would hand that exact person the "deactivated" copy, which is a
         # second wrong answer to the same member. login() is the only writer of
         # last_login, and they have never reached it.
-        if account.last_login is None:
+        if account.last_login is None and has_legacy_access(account):
             return Response(
                 {
                     "detail": (
@@ -265,6 +264,12 @@ class LoginView(APIView):
                 {"detail": "Invalid credentials."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
+        if not email_allows_login(user):
+            return Response(
+                {"detail": "Verify your email before signing in. Use the sign-in form to resend the link.",
+                 "code": "email_verification_required"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         login(request, user)
         return Response({"user": _build_user_payload(user)})
 
@@ -328,44 +333,14 @@ class CurrentUserView(APIView):
 
 @method_decorator(csrf_exempt, name="dispatch")
 class LoginRequestView(APIView):
-    """
-    Public API for users to request login access.
-    Creates User directly (is_active=False). Admin sets username/password and activates in Users.
-    """
+    """Retired manual-request endpoint for older clients."""
     authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
-        from common.api.v2.serializers import LoginRequestSerializer
-        serializer = LoginRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        data = serializer.validated_data
-        User = get_user_model()
-        email = data["email"].strip().lower()
-        user = User(
-            username=email,
-            email=email,
-            first_name=data["first_name"].strip(),
-            last_name=data["last_name"].strip(),
-            is_active=False,
-        )
-        user.set_unusable_password()
-        user.save()
-        # Promises nothing the system can actually deliver. The previous copy
-        # ("An admin will provide your username and password") described a
-        # notification that does not exist, for a step nobody owns (issue #151),
-        # over mail that currently cannot send at all (issue #152) -- so users
-        # waited silently instead of asking.
         return Response(
-            {
-                "detail": (
-                    "Request received. Each request is reviewed by an editor by hand, so it "
-                    "is not instant. You will not get an automatic confirmation email - if "
-                    f"you have not heard back within a week, email {_support_email()}."
-                )
-            },
-            status=status.HTTP_201_CREATED,
+            {"detail": "Please refresh the page and use Create account to sign up."},
+            status=status.HTTP_410_GONE,
         )
 
 
@@ -519,7 +494,7 @@ class ForgotPasswordApiView(APIView):
                 html_message=html_message,
             )
         except Exception:
-            # ⛔ A mail-transport failure must not surface as a 500 (issue #162).
+            # NOTE: A mail-transport failure must not surface as a 500 (issue #162).
             #
             # On production this is not an edge case, it is EVERY reset: the
             # relay authenticates fine and then refuses the sender address
@@ -611,7 +586,7 @@ class ResetPasswordApiView(APIView):
         # non-SPA client, could set a weaker password than the product allows
         # anywhere else.
         #
-        # ⭐ Note this was a server-only hole. ResetPassword.tsx already enforces
+        # * Note this was a server-only hole. ResetPassword.tsx already enforces
         # all five rules client-side, so the SPA never sent a weak password and
         # nothing user-facing changes here -- which is exactly why it survived:
         # the form's own validation hid the missing server check.
@@ -619,10 +594,7 @@ class ResetPasswordApiView(APIView):
         if err:
             return Response({"detail": err}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ⛔ is_active is deliberately NOT set here. Activation is an editorial
-        # membership decision (issue #151), not proof of email ownership --
-        # auto-activating on reset would let anyone who can receive mail at the
-        # address bypass approval entirely.
+        # Password reset neither restores suspended access nor verifies email.
         user.set_password(password)
         user.save()
 
@@ -630,23 +602,6 @@ class ResetPasswordApiView(APIView):
             {"detail": "Your password has been reset. You can now sign in with your new password."},
             status=status.HTTP_200_OK,
         )
-
-
-def _validate_password_strength(password):
-    """Return error message if password is weak, else None."""
-    if len(password) < 8:
-        return "Password must be at least 8 characters long."
-    if not re.search(r"[A-Z]", password):
-        return "Password must include at least one uppercase letter."
-    if not re.search(r"[a-z]", password):
-        return "Password must include at least one lowercase letter."
-    if not re.search(r"[0-9]", password):
-        return "Password must include at least one number."
-    if not re.search(r'[!@#$%^&*(),.?":{}|<>_\-+=\\[\];\'/`~]', password):
-        return "Password must include at least one special character."
-    return None
-
-
 @method_decorator(csrf_exempt, name="dispatch")
 class ChangePasswordApiView(APIView):
     """

@@ -27,7 +27,7 @@ export default defineConfig(({ mode }) => ({
           if (/[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom)[\\/]/.test(id)) return "react";
           if (/[\\/]node_modules[\\/]@radix-ui[\\/]/.test(id)) return "radix";
           if (/[\\/]node_modules[\\/]recharts[\\/]/.test(id)) return "charts";
-          if (/[\\/]node_modules[\\/](react-hook-form|@hookform[\\/]resolvers|formik|zod)[\\/]/.test(id)) return "forms";
+          if (/[\\/]node_modules[\\/](react-hook-form|@hookform[\\/]resolvers|formik)[\\/]/.test(id)) return "forms";
         },
       },
     },

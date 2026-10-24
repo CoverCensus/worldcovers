@@ -97,21 +97,6 @@ def _validate_submitter_name_preference(serializer, value):
 ###################################################################################################
 ## Lookup / shared
 ###################################################################################################
-class LoginRequestSerializer(serializers.Serializer):
-    """Validates login access request (email, first_name, last_name). Creates User directly."""
-    email = serializers.EmailField()
-    first_name = serializers.CharField(max_length=150)
-    last_name = serializers.CharField(max_length=150)
-
-    def validate_email(self, value):
-        value = (value or "").strip().lower()
-        if User.objects.filter(email__iexact=value).exists():
-            raise serializers.ValidationError(
-                "A user with this email already exists."
-            )
-        return value
-
-
 class ColorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Color

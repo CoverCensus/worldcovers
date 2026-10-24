@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-// Trello T84 -- on the test site the "Request a login" path points at production;
+// Trello T84 -- on the test site the "Create account" path points at production;
 // on production it opens the request dialog as before.
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -37,10 +37,10 @@ describe("Auth page request path (T84)", () => {
     mockSite = { isProduction: false, productionUrl: "https://hellowoco.app", productionHost: "hellowoco.app" };
     renderAuth();
 
-    const link = screen.getByRole("link", { name: "Request a login on hellowoco.app" }) as HTMLAnchorElement;
+    const link = screen.getByRole("link", { name: "Create an account on hellowoco.app" }) as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe("https://hellowoco.app/auth");
     expect(screen.getByRole("note").textContent).toContain("This is the test site");
-    expect(screen.queryByRole("button", { name: "Request a login" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create account" })).toBeNull();
   });
 
   it("on production opens the request dialog", () => {
@@ -48,8 +48,8 @@ describe("Auth page request path (T84)", () => {
     renderAuth();
 
     expect(screen.queryByRole("note")).toBeNull();
-    expect(screen.queryByRole("link", { name: /Request a login on/ })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Request a login" }));
+    expect(screen.queryByRole("link", { name: /Create an account on/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
     screen.getByRole("dialog");
   });
 
@@ -58,6 +58,6 @@ describe("Auth page request path (T84)", () => {
     renderAuth();
 
     expect(screen.queryByRole("note")).toBeNull();
-    screen.getByRole("button", { name: "Request a login" });
+    screen.getByRole("button", { name: "Create account" });
   });
 });

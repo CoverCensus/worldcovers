@@ -36,17 +36,18 @@ def _mail_backend_configured():
 @receiver(pre_save, sender=User)
 def send_activation_email_when_user_activated(sender, instance, **kwargs):
     """
-    When a user is changed from inactive to active in Django admin (or created as active),
+    When a legacy user is changed from inactive to active in Django admin,
     send them an email so they know they can sign in.
     """
     # Superusers (e.g. createsuperuser) should not trigger consumer activation mail or SMTP.
     if getattr(instance, "is_superuser", False):
         return
 
-    # New user being created with Active checked and email set
+    # Signup sends allauth verification mail, not an activation notice.
     if not instance.pk:
-        if instance.is_active and (instance.email or "").strip():
-            _send_activation_email(instance.email.strip())
+        return
+    from common.account_access import has_legacy_access
+    if not has_legacy_access(instance):
         return
 
     # Existing user: only send when transitioning inactive -> active
@@ -70,7 +71,7 @@ def _send_activation_email(to_email):
     message_lines = [
         "Hello,",
         "",
-        "Good news — your WorldCovers account has just been activated.",
+        "Good news -- your WorldCovers account has just been activated.",
         "",
         f"You can now sign in here: {login_url}",
         "",
@@ -125,7 +126,7 @@ def _send_activation_email(to_email):
 ## Marking date-range cache maintenance (issue #59)
 ##
 ## Marking.earliest_seen / latest_seen (+granularities) are a derived cache
-## over DateSeen + CoverMarking. These receivers cover every ORM write path —
+## over DateSeen + CoverMarking. These receivers cover every ORM write path --
 ## API viewsets, admin (incl. inlines and bulk delete), contribution apply,
 ## import-export per-row saves, and cascades (a post_delete receiver disables
 ## fast-delete, so queryset.delete() fires per instance). Bulk paths that skip

@@ -13,6 +13,8 @@ from smtplib import SMTPSenderRefused
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
+from common.account_access import LEGACY_EMAIL_GROUP
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import mail
 from django.test import TestCase, override_settings
@@ -37,6 +39,7 @@ class AuthAccountStateTests(TestCase):
         user = User(username=email, email=email, is_active=False)
         user.set_unusable_password()
         user.save()
+        user.groups.add(Group.objects.get(name=LEGACY_EMAIL_GROUP))
         return user
 
     def _login(self, identifier, password):
@@ -67,6 +70,7 @@ class AuthAccountStateTests(TestCase):
         )
         user.is_active = False
         user.save(update_fields=["is_active"])
+        user.groups.add(Group.objects.get(name=LEGACY_EMAIL_GROUP))
 
         response = self._login("reset@example.com", "CorrectHorse1!")
 
@@ -116,6 +120,7 @@ class AuthAccountStateTests(TestCase):
         user = User.objects.create_user(
             username="editor", email="editor@example.com", password="CorrectHorse1!"
         )
+        user.groups.add(Group.objects.get(name=LEGACY_EMAIL_GROUP))
         response = self._login("editor", "CorrectHorse1!")
 
         self.assertEqual(response.status_code, 200, response.data)
@@ -130,6 +135,7 @@ class AuthAccountStateTests(TestCase):
         User.objects.create_user(
             username="editor2", email="editor2@example.com", password="CorrectHorse1!"
         )
+        User.objects.get(username="editor2").groups.add(Group.objects.get(name=LEGACY_EMAIL_GROUP))
         response = self._login("editor2@example.com", "CorrectHorse1!")
 
         self.assertEqual(response.status_code, 200, response.data)
@@ -174,7 +180,7 @@ class AuthAccountStateTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 503, response.data)
-        # ⛔ Never 200 here. Claiming "a reset link has been sent" when the send
+        # NOTE: Never 200 here. Claiming "a reset link has been sent" when the send
         # raised is the same lie as the silent activation mail in signals.py.
         self.assertNotIn("has been sent", response.data["detail"])
         self.assertIn("could not send", response.data["detail"].lower())

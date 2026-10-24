@@ -83,6 +83,7 @@ INSTALLED_APPS = [
     "django_extensions",
     "allauth",
     "allauth.account",
+    "allauth.headless",
     "import_export",
     "rest_framework",
     "django_filters",
@@ -164,17 +165,8 @@ SILENCED_SYSTEM_CHECKS = ["models.W036"]
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
-# ⚠ These validators are NOT what the API enforces. The SPA's password paths
-# (ResetPasswordApiView, ChangePasswordApiView) call _validate_password_strength
-# in common/api/auth.py -- 8 chars + upper + lower + digit + special -- and
-# nothing in this project calls django's validate_password(). This list only
-# reaches the Django admin's password forms and allauth.
-#
-# min_length was 4, which contradicted the policy the product advertises and
-# read as though 4 were acceptable somewhere (issue #157). Raised to 8 so the
-# floor here agrees with the app. It is deliberately only a floor, not the whole
-# rule -- see DECISIONS.md 2026-09-10 for why the validator list was NOT made
-# the single source of truth.
+# Allauth and the password APIs also apply common.passwords' shared rules.
+# Keep the Django minimum for admin password forms.
 AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
@@ -185,8 +177,16 @@ AUTH_PASSWORD_VALIDATORS = [
 # Authentication (provided by AllAuth)
 SITE_ID = 1
 ACCOUNT_LOGIN_METHODS = {"email", "username"}
-ACCOUNT_SIGNUP_FIELDS = ['email*', 'username*', 'password1*', 'password2*']
-ACCOUNT_EMAIL_VERIFICATION = "none" if DEBUG or TESTING else "mandatory"
+ACCOUNT_SIGNUP_FIELDS = ['email*', 'password1*', 'password2*']
+ACCOUNT_EMAIL_VERIFICATION = "mandatory"
+ACCOUNT_EMAIL_CONFIRMATION_EXPIRE_DAYS = 3
+ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = False
+ACCOUNT_CONFIRM_EMAIL_ON_GET = False
+ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = False
+ACCOUNT_SIGNUP_FORM_CLASS = "common.account_adapter.SignupForm"
+ACCOUNT_ADAPTER = "common.account_adapter.AccountAdapter"
+HEADLESS_CLIENTS = ("browser",)
+HEADLESS_ONLY = True
 AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",
     "allauth.account.auth_backends.AuthenticationBackend",
@@ -407,3 +407,10 @@ DEFAULT_FROM_EMAIL = config(
 LOGIN_REQUEST_ADMIN_EMAIL = config("LOGIN_REQUEST_ADMIN_EMAIL", default="")
 
 ###################################################################################################
+
+FRONTEND_BASE_URL = config("FRONTEND_BASE_URL", default=f"https://{DJANGO_APP_HOSTNAME}")
+HEADLESS_FRONTEND_URLS = {
+    "account_confirm_email": f"{FRONTEND_BASE_URL.rstrip('/')}/verify-email?key={{key}}",
+    "account_signup": f"{FRONTEND_BASE_URL.rstrip('/')}/auth",
+    "account_reset_password": f"{FRONTEND_BASE_URL.rstrip('/')}/auth",
+}

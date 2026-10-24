@@ -115,21 +115,12 @@ class PendingLoginRequestsTests(TestCase):
         self.assertEqual(row["admin_url"], f"/admin/auth/user/{self.pending.pk}/change/")
         self.assertIsNotNone(row["requested_at"])
 
-    def test_a_login_request_creates_a_pending_row(self):
-        """AC5: the public form still creates the inactive user this list shows."""
-        response = APIClient().post(
-            REQUEST_URL,
-            {"first_name": "Rob", "last_name": "Requester", "email": "Rob@Example.com"},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 201, response.data)
-        user = User.objects.get(email="rob@example.com")
-        self.assertFalse(user.is_active)
-        self.assertFalse(user.has_usable_password())
-        self.assertIsNone(user.last_login)
-        emails = [row["email"] for row in self._get(self.admin).data["results"]]
-        self.assertEqual(emails, ["rob@example.com", "newcomer@example.com"])
+    def test_old_login_requests_are_retired(self):
+        response = self.client.post(REQUEST_URL, {
+            "email": "rob@example.com", "first_name": "Rob", "last_name": "Collector",
+        }, format="json")
+        self.assertEqual(response.status_code, 410)
+        self.assertFalse(User.objects.filter(email="rob@example.com").exists())
 
     def test_a_flood_is_capped_but_counted(self):
         """The public form is unthrottled; the Administrator's page must stay small."""

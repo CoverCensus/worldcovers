@@ -11,6 +11,9 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 from django.contrib import admin
+from common.account_admin import VerifiedAdminAuthenticationForm
+
+admin.site.login_form = VerifiedAdminAuthenticationForm
 
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
@@ -40,6 +43,8 @@ urlpatterns = [
     path("admin", RedirectView.as_view(url="/admin/", permanent=True)),
     path("admin/", admin.site.urls),
     path("accounts", RedirectView.as_view(url="/accounts/", permanent=True)),
+    path("accounts/login/", RedirectView.as_view(url="/auth")),
+    path("accounts/signup/", RedirectView.as_view(url="/auth")),
     path("accounts/", include("allauth.urls")),
 
     path("api/v2/", include("common.api.v2.urls")),
@@ -50,7 +55,6 @@ urlpatterns = [
     path("api/login", csrf_exempt(LoginView.as_view()), name="api-login-no-slash"),
     path("api/logout", csrf_exempt(LogoutView.as_view()), name="api-logout-no-slash"),
 
-    path("api-auth/", include("rest_framework.urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
 
