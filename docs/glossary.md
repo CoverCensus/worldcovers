@@ -101,3 +101,5 @@ Codes describing how the date is arranged on the Marking.
 | `YD` | Year date only |
 | `YMD` | Year, month, date |
 | `YMDD` | Year, month and day date |
+
+**WorldCovers.** The free software the APMC runs on, published under the GNU General Public License, version 3. The name belongs to the software project and its addresses (worldcovers.org), not to the catalog's pages.

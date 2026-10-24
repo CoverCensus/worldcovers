@@ -20,7 +20,7 @@ Many more thanks to the participants in our closed beta: **Bob Zahm**, **Greg St
 
 ## Past Editors of the Catalog
 
-With gratitude to the editors who carried the catalog across nearly a century of printed editions: **Harry M. Konwiser**, **E. N. Sampson**, **David G. Phillips**, **Benjamin Wishnietsky**, **Hubert C. Skinner**, **Gordon L. Hudson**, **James S. Leonardo**, **Kenneth L. Gilman**, **Kristi Johnson**, **Robert Dalton Harris**, and -- for the accumulated revisions that form the backbone of the data behind WorldCovers -- **Van Koppersmith**.
+With gratitude to the editors who carried the catalog across nearly a century of printed editions: **Harry M. Konwiser**, **E. N. Sampson**, **David G. Phillips**, **Benjamin Wishnietsky**, **Hubert C. Skinner**, **Gordon L. Hudson**, **James S. Leonardo**, **Kenneth L. Gilman**, **Kristi Johnson**, **Robert Dalton Harris**, and -- for the accumulated revisions that form the backbone of the data behind the APMC -- **Van Koppersmith**.
 
 ## Donors
 

@@ -32,7 +32,9 @@ class BrandWordingTests(TestCase):
         # what is under test, not the transport.
         with mock.patch("common.signals._mail_backend_configured", return_value=True):
             _send_activation_email("new-editor@example.com")
+        self.assertEqual(len(mail.outbox), 1)
         message = mail.outbox[-1]
+        self.assertTrue(message.alternatives)
         html = message.alternatives[0][0]
         self.assert_branded(message.subject, message.body, html)
 
@@ -46,7 +48,9 @@ class BrandWordingTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(len(mail.outbox), 1)
         message = mail.outbox[-1]
+        self.assertTrue(message.alternatives)
         self.assert_branded(message.subject, message.body, message.alternatives[0][0])
 
     def test_allauth_account_emails_name_the_product(self):

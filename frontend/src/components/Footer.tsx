@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useSiteInfo } from "@/hooks/useSiteInfo";
 import { Badge } from "@/components/ui/badge";
-import { APP_NAME } from "@/constants/brand";
+import { APP_NAME, CONTACT_EMAIL } from "@/constants/brand";
 
 export const Footer = () => {
   const user = useAuth();
@@ -49,8 +49,8 @@ export const Footer = () => {
             <h3 className="font-heading text-lg font-semibold mb-3">Contact</h3>
             <p className="text-sm text-muted-foreground leading-relaxed">
               Questions or feedback?<br />
-              <a href="mailto:info@worldcovers.org" className="text-primary hover:underline">
-                info@worldcovers.org
+              <a href={`mailto:${CONTACT_EMAIL}`} className="text-primary hover:underline">
+                {CONTACT_EMAIL}
               </a>
             </p>
           </div>

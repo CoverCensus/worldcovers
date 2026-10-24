@@ -14,7 +14,7 @@ Who may use what in the APMC, how to credit it, and what to do when something is
 
 The APMC holds listings from published reference works and from its Contributors. The main sources so far are the *American Stampless Cover Catalog* (5th and 6th editions), the *Virginia Postal History Catalog* (1st edition) and *Florida Postal History 1763-1861* (2nd edition), as listed on the Reference Works page. Every record that came from a catalog shows that catalog as a Citation, with a page or section where one is known. A listing taken from a catalog is accepted as genuine on that catalog's authority.
 
-The American Postal Markings Catalog is a project of the U.S. Philatelic Classics Society, which entrusted the WorldCovers software project with delivering it. The printed catalogs remain the work of their editors and publishers, who are named on the **Acknowledgements** page. WorldCovers has not confirmed the terms for reusing a catalog's original text, layout or page images beyond this site; ask the publisher first.
+The American Postal Markings Catalog is a project of the U.S. Philatelic Classics Society, which entrusted the WorldCovers software project with delivering it. The printed catalogs remain the work of their editors and publishers, who are named on the **Acknowledgements** page. The APMC has not confirmed the terms for reusing a catalog's original text, layout or page images beyond this site; ask the publisher first.
 
 ## Images
 
@@ -49,13 +49,13 @@ In both examples, replace [record number] with the address shown in your browser
 
 **A catalog record (data).** Suppose you copy a Marking's details into an article and reformat its dates.
 
-> Marking ASCC6-VA-M0001, Richmond, Va. townmark. American Postal Markings Catalog (APMC), U.S. Philatelic Classics Society, https://hellowoco.app/record/[record number]. License: CC BY 4.0, https://creativecommons.org/licenses/by/4.0/, as stated by WorldCovers. Changes: dates rewritten as day-month-year; converted to a table.
+> Marking ASCC6-VA-M0001, Richmond, Va. townmark. American Postal Markings Catalog (APMC), U.S. Philatelic Classics Society, https://hellowoco.app/record/[record number]. License: CC BY 4.0, https://creativecommons.org/licenses/by/4.0/, as stated by the APMC. Changes: dates rewritten as day-month-year; converted to a table.
 
 If the record also cites a printed catalog, keep that Citation in your credit, for example "after the American Stampless Cover Catalog, 6th edition, page 123", so your readers can find the original listing.
 
 **An image.** Suppose you crop a cover scan from a record for a talk.
 
-> Cover from Petersburg, Va., 1851 (image). Submitted to the APMC by [the name shown on the record, or "an APMC contributor" when none is shown]. https://hellowoco.app/record/[record number]. License: not stated by WorldCovers; used with the rights holder's permission (ask first, see below). Changes: cropped from the original scan.
+> Cover from Petersburg, Va., 1851 (image). Submitted to the APMC by [the name shown on the record, or "an APMC contributor" when none is shown]. https://hellowoco.app/record/[record number]. License: not stated by the APMC; used with the rights holder's permission (ask first, see below). Changes: cropped from the original scan.
 
 When something is unknown, give what you have. A credit with no title, or with no name because the Contributor chose not to be named, is still a correct credit.
 

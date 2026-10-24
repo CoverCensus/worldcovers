@@ -25,6 +25,9 @@ describe("Navigation branding (T98)", () => {
     const seal = screen.getByRole("img", { name: ORG_NAME });
     expect(seal.getAttribute("src")).toBeTruthy();
     expect(screen.getByText(APP_NAME)).toBeTruthy();
+    const home = screen.getByRole("link", { name: `${APP_NAME} home` });
+    expect(home.getAttribute("href")).toBe("/");
+    expect(home.contains(seal)).toBe(true);
   });
 
   it("no longer renders the old WorldCovers name or the W tile", () => {

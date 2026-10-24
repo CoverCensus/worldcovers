@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from django.conf import settings
+from django.utils.html import escape
 from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.hashers import UNUSABLE_PASSWORD_PREFIX
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
@@ -463,6 +464,7 @@ class ForgotPasswordApiView(APIView):
         reset_link = f"{frontend_base.rstrip('/')}/reset-password?uid={uid}&token={token}"
 
         site_name = settings.SITE_NAME
+        site_name_html = escape(site_name)
         subject = f"Reset password for your {site_name} account"
         message_lines = [
             f"We received a request to reset your {site_name} account password",
@@ -475,7 +477,7 @@ class ForgotPasswordApiView(APIView):
         message = "\n".join(message_lines)
 
         html_message = f"""
-                <p>We received a request to reset your {site_name} account password.</p>
+                <p>We received a request to reset your {site_name_html} account password.</p>
                 <p>Please click the below link to create a new password.</p>
                 <p>
                 <a href="{reset_link}" style="display:inline-block;padding:10px 16px;margin-top:8px;background-color:#7b4b4b;color:#ffffff;text-decoration:none;border-radius:4px;">
