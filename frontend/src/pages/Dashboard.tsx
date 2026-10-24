@@ -848,6 +848,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   useEffect(() => {
     if (!user || !isEditor) {
       setEditorPendingCount(null);
+      setEditorPendingLoading(false);
       return;
     }
     let cancelled = false;
