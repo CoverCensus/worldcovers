@@ -42,6 +42,22 @@ describe("SubmissionCountsBar", () => {
     screen.getByLabelText("Loading");
   });
 
+  it("shows a dash, not a spinner, when the review count could not be loaded", () => {
+    renderBar({ isEditor: true, editorPending: null, editorLoading: false });
+    const review = screen.getByRole("link", { name: "To review: not available" });
+    expect(review.textContent).toContain("--");
+    expect(screen.queryByLabelText("Loading")).toBeNull();
+  });
+
+  it("leaves the current page alone when a tile is opened in a new tab", () => {
+    const onSelect = renderBar({ isEditor: true, editorPending: 12 });
+    const review = screen.getByRole("link", { name: "12 submissions to review" });
+    fireEvent.click(review, { metaKey: true });
+    fireEvent.click(review, { ctrlKey: true });
+    fireEvent.click(review, { button: 1 });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it("tells the page which view was chosen when a tile is clicked", () => {
     const onSelect = renderBar({ isEditor: true, editorPending: 12 });
     const review = screen.getByRole("link", { name: "12 submissions to review" });

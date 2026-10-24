@@ -840,7 +840,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   // T96: the Editor's review-queue total. One page_size=1 request; the server
   // scopes it to the Editor's Collections the same way the queue tab is. Refetched
-  // with My Submissions when the browser tab becomes visible again.
+  // with My Submissions when the browser tab becomes visible again or after a
+  // bulk review / archive / restore bumps submissionsRefetchKey; a single
+  // approval happens on the detail page and this page remounts on return.
   const [editorPendingCount, setEditorPendingCount] = useState<number | null>(null);
   const [editorPendingLoading, setEditorPendingLoading] = useState(false);
   useEffect(() => {
@@ -866,18 +868,50 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     };
   }, [user, isEditor, submissionsRefetchKey]);
 
+  // Shared by the Clear Filters buttons and the count tiles, so a reset always
+  // lands on the same view a first load gives.
+  const clearMySubmissionFilters = () => {
+    setSearchQuery("");
+    setStatusFilter("all");
+    setStateFilter("all");
+    setTownFilter("");
+    setShapeFilter("all");
+    setColorFilter("all");
+    setMySubmissionsSort([{ field: "submitted", dir: "desc" }]);
+    setDateFrom("");
+    setDateTo("");
+  };
+  const clearEditorFilters = () => {
+    setSubmissionQueueSort([{ field: "submitted", dir: "desc" }]);
+    setEditorSearchQuery("");
+    setEditorHistoryStatusFilter("all");
+    setEditorStateFilter("all");
+    setEditorTownFilter("");
+    setEditorShapeFilter("all");
+    setEditorColorFilter("all");
+    // Issue #136: a reset returns every source, not the ingest rows. Reset has
+    // to land on the same view a first load gives you, or "clear filters" is a lie.
+    setEditorSourceFilter(DEFAULT_SOURCE);
+    setEditorDateFrom("");
+    setEditorDateTo("");
+  };
+
   // The tiles are links, so the URL changes; this applies the same view in
-  // place, because the page reads its URL only once on mount (#87).
+  // place, because the page reads its URL only once on mount (#87). Every
+  // other filter is cleared first so the list matches the tile's count, which
+  // is a total, and matches what the tile's URL gives on a fresh load.
   const selectCountTarget = (target: SubmissionCountTarget) => {
     if (target === "editor_pending") {
-      setActiveTab("editor");
+      clearEditorFilters();
       setEditorHistoryStatusFilter("pending");
       setEditorHistoryPage(1);
+      setActiveTab("editor");
       return;
     }
-    setActiveTab("submissions");
+    clearMySubmissionFilters();
     setStatusFilter(target);
     setCurrentPage(1);
+    setActiveTab("submissions");
   };
 
   // Load editor history for assigned states.
@@ -1685,17 +1719,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   <Button
                     variant="outline"
                     className="w-full"
-                    onClick={() => {
-                      setSearchQuery("");
-                      setStatusFilter("all");
-                      setStateFilter("all");
-                      setTownFilter("");
-                      setShapeFilter("all");
-                      setColorFilter("all");
-                      setMySubmissionsSort([{ field: "submitted", dir: "desc" }]);
-                      setDateFrom("");
-                      setDateTo("");
-                    }}
+                    onClick={clearMySubmissionFilters}
                     disabled={filtersDisabled}
                   >
                     Clear Filters
@@ -2243,21 +2267,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     <Button
                       variant="outline"
                       className="w-full"
-                      onClick={() => {
-                        setSubmissionQueueSort([{ field: "submitted", dir: "desc" }]);
-                        setEditorSearchQuery("");
-                        setEditorHistoryStatusFilter("all");
-                        setEditorStateFilter("all");
-                        setEditorTownFilter("");
-                        setEditorShapeFilter("all");
-                        setEditorColorFilter("all");
-                        // Issue #136: a reset returns every source, not the
-                        // ingest rows. Reset has to land on the same view a
-                        // first load gives you, or "clear filters" is a lie.
-                        setEditorSourceFilter(DEFAULT_SOURCE);
-                        setEditorDateFrom("");
-                        setEditorDateTo("");
-                      }}
+                      onClick={clearEditorFilters}
                       disabled={editorHistoryLoading}
                     >
                       Clear Filters

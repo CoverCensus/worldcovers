@@ -84,7 +84,7 @@ export function SubmissionCountsBar({
       status: "pending",
       count: counts.pending,
       loading: false,
-      describe: (n) => `${plural(n, "pending submission", "pending submissions")}`,
+      describe: (n) => plural(n, "pending submission", "pending submissions"),
     },
   ];
   if (isEditor) {
@@ -100,19 +100,40 @@ export function SubmissionCountsBar({
   }
 
   return (
-    <Card className="shadow-archival-md mb-6" aria-label="Submission counts">
+    <Card className="shadow-archival-md mb-6" role="region" aria-label="Submission counts">
       <CardContent className="pt-6">
-        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4 list-none p-0 m-0">
+        <ul role="list" className="grid grid-cols-2 gap-3 sm:grid-cols-4 list-none p-0 m-0">
           {tiles.map((tile) => {
-            const shown = tile.loading ? null : tile.count;
-            const ariaLabel =
-              shown === null ? `${tile.label}: loading` : tile.describe(shown);
+            // Three states: loading (spinner), unavailable (the request failed,
+            // show a dash rather than a spinner that never stops), or a number.
+            const unavailable = !tile.loading && tile.count === null;
+            const shown = tile.loading || unavailable ? null : tile.count;
+            const ariaLabel = tile.loading
+              ? `${tile.label}: loading`
+              : unavailable
+                ? `${tile.label}: not available`
+                : tile.describe(shown as number);
             return (
               <li key={tile.target}>
                 <Link
                   to={tile.href}
                   aria-label={ariaLabel}
-                  onClick={() => onSelect(tile.target)}
+                  onClick={(e) => {
+                    // A modifier or middle click opens a new tab; the router
+                    // skips navigation for those, so the current page must not
+                    // change its view either.
+                    if (
+                      e.defaultPrevented ||
+                      e.button !== 0 ||
+                      e.metaKey ||
+                      e.ctrlKey ||
+                      e.shiftKey ||
+                      e.altKey
+                    ) {
+                      return;
+                    }
+                    onSelect(tile.target);
+                  }}
                   className={cn(
                     "flex flex-col items-center justify-center rounded-lg border px-3 py-3 text-center",
                     "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
@@ -120,7 +141,13 @@ export function SubmissionCountsBar({
                   )}
                 >
                   <span className="text-3xl font-bold leading-none" aria-hidden="true">
-                    {shown === null ? <Spinner className="h-7 w-7 text-current" /> : shown}
+                    {tile.loading ? (
+                      <Spinner className="h-7 w-7 text-current" />
+                    ) : unavailable ? (
+                      "--"
+                    ) : (
+                      shown
+                    )}
                   </span>
                   <span className="mt-1 text-xs font-semibold uppercase tracking-wide" aria-hidden="true">
                     {tile.label}
