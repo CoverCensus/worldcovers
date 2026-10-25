@@ -12,6 +12,7 @@ let mockSite: { isProduction: boolean } | null = null;
 jest.mock("@/hooks/useSiteInfo", () => ({ useSiteInfo: () => mockSite }));
 
 import { Footer } from "./Footer";
+import { DONATE_URL } from "@/constants/brand";
 
 describe("Footer", () => {
   beforeAll(() => {
@@ -48,5 +49,18 @@ describe("Footer", () => {
       </MemoryRouter>,
     );
     expect(screen.queryByText("Test site")).toBeNull();
+  });
+
+  it("links to About and to the Society's PayPal donate page (T99)", () => {
+    render(
+      <MemoryRouter>
+        <Footer />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("link", { name: "About" }).getAttribute("href")).toBe("/about");
+    const donate = screen.getByRole("link", { name: "Donate" });
+    expect(donate.getAttribute("href")).toBe(DONATE_URL);
+    expect(donate.getAttribute("target")).toBe("_blank");
+    expect(donate.getAttribute("rel")).toContain("noopener");
   });
 });

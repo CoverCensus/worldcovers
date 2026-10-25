@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useSiteInfo } from "@/hooks/useSiteInfo";
 import { Badge } from "@/components/ui/badge";
-import { APP_NAME, CONTACT_EMAIL } from "@/constants/brand";
+import { APP_NAME, CONTACT_EMAIL, DONATE_URL } from "@/constants/brand";
 
 export const Footer = () => {
   const user = useAuth();
@@ -32,9 +32,24 @@ export const Footer = () => {
                 </Link>
               </li>
               <li>
+                <Link to="/about" className="hover:text-foreground transition-colors">
+                  About
+                </Link>
+              </li>
+              <li>
                 <Link to="/acknowledgements" className="hover:text-foreground transition-colors">
                   Acknowledgements
                 </Link>
+              </li>
+              <li>
+                <a
+                  href={DONATE_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-foreground transition-colors"
+                >
+                  Donate
+                </a>
               </li>
               {user && (
                 <li>
