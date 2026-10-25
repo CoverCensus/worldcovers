@@ -28,7 +28,9 @@ describe("About page (T99)", () => {
     const societyLinks = screen.getAllByRole("link", { name: ORG_NAME });
     expect(societyLinks.length).toBeGreaterThan(0);
     societyLinks.forEach((link) => expect(link.getAttribute("href")).toBe(ORG_URL));
-    expect(screen.getByRole("link", { name: "Donate via PayPal" }).getAttribute("href")).toBe(DONATE_URL);
+    expect(
+      screen.getByRole("link", { name: "Donate via PayPal" }).getAttribute("href"),
+    ).toBe(DONATE_URL);
     expect(screen.getByRole("link", { name: "getting started guide" }).getAttribute("href")).toBe(
       "/help/getting-started",
     );

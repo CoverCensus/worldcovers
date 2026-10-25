@@ -34,6 +34,8 @@ describe("Navigation branding (T98)", () => {
     const home = screen.getByRole("link", { name: `${APP_NAME} home` });
     expect(home.getAttribute("href")).toBe("/");
     expect(home.textContent).toBe(APP_NAME);
+    // The name must stay visible on phones: it is the only header tap that goes home.
+    expect(home.className).not.toContain("hidden");
   });
 
   it("no longer renders the old WorldCovers name or the W tile", () => {

@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useSiteInfo } from "@/hooks/useSiteInfo";
 import { Badge } from "@/components/ui/badge";
+import { ExternalLink } from "@/components/ExternalLink";
 import { APP_NAME, CONTACT_EMAIL, DONATE_URL } from "@/constants/brand";
 
 export const Footer = () => {
@@ -42,14 +43,9 @@ export const Footer = () => {
                 </Link>
               </li>
               <li>
-                <a
-                  href={DONATE_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-foreground transition-colors"
-                >
+                <ExternalLink href={DONATE_URL} className="hover:text-foreground transition-colors">
                   Donate
-                </a>
+                </ExternalLink>
               </li>
               {user && (
                 <li>

@@ -1,4 +1,5 @@
 import { NavLink } from "@/components/NavLink";
+import { ExternalLink } from "@/components/ExternalLink";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -82,18 +83,16 @@ export const Navigation = () => {
         <div className="flex justify-between items-center h-16">
           {/* Logo: the Society seal opens uspcs.org (T99); the name still goes home. */}
           <div className="flex items-center space-x-2">
-            <a
+            <ExternalLink
               href={ORG_URL}
-              target="_blank"
-              rel="noopener noreferrer"
               aria-label={`${ORG_NAME} website`}
               className="flex items-center"
             >
               <img src={sealImage} alt={ORG_NAME} width={32} height={32} className="w-8 h-8 rounded-sm" />
-            </a>
+            </ExternalLink>
             <NavLink
               to="/"
-              className="font-heading text-xl font-semibold text-foreground hidden sm:inline"
+              className="font-heading text-xl font-semibold text-foreground"
               aria-label={`${APP_NAME} home`}
             >
               {APP_NAME}
@@ -200,16 +199,16 @@ export const Navigation = () => {
               </DropdownMenu>
             )}
             {/* T99: Donate stays at the far right on every page; PayPal on the Society's account. */}
-            <Button asChild size="sm" className="ml-2 bg-primary text-primary-foreground hover:bg-primary/90">
-              <a href={DONATE_URL} target="_blank" rel="noopener noreferrer">
-                Donate
-              </a>
+            <Button asChild size="sm" className="ml-2">
+              <ExternalLink href={DONATE_URL}>Donate</ExternalLink>
             </Button>
           </div>
 
           {/* Mobile menu button */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+            aria-expanded={mobileMenuOpen}
             className="md:hidden p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted"
           >
             {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
@@ -334,15 +333,10 @@ export const Navigation = () => {
               </>
             )}
             <div className="pt-2">
-              <Button asChild className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
-                <a
-                  href={DONATE_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => setMobileMenuOpen(false)}
-                >
+              <Button asChild className="w-full">
+                <ExternalLink href={DONATE_URL} onClick={() => setMobileMenuOpen(false)}>
                   Donate
-                </a>
+                </ExternalLink>
               </Button>
             </div>
           </div>

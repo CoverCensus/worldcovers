@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { SupportApmc } from "@/components/SupportApmc";
+import { ExternalLink } from "@/components/ExternalLink";
 import { APP_LONG_NAME, APP_NAME, ORG_NAME, ORG_URL } from "@/constants/brand";
 
 // Trello T99: a short page that says what the catalog is, who stands behind it,
@@ -51,14 +52,9 @@ const About = () => (
                 <h2 className="font-heading text-xl font-semibold mb-2">Who stands behind it</h2>
                 <p className="text-muted-foreground text-sm leading-relaxed">
                   The catalog is sponsored by the{" "}
-                  <a
-                    href={ORG_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline"
-                  >
+                  <ExternalLink href={ORG_URL} className="text-primary hover:underline">
                     {ORG_NAME}
-                  </a>
+                  </ExternalLink>
                   , a nonprofit of collectors and students of classic United States postal history.
                   Volunteer state editors review every submission, and the software is built and
                   kept up by volunteers.
