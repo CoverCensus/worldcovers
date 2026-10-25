@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { SupportApmc } from "@/components/SupportApmc";
 import { Search, BookOpen, Users, Database } from "lucide-react";
 import {
   Accordion,
@@ -296,6 +297,8 @@ const Index = () => {
           </div>
         </div>
       </section>
+
+      <SupportApmc />
 
       {!user && (
         <section className="py-16 bg-gradient-to-br from-primary/5 to-accent/5">

@@ -1092,3 +1092,30 @@ must be able to find and finish it. Evidence:
 `frontend/src/services/markings.coverDrafts.test.ts`,
 `frontend/src/components/WrongImageKindWarning.test.tsx`,
 `backend/common/tests/test_cover_draft_visibility.py`.
+
+## Name The Product From One Place
+
+**Do:** Take the product name from `frontend/src/constants/brand.ts`
+(`APP_NAME`, `APP_LONG_NAME`, `ORG_NAME`, `CONTACT_EMAIL`) on the frontend
+and from `settings.SITE_NAME` on the backend, including every email subject
+and body, the API schema title, the admin header and the allauth templates
+(the account adapter injects `site_name` into their context). Keep the seal
+as a PNG on a white background, regenerated into every icon from the one
+source file, with the icon file names unchanged. Pass the site name through
+`escape()` wherever an email body is built by hand.
+
+**Don't:** Type "APMC", "WorldCovers" or the Society's name into a page,
+template, subject line or document by hand. Do not rename the localStorage
+keys (`worldcovers_user`, `worldcovers.*`): that signs every user out. Do
+not change the `worldcovers.org` mail addresses; they are real.
+
+**Why:** The U.S. Philatelic Classics Society decided on 2026-10-23 that
+the catalog presents as APMC with the Society seal on every screen. The
+first rename found the old name typed in nine frontend places, three email
+sets and four Help docs, with no single source; one constant per side makes
+the next change a one-line edit. Internal identifiers are not branding.
+
+**Evidence:** [brand constants](frontend/src/constants/brand.ts),
+[account adapter](backend/common/account_adapter.py),
+[brand wording tests](backend/common/tests/test_brand_wording.py),
+[header test](frontend/src/components/Navigation.brand.test.tsx).

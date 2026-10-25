@@ -14,6 +14,7 @@ import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
 import VerifyEmail from "./pages/VerifyEmail";
 import Help from "./pages/Help";
+import About from "./pages/About";
 import Collections from "./pages/Collections";
 import EditorRoster from "./pages/EditorRoster";
 import { RequireEditor } from "@/components/RequireEditor";
@@ -119,6 +120,7 @@ const App = () => (
                 </RequireEditor>
               }
             />
+            <Route path="/about" element={<About />} />
             <Route path="/help" element={<Help />} />
             <Route path="/help/:docSlug" element={<Help />} />
             <Route path="/acknowledgements" element={<Help singleDocSlug="acknowledgements" />} />
