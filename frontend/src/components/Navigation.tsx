@@ -16,7 +16,7 @@ import { clearStoredUser } from "@/lib/auth";
 import { capitalizeFirst } from "@/lib/utils";
 import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 import sealImage from "@/assets/uspcs-seal.png";
-import { APP_NAME, ORG_NAME } from "@/constants/brand";
+import { APP_NAME, DONATE_URL, ORG_NAME, ORG_URL } from "@/constants/brand";
 
 export const Navigation = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -80,13 +80,25 @@ export const Navigation = () => {
     <nav className="bg-card border-b border-border sticky top-0 z-50 shadow-archival-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
-          {/* Logo */}
-          <NavLink to="/" className="flex items-center space-x-2" aria-label={`${APP_NAME} home`}>
-            <img src={sealImage} alt={ORG_NAME} width={32} height={32} className="w-8 h-8 rounded-sm" />
-            <span className="font-heading text-xl font-semibold text-foreground hidden sm:inline">
+          {/* Logo: the Society seal opens uspcs.org (T99); the name still goes home. */}
+          <div className="flex items-center space-x-2">
+            <a
+              href={ORG_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`${ORG_NAME} website`}
+              className="flex items-center"
+            >
+              <img src={sealImage} alt={ORG_NAME} width={32} height={32} className="w-8 h-8 rounded-sm" />
+            </a>
+            <NavLink
+              to="/"
+              className="font-heading text-xl font-semibold text-foreground hidden sm:inline"
+              aria-label={`${APP_NAME} home`}
+            >
               {APP_NAME}
-            </span>
-          </NavLink>
+            </NavLink>
+          </div>
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center space-x-1">
@@ -104,6 +116,13 @@ export const Navigation = () => {
               activeClassName="text-primary font-semibold"
             >
               Catalog
+            </NavLink>
+            <NavLink
+              to="/about"
+              className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              activeClassName="text-primary font-semibold"
+            >
+              About
             </NavLink>
             <NavLink
               to="/help"
@@ -180,6 +199,12 @@ export const Navigation = () => {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
+            {/* T99: Donate stays at the far right on every page; PayPal on the Society's account. */}
+            <Button asChild size="sm" className="ml-2 bg-primary text-primary-foreground hover:bg-primary/90">
+              <a href={DONATE_URL} target="_blank" rel="noopener noreferrer">
+                Donate
+              </a>
+            </Button>
           </div>
 
           {/* Mobile menu button */}
@@ -212,6 +237,14 @@ export const Navigation = () => {
               onClick={() => setMobileMenuOpen(false)}
             >
               Catalog
+            </NavLink>
+            <NavLink
+              to="/about"
+              className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
+              activeClassName="text-primary bg-secondary font-semibold"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              About
             </NavLink>
             <NavLink
               to="/help"
@@ -300,6 +333,18 @@ export const Navigation = () => {
                 </button>
               </>
             )}
+            <div className="pt-2">
+              <Button asChild className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
+                <a
+                  href={DONATE_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  Donate
+                </a>
+              </Button>
+            </div>
           </div>
         </div>
       )}
