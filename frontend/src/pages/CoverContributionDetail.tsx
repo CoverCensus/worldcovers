@@ -52,6 +52,7 @@ import {
 import { returnToLabel } from "@/lib/returnTo";
 import {
   type Contribution,
+  canReviewContribution,
   decideContribution,
   deleteOwnContribution,
   getContribution,
@@ -142,6 +143,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   const returnTo = readReturnTo(new URLSearchParams(location.search));
   const isStateEditor =
     user?.role === "editor" || user?.role === "administrator" || user?.is_superuser === true;
+  const canReview = canReviewContribution(user, contribution);
 
   useEffect(() => {
     if (initialContribution) {
@@ -313,7 +315,6 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   };
 
   const contributionId = contribution?.id;
-  const contributionStatus = contribution?.status;
 
   // Preview only -- see the note in ContributionDetail.tsx. Firing the
   // contribution-scoped endpoint from an effect PERSISTS the minted code into
@@ -321,7 +322,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   // The cover queue was not implicated in the 27 VPHC rows, but it is the same
   // defect. The direct endpoint computes the same code and saves nothing.
   useEffect(() => {
-    if (contributionId == null || contributionStatus !== "pending" || !isStateEditor || !user) return;
+    if (contributionId == null || !canReview) return;
     if (parentMarkingId == null) return;
     let cancelled = false;
     setCatalogCodeLoading(true);
@@ -341,7 +342,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     return () => {
       cancelled = true;
     };
-  }, [contributionId, contributionStatus, isStateEditor, user, parentMarkingId]);
+  }, [contributionId, canReview, parentMarkingId]);
 
   const ensureCatalogCode = async (): Promise<string> => {
     if (!contribution) return "";
@@ -363,7 +364,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   };
 
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
-    if (!contribution) return;
+    if (!contribution || !canReview) return;
     if (kind !== "approve" && !comment.trim()) {
       setCommentError("A comment is required to reject or request revision.");
       return;
@@ -458,8 +459,6 @@ export default function CoverContributionDetail({ initialContribution = null }: 
             ? "rounded-full border border-amber-900 bg-amber-800 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-amber-800"
             : "rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500";
 
-  const isPending = normalizedStatus === "pending";
-  const canReview = isStateEditor && isPending && !!user;
   const canContributorEdit =
     isContributor &&
     (normalizedStatus === "pending" ||

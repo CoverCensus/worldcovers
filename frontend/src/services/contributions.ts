@@ -14,6 +14,7 @@
  * every unsafe verb so a freshly-landed user does not 403 on the first write.
  */
 import apiClient, { ensureCsrfToken } from "@/lib/api";
+import type { AuthUser } from "@/lib/auth";
 import { countyIntentFromApi, type CountyIntent } from "@/lib/contributionDisplay";
 import {
   sourceMarkingImageFromContribution,
@@ -28,6 +29,7 @@ const CONTRIBUTION_UPLOAD_TIMEOUT_MS = 300000;
  */
 export interface ContributionApiItem {
   id: number;
+  collection?: number | null;
   status?: string;
   contributor?: number | null;
   contributorId?: number | null;
@@ -77,6 +79,7 @@ export interface ContributionListResponse {
  */
 export interface Contribution {
   id: number;
+  collectionId: number | null;
   contributorId: number | null;
   status: string;
   contributorUsername: string;
@@ -139,6 +142,7 @@ export function mapApiItemToContribution(item: ContributionApiItem): Contributio
       : {};
   return {
     id: item.id,
+    collectionId: toNumberOrNull(item.collection),
     contributorId: toNumberOrNull(firstDefined(item.contributor, item.contributorId)),
     status: item.status ?? "pending",
     contributorUsername: String(
@@ -156,6 +160,15 @@ export function mapApiItemToContribution(item: ContributionApiItem): Contributio
     editBaseline: plainObjectOrNull(firstDefined(item.edit_baseline, item.editBaseline)),
     countyIntent: countyIntentFromApi(item.county_intent),
   };
+}
+
+export function canReviewContribution(user: AuthUser | null, contribution: Contribution | null): boolean {
+  if (!user || !contribution || contribution.status !== "pending") return false;
+  if (user.is_superuser || user.role === "administrator") return true;
+  return (
+    user.role === "editor" && contribution.collectionId != null &&
+    (user.assigned_collections ?? []).some((collection) => collection.id === contribution.collectionId)
+  );
 }
 
 /** Query filters for GET /contributions/. camelCase here maps to snake_case params. */

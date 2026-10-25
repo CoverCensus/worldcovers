@@ -57,6 +57,7 @@ import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenc
 import type { MarkingFieldInput } from "@/lib/markingFields";
 import {
   type Contribution,
+  canReviewContribution,
   getContribution,
   decideContribution,
   deleteOwnContribution,
@@ -152,9 +153,8 @@ const ContributionDetail = () => {
   const returnHref = (fallbackTab: "submissions" | "editor") =>
     returnTo ?? dashboardHrefForTab(dashboardTab ?? fallbackTab);
   const backLabel = returnToLabel(returnTo);
-  const isStateEditor =
-    user?.role === "editor" || user?.role === "administrator" || user?.is_superuser;
-  /** True if the logged-in user is the person who submitted this contribution (edit/review UI is for other editors only). */
+  const canReview = canReviewContribution(user, contribution);
+  /** True when this user submitted the Submission. */
   const isContributor =
     !!user &&
     !!contribution &&
@@ -229,7 +229,6 @@ const ContributionDetail = () => {
   }, []);
 
   const contributionId = contribution?.id;
-  const contributionStatus = contribution?.status;
   const contributionSubmittedData = contribution?.submittedData;
 
   // Preview the code WITHOUT writing it. `getContributionCatalogCodeSuggestion`
@@ -245,7 +244,7 @@ const ContributionDetail = () => {
   // but takes no contribution and saves nothing. Minting stays where it belongs:
   // ensureCatalogCode() below, at approve time, deliberately.
   useEffect(() => {
-    if (contributionId == null || contributionStatus !== "pending" || !isStateEditor || !user) return;
+    if (contributionId == null || !canReview) return;
     if (isCoverContributionData(contributionSubmittedData)) return;
     const sd = (contributionSubmittedData ?? {}) as Record<string, unknown>;
     const referenceWorkIds = Array.isArray(sd.reference_work_ids)
@@ -275,7 +274,7 @@ const ContributionDetail = () => {
     return () => {
       cancelled = true;
     };
-  }, [contributionId, contributionStatus, contributionSubmittedData, isStateEditor, user]);
+  }, [contributionId, contributionSubmittedData, canReview]);
 
   const ensureCatalogCode = async (): Promise<string> => {
     if (!contribution) return "";
@@ -297,7 +296,7 @@ const ContributionDetail = () => {
   };
 
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
-    if (!contribution) return;
+    if (!contribution || !canReview) return;
     if (kind !== "approve" && !comment.trim()) {
       setCommentError("A comment is required to reject or request revision.");
       return;
@@ -502,7 +501,6 @@ const ContributionDetail = () => {
   }
   const images = imageMetaList;
 
-  const isPending = contribution.status === "pending";
   const normalizedStatus = String(contribution.status || "").toLowerCase();
   const statusLabel =
     normalizedStatus === "approved"
@@ -520,7 +518,6 @@ const ContributionDetail = () => {
         : normalizedStatus === "needs_revision"
           ? "rounded-full border border-orange-600 bg-orange-500 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-orange-500"
           : "rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500";
-  const canReview = isStateEditor && isPending && !!user;
 
   // Build the catalog-search-style field block from submitted_data. The review
   // header/details intentionally mirror Catalog Search cards so the same entry
