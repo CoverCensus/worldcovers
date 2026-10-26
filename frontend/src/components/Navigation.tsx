@@ -73,7 +73,7 @@ export const Navigation = () => {
   return (
     <nav className="bg-card border-b border-border sticky top-0 z-50 shadow-archival-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
+        <div className="flex justify-between items-center h-20">
           {/* Logo: the Society seal opens uspcs.org (T99); the name still goes home. */}
           <div className="flex items-center space-x-2">
             <ExternalLink
@@ -81,7 +81,7 @@ export const Navigation = () => {
               aria-label={`${ORG_NAME} website`}
               className="flex items-center"
             >
-              <img src={sealImage} alt={ORG_NAME} width={48} height={48} className="w-12 h-12 rounded-sm" />
+              <img src={sealImage} alt={ORG_NAME} width={64} height={64} className="w-16 h-16 rounded-sm" />
             </ExternalLink>
             <NavLink
               to="/"
