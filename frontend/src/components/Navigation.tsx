@@ -82,7 +82,7 @@ export const Navigation = () => {
             <ExternalLink
               href={ORG_URL}
               aria-label={`${ORG_NAME} website`}
-              className={isHome ? "flex items-start self-start pt-1" : "flex items-center"}
+              className={isHome ? "flex items-start self-start pt-3" : "flex items-center"}
             >
               <img
                 src={sealImage}
