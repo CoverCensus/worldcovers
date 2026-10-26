@@ -81,7 +81,7 @@ export const Navigation = () => {
               aria-label={`${ORG_NAME} website`}
               className="flex items-center"
             >
-              <img src={sealImage} alt={ORG_NAME} width={32} height={32} className="w-8 h-8 rounded-sm" />
+              <img src={sealImage} alt={ORG_NAME} width={48} height={48} className="w-12 h-12 rounded-sm" />
             </ExternalLink>
             <NavLink
               to="/"
