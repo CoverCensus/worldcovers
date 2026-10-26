@@ -1,7 +1,5 @@
 /**
- * Submission status colours, shared by the Dashboard lists and the counts bar
- * (Trello T96). Lifted unchanged from Dashboard.tsx so the two render the same
- * status the same way; the pill class strings are the single source of truth.
+ * Submission status colors shared by the Dashboard lists and counts bar (T96).
  */
 import { Badge } from "@/components/ui/badge";
 
@@ -10,11 +8,11 @@ export type SubmissionStatusKey = "draft" | "approved" | "rejected" | "needs_rev
 const PILL_BASE = "rounded-full border px-3 py-1 text-xs font-semibold shadow-sm";
 
 const STATUS_CLASS: Record<SubmissionStatusKey, string> = {
-  draft: "border-amber-900 bg-amber-800 text-white hover:bg-amber-800",
+  draft: "border-slate-300 bg-slate-100 text-slate-800 hover:bg-slate-200 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
   approved: "border-green-700 bg-green-600 text-white hover:bg-green-600",
   rejected: "border-red-700 bg-red-600 text-white hover:bg-red-600",
-  needs_revision: "border-orange-600 bg-orange-500 text-white hover:bg-orange-500",
-  pending: "border-yellow-600 bg-yellow-500 text-black hover:bg-yellow-500",
+  needs_revision: "border-amber-300 bg-amber-100 text-amber-900 hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100 dark:hover:bg-amber-900",
+  pending: "border-blue-300 bg-blue-100 text-blue-900 hover:bg-blue-200 dark:border-blue-700 dark:bg-blue-950 dark:text-blue-100 dark:hover:bg-blue-900",
 };
 
 const STATUS_LABEL: Record<SubmissionStatusKey, string> = {
@@ -25,7 +23,7 @@ const STATUS_LABEL: Record<SubmissionStatusKey, string> = {
   pending: "Pending",
 };
 
-/** Normalise a raw API/UI status to the key the colour table knows. Unknown values read as pending. */
+/** Normalize an API/UI status to a color key. Unknown values read as pending. */
 export function submissionStatusKey(status: string): SubmissionStatusKey {
   switch (String(status || "").toLowerCase()) {
     case "draft":
@@ -42,7 +40,7 @@ export function submissionStatusKey(status: string): SubmissionStatusKey {
   }
 }
 
-/** The colour classes (no shape) for a status, for callers that are not a pill. */
+/** Color classes for a status without the badge shape. */
 export function statusColorClass(status: string): string {
   return STATUS_CLASS[submissionStatusKey(status)];
 }

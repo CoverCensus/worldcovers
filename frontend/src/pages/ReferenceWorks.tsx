@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigation } from "@/components/Navigation";
+import { EditorNavigation } from "@/components/EditorNavigation";
 import { Footer } from "@/components/Footer";
 import { FieldHelp } from "@/components/FieldHelp";
 import { Button } from "@/components/ui/button";
@@ -243,6 +244,10 @@ const ReferenceWorks = () => {
             <Button onClick={formOpen ? closeForm : openNew}>
               {formOpen ? "Cancel" : "New Reference Work"}
             </Button>
+          </div>
+
+          <div className="mb-6">
+            <EditorNavigation active="reference-works" />
           </div>
 
           {formOpen && (

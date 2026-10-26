@@ -80,6 +80,12 @@ describe("ReferenceWorks page", () => {
   it("lists every work with the compact author line and no delete control", async () => {
     renderPage();
     expect(await screen.findByText("ASCC6 - American Stampless Cover Catalog (6th Ed.)")).toBeTruthy();
+    const navigation = within(screen.getByRole("navigation", { name: "Editor navigation" }));
+    expect(navigation.getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "My Submissions", "User Submissions", "Editors", "Reference Works",
+    ]);
+    expect(navigation.getByRole("link", { name: "Reference Works" }).getAttribute("aria-current")).toBe("page");
+    expect(navigation.getByRole("link", { name: "Editors" }).getAttribute("href")).toBe("/editors");
     expect(screen.getByText("On submission forms: Deane R. Briggs et al. | 2nd Ed. | 2021")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Edit / }).length).toBe(2);
     expect(screen.queryByRole("button", { name: /delete|remove/i })).toBeNull();

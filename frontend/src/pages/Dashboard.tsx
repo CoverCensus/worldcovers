@@ -1,4 +1,5 @@
 import { Navigation } from "@/components/Navigation";
+import { EditorNavigation } from "@/components/EditorNavigation";
 import { Footer } from "@/components/Footer";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -55,7 +56,7 @@ import {
 import { BulkReviewBar } from "@/components/BulkReviewBar";
 import { PendingLoginRequestsCard } from "@/components/PendingLoginRequestsCard";
 import { SubmissionCountsBar, type SubmissionCountTarget } from "@/components/SubmissionCountsBar";
-import { getStatusBadge } from "@/lib/statusBadge";
+import { getStatusBadge, statusColorClass } from "@/lib/statusBadge";
 import { withReturnTo } from "@/lib/returnTo";
 import { catalogHref } from "@/lib/catalogParams";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1391,22 +1392,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to catalog
           </Link>
-          {isEditor && (
-            <Link
-              to="/editors"
-              className="mb-4 ml-6 inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
-            >
-              State editors
-            </Link>
-          )}
-          {isEditor && (
-            <Link
-              to="/reference-works"
-              className="mb-4 ml-6 inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
-            >
-              Reference Works
-            </Link>
-          )}
           <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div className="min-w-0 md:flex-1">
               <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">
@@ -1442,29 +1427,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               )}
             </div>
 
-            {isEditor && (
-              <div className="inline-flex rounded-md border border-border bg-card p-1">
-                <Button
-                  type="button"
-                  variant={activeTab === "submissions" ? "secondary" : "ghost"}
-                  size="sm"
-                  className="rounded-r-none"
-                  onClick={() => setActiveTab("submissions")}
-                >
-                  My Submissions
-                </Button>
-                <Button
-                  type="button"
-                  variant={activeTab === "editor" ? "secondary" : "ghost"}
-                  size="sm"
-                  className="rounded-l-none"
-                  onClick={() => setActiveTab("editor")}
-                >
-                  User Submissions
-                </Button>
-              </div>
-            )}
           </div>
+
+          {isEditor && (
+            <div className="mb-6">
+              <EditorNavigation active={activeTab} onTabChange={setActiveTab} />
+            </div>
+          )}
 
           {/* T96: totals first, each one a link into the matching filtered list. */}
           {user && (
@@ -2522,14 +2491,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   <ul className="space-y-3">
                     {editorHistoryItems.map((item) => {
                       const displayLabel = item.presentation.title;
-                      const statusClassName =
-                        item.status === "approved"
-                          ? "bg-green-600 text-white hover:bg-green-600"
-                          : item.status === "rejected"
-                            ? "bg-red-600 text-white hover:bg-red-600"
-                            : item.status === "needs_revision"
-                              ? "bg-orange-500 text-white hover:bg-orange-500"
-                              : "bg-yellow-500 text-black hover:bg-yellow-500";
+                      const statusClassName = statusColorClass(item.status);
                       return (
                         <li
                           key={item.id}

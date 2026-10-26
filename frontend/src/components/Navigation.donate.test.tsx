@@ -1,8 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-// Trello T99: Donate sits at the right of the header on every page, in the bar and
-// in the mobile menu, for guests and signed-in users; About joins the nav.
+// Trello T99: Donate appears in the header and mobile menu for all users.
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { Navigation } from "./Navigation";
@@ -63,12 +62,12 @@ describe("Navigation Donate and About (T99)", () => {
     about.forEach((link) => expect(link.getAttribute("href")).toBe("/about"));
   });
 
-  it("keeps About between Catalog and Help, with Donate last", () => {
+  it("puts Donate first, next to Home, and keeps About between Catalog and Help", () => {
     renderNavigation(null);
     const names = screen
       .getAllByRole("link")
       .map((link) => link.textContent?.replace("Opens in a new tab", "").trim())
       .filter((name) => ["Home", "Catalog", "About", "Help", "Login", "Donate"].includes(name ?? ""));
-    expect(names).toEqual(["Home", "Catalog", "About", "Help", "Login", "Donate"]);
+    expect(names).toEqual(["Donate", "Home", "Catalog", "About", "Help", "Login"]);
   });
 });

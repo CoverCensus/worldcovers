@@ -94,6 +94,13 @@ export const Navigation = () => {
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center space-x-1">
+            <Button
+              asChild
+              size="sm"
+              className="bg-[#ffc439] text-[#003087] hover:bg-[#f2ba36]"
+            >
+              <ExternalLink href={DONATE_URL}>Donate</ExternalLink>
+            </Button>
             <NavLink
               to="/"
               end
@@ -123,24 +130,6 @@ export const Navigation = () => {
             >
               Help
             </NavLink>
-            {hasEditorAccess && (
-              <NavLink
-                to="/editors"
-                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-                activeClassName="text-primary font-semibold"
-              >
-                Editors
-              </NavLink>
-            )}
-            {hasEditorAccess && (
-              <NavLink
-                to="/reference-works"
-                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-                activeClassName="text-primary font-semibold"
-              >
-                Reference Works
-              </NavLink>
-            )}
             {!user && (
               <NavLink
                 to="/auth"
@@ -191,10 +180,6 @@ export const Navigation = () => {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            {/* T99: Donate stays at the far right on every page; PayPal on the Society's account. */}
-            <Button asChild size="sm" className="ml-2">
-              <ExternalLink href={DONATE_URL}>Donate</ExternalLink>
-            </Button>
           </div>
 
           {/* Mobile menu button */}
@@ -246,26 +231,6 @@ export const Navigation = () => {
             >
               Help
             </NavLink>
-            {hasEditorAccess && (
-              <NavLink
-                to="/editors"
-                className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
-                activeClassName="text-primary bg-secondary font-semibold"
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                Editors
-              </NavLink>
-            )}
-            {hasEditorAccess && (
-              <NavLink
-                to="/reference-works"
-                className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
-                activeClassName="text-primary bg-secondary font-semibold"
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                Reference Works
-              </NavLink>
-            )}
             {!user && (
               <NavLink
                 to="/auth"

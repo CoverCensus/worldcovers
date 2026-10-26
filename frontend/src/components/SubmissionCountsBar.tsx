@@ -137,7 +137,9 @@ export function SubmissionCountsBar({
                   className={cn(
                     "flex flex-col items-center justify-center rounded-lg border px-3 py-3 text-center",
                     "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                    statusColorClass(tile.status),
+                    tile.target === "editor_pending"
+                      ? "border-purple-300 bg-purple-100 text-purple-900 hover:bg-purple-200 dark:border-purple-700 dark:bg-purple-950 dark:text-purple-100 dark:hover:bg-purple-900"
+                      : statusColorClass(tile.status),
                   )}
                 >
                   <span className="text-3xl font-bold leading-none" aria-hidden="true">
