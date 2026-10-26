@@ -175,6 +175,7 @@ at the site root.
 
 ```sh
 ./woco migrate
+./woco createcachetable
 ```
 
 If this fails with a connection error, recheck steps 2 and 3. If it fails
@@ -201,10 +202,14 @@ The built SPA is served at `/`. The API lives under `/api/` and the admin at
 ## Launcher
 
 `./woco` is the repo-local CLI shim for Django management commands and
-project tooling on macOS/Linux. It wraps `uv run woco`, which calls
-`woco_cli.py` and then Django's `execute_from_command_line`, so shells
-without the virtualenv activated still work. `woco.bat` provides the same
-convenience entrypoint for Windows cmd.exe and PowerShell:
+project tooling on macOS/Linux. It runs `woco_cli.py` with `.venv/bin/python`
+and then Django's `execute_from_command_line`, so shells without the
+virtualenv activated still work. Normal commands never sync or rebuild
+the environment. A missing environment produces an error; use `uv sync`
+for development or `uv sync --no-dev --frozen` on a server to build it.
+Run the same sync command after dependency changes. `./woco setup` runs
+the setup script directly, so it also works before `.venv` exists.
+`woco.bat` still uses `uv run` for Windows cmd.exe and PowerShell:
 
 - macOS and Linux: `./woco <command>`
 - Windows cmd.exe and PowerShell: `.\woco.bat <command>`

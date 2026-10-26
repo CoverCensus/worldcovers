@@ -13,6 +13,7 @@ uv sync --no-dev --frozen
 
 echo "[2/4] Running migrations..."
 uv run python backend/manage.py migrate --noinput
+uv run python backend/manage.py createcachetable
 
 echo "[3/4] Building frontend (creates frontend/dist/)..."
 # Load frontend/.env if present (not in git; create on server or set env vars in host dashboard).

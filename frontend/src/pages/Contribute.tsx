@@ -29,11 +29,21 @@ import { Link, useNavigate, useLocation, useSearchParams, useParams } from "reac
 import { getColors, type ColorOption } from "@/services/colors";
 import { getShapes, type ShapeOption } from "@/services/shapes";
 import { getPostOffices, type PostOfficeOption } from "@/services/postOffices";
-import { getRegions } from "@/services/regions";
-import { getMarkingByIdRaw, normalizeImageUrl } from "@/services/markings";
+import { getCountyRegions, getRegions, type CountyOption, type StateOption } from "@/services/regions";
+import { getMarkingByIdRaw, mapApiMarkingToRecord, normalizeImageUrl, resolveMarkingRoutingState, routingStateFromMarkingRecord, type MarkingRecord, type AssociatedDateSeen } from "@/services/markings";
+import { DatesSeenCard } from "@/components/DatesSeenCard";
+import { PendingCoverSection } from "@/components/PendingCoverSection";
+import {
+  EMPTY_PENDING_COVER,
+  type PendingCoverErrors,
+  type PendingCoverFields,
+  type PendingCoverSavedImage,
+} from "@/lib/pendingCover";
+import { DRAFT_COVER_FROM_EDIT, PENDING_COVER_SECTION } from "@/labels/guidelines";
 import {
   partialDateInputFromDateSeen,
   partialDateInputFromPayload,
+  partialDateInputFromSubmittedData,
   validatePartialDate,
   type PartialDateInput,
   type PartialDateValue,
@@ -41,6 +51,7 @@ import {
 import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getDateFormats, type DateFormatOption } from "@/constants/markingEnums";
 import { formatReferenceWorkLabel, getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
+import { compactReferenceWorkLine } from "@/lib/referenceWorkDisplay";
 import {
   getContribution,
   listContributions,
@@ -57,8 +68,22 @@ import {
   LETTERING_HELP,
   IMPRESSION_HELP,
   IRREGULAR_HELP,
+  MARKING_TYPE_HELP,
+  MANUSCRIPT_HELP,
+  STATE_HELP,
+  COUNTY_HELP,
+  TOWN_HELP,
+  INSCRIPTION_DEFINITION_HELP,
+  SHAPE_HELP,
+  COLOR_HELP,
+  DESCRIPTION_HELP,
+  RATE_VALUE_HELP,
+  CATALOG_CODE_HELP,
+  DIMENSIONS_HELP,
+  REFERENCE_WORKS_HELP,
 } from "@/labels/guidelines";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { LocalCropImageDialog } from "@/components/LocalCropImageDialog";
 import { LocalRotateImageDialog } from "@/components/LocalRotateImageDialog";
 import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
@@ -77,6 +102,9 @@ import {
   submittedDataToWidthHeightStrings,
 } from "@/lib/dimensionsMm";
 import { isTrueCircleShapeName, shapeCodeFromName } from "@/lib/shapeDisplay";
+import { useSimilarMarkings } from "@/hooks/useSimilarMarkings";
+import { SimilarEntriesPanel } from "@/components/SimilarEntriesPanel";
+import { describeSimilarMarking } from "@/lib/similarEntries";
 
 const SUBMISSION_IMAGES_BUCKET = "submission-images";
 const MAX_IMAGE_SIZE_MB = 100;
@@ -482,8 +510,20 @@ const Contribute = () => {
       : baseCopy;
   const [loadingRecord, setLoadingRecord] = useState(isEditMarking);
   const [recordError, setRecordError] = useState<string | null>(null);
+  const [dateRecord, setDateRecord] = useState<MarkingRecord | null>(null);
+  const [newMarkingDates, setNewMarkingDates] = useState<AssociatedDateSeen[]>([]);
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
-  const [stateOptions, setStateOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const [stateOptions, setStateOptions] = useState<StateOption[]>([]);
+  // Trello T70: the county of the Post Office, optional. The list is the
+  // COUNTY-tier Regions under the chosen state; a county that is not listed
+  // goes in countyProposed as text for the Editor.
+  const [countyId, setCountyId] = useState("");
+  // The picked county's name, kept beside the id so a draft saved before the
+  // county list has loaded still carries a readable name for review.
+  const [countyLabel, setCountyLabel] = useState("");
+  const [countyProposed, setCountyProposed] = useState("");
+  const [countyOptions, setCountyOptions] = useState<CountyOption[]>([]);
+  const [loadingCounties, setLoadingCounties] = useState(false);
   const [shapeOptions, setShapeOptions] = useState<ShapeOption[]>([]);
   const [postOffices, setPostOffices] = useState<PostOfficeOption[]>([]);
   const [loadingShapes, setLoadingShapes] = useState(true);
@@ -527,6 +567,9 @@ const Contribute = () => {
         previewUrl: string;
         tracing: boolean;
         description: string;
+        /** The file as picked, before any crop or rotation (Trello T37): it
+         *  becomes the Cover's image when the Cover is submitted alongside. */
+        originalFile?: File;
       };
   // Single ordered gallery: already-saved images interleaved with new uploads.
   // Reorder + set-default work across the whole list; the chosen order is sent as
@@ -549,6 +592,21 @@ const Contribute = () => {
   const [coverLikeImageKeys, setCoverLikeImageKeys] = useState<string[]>([]);
   // Key of the new upload open in the crop dialog, if any.
   const [cropTargetKey, setCropTargetKey] = useState<string | null>(null);
+  // Trello T92: on a Marking edit, a whole-cover upload can become a Cover
+  // draft for the published Marking. The request is in flight while `saving`
+  // is true; the notice names the draft the server created so the contributor
+  // can go and finish it.
+  const [draftCoverSaving, setDraftCoverSaving] = useState(false);
+  const [draftCoverNotice, setDraftCoverNotice] = useState<{ draftId: number; markingId: number } | null>(null);
+  // Trello T37: the Cover submitted together with a new Marking. Staged here and
+  // sent as pending_cover + pending_cover_image; the server turns it into a
+  // cover submission when the Marking is approved. Never offered on a Marking edit.
+  const [pendingCoverOn, setPendingCoverOn] = useState(false);
+  const [pendingCoverFields, setPendingCoverFields] = useState<PendingCoverFields>({ ...EMPTY_PENDING_COVER });
+  const [pendingCoverFiles, setPendingCoverFiles] = useState<File[]>([]);
+  const [pendingCoverSavedImages, setPendingCoverSavedImages] = useState<PendingCoverSavedImage[]>([]);
+  const [pendingCoverRemovedKeys, setPendingCoverRemovedKeys] = useState<string[]>([]);
+  const [pendingCoverErrors, setPendingCoverErrors] = useState<PendingCoverErrors>({});
   const [rotateTargetKey, setRotateTargetKey] = useState<string | null>(null);
   const [lowResolutionImageKeys, setLowResolutionImageKeys] = useState<string[]>([]);
   // Timestamp of the marking record as observed when this edit session loaded
@@ -618,6 +676,9 @@ const Contribute = () => {
 
   const isStateEditor =
     user?.role === "editor" || user?.role === "administrator" || user?.is_superuser === true;
+  const showRecordedDateRange = isStateEditor && (
+    isMarkingEditAction ? (dateRecord?.datesSeen.length ?? 0) > 0 : newMarkingDates.length > 0
+  );
 
   const canEditCatalogCode = Boolean(isStateEditor);
 
@@ -660,7 +721,7 @@ const Contribute = () => {
         if (cancelled) return;
         const seen = new Set<string>();
         const options = regions
-          .map((r) => ({ value: String(r.value || "").trim(), label: String(r.label || "").trim() }))
+          .map((r) => ({ ...r, value: String(r.value || "").trim(), label: String(r.label || "").trim() }))
           .filter((opt) => {
             if (!opt.value) return false;
             const key = opt.value.toLowerCase();
@@ -680,6 +741,39 @@ const Contribute = () => {
       cancelled = true;
     };
   }, []);
+
+  // T70: the chosen state's Region id. Saved drafts and edits may carry the
+  // abbreviation ("VA") where the options carry names, so match either.
+  const stateRegionId = useMemo(() => {
+    const wanted = state.trim().toLowerCase();
+    if (!wanted) return null;
+    const match = stateOptions.find(
+      (opt) => opt.value.toLowerCase() === wanted || (opt.abbrev ?? "").toLowerCase() === wanted,
+    );
+    return match?.id ?? null;
+  }, [state, stateOptions]);
+
+  useEffect(() => {
+    if (stateRegionId == null) {
+      setCountyOptions([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingCounties(true);
+    getCountyRegions(stateRegionId)
+      .then((counties) => {
+        if (!cancelled) setCountyOptions(counties);
+      })
+      .catch(() => {
+        if (!cancelled) setCountyOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCounties(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [stateRegionId]);
 
   useEffect(() => {
     setLoadingShapes(true);
@@ -815,6 +909,23 @@ const Contribute = () => {
     }
   };
 
+  // T48: advisory "similar existing Markings" panel, fed by the key fields.
+  // Reads only; Submit is never gated on it.
+  const similar = useSimilarMarkings({
+    state,
+    town,
+    type: markingType,
+    inscription: inscriptionText,
+    shapeId: shapeOptions.find((opt) => opt.name === shape)?.id ?? null,
+    color,
+    isManuscript,
+    widthMm,
+    heightMm,
+    excludeId: editMarkingId ?? resumedEditMarkingId ?? null,
+  });
+  const similarRows = similar.rows.map(describeSimilarMarking);
+  const similarHint = !shape.trim() || !color.trim() ? "Choose a shape and colour to narrow this list." : null;
+
   useEffect(() => {
     if (!canEditCatalogCode) return;
     if (!state.trim()) return;
@@ -880,6 +991,9 @@ const Contribute = () => {
         );
         setState(stateVal);
         setTown(townVal);
+        setCountyId(getStr(sd.county_id));
+        setCountyLabel(getStr(sd.county));
+        setCountyProposed(getStr(sd.county_proposed));
         if (loadedCatalogCode) {
           setCatalogCode(loadedCatalogCode);
           setCatalogCodeTouched(true);
@@ -945,6 +1059,36 @@ const Contribute = () => {
         setLrd(markingBoundaryDateFromPayload(sd, "marking_lrd"));
         setErdBaseline({ ...EMPTY_PARTIAL_DATE });
         setLrdBaseline({ ...EMPTY_PARTIAL_DATE });
+        const submittedDates = Array.isArray(sd.marking_dates_seen) ? sd.marking_dates_seen : [];
+        setNewMarkingDates(mapApiMarkingToRecord({
+          dates_seen: submittedDates.map((date, index) => ({ ...date, id: index + 1 })),
+        }).datesSeen);
+        // Trello T37: a saved Cover rides the draft as pending_cover.
+        const savedPendingCover = sd.pending_cover;
+        if (savedPendingCover && typeof savedPendingCover === "object" && !Array.isArray(savedPendingCover)) {
+          const pc = savedPendingCover as Record<string, unknown>;
+          const mediaBase = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "") || "/media";
+          const pcMetas = Array.isArray(pc.image_metas) ? (pc.image_metas as Array<{ storage_filename?: string }>) : [];
+          setPendingCoverOn(true);
+          setPendingCoverFields({
+            type: String(pc.type ?? "").trim().toUpperCase(),
+            date: partialDateInputFromSubmittedData(pc),
+            isInstitutional: String(pc.is_institutional) === "true",
+            isBackstamp: String(pc.is_backstamp) === "true",
+            description: String(pc.description ?? ""),
+            noImage: String(pc.no_cover_image) === "true",
+          });
+          setPendingCoverSavedImages(
+            pcMetas
+              .map((m) => String(m?.storage_filename ?? "").replace(/^\/+/, ""))
+              .filter((sf) => sf.length > 0)
+              .map((sf) => ({ key: sf, url: `${mediaBase}/${sf}` })),
+          );
+          setPendingCoverFiles([]);
+          setPendingCoverRemovedKeys([]);
+        } else {
+          setPendingCoverOn(false);
+        }
         // Load prior images as "existing" gallery items (same path used by the
         // edit-marking flow) so the remove button records removals in
         // `removedExistingImageKeys` and the contributor can reorder / set the
@@ -1021,6 +1165,7 @@ const Contribute = () => {
           getMarkingByIdRaw(editMarkingIdNum)
             .then((m) => {
               if (cancelled || !m) return;
+              setDateRecord(mapApiMarkingToRecord(m));
               setCanChangeSubmitterName(m.can_change_submitter_name === true);
               // The draft's stored list mixes the marking's current images
               // with the contributor's own draft uploads. The current ones
@@ -1085,6 +1230,12 @@ const Contribute = () => {
 
     setState(typeof data.state === "string" ? data.state : "");
     setTown(sanitizeTown(typeof data.town === "string" ? data.town : ""));
+    // T70: the town's county, from its region links (current-first).
+    const regionRows = Array.isArray(data.regions) ? (data.regions as Array<Record<string, unknown>>) : [];
+    const countyRegion = regionRows.find((r) => String(r.region_tier ?? "").toUpperCase() === "COUNTY");
+    setCountyId(countyRegion && countyRegion.id != null ? String(countyRegion.id) : "");
+    setCountyLabel(countyRegion ? String(countyRegion.name ?? "") : "");
+    setCountyProposed("");
 
     const shapeName = typeof data.shape_name === "string" ? data.shape_name : "";
     if (shapeName) {
@@ -1159,6 +1310,7 @@ const Contribute = () => {
           setRecordError("Record not found");
           return;
         }
+        setDateRecord(mapApiMarkingToRecord(data));
 
         const existingRows = Array.isArray(data.images)
           ? (data.images as unknown[])
@@ -1377,6 +1529,85 @@ const Contribute = () => {
     return `${selectedCodes.slice(0, 2).join(", ")} +${selectedCodes.length - 2} more`;
   }, [dateFormatIds, dateFormatOptions]);
 
+  // The Cover section is for new Markings only: a Marking edit has a published
+  // Marking whose Covers are managed from its record page.
+  const showPendingCoverSection = !isEditMarking && resumedEditMarkingId == null;
+  // Turning the section on seeds its images with the uncropped originals of
+  // cropped uploads and with any upload that looks like a whole cover, so the
+  // scan the contributor already has becomes the Cover's image without a second
+  // pick. Files already listed are not added twice.
+  const enablePendingCover = () => {
+    setPendingCoverOn(true);
+    setPendingCoverFiles((prev) => {
+      const next = [...prev];
+      for (const item of gallery) {
+        if (item.kind !== "new") continue;
+        const candidate = item.originalFile ?? (coverLikeImageKeys.includes(item.key) ? item.file : null);
+        if (candidate && !next.includes(candidate)) next.push(candidate);
+      }
+      return next;
+    });
+  };
+  // Trello T92: the Marking being edited, whether opened from its record page
+  // (/edit/:id) or resumed as an edit draft. Null on a new-Marking form.
+  const draftCoverTargetId = isEditMarking ? editMarkingId : resumedEditMarkingId;
+  // Trello T92: turn a whole-cover upload on a Marking edit into a Cover draft
+  // for the published Marking. This is the same request the cover editor's
+  // Save Draft sends (CoverEdit.tsx submitCoverContribution), with the file
+  // the contributor picked -- the uncropped original when they already cropped.
+  // The tile leaves this edit only once the server holds the draft, so a
+  // failed request loses nothing; the draft is then the contributor's to
+  // finish from the record page or the Dashboard, and nobody else sees it.
+  const makeDraftCoverFromUpload = async (key: string) => {
+    const item = gallery.find(
+      (g): g is Extract<MarkingGalleryItem, { kind: "new" }> => g.kind === "new" && g.key === key,
+    );
+    if (!item || draftCoverTargetId == null || draftCoverSaving) return;
+    const file = item.originalFile ?? item.file;
+    setDraftCoverSaving(true);
+    try {
+      const form = new FormData();
+      form.append("submission_kind", "cover");
+      form.append("save_as_draft", "true");
+      // State routes the draft to its Collection. The loaded record usually has
+      // it; before it has loaded, ask the server the way CoverEdit.tsx does. A
+      // draft without state is still accepted (fallback Collection, routed on
+      // submit), so neither path blocks the offer.
+      let stateRoute = routingStateFromMarkingRecord(dateRecord);
+      if (!stateRoute) {
+        try {
+          stateRoute = await resolveMarkingRoutingState(draftCoverTargetId);
+        } catch {
+          stateRoute = "";
+        }
+      }
+      if (stateRoute) form.append("state", stateRoute);
+      form.append("parent_marking_id", String(draftCoverTargetId));
+      form.append("marking_id", String(draftCoverTargetId));
+      form.append("cover_image", file, file.name);
+      form.append("cover_image_tags", JSON.stringify(["photograph"]));
+      form.append("image_order", JSON.stringify(["__new__"]));
+      const result = await createContribution(form);
+      setGallery((prev) => prev.filter((g) => g.key !== key));
+      setCoverLikeImageKeys((prev) => prev.filter((k) => k !== key));
+      setLowResolutionImageKeys((prev) => prev.filter((k) => k !== key));
+      setDraftCoverNotice(
+        result.contributionId != null
+          ? { draftId: result.contributionId, markingId: draftCoverTargetId }
+          : null,
+      );
+      toast({ title: DRAFT_COVER_FROM_EDIT.savedTitle, description: DRAFT_COVER_FROM_EDIT.savedBody });
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.message ? `${err.message} ` : "";
+      toast({
+        title: DRAFT_COVER_FROM_EDIT.failedTitle,
+        description: `${reason}${DRAFT_COVER_FROM_EDIT.failedBody}`,
+        variant: "destructive",
+      });
+    } finally {
+      setDraftCoverSaving(false);
+    }
+  };
   // Only counts images still in the gallery, so removing the offending file
   // clears the warning without any extra bookkeeping.
   const coverLikeImageCount = useMemo(
@@ -1477,8 +1708,22 @@ const Contribute = () => {
   // Tracing flag. The cover-shape check runs again on the result; the DPI flag
   // is left as measured on the original, because a canvas carries no DPI.
   const replaceGalleryFile = (key: string, file: File) => {
+    // Trello T37: the first version of the upload is the whole scan the Cover
+    // wants. If the Cover section is already on, add it there now rather than
+    // only when the section is turned on.
+    const replaced = gallery.find(
+      (g): g is Extract<MarkingGalleryItem, { kind: "new" }> => g.kind === "new" && g.key === key,
+    );
+    const original = replaced ? (replaced.originalFile ?? replaced.file) : null;
+    if (original && pendingCoverOn) {
+      setPendingCoverFiles((prev) => (prev.includes(original) ? prev : [...prev, original]));
+    }
     setGallery((prev) =>
-      prev.map((g) => (g.kind === "new" && g.key === key ? { ...g, file, previewUrl: "" } : g)),
+      prev.map((g) =>
+        g.kind === "new" && g.key === key
+          ? { ...g, file, previewUrl: "", originalFile: g.originalFile ?? g.file }
+          : g,
+      ),
     );
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -1607,6 +1852,10 @@ const Contribute = () => {
 
     const stateVal = state.trim();
     const townVal = town.trim();
+    // T70: the display name travels with the id so review can print it without a lookup.
+    const countyName = countyId
+      ? countyOptions.find((c) => String(c.id) === countyId)?.name ?? countyLabel
+      : "";
     const isManuscriptSelected = isManuscript;
     const shapeVal = isManuscriptSelected ? "" : shape.trim();
     const typeVal = normalizeMarkingTypeValue(markingType.trim()) || markingType.trim();
@@ -1670,15 +1919,15 @@ const Contribute = () => {
     // Final editor submissions require each visible boundary date to be known
     // or explicitly unknown. Drafts stay permissive, but typed draft values are
     // still checked for shape.
-    const shouldValidateBoundaryDates = !saveAsDraft && isStateEditor;
+    const shouldValidateBoundaryDates = !saveAsDraft && showRecordedDateRange;
     const erdChanged = partialDateKey(erd) !== partialDateKey(erdBaseline);
     const lrdChanged = partialDateKey(lrd) !== partialDateKey(lrdBaseline);
     const erdValidation =
-      shouldValidateBoundaryDates || partialDateHasValue(erd) || erdChanged
+      showRecordedDateRange && (shouldValidateBoundaryDates || partialDateHasValue(erd) || erdChanged)
         ? validatePartialDate(erd)
         : null;
     const lrdValidation =
-      shouldValidateBoundaryDates || partialDateHasValue(lrd) || lrdChanged
+      showRecordedDateRange && (shouldValidateBoundaryDates || partialDateHasValue(lrd) || lrdChanged)
         ? validatePartialDate(lrd)
         : null;
     if (erdValidation?.ok === false) {
@@ -1733,11 +1982,42 @@ const Contribute = () => {
     }
     setReferenceDetailErrorsById(referenceDetailErrors);
 
+    // Trello T37: the Cover submitted with this marking follows the Cover
+    // form's three rules at final submit; a draft may be incomplete.
+    const nextPendingCoverErrors: PendingCoverErrors = {};
+    if (showPendingCoverSection && pendingCoverOn && !saveAsDraft) {
+      if (!pendingCoverFields.type.trim()) {
+        nextPendingCoverErrors.type = "Cover type is required";
+      }
+      const pcDate = pendingCoverFields.date;
+      if (!pcDate.unknown) {
+        if (!pcDate.year.trim() && !pcDate.month.trim() && !pcDate.day.trim()) {
+          nextPendingCoverErrors.date = "Add a cover date or mark it unknown";
+        } else {
+          const parsed = validatePartialDate(pcDate);
+          if (parsed.ok === false) nextPendingCoverErrors.date = parsed.error;
+        }
+      }
+      if (pendingCoverFiles.length + pendingCoverSavedImages.length === 0 && !pendingCoverFields.noImage) {
+        nextPendingCoverErrors.images = "Add at least one cover image or confirm no image is available";
+      }
+    }
+    setPendingCoverErrors(nextPendingCoverErrors);
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       scrollToFirstError(errors);
       return;
     }
+    if (Object.keys(nextPendingCoverErrors).length > 0) {
+      toast({
+        title: "Finish the Cover section",
+        description: "The Cover submitted with this marking needs a type, a date and an image.",
+        variant: "destructive",
+      });
+      document.getElementById("pending-cover-title")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+
 
     if (!saveAsDraft && Object.keys(referenceDetailErrors).length > 0) {
       toast({
@@ -1840,11 +2120,19 @@ const Contribute = () => {
         if (!parsed.ok) return null;
         return parsed.value;
       };
-      const erdToSend = markingDateToSend(erd, erdBaseline);
-      const lrdToSend = markingDateToSend(lrd, lrdBaseline);
+      const erdToSend = showRecordedDateRange ? markingDateToSend(erd, erdBaseline) : null;
+      const lrdToSend = showRecordedDateRange ? markingDateToSend(lrd, lrdBaseline) : null;
+      const datesToSend = newMarkingDates.map((date) => ({
+        date_year: date.dateYear, date_month: date.dateMonth, date_day: date.dateDay,
+      }));
 
-      if (allImageFiles.length > 0 || isEditMarking) {
+      const sendPendingCover = showPendingCoverSection && pendingCoverOn;
+      const dropPendingCover = showPendingCoverSection && !pendingCoverOn && isEditContribution;
+      if (allImageFiles.length > 0 || isEditMarking || sendPendingCover) {
         const form = new FormData();
+        if (isStateEditor && !isMarkingEditAction) {
+          form.append("marking_dates_seen", JSON.stringify(datesToSend));
+        }
         if (isEditContribution && editContributionId != null) {
           form.append("edit_contribution_id", String(editContributionId));
         }
@@ -1860,6 +2148,10 @@ const Contribute = () => {
         if (selectedPostOfficeId != null) form.append("post_office_id", String(selectedPostOfficeId));
         form.append("state", stateVal);
         form.append("town", townVal);
+        // T70: always present; "" means the submission says nothing about the county.
+        form.append("county_id", countyId);
+        form.append("county", countyName);
+        form.append("county_proposed", countyProposed.trim());
         if (typeVal) form.append("type", typeVal);
         if (!isManuscriptSelected) form.append("shape", shapeVal);
         if (!isManuscriptSelected && shapeIdVal != null) form.append("shape_id", String(shapeIdVal));
@@ -1923,6 +2215,30 @@ const Contribute = () => {
         if (noMarkingImage) {
           form.append("no_marking_image", "true");
         }
+        if (sendPendingCover) {
+          form.append(
+            "pending_cover",
+            JSON.stringify({
+              type: pendingCoverFields.type.trim().toUpperCase(),
+              cover_date_unknown: pendingCoverFields.date.unknown,
+              cover_date_year: pendingCoverFields.date.year.trim(),
+              cover_date_month: pendingCoverFields.date.month.trim(),
+              cover_date_day: pendingCoverFields.date.day.trim(),
+              is_institutional: pendingCoverFields.isInstitutional,
+              is_backstamp: pendingCoverFields.isBackstamp,
+              description: pendingCoverFields.description.trim(),
+              no_cover_image: pendingCoverFields.noImage,
+            }),
+          );
+          for (const file of pendingCoverFiles) {
+            form.append("pending_cover_image", file, file.name);
+          }
+          if (pendingCoverRemovedKeys.length > 0) {
+            form.append("pending_cover_removed_image_keys", JSON.stringify(pendingCoverRemovedKeys));
+          }
+        } else if (dropPendingCover) {
+          form.append("drop_pending_cover", "true");
+        }
         if (isEditMarking && existingTagMapEntries.length > 0) {
           const existingTagMap: Record<string, UploadedImageTag> =
             Object.fromEntries(existingTagMapEntries);
@@ -1938,6 +2254,7 @@ const Contribute = () => {
         const existingTagMap: Record<string, UploadedImageTag> =
           Object.fromEntries(existingTagMapEntries);
         body = {
+          ...(isStateEditor && !isMarkingEditAction ? { marking_dates_seen: datesToSend } : {}),
           ...(isEditContribution && editContributionId != null
             ? { edit_contribution_id: editContributionId }
             : {}),
@@ -1947,6 +2264,9 @@ const Contribute = () => {
           post_office_id: selectedPostOfficeId ?? undefined,
           state: stateVal,
           town: townVal,
+          county_id: countyId,
+          county: countyName,
+          county_proposed: countyProposed.trim(),
           type: typeVal || undefined,
           shape: isManuscriptSelected ? null : shapeVal,
           shape_id: isManuscriptSelected ? null : shapeIdVal ?? null,
@@ -2002,6 +2322,8 @@ const Contribute = () => {
           ...(saveAsDraft && isEditMarking && markingModifiedAtBaseline
             ? { marking_modified_at_baseline: markingModifiedAtBaseline }
             : {}),
+          // The section is off (a resumed draft may still hold a cover): clear it.
+          ...(dropPendingCover ? { drop_pending_cover: true } : {}),
         };
       }
 
@@ -2374,18 +2696,54 @@ const Contribute = () => {
         <WrongImageKindWarning
           expected="MARKING"
           count={coverLikeImageCount}
+          editing={isMarkingEditAction}
           action={firstCoverLikeUploadKey ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setCropTargetKey(firstCoverLikeUploadKey)}
-            >
-              <Crop className="mr-1 h-3.5 w-3.5" />
-              Crop to the marking
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCropTargetKey(firstCoverLikeUploadKey)}
+              >
+                <Crop className="mr-1 h-3.5 w-3.5" />
+                Crop to the marking
+              </Button>
+              {showPendingCoverSection && !pendingCoverOn && (
+                <Button type="button" variant="outline" size="sm" onClick={enablePendingCover}>
+                  {PENDING_COVER_SECTION.warningAction}
+                </Button>
+              )}
+              {isMarkingEditAction && draftCoverTargetId != null && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={draftCoverSaving || submitting}
+                  aria-busy={draftCoverSaving}
+                  onClick={() => void makeDraftCoverFromUpload(firstCoverLikeUploadKey)}
+                >
+                  {draftCoverSaving && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                  {DRAFT_COVER_FROM_EDIT.action}
+                </Button>
+              )}
+            </div>
           ) : null}
         />
+        {draftCoverNotice && (
+          <Alert className="mt-3" role="status" data-testid="draft-cover-notice">
+            <AlertTitle>{DRAFT_COVER_FROM_EDIT.savedTitle}</AlertTitle>
+            <AlertDescription>
+              <p>{DRAFT_COVER_FROM_EDIT.savedBody}</p>
+              <Link
+                className="mt-2 inline-block underline"
+                to={`/record/${draftCoverNotice.markingId}/cover/new?edit=${draftCoverNotice.draftId}`}
+                state={{ from: location.pathname + location.search }}
+              >
+                {DRAFT_COVER_FROM_EDIT.finish}
+              </Link>
+            </AlertDescription>
+          </Alert>
+        )}
         <LocalCropImageDialog
           open={cropTarget != null}
           onOpenChange={(open) => {
@@ -2576,9 +2934,12 @@ const Contribute = () => {
                       noValidate
                     >
                     <div className="space-y-2">
-                      <Label htmlFor="marking-type">
-                        Marking Type <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="marking-type">
+                          Marking Type <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label="Marking Type">{MARKING_TYPE_HELP}</FieldHelp>
+                      </div>
                       <Select
                         value={markingType}
                         onValueChange={(value) => {
@@ -2633,17 +2994,30 @@ const Contribute = () => {
                         }}
                       />
                       <Label htmlFor="manuscript">Manuscript</Label>
+                      <FieldHelp label="Manuscript">{MANUSCRIPT_HELP}</FieldHelp>
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="state">
-                        State <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="state">
+                          State <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label="State">{STATE_HELP}</FieldHelp>
+                      </div>
                       <SearchableSelect
                         id="state"
                         value={state}
                         onValueChange={(value) => {
                           setState(value);
+                          // A county belongs to one state: when a chosen state is
+                          // replaced by another, the pick and a county typed for
+                          // the old state are emptied. Prefill sets the state before
+                          // the county and never passes through here.
+                          if (state && value !== state) {
+                            setCountyId("");
+                            setCountyLabel("");
+                            setCountyProposed("");
+                          }
                           if (fieldErrors.state) {
                             setFieldErrors((prev) => ({ ...prev, state: undefined }));
                           }
@@ -2664,9 +3038,53 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="town">
-                        Town/City <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="county">County</Label>
+                        <FieldHelp label="County">{COUNTY_HELP}</FieldHelp>
+                      </div>
+                      <SearchableSelect
+                        id="county"
+                        value={countyId}
+                        onValueChange={(value) => {
+                          setCountyId(value);
+                          setCountyLabel(countyOptions.find((c) => String(c.id) === value)?.name ?? "");
+                          // A pick from the list supersedes a typed county.
+                          if (value) setCountyProposed("");
+                        }}
+                        placeholder="Select county (optional)..."
+                        options={countyOptions.map((c) => ({ value: String(c.id), label: c.name }))}
+                        disabled={stateRegionId == null}
+                        loading={loadingCounties}
+                        searchPlaceholder="Search counties..."
+                        emptyMessage="No county found."
+                        aria-label="County"
+                      />
+                      <div className="space-y-1">
+                        <Label htmlFor="county-proposed" className="text-sm text-muted-foreground">
+                          County not listed
+                        </Label>
+                        <Input
+                          id="county-proposed"
+                          value={countyProposed}
+                          onChange={(e) => setCountyProposed(e.target.value)}
+                          maxLength={200}
+                          disabled={stateRegionId == null || countyId !== ""}
+                          placeholder="Type the county's name if it is missing from the list"
+                          aria-label="County not listed"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          An Editor will add a county that is missing from the list before approving.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="town">
+                          Town/City <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label="Town/City">{TOWN_HELP}</FieldHelp>
+                      </div>
                       <div className="relative">
                         <Input
                           id="town"
@@ -2744,9 +3162,12 @@ const Contribute = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="inscription-text">
-                        {inscriptionLabel} <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="inscription-text">
+                          {inscriptionLabel} <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label={inscriptionLabel}>{INSCRIPTION_DEFINITION_HELP}</FieldHelp>
+                      </div>
                       <Textarea
                         id="inscription-text"
                         placeholder="Exact text inscribed on the marking device (abbreviations/annotations)."
@@ -2766,12 +3187,15 @@ const Contribute = () => {
                       )}
                     </div>
                     {showShapeField && <div className="space-y-2">
-                      <Label htmlFor="shape">
-                        Shape
-                        {!isManuscript ? (
-                          <span className="text-destructive" aria-hidden="true">*</span>
-                        ) : null}
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="shape">
+                          Shape
+                          {!isManuscript ? (
+                            <span className="text-destructive" aria-hidden="true">*</span>
+                          ) : null}
+                        </Label>
+                        <FieldHelp label="Shape">{SHAPE_HELP}</FieldHelp>
+                      </div>
                       <SearchableSelect
                         id="shape"
                         value={shape}
@@ -2797,7 +3221,10 @@ const Contribute = () => {
                     </div>}
 
                     <div className="space-y-2">
-                      <Label htmlFor="color">Color</Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="color">Color</Label>
+                        <FieldHelp label="Color">{COLOR_HELP}</FieldHelp>
+                      </div>
                       <Select
                         value={color}
                         onValueChange={(value) => {
@@ -2825,6 +3252,13 @@ const Contribute = () => {
                         <p className="text-sm text-destructive">{fieldErrors.color}</p>
                       )}
                     </div>
+                    <SimilarEntriesPanel
+                      noun="Markings"
+                      rows={similarRows}
+                      totalCount={similar.matchCount + similar.relatedCount}
+                      loading={similar.loading}
+                      hint={similarHint}
+                    />
                     {showDateFormatField && <div className="space-y-2">
                       <Label>Date format</Label>
                       <p className="text-sm text-muted-foreground">{DATE_FORMAT_HELP}</p>
@@ -2869,19 +3303,43 @@ const Contribute = () => {
                     {/* Setting a marking's date is editor-only (issue #27); the
                         field is hidden for non-editors and the server strips
                         ERD/LRD from a non-editor's submission. */}
-                    {isStateEditor && <div className="space-y-2">
+                    {isMarkingEditAction && dateRecord?.canEditDates && (
+                      <DatesSeenCard
+                        markingId={dateRecord.id}
+                        datesSeen={dateRecord.datesSeen}
+                        onChanged={async () => {
+                          const data = await getMarkingByIdRaw(dateRecord.id);
+                          if (!data) throw new Error("Could not reload the Marking dates.");
+                          const refreshed = mapApiMarkingToRecord(data);
+                          setDateRecord(refreshed);
+                          const earliest = partialDateInputFromDateSeen({
+                            date: refreshed.earliestSeen,
+                            granularity: refreshed.earliestSeenGranularity,
+                          });
+                          const latest = partialDateInputFromDateSeen({
+                            date: refreshed.latestSeen,
+                            granularity: refreshed.latestSeenGranularity,
+                          });
+                          setErd((value) => partialDateKey(value) === partialDateKey(erdBaseline) ? earliest : value);
+                          setLrd((value) => partialDateKey(value) === partialDateKey(lrdBaseline) ? latest : value);
+                          setErdBaseline(earliest);
+                          setLrdBaseline(latest);
+                        }}
+                      />
+                    )}
+                    {isStateEditor && editMarkingId == null && resumedEditMarkingId == null && (
+                      <DatesSeenCard datesSeen={newMarkingDates} onDatesChange={setNewMarkingDates} />
+                    )}
+                    {showRecordedDateRange && <div className="space-y-2">
                       <Label>Recorded date range</Label>
                       <p className="text-sm text-muted-foreground">
                         Enter the earliest (ERD) and latest (LRD) recorded date status. Use
                         date components when known, or select Date unknown.
                       </p>
-                      {isEditMarking && editMarkingId != null && (
-                        // issues.md 107: approval only ADDS these as observations, so a
-                        // wrong date cannot be fixed here. Todd Hause looked for it here.
+                      {isMarkingEditAction && (
                         <p className="text-sm text-muted-foreground">
-                          Saving adds these as observations; it does not replace existing dates. To
-                          correct or remove individual dates, use <em>Dates seen</em> on the{" "}
-                          <Link to={`/record/${editMarkingId}`} className="underline">marking page</Link>.
+                          Saving adds these as observations; it does not replace existing dates.
+                          {dateRecord?.canEditDates && " Use Dates seen above to correct or remove individual dates."}
                         </p>
                       )}
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -2902,7 +3360,10 @@ const Contribute = () => {
                       </div>
                     </div>}
                     <div className="space-y-2">
-                      <Label htmlFor="description">Description</Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="description">Description</Label>
+                        <FieldHelp label="Description">{DESCRIPTION_HELP}</FieldHelp>
+                      </div>
                       <Textarea
                         id="description"
                         placeholder="Details about the marking..."
@@ -2913,9 +3374,12 @@ const Contribute = () => {
                     </div>
 
                     {showRateValueField && <div className="space-y-2">
-                      <Label htmlFor="rate-value">
-                        Rate Value (cents) <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="rate-value">
+                          Rate Value (cents) <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label="Rate Value">{RATE_VALUE_HELP}</FieldHelp>
+                      </div>
                       <Input
                         id="rate-value"
                         type="text"
@@ -2936,7 +3400,10 @@ const Contribute = () => {
 
                     {canEditCatalogCode && (
                       <div className="space-y-2">
-                        <Label htmlFor="catalog-code">Catalog Marking code</Label>
+                        <div className="flex items-center gap-1">
+                          <Label htmlFor="catalog-code">Catalog Marking code</Label>
+                          <FieldHelp label="Catalog Marking code">{CATALOG_CODE_HELP}</FieldHelp>
+                        </div>
                         <Input
                           id="catalog-code"
                           value={catalogCode}
@@ -2964,9 +3431,12 @@ const Contribute = () => {
                       <>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="space-y-2">
-                            <Label htmlFor="width-mm">
-                              {isCircularShape ? "Diameter (mm)" : "Width (mm)"}
-                            </Label>
+                            <div className="flex items-center gap-1">
+                              <Label htmlFor="width-mm">
+                                {isCircularShape ? "Diameter (mm)" : "Width (mm)"}
+                              </Label>
+                              <FieldHelp label={isCircularShape ? "Diameter" : "Width"}>{DIMENSIONS_HELP}</FieldHelp>
+                            </div>
                             <Input
                               id="width-mm"
                               type="text"
@@ -3028,7 +3498,10 @@ const Contribute = () => {
 
                     <div className="space-y-3">
                       <div className="space-y-2">
-                        <Label>Reference Works</Label>
+                        <div className="flex items-center gap-1">
+                          <Label>Reference Works</Label>
+                          <FieldHelp label="Reference Works">{REFERENCE_WORKS_HELP}</FieldHelp>
+                        </div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
@@ -3116,9 +3589,7 @@ const Contribute = () => {
                                     {formatReferenceWorkLabel(work, "Untitled")}
                                   </p>
                                   <p className="text-xs text-muted-foreground truncate">
-                                    {[work.authorship, work.publisher]
-                                      .filter((x) => (x ?? "").trim() !== "")
-                                      .join(" -- ")}
+                                    {compactReferenceWorkLine(work)}
                                   </p>
                                 </div>
                                 <Button
@@ -3293,6 +3764,26 @@ const Contribute = () => {
                       isMarkingEditAction ? "Add Marking Images" : "Marking Images",
                       `PNG or JPG up to ${MAX_IMAGE_SIZE_MB}MB each`,
                       !isMarkingEditAction,
+                    )}
+
+                    {showPendingCoverSection && (
+                      <PendingCoverSection
+                        enabled={pendingCoverOn}
+                        onEnabledChange={(on) => (on ? enablePendingCover() : setPendingCoverOn(false))}
+                        fields={pendingCoverFields}
+                        onFieldsChange={setPendingCoverFields}
+                        files={pendingCoverFiles}
+                        onAddFiles={(picked) => setPendingCoverFiles((prev) => [...prev, ...picked])}
+                        onRemoveFile={(index) => setPendingCoverFiles((prev) => prev.filter((_, i) => i !== index))}
+                        savedImages={pendingCoverSavedImages}
+                        onRemoveSavedImage={(key) => {
+                          setPendingCoverSavedImages((prev) => prev.filter((img) => img.key !== key));
+                          setPendingCoverRemovedKeys((prev) => (prev.includes(key) ? prev : [...prev, key]));
+                        }}
+                        errors={pendingCoverErrors}
+                        disabled={submitting}
+                        highlight={coverLikeImageCount > 0}
+                      />
                     )}
 
                     {canChangeSubmitterName ? <label className="flex items-center gap-2 text-sm">

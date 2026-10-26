@@ -9,6 +9,7 @@
  */
 import { useEffect, useState } from "react";
 import { Navigation } from "@/components/Navigation";
+import { EditorNavigation } from "@/components/EditorNavigation";
 import { Footer } from "@/components/Footer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
@@ -52,6 +53,10 @@ export default function EditorRoster() {
             Current Editor assignments for each state. Visible to Editors and
             Administrators only.
           </p>
+
+          <div className="mb-6">
+            <EditorNavigation active="editors" />
+          </div>
 
           {error && (
             <p role="alert" className="text-sm text-destructive mb-6">

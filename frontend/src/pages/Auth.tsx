@@ -12,9 +12,12 @@ import { Eye, EyeOff } from "lucide-react";
 import { Formik, Form, Field, FormikHelpers } from "formik";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import { getStoredUser, setStoredUser } from "@/lib/auth";
-import apiClient, { ensureCsrfToken } from "@/lib/api";
+import { useAuthState } from "@/hooks/useAuth";
+import { signOut, syncCurrentUser } from "@/lib/auth";
+import { signIn } from "@/services/account";
 import { getRedirectPath } from "@/lib/authRedirect";
+import { useSiteInfo } from "@/hooks/useSiteInfo";
+import { APP_NAME } from "@/constants/brand";
 
 interface AuthValues {
   email: string;
@@ -25,9 +28,8 @@ const validateAuth = (values: AuthValues): Partial<Record<keyof AuthValues, stri
   const errors: Partial<Record<keyof AuthValues, string>> = {};
 
   if (!values.email?.trim()) {
-    errors.email = "Email is required";
-  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email.trim())) {
-    errors.email = "Please enter a valid email address";
+    errors.email = "Email or username is required";
+
   }
 
   if (!values.password) {
@@ -38,43 +40,41 @@ const validateAuth = (values: AuthValues): Partial<Record<keyof AuthValues, stri
 };
 
 const Auth = () => {
+  const { user, status, error: sessionError } = useAuthState();
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [accountConflict, setAccountConflict] = useState(false);
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [siteRetry, setSiteRetry] = useState(0);
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [verificationPending, setVerificationPending] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
   const redirectPath = getRedirectPath(location.state);
+  const site = useSiteInfo(siteRetry);
+  const onTestSite = site !== null && !site.isProduction;
 
   useEffect(() => {
-    if (getStoredUser()) {
+    if (status === "authenticated" && user && !loginBusy && !loginError) {
       navigate(redirectPath, { replace: true });
     }
-  }, [navigate, redirectPath]);
+  }, [user, status, loginBusy, loginError, navigate, redirectPath]);
 
   const handleSubmit = async (
     values: AuthValues,
     { setSubmitting }: FormikHelpers<AuthValues>
   ) => {
+    setVerificationPending(false);
+    setLoginError(null);
+    setAccountConflict(false);
+    setLoginBusy(true);
     try {
-      try {
-        await ensureCsrfToken();
-      } catch {
-        // Best-effort only; login may still succeed (e.g. CSRF-exempt view or token already present).
-      }
-      const res = await apiClient.post<{
-        user?: { id: number; username: string; email: string; is_staff: boolean; role?: string };
-        message?: string;
-        detail?: string;
-      }>("/login/", {
-        email: values.email.trim(),
-        password: values.password,
-      });
-
-      const data = res.data;
-      const userData = data?.user;
-      if (userData) {
-        setStoredUser(userData);
+      const signedIn = await signIn(values.email.trim(), values.password);
+      if (!signedIn) {
+        setVerificationPending(true);
+        return;
       }
 
       toast({
@@ -83,12 +83,15 @@ const Auth = () => {
       });
       navigate(redirectPath, { replace: true });
     } catch (err) {
+      setLoginError(err instanceof Error ? err.message : "Network error");
+      setAccountConflict((err as { status?: number }).status === 409);
       toast({
         title: "Sign in failed",
         description: err instanceof Error ? err.message : "Network error",
         variant: "destructive",
       });
     } finally {
+      setLoginBusy(false);
       setSubmitting(false);
     }
   };
@@ -101,13 +104,37 @@ const Auth = () => {
         <Card className="w-full max-w-md shadow-archival-lg">
           <CardHeader className="space-y-1 p-4 sm:p-6">
             <CardTitle className="font-heading text-2xl text-center">
-              WorldCovers Account
+              {APP_NAME} Account
             </CardTitle>
             <CardDescription className="text-center">
-              Sign in below, or request access if you do not have an account yet
+              Sign in below, or create an account if you do not have one yet
             </CardDescription>
           </CardHeader>
           <CardContent className="p-4 sm:p-6 pt-0">
+            {status === "checking" && <p role="status">Checking your session...</p>}
+            {status === "unavailable" && <div role="alert" className="mb-4">
+              <p>{sessionError || "Your session could not be checked."}</p>
+              <Button onClick={() => void syncCurrentUser().catch(() => {})}>Retry session check</Button>
+            </div>}
+            {loginError && <div role="alert" className="mb-4">
+              <p>{loginError}</p>
+              {accountConflict && <Button disabled={loginBusy} onClick={async () => {
+                setLoginBusy(true);
+                try {
+                  await signOut();
+                  setAccountConflict(false);
+                  setLoginError(null);
+                } catch (error) {
+                  setLoginError(error instanceof Error ? error.message : "Sign out failed. Please retry.");
+                } finally {
+                  setLoginBusy(false);
+                }
+              }}>Sign out of the current account</Button>}
+            </div>}
+            {verificationPending && <div role="status" className="mb-4 space-y-2">
+              <h2 className="font-semibold">Check your email</h2>
+              <p>Signing in before confirming your email automatically sends a new confirmation link, unless one was sent recently. Check your inbox and spam folder, then follow the link before signing in again.</p>
+            </div>}
             <Formik
               initialValues={{ email: "", password: "" }}
               validate={validateAuth}
@@ -115,14 +142,15 @@ const Auth = () => {
               onSubmit={handleSubmit}
             >
               {({ errors, touched, isSubmitting, isValid }) => (
-                <Form className="space-y-2 sm:space-y-4 pt-2 sm:pt-4">
+                <Form className="space-y-2 sm:space-y-4 pt-2 sm:pt-4" onChange={() => setVerificationPending(false)}>
                   <div className="space-y-1 sm:space-y-2">
-                    <Label htmlFor="signin-email">Email</Label>
+                    <Label htmlFor="signin-email">Email or username</Label>
                     <Field
                       as={Input}
                       id="signin-email"
+                      autoComplete="username"
                       name="email"
-                      type="email"
+                      type="text"
                       placeholder="name@example.com"
                       aria-invalid={!!(touched.email && errors.email)}
                       aria-describedby={touched.email && errors.email ? "signin-email-error" : undefined}
@@ -140,6 +168,7 @@ const Auth = () => {
                       <Field
                         as={Input}
                         id="signin-password"
+                        autoComplete="current-password"
                         name="password"
                         type={showPassword ? "text" : "password"}
                         placeholder="Enter your password"
@@ -179,7 +208,7 @@ const Auth = () => {
                   <Button
                     type="submit"
                     className="w-full"
-                    disabled={!isValid || isSubmitting}
+                    disabled={!isValid || isSubmitting || status === "checking" || status === "unavailable"}
                   >
                     {isSubmitting ? "Signing in..." : "Sign In"}
                   </Button>
@@ -192,17 +221,36 @@ const Auth = () => {
                 buried under the submit button. */}
             <div className="mt-6 border-t pt-4 space-y-2 text-center">
               <p className="text-sm font-medium">New to the catalog?</p>
-              <p className="text-sm text-muted-foreground">
-                Editor accounts are created for you — request one and we will set it up.
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full"
-                onClick={() => setRequestDialogOpen(true)}
-              >
-                Request a login
-              </Button>
+              {site === null ? (
+                <>
+                  <p role="status">Signup is unavailable until we can identify this site.</p>
+                  <Button variant="outline" onClick={() => setSiteRetry((value) => value + 1)}>Retry site check</Button>
+                </>
+              ) : onTestSite ? (
+                <>
+                  <p className="text-sm text-muted-foreground" role="note">
+                    This is the test site. Create your account on{" "}
+                    {site.productionHost}, then verify your email.
+                  </p>
+                  <Button asChild variant="outline" className="w-full">
+                    <a href={`${site.productionUrl}/auth`}>Create an account on {site.productionHost}</a>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Create an account and verify your email to contribute.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setRequestDialogOpen(true)}
+                  >
+                    Create account
+                  </Button>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>

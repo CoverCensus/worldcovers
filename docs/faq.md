@@ -20,3 +20,7 @@ Regular users cannot directly edit live records. Instead, submit a contribution 
 
 ## How do I report an error in the catalog or the documentation?
 For catalog data, sign in and submit a correction through the contribution workflow -- that is the fastest path to a fix, because it goes straight to the Editors. For errors in the documentation itself, contact the project team: beta participants can use the channel they were given when they joined, and anyone else can reach the project through the U.S. Philatelic Classics Society. Include the document title and the section that appears wrong.
+
+## Can I reuse catalog data or images, and how do I credit them?
+Open the Rights and Attribution article in Help. It explains the difference between the software licence and the catalog data statement, where the records and images come from, how Contributor credit works, how to write a credit line, and which terms are not yet confirmed.
+

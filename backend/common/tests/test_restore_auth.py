@@ -14,6 +14,7 @@ from django.test import TestCase
 
 from common import admin as common_admin
 from common.auth_resources import AUTH_BACKUP_SCHEMA
+from common.account_access import LEGACY_EMAIL_GROUP
 from common.models import Collection, CollectionAssignment, Region
 
 
@@ -322,6 +323,16 @@ class RestoreAuthCommandTests(TestCase):
         )
         user_rows = payload["datasets"]["users"]["rows"]
         self.assertIn(self.editor.username, {row["username"] for row in user_rows})
+
+    def test_backup_and_restore_preserve_legacy_verification_exemption(self):
+        group = Group.objects.get(name=LEGACY_EMAIL_GROUP)
+        self.editor.groups.add(group)
+        out_path = self.tmp_path / "legacy_auth.json"
+        call_command("backup_auth", str(out_path), verbosity=0)
+        self.editor.groups.remove(group)
+        call_command("restore_auth", str(out_path), verbosity=0)
+        self.assertTrue(self.editor.groups.filter(name=LEGACY_EMAIL_GROUP).exists())
+        self.assertFalse(EmailAddress.objects.filter(user=self.editor, verified=True).exists())
 
     def test_backup_auth_emit_csv_writes_fixed_bundle_files(self):
         self.assertIsNotNone(common_admin.CollectionAdmin)

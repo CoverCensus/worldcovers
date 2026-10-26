@@ -16,8 +16,8 @@ const API_BASE_URL = String(
 // logged in.
 //
 // `withXSRFToken: true` is REQUIRED on axios 1.x for cross-origin
-// requests. The previous behavior — "attach the xsrf header whenever
-// withCredentials is true" — was changed in axios 1.x; now the xsrf
+// requests. The previous behavior -- "attach the xsrf header whenever
+// withCredentials is true" -- was changed in axios 1.x; now the xsrf
 // header only auto-attaches for same-origin requests unless
 // withXSRFToken is explicitly set. In dev the SPA usually goes through
 // the Vite proxy (same-origin) so this wouldn't matter, but in any
@@ -70,6 +70,12 @@ function extractErrorMessage(data: unknown): string | null {
   if (typeof data !== 'object') return null;
 
   const payload = data as Record<string, unknown>;
+  if (Array.isArray(payload.errors)) {
+    const messages = payload.errors.map(error =>
+      error && typeof error === "object" && "message" in error && typeof error.message === "string" ? error.message : ""
+    ).filter(Boolean);
+    if (messages.length) return messages.join(" ");
+  }
   const direct =
     (typeof payload.detail === 'string' && payload.detail) ||
     (typeof payload.message === 'string' && payload.message) ||
@@ -93,19 +99,24 @@ function extractErrorMessage(data: unknown): string | null {
   return null;
 }
 
+export function accountError(data: unknown, status?: number, requestId?: string): Error & { status?: number } {
+  const message = extractErrorMessage(data) || (status === 429
+    ? "Too many attempts. Please wait before trying again."
+    : `The request could not be completed${status ? ` (HTTP ${status})` : ""}. Please try again.`);
+  const reference = requestId && /^[a-f0-9]{32}$/.test(requestId) ? ` Reference: ${requestId}.` : "";
+  return Object.assign(new Error(message + reference), { status });
+}
+
 // Response interceptor for error handling
 apiClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
-    const parsedMessage = extractErrorMessage(error.response?.data);
-    const message = parsedMessage || error.message || 'Network error';
-
-    console.error('API Error:', message);
-    // Preserve the HTTP status on the rejected Error so callers can branch on it
-    // (e.g. Contribute.tsx shows a tailored toast for 413 oversized uploads).
-    // Backward compatible: existing callers that only read `.message` ignore it.
-    const normalizedError = new Error(message);
-    (normalizedError as { status?: number }).status = error.response?.status;
+    const status = error.response?.status;
+    const normalizedError = accountError(error.response?.data || error.message, status, error.response?.headers["x-request-id"]);
+    const path = error.config?.url || "";
+    if ((status === 401 || status === 403) && !path.includes("/auth/") && path !== "/me/") {
+      window.dispatchEvent(new Event("auth-check-required"));
+    }
     return Promise.reject(normalizedError);
   }
 );
@@ -147,7 +158,7 @@ export async function ensureCsrfToken(): Promise<string | null> {
   try {
     await apiClient.get('/me/');
   } catch {
-    // /me/ may 401 for anonymous users — that's fine, the response still
+    // /me/ may 401 for anonymous users -- that's fine, the response still
     // sets the csrftoken cookie. Swallow other errors so we don't block
     // the caller's primary request flow.
   }

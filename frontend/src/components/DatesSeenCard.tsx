@@ -4,15 +4,16 @@
  * ... is not available ... Where does this data come?"
  *
  * The edit form's ERD/LRD block can only ADD an observation on approval; it
- * cannot correct or remove one. This card works on the marking page over the
+ * cannot correct or remove one. This card works on the Marking edit page over the
  * existing /dates-seen/ API: one row per click, region-scoped and audited on
  * the server (issue #128), each change one version in the marking's history.
- * Rendered only when the server says this viewer may edit (can_edit_dates).
+ * Saved Markings require the server's can_edit_dates permission. New Marking
+ * forms keep these dates with the submission until approval.
  */
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,6 +43,11 @@ import {
 
 const EMPTY: PartialDateInput = { unknown: false, year: "", month: "", day: "" };
 
+type DatesSeenCardProps = { datesSeen: AssociatedDateSeen[] } & (
+  | { markingId: number; onChanged: () => Promise<void> | void; onDatesChange?: never }
+  | { markingId?: never; onChanged?: never; onDatesChange: (rows: AssociatedDateSeen[]) => void }
+);
+
 type EditorState =
   | { mode: "idle" }
   | { mode: "add"; value: PartialDateInput }
@@ -51,12 +57,8 @@ export function DatesSeenCard({
   markingId,
   datesSeen,
   onChanged,
-}: {
-  markingId: number;
-  datesSeen: AssociatedDateSeen[];
-  /** Called after a successful write; the page refetches so Earliest/Latest and the history move. */
-  onChanged: () => Promise<void> | void;
-}) {
+  onDatesChange,
+}: DatesSeenCardProps) {
   const [editor, setEditor] = useState<EditorState>({ mode: "idle" });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -74,13 +76,32 @@ export function DatesSeenCard({
     setBusy(true);
     setError(null);
     try {
-      if (editor.mode === "add") {
+      if (onDatesChange) {
+        const value = check.value;
+        if (!value.granularity) {
+          setError("Enter at least one date component.");
+          return;
+        }
+        const row: AssociatedDateSeen = {
+          id: editor.mode === "edit" ? editor.id : Math.min(0, ...datesSeen.map((date) => date.id)) - 1,
+          date: value.legacyDate,
+          granularity: value.granularity,
+          dateYear: value.year,
+          dateMonth: value.month,
+          dateDay: value.day,
+        };
+        if (datesSeen.some((date) => date.id !== row.id && date.dateYear === row.dateYear && date.dateMonth === row.dateMonth && date.dateDay === row.dateDay)) {
+          setError("This date is already recorded for this Marking.");
+          return;
+        }
+        onDatesChange(editor.mode === "add" ? [...datesSeen, row] : datesSeen.map((date) => date.id === row.id ? row : date));
+      } else if (editor.mode === "add") {
         await createDateSeen({ subjectType: "MARKING", subjectId: markingId, parts: editor.value });
       } else {
         await updateDateSeen(editor.id, editor.value);
       }
       setEditor({ mode: "idle" });
-      await onChanged();
+      await onChanged?.();
     } catch (err) {
       setError(dateSeenErrorMessage(err));
     } finally {
@@ -93,9 +114,10 @@ export function DatesSeenCard({
     setBusy(true);
     setError(null);
     try {
-      await deleteDateSeen(pendingDelete.id);
+      if (onDatesChange) onDatesChange(datesSeen.filter((date) => date.id !== pendingDelete.id));
+      else await deleteDateSeen(pendingDelete.id);
       setPendingDelete(null);
-      await onChanged();
+      await onChanged?.();
     } catch (err) {
       setError(dateSeenErrorMessage(err));
     } finally {
@@ -106,10 +128,10 @@ export function DatesSeenCard({
   const editing = editor.mode !== "idle";
 
   return (
-    <Card className="shadow-archival-md">
-      <CardHeader>
+    <div className="space-y-2">
+      <div className="space-y-2">
         <div className="flex items-center justify-between gap-3">
-          <CardTitle className="font-heading text-lg">Dates seen</CardTitle>
+          <Label>Dates seen</Label>
           {!editing && (
             <Button size="sm" variant="outline" onClick={() => setEditor({ mode: "add", value: EMPTY })} disabled={busy}>
               Add date
@@ -117,14 +139,19 @@ export function DatesSeenCard({
           )}
         </div>
         <p className="text-sm text-muted-foreground">
-          Dates on this marking come from the source catalogue text and from editors. Dates on
+          Dates on this Marking come from the source catalog text and from Editors. Dates on
           linked covers count toward Earliest/Latest but are edited on each cover.
         </p>
-      </CardHeader>
-      <CardContent className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          {onDatesChange
+            ? "These dates save with your submission and are added when it is approved."
+            : "Changes here save immediately, separate from the edit submission."}
+        </p>
+      </div>
+      <div className="space-y-3">
         {rows.length === 0 && !editing && (
           <p className="text-sm text-muted-foreground">
-            No dates recorded directly on this marking. Earliest/Latest, if shown, come from linked covers.
+            {onDatesChange ? "No dates added to this submission." : "No dates recorded directly on this marking. Earliest/Latest, if shown, come from linked covers."}
           </p>
         )}
         {rows.length > 0 && (
@@ -167,7 +194,7 @@ export function DatesSeenCard({
           </div>
         )}
         {error && editor.mode === "idle" && <p className="text-sm text-destructive">{error}</p>}
-      </CardContent>
+      </div>
 
       <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
         <AlertDialogContent>
@@ -175,7 +202,7 @@ export function DatesSeenCard({
             <AlertDialogTitle>Remove this date?</AlertDialogTitle>
             <AlertDialogDescription>
               {pendingDelete ? formatDateSeenLike(pendingDelete) : ""} will be removed from this marking.
-              The change is recorded in the marking's history and can be added back.
+              {onDatesChange ? "You can add it back before submitting." : "The change is recorded in the marking's history and can be added back."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -184,6 +211,6 @@ export function DatesSeenCard({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Card>
+    </div>
   );
 }

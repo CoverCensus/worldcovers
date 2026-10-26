@@ -38,6 +38,7 @@ export function EntryRecordHistoryCard({
   expanded,
   onToggleExpanded,
   unavailableMessage,
+  onRestoreVersion,
 }: {
   loading: boolean;
   error: string | null;
@@ -45,6 +46,11 @@ export function EntryRecordHistoryCard({
   expanded: boolean;
   onToggleExpanded: () => void;
   unavailableMessage?: string;
+  /**
+   * Offer "Restore this version" on events that saved a version (Trello
+   * T74). Left out for a removed Entry, whose recovery is the recycle bin.
+   */
+  onRestoreVersion?: (versionNo: number) => void;
 }) {
   const visibleEvents = expanded
     ? events.slice(0, HISTORY_EXPANDED_LIMIT)
@@ -85,8 +91,20 @@ export function EntryRecordHistoryCard({
                       {formatHistoryTimestamp(event.timestamp)}
                     </span>
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground break-all">
-                    {historyActorDisplay(event)}
+                  <div className="mt-1 flex items-center justify-between gap-3">
+                    <span className="text-xs text-muted-foreground break-all">{historyActorDisplay(event)}</span>
+                    {onRestoreVersion && event.version_no != null && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        aria-label={`Restore this version (version ${event.version_no})`}
+                        onClick={() => onRestoreVersion(event.version_no as number)}
+                      >
+                        Restore this version
+                      </Button>
+                    )}
                   </div>
                   {/* Field-level changes. Gate on version_no > 1 so the initial
                       create approval (version 1, before == empty) does not list

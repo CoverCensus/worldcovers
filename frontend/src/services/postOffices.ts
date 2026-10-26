@@ -133,11 +133,9 @@ function mapPaginatedPostOfficesPayload(data: unknown): PostOfficeOption[] {
   );
 }
 
-/** Returns the total number of post office records from the paginated list endpoint. */
+/** Returns the exact Post Office count without loading catalog rows. */
 export async function getPostOfficeCount(): Promise<number> {
-  const res = await apiClient.get<PostOfficesApiResponse>("/post-offices/", {
-    params: { page_size: "1" },
-  });
+  const res = await apiClient.get<{ count: number }>("/post-offices/count/");
   return typeof res.data.count === "number" ? res.data.count : 0;
 }
 

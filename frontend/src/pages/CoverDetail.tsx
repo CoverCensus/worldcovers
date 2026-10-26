@@ -27,6 +27,7 @@ import { CropImageDialog } from "@/components/CropImageDialog";
 import { ImageCaptionDialog } from "@/components/ImageCaptionDialog";
 import { RotateImageDialog } from "@/components/RotateImageDialog";
 import { EntryRecordHistoryCard } from "@/components/entry-detail/EntryRecordHistoryCard";
+import { RestoreVersionDialog } from "@/components/entry-detail/RestoreVersionDialog";
 import { EntryCitationsCard, type EntryCitationItem } from "@/components/entry-detail/EntryCitationsCard";
 import { CoverRecordDetailFields } from "@/components/entry-detail/CoverRecordDetailFields";
 import { AssociatedMarkingPreviewCard } from "@/components/entry-detail/AssociatedMarkingPreviewCard";
@@ -38,6 +39,8 @@ import {
   getMarkingById,
   getMarkingsPage,
   getCoverChangelog,
+  getCoverRestorePreview,
+  restoreCoverVersion,
   updateImageCaption,
   getCoverMarkingsByCover,
   deleteImage,
@@ -191,6 +194,8 @@ const CoverDetailPage = () => {
   const [removeReason, setRemoveReason] = useState("");
   const [removing, setRemoving] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
+  // Version an editor is about to restore the cover to (Trello T74).
+  const [restoreVersionNo, setRestoreVersionNo] = useState<number | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
   // Trello T37 / workspace issues.md #182: crop from this cover into an
@@ -949,6 +954,7 @@ const CoverDetailPage = () => {
                     ? "Open this cover from a marking record to view audit history."
                     : undefined
                 }
+                onRestoreVersion={isStaff && !cover.isRemoved ? setRestoreVersionNo : undefined}
               />
             )}
           </>
@@ -1442,6 +1448,31 @@ const CoverDetailPage = () => {
           if (result.ok === false) return result.message;
           toast({ title: "Caption saved" });
           setImages(await getImagesForSubject({ subjectType: "COVER", subjectId: coverPk }));
+          setHistoryReloadKey((key) => key + 1);
+          return null;
+        }}
+      />
+
+      <RestoreVersionDialog
+        open={restoreVersionNo != null}
+        onOpenChange={(open) => {
+          if (!open) setRestoreVersionNo(null);
+        }}
+        entryLabel="cover"
+        versionNo={restoreVersionNo}
+        loadPreview={() =>
+          coverPk != null && restoreVersionNo != null
+            ? getCoverRestorePreview(coverPk, restoreVersionNo)
+            : Promise.resolve({ ok: false as const, message: "This record has no versions to restore." })
+        }
+        onConfirm={async () => {
+          if (coverPk == null || restoreVersionNo == null) return "This record has no versions to restore.";
+          const result = await restoreCoverVersion(coverPk, restoreVersionNo);
+          if (result.ok === false) return result.message;
+          toast({ title: `Restored from version ${restoreVersionNo}` });
+          await reloadCover();
+          setImages(await getImagesForSubject({ subjectType: "COVER", subjectId: coverPk }));
+          await refreshCoverMarkingLink();
           setHistoryReloadKey((key) => key + 1);
           return null;
         }}

@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
-# Convenience wrapper: 'woco <args>' == 'uv run woco <args>'.
-# The actual entry point lives in woco_cli.py + [project.scripts] woco
-# in pyproject.toml. This shim just avoids the 'uv run' prefix and lets
-# you run from anywhere via 'ln -s "$PWD/woco" ~/.local/bin/woco'.
+# Run commands in the installed environment without changing dependencies.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
-exec uv run --project "$HERE" woco "$@"
+
+# Setup must work before the environment exists.
+if [[ "${1:-}" == "setup" ]]; then
+    shift
+    exec "$HERE/tools/setup.sh" "$@"
+fi
+
+if [[ ! -x "$HERE/.venv/bin/python" ]]; then
+    echo "Missing Python environment: $HERE/.venv/bin/python" >&2
+    echo "Run uv sync for development, or uv sync --no-dev --frozen on a server." >&2
+    exit 1
+fi
+
+exec "$HERE/.venv/bin/python" "$HERE/woco_cli.py" "$@"

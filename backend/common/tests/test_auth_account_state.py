@@ -13,8 +13,11 @@ from smtplib import SMTPSenderRefused
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
+from common.account_access import LEGACY_EMAIL_GROUP
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core import mail
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
@@ -30,6 +33,7 @@ RESET_URL = "/api/v2/reset-password/"
 
 class AuthAccountStateTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.client = APIClient()
 
     def _pending(self, email="pending@example.com"):
@@ -37,6 +41,7 @@ class AuthAccountStateTests(TestCase):
         user = User(username=email, email=email, is_active=False)
         user.set_unusable_password()
         user.save()
+        user.groups.add(Group.objects.get(name=LEGACY_EMAIL_GROUP))
         return user
 
     def _login(self, identifier, password):
@@ -67,6 +72,7 @@ class AuthAccountStateTests(TestCase):
         )
         user.is_active = False
         user.save(update_fields=["is_active"])
+        user.groups.add(Group.objects.get(name=LEGACY_EMAIL_GROUP))
 
         response = self._login("reset@example.com", "CorrectHorse1!")
 
@@ -116,6 +122,7 @@ class AuthAccountStateTests(TestCase):
         user = User.objects.create_user(
             username="editor", email="editor@example.com", password="CorrectHorse1!"
         )
+        user.groups.add(Group.objects.get(name=LEGACY_EMAIL_GROUP))
         response = self._login("editor", "CorrectHorse1!")
 
         self.assertEqual(response.status_code, 200, response.data)
@@ -130,6 +137,7 @@ class AuthAccountStateTests(TestCase):
         User.objects.create_user(
             username="editor2", email="editor2@example.com", password="CorrectHorse1!"
         )
+        User.objects.get(username="editor2").groups.add(Group.objects.get(name=LEGACY_EMAIL_GROUP))
         response = self._login("editor2@example.com", "CorrectHorse1!")
 
         self.assertEqual(response.status_code, 200, response.data)
@@ -174,14 +182,14 @@ class AuthAccountStateTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 503, response.data)
-        # ⛔ Never 200 here. Claiming "a reset link has been sent" when the send
+        # NOTE: Never 200 here. Claiming "a reset link has been sent" when the send
         # raised is the same lie as the silent activation mail in signals.py.
         self.assertNotIn("has been sent", response.data["detail"])
         self.assertIn("could not send", response.data["detail"].lower())
         # The user must be given a human to contact, not just a failure.
         self.assertIn("@", response.data["detail"])
 
-    def test_forgot_password_logs_the_failed_address_at_error(self):
+    def test_forgot_password_logs_a_reference_without_the_address(self):
         """A silent failure is how #152 went unnoticed. Someone must be able to see it."""
         User.objects.create_user(
             username="editor5", email="editor5@example.com", password="CorrectHorse1!"
@@ -195,10 +203,8 @@ class AuthAccountStateTests(TestCase):
                     FORGOT_URL, {"email": "editor5@example.com"}, format="json"
                 )
 
-        self.assertTrue(
-            any("editor5@example.com" in line for line in captured.output),
-            f"the attempted address must be in the log: {captured.output}",
-        )
+        self.assertIn("request_id=", "\n".join(captured.output))
+        self.assertNotIn("editor5@example.com", "\n".join(captured.output))
 
     def test_forgot_password_still_returns_200_when_mail_works(self):
         """The positive control -- the new handler must not swallow the happy path."""

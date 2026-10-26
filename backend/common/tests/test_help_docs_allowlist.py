@@ -52,6 +52,30 @@ class HelpDocsAllowlistTests(TestCase):
         self.assertEqual(len(guide), 1)
         self.assertGreater(len(guide[0]["markdown"]), 0)
 
+    def test_rights_and_attribution_is_published_with_content(self):
+        # Trello T69: Guests must be able to read the rights and credit guidance.
+        response = self.client.get(URL)
+        docs = [doc for doc in response.data["results"] if doc["slug"] == "rights-and-attribution"]
+        self.assertEqual(len(docs), 1)
+        self.assertEqual(docs[0]["title"], "Rights and Attribution")
+        self.assertIn("Not yet confirmed", docs[0]["markdown"])
+        self.assertIn("creativecommons.org/licenses/by/4.0", docs[0]["markdown"])
+
+    def test_acknowledgements_ends_with_the_funding_lines(self):
+        # Trello T91 (Ian, 2026-10-19): the page ends with the IanThom Foundation
+        # funding line and its link, below the Beals Trust line from PR #166.
+        response = self.client.get(URL)
+        docs = [doc for doc in response.data["results"] if doc["slug"] == "acknowledgements"]
+        self.assertEqual(len(docs), 1)
+        markdown = docs[0]["markdown"].rstrip()
+        self.assertIn("David T. Beals Charitable Trust", markdown)
+        self.assertTrue(
+            markdown.endswith(
+                "Funding was provided by The IanThom Foundation, [www.IanThom.org](https://www.ianthom.org)."
+            ),
+            markdown[-200:],
+        )
+
     def test_new_doc_dropped_in_docs_is_not_published(self):
         # The actual failure mode: someone adds a markdown file to docs/ and it
         # goes public without anyone deciding that it should.
@@ -73,3 +97,12 @@ class HelpDocsAllowlistTests(TestCase):
         # Documenting intent: this is deliberately unauthenticated, which is
         # exactly why the allowlist carries the weight it does.
         self.assertEqual(self.client.get(URL).status_code, 200)
+
+    def test_published_doc_titles_use_the_product_name(self):
+        # Trello T98: the catalog presents as APMC; no public Help page may
+        # still be titled for the retired product name.
+        response = self.client.get(URL)
+        self.assertEqual(response.status_code, 200)
+        titles = {doc["slug"]: doc["title"] for doc in response.data["results"]}
+        offenders = {slug: title for slug, title in titles.items() if "WorldCovers" in title}
+        self.assertEqual(offenders, {})

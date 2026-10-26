@@ -16,7 +16,9 @@ from common.api.auth import (
     LoginRequestView,
     LoginView,
     LogoutView,
+    PendingLoginRequestsView,
     ResetPasswordApiView,
+    SiteInfoView,
 )
 from common.api.help import HelpDocsView
 
@@ -51,14 +53,17 @@ router.register(r"collections", views.CollectionViewSet, basename="collection")
 
 urlpatterns = [
     # Auth
-    path("login/", csrf_exempt(LoginView.as_view()), name="login"),
-    path("logout/", csrf_exempt(LogoutView.as_view()), name="logout"),
+    path("auth/", include("common.api.account")),
+    path("login/", LoginView.as_view(), name="login"),
+    path("logout/", LogoutView.as_view(), name="logout"),
     path("me/", CurrentUserView.as_view(), name="current-user"),
     path("login-requests/", csrf_exempt(LoginRequestView.as_view()), name="login-request"),
-    path("forgot-password/", csrf_exempt(ForgotPasswordApiView.as_view()), name="forgot-password"),
-    path("reset-password/", csrf_exempt(ResetPasswordApiView.as_view()), name="reset-password"),
-    path("change-password/", csrf_exempt(ChangePasswordApiView.as_view()), name="change-password"),
+    path("login-requests/pending/", PendingLoginRequestsView.as_view(), name="login-requests-pending"),
+    path("forgot-password/", ForgotPasswordApiView.as_view(), name="forgot-password"),
+    path("reset-password/", ResetPasswordApiView.as_view(), name="reset-password"),
+    path("change-password/", ChangePasswordApiView.as_view(), name="change-password"),
     path("help-docs/", HelpDocsView.as_view(), name="help-docs"),
+    path("site/", SiteInfoView.as_view(), name="site-info"),
     path("editor-roster/", views.EditorRosterView.as_view(), name="editor-roster"),
 
     # Custom non-router endpoints.

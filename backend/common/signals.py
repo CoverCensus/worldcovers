@@ -6,6 +6,7 @@
 import logging
 
 from django.conf import settings
+from django.utils.html import escape
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.db.models.signals import post_delete, post_save, pre_save
@@ -36,17 +37,18 @@ def _mail_backend_configured():
 @receiver(pre_save, sender=User)
 def send_activation_email_when_user_activated(sender, instance, **kwargs):
     """
-    When a user is changed from inactive to active in Django admin (or created as active),
+    When a legacy user is changed from inactive to active in Django admin,
     send them an email so they know they can sign in.
     """
     # Superusers (e.g. createsuperuser) should not trigger consumer activation mail or SMTP.
     if getattr(instance, "is_superuser", False):
         return
 
-    # New user being created with Active checked and email set
+    # Signup sends allauth verification mail, not an activation notice.
     if not instance.pk:
-        if instance.is_active and (instance.email or "").strip():
-            _send_activation_email(instance.email.strip())
+        return
+    from common.account_access import has_legacy_access
+    if not has_legacy_access(instance):
         return
 
     # Existing user: only send when transitioning inactive -> active
@@ -56,76 +58,48 @@ def send_activation_email_when_user_activated(sender, instance, **kwargs):
         return
 
     if not previous.is_active and instance.is_active and (instance.email or "").strip():
-        _send_activation_email(instance.email.strip())
+        _send_activation_email(instance.email.strip(), password_ready=instance.has_usable_password())
 
 
-def _send_activation_email(to_email):
-    """Send 'Your account is now active' email to the given address."""
+def _send_activation_email(to_email: str, *, password_ready: bool = True) -> None:
+    """Tell a legacy account holder how to use the newly enabled account."""
     frontend_base = getattr(settings, "FRONTEND_BASE_URL", None) or f"https://{settings.DJANGO_APP_HOSTNAME}"
     if not frontend_base.startswith(("http://", "https://")):
         frontend_base = f"https://{frontend_base.lstrip('/')}"
     login_url = f"{frontend_base.rstrip('/')}/auth"
-
-    subject = "Your WorldCovers Account Is Now Active"
-    message_lines = [
-        "Hello,",
-        "",
-        "Good news — your WorldCovers account has just been activated.",
-        "",
-        f"You can now sign in here: {login_url}",
-        "",
-        "If you did not expect this change, please contact the site administrator.",
-    ]
-    message = "\n".join(message_lines)
-
-    # HTML version with a clickable login link/button
+    site_name = settings.SITE_NAME
+    site_name_html = escape(site_name)
+    next_step = ("You can now sign in here:" if password_ready else
+                 "Set a password before signing in. Choose Forgot password on this page:")
+    message = "\n".join([
+        f"Your {site_name} account has been activated.", "", next_step, login_url, "",
+        "If you did not expect this change, please contact the site Administrator.",
+    ])
     html_message = f"""
-            <p>Hello,</p>
-
-            <p>Good news! Your <strong>WorldCovers</strong> account has been successfully activated.</p>
-
-            <p>You can now sign in using the link below:</p>
-
-            <p>
-            <a href="{login_url}" 
-                style="display:inline-block;padding:10px 16px;margin-top:8px;background-color:#7b4b4b;color:#ffffff;text-decoration:none;border-radius:4px;">
-                Sign in to WorldCovers
-            </a>
-            </p>
-
-            <p>If you did not expect this change or believe this was done in error, please contact the site administrator immediately.</p>
-
-            <p>Best regards,<br>
-            WorldCovers Team</p>
-            """
-
+        <p>Your <strong>{site_name_html}</strong> account has been activated.</p>
+        <p>{escape(next_step)}</p>
+        <p><a href="{escape(login_url)}">Open {site_name_html}</a></p>
+        <p>If you did not expect this change, please contact the site Administrator.</p>
+        """
     if not _mail_backend_configured():
-        logger.info(
-            "Skipping activation email to %s: email backend not configured (set EMAIL_HOST or use a real backend).",
-            to_email,
-        )
+        logger.info("Activation email skipped: email backend is not configured.")
         return
-
-    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", None) or "no-reply@worldcovers.org"
     try:
         send_mail(
-            subject,
-            message,
-            from_email,
-            [to_email],
-            fail_silently=False,
-            html_message=html_message,
+            f"Your {site_name} Account Is Now Active", message,
+            getattr(settings, "DEFAULT_FROM_EMAIL", None) or "no-reply@worldcovers.org",
+            [to_email], fail_silently=False, html_message=html_message,
         )
     except Exception:
-        # Best-effort: do not block user save if SMTP is misconfigured or unreachable.
-        logger.exception("Failed to send activation email to %s", to_email)
+        # Mail failure must not undo an Administrator's activation decision.
+        logger.error("Activation email could not be sent.")
 
 
 ###################################################################################################
 ## Marking date-range cache maintenance (issue #59)
 ##
 ## Marking.earliest_seen / latest_seen (+granularities) are a derived cache
-## over DateSeen + CoverMarking. These receivers cover every ORM write path —
+## over DateSeen + CoverMarking. These receivers cover every ORM write path --
 ## API viewsets, admin (incl. inlines and bulk delete), contribution apply,
 ## import-export per-row saves, and cascades (a post_delete receiver disables
 ## fast-delete, so queryset.delete() fires per instance). Bulk paths that skip

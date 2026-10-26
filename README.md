@@ -108,6 +108,7 @@ cp .env.example .env             # then set DJANGO_SECRET_KEY (see below)
 ./woco secretkey                 # prints a fresh secret key
 cd frontend && npm ci && npm run build && cd ..
 ./woco migrate
+./woco createcachetable
 ./woco collectstatic --noinput
 ./woco dev
 ```
@@ -116,8 +117,12 @@ Paste the generated secret key into the `DJANGO_SECRET_KEY=` line of `.env`
 before running `./woco migrate` -- Django refuses to start without it.
 
 `./woco` is the repo-local CLI shim for Django management commands on macOS
-and Linux. It wraps `uv run woco`, which calls `woco_cli.py` and then
-Django's `execute_from_command_line`. `woco.bat` is included as a convenience
+and Linux. It runs `woco_cli.py` with `.venv/bin/python`, then calls
+Django's `execute_from_command_line`. Normal commands do not sync or rebuild
+the environment. Run `uv sync` explicitly after dependency changes in
+development; server deployment uses `uv sync --no-dev --frozen`.
+`./woco setup` can build the environment before Python is installed in it.
+`woco.bat` still uses `uv run` and is included as a convenience
 wrapper for Windows cmd.exe and PowerShell; use `.\woco.bat` in place of
 `./woco` on Windows systems.
 

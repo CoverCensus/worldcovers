@@ -10,6 +10,8 @@ from pathlib import Path
 
 from decouple import config
 
+from woco.site_role import derive_site_role, validate_site_role
+
 
 ###
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -48,6 +50,24 @@ INTERNAL_IPS = [
 
 DJANGO_APP_HOSTNAME = config("DJANGO_APP_HOSTNAME", default="hellowoco.app")
 
+# Product name shown in email subjects and bodies, the API schema and the admin
+# header. The USPCS decided on 2026-10-23 that the catalog presents as "APMC"
+# (Trello T98); the frontend keeps its own copy in src/constants/brand.ts.
+SITE_NAME = "APMC"
+
+# Which site this install is (Trello T84). The SPA is the same bundle on both
+# sites, so it asks GET /api/v2/site/ and the backend answers from these. The
+# role is derived from the hostname (see woco/site_role.py), so neither server
+# needs a new .env entry; WOCO_SITE_ROLE overrides it with exactly "production"
+# or "staging" and anything else refuses to start.
+WOCO_PRODUCTION_URL = config("WOCO_PRODUCTION_URL", default="https://hellowoco.app")
+WOCO_SITE_ROLE = validate_site_role(
+    config(
+        "WOCO_SITE_ROLE",
+        default=derive_site_role(DJANGO_APP_HOSTNAME, WOCO_PRODUCTION_URL),
+    )
+)
+
 ALLOWED_HOSTS = [
     DJANGO_APP_HOSTNAME, 
     f"www.{DJANGO_APP_HOSTNAME}",
@@ -68,6 +88,7 @@ INSTALLED_APPS = [
     "django_extensions",
     "allauth",
     "allauth.account",
+    "allauth.headless",
     "import_export",
     "rest_framework",
     "django_filters",
@@ -88,6 +109,7 @@ if not TESTING:
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
+    "common.auth_diagnostics.AuthRequestLogMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -149,17 +171,8 @@ SILENCED_SYSTEM_CHECKS = ["models.W036"]
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
-# ⚠ These validators are NOT what the API enforces. The SPA's password paths
-# (ResetPasswordApiView, ChangePasswordApiView) call _validate_password_strength
-# in common/api/auth.py -- 8 chars + upper + lower + digit + special -- and
-# nothing in this project calls django's validate_password(). This list only
-# reaches the Django admin's password forms and allauth.
-#
-# min_length was 4, which contradicted the policy the product advertises and
-# read as though 4 were acceptable somewhere (issue #157). Raised to 8 so the
-# floor here agrees with the app. It is deliberately only a floor, not the whole
-# rule -- see DECISIONS.md 2026-09-10 for why the validator list was NOT made
-# the single source of truth.
+# Allauth and the password APIs also apply common.passwords' shared rules.
+# Keep the Django minimum for admin password forms.
 AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
@@ -170,15 +183,41 @@ AUTH_PASSWORD_VALIDATORS = [
 # Authentication (provided by AllAuth)
 SITE_ID = 1
 ACCOUNT_LOGIN_METHODS = {"email", "username"}
-ACCOUNT_SIGNUP_FIELDS = ['email*', 'username*', 'password1*', 'password2*']
-ACCOUNT_EMAIL_VERIFICATION = "none" if DEBUG or TESTING else "mandatory"
+ACCOUNT_SIGNUP_FIELDS = ['email*', 'password1*', 'password2*']
+ACCOUNT_EMAIL_VERIFICATION = "mandatory"
+ACCOUNT_EMAIL_CONFIRMATION_EXPIRE_DAYS = 3
+ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = False
+ACCOUNT_CONFIRM_EMAIL_ON_GET = False
+ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = False
+ACCOUNT_SIGNUP_FORM_CLASS = "common.account_adapter.SignupForm"
+ACCOUNT_ADAPTER = "common.account_adapter.AccountAdapter"
+# Subjects already carry the product name; without this allauth prepends
+# "[<Site.name>] " from django.contrib.sites (SITE_ID=1, "example.com").
+ACCOUNT_EMAIL_SUBJECT_PREFIX = ""
+HEADLESS_CLIENTS = ("browser",)
+HEADLESS_ONLY = True
 AUTHENTICATION_BACKENDS = [
+    "common.account_backend.AccountAuthenticationBackend",
+    # Keep these paths so pre-release sessions remain readable. New failed
+    # authentication stops in AccountAuthenticationBackend.
     "django.contrib.auth.backends.ModelBackend",
     "allauth.account.auth_backends.AuthenticationBackend",
 ]
 
 LOGIN_REDIRECT_URL = '/'
 ACCOUNT_LOGOUT_REDIRECT_URL = '/'
+
+# nginx is the one trusted hop; it appends the actual peer to X-Forwarded-For.
+ALLAUTH_TRUSTED_PROXY_COUNT = 1
+# All five Gunicorn workers must see the same rate-limit history.
+CACHES = {"default": {
+    "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+    "LOCATION": "account_rate_cache",
+    "OPTIONS": {"MAX_ENTRIES": 100000},
+}}
+if TESTING:
+    # The cross-process cache test separately exercises the database backend.
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
@@ -249,8 +288,8 @@ REST_FRAMEWORK = {
 
 # API Documentation
 SPECTACULAR_SETTINGS = {
-    "TITLE": "WorldCovers API",
-    "DESCRIPTION": "WorldCovers REST interface for postal marking and stampless cover data",
+    "TITLE": f"{SITE_NAME} API",
+    "DESCRIPTION": f"{SITE_NAME} REST interface for postal marking and stampless cover data",
     "VERSION": "2.0.0",
     "SWAGGER_UI_SETTINGS": {
         "supportedSubmitMethods": [],
@@ -311,6 +350,7 @@ if _use_file_handler:
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {"omit_access_query": {"()": "common.auth_diagnostics.OmitAccessQuery"}},
     "formatters": {
         "verbose": {
             "format": "{levelname} {asctime} {module} {message}",
@@ -325,6 +365,12 @@ LOGGING = {
         **_file_handler_config,
     },
     "loggers": {
+        "django.server": {
+            "handlers": _log_handlers,
+            "filters": ["omit_access_query"],
+            "level": "INFO",
+            "propagate": False,
+        },
         "django": {
             "handlers": _log_handlers,
             "level": DJANGO_LOG_LEVEL,
@@ -340,6 +386,7 @@ LOGGING = {
 
 # CORS (adjust for frontend). Session auth requires credentials.
 CORS_ALLOW_CREDENTIALS = True
+CORS_EXPOSE_HEADERS = ["X-Request-ID"]
 # 8080 = common dev port; 5173 = Vite default
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:8080",
@@ -383,12 +430,20 @@ EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
 EMAIL_USE_TLS = config("EMAIL_USE_TLS", cast=bool, default=True)
 EMAIL_USE_SSL = config("EMAIL_USE_SSL", cast=bool, default=False)
+EMAIL_TIMEOUT = 5
 DEFAULT_FROM_EMAIL = config(
     "DEFAULT_FROM_EMAIL",
-    default=f"WorldCovers <no-reply@{DJANGO_APP_HOSTNAME}>",
+    default=f"{SITE_NAME} <no-reply@{DJANGO_APP_HOSTNAME}>",
 )
 # Email(s) to notify when a user requests login access. Comma-separated or single.
 # Falls back to ADMINS or staff users if not set.
 LOGIN_REQUEST_ADMIN_EMAIL = config("LOGIN_REQUEST_ADMIN_EMAIL", default="")
 
 ###################################################################################################
+
+FRONTEND_BASE_URL = config("FRONTEND_BASE_URL", default=f"https://{DJANGO_APP_HOSTNAME}")
+HEADLESS_FRONTEND_URLS = {
+    "account_confirm_email": f"{FRONTEND_BASE_URL.rstrip('/')}/verify-email?key={{key}}",
+    "account_signup": f"{FRONTEND_BASE_URL.rstrip('/')}/auth",
+    "account_reset_password": f"{FRONTEND_BASE_URL.rstrip('/')}/auth",
+}

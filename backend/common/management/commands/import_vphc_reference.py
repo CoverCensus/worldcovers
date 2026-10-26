@@ -47,6 +47,7 @@ from common.models import (
     PostmasterTenure,
     Region,
 )
+from common.postmaster_names import postmaster_sort_name
 
 RULES_VERSION = 2
 STATE_CODES = {"VA": "USA-VA1", "WV": "USA-WV1"}
@@ -62,23 +63,9 @@ def county_code(state, county):
     return f"{STATE_CODES[state]}-C-{slug}"[:30]
 
 
-def sort_name(name):
-    """Surname-first, for ordering and for spotting the same person twice.
-
-    Deliberately crude: the last whitespace-delimited token, minus a trailing
-    suffix. "Gerrard T. Conn" -> "Conn, Gerrard T.". Getting this wrong costs
-    ordering, not identity -- identity is the full name string.
-    """
-    parts = (name or "").strip().split()
-    if len(parts) < 2:
-        return (name or "").strip()
-    suffixes = {"JR.", "JR", "SR.", "SR", "II", "III", "IV"}
-    idx = -1
-    if parts[-1].upper().rstrip(",") in suffixes and len(parts) > 2:
-        idx = -2
-    surname = parts[idx]
-    rest = parts[:idx] + (parts[idx + 1:] if idx != -1 else [])
-    return f"{surname}, {' '.join(rest)}".strip().rstrip(",")
+# The surname-first rule lives in common.postmaster_names (shared with the
+# Postmaster API, Trello T71); kept under its old name for the callers below.
+sort_name = postmaster_sort_name
 
 
 def index_post_offices_by_state():

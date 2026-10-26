@@ -1,5 +1,5 @@
 /**
- * Write client for /dates-seen/ (issues.md 107): the marking page's Dates seen
+ * Write client for /dates-seen/ (issues.md 107): the Marking edit page's Dates seen
  * card adds, corrects and removes one DateSeen row per click, on the existing
  * region-scoped, audited API (issue #128).
  *

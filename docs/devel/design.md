@@ -2,7 +2,7 @@
 
 ## Summary
 
-*WorldCovers* is a software system, not a single utility. This document defines four user roles spanning unauthenticated browsing through system administration. Of its forty-nine stories, thirty-three are active and sixteen are deferred. The feature map has thirteen identifiers, including shared engineering and project administration; F4 Comment Workflow is deferred. The role model is cumulative: each tier inherits the capabilities of those below it. Collection Entries require Editor review before publication. All submissions are logged as system transactions. Standalone Entry comments, their review, and Collection creation are in Backlog, confirmed by Michael on 2026-09-19.
+*WorldCovers* is a software system, not a single utility. This document defines four user roles spanning unauthenticated browsing through system administration. Of its forty-nine stories, thirty-three are active, fifteen are deferred, and one is declined. The feature map has thirteen identifiers, including shared engineering and project administration; F4 Comment Workflow is deferred. The role model is cumulative: each tier inherits the capabilities of those below it. Collection Entries require Editor review before publication. All submissions are logged as system transactions. Standalone Entry comments, their review, and Collection creation are in Backlog, confirmed by Michael on 2026-09-19.
 
 ## Roles
 
@@ -98,8 +98,6 @@
 
 **S38** - As a Contributor, I want to apply and search by flexible tags on Entries, so that *Entries can be classified and discovered beyond fixed catalog fields.*
 
-**S39** - As a Contributor, I want to rate submission quality, contributor and editor profiles, and comment helpfulness, so that *the community can identify high-quality contributions and trusted community participants.*
-
 **S40** - As a Contributor, I want result lists to use infinite scrolling, so that I can *browse continuously without interacting with pagination controls.*
 
 **S42** - As a Contributor, I want to submit comments on a collection, so that I can *contribute observations or corrections scoped to the collection as a whole for expert review.*
@@ -117,6 +115,13 @@
 **S48** - As a Contributor, I want advanced search with boolean operations across selectable fields, so that I can *compose precise, multi-criterion queries against collection data beyond basic keyword search.*
 
 **S49** - As a Contributor, I want to add and edit Entries in my Personal Collection, so that I can *catalog and curate my own covers in the system.* (Note: a Personal Collection is conceptually distinct from the institutional Collection defined in model.md, which is region-scoped and editor-curated; implementing this story would require a separate model concept.)
+
+### Declined Story
+
+**S39** - As a Contributor, I want to rate submission quality, contributor and editor profiles, and comment helpfulness, so that *the community can identify high-quality contributions and trusted community participants.*
+
+S39 was declined. Its Done card closes the request; ratings are not implemented
+or deferred work.
 
 ## Technical Constraints
 
@@ -200,7 +205,7 @@ not what is built. For the current implementation status of each feature
 | S36 | Configure notification methods and triggers | F3 | Submission Workflow (Backlog) |
 | S37 | Escalate submission or contributor issue | F3 | Submission Workflow (Backlog) |
 | S38 | Apply and search by flexible tags | F2 | Collection Discovery (Backlog) |
-| S39 | Rate submissions, profiles, and comments | F3, F4 | Submission and Comment Workflows (Backlog) |
+| S39 | Rate submissions, profiles, and comments | F3, F4 | Submission and Comment Workflows (Declined) |
 | S40 | Infinite scrolling on result lists | F2 | Collection Discovery (Backlog) |
 | S41 | Configurable pagination on result lists | F2 | Collection Discovery |
 | S42 | Submit comments on a collection | F4 | Comment Workflow (Backlog) |

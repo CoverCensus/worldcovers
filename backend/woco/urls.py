@@ -3,7 +3,6 @@
 ## MPC: 2025/10/24
 ###################################################################################################
 from django.urls import include, path, re_path
-from django.views.decorators.csrf import csrf_exempt
 from django.views.static import serve
 from django.views.generic import RedirectView
 
@@ -11,6 +10,11 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 from django.contrib import admin
+from common.account_admin import VerifiedAdminAuthenticationForm
+
+admin.site.login_form = VerifiedAdminAuthenticationForm
+admin.site.site_header = f"{settings.SITE_NAME} administration"
+admin.site.site_title = settings.SITE_NAME
 
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
@@ -40,17 +44,18 @@ urlpatterns = [
     path("admin", RedirectView.as_view(url="/admin/", permanent=True)),
     path("admin/", admin.site.urls),
     path("accounts", RedirectView.as_view(url="/accounts/", permanent=True)),
+    path("accounts/login/", RedirectView.as_view(url="/auth")),
+    path("accounts/signup/", RedirectView.as_view(url="/auth")),
     path("accounts/", include("allauth.urls")),
 
     path("api/v2/", include("common.api.v2.urls")),
 
-    # Login/logout with CSRF exempt so SPA can POST without token.
-    path("api/login/", csrf_exempt(LoginView.as_view()), name="api-login"),
-    path("api/logout/", csrf_exempt(LogoutView.as_view()), name="api-logout"),
-    path("api/login", csrf_exempt(LoginView.as_view()), name="api-login-no-slash"),
-    path("api/logout", csrf_exempt(LogoutView.as_view()), name="api-logout-no-slash"),
+    # Preserve older account URLs with the same session and CSRF rules.
+    path("api/login/", LoginView.as_view(), name="api-login"),
+    path("api/logout/", LogoutView.as_view(), name="api-logout"),
+    path("api/login", LoginView.as_view(), name="api-login-no-slash"),
+    path("api/logout", LogoutView.as_view(), name="api-logout-no-slash"),
 
-    path("api-auth/", include("rest_framework.urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
 

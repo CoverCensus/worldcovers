@@ -10,12 +10,14 @@ import apiClient from "@/lib/api";
 
 const mockToast = jest.fn();
 
+jest.mock("@/hooks/useAuth", () => ({ useAuth: () => null, useAuthState: () => ({ user: null, status: "guest", error: null }) }));
 jest.mock("@/components/Navigation", () => ({ Navigation: () => null }));
 jest.mock("@/components/Footer", () => ({ Footer: () => null }));
 jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mockToast }) }));
 jest.mock("@/lib/auth", () => ({
   getStoredUser: () => null,
   setStoredUser: jest.fn(),
+  beginAuthChange: () => 1, isCurrentAuthChange: () => true, fetchCurrentUser: jest.fn().mockResolvedValue(null),
 }));
 jest.mock("@/lib/api", () => ({
   __esModule: true,
@@ -34,7 +36,7 @@ const PENDING_DETAIL =
   "password problem - resetting your password will not change it. Email " +
   "info@worldcovers.org if you would like it looked at.";
 
-describe("Auth page — a pending account is told the truth (issue #150)", () => {
+describe("Auth page -- a pending account is told the truth (issue #150)", () => {
   beforeEach(() => {
     mockToast.mockClear();
     mockPost.mockReset();
@@ -54,7 +56,7 @@ describe("Auth page — a pending account is told the truth (issue #150)", () =>
 
     // Exact labels: /password/i also matches the show/hide toggle's aria-label
     // and the "Forgot password?" link.
-    await user.type(await screen.findByLabelText("Email"), "pending@example.com");
+    await user.type(await screen.findByLabelText("Email or username"), "pending@example.com");
     await user.type(screen.getByLabelText("Password"), "whatever");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 

@@ -11,10 +11,15 @@
 # trusts X-Forwarded-Proto for its HTTPS detection (SECURE_PROXY_SSL_HEADER in
 # backend/woco/settings.py), so it must be forwarded.
 
+# Do not log reset/verification query tokens or Referer URLs.
+log_format worldcovers_safe '$remote_addr [$time_local] "$request_method $uri $server_protocol" '
+                           '$status $body_bytes_sent $request_time $upstream_http_x_request_id';
+
 server {
     listen 80;
     listen [::]:80;
     server_name __HOSTNAME__ www.__HOSTNAME__;
+    access_log /var/log/nginx/worldcovers-access.log worldcovers_safe;
 
     # Cover-image uploads from the submission flow.
     # Matches the UI and Django per-file upload limit.

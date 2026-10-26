@@ -2,9 +2,9 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { lazy, Suspense, useEffect, type ReactNode } from "react";
-import { useAuth } from "@/hooks/useAuth";
+import { RequireAuth } from "@/components/RequireAuth";
 import { Spinner } from "@/components/ui/spinner";
 import Index from "./pages/Index";
 import Search from "./pages/Search";
@@ -12,7 +12,9 @@ import ContributionDetail from "./pages/ContributionDetail";
 import Contribute from "./pages/Contribute";
 import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
+import VerifyEmail from "./pages/VerifyEmail";
 import Help from "./pages/Help";
+import About from "./pages/About";
 import Collections from "./pages/Collections";
 import EditorRoster from "./pages/EditorRoster";
 import { RequireEditor } from "@/components/RequireEditor";
@@ -26,6 +28,7 @@ const CoverEdit = lazy(() => import("./pages/CoverEdit"));
 const EntryDetail = lazy(() => import("./pages/EntryDetail"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const PostOfficeDetail = lazy(() => import("./pages/PostOfficeDetail"));
+const ReferenceWorks = lazy(() => import("./pages/ReferenceWorks"));
 
 const queryClient = new QueryClient();
 // Scroll to top on every route change so pages open at the top.
@@ -36,28 +39,6 @@ const ScrollToTop = ({ children }: { children: ReactNode }) => {
   }, [location.pathname, location.search]);
   return <>{children}</>;
 };
-// Protect routes that require an authenticated user.
-const RequireAuth = ({ children }: { children: ReactNode }) => {
-  const user = useAuth();
-  const location = useLocation();
-  if (!user) {
-    return <Navigate to="/auth" replace state={{ from: location }} />;
-  }
-  return <>{children}</>;
-};
-// Protect routes that require a superuser (e.g. catalog edit/delete).
-const RequireSuperuser = ({ children }: { children: ReactNode }) => {
-  const user = useAuth();
-  const location = useLocation();
-  if (!user) {
-    return <Navigate to="/auth" replace state={{ from: location }} />;
-  }
-  if (!user.is_superuser) {
-    return <Navigate to="/dashboard" replace />;
-  }
-  return <>{children}</>;
-};
-
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -121,6 +102,7 @@ const App = () => (
               )}
             />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route
               path="/editors"
@@ -130,15 +112,24 @@ const App = () => (
                 </RequireEditor>
               }
             />
+            <Route
+              path="/reference-works"
+              element={
+                <RequireEditor>
+                  <ReferenceWorks />
+                </RequireEditor>
+              }
+            />
+            <Route path="/about" element={<About />} />
             <Route path="/help" element={<Help />} />
             <Route path="/help/:docSlug" element={<Help />} />
             <Route path="/acknowledgements" element={<Help singleDocSlug="acknowledgements" />} />
             <Route
               path="/admin/collections"
               element={(
-                <RequireSuperuser>
+                <RequireAuth role="administrator">
                   <Collections />
-                </RequireSuperuser>
+                </RequireAuth>
               )}
             />
             <Route path="/post-office/:id" element={<PostOfficeDetail />} />

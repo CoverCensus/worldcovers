@@ -3,6 +3,7 @@ import {
   formatPartialDateInput,
   partialDateInputFromPayload,
   partialDateInputFromSubmittedData,
+  type PartialDateInput,
 } from "@/lib/partialDate";
 import { formatSizeFromSubmittedData } from "@/lib/dimensionsMm";
 import { ENTRY_LABELS } from "@/labels/entry";
@@ -208,4 +209,101 @@ export function contributionCardPresentation({
   }
 
   return { entryKind, title, fields };
+}
+
+/**
+ * The Cover a contributor submitted together with a new Marking (Trello T37),
+ * read from submitted_data.pending_cover. Approval turns it into its own cover
+ * contribution; until then it travels inside the Marking submission.
+ */
+export interface PendingCoverSummary {
+  type: string;
+  date: PartialDateInput;
+  isInstitutional: boolean;
+  isBackstamp: boolean;
+  description: string;
+  /** storage_filename of each saved upload, relative to the media root. */
+  imageStorageFilenames: string[];
+  noImage: boolean;
+}
+
+function truthy(v: unknown): boolean {
+  return v === true || String(v ?? "").trim().toLowerCase() === "true";
+}
+
+export function pendingCoverFromSubmittedData(
+  sd: Record<string, unknown> | null | undefined,
+): PendingCoverSummary | null {
+  const raw = sd?.pending_cover;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const pc = raw as Record<string, unknown>;
+  const metas = Array.isArray(pc.image_metas) ? (pc.image_metas as Array<Record<string, unknown>>) : [];
+  return {
+    type: String(pc.type ?? "").trim().toUpperCase(),
+    date: partialDateInputFromSubmittedData(pc),
+    isInstitutional: truthy(pc.is_institutional),
+    isBackstamp: truthy(pc.is_backstamp),
+    description: String(pc.description ?? ""),
+    imageStorageFilenames: metas
+      .map((m) => String(m?.storage_filename ?? "").replace(/^\/+/, ""))
+      .filter((v) => v.length > 0),
+    noImage: truthy(pc.no_cover_image),
+  };
+}
+
+/** Set on the Marking submission once approval created its Cover submission. */
+export function pendingCoverContributionIdFromSubmittedData(
+  sd: Record<string, unknown> | null | undefined,
+): number | null {
+  const raw = sd?.pending_cover_contribution_id;
+  if (raw == null || raw === "") return null;
+  const n = parseInt(String(raw), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Set on a cover contribution that approval created from a Marking submission. */
+export function createdFromContributionIdFromSubmittedData(
+  sd: Record<string, unknown> | null | undefined,
+): number | null {
+  const raw = sd?.created_from_contribution_id;
+  if (raw == null || raw === "") return null;
+  const n = parseInt(String(raw), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Trello T70: a county the contributor typed because it was not in the list. Never applied by approval. */
+export function countyProposedFromSubmittedData(
+  sd: Record<string, unknown> | null | undefined,
+): string {
+  return String(sd?.county_proposed ?? "").trim();
+}
+
+/** Trello T70: the server's verdict on a submission's county (ContributionDetailSerializer.county_intent). */
+export interface CountyIntent {
+  countyId: number | null;
+  countyName: string;
+  valid: boolean;
+  error: string | null;
+  townFound: boolean;
+  currentCounty: string | null;
+  willLink: boolean;
+  note: string;
+  countyProposed: string;
+}
+
+export function countyIntentFromApi(raw: unknown): CountyIntent | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const str = (v: unknown) => (v == null ? "" : String(v));
+  return {
+    countyId: typeof o.county_id === "number" ? o.county_id : null,
+    countyName: str(o.county_name),
+    valid: o.valid === true,
+    error: o.error == null ? null : str(o.error),
+    townFound: o.town_found === true,
+    currentCounty: o.current_county == null ? null : str(o.current_county),
+    willLink: o.will_link === true,
+    note: str(o.note),
+    countyProposed: str(o.county_proposed),
+  };
 }

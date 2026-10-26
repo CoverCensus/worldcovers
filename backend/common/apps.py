@@ -11,6 +11,7 @@ import reversion
 # them with reversion would double-store every custom snapshot (history of
 # history), so they are excluded from version tracking.
 REVERSION_EXCLUDED_MODELS = frozenset({
+    "collectiontransfermap",
     "submissiontransaction",
     "markingversion",
     "coverversion",

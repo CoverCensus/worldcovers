@@ -18,9 +18,9 @@ from pathlib import Path
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import IntegrityError, ProgrammingError, transaction
+from django.db import DatabaseError, IntegrityError, ProgrammingError, transaction
 from django.db.models import (
-    Exists, F, Min, Max, OuterRef, Q, Subquery, TextField, Value,
+    Exists, F, Min, Max, OuterRef, Prefetch, ProtectedError, Q, TextField, Value,
 )
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import ExtractYear, NullIf
@@ -67,9 +67,20 @@ from common.contribution_apply import (
     ContributionApplyError,
     MARKING_DATE_SUBMIT_KEYS,
     _CITATION_ID_KEYS,
+    _parse_decimal,
     _parse_int,
     _source_marking_image_id,
     strip_marking_date_keys,
+    normalize_marking_dates_seen,
+)
+from common.matching import (
+    SCAN_FIELDS,
+    inscription_key,
+    near_key,
+    primary_region_subquery as _primary_region_subquery,
+    related_key,
+    sizes_compatible,
+    town_match_key,
 )
 from common.contribution_consolidation import (
     ContributionTarget,
@@ -78,6 +89,8 @@ from common.contribution_consolidation import (
 from common.audit import (
     build_cover_snapshot,
     build_marking_snapshot,
+    build_postmaster_snapshot,
+    build_postmaster_tenure_snapshot,
     create_cover_version,
     create_marking_version,
     log_cover_removed,
@@ -85,8 +98,13 @@ from common.audit import (
     log_marking_removed,
     log_marking_restored,
     log_submission_transaction,
-    restore_cover_from_snapshot,
-    restore_marking_from_snapshot,
+)
+from common.version_restore import (
+    RestorePlanError,
+    apply_restore_plan,
+    plan_cover_restore,
+    plan_marking_restore,
+    preview_payload,
 )
 from common.filters import (
     AliasedOrderingFilter,
@@ -113,6 +131,7 @@ from common.models import (
     Image,
     Lettering,
     Marking,
+    MarkingType,
     MarkingRecycleBin,
     MarkingVersion,
     PostOffice,
@@ -134,11 +153,13 @@ from .permissions import (
     IsEditorOrAdminWrite,
     IsResponsibleForDateSeenSubject,
     IsResponsibleForImageSubject,
+    IsResponsibleForTenureOffice,
     _get_user_assigned_regions,
     _user_is_responsible_for_cover,
     _user_is_responsible_for_marking,
     user_assigned_collection_ids,
     user_can_review_contributions,
+    user_is_responsible_for_post_office,
     user_is_responsible_for_subject,
 )
 from .serializers import (
@@ -148,6 +169,8 @@ from .serializers import (
     # silent way for the two to disagree.
     _contribution_submitted_data_is_cover,
     _contribution_target_marking_id,
+    _format_decimal,
+    image_public_url,
     CitationSerializer,
     CollectionSerializer,
     ColorSerializer,
@@ -347,6 +370,14 @@ def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_cod
         if not Contribution.objects.filter(marking=marking).exclude(pk=contrib.pk).exists():
             contrib.marking = marking
             update_fields.append("marking")
+        # Trello T37: a Cover submitted together with this Marking becomes its
+        # own pending cover contribution now that the Marking exists.
+        pending_cover_child = _create_pending_cover_child(contrib, marking, actor)
+        if pending_cover_child is not None:
+            sd = dict(contrib.submitted_data or {})
+            sd["pending_cover_contribution_id"] = pending_cover_child.pk
+            contrib.submitted_data = sd
+            update_fields.append("submitted_data")
         contrib.save(update_fields=update_fields)
         after_snapshot = build_marking_snapshot(marking)
         txn = log_submission_transaction(
@@ -360,7 +391,10 @@ def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_cod
             extra_payload={"review_notes": review_notes},
         )
         create_marking_version(marking, txn, actor)
-        return {"detail": "Contribution approved.", "markingId": marking.pk}
+        body = {"detail": "Contribution approved.", "markingId": marking.pk}
+        if pending_cover_child is not None:
+            body["pendingCoverContributionId"] = pending_cover_child.pk
+        return body
 
 
 def _reject_contribution(contrib, *, actor, review_notes):
@@ -409,48 +443,6 @@ class IsResponsibleForRegion(BasePermission):
             return True
         marking = obj if isinstance(obj, Marking) else getattr(obj, "marking", None)
         return _user_is_responsible_for_marking(request.user, marking)
-
-
-def _primary_region_subquery(field):
-    """A marking's primary-jurisdiction Region `field`, as a scalar subquery.
-
-    Deliberately a correlated subquery and NOT a join. Ordering across the
-    post_office_regions junction multiplies rows -- Django's own order_by()
-    docs warn that a multi-valued field "could return more items than you were
-    working on to begin with" -- and since the VPHC ingest gave every VA/WV
-    town a county link alongside its state, that is exactly what happened:
-    502 markings emitted twice and 502 different ones pushed off the end by
-    LIMIT/OFFSET, while count() stayed correct because Django strips ordering
-    when it counts (issue #103, LEFT_OFF.md B2).
-
-    .distinct() does not fix it. Ordering by a related field puts that field in
-    the SELECT list, so the Virginia row and the Accomack row of the same
-    marking are not duplicates to DISTINCT -- measured live on woco.dev, where
-    ?state=VA already had .distinct() and still returned 2,309 rows for 1,947
-    markings. It is also the slow path: the issue #59 load test measured 723 of
-    11,493 temp tables spilling to disk at 4,000 rows.
-
-    The ordering mirrors PostOffice.region's tie-break exactly so the sort key
-    and the displayed state can never disagree.
-
-    Cost, measured (EXPLAIN + timings, 3,155 local markings / 1,569 county
-    links): the subquery is `ref` on the unique post_office_region index plus
-    an `eq_ref` PK lookup -- two bounded index lookups per candidate row, so
-    O(1) per row, not a scan. A deep-offset page costs ~17.5 ms against
-    ~15.0 ms for the old (wrong) junction sort. Paying ~2.5 ms for pages that
-    are actually complete. The planned denormalized state_region_id column
-    removes even that; this is its no-migration precursor.
-    """
-    return Subquery(
-        PostOfficeRegion.objects
-        .filter(post_office_id=OuterRef("post_office_id"))
-        .exclude(region__region_tier__in=Region.SUBREGION_TIERS)
-        .order_by(
-            F("region__defunct_date").desc(nulls_first=True),
-            F("region__established_date").desc(nulls_last=True),
-        )
-        .values(f"region__{field}")[:1]
-    )
 
 
 def _marking_list_queryset():
@@ -582,6 +574,13 @@ class PostOfficeViewSet(viewsets.ModelViewSet):
     ordering_fields = ["name", "created_date"]
     ordering = ["name"]
 
+    @extend_schema(responses=inline_serializer(
+        name="PostOfficeCount", fields={"count": serializers.IntegerField(min_value=0)},
+    ))
+    @action(detail=False, methods=["get"])
+    def count(self, request):
+        return Response({"count": PostOffice.objects.count()})
+
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, modified_by=self.request.user)
 
@@ -690,10 +689,32 @@ class ReferenceWorkViewSet(viewsets.ModelViewSet):
     ordering = ["title"]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, modified_by=self.request.user)
+        self._save_or_400(serializer, created_by=self.request.user, modified_by=self.request.user)
 
     def perform_update(self, serializer):
-        serializer.save(modified_by=self.request.user)
+        self._save_or_400(serializer, modified_by=self.request.user)
+
+    @staticmethod
+    def _save_or_400(serializer, **stamps):
+        # Two Editors saving the same code at once pass validation and race on
+        # the unique index; report it as a field error, not a server error.
+        try:
+            with transaction.atomic():
+                serializer.save(**stamps)
+        except IntegrityError as exc:
+            raise serializers.ValidationError(
+                {"code": "A Reference Work with this code already exists."}
+            ) from exc
+
+    def destroy(self, request, *args, **kwargs):
+        # Only a superuser reaches this; a cited work is protected at the database.
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {"detail": "This Reference Work is cited by existing Entries and cannot be deleted."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
     @staticmethod
     def _ordinal_suffix(raw):
@@ -743,32 +764,149 @@ class ReferenceWorkViewSet(viewsets.ModelViewSet):
         return Response(out, status=status.HTTP_200_OK)
 
 
-class PostmasterViewSet(viewsets.ReadOnlyModelViewSet):
-    """Postmasters, read-only. Editing belongs to the source catalogs."""
+class PostmasterViewSet(viewsets.ModelViewSet):
+    """People. Public reads; Editors add and rename (Trello T71).
+
+    A person has no region of their own (the same name serves in several
+    states), so the write rule is the plain Editor rule and every write is
+    logged with its before/after. No PUT, no DELETE: a person referenced by
+    tenures is PROTECTed anyway, and renames are the only correction needed.
+    """
     queryset = Postmaster.objects.all()
     serializer_class = PostmasterSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsEditorOrAdminWrite]
+    http_method_names = ["get", "head", "options", "post", "patch"]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["name", "sort_name"]
     ordering_fields = ["sort_name", "name"]
     ordering = ["sort_name"]
 
+    def perform_create(self, serializer):
+        with transaction.atomic():
+            person = serializer.save(created_by=self.request.user, modified_by=self.request.user)
+            log_submission_transaction(
+                action=SubmissionTransaction.ACTION_POSTMASTER_ADDED,
+                actor=self.request.user,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload={},
+                after_payload=build_postmaster_snapshot(person),
+                extra_payload={"postmaster_id": person.pk},
+            )
 
-class PostmasterTenureViewSet(viewsets.ReadOnlyModelViewSet):
+    def perform_update(self, serializer):
+        with transaction.atomic():
+            before = build_postmaster_snapshot(serializer.instance)
+            person = serializer.save(modified_by=self.request.user)
+            log_submission_transaction(
+                action=SubmissionTransaction.ACTION_POSTMASTER_CHANGED,
+                actor=self.request.user,
+                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                before_payload=before,
+                after_payload=build_postmaster_snapshot(person),
+                extra_payload={"postmaster_id": person.pk},
+            )
+
+
+class PostmasterTenureViewSet(viewsets.ModelViewSet):
     """Appointment events, filterable by office or by person.
 
     Ordered by date with undated events last, so a town's list reads as a
     succession rather than starting with the rows nobody could date.
+
+    Writes (Trello T71) follow the DateSeen shape: public reads, Editor role
+    plus responsibility for the office's region, one audited transaction per
+    write, no DELETE. A row created here is a MANUAL row; editing an IMPORT
+    row keeps its origin and is logged rather than re-keyed.
     """
     queryset = PostmasterTenure.objects.select_related(
         "postmaster", "post_office"
     ).order_by(F("date_appointed").asc(nulls_last=True), "tenure_id")
     serializer_class = PostmasterTenureSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsEditorOrAdminWrite, IsResponsibleForTenureOffice]
+    http_method_names = ["get", "head", "options", "post", "patch"]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = {"post_office": ["exact"], "postmaster": ["exact"],
                         "event": ["exact"]}
     ordering_fields = ["date_appointed", "tenure_id"]
+
+    def _assert_responsible(self, post_office):
+        """Region check for CREATE and for a PATCH that moves the row.
+
+        Two guards, two offices: IsResponsibleForTenureOffice.has_object_permission
+        checks the row's EXISTING office on every PATCH (an editor outside that
+        region is refused before this method runs); this method checks the
+        office a request POINTS AT, which DRF never sees on create and never
+        re-checks when a PATCH changes post_office (the hole #128 closed for
+        dates). test_postmaster_api covers both.
+        """
+        if user_is_responsible_for_post_office(self.request.user, post_office):
+            return
+        raise PermissionDenied("You are not assigned to the region this post office belongs to.")
+
+    def _log(self, *, action_name, before, after, tenure):
+        log_submission_transaction(
+            action=action_name,
+            actor=self.request.user,
+            source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+            before_payload=before,
+            after_payload=after,
+            extra_payload={
+                "tenure_id": tenure.pk,
+                "post_office_id": tenure.post_office_id,
+                "postmaster_id": tenure.postmaster_id,
+            },
+        )
+
+    # Race backstop for the window between the serializer's duplicate check
+    # and the INSERT, matched on the constraint name as DateSeenViewSet does.
+    def _duplicate_response(self, exc):
+        if "tenure_office_person_date_event_unique" not in str(exc):
+            raise exc
+        return Response(
+            {"non_field_errors": ["This event is already recorded for this office."]},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except IntegrityError as exc:
+            return self._duplicate_response(exc)
+
+    def update(self, request, *args, **kwargs):
+        try:
+            return super().update(request, *args, **kwargs)
+        except IntegrityError as exc:
+            return self._duplicate_response(exc)
+
+    def perform_create(self, serializer):
+        self._assert_responsible(serializer.validated_data["post_office"])
+        with transaction.atomic():
+            tenure = serializer.save(
+                origin=PostmasterTenure.ORIGIN_MANUAL,
+                created_by=self.request.user,
+                modified_by=self.request.user,
+            )
+            self._log(
+                action_name=SubmissionTransaction.ACTION_POSTMASTER_EVENT_ADDED,
+                before={},
+                after=build_postmaster_tenure_snapshot(tenure),
+                tenure=tenure,
+            )
+
+    def perform_update(self, serializer):
+        new_office = serializer.validated_data.get("post_office")
+        if new_office is not None and new_office.pk != serializer.instance.post_office_id:
+            self._assert_responsible(new_office)
+        with transaction.atomic():
+            before = build_postmaster_tenure_snapshot(serializer.instance)
+            tenure = serializer.save(modified_by=self.request.user)
+            self._log(
+                action_name=SubmissionTransaction.ACTION_POSTMASTER_EVENT_CHANGED,
+                before=before,
+                after=build_postmaster_tenure_snapshot(tenure),
+                tenure=tenure,
+            )
 
 
 class FAQEntryViewSet(viewsets.ReadOnlyModelViewSet):
@@ -798,6 +936,89 @@ def _caption_change(txn):
         "previous": str(extra.get("previous_caption") or ""),
         "caption": str(extra.get("caption") or ""),
     }
+
+
+RESTORE_FAILED_DETAIL = "Restore could not be completed; nothing was changed."
+MAX_VERSION_NO = 2**31 - 1  # version_no is an IntegerField
+RESTORE_OUTSIDE_REGION_DETAIL = "This version links markings in a region you are not responsible for."
+
+
+def _version_for_restore(version_model, entry_filter, raw_version_no):
+    """Parse a requested version number and find that version row (Trello T74).
+
+    Returns (version, None) or (None, Response) so the four restore actions
+    share one 400/404 path."""
+    try:
+        version_no = int(raw_version_no)
+    except (TypeError, ValueError):
+        return None, Response(
+            {"detail": "version_no must be an integer."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not 1 <= version_no <= MAX_VERSION_NO:
+        return None, Response(
+            {"detail": "version_no is out of range."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    version = version_model.objects.filter(version_no=version_no, **entry_filter).first()
+    if version is None:
+        return None, Response(
+            {"detail": f"Version {version_no} not found for this record."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    return version, None
+
+
+def _version_action_label(version) -> str | None:
+    txn = version.transaction
+    if txn is None:
+        return None
+    return dict(SubmissionTransaction.ACTION_CHOICES).get(txn.action, txn.action.replace("_", " ").title())
+
+
+def _restore_links_outside_scope(user, plan) -> bool:
+    """True when a cover restore would link markings in regions the editor is
+    not assigned to; _user_is_responsible_for_cover forbids acting on such a
+    cover, so the restore must not create one. Denies unless every added
+    marking is found and proven in scope."""
+    marking_ids = plan.added_marking_ids()
+    if not marking_ids or user.is_superuser:
+        return False
+    assigned = set(_get_user_assigned_regions(user).values_list("pk", flat=True))
+    rows = list(Marking.all_objects.filter(pk__in=marking_ids).select_related("post_office"))
+    if len(rows) != len(set(marking_ids)):
+        return True
+    for marking in rows:
+        region = marking.post_office.region if marking.post_office_id else None
+        if region is None or region.pk not in assigned:
+            return True
+    return False
+
+
+def _restore_office_outside_scope(user, entry, plan) -> bool:
+    """True when a marking restore would move the marking to a post office in a
+    region the editor is not assigned to (or to one with no region)."""
+    if plan.entry_type != "marking" or user.is_superuser:
+        return False
+    target_id = plan.scalars.get("post_office_id")
+    if target_id is None or target_id == entry.post_office_id:
+        return False
+    office = PostOffice.objects.filter(pk=target_id).first()
+    region = office.region if office else None
+    if region is None:
+        return True
+    return not _get_user_assigned_regions(user).filter(pk=region.pk).exists()
+
+
+def _restore_plan_response(plan_fn, entry, version, user):
+    """Compute a restore plan, mapping its failures to responses (Trello T74)."""
+    try:
+        plan = plan_fn(entry, version.snapshot or {})
+    except RestorePlanError as exc:
+        return None, Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    if _restore_links_outside_scope(user, plan) or _restore_office_outside_scope(user, entry, plan):
+        return None, Response({"detail": RESTORE_OUTSIDE_REGION_DETAIL}, status=status.HTTP_403_FORBIDDEN)
+    return plan, None
 
 
 def _parse_angle(raw):
@@ -1606,6 +1827,25 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
             }
         )
 
+    @action(detail=True, methods=["get"], url_path="restore-preview", permission_classes=[IsAuthenticated])
+    def restore_preview(self, request, pk=None):
+        """What restoring a version would change, without writing (Trello T74)."""
+        cover = self.get_object()
+        if not _user_is_responsible_for_cover(request.user, cover):
+            return Response(
+                {"detail": "You are not allowed to restore this record."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        version, error = _version_for_restore(
+            CoverVersion, {"cover": cover}, request.query_params.get("version_no")
+        )
+        if error:
+            return error
+        plan, error = _restore_plan_response(plan_cover_restore, cover, version, request.user)
+        if error:
+            return error
+        return Response(preview_payload(plan, version, _version_action_label(version)))
+
     @action(detail=True, methods=["post"], url_path="restore-version", permission_classes=[IsAuthenticated])
     def restore_version(self, request, pk=None):
         cover = self.get_object()
@@ -1614,42 +1854,49 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
                 {"detail": "You are not allowed to restore this record."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        raw_version_no = (request.data or {}).get("version_no")
+        restore_from, error = _version_for_restore(
+            CoverVersion, {"cover": cover}, (request.data or {}).get("version_no")
+        )
+        if error:
+            return error
+        # One transaction holds the row lock, the plan, the before-snapshot, the
+        # apply and the history rows, so they all describe one consistent state;
+        # a concurrent request waits for the lock and then plans against the
+        # restored row. A constraint refusing the restored rows rolls everything
+        # back and answers 409.
         try:
-            version_no = int(raw_version_no)
-        except (TypeError, ValueError):
-            return Response(
-                {"detail": "version_no must be an integer."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        restore_from = CoverVersion.objects.filter(
-            cover=cover, version_no=version_no
-        ).first()
-        if not restore_from:
-            return Response(
-                {"detail": f"Version {version_no} not found for this record."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        before_snapshot = build_cover_snapshot(cover)
-        with transaction.atomic():
-            restore_cover_from_snapshot(cover, restore_from.snapshot or {}, request.user)
-            cover.refresh_from_db()
-            after_snapshot = build_cover_snapshot(cover)
-            txn = log_submission_transaction(
-                action=SubmissionTransaction.ACTION_RESTORE_VERSION,
-                actor=request.user,
-                cover=cover,
-                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-                before_payload=before_snapshot,
-                after_payload=after_snapshot,
-                extra_payload={"restored_from_version_no": restore_from.version_no},
-            )
-            new_version = create_cover_version(cover, txn, request.user)
+            with transaction.atomic():
+                cover = Cover.objects.select_for_update().get(pk=cover.pk)
+                plan, error = _restore_plan_response(plan_cover_restore, cover, restore_from, request.user)
+                if error:
+                    return error
+                before_snapshot = build_cover_snapshot(cover)
+                apply_restore_plan(plan, request.user)
+                cover.refresh_from_db()
+                after_snapshot = build_cover_snapshot(cover)
+                txn = log_submission_transaction(
+                    action=SubmissionTransaction.ACTION_RESTORE_VERSION,
+                    actor=request.user,
+                    cover=cover,
+                    source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                    before_payload=before_snapshot,
+                    after_payload=after_snapshot,
+                    extra_payload={
+                        "restored_from_version_no": restore_from.version_no,
+                        "limitations": plan.limitations,
+                        "relationships": plan.relationship_counts(),
+                    },
+                )
+                new_version = create_cover_version(cover, txn, request.user)
+        except (DatabaseError, DjangoValidationError):
+            return Response({"detail": RESTORE_FAILED_DETAIL}, status=status.HTTP_409_CONFLICT)
         return Response(
             {
                 "detail": f"Record restored from version {restore_from.version_no}.",
                 "restored_from_version_no": restore_from.version_no,
                 "new_version_no": new_version.version_no,
+                "limitations": plan.limitations,
+                "relationships": plan.relationship_counts(),
             },
             status=status.HTTP_200_OK,
         )
@@ -1681,11 +1928,10 @@ class DateSeenViewSet(viewsets.ModelViewSet):
       writing one transaction and one version per submit, not per-row
       suppression here. Date events are logged as date_seen_added/changed/
       removed so the changelog never reads "Record deleted" for a date.
-    * Version snapshots *capture* dates_seen (audit.py:69-78) but
-      restore_marking_from_snapshot does not replay them, so restoring a
-      version leaves the current date rows in place. Deliberate and tracked
-      separately -- the same gap covers images, and fixing dates alone would
-      make restore half-correct in a less obvious way.
+    * Version snapshots capture dates_seen (audit.py:69-78) and, since
+      Trello T74, restoring a version reconciles the date rows to the
+      snapshot (common.version_restore), alongside images and citations.
+      Each such restore is one transaction and one version row of its own.
     """
 
     queryset = DateSeen.objects.all()
@@ -2309,6 +2555,43 @@ class MarkingViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return _marking_list_queryset()
 
+    @extend_schema(responses=inline_serializer(
+        name="MarkingCount", fields={"count": serializers.IntegerField(min_value=0)},
+    ))
+    @action(detail=False, methods=["get"])
+    def count(self, request):
+        return Response({"count": Marking.objects.count()})
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        # Sort only IDs and required sort keys. Display annotations and wide
+        # catalog text must not be computed for every match before LIMIT.
+        page_ids = self.paginate_queryset(queryset.values_list("pk", flat=True))
+        rows = self.get_queryset().filter(pk__in=page_ids).order_by().prefetch_related(None)
+        rows = rows.prefetch_related(
+            Prefetch(
+                "post_office__post_office_regions",
+                queryset=PostOfficeRegion.primary_links(),
+                to_attr="_primary_region_links",
+            ),
+            Prefetch(
+                "post_office__post_office_regions",
+                queryset=PostOfficeRegion.county_links(),
+                to_attr="_county_region_links",
+            ),
+        )
+        by_id = {row.pk: row for row in rows}
+        for row in by_id.values():
+            row._marking_images = []
+        for image in Image.objects.filter(
+            subject_type=Image.SUBJECT_MARKING, subject_id__in=by_id,
+        ).order_by("display_order", "image_id"):
+            by_id[image.subject_id]._marking_images.append(image)
+        # Preserve the selected page's order. A concurrent removal may hide
+        # a selected row before the second query; do not bring it back.
+        page = [by_id[pk] for pk in page_ids if pk in by_id]
+        return self.get_paginated_response(self.get_serializer(page, many=True).data)
+
     def get_object(self):
         try:
             return super().get_object()
@@ -2516,6 +2799,139 @@ class MarkingViewSet(viewsets.ModelViewSet):
             return self.get_paginated_response(serializer.data)
         return Response(self.get_serializer(qs, many=True).data)
 
+    @action(detail=False, methods=["get"], url_path="similar")
+    def similar(self, request):
+        """Existing Markings that look like the one a Contributor is typing (T48).
+
+        Advisory input for the submission forms, so it never answers 4xx on
+        content: an incomplete or unrecognised form is an empty 200. Read-only
+        and public like the list; `/contribute` itself sits behind sign-in.
+
+        Two tiers, from common.matching, the same key as T47's report:
+          match    the full NEAR key (state, town key, type, inscription key,
+                   shape, colour family) with width/height within 0.5 mm,
+                   and the same manuscript flag when the form sent one
+          related  same state, town key, type and inscription key only
+        `?exclude=<id>` drops the Marking being edited; it is not checked
+        against the caller because Marking ids are public already (the list
+        endpoint) and excluding one changes nothing but this advisory answer.
+
+        Cost is bounded by resolving the typed town first: the region's post
+        offices whose town key matches (the #129 spelling variants meet here,
+        exactly as approval's _resolve_post_office does), then only Markings on
+        those offices. Richmond, the worst case, is ~150 rows. The primary-
+        region annotation then drops a town only historically linked to the
+        state ("Account For Historical Regions"); pre-statehood WV listings are
+        deliberately not surfaced under VA (#94), as in T47. Marking.objects
+        hides recycle-binned rows. No throttle classes are configured; the
+        town bound is what keeps this cheap.
+        """
+        empty = {"results": [], "match_count": 0, "related_count": 0}
+        params = request.query_params
+        type_ = (params.get("type") or "").strip().upper()
+        town = (params.get("town") or "").strip()
+        typed_inscription = inscription_key(params.get("inscription"))
+        typed_town_key = town_match_key(town)
+        if (type_ not in MarkingType.values or not typed_town_key
+                or not typed_inscription):
+            return Response(empty)
+        region = Region.primary_for_state_term(params.get("state"))
+        if region is None:
+            return Response(empty)
+
+        # The town key is punctuation-blind, which SQL cannot express, so the
+        # region's offices (id, name only; ~2,000 rows for VA) are keyed here.
+        # Approval's _resolve_post_office pays the same cost per submission.
+        office_ids = [
+            office_id for office_id, name in
+            PostOffice.objects.filter(post_office_regions__region=region)
+            .values_list("id", "name")
+            if town_match_key(name or "") == typed_town_key
+        ]
+        if not office_ids:
+            return Response(empty)
+
+        rows = Marking.objects.filter(post_office_id__in=office_ids, type=type_)
+        exclude_id = _parse_int(params.get("exclude"))
+        if exclude_id is not None:
+            rows = rows.exclude(pk=exclude_id)
+        # Every row of the town is read on purpose: the counts in the response
+        # are the whole picture, only the rows are capped.
+        rows = rows.annotate(
+            primary_region_id=_primary_region_subquery("id"),
+            state_abbrev=_primary_region_subquery("abbrev"),
+            state_code=_primary_region_subquery("code"),
+        ).filter(
+            primary_region_id=region.pk,
+        ).values(
+            *SCAN_FIELDS, "color__hex_val",
+        ).order_by("id")
+
+        typed = {
+            "state_code": region.code,
+            "post_office__name": town,
+            "type": type_,
+            "inscription_txt": params.get("inscription"),
+            "shape_id": _parse_int(params.get("shape")),
+            "color__name": (params.get("color") or "").strip() or None,
+            "width": _parse_decimal(params.get("width")),
+            "height": _parse_decimal(params.get("height")),
+        }
+        typed_near = near_key(typed)
+        typed_related = related_key(typed)
+        manuscript_sent = (params.get("is_manuscript") or "").strip().lower()
+        typed_manuscript = {"true": True, "false": False}.get(manuscript_sent)
+
+        matches, related = [], []
+        for row in rows:
+            if related_key(row) != typed_related:
+                continue
+            is_match = (
+                near_key(row) == typed_near
+                and sizes_compatible(row, typed)
+                and (typed_manuscript is None or row["is_manuscript"] == typed_manuscript)
+            )
+            (matches if is_match else related).append(row)
+
+        chosen = (matches + related)[:10]
+        thumbnails = {}
+        if chosen:
+            for image in Image.objects.filter(
+                subject_type=Image.SUBJECT_MARKING,
+                subject_id__in=[row["id"] for row in chosen],
+            ).order_by("subject_id", "display_order", "image_id"):
+                thumbnails.setdefault(image.subject_id, image_public_url(image, request))
+
+        def _row(row, tier):
+            return {
+                "id": row["id"],
+                "tier": tier,
+                "town": row["post_office__name"],
+                "state_abbrev": row["state_abbrev"],
+                "type": row["type"],
+                "inscription": row["inscription_txt"],
+                "is_manuscript": row["is_manuscript"],
+                "shape_name": row["shape__name"],
+                "color_name": row["color__name"],
+                "color_hex": row["color__hex_val"],
+                "width": _format_decimal(row["width"]),
+                "height": _format_decimal(row["height"]),
+                "earliest_seen": row["earliest_seen"],
+                "latest_seen": row["latest_seen"],
+                "main_image_url": thumbnails.get(row["id"]),
+            }
+
+        match_ids = {row["id"] for row in matches}
+        results = [
+            _row(row, "match" if row["id"] in match_ids else "related")
+            for row in chosen
+        ]
+        return Response({
+            "results": results,
+            "match_count": len(matches),
+            "related_count": len(related),
+        })
+
     @action(detail=True, methods=["get"], url_path="changelog", permission_classes=[IsAuthenticated])
     def changelog(self, request, pk=None):
         # Use all_objects so a removed (recycle-binned) marking's history stays
@@ -2647,6 +3063,25 @@ class MarkingViewSet(viewsets.ModelViewSet):
             }
         )
 
+    @action(detail=True, methods=["get"], url_path="restore-preview", permission_classes=[IsAuthenticated])
+    def restore_preview(self, request, pk=None):
+        """What restoring a version would change, without writing (Trello T74)."""
+        marking = self.get_object()
+        if not _user_is_responsible_for_marking(request.user, marking):
+            return Response(
+                {"detail": "You are not allowed to restore this record."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        version, error = _version_for_restore(
+            MarkingVersion, {"marking": marking}, request.query_params.get("version_no")
+        )
+        if error:
+            return error
+        plan, error = _restore_plan_response(plan_marking_restore, marking, version, request.user)
+        if error:
+            return error
+        return Response(preview_payload(plan, version, _version_action_label(version)))
+
     @action(detail=True, methods=["post"], url_path="restore-version", permission_classes=[IsAuthenticated])
     def restore_version(self, request, pk=None):
         marking = self.get_object()
@@ -2655,43 +3090,50 @@ class MarkingViewSet(viewsets.ModelViewSet):
                 {"detail": "You are not allowed to restore this record."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        raw_version_no = (request.data or {}).get("version_no")
+        restore_from, error = _version_for_restore(
+            MarkingVersion, {"marking": marking}, (request.data or {}).get("version_no")
+        )
+        if error:
+            return error
+        # One transaction holds the row lock, the plan, the before-snapshot, the
+        # apply and the history rows, so they all describe one consistent state;
+        # a concurrent request waits for the lock and then plans against the
+        # restored row. A constraint refusing the restored rows rolls everything
+        # back and answers 409.
         try:
-            version_no = int(raw_version_no)
-        except (TypeError, ValueError):
-            return Response(
-                {"detail": "version_no must be an integer."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        restore_from = MarkingVersion.objects.filter(
-            marking=marking, version_no=version_no
-        ).first()
-        if not restore_from:
-            return Response(
-                {"detail": f"Version {version_no} not found for this record."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        before_snapshot = build_marking_snapshot(marking)
-        with transaction.atomic():
-            restore_marking_from_snapshot(marking, restore_from.snapshot or {}, request.user)
-            marking.refresh_from_db()
-            after_snapshot = build_marking_snapshot(marking)
-            txn = log_submission_transaction(
-                action=SubmissionTransaction.ACTION_RESTORE_VERSION,
-                actor=request.user,
-                contribution=getattr(marking, "contribution", None),
-                marking=marking,
-                source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
-                before_payload=before_snapshot,
-                after_payload=after_snapshot,
-                extra_payload={"restored_from_version_no": restore_from.version_no},
-            )
-            new_version = create_marking_version(marking, txn, request.user)
+            with transaction.atomic():
+                marking = Marking.objects.select_for_update().get(pk=marking.pk)
+                plan, error = _restore_plan_response(plan_marking_restore, marking, restore_from, request.user)
+                if error:
+                    return error
+                before_snapshot = build_marking_snapshot(marking)
+                apply_restore_plan(plan, request.user)
+                marking.refresh_from_db()
+                after_snapshot = build_marking_snapshot(marking)
+                txn = log_submission_transaction(
+                    action=SubmissionTransaction.ACTION_RESTORE_VERSION,
+                    actor=request.user,
+                    contribution=getattr(marking, "contribution", None),
+                    marking=marking,
+                    source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
+                    before_payload=before_snapshot,
+                    after_payload=after_snapshot,
+                    extra_payload={
+                        "restored_from_version_no": restore_from.version_no,
+                        "limitations": plan.limitations,
+                        "relationships": plan.relationship_counts(),
+                    },
+                )
+                new_version = create_marking_version(marking, txn, request.user)
+        except (DatabaseError, DjangoValidationError):
+            return Response({"detail": RESTORE_FAILED_DETAIL}, status=status.HTTP_409_CONFLICT)
         return Response(
             {
                 "detail": f"Record restored from version {restore_from.version_no}.",
                 "restored_from_version_no": restore_from.version_no,
                 "new_version_no": new_version.version_no,
+                "limitations": plan.limitations,
+                "relationships": plan.relationship_counts(),
             },
             status=status.HTTP_200_OK,
         )
@@ -3681,6 +4123,256 @@ def _submission_citations(data) -> dict:
     return result
 
 
+# ---------------------------------------------------------------------------
+# A Cover submitted together with a new Marking (Trello T37).
+#
+# Ian, 2026-10-19: "When adding a NEW marking, give the opportunity to add the
+# corresponding cover at that time." The Cover cannot exist before its Marking
+# does, so the Marking contribution carries the Cover's fields and uploads under
+# submitted_data["pending_cover"]; approving the Marking turns that into an
+# ordinary pending cover contribution for the new Marking (see
+# _create_pending_cover_child). Both Entries are approved separately, as the
+# card and ISSUE.md require. No model change: the link is the stamped ids.
+# ---------------------------------------------------------------------------
+
+PENDING_COVER_FIELDS = (
+    "type",
+    "cover_date_unknown",
+    "cover_date_year",
+    "cover_date_month",
+    "cover_date_day",
+    "is_institutional",
+    "is_backstamp",
+    "description",
+    "no_cover_image",
+)
+# Bounds for what one request may carry: the Cover form's description is free
+# text, and nothing else on this path caps a multipart request's file count.
+PENDING_COVER_MAX_TEXT = 4000
+PENDING_COVER_MAX_IMAGES = 12
+_PENDING_COVER_TRANSPORT_KEYS = (
+    "pending_cover",
+    "drop_pending_cover",
+    "pending_cover_removed_image_keys",
+    "pending_cover_image",
+)
+
+
+def _truthy(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Trello T70: the Marking form's county keys. `county_id` is a Region pk that
+# approval validates and links (contribution_apply._link_county); `county` is
+# the display name; `county_proposed` is free text for a county not in the
+# list, shown to the Editor and never applied. Shape, length, and that the id
+# is a county of the submitted state are checked here; approval re-checks.
+COUNTY_PROPOSED_MAX_TEXT = 200
+
+
+def _county_request_error(data):
+    county_id = data.get("county_id")
+    if county_id not in (None, ""):
+        try:
+            county_pk = int(str(county_id).strip())
+        except (TypeError, ValueError):
+            return "county_id must be a Region id."
+        state_name = str(data.get("state") or "").strip()
+        state_region = Region.primary_for_state_term(state_name) if state_name else None
+        if state_region is not None and not Region.objects.filter(
+            pk=county_pk, region_tier="COUNTY", parent_region=state_region
+        ).exists():
+            return f"county_id is not a county in {state_region.name}."
+    for key, label in (("county_proposed", "proposed county name"), ("county", "county name")):
+        value = data.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            # A JSON list or object would dodge the length bound and render as noise.
+            return f"{key} must be text."
+        if len(value) > COUNTY_PROPOSED_MAX_TEXT:
+            return f"The {label} is too long (at most {COUNTY_PROPOSED_MAX_TEXT} characters)."
+    return None
+
+
+def _parse_pending_cover_fields(raw):
+    """The cover fields from the request: a JSON string or a dict; None when absent."""
+    if raw in (None, ""):
+        return None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(raw, dict):
+        return None
+    fields = {}
+    for key in PENDING_COVER_FIELDS:
+        if key not in raw:
+            continue
+        value = raw.get(key)
+        if key in ("cover_date_unknown", "is_institutional", "is_backstamp", "no_cover_image"):
+            fields[key] = _truthy(value)
+        elif value is None:
+            fields[key] = ""
+        else:
+            fields[key] = str(value).strip()
+    if "type" in fields:
+        fields["type"] = fields["type"].upper()
+    return fields
+
+
+def _pending_cover_request_error(data, request):
+    """Bounds that refuse the request outright rather than trimming it silently."""
+    fields = _parse_pending_cover_fields(data.get("pending_cover")) or {}
+    for key, value in fields.items():
+        if isinstance(value, str) and len(value) > PENDING_COVER_MAX_TEXT:
+            return f"The cover's {key} is too long (at most {PENDING_COVER_MAX_TEXT} characters)."
+    try:
+        count = len(request.FILES.getlist("pending_cover_image"))
+    except AttributeError:
+        count = 0
+    if count > PENDING_COVER_MAX_IMAGES:
+        return f"At most {PENDING_COVER_MAX_IMAGES} cover images can be added in one request."
+    return None
+
+
+def _resolve_pending_cover(data, existing):
+    """Merge the request's pending-cover fields over what the row already holds.
+
+    Returns the dict to store (without this request's new uploads, which
+    _save_pending_cover_uploads adds after validation), or None when there is
+    no cover: absent and nothing saved, or explicitly dropped. Saved images
+    survive a resubmit unless named in pending_cover_removed_image_keys; keys
+    arrive as the URLs the form displayed (".../media/<storage_filename>") or
+    as bare storage filenames, and are matched exactly against this row's own
+    metas, never by suffix.
+    """
+    if _truthy(data.get("drop_pending_cover")):
+        return None
+    fields = _parse_pending_cover_fields(data.get("pending_cover"))
+    existing = existing if isinstance(existing, dict) else None
+    if fields is None and existing is None:
+        return None
+    merged = dict(existing or {})
+    merged.update(fields or {})
+    kept = [m for m in (merged.get("image_metas") or []) if isinstance(m, dict)]
+    removed = {
+        key.split("/media/", 1)[-1].lstrip("/")
+        for key in (_parse_removed_image_keys(data.get("pending_cover_removed_image_keys")) or [])
+        if isinstance(key, str) and key.strip()
+    }
+    if removed:
+        kept = [m for m in kept if str(m.get("storage_filename", "")).lstrip("/") not in removed]
+    merged["image_metas"] = kept
+    return merged
+
+
+def _pending_cover_uploads(request):
+    try:
+        return list(request.FILES.getlist("pending_cover_image"))
+    except AttributeError:
+        return []
+
+
+def _save_pending_cover_uploads(pending_cover, uploads, region_abbrev):
+    """Write this request's cover uploads and append their metas. Called only
+    after the field checks passed, so a refused request leaves no new files."""
+    if pending_cover is None or not uploads:
+        return pending_cover
+    kept = list(pending_cover.get("image_metas") or [])
+    for uploaded in uploads:
+        meta = _save_contribution_image(uploaded, region_abbrev)
+        if meta:
+            kept.append(meta)
+    pending_cover["image_metas"] = kept[:PENDING_COVER_MAX_IMAGES]
+    return pending_cover
+
+
+def _validate_pending_cover(pending_cover, pending_upload_count=0):
+    """The same three rules the Cover form enforces at final submit. Runs before
+    this request's uploads are written, so it counts them rather than reading
+    them back."""
+    if not pending_cover:
+        return None
+    cover_type = (pending_cover.get("type") or "").strip().upper()
+    if cover_type not in Cover.COVER_TYPE_CODES:
+        return "Choose a type for the cover submitted with this marking."
+    has_date = pending_cover.get("cover_date_unknown") or any(
+        str(pending_cover.get(k) or "").strip()
+        for k in ("cover_date_year", "cover_date_month", "cover_date_day")
+    )
+    if not has_date:
+        return "Add a date for the cover submitted with this marking, or mark it unknown."
+    if (
+        not pending_cover.get("image_metas")
+        and pending_upload_count <= 0
+        and not pending_cover.get("no_cover_image")
+    ):
+        return "Add at least one cover image or confirm no image is available."
+    return None
+
+
+def _create_pending_cover_child(contrib, marking, actor):
+    """On Marking approval, turn submitted_data["pending_cover"] into a pending
+    cover contribution for the new Marking. Returns the child or None.
+
+    Runs inside the approval's transaction.atomic(), so a failure here rolls the
+    whole approval back rather than leaving a Marking whose promised Cover never
+    reached the queue. The child is an ordinary cover submission: same
+    contributor, same Collection, real parent_marking_id, reviewed on the
+    existing cover page.
+    """
+    sd = contrib.submitted_data or {}
+    pending = sd.get("pending_cover")
+    if not isinstance(pending, dict) or not pending:
+        return None
+    # New Markings only: a Marking edit has a published Marking whose Covers
+    # are managed from its record page (Trello T92 for the edit-form offer).
+    if _parse_int(sd.get("edit_marking_id")) is not None:
+        return None
+    metas = [m for m in (pending.get("image_metas") or []) if isinstance(m, dict)]
+    child_sd = {
+        "submission_kind": "cover",
+        "entity_type": "cover",
+        "parent_marking_id": marking.pk,
+        "marking_id": marking.pk,
+        "created_from_contribution_id": contrib.pk,
+    }
+    if sd.get("state"):
+        child_sd["state"] = sd["state"]
+    for key in PENDING_COVER_FIELDS:
+        if key in pending:
+            child_sd[key] = pending[key]
+    if "display_submitter_name" in sd:
+        child_sd["display_submitter_name"] = sd["display_submitter_name"]
+    if metas:
+        child_sd["cover_image_metas"] = metas
+        child_sd["image_metas"] = metas
+        child_sd["image_meta"] = metas[0]
+    child = Contribution.objects.create(
+        contributor=contrib.contributor,
+        collection=contrib.collection,
+        submitted_data=child_sd,
+        status=Contribution.STATUS_PENDING,
+        created_by=contrib.contributor,
+        modified_by=actor,
+    )
+    log_submission_transaction(
+        action=SubmissionTransaction.ACTION_SUBMIT,
+        actor=actor,
+        contribution=child,
+        marking=marking,
+        source=SubmissionTransaction.SOURCE_SYSTEM,
+        before_payload={},
+        after_payload=child_sd,
+        extra_payload={"created_from_contribution_id": contrib.pk},
+    )
+    return child
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class ContributionSubmitView(APIView):
     """
@@ -3773,6 +4465,9 @@ class ContributionSubmitView(APIView):
                     {"detail": "type must be TOWNMARK, RATEMARK, or AUXMARK."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            county_error = _county_request_error(data)
+            if county_error:
+                return Response({"detail": county_error}, status=status.HTTP_400_BAD_REQUEST)
         elif type_value and type_value not in Cover.COVER_TYPE_CODES:
             # Cover contributions may send the cover type as `type`.
             return Response(
@@ -3898,6 +4593,13 @@ class ContributionSubmitView(APIView):
             "save_as_draft",
             "saveAsDraft",
             "status",
+            # Trello T37: the cover submitted with a new marking travels as
+            # pending_cover (JSON) + pending_cover_image files; resolved below.
+            # The two provenance stamps are written by the approval, never taken
+            # from the request.
+            *_PENDING_COVER_TRANSPORT_KEYS,
+            "pending_cover_contribution_id",
+            "created_from_contribution_id",
         }
         user_can_submit_catalog_code = user_can_review_contributions(request.user)
         if not user_can_submit_catalog_code:
@@ -3918,6 +4620,13 @@ class ContributionSubmitView(APIView):
                 submitted_data[key] = str(value)
 
         submitted_data.update(citation_data)
+        if "marking_dates_seen" in submitted_data:
+            try:
+                submitted_data["marking_dates_seen"] = normalize_marking_dates_seen(
+                    submitted_data["marking_dates_seen"]
+                )
+            except ContributionApplyError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         if is_cover_submission:
             submitted_data["submission_kind"] = "cover"
             submitted_data["entity_type"] = "cover"
@@ -4049,6 +4758,26 @@ class ContributionSubmitView(APIView):
             draft_edit_marking_id = _parse_int(existing_sd.get("edit_marking_id"))
             if not is_cover_submission and draft_edit_marking_id is not None:
                 _keep_marking_images_on_edit(existing_sd, draft_edit_marking_id)
+            if not is_cover_submission and draft_edit_marking_id is not None:
+                # A row that became a Marking edit cannot carry a cover.
+                existing_sd.pop("pending_cover", None)
+            elif not is_cover_submission:
+                bound_error = _pending_cover_request_error(data, request)
+                if bound_error:
+                    return Response({"detail": bound_error}, status=status.HTTP_400_BAD_REQUEST)
+                pending_cover = _resolve_pending_cover(data, existing_sd.get("pending_cover"))
+                cover_uploads = _pending_cover_uploads(request)
+                # A row that is (or stays) pending must carry a complete cover:
+                # a draft-style save on a pending row keeps it in the queue.
+                if transition_to_pending or contrib.status == Contribution.STATUS_PENDING:
+                    cover_error = _validate_pending_cover(pending_cover, len(cover_uploads))
+                    if cover_error:
+                        return Response({"detail": cover_error}, status=status.HTTP_400_BAD_REQUEST)
+                pending_cover = _save_pending_cover_uploads(pending_cover, cover_uploads, region_abbrev)
+                if pending_cover is None:
+                    existing_sd.pop("pending_cover", None)
+                else:
+                    existing_sd["pending_cover"] = pending_cover
             if transition_to_pending:
                 image_error = _validate_final_submission_image_choice(
                     existing_sd, is_cover_submission
@@ -4124,6 +4853,20 @@ class ContributionSubmitView(APIView):
                 submitted_data["cover_image_metas"] = image_metas
             submitted_data["image_metas"] = image_metas
             submitted_data["image_meta"] = image_metas[0]
+
+        if not is_cover_submission and edit_marking_marker is None:
+            bound_error = _pending_cover_request_error(data, request)
+            if bound_error:
+                return Response({"detail": bound_error}, status=status.HTTP_400_BAD_REQUEST)
+            pending_cover = _resolve_pending_cover(data, None)
+            cover_uploads = _pending_cover_uploads(request)
+            if not is_draft:
+                cover_error = _validate_pending_cover(pending_cover, len(cover_uploads))
+                if cover_error:
+                    return Response({"detail": cover_error}, status=status.HTTP_400_BAD_REQUEST)
+            pending_cover = _save_pending_cover_uploads(pending_cover, cover_uploads, region_abbrev)
+            if pending_cover is not None:
+                submitted_data["pending_cover"] = pending_cover
 
         if not is_draft:
             image_error = _validate_final_submission_image_choice(
