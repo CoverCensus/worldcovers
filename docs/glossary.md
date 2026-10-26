@@ -1,12 +1,12 @@
-# WorldCovers | Glossary
+# APMC | Glossary
 
-A reference for the terminology used in WorldCovers data, interface, and supporting documentation.
+A reference for the terminology used in APMC data, interface, and supporting documentation.
 
 ---
 
 **Administrator.** Creates Collections, assigns Editors, performs system maintenance and reporting. Inherits Editor capabilities.
 
-**APMC.** *American Postal Markings Catalog.* The aggregate dataset WorldCovers manages. The ASCC was the first Reference Work incorporated; the VPHC and others will follow.
+**APMC.** *American Postal Markings Catalog.* The catalog this site publishes, a project of the U.S. Philatelic Classics Society. The ASCC was the first Reference Work incorporated; the VPHC and others will follow.
 
 **ASCC.** *American Stampless Cover Catalog.* The first Reference Work being digitized.
 
@@ -22,9 +22,9 @@ A reference for the terminology used in WorldCovers data, interface, and support
 
 **Contributor.** Authenticated user. Can submit entries, edits, and comments. Inherits Guest capabilities.
 
-**Cover.** A folded letter or folded cover that carries one or more recorded Markings. The Cover record holds the cover type, physical details, and date observations.
+**Cover.** A folded letter, folded cover, envelope, or envelope front that carries one or more recorded Markings. The Cover record holds the cover type (FL, FLF, ENV, ENVF, FC, or UNK), physical details, and date observations.
 
-**Dates.** Marking date ranges combine direct Marking observations and dates on linked Covers. Direct observations can come from imported catalog text or authorized Editor changes. Editors may add, correct, or remove Marking-level dates on the Marking page. Contributors supply dates only through Covers.
+**Dates.** Marking date ranges combine direct Marking observations and dates on linked Covers. Direct observations can come from imported catalog text or authorized Editor changes. Editors manage direct dates on the new and edit Marking forms. New Marking dates are applied on approval; authorized changes to saved Marking dates save immediately. Contributors supply dates only through Covers.
 
 **Editor.** Approves or rejects submissions and comments on assigned Collections, provides feedback, manages Reference Works. Inherits Contributor capabilities.
 
@@ -52,7 +52,7 @@ A reference for the terminology used in WorldCovers data, interface, and support
 
 **Rate Value.** The numeric amount of postage stated by a Ratemark, recorded as a decimal value in cents. For example, a 3-cent rate is stored as 3 and shown as 3 cents.
 
-**Reference Work.** A citable publication, such as a printed catalog, monograph, or digital resource. The ASCC and the forthcoming VPHC are among the Reference Works incorporated into the APMC.
+**Reference Work.** A citable publication, such as a printed catalog, monograph, or digital resource. The ASCC and the forthcoming VPHC are among the Reference Works incorporated into the APMC. Editors add and edit Reference Works on the Reference Works page; a work that Citations point at cannot be removed.
 
 **Region.** A structured hierarchy of named geographic or administrative jurisdictions such as "country, state, territory, county, city, or district."
 
@@ -62,7 +62,7 @@ A reference for the terminology used in WorldCovers data, interface, and support
 
 **Townmark** (`TOWNMARK`). A Marking whose function is to identify the origin Post Office. Bears the town name, and frequently a date.
 
-**VPHC.** *Virginia Postal History Catalog.* The next Reference Work scheduled for incorporation into the APMC.
+**VPHC.** *Virginia Postal History Catalog.* The second Reference Work incorporated into the APMC, after the ASCC; its listings carry the VPHC1 Citation.
 
 ---
 
@@ -101,3 +101,5 @@ Codes describing how the date is arranged on the Marking.
 | `YD` | Year date only |
 | `YMD` | Year, month, date |
 | `YMDD` | Year, month and day date |
+
+**WorldCovers.** The free software the APMC runs on, published under the GNU General Public License, version 3. The name belongs to the software project and its addresses (worldcovers.org), not to the catalog's pages.

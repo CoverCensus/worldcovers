@@ -10,7 +10,7 @@
  * end date sitting beside recorded ones reads as recorded, and every future
  * consumer would inherit the guess without seeing the caveat.
  */
-import apiClient from "@/lib/api";
+import apiClient, { ensureCsrfToken } from "@/lib/api";
 
 /** One item from GET /postmaster-tenures/ (DRF snake_case) */
 export interface PostmasterTenureApiResultItem {
@@ -23,7 +23,24 @@ export interface PostmasterTenureApiResultItem {
   date_appointed: string | null;
   date_appointed_granularity?: string | null;
   source_ref?: string | null;
+  origin?: string | null;
+  source_note?: string | null;
 }
+
+/** One item from GET /postmasters/ */
+export interface PostmasterApiResultItem {
+  id: number;
+  name: string;
+  sort_name?: string | null;
+}
+
+export interface PostmasterPerson {
+  id: number;
+  name: string;
+  sortName: string;
+}
+
+export type TenureOrigin = "IMPORT" | "MANUAL";
 
 export interface PostmasterTenureApiResponse {
   count: number;
@@ -43,6 +60,20 @@ export interface PostmasterTenure {
   dateAppointed: string | null;
   granularity: string;
   sourceRef: string;
+  /** IMPORT = decoded from a source workbook; MANUAL = typed in by an Editor (T71). */
+  origin: TenureOrigin;
+  /** Citation in words for a MANUAL row; empty on imported rows. */
+  sourceNote: string;
+}
+
+/** POST / PATCH body for /postmaster-tenures/ (DRF snake_case). */
+export interface PostmasterTenurePayload {
+  post_office: number;
+  postmaster: number | null;
+  event: string;
+  date_appointed: string | null;
+  date_appointed_granularity: "YEAR" | "MONTH" | "DAY" | null;
+  source_note: string;
 }
 
 const EVENT_LABELS: Record<string, string> = {
@@ -80,7 +111,65 @@ function mapTenure(item: PostmasterTenureApiResultItem): PostmasterTenure {
     dateAppointed: item.date_appointed ?? null,
     granularity: (item.date_appointed_granularity ?? "").trim(),
     sourceRef: (item.source_ref ?? "").trim(),
+    origin: item.origin === "MANUAL" ? "MANUAL" : "IMPORT",
+    sourceNote: (item.source_note ?? "").trim(),
   };
+}
+
+function mapPerson(item: PostmasterApiResultItem): PostmasterPerson {
+  return { id: item.id, name: (item.name ?? "").trim(), sortName: (item.sort_name ?? "").trim() };
+}
+
+/**
+ * People whose name or sort name contains `query` (first page). The picker
+ * shows these as choices and always offers "Add new person" beside them: a
+ * matching name is a hint, never an identity.
+ */
+export async function searchPostmasters(query: string): Promise<PostmasterPerson[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const res = await apiClient.get<{ results: PostmasterApiResultItem[] }>("/postmasters/", {
+    params: { search: q, page_size: 20 },
+  });
+  const results = res.data?.results;
+  return Array.isArray(results) ? results.map(mapPerson) : [];
+}
+
+/** POST /postmasters/ (Editors). sort_name is derived server-side when blank. */
+export async function createPostmaster(name: string, sortName = ""): Promise<PostmasterPerson> {
+  await ensureCsrfToken();
+  const res = await apiClient.post<PostmasterApiResultItem>("/postmasters/", {
+    name: name.trim(),
+    sort_name: sortName.trim(),
+  });
+  return mapPerson(res.data);
+}
+
+/** PATCH /postmasters/{id}/ (Editors): rename, never merge. */
+export async function updatePostmaster(
+  id: number,
+  payload: { name?: string; sort_name?: string },
+): Promise<PostmasterPerson> {
+  await ensureCsrfToken();
+  const res = await apiClient.patch<PostmasterApiResultItem>(`/postmasters/${id}/`, payload);
+  return mapPerson(res.data);
+}
+
+/** POST /postmaster-tenures/ (Editors responsible for the office's region). */
+export async function createTenure(payload: PostmasterTenurePayload): Promise<PostmasterTenure> {
+  await ensureCsrfToken();
+  const res = await apiClient.post<PostmasterTenureApiResultItem>("/postmaster-tenures/", payload);
+  return mapTenure(res.data);
+}
+
+/** PATCH /postmaster-tenures/{id}/ with the fields to change. */
+export async function updateTenure(
+  id: number,
+  payload: Partial<PostmasterTenurePayload>,
+): Promise<PostmasterTenure> {
+  await ensureCsrfToken();
+  const res = await apiClient.patch<PostmasterTenureApiResultItem>(`/postmaster-tenures/${id}/`, payload);
+  return mapTenure(res.data);
 }
 
 /** Every appointment recorded for one post office, oldest first. */

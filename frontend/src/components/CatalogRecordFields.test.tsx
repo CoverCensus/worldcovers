@@ -36,6 +36,16 @@ function renderedLabels(container: HTMLElement): string[] {
   );
 }
 
+describe.each(["list", "gallery", "detail"] as const)("CatalogRecordFields %s Manuscripts", (variant) => {
+  it.each(["Townmark", "Ratemark", "Auxmark"])("hides Shape and Dimensions for a manuscript %s", (type) => {
+    render(<CatalogRecordFields row={catalogRow({ type, manuscript: "Yes" })} variant={variant} />);
+    expect(screen.queryByText("Shape:")).toBeNull();
+    expect(screen.queryByText("Dimensions:")).toBeNull();
+    expect(screen.getByText("Manuscript:")).toBeTruthy();
+    expect(screen.getByText("Earliest Seen:")).toBeTruthy();
+  });
+});
+
 describe("CatalogRecordFields search list fields", () => {
   it("shows the requested Townmark fields in order", () => {
     const { container } = render(

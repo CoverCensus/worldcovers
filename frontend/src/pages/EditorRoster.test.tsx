@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 // issues.md 177 / Trello T46 -- the Editors-only roster page.
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import EditorRoster from "./EditorRoster";
 import { getEditorRoster } from "@/services/editorRoster";
@@ -42,6 +42,12 @@ describe("EditorRoster page", () => {
     ]);
     renderPage();
     expect(await screen.findByText("Virginia")).toBeTruthy();
+    const navigation = within(screen.getByRole("navigation", { name: "Editor navigation" }));
+    expect(navigation.getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "My Submissions", "User Submissions", "Editors", "Reference Works",
+    ]);
+    expect(navigation.getByRole("link", { name: "Editors" }).getAttribute("aria-current")).toBe("page");
+    expect(navigation.getByRole("link", { name: "User Submissions" }).getAttribute("href")).toBe("/dashboard?tab=editor");
     expect(screen.getByText("Maryland")).toBeTruthy();
     expect(screen.queryByText(/@example\.com/)).toBeNull();
     expect(document.querySelector('a[href^="mailto:"]')).toBeNull();

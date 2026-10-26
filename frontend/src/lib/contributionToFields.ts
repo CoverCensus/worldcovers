@@ -13,9 +13,10 @@ import { formatRateValue } from "@/lib/rateDisplay";
 import {
   formatPartialDateInput,
   partialDateInputFromPayload,
+  formatDateSeenLike,
 } from "@/lib/partialDate";
 import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
-import type { MarkingTypeValue } from "@/services/markings";
+import { mapApiMarkingToRecord, type MarkingTypeValue } from "@/services/markings";
 
 export interface ContributionLookups {
   letteringOptions: { id: number; name: string }[];
@@ -32,6 +33,11 @@ export const KNOWN_SUBMITTED_DATA_KEYS: ReadonlySet<string> = new Set([
   // consumed: identity / location / type
   "state",
   "town",
+  // Trello T70: the town's county. county_id is what approval links; county
+  // is the display name; county_proposed is a county not in the list, shown
+  // to the Editor and never applied. snake_case only: the form sends these
+  // keys itself, and the API bounds exactly these names.
+  "county", "county_id", "county_proposed",
   "type",
   "marking_type", "markingType",
   "is_manuscript", "isManuscript",
@@ -42,6 +48,7 @@ export const KNOWN_SUBMITTED_DATA_KEYS: ReadonlySet<string> = new Set([
   "last_seen", "lastSeen",
   "date_range", "dateRange",
   "dates_observed", "datesObserved",
+  "marking_dates_seen",
   // consumed: editor-only ERD/LRD (fall back to these for earliest/latest)
   "marking_erd", "markingErd",
   "marking_erd_granularity", "markingErdGranularity",
@@ -324,10 +331,15 @@ export function submittedDataToFieldInput(
     type,
     isManuscript,
     state: toStr(sd.state),
+    county: toStr(sd.county),
     town: toStr(sd.town),
     inscriptionTxt: toStr(sd.inscription_txt ?? sd.inscriptionTxt),
     earliestSeen: earliest,
     latestSeen: latest,
+    datesSeen: mapApiMarkingToRecord({
+      dates_seen: (Array.isArray(sd.marking_dates_seen) ? sd.marking_dates_seen : [])
+        .map((date, index) => ({ ...date, id: index + 1 })),
+    }).datesSeen.map(formatDateSeenLike).join(", "),
     shapeName,
     rateValFormatted: formatRateValue(toStr(sd.rate_val ?? sd.rateVal)),
     dateFmt: resolveDateFormat(sd, lookups),

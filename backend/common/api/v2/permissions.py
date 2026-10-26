@@ -10,8 +10,10 @@ Role mapping (see plan in
                       `common.review_contribution`
     Administrator  -> `is_superuser` (single-person admin per design)
 
-`IsAdminUser` (DRF built-in) is used directly in views for Administrator-only
-endpoints -- there is no separate Administrator group.
+There is no separate Administrator group. `IsSuperuser` below is the
+Administrator check for new endpoints (Trello T84). `CollectionViewSet` writes
+still use DRF's `IsAdminUser`, which tests `is_staff`, a looser pre-existing
+definition left as found.
 """
 from __future__ import annotations
 
@@ -53,22 +55,35 @@ def user_can_review_contributions(user) -> bool:
 def _get_user_assigned_regions(user):
     if not user or not user.is_authenticated:
         return Region.objects.none()
-    return Region.objects.filter(collection__editor_assignments__user=user).distinct()
+    assigned = Region.objects.filter(collection__editor_assignments__user=user)
+    return Region.including_counties(assigned)
 
 
-def _user_is_responsible_for_marking(user, marking):
+def user_is_responsible_for_post_office(user, post_office):
+    """Whether ``user`` may write rows that hang off ``post_office``.
+
+    The office's current state/territory region (PostOffice.region, which
+    skips county tiers) must be one of the user's assigned regions. Shared by
+    the marking check below and by PostmasterTenure writes (Trello T71).
+    """
     if not user or not user.is_authenticated:
         return False
     if user.is_superuser:
         return True
     if not user_can_review_contributions(user):
         return False
-    if not marking or not marking.post_office_id:
+    if post_office is None:
         return False
-    region = marking.post_office.region
+    region = post_office.region
     if region is None:
         return False
     return _get_user_assigned_regions(user).filter(pk=region.pk).exists()
+
+
+def _user_is_responsible_for_marking(user, marking):
+    if not marking or not marking.post_office_id:
+        return bool(user and user.is_authenticated and user.is_superuser)
+    return user_is_responsible_for_post_office(user, marking.post_office)
 
 
 def _user_is_responsible_for_cover(user, cover):
@@ -97,11 +112,26 @@ def _user_is_responsible_for_cover(user, cover):
         post_office = cm.marking.post_office if cm.marking else None
         # PostOffice.region is a property resolving the most-recent active region.
         region = post_office.region if post_office else None
-        if region is not None:
-            region_ids.add(region.pk)
+        if region is None:
+            return False
+        region_ids.add(region.pk)
     if not region_ids:
         return False
     return region_ids.issubset(assigned_ids)
+
+
+class IsSuperuser(BasePermission):
+    """
+    Administrator only: `is_superuser` (there is no Administrator group).
+
+    Used for the pending login-request list (Trello T84), which carries the
+    requesters' names and email addresses -- the same rows the Administrator
+    already sees in Django admin, and never part of a public response.
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated and user.is_superuser)
 
 
 class IsEditor(BasePermission):
@@ -239,6 +269,32 @@ class IsResponsibleForDateSeenSubject(BasePermission):
         )
 
 
+class IsResponsibleForTenureOffice(BasePermission):
+    """
+    Object-level write check for PostmasterTenure rows, scoped to the office's
+    region (Trello T71). Same shape as IsResponsibleForDateSeenSubject: DRF
+    does not call has_object_permission on create, so
+    PostmasterTenureViewSet.perform_create runs the same predicate by hand,
+    and perform_update re-runs it against a new office when a PATCH moves
+    the row.
+    """
+
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and (user.is_superuser or user_can_review_contributions(user))
+        )
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in SAFE_METHODS:
+            return True
+        return user_is_responsible_for_post_office(request.user, obj.post_office)
+
+
 class CanReviewContribution(BasePermission):
     """
     Object-level: user can review (approve/reject/edit) THIS contribution.
@@ -337,7 +393,10 @@ class IsOwnDeletableContribution(BasePermission):
 class CanManageReferenceWorks(BasePermission):
     """
     Reads: anyone authenticated.
-    Writes: anyone with `add_referencework` / `change_referencework` (Editors group, superuser).
+    Writes (POST/PUT/PATCH): Editors and Administrators by the project's Editor
+    rule (a CollectionAssignment, the review permission, or superuser), the same
+    rule the Color, Shape and Lettering endpoints use. Trello S19.
+    DELETE: refused except for a superuser -- the story is "add and edit".
     Closes the F6 gap where reference works were writable by any contributor.
     """
 
@@ -349,11 +408,6 @@ class CanManageReferenceWorks(BasePermission):
             return True
         if user.is_superuser:
             return True
-        if request.method == "POST":
-            return user.has_perm("common.add_referencework")
-        if request.method in ("PUT", "PATCH"):
-            return user.has_perm("common.change_referencework")
-        if request.method == "DELETE":
-            # Spec says "add and edit" only -- delete is admin-only.
-            return False
+        if request.method in ("POST", "PUT", "PATCH"):
+            return user_can_review_contributions(user)
         return False

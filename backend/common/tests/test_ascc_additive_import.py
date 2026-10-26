@@ -389,6 +389,27 @@ class AsccAdditiveImportTests(TestCase):
         self.assertIsNone(marking.color_id)
         self.assertFalse(marking.is_irreg)
 
+    def test_import_creates_collections_only_for_supported_region_tiers(self):
+        for tier in ("TERRITORY", "DISTRICT", "COUNTY", "CITY", "PROVINCE", "OTHER"):
+            Region.objects.create(
+                code=f"TEST-{tier}",
+                name=tier.title(),
+                abbrev="TST",
+                region_tier=tier,
+                created_by=self.user,
+                modified_by=self.user,
+            )
+
+        for _ in range(2):
+            call_command("import_ascc_bundle", str(self.bundle), verbosity=0)
+
+            self.assertSetEqual(
+                set(Collection.objects.values_list("region__region_tier", flat=True)),
+                {"STATE", "TERRITORY", "DISTRICT"},
+            )
+            self.assertEqual(Collection.objects.count(), 3)
+            self.assertEqual(Region.objects.count(), 8)
+
     def test_truncate_recreates_collections_without_stale_assignments(self):
         call_command("import_ascc_bundle", str(self.bundle), verbosity=0)
         collection = Collection.objects.get(region__code="USA-VA1")
@@ -402,8 +423,8 @@ class AsccAdditiveImportTests(TestCase):
         call_command("import_ascc_bundle", str(self.bundle), truncate=True, verbosity=0)
 
         self.assertEqual(CollectionAssignment.objects.count(), 0)
-        self.assertEqual(Collection.objects.count(), 2)
-        self.assertTrue(Collection.objects.filter(region__code="USA").exists())
+        self.assertEqual(Collection.objects.count(), 1)
+        self.assertFalse(Collection.objects.filter(region__code="USA").exists())
         self.assertTrue(Collection.objects.filter(region__code="USA-VA1").exists())
         self.assertEqual(Region.objects.count(), 2)
         self.assertEqual(Marking.objects.count(), 1)
@@ -427,4 +448,4 @@ class AsccAdditiveImportTests(TestCase):
         self.assertEqual(Color.objects.count(), 1)
         self.assertEqual(Region.objects.count(), 2)
         self.assertEqual(ReferenceWork.objects.count(), 1)
-        self.assertEqual(Collection.objects.count(), 2)
+        self.assertEqual(Collection.objects.count(), 1)

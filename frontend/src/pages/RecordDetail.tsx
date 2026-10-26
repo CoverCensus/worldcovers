@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Copy, Crop, History, Info, Loader2, MessageSquare, Pencil, Plus, Recycle, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, Copy, Crop, Info, Loader2, MessageSquare, Pencil, Plus, Recycle, Star, Trash2 } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { AdminEditLink } from "@/components/AdminEditLink";
 import { Footer } from "@/components/Footer";
@@ -21,7 +21,8 @@ import { ImageOrPlaceholder } from "@/components/ImageOrPlaceholder";
 import { CropImageDialog } from "@/components/CropImageDialog";
 import { RotateImageDialog } from "@/components/RotateImageDialog";
 import { ImageCaptionDialog } from "@/components/ImageCaptionDialog";
-import { formatCaptionChange } from "@/components/entry-detail/historyDiffFormatting";
+import { EntryRecordHistoryCard } from "@/components/entry-detail/EntryRecordHistoryCard";
+import { RestoreVersionDialog } from "@/components/entry-detail/RestoreVersionDialog";
 import {
   formatDateSeen,
   formatDatesSeenList,
@@ -47,6 +48,8 @@ import {
   countyDisplay,
   getMarkingById,
   getMarkingChangelog,
+  getMarkingRestorePreview,
+  getCoverContributionDraftsForMarking,
   loadAssociatedCoversForMarking,
   normalizeImageUrl,
   primaryRegions,
@@ -54,6 +57,7 @@ import {
   removeMarking,
   reorderImages,
   restoreMarking,
+  restoreMarkingVersion,
   rotateImage,
   updateImageCaption,
   updateMarkingReviewed,
@@ -97,7 +101,6 @@ import { earliestDateSeen } from "@/lib/associatedCoverSort";
 import { VphcProvenanceCard } from "@/components/VphcProvenanceCard";
 import { getTenuresForPostOffice, type PostmasterTenure } from "@/services/postmasters";
 import { PostmastersCard } from "@/components/PostmastersCard";
-import { DatesSeenCard } from "@/components/DatesSeenCard";
 
 type GalleryImage = {
   imageUrl: string | null;
@@ -250,36 +253,6 @@ function citationByline(rw: MarkingCitationReferenceWork | null): string {
   return "";
 }
 
-/**
- * Format a server-side ISO timestamp (e.g. "2026-04-12T19:34:51.123Z") for
- * the Record History row. We render in the viewer's locale so timestamps
- * read naturally, with second precision since events can fire close together
- * during automated workflows. Falls back to the raw string if Date parsing
- * fails (e.g. a malformed payload) so editors still see *something*.
- */
-function formatHistoryTimestamp(raw: string | null | undefined): string {
-  if (!raw) return "";
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return raw;
-  return d.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
-/** Fallback when an event has no actor email (e.g. system-generated). */
-function historyActorDisplay(event: MarkingChangelogEvent): string {
-  const email = (event.actor_email ?? "").trim();
-  if (email) return email;
-  const actor = (event.actor ?? "").trim();
-  if (actor) return actor;
-  return "system";
-}
-
 function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
   const typeLabel = markingTypeLabel(record.type) || "Marking";
   return record.images.map((img: MarkingImage) => ({
@@ -299,7 +272,7 @@ function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
 function coverLinkReviewBadgeLabel(cover: AssociatedCover): string {
   if (cover.contributionDraftId != null) {
     const st = (cover.contributionStatus ?? "draft").toLowerCase();
-    if (st === "draft") return "Draft";
+    if (st === "draft") return "Draft - not yet submitted";
     if (st === "needs_revision") return "Needs revision";
     if (st === "pending") return "Pending review";
     return st.charAt(0).toUpperCase() + st.slice(1);
@@ -333,6 +306,12 @@ const RecordDetail = () => {
   const [error, setError] = useState<string | null>(null);
   const [record, setRecord] = useState<MarkingRecord | null>(null);
   const [associatedCovers, setAssociatedCovers] = useState<AssociatedCover[]>([]);
+  // Trello T92: the signed-in user's own unsubmitted cover drafts for this
+  // marking (a cover-like upload moved off a Marking edit, or a draft saved
+  // from Submit New Cover). Listed under Associated Covers so the owner can
+  // find and finish them; never counted, never fetched for anonymous visitors,
+  // and the API only ever returns the caller's own rows.
+  const [ownCoverDrafts, setOwnCoverDrafts] = useState<AssociatedCover[]>([]);
   const [coversLoadError, setCoversLoadError] = useState<string | null>(null);
   const [historyEvents, setHistoryEvents] = useState<MarkingChangelogEvent[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -350,6 +329,8 @@ const RecordDetail = () => {
   const [removing, setRemoving] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  // Version an editor is about to restore the marking to (Trello T74).
+  const [restoreVersionNo, setRestoreVersionNo] = useState<number | null>(null);
   // Image whose marking an editor is cropping out of a whole-cover scan (#77).
   const [cropImageTarget, setCropImageTarget] = useState<MarkingImage | null>(null);
   // Image an editor is turning a quarter at a time (Trello T66).
@@ -415,15 +396,25 @@ const RecordDetail = () => {
   useEffect(() => {
     if (markingId == null || Number.isNaN(markingId)) {
       setAssociatedCovers([]);
+      setOwnCoverDrafts([]);
       setCoversLoadError(null);
       return;
     }
     let cancelled = false;
+    const viewerId = user?.id;
+    // A new marking (or a sign-out) must not show the previous one's drafts
+    // while the fetch below is in flight.
+    setOwnCoverDrafts([]);
     void (async () => {
       const { covers: rows, error: coversErr } = await loadAssociatedCoversForMarking(markingId);
       if (cancelled) return;
       setCoversLoadError(coversErr);
       setAssociatedCovers(rows);
+      // Own drafts ride behind the approved list so the public panel never
+      // waits on them; `cancelled` keeps a stale answer off a newer page.
+      const drafts = viewerId != null ? await getCoverContributionDraftsForMarking(markingId) : [];
+      if (cancelled) return;
+      setOwnCoverDrafts(drafts);
     })();
     return () => {
       cancelled = true;
@@ -809,21 +800,6 @@ const RecordDetail = () => {
   const coverLikeImages = coverLikeMarkingImages(record.images);
 
 
-  // Record History display rule: collapsed by default we show the three most
-  // recent events; when expanded we cap at the 10 newest events. Backend
-  // already returns events sorted by timestamp DESC, so we slice from the
-  // front to avoid an extra sort pass on every render.
-  const HISTORY_COLLAPSED_LIMIT = 3;
-  const HISTORY_EXPANDED_LIMIT = 10;
-  const visibleHistoryEvents = historyExpanded
-    ? historyEvents.slice(0, HISTORY_EXPANDED_LIMIT)
-    : historyEvents.slice(0, HISTORY_COLLAPSED_LIMIT);
-  const hasMoreHistory = historyEvents.length > HISTORY_COLLAPSED_LIMIT;
-  const historyOverflow = Math.max(
-    0,
-    historyEvents.length - HISTORY_EXPANDED_LIMIT,
-  );
-
   // Field order and visibility rules live in buildMarkingFields so
   // ContributionDetail renders the same sequence.
   const detailRows = buildMarkingFields(
@@ -869,6 +845,9 @@ const RecordDetail = () => {
   );
 
   const coverCount = associatedCovers.length;
+  // Approved links first, then the viewer's own drafts (T92); the count above
+  // stays the public number.
+  const coverRows = ownCoverDrafts.length > 0 ? [...associatedCovers, ...ownCoverDrafts] : associatedCovers;
   // Unauthenticated visitors clicking a write-action button get bounced to
   // /auth with `from` state so the auth page can return them here after
   // login. Matches the pattern used in App.tsx for protected routes.
@@ -1151,77 +1130,14 @@ const RecordDetail = () => {
               </Card>
 
               {isStaff && (
-                <Card className="shadow-archival-md">
-                  <CardHeader>
-                    <CardTitle className="font-heading text-lg flex items-center gap-2">
-                      <History className="h-5 w-5 text-muted-foreground" />
-                      Record History
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {historyLoading ? (
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Loading history...
-                      </div>
-                    ) : historyError ? (
-                      <p className="text-sm text-muted-foreground">{historyError}</p>
-                    ) : historyEvents.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        No audit events recorded for this marking yet.
-                      </p>
-                    ) : (
-                      <>
-                        <ul className="divide-y divide-border text-sm">
-                          {visibleHistoryEvents.map((event) => (
-                            <li
-                              key={event.event_id}
-                              className="py-3 first:pt-0 last:pb-0"
-                            >
-                              <div className="flex items-baseline justify-between gap-3">
-                                <span className="font-medium text-foreground">
-                                  {event.action_label || event.action}
-                                </span>
-                                <span className="text-xs text-muted-foreground whitespace-nowrap">
-                                  {formatHistoryTimestamp(event.timestamp)}
-                                </span>
-                              </div>
-                              <div className="mt-1 text-xs text-muted-foreground break-all">
-                                {historyActorDisplay(event)}
-                              </div>
-                              {event.caption_change && (
-                                <p className="mt-2 text-xs text-muted-foreground break-all">
-                                  <span className="font-medium text-foreground">Caption</span>
-                                  {`: ${formatCaptionChange(event.caption_change)}`}
-                                </p>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                        {hasMoreHistory && (
-                          <div className="mt-3 flex items-center justify-between gap-3">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setHistoryExpanded((v) => !v)}
-                            >
-                              {historyExpanded
-                                ? `Show latest ${HISTORY_COLLAPSED_LIMIT}`
-                                : `Show recent history (up to ${HISTORY_EXPANDED_LIMIT})`}
-                            </Button>
-                            {historyExpanded && historyOverflow > 0 && (
-                              <span className="text-xs text-muted-foreground">
-                                {historyOverflow} older event
-                                {historyOverflow === 1 ? "" : "s"} not shown
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </CardContent>
-                </Card>
+                <EntryRecordHistoryCard
+                  loading={historyLoading}
+                  error={historyError}
+                  events={historyEvents}
+                  expanded={historyExpanded}
+                  onToggleExpanded={() => setHistoryExpanded((v) => !v)}
+                  onRestoreVersion={record.isRemoved ? undefined : setRestoreVersionNo}
+                />
               )}
             </div>
 
@@ -1275,14 +1191,6 @@ const RecordDetail = () => {
                 </CardContent>
               </Card>
 
-              {/* issues.md 107: editors correct a marking's own dates here, one row per
-                  click on the region-scoped /dates-seen/ API. Shown only when the server
-                  says this viewer may (can_edit_dates); the public "Dates Seen" row above
-                  keeps its own rule (#122). */}
-              {record.canEditDates && markingId != null && (
-                <DatesSeenCard markingId={markingId} datesSeen={record.datesSeen} onChanged={refetchRecord} />
-              )}
-
               {record.desc.trim() && (
                 <Card className="shadow-archival-md">
                   <CardHeader><CardTitle className="font-heading text-lg">Description</CardTitle></CardHeader>
@@ -1319,13 +1227,13 @@ const RecordDetail = () => {
                       {coversLoadError}
                     </p>
                   )}
-                  {coverCount === 0 && !coversLoadError && (
+                  {coverRows.length === 0 && !coversLoadError && (
                     <p className="text-sm text-muted-foreground">No covers linked to this marking yet.</p>
                   )}
-                  {coverCount > 0 && (
+                  {coverRows.length > 0 && (
                     <>
                     <div className="space-y-4">
-                        {associatedCovers.map((cover) => {
+                        {coverRows.map((cover) => {
                           const c = cover.coverDetails;
                           const thumb = cover.defaultImageUrl ?? null;
                           const earliestLabel = associatedCoverEarliestDisplay(c);
@@ -1342,7 +1250,9 @@ const RecordDetail = () => {
                               (c?.id != null && c.id > 0));
                           return (
                             <Card
-                              key={cover.contributionDraftId ?? cover.id}
+                              // Draft ids (Contribution) and link ids (CoverMarking) are
+                              // independent sequences, so prefix them (T92).
+                              key={cover.contributionDraftId != null ? `draft-${cover.contributionDraftId}` : `link-${cover.id}`}
                               className={`relative shadow-archival-md hover:shadow-archival-lg transition-shadow ${
                                 canOpenCover ? "cursor-pointer" : ""
                               }`}
@@ -1655,6 +1565,29 @@ const RecordDetail = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <RestoreVersionDialog
+        open={restoreVersionNo != null}
+        onOpenChange={(open) => {
+          if (!open) setRestoreVersionNo(null);
+        }}
+        entryLabel="marking"
+        versionNo={restoreVersionNo}
+        loadPreview={() =>
+          markingId != null && restoreVersionNo != null
+            ? getMarkingRestorePreview(markingId, restoreVersionNo)
+            : Promise.resolve({ ok: false as const, message: "This record has no versions to restore." })
+        }
+        onConfirm={async () => {
+          if (markingId == null || restoreVersionNo == null) return "This record has no versions to restore.";
+          const result = await restoreMarkingVersion(markingId, restoreVersionNo);
+          if (result.ok === false) return result.message;
+          toast({ title: `Restored from version ${restoreVersionNo}` });
+          await refetchRecord();
+          setHistoryReloadKey((key) => key + 1);
+          return null;
+        }}
+      />
 
       <RotateImageDialog
         open={rotateImageTarget != null}

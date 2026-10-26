@@ -185,8 +185,25 @@ Steps:
    frontend build (Vite build-time settings; optional, not in git).
 2. `uv sync --no-dev --frozen`
 3. `uv run python backend/manage.py migrate --noinput`
-4. `cd frontend && npm ci && npm run build`
-5. `uv run python backend/manage.py collectstatic --noinput`
+4. `uv run python backend/manage.py createcachetable`
+5. `cd frontend && npm ci && npm run build`
+6. `uv run python backend/manage.py collectstatic --noinput`
+
+The account rate limits use `account_rate_cache` in MariaDB so all workers
+share limits. Create the cache table before starting the new code. The
+nginx -> Gunicorn topology trusts one proxy hop; keep Gunicorn bound to
+loopback and preserve nginx's appended client address. Do not add another
+proxy without reviewing this setting.
+
+Django development access logs omit query strings. The nginx template also
+omits query strings and Referer from access logs so reset
+and verification links do not expose their tokens. An existing host needs
+this nginx change applied and checked with `nginx -t`; `deploy.sh` does not
+replace live nginx configuration. Keep the safe format in its HTTPS server
+block too. Account responses include `X-Request-ID`, which links a reported
+error to the account log. These logs record operation, outcome, status, and
+duration without credentials or email addresses. SMTP has a five-second
+socket timeout; the frontend HTTP timeout is ten seconds.
 
 The script does not stop, start, or restart systemd. The caller owns service
 lifecycle.

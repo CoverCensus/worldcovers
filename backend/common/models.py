@@ -19,6 +19,24 @@ class TimestampedModel(models.Model):
     class Meta:
         abstract = True
 
+
+class CollectionTransferMap(models.Model):
+    """Keep source record identities stable across Collection restores."""
+
+    source_instance = models.CharField(max_length=255)
+    source_model = models.CharField(max_length=100)
+    source_id = models.CharField(max_length=64)
+    target_id = models.CharField(max_length=64)
+    record_digest = models.CharField(max_length=64)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source_instance", "source_model", "source_id"],
+                name="collection_transfer_source_unique",
+            ),
+        ]
+
 class Color(TimestampedModel):
     """
     Value table of ink or cover material colors.
@@ -334,6 +352,13 @@ class SubmissionTransaction(models.Model):
     # An editor changed a saved image's caption (Trello T87); the previous and
     # new caption are in extra_payload.
     ACTION_IMAGE_CAPTION_CHANGED = "image_caption_changed"
+    # Manual Postmaster entry (Trello T71). SubmissionTransaction has no FK to
+    # a person, an office or a tenure, so the row ids live in extra_payload and
+    # the before/after payloads carry the tenure or person snapshot.
+    ACTION_POSTMASTER_ADDED = "postmaster_added"
+    ACTION_POSTMASTER_CHANGED = "postmaster_changed"
+    ACTION_POSTMASTER_EVENT_ADDED = "postmaster_event_added"
+    ACTION_POSTMASTER_EVENT_CHANGED = "postmaster_event_changed"
     ACTION_CHOICES = [
         (ACTION_SUBMIT, "Record submitted"),
         (ACTION_EDIT_SUBMISSION, "Edited submission"),
@@ -358,6 +383,10 @@ class SubmissionTransaction(models.Model):
         (ACTION_DATE_SEEN_REMOVED, "Date removed"),
         (ACTION_IMAGE_ROTATED, "Image rotated"),
         (ACTION_IMAGE_CAPTION_CHANGED, "Image caption changed"),
+        (ACTION_POSTMASTER_ADDED, "Postmaster added"),
+        (ACTION_POSTMASTER_CHANGED, "Postmaster changed"),
+        (ACTION_POSTMASTER_EVENT_ADDED, "Postmaster event added"),
+        (ACTION_POSTMASTER_EVENT_CHANGED, "Postmaster event changed"),
     ]
 
     SOURCE_CONTRIBUTOR_PORTAL = "contributor_portal"
@@ -791,6 +820,14 @@ class Region(TimestampedModel):
         return self.name
 
     @classmethod
+    def including_counties(cls, regions: models.QuerySet) -> models.QuerySet:
+        """Include Counties whose parent is one of the given Regions."""
+        return cls.objects.filter(
+            Q(pk__in=regions)
+            | Q(region_tier="COUNTY", parent_region__in=regions)
+        )
+
+    @classmethod
     def matching_state_term(cls, value):
         """Regions a user or a payload means by `value` in a "state" field.
 
@@ -886,17 +923,22 @@ class PostOffice(TimestampedModel):
         # state (issue #103). This resolved to the state anyway -- but only by
         # accident, because VA/WV carry an established_date and the counties do
         # not. Give one county a date and the tie-break flips the town's state.
-        link = (
-            self.post_office_regions
-            .exclude(region__region_tier__in=Region.SUBREGION_TIERS)
-            .select_related('region')
-            .order_by(
-                F('region__defunct_date').desc(nulls_first=True),
-                F('region__established_date').desc(nulls_last=True),
-            )
-            .first()
-        )
-        return link.region if link is not None else None
+        links = getattr(self, '_primary_region_links', None)
+        if links is None:
+            link = PostOfficeRegion.primary_links().filter(post_office=self).first()
+        else:
+            link = links[0] if links else None
+        if link is not None:
+            return link.region
+
+        # A County-only link inherits its containing State's responsibility.
+        # Keep direct primary links first to preserve historical routing.
+        county_links = getattr(self, '_county_region_links', None)
+        if county_links is None:
+            county_link = PostOfficeRegion.county_links().filter(post_office=self).first()
+        else:
+            county_link = county_links[0] if county_links else None
+        return county_link.region.parent_region if county_link is not None else None
 
     @property
     def regions(self):
@@ -963,6 +1005,28 @@ class PostOfficeRegion(TimestampedModel):
     def __str__(self):
         return f'{self.post_office.name} -- {self.region.name}'
 
+    @classmethod
+    def primary_links(cls) -> models.QuerySet:
+        """Use the same Region order for single offices and catalog pages."""
+        return cls.objects.exclude(
+            region__region_tier__in=Region.SUBREGION_TIERS,
+        ).select_related('region').order_by(
+            F('region__defunct_date').desc(nulls_first=True),
+            F('region__established_date').desc(nulls_last=True),
+        )
+
+    @classmethod
+    def county_links(cls) -> models.QuerySet:
+        """Parent Regions used only when an office has no primary link."""
+        return cls.objects.filter(
+            region__region_tier='COUNTY',
+            region__parent_region__region_tier__in=('STATE', 'TERRITORY', 'DISTRICT'),
+        ).select_related('region__parent_region').order_by(
+            F('region__parent_region__defunct_date').desc(nulls_first=True),
+            F('region__parent_region__established_date').desc(nulls_last=True),
+            'pk',
+        )
+
 
 class Postmaster(TimestampedModel):
     """
@@ -1004,6 +1068,12 @@ class PostmasterTenure(TimestampedModel):
     source often gives a year alone, and storing 1 January would assert a
     precision nobody has.
 
+    Rows come from two places and say which (Trello T71): ``origin`` is IMPORT
+    for a row the VPHC importer decoded from a workbook cell (``source_ref``
+    names the cell) and MANUAL for a row an Editor typed in, whose evidence is
+    the free-text ``source_note``. Editing an imported row keeps IMPORT; the
+    change is audited, not re-keyed.
+
     model.md domain type: PostmasterTenure
     """
     EVENT_APPOINTMENT = 'appointment'
@@ -1017,6 +1087,12 @@ class PostmasterTenure(TimestampedModel):
         (EVENT_UNKNOWN, 'Unknown'),
     ]
     GRANULARITY_CHOICES = [('DAY', 'Day'), ('MONTH', 'Month'), ('YEAR', 'Year')]
+    ORIGIN_IMPORT = 'IMPORT'
+    ORIGIN_MANUAL = 'MANUAL'
+    ORIGIN_CHOICES = [
+        (ORIGIN_IMPORT, 'Imported from a source workbook'),
+        (ORIGIN_MANUAL, 'Entered by an Editor'),
+    ]
 
     tenure_id = models.AutoField(primary_key=True)
     post_office = models.ForeignKey(
@@ -1033,6 +1109,16 @@ class PostmasterTenure(TimestampedModel):
     source_ref = models.CharField(
         max_length=32, blank=True, default='',
         help_text='Cell reference in the source workbook, e.g. T3:r15904')
+    # Both carry a db_default as well as a default: AddField with only a Python
+    # default backfills existing rows and then drops the database default, so
+    # an INSERT from code that predates the column (the importer or a restore
+    # running during the deploy window) would fail under strict mode.
+    origin = models.CharField(
+        max_length=6, choices=ORIGIN_CHOICES, default=ORIGIN_IMPORT, db_default=ORIGIN_IMPORT,
+        help_text='IMPORT rows came from import_vphc_reference; MANUAL rows were typed by an Editor')
+    source_note = models.CharField(
+        max_length=500, blank=True, default='', db_default='',
+        help_text='Citation in words for a manually entered event; empty for imported rows')
     rules_version = models.PositiveSmallIntegerField(
         null=True, blank=True, help_text='RULES.md version that decoded this row')
 

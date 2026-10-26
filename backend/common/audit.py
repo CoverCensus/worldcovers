@@ -16,6 +16,7 @@ from common.models import (
     MarkingVersion,
     SubmissionTransaction,
 )
+from common.version_restore import apply_restore_plan, plan_cover_restore, plan_marking_restore
 
 
 def _json_safe(value: Any) -> Any:
@@ -128,6 +129,37 @@ def compute_payload_diff(before_payload: Any, after_payload: Any) -> list[dict[s
     return diff
 
 
+def build_postmaster_snapshot(person) -> dict[str, Any]:
+    """The person as a Postmaster write logs it (Trello T71)."""
+    if person is None:
+        return {}
+    return {"id": person.pk, "name": person.name, "sort_name": person.sort_name}
+
+
+def build_postmaster_tenure_snapshot(tenure) -> dict[str, Any]:
+    """One appointment event as a tenure write logs it (Trello T71).
+
+    SubmissionTransaction has no FK to a tenure, an office or a person, so
+    the before/after payloads carry the whole row and the ids repeat in
+    extra_payload for lookup.
+    """
+    if tenure is None:
+        return {}
+    return {
+        "tenure_id": tenure.pk,
+        "post_office_id": tenure.post_office_id,
+        "post_office_name": tenure.post_office.name if tenure.post_office_id else None,
+        "postmaster_id": tenure.postmaster_id,
+        "postmaster_name": tenure.postmaster.name if tenure.postmaster_id else None,
+        "event": tenure.event,
+        "date_appointed": tenure.date_appointed.isoformat() if tenure.date_appointed else None,
+        "date_appointed_granularity": tenure.date_appointed_granularity,
+        "origin": tenure.origin,
+        "source_ref": tenure.source_ref,
+        "source_note": tenure.source_note,
+    }
+
+
 def log_submission_transaction(
     *,
     action: str,
@@ -209,51 +241,14 @@ def log_marking_restored(marking: Marking, restored_by) -> SubmissionTransaction
 
 def restore_marking_from_snapshot(marking: Marking, snapshot: dict[str, Any], actor) -> Marking:
     """
-    Restore a Marking from a snapshot dict. Phase 1 stub: scalar-field restore
-    only. Image reattachment is deferred to the Phase 2 contribution rewrite,
-    which owns Image lifecycle for both COVER and MARKING subjects. DateSeen
-    rows are now polymorphic and live alongside Image / Citation under the same
-    (subject_type, subject_id) pattern; reattaching them is also deferred.
+    Restore a Marking to a version snapshot: scalar fields, citations, images
+    (rows whose file is still in storage) and dates seen are reconciled to the
+    snapshot by common.version_restore; links to covers are not part of a
+    marking version and are left alone. The caller owns the transaction.
     """
     if not isinstance(snapshot, dict):
         return marking
-
-    marking.code = snapshot.get("code")
-    marking.type = snapshot.get("type") or marking.type
-    marking.catalog_txt = snapshot.get("catalog_txt")
-    marking.inscription_txt = snapshot.get("inscription_txt") or ""
-    marking.desc = snapshot.get("desc")
-    marking.post_office_id = snapshot.get("post_office_id")
-    marking.shape_id = snapshot.get("shape_id")
-    marking.lettering_id = snapshot.get("lettering_id")
-    marking.color_id = snapshot.get("color_id")
-    marking.is_manuscript = bool(snapshot.get("is_manuscript"))
-    marking.impression = snapshot.get("impression")
-    marking.is_irreg = snapshot.get("is_irreg")
-    marking.width = snapshot.get("width")
-    marking.height = snapshot.get("height")
-    marking.date_fmt = snapshot.get("date_fmt")
-    marking.rate_val = snapshot.get("rate_val")
-    if actor and getattr(actor, "is_authenticated", False):
-        marking.modified_by = actor
-    marking.save()
-
-    user_for_related = actor if actor and getattr(actor, "is_authenticated", False) else marking.modified_by
-
-    Citation.objects.filter(subject_type="MARKING", subject_id=marking.pk).delete()
-    for row in snapshot.get("citations", []) or []:
-        ref_id = row.get("reference_work_id")
-        if not ref_id:
-            continue
-        Citation.objects.create(
-            reference_work_id=ref_id,
-            subject_type="MARKING",
-            subject_id=marking.pk,
-            citation_detail=(row.get("citation_detail") or "").strip(),
-            created_by=user_for_related,
-            modified_by=user_for_related,
-        )
-
+    apply_restore_plan(plan_marking_restore(marking, snapshot), actor)
     return marking
 
 
@@ -364,41 +359,12 @@ def log_cover_restored(cover: Cover, restored_by) -> SubmissionTransaction:
 
 def restore_cover_from_snapshot(cover: Cover, snapshot: dict[str, Any], actor) -> Cover:
     """
-    Restore a Cover from a snapshot dict. Phase 1 stub: scalar-field restore
-    plus citation reattachment only. Image reattachment is deferred to the
-    Phase 2 contribution rewrite, which owns Image lifecycle for both COVER and
-    MARKING subjects. DateSeen rows are polymorphic and live alongside Image /
-    Citation under the same (subject_type, subject_id) pattern; reattaching them
-    is also deferred. Mirrors restore_marking_from_snapshot.
+    Restore a Cover to a version snapshot: scalar fields, citations, images
+    (rows whose file is still in storage), dates seen, marking links and the
+    valuation are reconciled to the snapshot by common.version_restore.
+    Mirrors restore_marking_from_snapshot; the caller owns the transaction.
     """
     if not isinstance(snapshot, dict):
         return cover
-
-    cover.code = snapshot.get("code")
-    cover.type = snapshot.get("type")
-    cover.color_id = snapshot.get("color_id")
-    cover.has_adhesive = bool(snapshot.get("has_adhesive"))
-    cover.height = snapshot.get("height")
-    cover.width = snapshot.get("width")
-    cover.is_institutional = snapshot.get("is_institutional")
-    if actor and getattr(actor, "is_authenticated", False):
-        cover.modified_by = actor
-    cover.save()
-
-    user_for_related = actor if actor and getattr(actor, "is_authenticated", False) else cover.modified_by
-
-    Citation.objects.filter(subject_type="COVER", subject_id=cover.pk).delete()
-    for row in snapshot.get("citations", []) or []:
-        ref_id = row.get("reference_work_id")
-        if not ref_id:
-            continue
-        Citation.objects.create(
-            reference_work_id=ref_id,
-            subject_type="COVER",
-            subject_id=cover.pk,
-            citation_detail=(row.get("citation_detail") or "").strip(),
-            created_by=user_for_related,
-            modified_by=user_for_related,
-        )
-
+    apply_restore_plan(plan_cover_restore(cover, snapshot), actor)
     return cover

@@ -47,7 +47,8 @@ linked Marking Regions; the Administrator has a separate override.
 Check responsibility before ordinary Image creation, updates, and deletion.
 Check both source and destination when moving an Image, including the linked
 Marking Regions for a Cover. Preserve existing Administrator overrides and
-Contributor restrictions.
+Contributor restrictions. A County-only Post Office uses its parent primary
+Region for responsibility; County jurisdiction remains on PostOfficeRegion.
 
 **Don't:** Rely on a hidden button, a filtered screen, or permission to enter
 the review area as proof that the user may change any Entry.
@@ -126,6 +127,38 @@ Against The Current Entry Before Approval".
 hosted verification and acceptance of Citation preservation and explicit
 clearing through the form workflow. [T40](ISSUE.md#other-follow-ups) covers
 cumulative credit; preserve the public-credit rule below when changing edits.
+
+
+## Link A Submitted County To The Town Only When It Has None
+
+**Do:** Let a Marking submission name the county of its Post Office
+(`county_id`, a COUNTY Region under the submitted state) and, at approval,
+link it through `PostOfficeRegion` when the town has no county link yet.
+Treat an absent or empty `county_id` as silence: no link changes. Show the
+Editor, before approval, whether the county will be linked or differs from
+the catalog's, computed on the server (`describe_county_intent`, exposed as
+`county_intent`) from the Region and the town the submission points at. Let
+a county that is not in the list travel as text (`county_proposed`) for an
+Editor to create through the Regions API.
+
+**Don't:** Replace, re-date or delete an existing county link from a
+submission; add a second county beside one the town already has; let the
+county take part in resolving the Post Office (that stays state + town);
+trust the client-sent county name (an id whose sent name disagrees with the
+Region is refused, at submit and at approval); or give Contributors
+Region-creation rights.
+
+**Why:** The Post Office is shared by every Marking at that town, so a
+replaced county would move records the Contributor never saw. Existing
+county links came from the VPHC import and may be right or wrong; that is an
+Administrator's call, surfaced by the review comparison, not an approval
+side effect.
+
+**Evidence:** Trello T70; [`_link_county` and `describe_county_intent`](backend/common/contribution_apply.py);
+[approval and verdict tests](backend/common/tests/test_county_link_on_approval.py);
+[edit baseline](backend/common/edit_baseline.py);
+[review comparison](frontend/src/lib/editComparison.ts) and
+[form](frontend/src/pages/Contribute.tsx).
 
 ## Serialize Only Approved Public Credit, Never User Objects
 
@@ -232,12 +265,214 @@ entry does not prove that every field and relationship can be restored.
 [bulk audit tests](backend/common/tests/test_bulk_review.py) and
 [date audit tests](backend/common/tests/test_date_seen_permissions.py).
 
-**Open work:** [S23](ISSUE.md#feature-implementation-surfaces-reviewed-2026-09-13)
-is related history work, not a specific plan for full version restoration.
-The current Marking and Cover snapshot restore functions restore selected
-fields and Citations, but not images or date observations.
-[T74](ISSUE.md#t74---define-and-verify-entry-version-restoration) tracks the
-restoration scope and verification separately from history viewing.
+**Version restore (Trello T74, 2026-10-23):** restoring a version
+reconciles the Entry to its snapshot through one plan object
+([version_restore.py](backend/common/version_restore.py)) that both the
+`restore-preview` read and the `restore-version` write use, so the preview
+shows exactly what the restore does. Do list the limitations before the
+action (files no longer in storage, markings since removed, a snapshot that
+did not record a relationship, Marking->Cover links on a Marking version).
+Don't delete image files during a restore, and don't equate this with the
+recycle-bin restore or a backup restore.
+[S23](ISSUE.md#feature-implementation-surfaces-reviewed-2026-09-13) remains
+the history-viewing story; [tests](backend/common/tests/test_version_restore.py).
+
+## Archive Before A Permanent Purge
+
+**Do:** Write and verify a restorable archive before `purge_recycle_bin`
+hard-deletes anything. The archive covers every row the delete removes or
+alters, as the ORM's on_delete rules define it: the binned Markings and
+Covers and their sidecars, the cascaded Contributions, archive sidecars,
+version snapshots, valuations and cover links, the polymorphic image, date
+and citation rows, the transactions and crop Images whose link is set to
+NULL, and the image bytes of the deleted Image rows. Keep the rows that
+survive the purge in their own fixture so a restore never overwrites a live
+row by accident. Before deleting, ask Django's deletion collector whether
+the hand-kept scope is still complete, re-read the archive and re-hash its
+files; inside the delete transaction lock the recycle-bin rows, confirm the
+bin and the scope are unchanged, and compare the rows deleted per model
+with the manifest. Report the scope in dry-run, and write the archive in
+dry-run only when asked. Put archives under `tools/wip/out/` and mark them
+`PURGED` only after the delete commits.
+
+**Don't:** Delete a row the archive does not hold, delete image files during
+a purge (storage filenames are shared across Image rows and pending
+submissions reference files that have no row yet), or treat the archive
+restore (`loaddata` plus a media copy) as the editor recycle-bin restore, a
+version restore, or the S25/S26 application backup. Do not sweep orphan rows
+or files from `verify_media_integrity`'s report; it only reports.
+
+**Why:** Trello T51: "restorable archive is verified before erasure;
+dry-run reports scope." A purge used to cascade through Contributions and
+versions it never mentioned, and a database dump carries none of the image
+bytes (BACKUP.md, "both halves, always"). Orphan rows were invisible because
+the polymorphic subject link is not a foreign key. Evidence:
+`common/purge_archive.py`, `test_purge_recycle_bin.py` (round trip through
+`loaddata`, damaged-archive refusal, per-model count coverage),
+`test_verify_media_integrity.py`.
+
+## Manage Reference Works Through The Editor Page
+
+**Do:** Let Editors and Administrators add and edit Reference Works on the
+Reference Works page, and make the API's write rule the project's Editor
+definition (a Collection assignment, the review permission, or superuser),
+the same rule the Color, Shape and Lettering endpoints use. Trim text, store
+a blank code as NULL, refuse a title and edition that already exist, bound
+the year, and refuse a change to a code that existing Citations rely on,
+because catalog codes are generated from it. Show a Reference Work on the
+submission forms as its title, then the first author plus "et al." when the
+authorship names several people, with edition, volume and year.
+
+**Don't:** Offer delete in the application (the API refuses it for everyone
+but a superuser, and a Citation protects its Reference Work at the database).
+Don't rely on Django model permissions that no code grants to the Editors
+group. Any Editor may edit a Reference Work that every Collection cites; that
+is the project's Editor definition, the same as for Colors and Shapes, and the
+code guard is what keeps generated catalog codes stable. Don't split an authorship string on a
+comma: only a semicolon or an "and" / "&" between names separates people,
+so a single person written "Briggs, Deane R." stays whole; the full
+authorship is unchanged in storage and on the detail pages. Don't create a
+second VPHC1 or ASCC row; edit the existing one.
+
+**Why:** Trello S19: "permitted writes work and unauthorized writes fail;
+the Entry edit displays the first author plus et al. when applicable, with
+room for volume, edition, and date; preserve full authorship and
+comma-containing personal names; API/admin access alone does not satisfy
+the workflow." The previous permission class checked model permissions that
+nothing assigned, so Editors got 403 while admin and superusers could write.
+Reese chose the Editor rule, the year as the date, the inline page, and the
+separator-only author rule on 2026-10-22. Evidence:
+`common/api/v2/permissions.py` (`CanManageReferenceWorks`),
+`test_reference_work_api.py`, `frontend/src/lib/referenceWorkDisplay.ts` and
+its test, `frontend/src/pages/ReferenceWorks.tsx` and its test.
+
+## Verify New Contributor Accounts With Allauth
+
+**Do:** Collect name, email, and password at signup. Use django-allauth's
+browser APIs, verification records, signed links, and rate limits. Require
+email verification before a new account can sign in through any supported
+login route. Require an explicit confirmation POST; links expire after three
+days and confirmation does not sign the user in. Share password rules with
+the existing reset and change APIs. Verification grants Contributor access;
+an Administrator selects Editor and assigns Collections separately.
+
+Use the Django session as the source of truth. Check it even without browser
+storage. Route guards wait for the initial check and offer retry when the
+server is unavailable. Only a confirmed Guest response clears an uncertain
+session. Logout is repeatable; an active session still requires CSRF. Ignore
+requests that started before an account change, including changes in another
+tab. Recheck on tab return and browser page restoration. A lost login response
+or conflict requires a session check; never repeat credentials automatically
+or accept a different account as the requested login.
+
+Preserve password characters exactly. At login, try the exact value first,
+then one trimmed value for passwords saved by older forms. Do not rewrite
+hashes for this compatibility check. Match username first, then one current
+email address, without case sensitivity. This includes usernames containing
+`@`. Refuse ambiguous email recovery with a support message; do not merge
+accounts. Require verification of the current address, not a former address.
+
+After a successful password change, end the current session and invalidate
+other sessions. Clear the displayed identity and require a new sign-in. A
+password reset does not sign anyone in. Setting a password in operator tools
+does not activate an account; activation is an explicit Administrator action.
+
+Keep verification, CSRF, and allauth rate limits on every supported login
+alias and the Administrator login form. For nginx -> Gunicorn, trust one
+proxy hop and use the shared MariaDB cache table. Create that table during
+setup and deployment. Record an account operation, outcome, status, duration,
+and server request ID; exclude credentials, tokens, bodies, and email
+addresses. Keep query tokens and Referer URLs out of access logs. Bound SMTP
+waits below the browser request timeout and report mail failure truthfully.
+
+**Don't:** Treat `is_active` as email verification, restore a suspended
+account by verifying or resetting a password, or mark old addresses verified.
+The permissionless `Legacy email verification exemption` group preserves
+pre-rollout accounts' access, including later manual activation of old pending
+requests. Only migration 0024 seeds it; new signup never grants it. Preserve
+this group in auth backups. Do not reopen the retired manual-request API or
+an authentication route that bypasses the verification check.
+
+**Why:** Michael approved these account repairs on 2026-10-24 after local
+regressions exposed inconsistent sessions, password handling, and protections.
+He chose self-service Contributor signup on 2026-10-23, with
+verification required only for new accounts and manual handling retained for
+old pending requests. Address ownership and administrative suspension are
+separate facts. Existing accounts must not lose access or receive fabricated
+verification records.
+
+**Evidence:** [account adapter](backend/common/account_adapter.py),
+[browser endpoints](backend/common/api/account.py),
+[verification tests](backend/common/tests/test_email_signup.py), and
+[auth restore tests](backend/common/tests/test_restore_auth.py),
+[account regressions](backend/common/tests/test_auth_reliability.py), and
+[shared-cache test](backend/common/tests/test_auth_shared_cache.py).
+
+**Open work:** [Production rollout and remaining acceptance](ISSUE.md#contributor-email-verification)
+are tracked in ISSUE.md; the October 25 staging signup and permission checks
+are complete. Back up auth data
+and pause account creation while applying the migration and code together.
+After new signups exist, retain the verification guards during rollback;
+disable signup if needed rather than restoring an unguarded login route.
+
+## Point Test-Site Signup At Production, Show Legacy Pending Requests To Administrators
+
+**Do:** Let the backend say which site it is (`GET /api/v2/site/`: hostname,
+role, production URL, derived from `DJANGO_APP_HOSTNAME`, overridable with
+`WOCO_SITE_ROLE`) and let the SPA ask it once per page load. On a
+non-production site, turn the sign-in page's "Create account" into a link to
+production's `/auth` with a one-sentence notice, and badge the footer "Test
+site". Give Administrators a Dashboard card listing login requests (inactive
+accounts with no usable password that have never signed in, left from the
+old request flow) with a link to each account in Django admin, where manual
+activation still happens. Keep that list superuser-only, because it carries
+names and email addresses; cap it at the newest 200 rows and send the true
+count. New signups use allauth's rate limits. Derive the role by comparing
+the hostname with the host of the production URL (with or without "www."),
+validate any `WOCO_SITE_ROLE` override at start-up, treat an unknown or
+failed site answer as unknown in the SPA, and keep signup unavailable with
+a retry control until the site is known.
+
+**Don't:** Post a request from one site to the other, or copy accounts
+between sites through this feature; a stranded account moves only on
+Michael's say-so. The old `POST /login-requests/` now returns 410 on both
+sites. New Contributor signup depends on verification email; old pending
+requests still use manual activation in admin. Do not send bulk activation
+email or move old requests into the new flow. Do not put requester emails
+in any public or Editor-level response.
+
+**Why:** Trello T84: eight sign-ups made on woco.dev went unnoticed because
+the two sites look identical and a login request is only an inactive User
+row that nothing reports. Reese chose on 2026-10-22 to do both halves
+(route and report) with the site signal from the backend rather than
+hostname sniffing in the SPA. Evidence:
+`test_site_and_pending_requests.py`, `Auth.testSite.test.tsx`,
+`PendingLoginRequestsCard.test.tsx`, `Footer.test.tsx`.
+
+## State Rights As Stated, Never As Verified
+
+**Do:** In public Help, report the rights statements the project has
+actually made (the software licence, the footer's CC BY 4.0 sentence for
+catalog records, the source catalogs cited on their own authority, the
+Contributor name opt-in) and attribute each to where it is stated. Keep a
+"Not yet confirmed" section that names the terms nobody has written down,
+and tell readers to ask before reusing those. Give worked credit lines in
+the Creative Commons title / author / source / licence form, with the
+changes made.
+
+**Don't:** Choose a licence, promise a permission, or describe a reuse right
+in Help that the owner of the material has not granted. Don't quote private
+correspondence or publish contact details beyond the public address. Don't
+change the footer's rights sentence through a Help card; a change to a public
+rights claim is Michael's and Ian's decision.
+
+**Why:** Trello T69 asked for rights and attribution guidance while saying
+"this task does not select a new license or publish a rights policy", and
+the repo holds no confirmed terms for ASCC, VPHC or FPHC listings or for
+uploaded images. Reese chose on 2026-10-22 to publish the facts and mark the
+gaps rather than wait. Evidence: `docs/rights-and-attribution.md`,
+`backend/common/api/help.py` allowlist, `test_help_docs_allowlist.py`,
+`Footer.test.tsx`.
 
 ## Publish Help Content Explicitly
 
@@ -278,6 +513,9 @@ do not establish privacy on other endpoints.
 Django admin, or operator tools. Follow the existing
 [runbook](docs/devel/RUNBOOK.md), [backup guide](docs/devel/BACKUP.md), and
 [deployment guide](docs/devel/DEPLOY.md) for server work.
+For a Collection transfer, verify its complete records and media on the
+destination before source removal. Follow the
+[Collection transfer procedure](docs/devel/RUNBOOK.md#collection-transfer-between-instances).
 
 **Don't:** Count a command-line backup as the application backup feature,
 or build an application update screen to satisfy S27. Do not copy server
@@ -382,6 +620,39 @@ cover screen had the same defect in the other direction: it passed no
 delete for an unsaved image. Evidence: workspace `docs/issues.md` #180;
 `EntryAssociatedThumbnailsCard.test.tsx`, `CoverDetail.imageActions.test.tsx`,
 `coverImageActionState.test.ts`.
+
+## Submit A Marking And Its Cover Together, Approve Each
+
+**Do:** Let a contributor submitting a NEW Marking also submit the Cover it is
+on, in the same form. The Cover's fields and uploads travel inside the
+Marking contribution as `submitted_data["pending_cover"]` (type, date or
+unknown, institutional and backstamp flags, description, its own image
+metas). Enforce the Cover form's three rules at final submit (type, date or
+unknown, image or affirmation); let a draft be incomplete; keep saved cover
+images across a resubmit unless the contributor removes them. When the
+Marking is approved, singly or in bulk, create an ordinary pending cover
+contribution for the new Marking in the same transaction (same contributor
+and Collection, real `parent_marking_id`, `created_from_contribution_id`),
+stamp `pending_cover_contribution_id` on the parent, and return it. Review
+the Cover on the existing cover page. On the form, keep the uncropped
+original of a cropped upload and seed the Cover's images with it; offer the
+section on every new-Marking form and point the whole-cover warning at it.
+
+**Don't:** Add a parent FK, a kind column or any migration for this; the
+link is the two stamped ids. Don't create the Cover row before the Marking
+exists, approve both with one click, or let a Marking edit carry a cover (a
+published Marking's Covers are managed from its record page; see T92).
+Don't cascade a rejection: rejecting or returning the Marking creates
+nothing, and a rejected Marking's cover scan stays only on that row. Don't
+crop on the server or link the two uploads with `cropped_from`.
+
+**Why:** Trello T37 and ISSUE.md say both Entries require approval; the 23 Sep
+triage said one approval; this follows the card. Michael did not answer the
+7 Oct memo's five questions, and model changes are his lane, so Reese chose
+the no-migration design on 2026-10-22 (Ian asked for the flow on 10-16, 10-19
+and 10-22). The parent-FK design in the memo remains the upgrade path if
+side-by-side review is wanted. Evidence: `test_pending_cover.py`,
+`Contribute.pendingCover.test.tsx`, `contributionDisplay.pendingCover.test.ts`.
 
 ## Approve Images In The Order The Contributor Arranged
 
@@ -499,7 +770,7 @@ and for a contributor on each new upload in the Marking form and the Cover
 form. All four use `RotateImageDialog`: drag the image (or the round rotate
 handle, `RotateControls`) round its centre to any angle, as many turns as you
 like in either direction, then save once. The angle snaps to 0/90/180/270
-within 3 degrees (hold Alt to turn it off); "Turn 90° left/right" are
+within 3 degrees (hold Alt to turn it off); "Turn 90 degrees left/right" are
 shortcuts; the handle is a keyboard slider. Only the final angle, normalised
 to (-180, 180] at 0.1 degrees, is sent. On either page,
 `POST /images/{id}/rotate/ {angle}` (clockwise degrees) writes the turned
@@ -667,3 +938,186 @@ checked. Migration `0021_image_caption_changed_action` adds the choice only.
 Evidence: `test_image_caption_edit.py`, `CoverDetail.imageActions.test.tsx`,
 `EntryRecordHistoryCard.caption.test.tsx`, `ImageCaptions.test.tsx`.
 
+
+## Report Duplicate Markings, Never Merge Them
+
+**Do:** Find candidate duplicate Markings with the read-only
+`report_duplicate_markings` command and let a person decide. It scans
+`Marking.objects` (recycle bin excluded), takes each Marking's state from
+`primary_region_subquery` (a correlated subquery, never a join across
+`post_office_regions`), and groups on a NEAR key: primary state, town key
+(`town_match_key`: letters and digits only, uppercased), type, inscription
+key (same normalisation, so ornaments such as `*` are ignored), shape, and
+colour family (uppercased, hyphens to spaces, GRAY to GREY, words sorted).
+Within a NEAR bucket, width and height must agree within 0.5 mm where both
+are known; an unknown size never separates two rows. A group is EXACT when
+every column except `code`, `catalog_txt`, and the audit columns is equal,
+which is the pipeline's `merge_equal_v1_markings` rule on database rows;
+otherwise it is NEAR, and each row names its identical twins. Dates are
+shown per row with a group `dates_overlap` verdict and only filtered on
+`--require-date-overlap`. T48's submission-time "similar Entries" warning
+reuses this key rather than inventing a second one. Since T48 the keys,
+`primary_region_subquery` and `town_match_key` live in `common/matching.py`;
+the report, the API and approval all import them from there.
+
+**Don't:** Merge, archive, or recycle-bin anything from the report; the card
+says matches do not authorize it. Don't group by `post_office_id` alone: the
+catalog holds spelling variants of one town on different PostOffice rows
+(issue #129). Don't group across primary states: Martinsburg VA and
+Martinsburg WV are different towns (#94), and one Marking cross-listed under
+two Regions is one Marking ("Account For Historical Regions In Search").
+Don't resolve `--state` with a bare abbreviation lookup; county rows carry
+the state's abbrev (#103), so use `Region.primary_for_state_term`.
+
+**Why:** Trello T47. The colour repair left "markings that become
+colour-identical after a merge" for T47, and the munger's own merge rule
+needs the raw v1 source row, which the database does not hold, so only its
+attribute half carries over. Reese chose two tiers, dates shown and filtered
+by flag, and CSV plus console with live rows only on 2026-10-20. The local
+staging-shaped database (3,155 Markings) reports 227 groups, 159 of them
+EXACT, which is the review workload the tiers were sized for. Evidence:
+`test_report_duplicate_markings.py`; `docs/devel/TOOLS.md`
+"report_duplicate_markings".
+
+## Warn About Similar Entries, Never Block
+
+**Do:** While a Contributor fills in the Marking form, ask
+`GET /api/v2/markings/similar/` 800 ms after the key fields settle and show
+what comes back in an amber advisory panel (`SimilarEntriesPanel`,
+`role="status"`) directly under the Colour field. The endpoint resolves the
+typed town to the state's post offices by `town_match_key` (so the #129
+spelling variants meet, exactly as approval does), reads only Markings on
+those offices, keeps the ones whose primary region is that state, and labels
+each as **match** (T47's full NEAR key with width/height within 0.5 mm and
+the same manuscript flag when the form sent one) or **related** (same state,
+town key, type and inscription key; other details differ). Match rows first,
+ten at most, with the uncapped counts so the heading stays honest. Rows carry
+no catalog code and no user identity, link to `/record/<id>` in a new tab so
+unsaved input survives, and `?exclude=` drops the Marking being edited. An
+incomplete or unrecognised form is an empty `200`, never a `4xx`: the panel is
+advice, not validation. On the Cover form the same panel is fed client-side
+from the parent Marking's sibling covers (`findSimilarCovers`): same type
+where both are known (`UNK` is unknown, not different), compatible date on
+every component both sides know, and nothing at all until a year is typed.
+
+**Don't:** Disable Submit, require an acknowledgement, or record in the
+submission that candidates were shown. Don't hide the `?copy=` source: only
+the Entry being edited is excluded, and an unchanged copy is exactly what the
+panel exists to flag. Don't reuse `GET /markings/` for this (its `town` is
+`icontains`, `color` is `iexact`, sizes are exact, `state` pulls in
+cross-listed WV and there is no inscription filter), and don't introduce
+react-query into the forms: their tests render without a provider, and the
+catalog-code suggestion effect already shows the effect-and-cancel pattern.
+Don't flash a "checking..." box on every settled keystroke; the panel renders
+only when it has rows and keeps them while a refresh is in flight.
+
+**Why:** Trello T48. Its acceptance: "useful candidate previews without false
+claims of identity." Reese chose the two tiers, advisory only, the placement
+and client-side Covers on 2026-10-20, following the repo's own precedent
+(`alert.tsx` warning is "advisory, not an error"; image warnings say "you can
+still submit"; T34 keeps acknowledge-and-continue). The office-first lookup
+bounds the cost to one town (Richmond, the largest, is ~150 rows) on a public
+endpoint with no throttle classes. Evidence: `test_similar_markings_api.py`,
+`SimilarEntriesPanel.test.tsx`, `Contribute.similar.test.tsx`,
+`lib/similarEntries.test.ts`.
+
+## Tooltips Define, Visible Text Instructs
+
+**Do:** Give every textual field on the Marking and Cover submission forms a
+`FieldHelp` tooltip (Trello S33) whose text is the glossary's definition of
+the term (`docs/glossary.md`, served at `/help/glossary`), kept in
+`labels/guidelines.ts` as one named export per field. Place it as a sibling
+of the field's `Label` inside a `flex items-center gap-1` row, the way
+`f9351f3` placed Lettering, Impression and Is Irregular. For a checkbox
+named by a wrapping `<label>`, put the help outside that label. Keep the
+existing visible helper text where a field needs an instruction (Inscription,
+Town, Date format, dimensions): persistent text for touch and screen-reader
+users, never hover-only. Keep in-app wording in step with the glossary; it is
+the project's defined terms.
+
+**Don't:** Put a help button inside a wrapping `<label>` (it renames the
+control to "... Help for ..." and toggles it on click), inside an image drop zone
+(the click opens the file picker), or on the current-images strip, captions,
+tracing or submitter-name controls. Don't repeat visible helper text in a
+tooltip beside it. Don't change `FieldHelp`'s contract (it describes its own
+button through `aria-describedby`; linking the input itself is a possible
+later refinement). Don't let in-app help drift from the glossary: the
+date-format example once said "MD = Month / Day" against the glossary's
+"Month date only", and the marking-type guideline used the retired "Rate
+Mark" / "town mark" names.
+
+**Why:** Trello S33 ("add concise help to textual fields using the project's
+defined terms"; "do not close S33 on the basis of these three fields alone").
+Reese chose both forms and the string corrections on 2026-10-20, leaving the
+Search filters for a follow-up. `MarkingEditImages.test.tsx` rendered the form
+without a `TooltipProvider` and only passed because its fixture was a
+manuscript Marking; always-visible help made the provider mandatory.
+Evidence: `FieldHelpCoverage.test.tsx`, `guidelines.test.ts`,
+`FieldHelp.test.tsx`.
+
+## Offer A Draft Cover From A Marking Edit
+
+**Do:** On a Marking edit, when an upload looks like a whole cover, offer
+"Make this a Cover for this Marking" in the whole-cover warning. Taking it
+posts a cover DRAFT through the ordinary submit path (`submission_kind=cover`,
+`save_as_draft`, `parent_marking_id`, the file as `cover_image`, the
+uncropped original when the contributor already cropped), removes the tile
+from the edit once the server holds the draft, and names the draft in a
+notice that links to the cover editor. On the record page, list the
+signed-in viewer's own cover drafts for the Marking under Associated Covers
+with a "Draft - not yet submitted" badge, outside the count; fetch them as
+draft rows at the largest page the API allows. Keep the edit-mode warning
+copy separate from the new-Marking copy, which points at the Cover section.
+
+**Don't:** Create the Cover as pending from the edit form (final submit needs
+a type, a date or unknown, and an image; the edit has only the image). Don't
+copy the image so it stays on the Marking edit; it moves, or stays only when
+the draft request failed. Don't show pending or returned cover submissions
+on the record page (they live on the Dashboard until approval, like every
+other submission), and never list a draft to anyone but its author: the
+contributions list is owner-scoped and `?mode=editor` excludes drafts, which
+`test_cover_draft_visibility.py` pins (an Editor assigned to the Collection or
+an Administrator can still open a draft by id, as before; that retrieve rule
+is Michael's to change). Don't add a server filter by parent
+marking, a model field, or an Editor path for this; linking existing
+Entries stays Editor-only (T20). The offer measures uploads made in the
+current session: an image already saved with an edit draft comes back as a
+URL, is not re-measured, and gets no offer; the contributor removes it from
+the resumed edit and uploads it on Submit New Cover instead.
+
+**Why:** Trello T92, part (c) of the 7 Oct T37 memo; its three open questions
+were answered by Reese on 2026-10-23 (draft, drafts only, moved). This
+reverses the May 2026 choice (`19374cd`) that kept drafts off the record
+panel: a draft made from an edit has no other natural home, and the owner
+must be able to find and finish it. Evidence:
+`frontend/src/pages/Contribute.draftCover.test.tsx`,
+`frontend/src/services/markings.coverDrafts.test.ts`,
+`frontend/src/components/WrongImageKindWarning.test.tsx`,
+`backend/common/tests/test_cover_draft_visibility.py`.
+
+## Name The Product From One Place
+
+**Do:** Take the product name from `frontend/src/constants/brand.ts`
+(`APP_NAME`, `APP_LONG_NAME`, `ORG_NAME`, `CONTACT_EMAIL`) on the frontend
+and from `settings.SITE_NAME` on the backend, including every email subject
+and body, the API schema title, the admin header and the allauth templates
+(the account adapter injects `site_name` into their context). Keep the seal
+as a PNG on a white background, regenerated into every icon from the one
+source file, with the icon file names unchanged. Pass the site name through
+`escape()` wherever an email body is built by hand.
+
+**Don't:** Type "APMC", "WorldCovers" or the Society's name into a page,
+template, subject line or document by hand. Do not rename the localStorage
+keys (`worldcovers_user`, `worldcovers.*`): that signs every user out. Do
+not change the `worldcovers.org` mail addresses; they are real.
+
+**Why:** The U.S. Philatelic Classics Society decided on 2026-10-23 that
+the catalog presents as APMC with the Society seal on every screen. The
+first rename found the old name typed in nine frontend places, three email
+sets and four Help docs, with no single source; one constant per side makes
+the next change a one-line edit. Internal identifiers are not branding.
+
+**Evidence:** [brand constants](frontend/src/constants/brand.ts),
+[account adapter](backend/common/account_adapter.py),
+[brand wording tests](backend/common/tests/test_brand_wording.py),
+[header test](frontend/src/components/Navigation.brand.test.tsx).

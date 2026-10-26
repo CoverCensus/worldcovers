@@ -10,8 +10,9 @@ Source of truth for command availability:
 - Run `./woco help` from repo root to list commands in the current checkout.
 
 Use `./woco <command>` from repo root for Django management commands. The
-`./woco` shim wraps `uv run woco`, which calls `woco_cli.py` and then Django's
-`execute_from_command_line`. Several shortcuts bypass Django entirely:
+`./woco` shim runs `woco_cli.py` with the installed `.venv/bin/python`, then
+calls Django's `execute_from_command_line`. It does not sync or rebuild
+the environment for normal commands. Several shortcuts bypass Django entirely:
 `./woco setup dev` and `./woco setup prod` run the environment setup in
 `tools/setup.sh` (see [BUILD.md](BUILD.md) and [DEPLOY.md](DEPLOY.md)),
 `./woco push [args]` runs `tools/push_data.sh`, `./woco refresh [args]`
@@ -43,15 +44,20 @@ which is exactly when you need it).
 | `apply_vphc_ledger` | Apply reviewed VPHC actions and queue marking contributions | `backend/common/management/commands/apply_vphc_ledger.py` |
 | `repair_vphc_rate` | Repair rates derived from VPHC drawing numbers | `backend/common/management/commands/repair_vphc_rate.py` |
 | `repair_catalog_colors` | Apply an operator-reviewed Color correction map | `backend/common/management/commands/repair_catalog_colors.py` |
+| `report_duplicate_markings` | Read-only census of candidate duplicate Markings (T47) | `backend/common/management/commands/report_duplicate_markings.py` |
 | `check_catalog_colors.py` | Verify Color repair before, dry-run, and after states | `tools/check_catalog_colors.py` |
 | `repair_ascc_child_inscriptions` | Remove added Townmark prefixes from Ratemarks and Auxmarks | `backend/common/management/commands/repair_ascc_child_inscriptions.py` |
 | `wipe_user_data` | Clear submission/version/recycle-bin data | `backend/common/management/commands/wipe_user_data.py` |
 | `drop_ascc_state` | Delete one state's imported catalog data | `backend/common/management/commands/drop_ascc_state.py` |
 | `consolidate_superseded_contributions` | Delete superseded non-draft contributions | `backend/common/management/commands/consolidate_superseded_contributions.py` |
-| `purge_recycle_bin` | Permanently delete recycle-bin catalog rows | `backend/common/management/commands/purge_recycle_bin.py` |
+| `purge_recycle_bin` | Archive, verify, then permanently delete recycle-bin catalog rows | `backend/common/management/commands/purge_recycle_bin.py` |
+| `verify_media_integrity` | Check Image rows against files; report orphan files and orphan rows | `backend/common/management/commands/verify_media_integrity.py` |
 | `prune_revisions` | Prune django-reversion rows safely | `backend/common/management/commands/prune_revisions.py` |
 | `backup_marking` | Export one marking graph to JSON | `backend/common/management/commands/backup_marking.py` |
 | `restore_marking` | Restore one marking graph from JSON | `backend/common/management/commands/restore_marking.py` |
+| `backup_collection` | Export a complete Collection and referenced media | `backend/common/management/commands/backup_collection.py` |
+| `restore_collection` | Restore a Collection bundle without overwriting conflicts | `backend/common/management/commands/restore_collection.py` |
+| `verify_collection` | Compare restored records, relationships, and media with a bundle | `backend/common/management/commands/verify_collection.py` |
 | `backup_auth` | Export users and auth/collection config | `backend/common/management/commands/backup_auth.py` |
 | `restore_auth` | Restore users and auth/collection config | `backend/common/management/commands/restore_auth.py` |
 | `set_user_password` | Set a user's password from the CLI | `backend/common/management/commands/set_user_password.py` |
@@ -377,18 +383,136 @@ recycle-bin data before a separate destructive catalog refresh.
 ### `purge_recycle_bin`
 
 Permanently hard-delete catalog markings and covers that are currently hidden
-by recycle-bin rows. The command also deletes polymorphic image, date, and
-citation rows for those subjects. It does not remove image files from disk and
-does not prune django-reversion history.
+by recycle-bin rows, after writing and verifying an archive of them (T51).
+The command deletes the polymorphic image, date, and citation rows for those
+subjects, and the ORM cascades to approved Contributions and their archive
+sidecars, version snapshots, valuations, and cover links. Transactions and
+crop Images that point at the deleted rows keep their rows and lose the link.
+It does not remove image files from disk and does not prune django-reversion
+history.
 
 ```sh
 ./woco purge_recycle_bin --dry-run
+./woco purge_recycle_bin --dry-run --archive-dir tools/wip/out/purge-rehearsal
 ./woco purge_recycle_bin --no-input
+./woco purge_recycle_bin --no-input --archive-dir tools/wip/out/purge-2026-10-22
 ```
 
-Use this when removed catalog records should no longer be restorable from the
-editor recycle bin. The dry run reports what would be deleted and rolls back.
+Every real purge writes a new archive directory first, by default
+`tools/wip/out/recycle-bin-purge-<UTC stamp>`, and refuses to delete anything
+the archive does not cover. The archive holds `records.json` (a Django JSON
+fixture of every deleted row, primary keys included), `relinked.json` (the
+transactions and crop Images that survive the purge and only lose a link),
+`media/` (the image files of the deleted Image rows), and `manifest.json`
+(source instance, code revision, migrations, per-model counts, file
+checksums, and the restore commands). Before the delete the command asks
+Django's deletion collector whether its scope still matches the model's
+cascade rules, re-reads the archive, and re-hashes every file; inside the
+delete transaction it locks the recycle-bin rows, checks that the bin and
+the scope are unchanged, and compares the rows actually deleted per model
+with the manifest, rolling back on any difference. A damaged archive, a
+changed bin, or a mismatch stops the purge with nothing deleted. After the
+delete commits the command writes a `PURGED` marker into the archive; an
+archive without one was a rehearsal or an aborted purge.
+
+A binned Image row with no file on disk, or with a storage name the archive
+cannot use, also stops the purge; `--allow-missing-media` records those
+names in the manifest instead. A file whose bytes differ from its row's
+checksum stops it too: run `verify_media_integrity --check-checksums` and
+repair the row first. An interrupted run can leave a hidden `.purge-*`
+directory beside the destination; it holds private data and can be deleted.
+
+The dry run reports the scope (rows per model, files and bytes, files shared
+with other Image rows) and rolls back. It hashes every binned image file to
+report sizes, so it takes as long as the archive step. With `--archive-dir`
+it also writes and verifies the archive as a rehearsal. Without it, nothing
+is written.
+
+Restore on the same instance only (the manifest names the instance, and
+`loaddata` cannot check it), for example after a purge that should not have
+happened:
+
+```sh
+./woco loaddata tools/wip/out/recycle-bin-purge-<stamp>/records.json
+cp -rn tools/wip/out/recycle-bin-purge-<stamp>/media/. backend/media/
+./woco loaddata tools/wip/out/recycle-bin-purge-<stamp>/relinked.json
+```
+
+Rows return with their original primary keys and are still in the recycle
+bin. `loaddata` overwrites a row that has the same primary key, so load
+`relinked.json` only when those transactions and crop Images have not
+changed since the purge; otherwise restore their links by hand. This is an
+operator recovery, separate from the editor recycle-bin restore, version
+restore, and the S25/S26 application backup. The archive contains
+Contribution review notes; it is created readable by its owner only, lives
+under `tools/wip/out/`, which is not committed, and must be treated as
+private. Expected exit code: `0`.
+
+### `verify_media_integrity`
+
+Check that every Image row resolves to a file under `MEDIA_ROOT`, optionally
+with matching sha256, and report files with no Image row (orphan files) and
+Image, Citation, or DateSeen rows whose Marking or Cover no longer exists
+(orphan rows, T51). A row on a recycle-binned subject is not an orphan.
+
+```sh
+./woco verify_media_integrity
+./woco verify_media_integrity --check-checksums --json tools/wip/out/media-integrity.json
+./woco verify_media_integrity --fail-on-orphans
+```
+
+Missing or corrupt files fail the check. Orphan files and orphan rows are
+reported and fail only with `--fail-on-orphans`. The JSON report lists orphan
+rows per table with their subject and row IDs. The command deletes nothing;
+what to do with orphans is a separate decision. `--media-root` checks a
+restored snapshot instead of the live tree (see [BACKUP.md](BACKUP.md)).
 Expected exit code: `0`.
+
+### `report_duplicate_markings`
+
+Report candidate duplicate Markings for human review (Trello T47). Read-only:
+it never merges, archives, or deletes, and a match is evidence, not an
+authorisation. Recycle-binned Markings are not scanned.
+
+```sh
+./woco report_duplicate_markings
+./woco report_duplicate_markings --state VA --state WV --require-date-overlap
+./woco report_duplicate_markings --state VA --out tools/wip/out/dupes_va.csv
+```
+
+The default output is `tools/wip/out/duplicate_markings_<YYYYMMDD>.csv`, one
+row per group member. Expected exit code: `0`. The same groups are printed to
+the console, so a CSV that cannot be written is a warning, not a failure.
+
+Two tiers, in one report:
+
+- `EXACT`: every attribute equal except `code`, `catalog_txt`, and the audit
+  columns. This is the pipeline's own merge rule applied to database rows.
+- `NEAR`: same primary state, same town key (case, spacing, and punctuation
+  ignored, so the fragmented spellings of issue #129 meet), same type, same
+  inscription key (same normalisation, so ornament characters such as `*` are
+  ignored; the raw inscription is in the row), same shape, same colour family
+  (word order ignored, GRAY and GREY equal), and width and height within
+  0.5 mm where both are known. An unknown size never separates two rows.
+
+Every EXACT twin is also a NEAR twin, so no Marking appears twice. A group is
+`EXACT` only when all of its members are identical; `exact_match_ids` lists a
+row's identical twins inside a `NEAR` group. Markings under different primary
+states never group, so Martinsburg VA and Martinsburg WV stay apart, and one
+Marking cross-listed under two Regions is not a duplicate.
+
+`earliest_seen` and `latest_seen` are each row's cached date range.
+`dates_overlap` is `yes` or `no` for the group's known ranges and `unknown`
+with fewer than two dated members. `--require-date-overlap` drops the `no`
+groups; the default keeps them, because a date typo is itself a finding.
+
+Options:
+
+- `--state TERM`: a state name or abbreviation, repeatable. Abbreviations
+  resolve to the primary jurisdiction, never a county (issue #103).
+- `--require-date-overlap`: keep only groups whose known dates overlap.
+- `--min-group-size N`: smallest group to report (default `2`).
+- `--out PATH`: the CSV path.
 
 ### `backup_marking` And `restore_marking`
 
@@ -443,6 +567,60 @@ The exported data contains email addresses and password hashes. Store it as
 a sensitive artifact. For the full host-to-host sync procedure, see
 [RUNBOOK.md](RUNBOOK.md#auth-sync-between-hosts).
 
+### Collection Backup And Restore
+
+Use a Collection ID, not a Region code. The command resolves the Collection's
+Region internally. Apply migrations on the destination before restore.
+
+```sh
+./woco backup_collection <collection-id> tools/wip/out/collection-backup
+./woco restore_collection tools/wip/in/collection-backup --dry-run
+./woco restore_collection tools/wip/in/collection-backup
+./woco verify_collection tools/wip/in/collection-backup --report tools/wip/out/collection-verification.json
+```
+
+The bundle directory must not exist. It contains `manifest.json`,
+`records.json`, and `media/`. The manifest records the source instance,
+Collection, Region, code revision, migrations, counts, and file checksums.
+Keep the completed directory together when copying it between instances.
+
+Scope includes recycled Entries, all Collection Contribution statuses,
+archived Contributions, Cover links, Citations, dates, valuations, images,
+crop sources, Post Office and Postmaster data, lookup records, transactions,
+versions, and relevant django-reversion history. Files referenced by pending
+submissions and history are included. A missing file fails the backup.
+Storage paths must be relative ASCII paths without symlinks. Text values
+are preserved through JSON escaping.
+
+Users must already exist on the destination with matching usernames. The
+bundle preserves credit and audit actors but copies no passwords, account
+permissions, or Editor assignments. It contains private submissions, review
+notes, and usernames; keep it private and transfer it over SSH.
+
+Restore adds missing records and reuses identical records. Differences,
+ambiguous identities, absent users, missing external Entries, and filename
+conflicts stop the restore. There is no overwrite option. Shared Covers keep
+all their links; Markings outside the Collection must already match on the
+destination. Transfer mappings retain identities for uncoded Entries and
+pending Contributions. Repeating the same restore creates no duplicates.
+
+Foreign keys and known submission/history IDs are remapped. References to
+records already deleted in the source's history are kept as explicit
+`source_reference` objects, with source instance, model, and ID. They are
+historical evidence, not pointers to live destination records. Required live
+references must resolve. Original history remains in the retained bundle.
+
+Dry-run rolls back database work and leaves live media unchanged. Image
+files are staged and checked before publication. A failed restore rolls
+back database changes and removes files it installed. An interrupted restore
+can leave complete unreferenced files or temporary files; retry reuses
+complete files by checksum. It never overwrites a differing live file.
+
+Verification checks record values, relationships, history, and referenced
+file bytes. Extra destination Entries or related records also fail the
+comparison. Write its report outside the bundle. See the
+[transfer procedure](RUNBOOK.md#collection-transfer-between-instances).
+
 ### `ascc drop`
 
 Delete imported catalog data using an exact `Region.code`.
@@ -451,6 +629,18 @@ Delete imported catalog data using an exact `Region.code`.
 ./woco ascc drop USA-VA1 --dry-run
 ./woco ascc drop USA-VA1
 ```
+
+If the Region has a Collection, removal follows its relationships and
+includes pending and archived Contributions. Shared Covers and Post Offices
+are retained. Without a Collection, the existing Post Office code-prefix
+selection applies. Neither path removes image files or account data.
+
+For source cleanup after a Collection transfer, pass both `--bundle` and
+`--verification-report`; see the runbook. The report must be a passing
+comparison from another instance, and the source must still match the
+bundle. Another Collection's Contributions or crop dependencies can block
+removal. A passing report is evidence from the operator, not a signature or
+an automatic authorization to delete data.
 
 Expected exit code: `0`. The region code is positional. The dry run reports
 delete counts and rolls back. The legacy top-level command remains available
@@ -470,7 +660,9 @@ rolls back.
 
 ### `set_user_password`
 
-Set a password without opening the Django shell.
+Set a password without opening the Django shell. Password characters are
+preserved and strength rules apply. This command does not activate an
+account. An Administrator must make that separate decision in Django admin.
 
 ```sh
 ./woco set_user_password <username> <new_password>

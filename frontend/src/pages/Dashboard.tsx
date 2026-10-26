@@ -1,4 +1,5 @@
 import { Navigation } from "@/components/Navigation";
+import { EditorNavigation } from "@/components/EditorNavigation";
 import { Footer } from "@/components/Footer";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,9 @@ import {
   restoreContribution,
 } from "@/services/contributions";
 import { BulkReviewBar } from "@/components/BulkReviewBar";
+import { PendingLoginRequestsCard } from "@/components/PendingLoginRequestsCard";
+import { SubmissionCountsBar, type SubmissionCountTarget } from "@/components/SubmissionCountsBar";
+import { getStatusBadge, statusColorClass } from "@/lib/statusBadge";
 import { withReturnTo } from "@/lib/returnTo";
 import { catalogHref } from "@/lib/catalogParams";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -813,6 +817,105 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [user, location.pathname]);
 
+  // T96: totals for the signed-in user, from the rows already loaded above.
+  const ownCounts = useMemo(() => {
+    const counts = { needsRevision: 0, drafts: 0, pending: 0 };
+    for (const item of submissions) {
+      switch (String(item.status || "").toLowerCase()) {
+        case "needs_revision":
+        case "revision":
+          counts.needsRevision += 1;
+          break;
+        case "draft":
+          counts.drafts += 1;
+          break;
+        case "pending":
+          counts.pending += 1;
+          break;
+        default:
+          break;
+      }
+    }
+    return counts;
+  }, [submissions]);
+
+  // T96: the Editor's review-queue total. One page_size=1 request; the server
+  // scopes it to the Editor's Collections the same way the queue tab is. Refetched
+  // with My Submissions when the browser tab becomes visible again or after a
+  // bulk review / archive / restore bumps submissionsRefetchKey; a single
+  // approval happens on the detail page and this page remounts on return.
+  const [editorPendingCount, setEditorPendingCount] = useState<number | null>(null);
+  const [editorPendingLoading, setEditorPendingLoading] = useState(false);
+  useEffect(() => {
+    if (!user || !isEditor) {
+      setEditorPendingCount(null);
+      setEditorPendingLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setEditorPendingLoading(true);
+    listContributions({ mode: "editor", status: "pending", pageSize: 1 })
+      .then(({ count }) => {
+        if (!cancelled) setEditorPendingCount(count);
+      })
+      .catch(() => {
+        // The queue tab reports its own errors; the tile just shows nothing.
+        if (!cancelled) setEditorPendingCount(null);
+      })
+      .finally(() => {
+        if (!cancelled) setEditorPendingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, isEditor, submissionsRefetchKey]);
+
+  // Shared by the Clear Filters buttons and the count tiles, so a reset always
+  // lands on the same view a first load gives.
+  const clearMySubmissionFilters = () => {
+    setSearchQuery("");
+    setStatusFilter("all");
+    setStateFilter("all");
+    setTownFilter("");
+    setShapeFilter("all");
+    setColorFilter("all");
+    setMySubmissionsSort([{ field: "submitted", dir: "desc" }]);
+    setDateFrom("");
+    setDateTo("");
+  };
+  const clearEditorFilters = () => {
+    setSubmissionQueueSort([{ field: "submitted", dir: "desc" }]);
+    setEditorSearchQuery("");
+    setEditorHistoryStatusFilter("all");
+    setEditorStateFilter("all");
+    setEditorTownFilter("");
+    setEditorShapeFilter("all");
+    setEditorColorFilter("all");
+    // Issue #136: a reset returns every source, not the ingest rows. Reset has
+    // to land on the same view a first load gives you, or "clear filters" is a lie.
+    setEditorSourceFilter(DEFAULT_SOURCE);
+    setEditorDateFrom("");
+    setEditorDateTo("");
+  };
+
+  // The tiles are links, so the URL changes; this applies the same view in
+  // place, because the page reads its URL only once on mount (#87). Every
+  // other filter is cleared first so the list matches the tile's count, which
+  // is a total, and matches what the tile's URL gives on a fresh load.
+  const selectCountTarget = (target: SubmissionCountTarget) => {
+    if (target === "editor_pending") {
+      clearEditorFilters();
+      setEditorHistoryStatusFilter("pending");
+      setEditorHistoryPage(1);
+      setActiveTab("editor");
+      return;
+    }
+    clearMySubmissionFilters();
+    setStatusFilter(target);
+    setCurrentPage(1);
+    setActiveTab("submissions");
+  };
+
   // Load editor history for assigned states.
   useEffect(() => {
     if (!isEditor || activeTab !== "editor") return;
@@ -1160,42 +1263,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     pageEnd = endIndex;
   }
 
-  const getStatusBadge = (status: string) => {
-    switch (String(status || "").toLowerCase()) {
-      case "draft":
-        return (
-          <Badge className="rounded-full border border-amber-900 bg-amber-800 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-amber-800">
-            Draft
-          </Badge>
-        );
-      case "approved":
-        return (
-          <Badge className="rounded-full border border-green-700 bg-green-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-green-600">
-            Approved
-          </Badge>
-        );
-      case "rejected":
-        return (
-          <Badge className="rounded-full border border-red-700 bg-red-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-red-600">
-            Rejected
-          </Badge>
-        );
-      case "needs_revision":
-      case "revision":
-        return (
-          <Badge className="rounded-full border border-orange-600 bg-orange-500 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-orange-500">
-            Needs Revision
-          </Badge>
-        );
-      default:
-        return (
-          <Badge className="rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500">
-            Pending
-          </Badge>
-        );
-    }
-  };
-
   // Reset submissions pagination when filters or page size change. Skipped on
   // the first run so a page restored from the URL is not immediately clobbered
   // back to 1 (Issue #87).
@@ -1325,14 +1392,6 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to catalog
           </Link>
-          {isEditor && (
-            <Link
-              to="/editors"
-              className="mb-4 ml-6 inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
-            >
-              State editors
-            </Link>
-          )}
           <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div className="min-w-0 md:flex-1">
               <h1 className="font-heading text-3xl md:text-4xl font-bold text-foreground mb-2">
@@ -1368,29 +1427,27 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               )}
             </div>
 
-            {isEditor && (
-              <div className="inline-flex rounded-md border border-border bg-card p-1">
-                <Button
-                  type="button"
-                  variant={activeTab === "submissions" ? "secondary" : "ghost"}
-                  size="sm"
-                  className="rounded-r-none"
-                  onClick={() => setActiveTab("submissions")}
-                >
-                  My Submissions
-                </Button>
-                <Button
-                  type="button"
-                  variant={activeTab === "editor" ? "secondary" : "ghost"}
-                  size="sm"
-                  className="rounded-l-none"
-                  onClick={() => setActiveTab("editor")}
-                >
-                  User Submissions
-                </Button>
-              </div>
-            )}
           </div>
+
+          {isEditor && (
+            <div className="mb-6">
+              <EditorNavigation active={activeTab} onTabChange={setActiveTab} />
+            </div>
+          )}
+
+          {/* T96: totals first, each one a link into the matching filtered list. */}
+          {user && (
+            <SubmissionCountsBar
+              counts={ownCounts}
+              isEditor={isEditor}
+              editorPending={editorPendingCount}
+              editorLoading={editorPendingLoading}
+              onSelect={selectCountTarget}
+            />
+          )}
+
+          {/* T84: Administrators see who is waiting for an account; approval stays in the admin. */}
+          {isSuperuser && <PendingLoginRequestsCard />}
 
           {activeTab === "submissions" && (
             <div className="flex flex-col lg:flex-row gap-6">
@@ -1632,17 +1689,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   <Button
                     variant="outline"
                     className="w-full"
-                    onClick={() => {
-                      setSearchQuery("");
-                      setStatusFilter("all");
-                      setStateFilter("all");
-                      setTownFilter("");
-                      setShapeFilter("all");
-                      setColorFilter("all");
-                      setMySubmissionsSort([{ field: "submitted", dir: "desc" }]);
-                      setDateFrom("");
-                      setDateTo("");
-                    }}
+                    onClick={clearMySubmissionFilters}
                     disabled={filtersDisabled}
                   >
                     Clear Filters
@@ -2190,21 +2237,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     <Button
                       variant="outline"
                       className="w-full"
-                      onClick={() => {
-                        setSubmissionQueueSort([{ field: "submitted", dir: "desc" }]);
-                        setEditorSearchQuery("");
-                        setEditorHistoryStatusFilter("all");
-                        setEditorStateFilter("all");
-                        setEditorTownFilter("");
-                        setEditorShapeFilter("all");
-                        setEditorColorFilter("all");
-                        // Issue #136: a reset returns every source, not the
-                        // ingest rows. Reset has to land on the same view a
-                        // first load gives you, or "clear filters" is a lie.
-                        setEditorSourceFilter(DEFAULT_SOURCE);
-                        setEditorDateFrom("");
-                        setEditorDateTo("");
-                      }}
+                      onClick={clearEditorFilters}
                       disabled={editorHistoryLoading}
                     >
                       Clear Filters
@@ -2458,14 +2491,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                   <ul className="space-y-3">
                     {editorHistoryItems.map((item) => {
                       const displayLabel = item.presentation.title;
-                      const statusClassName =
-                        item.status === "approved"
-                          ? "bg-green-600 text-white hover:bg-green-600"
-                          : item.status === "rejected"
-                            ? "bg-red-600 text-white hover:bg-red-600"
-                            : item.status === "needs_revision"
-                              ? "bg-orange-500 text-white hover:bg-orange-500"
-                              : "bg-yellow-500 text-black hover:bg-yellow-500";
+                      const statusClassName = statusColorClass(item.status);
                       return (
                         <li
                           key={item.id}

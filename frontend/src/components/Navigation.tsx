@@ -1,4 +1,5 @@
 import { NavLink } from "@/components/NavLink";
+import { ExternalLink } from "@/components/ExternalLink";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -12,9 +13,11 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { clearStoredUser } from "@/lib/auth";
+import { signOut } from "@/lib/auth";
 import { capitalizeFirst } from "@/lib/utils";
 import { ChangePasswordForm } from "@/components/ChangePasswordForm";
+import sealImage from "@/assets/uspcs-seal.png";
+import { APP_NAME, DONATE_URL, ORG_NAME, ORG_URL } from "@/constants/brand";
 
 export const Navigation = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -23,8 +26,6 @@ export const Navigation = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const apiBase = (import.meta.env.VITE_API_URL ?? "").trim().replace(/\/+$/, "");
-  const logoutUrl = apiBase ? `${apiBase}/logout/` : (import.meta.env.VITE_API_BASE_URL || '/api/v2') + "/logout/";
   const hasEditorAccess =
     user?.role === "editor" || user?.role === "administrator" || user?.is_superuser;
   const dashboardLabel = hasEditorAccess ? "Dashboard" : "My Submissions";
@@ -32,8 +33,7 @@ export const Navigation = () => {
 
   const handleLogout = async () => {
     try {
-      await fetch(logoutUrl, { method: "POST", credentials: "include" });
-      clearStoredUser();
+      await signOut();
 
       toast({
         title: "Signed out",
@@ -43,7 +43,6 @@ export const Navigation = () => {
       navigate("/");
       setMobileMenuOpen(false);
     } catch (error: unknown) {
-      clearStoredUser();
       toast({
         title: "Error signing out",
         description: error instanceof Error ? error.message : "Could not sign out",
@@ -55,8 +54,7 @@ export const Navigation = () => {
   const handleSignOutAndSignIn = async () => {
     setChangePasswordOpen(false);
     try {
-      await fetch(logoutUrl, { method: "POST", credentials: "include" });
-      clearStoredUser();
+      await signOut();
       toast({
         title: "Signed out",
         description: "Please sign in again with your correct account.",
@@ -64,8 +62,6 @@ export const Navigation = () => {
       navigate("/auth");
       setMobileMenuOpen(false);
     } catch (error: unknown) {
-      clearStoredUser();
-      navigate("/auth");
       toast({
         title: "Error signing out",
         description: error instanceof Error ? error.message : "Could not sign out",
@@ -78,18 +74,33 @@ export const Navigation = () => {
     <nav className="bg-card border-b border-border sticky top-0 z-50 shadow-archival-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
-          {/* Logo */}
-          <NavLink to="/" className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-primary rounded-sm flex items-center justify-center">
-              <span className="text-primary-foreground font-heading font-bold text-lg">W</span>
-            </div>
-            <span className="font-heading text-xl font-semibold text-foreground hidden sm:inline">
-              WorldCovers
-            </span>
-          </NavLink>
+          {/* Logo: the Society seal opens uspcs.org (T99); the name still goes home. */}
+          <div className="flex items-center space-x-2">
+            <ExternalLink
+              href={ORG_URL}
+              aria-label={`${ORG_NAME} website`}
+              className="flex items-center"
+            >
+              <img src={sealImage} alt={ORG_NAME} width={32} height={32} className="w-8 h-8 rounded-sm" />
+            </ExternalLink>
+            <NavLink
+              to="/"
+              className="font-heading text-xl font-semibold text-foreground"
+              aria-label={`${APP_NAME} home`}
+            >
+              {APP_NAME}
+            </NavLink>
+          </div>
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center space-x-1">
+            <Button
+              asChild
+              size="sm"
+              className="bg-[#ffc439] text-[#003087] hover:bg-[#f2ba36]"
+            >
+              <ExternalLink href={DONATE_URL}>Donate</ExternalLink>
+            </Button>
             <NavLink
               to="/"
               end
@@ -106,21 +117,19 @@ export const Navigation = () => {
               Catalog
             </NavLink>
             <NavLink
+              to="/about"
+              className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              activeClassName="text-primary font-semibold"
+            >
+              About
+            </NavLink>
+            <NavLink
               to="/help"
               className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
               activeClassName="text-primary font-semibold"
             >
               Help
             </NavLink>
-            {hasEditorAccess && (
-              <NavLink
-                to="/editors"
-                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-                activeClassName="text-primary font-semibold"
-              >
-                Editors
-              </NavLink>
-            )}
             {!user && (
               <NavLink
                 to="/auth"
@@ -176,6 +185,8 @@ export const Navigation = () => {
           {/* Mobile menu button */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+            aria-expanded={mobileMenuOpen}
             className="md:hidden p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted"
           >
             {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
@@ -205,6 +216,14 @@ export const Navigation = () => {
               Catalog
             </NavLink>
             <NavLink
+              to="/about"
+              className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
+              activeClassName="text-primary bg-secondary font-semibold"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              About
+            </NavLink>
+            <NavLink
               to="/help"
               className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
               activeClassName="text-primary bg-secondary font-semibold"
@@ -212,16 +231,6 @@ export const Navigation = () => {
             >
               Help
             </NavLink>
-            {hasEditorAccess && (
-              <NavLink
-                to="/editors"
-                className="block px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md"
-                activeClassName="text-primary bg-secondary font-semibold"
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                Editors
-              </NavLink>
-            )}
             {!user && (
               <NavLink
                 to="/auth"
@@ -281,6 +290,13 @@ export const Navigation = () => {
                 </button>
               </>
             )}
+            <div className="pt-2">
+              <Button asChild className="w-full">
+                <ExternalLink href={DONATE_URL} onClick={() => setMobileMenuOpen(false)}>
+                  Donate
+                </ExternalLink>
+              </Button>
+            </div>
           </div>
         </div>
       )}

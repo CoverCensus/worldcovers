@@ -4,7 +4,7 @@ import { ColorText } from "@/components/ColorText";
 
 /**
  * Fixed catalog fields for Catalog Search and Record Detail.
- * Always shows all labels; values use the empty marker when missing
+ * Omits Shape and Dimensions for Manuscripts; other missing values use the empty marker
  * (see `buildCatalogFieldValues`). Search list and gallery cards use
  * different, type-specific field sets. Dates render in a dedicated bottom
  * row so Earliest/Latest stay side-by-side.
@@ -76,6 +76,8 @@ function contributionFields(row: CatalogFieldValues): CatalogRecordField[] {
     { label: "Type", value: row.type },
     { label: "Manuscript", value: row.manuscript },
   ];
+  // T70: only when the submission names one; the header already shows town and state.
+  if (row.county && hasValue(row.county)) fields.push({ label: "County", value: row.county });
   const isManuscript = row.manuscript.trim().toLowerCase() === "yes";
   const type = row.type.trim().toLowerCase();
   const isRatemark = type === "ratemark";
@@ -123,10 +125,13 @@ export function CatalogRecordFields({
       : variant === "contribution"
         ? contributionFields(row)
         : searchFields(row, variant);
+  const visibleFields = variant !== "contribution" && row.manuscript.trim().toLowerCase() === "yes"
+    ? fields.filter((field) => field.label !== "Shape" && field.label !== "Dimensions")
+    : fields;
 
   return (
     <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
-      {fields.map((field) => (
+      {visibleFields.map((field) => (
         <div key={field.label} className="min-w-0">
           <span className="text-muted-foreground">{field.label}:</span>{" "}
           <span className="text-foreground break-words">

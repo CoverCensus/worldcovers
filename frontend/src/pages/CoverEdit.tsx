@@ -50,13 +50,25 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import { PartialDateFields } from "@/components/PartialDateFields";
+import { SimilarEntriesPanel } from "@/components/SimilarEntriesPanel";
+import { findSimilarCovers } from "@/lib/similarEntries";
 import { WrongImageKindWarning } from "@/components/WrongImageKindWarning";
 import { LowResolutionImageWarning } from "@/components/LowResolutionImageWarning";
 import { LocalRotateImageDialog } from "@/components/LocalRotateImageDialog";
 import { CoverReviewBanner } from "@/components/CoverReviewBanner";
 import { looksLikeWrongKind, measureImageFile } from "@/lib/imageShape";
 import { isBelowPreferredImageDpi, measureImageDpi } from "@/lib/imageResolution";
-import { COVER_SUBMISSION_GUIDELINES } from "@/labels/guidelines";
+import {
+  COVER_SUBMISSION_GUIDELINES,
+  COVER_TYPE_HELP,
+  COVER_DATE_HELP,
+  INSTITUTIONAL_HELP,
+  BACKSTAMP_HELP,
+  NO_COVER_IMAGE_HELP,
+  COVER_DESCRIPTION_HELP,
+  REFERENCE_WORKS_HELP,
+} from "@/labels/guidelines";
+import { FieldHelp } from "@/components/FieldHelp";
 import { isCoverContributionData } from "@/lib/contributionDisplay";
 import {
   contributionImageMetasFromSubmittedData,
@@ -83,6 +95,7 @@ import {
   type MarkingRecord,
 } from "@/services/markings";
 import { formatReferenceWorkLabel, getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
+import { compactReferenceWorkLine } from "@/lib/referenceWorkDisplay";
 
 type Mode = "create" | "edit";
 
@@ -249,6 +262,10 @@ export default function CoverEdit() {
   const [draftLoadError, setDraftLoadError] = useState<string | null>(null);
   const [coverRow, setCoverRow] = useState<AssociatedCover | null>(null);
   const [copySource, setCopySource] = useState<AssociatedCover | null>(null);
+  // T48: every sibling cover of the parent Marking, for the advisory
+  // "similar existing Covers" panel; the edited cover is excluded below.
+  const [siblingCovers, setSiblingCovers] = useState<AssociatedCover[]>([]);
+  const [resumedEditCoverId, setResumedEditCoverId] = useState<number | null>(null);
   // Captions typed on images already saved with a resumed draft (T87), by tile key.
   const [savedCaptionEdits, setSavedCaptionEdits] = useState<Record<string, string>>({});
   const [copySourceError, setCopySourceError] = useState<string | null>(null);
@@ -379,6 +396,7 @@ export default function CoverEdit() {
         setIsBackstamp(String(sd.is_backstamp ?? sd.isBackstamp) === "true");
         setDisplaySubmitterName(String(sd.display_submitter_name ?? sd.displaySubmitterName) === "true");
         const editedCoverId = Number(sd.edit_cover_id ?? sd.editCoverId);
+        setResumedEditCoverId(Number.isInteger(editedCoverId) && editedCoverId > 0 ? editedCoverId : null);
         const editedCover = Number.isInteger(editedCoverId) && editedCoverId > 0
           ? await getCoverById(editedCoverId)
           : null;
@@ -528,6 +546,7 @@ export default function CoverEdit() {
     getMarkingCovers(markingId)
       .then(({ covers }) => {
         if (cancelled) return;
+        setSiblingCovers(covers);
         if (mode === "create") {
           setCoverRow(null);
           if (copySourceCoverId != null) {
@@ -1236,9 +1255,12 @@ export default function CoverEdit() {
 
                   <form onSubmit={handleFormSubmit} className="space-y-6" noValidate>
                     <div className="space-y-2">
-                      <Label htmlFor="cover-type">
-                        Type <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="cover-type">
+                          Type <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label="Type">{COVER_TYPE_HELP}</FieldHelp>
+                      </div>
                       <Select
                         value={type || undefined}
                         onValueChange={(v) => {
@@ -1261,9 +1283,12 @@ export default function CoverEdit() {
                     </div>
 
                     <div className="space-y-3" id="cover-date">
-                      <Label>
-                        Date <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
+                      <div className="flex items-center gap-1">
+                        <Label>
+                          Date <span className="text-destructive" aria-hidden="true">*</span>
+                        </Label>
+                        <FieldHelp label="Date">{COVER_DATE_HELP}</FieldHelp>
+                      </div>
                       <PartialDateFields
                         idPrefix="cover-date"
                         value={coverDate}
@@ -1276,6 +1301,17 @@ export default function CoverEdit() {
                         showUnknown
                       />
                     </div>
+
+                    <SimilarEntriesPanel
+                      noun="Covers"
+                      rows={findSimilarCovers(
+                        siblingCovers,
+                        { type, coverDate },
+                        markingId,
+                        mode === "edit" ? routeCoverId : resumedEditCoverId,
+                      )}
+                      showThumbnails={false}
+                    />
 
                     <div className="space-y-2" id="cover-images-zone">
                       <Label>
@@ -1475,14 +1511,17 @@ export default function CoverEdit() {
                           the star to set the default; check Tracing on hand-traced or computer-traced diagrams.
                         </p>
                       )}
-                      <label className="flex items-center gap-2 text-sm">
-                        <Checkbox
-                          checked={noCoverImage}
-                          onCheckedChange={(v) => setNoCoverImageChecked(v === true)}
-                          disabled={submitting}
-                        />
-                        No image is available to upload
-                      </label>
+                      <div className="flex items-center gap-1">
+                        <label className="flex items-center gap-2 text-sm">
+                          <Checkbox
+                            checked={noCoverImage}
+                            onCheckedChange={(v) => setNoCoverImageChecked(v === true)}
+                            disabled={submitting}
+                          />
+                          No image is available to upload
+                        </label>
+                        <FieldHelp label="No image available">{NO_COVER_IMAGE_HELP}</FieldHelp>
+                      </div>
                       {fieldErrors.images && <p className="text-sm text-destructive">{fieldErrors.images}</p>}
                       <WrongImageKindWarning
                         expected="COVER"
@@ -1492,18 +1531,24 @@ export default function CoverEdit() {
                     </div>
 
                     <div className="space-y-3 pt-1">
-                      <label className="flex items-center gap-2 text-sm">
-                        <Checkbox
-                          checked={isInstitutional}
-                          onCheckedChange={(v) => setIsInstitutional(v === true)}
-                          disabled={submitting}
-                        />
-                        Institutionally Owned
-                      </label>
-                      <label className="flex items-center gap-2 text-sm">
-                        <Checkbox checked={isBackstamp} onCheckedChange={(v) => setIsBackstamp(v === true)} disabled={submitting} />
-                        Backstamp
-                      </label>
+                      <div className="flex items-center gap-1">
+                        <label className="flex items-center gap-2 text-sm">
+                          <Checkbox
+                            checked={isInstitutional}
+                            onCheckedChange={(v) => setIsInstitutional(v === true)}
+                            disabled={submitting}
+                          />
+                          Institutionally Owned
+                        </label>
+                        <FieldHelp label="Institutionally Owned">{INSTITUTIONAL_HELP}</FieldHelp>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <label className="flex items-center gap-2 text-sm">
+                          <Checkbox checked={isBackstamp} onCheckedChange={(v) => setIsBackstamp(v === true)} disabled={submitting} />
+                          Backstamp
+                        </label>
+                        <FieldHelp label="Backstamp">{BACKSTAMP_HELP}</FieldHelp>
+                      </div>
                       {canChangeSubmitterName ? <label className="flex items-center gap-2 text-sm">
                         <Checkbox
                           checked={displaySubmitterName}
@@ -1517,7 +1562,10 @@ export default function CoverEdit() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="cover-description">Description</Label>
+                      <div className="flex items-center gap-1">
+                        <Label htmlFor="cover-description">Description</Label>
+                        <FieldHelp label="Description">{COVER_DESCRIPTION_HELP}</FieldHelp>
+                      </div>
                       <Textarea
                         id="cover-description"
                         rows={3}
@@ -1530,7 +1578,10 @@ export default function CoverEdit() {
 
                     <div className="space-y-3" id="cover-reference-works">
                       <div className="space-y-2">
-                        <Label>Reference Works</Label>
+                        <div className="flex items-center gap-1">
+                          <Label>Reference Works</Label>
+                          <FieldHelp label="Reference Works">{REFERENCE_WORKS_HELP}</FieldHelp>
+                        </div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button type="button" variant="outline" className="w-full justify-between" disabled={referenceWorksLoading}>
@@ -1598,6 +1649,7 @@ export default function CoverEdit() {
                           {selectedReferenceWorks.map((work) => (
                             <div key={work.id} className="rounded-md border border-border px-3 py-2 space-y-3">
                               <p className="text-sm font-medium truncate">{formatReferenceWorkLabel(work, "Untitled")}</p>
+                              <p className="text-xs text-muted-foreground truncate">{compactReferenceWorkLine(work)}</p>
                               <div className="grid gap-3 sm:grid-cols-2">
                                 <div className="space-y-1">
                                   <Label

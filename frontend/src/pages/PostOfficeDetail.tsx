@@ -1,15 +1,24 @@
 /**
- * One town: which state and county it sat in, and who ran its post office.
+ * One town: which state it sat in, and who ran its post office.
  *
  * Towns previously appeared only as a search filter and as an unlinked line on
  * a marking record. The postmaster data has no other home, so this page is it.
+ * Editors add and correct appointment events here (Trello T71); the API
+ * enforces the Editor and region rules, the page only shows the controls to
+ * users the SPA already treats as editors.
  */
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { PostmasterEventForm } from "@/components/PostmasterEventForm";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useAuth } from "@/hooks/useAuth";
 import apiClient from "@/lib/api";
+import { isEditorUser } from "@/lib/editorRole";
 import {
   PostmasterTenure,
   getTenuresForPostOffice,
@@ -26,17 +35,24 @@ interface PostOfficeDetailData {
   regionAbbrev: string;
 }
 
+const tenuresKey = (postOfficeId: number) => ["postmaster-tenures", postOfficeId];
+
 const PostOfficeDetail = () => {
   const { id } = useParams<{ id: string }>();
   const postOfficeId = Number(id);
+  const validId = Number.isFinite(postOfficeId) && postOfficeId > 0;
+  const user = useAuth();
+  const canEdit = isEditorUser(user);
+  const queryClient = useQueryClient();
 
   const [office, setOffice] = useState<PostOfficeDetailData | null>(null);
-  const [tenures, setTenures] = useState<PostmasterTenure[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // null = closed, "new" = adding, a row = correcting it.
+  const [editing, setEditing] = useState<"new" | PostmasterTenure | null>(null);
 
   useEffect(() => {
-    if (!Number.isFinite(postOfficeId) || postOfficeId <= 0) {
+    if (!validId) {
       setError("That is not a valid post office.");
       setLoading(false);
       return;
@@ -57,10 +73,8 @@ const PostOfficeDetail = () => {
           regionName: raw.region_name ?? raw.regionName ?? "",
           regionAbbrev: raw.region_abbrev ?? raw.regionAbbrev ?? "",
         };
-        const rows = await getTenuresForPostOffice(postOfficeId);
         if (cancelled) return;
         setOffice(detail);
-        setTenures(rows);
       } catch {
         if (!cancelled) setError("That post office could not be loaded.");
       } finally {
@@ -72,7 +86,14 @@ const PostOfficeDetail = () => {
     return () => {
       cancelled = true;
     };
-  }, [postOfficeId]);
+  }, [postOfficeId, validId]);
+
+  const tenuresQuery = useQuery({
+    queryKey: tenuresKey(postOfficeId),
+    queryFn: () => getTenuresForPostOffice(postOfficeId),
+    enabled: validId,
+  });
+  const tenures = useMemo(() => tenuresQuery.data ?? [], [tenuresQuery.data]);
 
   // Appointments read as a succession; undated events sort to the end rather
   // than heading the list.
@@ -88,6 +109,12 @@ const PostOfficeDetail = () => {
       }),
     [tenures]
   );
+
+  // Refetch first, then close: the list changes once, not twice.
+  const onSaved = async () => {
+    await queryClient.invalidateQueries({ queryKey: tenuresKey(postOfficeId) });
+    setEditing(null);
+  };
 
   const title = office?.name ? office.name : "Post office";
 
@@ -145,11 +172,29 @@ const PostOfficeDetail = () => {
               </Card>
 
               <Card>
-                <CardHeader>
+                <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
                   <CardTitle>Postmasters</CardTitle>
+                  {canEdit && editing === null && (
+                    <Button type="button" size="sm" variant="outline" onClick={() => setEditing("new")}>
+                      Add postmaster event
+                    </Button>
+                  )}
                 </CardHeader>
                 <CardContent>
-                  {ordered.length === 0 && (
+                  {canEdit && editing !== null && (
+                    <PostmasterEventForm
+                      postOfficeId={postOfficeId}
+                      existing={editing === "new" ? null : editing}
+                      onSaved={onSaved}
+                      onCancel={() => setEditing(null)}
+                    />
+                  )}
+                  {tenuresQuery.isError && (
+                    <p role="alert" className="text-sm text-destructive">
+                      The postmaster records could not be loaded.
+                    </p>
+                  )}
+                  {!tenuresQuery.isError && !tenuresQuery.isLoading && ordered.length === 0 && (
                     <p className="text-sm text-muted-foreground">
                       No postmaster records for this town yet.
                     </p>
@@ -157,11 +202,11 @@ const PostOfficeDetail = () => {
                   {ordered.length > 0 && (
                     <ol className="space-y-2 text-sm">
                       {ordered.map((tenure) => (
-                        <li key={tenure.id} className="flex gap-3">
+                        <li key={tenure.id} className="flex gap-3 items-start">
                           <span className="text-muted-foreground tabular-nums whitespace-nowrap">
                             {tenureDateLabel(tenure)}
                           </span>
-                          <span>
+                          <span className="flex-1">
                             {tenure.postmasterName || tenureEventLabel(tenure.event)}
                             {tenure.postmasterName &&
                               tenure.event !== "appointment" && (
@@ -170,7 +215,31 @@ const PostOfficeDetail = () => {
                                   — {tenureEventLabel(tenure.event)}
                                 </span>
                               )}
+                            {tenure.origin === "MANUAL" && (
+                              <>
+                                {" "}
+                                <Badge variant="secondary" title="Entered by an Editor, not imported from a source workbook">
+                                  manual
+                                </Badge>
+                                {tenure.sourceNote && (
+                                  <span className="block text-xs text-muted-foreground">
+                                    Source: {tenure.sourceNote}
+                                  </span>
+                                )}
+                              </>
+                            )}
                           </span>
+                          {canEdit && editing === null && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setEditing(tenure)}
+                              aria-label={`Edit ${tenure.postmasterName || tenureEventLabel(tenure.event)} ${tenureDateLabel(tenure)}`}
+                            >
+                              Edit
+                            </Button>
+                          )}
                         </li>
                       ))}
                     </ol>

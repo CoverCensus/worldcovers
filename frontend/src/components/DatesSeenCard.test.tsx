@@ -1,9 +1,9 @@
 /**
  * @jest-environment jsdom
  */
-// issues.md 107 — Greg Stone: "When editing a listing, I don't see where the
+// issues.md 107 - Greg Stone: "When editing a listing, I don't see where the
 // dates seen can be modified." Todd Hause: "'Dates Seen' ... is not available
-// ... Where does this data come?" This card is the answer, on the marking page.
+// ... Where does this data come?" The card is on the Marking edit page.
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { DatesSeenCard } from "./DatesSeenCard";
 import { createDateSeen, deleteDateSeen, updateDateSeen } from "@/services/datesSeen";
@@ -27,7 +27,7 @@ const rows = [
   { id: 3, date: "1832-01-01", granularity: "YEAR" as const, dateYear: 1832, dateMonth: null, dateDay: null },
 ];
 
-function renderCard(over: Partial<React.ComponentProps<typeof DatesSeenCard>> = {}) {
+function renderCard(over: Partial<Extract<React.ComponentProps<typeof DatesSeenCard>, { markingId: number }>> = {}) {
   const onChanged = jest.fn().mockResolvedValue(undefined);
   render(<DatesSeenCard markingId={7} datesSeen={rows} onChanged={onChanged} {...over} />);
   return { onChanged };
@@ -93,7 +93,7 @@ describe("DatesSeenCard", () => {
 
   it("says where the dates come from and shows the empty state", () => {
     renderCard({ datesSeen: [] });
-    expect(screen.getByText(/come from the source catalogue text and from editors/i)).toBeTruthy();
+    expect(screen.getByText(/come from the source catalog text and from editors/i)).toBeTruthy();
     expect(screen.getByText(/no dates recorded directly on this marking/i)).toBeTruthy();
   });
 });

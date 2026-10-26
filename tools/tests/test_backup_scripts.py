@@ -12,6 +12,7 @@ exercised by tools/rehearse_restore.sh instead.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -38,7 +39,7 @@ def select_prunable(names: list[str], keep_latest: str = "") -> set[str]:
         capture_output=True,
         text=True,
         env={
-            "PATH": "/usr/bin:/bin",
+            "PATH": os.environ["PATH"],
             "WOCO_BACKUP_NOW": str(int(NOW.timestamp())),
             "WOCO_KEEP_LATEST": keep_latest,
         },
@@ -100,7 +101,7 @@ class TestTagValidation:
     def test_rejects_unsafe_tags(self, tag):
         proc = subprocess.run(
             ["bash", str(BACKUP_SH), "--tag", tag],
-            capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"},
+            capture_output=True, text=True, env={"PATH": os.environ["PATH"]},
         )
         assert proc.returncode != 0
         assert "invalid tag" in proc.stderr
@@ -111,7 +112,7 @@ class TestTagValidation:
         # that it is not rejected AS A TAG.
         proc = subprocess.run(
             ["bash", str(BACKUP_SH), "--tag", tag],
-            capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"},
+            capture_output=True, text=True, env={"PATH": os.environ["PATH"]},
         )
         assert "invalid tag" not in proc.stderr
 
@@ -135,7 +136,7 @@ class TestRestoreEngineGate:
         proc = subprocess.run(
             ["bash", str(RESTORE_SH), "--snapshot", "2026-08-15T023007Z", "--into", "worldcovers"],
             capture_output=True, text=True,
-            env={"PATH": "/usr/bin:/bin", "WOCO_BACKUP_DIR": str(tmp_path),
+            env={"PATH": os.environ["PATH"], "WOCO_BACKUP_DIR": str(tmp_path),
                  "WOCO_DB_NAME": "worldcovers"},
         )
         assert proc.returncode != 0
@@ -147,6 +148,6 @@ class TestRestoreEngineGate:
         proc = subprocess.run(
             ["bash", str(RESTORE_SH), "--snapshot", "2026-08-15T023007Z", "--into", dbname],
             capture_output=True, text=True,
-            env={"PATH": "/usr/bin:/bin", "WOCO_BACKUP_DIR": str(tmp_path)},
+            env={"PATH": os.environ["PATH"], "WOCO_BACKUP_DIR": str(tmp_path)},
         )
         assert proc.returncode != 0

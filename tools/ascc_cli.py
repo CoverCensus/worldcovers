@@ -177,6 +177,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="delete imported catalog data for an exact Region.code",
     )
     drop.add_argument("region_code", help="exact Region.code, for example USA-MI1")
+    drop.add_argument("--bundle", help="Collection bundle to guard source removal")
+    drop.add_argument("--verification-report", help="passing destination verification report")
     drop.add_argument(
         "--dry-run",
         action="store_true",
@@ -390,6 +392,10 @@ def command_drop(args) -> int:
     ]
     if args.dry_run:
         cmd.append("--dry-run")
+    if args.bundle:
+        cmd.extend(["--bundle", args.bundle])
+    if args.verification_report:
+        cmd.extend(["--verification-report", args.verification_report])
     run_command(cmd)
     return 0
 

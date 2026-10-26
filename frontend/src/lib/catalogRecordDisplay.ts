@@ -199,6 +199,8 @@ export type CatalogFieldValues = {
    * town in the results with no explanation and reports it as a bug.
    */
   crossListedNote?: string;
+  /** The town's county, when a submission names one (T70). Review view only. */
+  county?: string;
   regionAbbrev: string;
   manuscript: string;
   desc: string;

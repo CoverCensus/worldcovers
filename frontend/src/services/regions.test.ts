@@ -11,7 +11,7 @@
  * the filter has to be *sent*, not applied client-side, or every consumer has
  * to remember to reapply it.
  */
-import { getRegions, getAssignedRegions, STATE_SELECTOR_TIERS } from "./regions";
+import { getCountyRegions, getRegions, getAssignedRegions, STATE_SELECTOR_TIERS } from "./regions";
 import apiClient from "@/lib/api";
 
 jest.mock("@/lib/api", () => ({
@@ -66,6 +66,31 @@ describe("getRegions tier filtering", () => {
       const config = mockedGet.mock.calls[0][1];
       expect(config.params.assigned_only).toBe("true");
       expect(config.params.region_tier__in).toBe("STATE,TERRITORY,DISTRICT");
+    });
+  });
+});
+
+describe("getCountyRegions (T70)", () => {
+  beforeEach(() => mockedGet.mockReset());
+
+  it("asks for the COUNTY tier under the given state and returns id + name", () => {
+    mockedGet.mockResolvedValue(page([
+      { id: 9, name: "Accomack", region_tier: "COUNTY", parent_region: 12 },
+      { id: 4, name: "Albemarle", region_tier: "COUNTY", parent_region: 12 },
+    ]));
+    return getCountyRegions(12).then((counties) => {
+      const [url, config] = mockedGet.mock.calls[0];
+      expect(url).toBe("/regions/");
+      expect(config.params.region_tier).toBe("COUNTY");
+      expect(config.params.parent_region).toBe("12");
+      expect(counties).toEqual([{ id: 9, name: "Accomack" }, { id: 4, name: "Albemarle" }]);
+    });
+  });
+
+  it("state options carry the region id and abbreviation", () => {
+    mockedGet.mockResolvedValue(page([{ id: 12, name: "Virginia", abbrev: "VA", region_tier: "STATE" }]));
+    return getRegions().then((options) => {
+      expect(options).toEqual([{ value: "Virginia", label: "Virginia", id: 12, abbrev: "VA" }]);
     });
   });
 });

@@ -15,6 +15,7 @@ jest.mock("@/components/Footer", () => ({ Footer: () => null }));
 jest.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ id: 1, role: "editor" }) }));
 jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: jest.fn() }) }));
 jest.mock("@/services/colors", () => ({ getColors: jest.fn().mockResolvedValue([]) }));
+jest.mock("@/services/similarEntries", () => ({ getSimilarMarkings: jest.fn().mockResolvedValue({ rows: [], matchCount: 0, relatedCount: 0 }) }));
 jest.mock("@/services/shapes", () => ({ getShapes: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/services/postOffices", () => ({ getPostOffices: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/services/regions", () => ({ getRegions: jest.fn().mockResolvedValue([{ value: "VA", label: "Virginia" }]) }));
@@ -31,6 +32,7 @@ jest.mock("@/services/referenceWorks", () => ({
 }));
 jest.mock("@/services/citations", () => ({ listCitationsForSubject: jest.fn() }));
 jest.mock("@/services/markings", () => ({
+  ...jest.requireActual("@/services/markings"),
   getMarkingByIdRaw: jest.fn(),
   routingStateFromMarkingRecord: () => "VA",
   getMarkingById: jest.fn().mockResolvedValue({ id: 7, state: "Virginia", stateAbbrev: "VA" }),

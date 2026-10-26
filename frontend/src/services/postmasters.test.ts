@@ -1,18 +1,20 @@
 import {
+  createTenure,
   getTenuresForPostOffice,
   tenureDateLabel,
   tenureEventLabel,
   type PostmasterTenure,
 } from "./postmasters";
-import apiClient from "@/lib/api";
+import apiClient, { ensureCsrfToken } from "@/lib/api";
 
 jest.mock("@/lib/api", () => ({
   __esModule: true,
-  default: { get: jest.fn() },
+  default: { get: jest.fn(), post: jest.fn(), patch: jest.fn() },
   ensureCsrfToken: jest.fn(),
 }));
 
 const mockedGet = apiClient.get as jest.Mock;
+const mockedPost = apiClient.post as jest.Mock;
 
 const tenure = (over: Partial<PostmasterTenure>): PostmasterTenure => ({
   id: 1,
@@ -24,6 +26,8 @@ const tenure = (over: Partial<PostmasterTenure>): PostmasterTenure => ({
   dateAppointed: "1793-04-25",
   granularity: "DAY",
   sourceRef: "T3:r15904",
+  origin: "IMPORT",
+  sourceNote: "",
   ...over,
 });
 
@@ -89,5 +93,52 @@ describe("getTenuresForPostOffice", () => {
     const rows = await getTenuresForPostOffice(42);
     expect(mockedGet).toHaveBeenCalledTimes(2);
     expect(rows.map((r) => r.postmasterName)).toEqual(["A", "B"]);
+  });
+});
+
+describe("manual entry (T71)", () => {
+  beforeEach(() => {
+    mockedGet.mockReset();
+    mockedPost.mockReset();
+    (ensureCsrfToken as jest.Mock).mockReset();
+  });
+
+  it("maps origin and source note, defaulting old payloads to IMPORT", async () => {
+    mockedGet.mockResolvedValueOnce({
+      data: {
+        count: 2,
+        next: null,
+        previous: null,
+        results: [
+          { tenure_id: 1, post_office: 7, postmaster: 1, event: "appointment", date_appointed: "1793-01-01" },
+          {
+            tenure_id: 2, post_office: 7, postmaster: null, event: "discontinued", date_appointed: null,
+            origin: "MANUAL", source_note: "Register, p. 12",
+          },
+        ],
+      },
+    });
+    const rows = await getTenuresForPostOffice(7);
+    expect(rows[0].origin).toBe("IMPORT");
+    expect(rows[0].sourceNote).toBe("");
+    expect(rows[1].origin).toBe("MANUAL");
+    expect(rows[1].sourceNote).toBe("Register, p. 12");
+  });
+
+  it("fetches a CSRF token and posts snake_case to /postmaster-tenures/", async () => {
+    mockedPost.mockResolvedValueOnce({
+      data: { tenure_id: 9, post_office: 7, postmaster: 3, event: "appointment",
+        date_appointed: "1801-01-01", date_appointed_granularity: "YEAR", origin: "MANUAL", source_note: "x" },
+    });
+    const row = await createTenure({
+      post_office: 7, postmaster: 3, event: "appointment",
+      date_appointed: "1801-01-01", date_appointed_granularity: "YEAR", source_note: "x",
+    });
+    expect(ensureCsrfToken).toHaveBeenCalledTimes(1);
+    expect(mockedPost).toHaveBeenCalledWith("/postmaster-tenures/", expect.objectContaining({
+      post_office: 7, date_appointed_granularity: "YEAR", source_note: "x",
+    }));
+    expect(row.id).toBe(9);
+    expect(row.origin).toBe("MANUAL");
   });
 });

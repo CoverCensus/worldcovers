@@ -10,6 +10,7 @@
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
 
 import re
 
@@ -24,6 +25,7 @@ from common.contribution_apply import (
     _parse_int,
     _source_marking_image_id,
     _source_marking_image_position,
+    describe_county_intent,
 )
 from common.contribution_consolidation import contribution_target
 from common.edit_baseline import cover_edit_baseline, marking_edit_baseline
@@ -51,6 +53,7 @@ from common.models import (
     Region,
     Shape,
 )
+from common.postmaster_names import postmaster_sort_name
 
 from .permissions import (
     _user_is_responsible_for_cover,
@@ -94,21 +97,6 @@ def _validate_submitter_name_preference(serializer, value):
 ###################################################################################################
 ## Lookup / shared
 ###################################################################################################
-class LoginRequestSerializer(serializers.Serializer):
-    """Validates login access request (email, first_name, last_name). Creates User directly."""
-    email = serializers.EmailField()
-    first_name = serializers.CharField(max_length=150)
-    last_name = serializers.CharField(max_length=150)
-
-    def validate_email(self, value):
-        value = (value or "").strip().lower()
-        if User.objects.filter(email__iexact=value).exists():
-            raise serializers.ValidationError(
-                "A user with this email already exists."
-            )
-        return value
-
-
 class ColorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Color
@@ -146,16 +134,45 @@ class PostOfficeSerializer(serializers.ModelSerializer):
 
 
 class PostmasterSerializer(serializers.ModelSerializer):
+    """A person. Editors may add or rename one (Trello T71).
+
+    sort_name is derived when the caller leaves it blank, with the same
+    surname-first rule the importer uses, so manual and imported people sort
+    together. Two people with the same name are two rows: identity is never
+    inferred from the name.
+    """
     class Meta:
         model = Postmaster
         fields = ["id", "name", "sort_name"]
+        extra_kwargs = {"sort_name": {"required": False, "allow_blank": True}}
+
+    def validate_name(self, value):
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("A name is required.")
+        return value
+
+    def validate(self, attrs):
+        # Derive on create, or when the caller sends a blank sort_name. A PATCH
+        # that omits the field leaves the stored value alone.
+        blank_sort_name = not (attrs.get("sort_name") or "").strip()
+        derive = blank_sort_name and (self.instance is None or "sort_name" in attrs)
+        if derive:
+            name = attrs.get("name") or (self.instance.name if self.instance else "")
+            attrs["sort_name"] = postmaster_sort_name(name)
+        if "sort_name" in attrs:
+            # ", " inserted into a 255-character name would overflow the column.
+            attrs["sort_name"] = attrs["sort_name"][:255]
+        return attrs
 
 
 class PostmasterTenureSerializer(serializers.ModelSerializer):
-    """One appointment event, flattened for display.
+    """One appointment event, flattened for display; writable by Editors (T71).
 
     The office keeps its own name alongside the id so a postmaster's career can
-    be listed without a second round trip per town.
+    be listed without a second round trip per town. origin and source_ref are
+    read-only: the view sets origin on create and only the importer writes a
+    workbook locator. Manual evidence goes in source_note.
     """
     postmaster_name = serializers.CharField(
         source="postmaster.name", read_only=True, default="")
@@ -167,8 +184,67 @@ class PostmasterTenureSerializer(serializers.ModelSerializer):
         fields = [
             "tenure_id", "post_office", "post_office_name", "postmaster",
             "postmaster_name", "event", "date_appointed",
-            "date_appointed_granularity", "source_ref",
+            "date_appointed_granularity", "source_ref", "origin", "source_note",
         ]
+        read_only_fields = ["tenure_id", "source_ref", "origin"]
+        extra_kwargs = {
+            "postmaster": {"required": False, "allow_null": True},
+            "date_appointed": {"required": False, "allow_null": True},
+            "date_appointed_granularity": {"required": False, "allow_null": True},
+            "source_note": {"required": False, "allow_blank": True},
+        }
+
+    def _effective(self, attrs, key):
+        if key in attrs:
+            return attrs[key]
+        return getattr(self.instance, key) if self.instance is not None else None
+
+    def validate(self, attrs):
+        if "source_note" in attrs:
+            attrs["source_note"] = (attrs["source_note"] or "").strip()
+        date = self._effective(attrs, "date_appointed")
+        gran = self._effective(attrs, "date_appointed_granularity") or None
+        if date is not None and gran is None:
+            raise serializers.ValidationError(
+                {"date_appointed_granularity": ["Say how much of the date the source gave: YEAR, MONTH or DAY."]})
+        if date is None and gran is not None:
+            raise serializers.ValidationError(
+                {"date_appointed": ["A date precision needs a date."]})
+        if date is not None:
+            # Store the precision the source stated and nothing finer: a
+            # year-only date is 1 January, a month-only date the 1st.
+            if gran == "YEAR":
+                date = date.replace(month=1, day=1)
+            elif gran == "MONTH":
+                date = date.replace(day=1)
+            attrs["date_appointed"] = date
+            attrs["date_appointed_granularity"] = gran
+        event = self._effective(attrs, "event") or PostmasterTenure.EVENT_APPOINTMENT
+        person = self._effective(attrs, "postmaster")
+        named_event = event in (PostmasterTenure.EVENT_APPOINTMENT, PostmasterTenure.EVENT_REAPPOINTMENT)
+        # On create always; on update only when the payload touches the person
+        # or the event, so an imported person-less row stays patchable for a
+        # source_note-only correction.
+        touches_identity = self.instance is None or "postmaster" in attrs or "event" in attrs
+        if named_event and person is None and touches_identity:
+            raise serializers.ValidationError(
+                {"postmaster": ["An appointment names a person. Use an office-level event for a closure."]})
+        origin = PostmasterTenure.ORIGIN_MANUAL if self.instance is None else self.instance.origin
+        if origin == PostmasterTenure.ORIGIN_MANUAL and not self._effective(attrs, "source_note"):
+            raise serializers.ValidationError(
+                {"source_note": ["Say where this event comes from (a catalog, a document, a page)."]})
+        office = self._effective(attrs, "post_office")
+        # MySQL's unique index lets NULLs repeat, so an undated or office-level
+        # duplicate would otherwise slip past tenure_office_person_date_event_unique.
+        dupes = PostmasterTenure.objects.filter(post_office=office, event=event)
+        dupes = dupes.filter(postmaster=person) if person is not None else dupes.filter(postmaster__isnull=True)
+        dupes = dupes.filter(date_appointed=date) if date is not None else dupes.filter(date_appointed__isnull=True)
+        if self.instance is not None:
+            dupes = dupes.exclude(pk=self.instance.pk)
+        if dupes.exists():
+            raise serializers.ValidationError(
+                {"non_field_errors": ["This event is already recorded for this office."]})
+        return attrs
 
 
 class LetteringSerializer(serializers.ModelSerializer):
@@ -186,10 +262,87 @@ class ShapeSerializer(serializers.ModelSerializer):
 
 
 class ReferenceWorkSerializer(serializers.ModelSerializer):
+    """
+    Editors add and edit Reference Works from the SPA (Trello S19).
+
+    DRF trims text; an empty code is stored as NULL so the unique index on
+    `code` never collides on blanks and codes are folded to upper case. A work whose title and edition match an
+    existing one is refused (T15: never duplicate VPHC1). A code that existing
+    Citations rely on cannot change, because catalog codes are generated from
+    the first cited work's code (common/catalog_codes.py).
+    """
+
+    MIN_YEAR = 1000
+
     class Meta:
         model = ReferenceWork
-        fields = "__all__"
+        fields = [
+            "id", "code", "title", "authorship", "publisher", "publication_year",
+            "edition", "volume", "isbn", "url",
+            "created_date", "modified_date", "created_by", "modified_by",
+        ]
         read_only_fields = ["id", "created_date", "modified_date", "created_by", "modified_by"]
+
+    def validate_publication_year(self, value):
+        latest = timezone.now().year + 1
+        if value < self.MIN_YEAR or value > latest:
+            raise serializers.ValidationError(
+                f"Publication year must be between {self.MIN_YEAR} and {latest}."
+            )
+        return value
+
+    def validate(self, attrs):
+        if "code" in attrs:
+            # Codes are upper-case identifiers (ASCC6, VPHC1); fold case so the
+            # unique index cannot hold both spellings on a case-sensitive database.
+            attrs["code"] = attrs["code"].upper() if attrs["code"] else None
+        instance = self.instance
+        if attrs.get("code"):
+            clash = ReferenceWork.objects.filter(code__iexact=attrs["code"])
+            if instance is not None:
+                clash = clash.exclude(pk=instance.pk)
+            if clash.exists():
+                raise serializers.ValidationError({"code": "A Reference Work with this code already exists."})
+        title = attrs.get("title", instance.title if instance else "")
+        edition = attrs.get("edition", instance.edition if instance else "") or ""
+        candidates = ReferenceWork.objects.filter(title__iexact=title)
+        if instance is not None:
+            candidates = candidates.exclude(pk=instance.pk)
+        for other in candidates:
+            if (other.edition or "").strip().lower() == edition.strip().lower():
+                raise serializers.ValidationError({
+                    "title": (
+                        "A Reference Work with this title and edition already exists "
+                        f"({other.code or f'id {other.pk}'}). Edit that one instead."
+                    )
+                })
+        # A work that never had a code may be given one; only a code that
+        # Entries already carry is frozen.
+        if (
+            instance is not None
+            and instance.code
+            and "code" in attrs
+            and attrs["code"] != instance.code
+        ):
+            if instance.citations.exists() or self._entries_carry_prefix(instance.code):
+                raise serializers.ValidationError({
+                    "code": (
+                        "This code is cited by existing Entries or appears in their catalog "
+                        "codes; it cannot be changed."
+                    )
+                })
+        return attrs
+
+    @staticmethod
+    def _entries_carry_prefix(code):
+        """Catalog codes keep the prefix after a Citation is deleted; guard those too."""
+        if not code:
+            return False
+        prefix = f"{code}-"
+        return (
+            Marking.all_objects.filter(code__startswith=prefix).exists()
+            or Cover.all_objects.filter(code__startswith=prefix).exists()
+        )
 
 
 class FAQEntrySerializer(serializers.ModelSerializer):
@@ -1529,6 +1682,7 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
     cover_id = serializers.SerializerMethodField()
     source_marking_image = serializers.SerializerMethodField()
     edit_baseline = serializers.SerializerMethodField()
+    county_intent = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField(source="created_date", read_only=True)
     updated_at = serializers.DateTimeField(source="modified_date", read_only=True)
 
@@ -1543,6 +1697,7 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
             "cover_id",
             "source_marking_image",
             "edit_baseline",
+            "county_intent",
             "collection",
             "submitted_data",
             "status",
@@ -1640,6 +1795,22 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
         if marking is None:
             return None
         return marking_edit_baseline(MarkingSerializer(marking, context=self.context).data)
+
+
+    def get_county_intent(self, obj):
+        """
+        What approval would do with the submission's county (Trello T70),
+        computed server-side from the Region and the town's current links
+        so the review page never trusts the client-sent name. For Marking
+        submissions (new and edit) still awaiting a decision; None once
+        approved (the town already carries the result). Cover submissions
+        carry no county keys, so they get None without a special case.
+        """
+        if obj.status not in (
+            Contribution.STATUS_DRAFT, Contribution.STATUS_PENDING, Contribution.STATUS_NEEDS_REVISION
+        ):
+            return None
+        return describe_county_intent(obj.submitted_data or {})
 
 
 class ContributionApproveRejectSerializer(serializers.Serializer):

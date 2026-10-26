@@ -29,7 +29,14 @@ import { normalizeImageUrl } from "@/services/markings";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getDateFormats, type DateFormatOption } from "@/constants/markingEnums";
-import { entryKindForContribution, isCoverContributionData } from "@/lib/contributionDisplay";
+import {
+  entryKindForContribution,
+  isCoverContributionData,
+  pendingCoverContributionIdFromSubmittedData,
+  pendingCoverFromSubmittedData,
+  countyProposedFromSubmittedData,
+} from "@/lib/contributionDisplay";
+import { PendingCoverCard } from "@/components/PendingCoverCard";
 import CoverContributionDetail from "@/pages/CoverContributionDetail";
 import { CatalogRecordFields } from "@/components/CatalogRecordFields";
 import {
@@ -50,6 +57,7 @@ import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenc
 import type { MarkingFieldInput } from "@/lib/markingFields";
 import {
   type Contribution,
+  canReviewContribution,
   getContribution,
   decideContribution,
   deleteOwnContribution,
@@ -72,11 +80,12 @@ type ContributionImageMeta = {
   image_description?: string;
 };
 
-function buildContributionCatalogFields(input: MarkingFieldInput): CatalogFieldValues {
+function buildContributionCatalogFields(input: MarkingFieldInput, countyName: string): CatalogFieldValues {
   return {
     type: displayCatalogField(markingTypeLabel(input.type) || ""),
     town: displayCatalogField(input.town),
     state: displayCatalogField(input.state),
+    ...(countyName ? { county: displayCatalogField(countyName) } : {}),
     regionAbbrev: displayCatalogField(input.state),
     manuscript: displayCatalogField(input.isManuscript ? "Yes" : "No"),
     desc: displayCatalogField(input.catalogTxt),
@@ -144,9 +153,8 @@ const ContributionDetail = () => {
   const returnHref = (fallbackTab: "submissions" | "editor") =>
     returnTo ?? dashboardHrefForTab(dashboardTab ?? fallbackTab);
   const backLabel = returnToLabel(returnTo);
-  const isStateEditor =
-    user?.role === "editor" || user?.role === "administrator" || user?.is_superuser;
-  /** True if the logged-in user is the person who submitted this contribution (edit/review UI is for other editors only). */
+  const canReview = canReviewContribution(user, contribution);
+  /** True when this user submitted the Submission. */
   const isContributor =
     !!user &&
     !!contribution &&
@@ -221,7 +229,6 @@ const ContributionDetail = () => {
   }, []);
 
   const contributionId = contribution?.id;
-  const contributionStatus = contribution?.status;
   const contributionSubmittedData = contribution?.submittedData;
 
   // Preview the code WITHOUT writing it. `getContributionCatalogCodeSuggestion`
@@ -237,7 +244,7 @@ const ContributionDetail = () => {
   // but takes no contribution and saves nothing. Minting stays where it belongs:
   // ensureCatalogCode() below, at approve time, deliberately.
   useEffect(() => {
-    if (contributionId == null || contributionStatus !== "pending" || !isStateEditor || !user) return;
+    if (contributionId == null || !canReview) return;
     if (isCoverContributionData(contributionSubmittedData)) return;
     const sd = (contributionSubmittedData ?? {}) as Record<string, unknown>;
     const referenceWorkIds = Array.isArray(sd.reference_work_ids)
@@ -267,7 +274,7 @@ const ContributionDetail = () => {
     return () => {
       cancelled = true;
     };
-  }, [contributionId, contributionStatus, contributionSubmittedData, isStateEditor, user]);
+  }, [contributionId, contributionSubmittedData, canReview]);
 
   const ensureCatalogCode = async (): Promise<string> => {
     if (!contribution) return "";
@@ -289,7 +296,7 @@ const ContributionDetail = () => {
   };
 
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
-    if (!contribution) return;
+    if (!contribution || !canReview) return;
     if (kind !== "approve" && !comment.trim()) {
       setCommentError("A comment is required to reject or request revision.");
       return;
@@ -311,8 +318,21 @@ const ContributionDetail = () => {
       toast({
         title: actionLabel,
         description: "Your comment was saved for the contributor.",
+        // Trello T37: a Marking that carried a Cover has just produced a Cover
+        // submission; the queue the editor returns to lists it, and the toast
+        // offers it directly.
+        ...(kind === "approve" && result.pendingCoverContributionId != null
+          ? { description: "Your comment was saved. A Cover submission was created for review." }
+          : {}),
         action:
-          kind === "approve" && result.markingId != null ? (
+          kind === "approve" && result.pendingCoverContributionId != null ? (
+            <ToastAction
+              altText="Review the Cover submission created with this marking"
+              onClick={() => navigate(`/contribution/${result.pendingCoverContributionId}`)}
+            >
+              Review the Cover
+            </ToastAction>
+          ) : kind === "approve" && result.markingId != null ? (
             <ToastAction
               altText="View the approved record"
               onClick={() => navigate(`/record/${result.markingId}`)}
@@ -414,6 +434,8 @@ const ContributionDetail = () => {
       sd.comment ??
       ""
   ).trim();
+  // Trello T70: a county the contributor could not find in the list.
+  const countyProposed = countyProposedFromSubmittedData(sd);
   // Null for anything that did not come from the VPHC ingest.
   const vphc = readVphcProvenance(sd);
   const baseImageUrl = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "");
@@ -479,7 +501,6 @@ const ContributionDetail = () => {
   }
   const images = imageMetaList;
 
-  const isPending = contribution.status === "pending";
   const normalizedStatus = String(contribution.status || "").toLowerCase();
   const statusLabel =
     normalizedStatus === "approved"
@@ -497,12 +518,13 @@ const ContributionDetail = () => {
         : normalizedStatus === "needs_revision"
           ? "rounded-full border border-orange-600 bg-orange-500 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-orange-500"
           : "rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500";
-  const canReview = isStateEditor && isPending && !!user;
 
   // Build the catalog-search-style field block from submitted_data. The review
   // header/details intentionally mirror Catalog Search cards so the same entry
   // is recognizable before and after approval.
   let contributionCatalogFields: CatalogFieldValues | null = null;
+  // Trello T37: the Cover carried inside this Marking submission, if any.
+  const pendingCover = pendingCoverFromSubmittedData(contribution.submittedData);
   let displayName = `Submission #${contribution.id}`;
   let fieldRowsError: string | null = null;
   try {
@@ -514,7 +536,12 @@ const ContributionDetail = () => {
       { letteringOptions, dateFormatOptions },
       { contributionId: contribution.id },
     );
-    contributionCatalogFields = buildContributionCatalogFields(fieldInput);
+    // T70: the county name the server resolved from the Region, never the
+    // client-sent text, with the sent text only as a fallback for old rows.
+    contributionCatalogFields = buildContributionCatalogFields(
+      fieldInput,
+      contribution.countyIntent?.countyName || fieldInput.county || "",
+    );
     displayName = buildCatalogSearchTitleFromParts({
       town: fieldInput.town,
       region: fieldInput.state,
@@ -535,11 +562,16 @@ const ContributionDetail = () => {
         { letteringOptions, dateFormatOptions },
         referenceWorks,
         contribution.id,
+        contribution.countyIntent,
       );
     } catch (err) {
       editComparisonError = err instanceof Error ? err.message : String(err);
     }
   }
+  // T70: the server's verdict on the county for a NEW marking; edits show it
+  // in the comparison row instead.
+  const countyIntent = contribution.countyIntent;
+  const showCountyVerdict = !!countyIntent && !contribution.editBaseline && (countyIntent.countyId != null || !!countyIntent.error);
   const showEditorFeedbackCard =
     contribution.status !== "pending" || !!(contribution.reviewNotes && contribution.reviewNotes.trim());
   // Unified edit/remove buttons (mirror the entry detail page). Edit is offered
@@ -802,6 +834,13 @@ const ContributionDetail = () => {
               </div>
 
               {editComparison && <EditComparisonCard entryLabel="marking" rows={editComparison} />}
+              {pendingCover && (
+                <PendingCoverCard
+                  summary={pendingCover}
+                  createdContributionId={pendingCoverContributionIdFromSubmittedData(contribution.submittedData)}
+                  approved={contribution.status === "approved"}
+                />
+              )}
               {editComparisonError && (
                 <p className="text-sm text-destructive rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2">
                   Could not compare this edit with the current marking: {editComparisonError}
@@ -831,6 +870,30 @@ const ContributionDetail = () => {
                       No submitted data returned for this contribution.
                     </p>
                   )}
+                  {showCountyVerdict && countyIntent ? (
+                    <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">County</p>
+                      <p className="text-sm text-foreground">
+                        {countyIntent.countyName || `County #${countyIntent.countyId ?? ""}`}
+                        {countyIntent.currentCounty ? ` (the town's catalog county: ${countyIntent.currentCounty})` : ""}
+                      </p>
+                      <p className={`mt-1 text-xs ${countyIntent.error ? "text-destructive" : "text-muted-foreground"}`}>
+                        {countyIntent.note}
+                      </p>
+                    </div>
+                  ) : null}
+                  {countyProposed ? (
+                    <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">County not listed</p>
+                      <p className="text-sm text-foreground">{countyProposed}</p>
+                      {canReview ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Approval does not link a typed county. Create the county Region, then either link the
+                          town to it yourself or return this submission so the Contributor can pick it.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {contributorComment ? (
                     <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">
                       <p className="text-xs uppercase tracking-wide text-muted-foreground">Comment for editor</p>

@@ -135,6 +135,56 @@ sudo -u wocod -H bash -lc 'rm -f /tmp/woco-auth.json'    # on the target
 # and remove /tmp/woco-auth.json on prod
 ```
 
+## Collection Transfer Between Instances
+
+Use this operator procedure to copy one complete Collection, including
+pending work and image files. This is separate from full-system recovery
+and the S25/S26 application interfaces.
+
+1. Identify the source Collection ID. Check the code revisions and migration
+   state on both instances. Apply the transfer migration before restore.
+   Inventory target differences, missing usernames, shared Covers, and
+   external Markings. Resolve conflicts explicitly; restore has no overwrite
+   option and does not create accounts or change Editor assignments.
+2. Run `backup_collection <collection-id> <new-bundle-directory>` on the
+   source. Use `tools/wip/out/` for output. Copy the entire completed bundle
+   over SSH to `tools/wip/in/` on the destination.
+3. Test with the existing local database and media directory: run
+   `restore_collection <bundle> --dry-run`, then `restore_collection <bundle>`
+   and `verify_collection <bundle> --report <report.json>`. Keep reports under
+   `tools/wip/out/`, outside the bundle. Inspect representative Marking and
+   Cover pages, images, review work, history, and credit. Repeat restore and
+   verification to check that no records are duplicated. Local conflicts
+   stop the test; do not erase or overwrite local records to bypass them.
+4. Pause source writes for the final export. If source contents changed,
+   export to a new directory and test that final bundle locally. Existing
+   local records that differ require review before the final test can pass.
+5. Before the live destination restore, take and verify a tagged full
+   database/media backup using [BACKUP.md](BACKUP.md). Run the same Collection
+   dry-run, restore, verification, and page checks on the destination. Retain
+   the exact bundle and its destination verification report off the source.
+6. Obtain Michael's acceptance before source removal. Take and verify a
+   tagged full source backup. Copy the destination verification report back
+   to the source. Resolve the Region code from the backed-up Collection and
+   preview the guarded removal:
+
+   ```sh
+   ./woco ascc drop <region-code> --bundle tools/wip/out/collection-backup --verification-report tools/wip/in/collection-verification.json --dry-run
+   ```
+
+   Review deletion counts and shared records. Run the same command without
+   `--dry-run` only after acceptance. The guard refuses a stale bundle,
+   mismatched report, wrong source instance, or changed source contents.
+7. Confirm the selected contents are gone from the source and unrelated
+   Collections remain intact. Collection configuration, accounts, Editor
+   assignments, shared records, and image files remain. Do not sweep media
+   files as part of this transfer.
+
+For Hawaii, the source is woco.dev and the destination is hellowoco.app.
+The actual Collection ID, Region code, counts, deployed revisions, report,
+and acceptance must come from that run. A code test or this procedure does
+not establish that Hawaii has been transferred.
+
 ## Database Restore
 
 Snapshots are taken nightly by `worldcovers-backup.timer` and live under

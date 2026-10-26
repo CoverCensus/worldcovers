@@ -396,33 +396,25 @@ const Search = () => {
     [endYear, minYear, maxYear],
   );
 
-  // Manuscripts have null shape, so the two filters are mutually exclusive:
-  // - manuscripts=Only -> Shape field is cleared and hidden (no shape to filter on).
-  // - shape selected  -> "Only" option in the manuscripts dropdown is disabled
-  //   (and snapped back to "both" if somehow already on "only" via URL state).
+  // Manuscript-only searches do not use Shape or Dimensions.
   useEffect(() => {
-    if (manuscriptFilter === "only" && shapeFilter !== "all") {
-      setShapeFilter("all");
-    }
-  }, [manuscriptFilter, shapeFilter]);
-
-  useEffect(() => {
-    if (shapeFilter !== "all" && manuscriptFilter === "only") {
-      setManuscriptFilter("both");
-    }
-  }, [shapeFilter, manuscriptFilter]);
+    if (manuscriptFilter !== "only") return;
+    setShapeFilter("all");
+    setHeightFilter("");
+    setWidthFilter("");
+  }, [manuscriptFilter]);
 
   // Circle-family shapes whose width == height == diameter. Matched by the
   // shape code prefix (the part before " - " in the label) so the UI collapses
   // height/width into a single Diameter input. Explicit allow-list because
   // other curved shapes (ARC - Arc or Semi-circle) are not true circles.
   const isCircleShape = useMemo(() => {
-    if (shapeFilter === "all") return false;
+    if (manuscriptFilter === "only" || shapeFilter === "all") return false;
     const opts = Array.isArray(shapeOptions) ? shapeOptions : [];
     const selected = opts.find((s) => s.value === shapeFilter);
     if (!selected) return false;
     return isTrueCircleShapeName(selected.label);
-  }, [shapeFilter, shapeOptions]);
+  }, [manuscriptFilter, shapeFilter, shapeOptions]);
   // While the circle UI is showing, keep widthFilter mirrored to heightFilter so
   // the API sees height == width and the URL persistence stays symmetric.
   useEffect(() => {
@@ -513,12 +505,12 @@ const Search = () => {
       : (debouncedEndYear.trim().length === 4 ? debouncedEndYear.trim() : "");
   }, [debouncedEndYear, minYear, maxYear]);
   const normalizedHeight = useMemo(
-    () => normalizeDimensionInput(debouncedHeightFilter),
-    [debouncedHeightFilter],
+    () => manuscriptFilter === "only" ? "" : normalizeDimensionInput(debouncedHeightFilter),
+    [manuscriptFilter, debouncedHeightFilter],
   );
   const normalizedWidth = useMemo(
-    () => normalizeDimensionInput(debouncedWidthFilter),
-    [debouncedWidthFilter],
+    () => manuscriptFilter === "only" ? "" : normalizeDimensionInput(debouncedWidthFilter),
+    [manuscriptFilter, debouncedWidthFilter],
   );
 
   // Map UI typeFilter ("all" | "townmark" | "ratemark" | "auxmark") to API value.
@@ -590,7 +582,7 @@ const Search = () => {
         itemsPerPage,
         {
           search: debouncedKeywordSearch.trim() || undefined,
-          shapeId: shapeFilter !== "all" ? shapeFilter : undefined,
+          shapeId: manuscriptFilter !== "only" && shapeFilter !== "all" ? shapeFilter : undefined,
           type: typeFilterApi,
           manuscripts: manuscriptFilter,
           color: colorFilter !== "all" ? colorFilter : undefined,
@@ -659,7 +651,7 @@ const Search = () => {
     if (normalizedEndYear) params.set("to", normalizedEndYear);
     if (normalizedHeight) params.set("height", normalizedHeight);
     if (normalizedWidth) params.set("width", normalizedWidth);
-    if (shapeFilter !== "all") params.set("shape", shapeFilter);
+    if (manuscriptFilter !== "only" && shapeFilter !== "all") params.set("shape", shapeFilter);
     if (typeFilter !== "all") params.set("markType", typeFilter);
     if (colorFilter !== "all") params.set("color", colorFilter);
     if (manuscriptFilter !== "both") params.set("manuscripts", manuscriptFilter);
@@ -932,7 +924,7 @@ const Search = () => {
                     </div>
                   )}
 
-                  {isCircleShape ? (
+                  {manuscriptFilter !== "only" && (isCircleShape ? (
                     <div className="space-y-2">
                       <Label htmlFor="diameterFilter">Diameter (mm)</Label>
                       <Input
@@ -1000,7 +992,7 @@ const Search = () => {
                         />
                       </div>
                     </div>
-                  )}
+                  ))}
 
                   <div className="space-y-2">
                     <SortableLabel
@@ -1060,7 +1052,7 @@ const Search = () => {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="both">Both (Default)</SelectItem>
-                        <SelectItem value="only" disabled={shapeFilter !== "all"}>Only</SelectItem>
+                        <SelectItem value="only">Only</SelectItem>
                         <SelectItem value="none">None</SelectItem>
                       </SelectContent>
                     </Select>

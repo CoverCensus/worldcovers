@@ -14,6 +14,8 @@
  * every unsafe verb so a freshly-landed user does not 403 on the first write.
  */
 import apiClient, { ensureCsrfToken } from "@/lib/api";
+import type { AuthUser } from "@/lib/auth";
+import { countyIntentFromApi, type CountyIntent } from "@/lib/contributionDisplay";
 import {
   sourceMarkingImageFromContribution,
   type SourceMarkingImage,
@@ -27,6 +29,7 @@ const CONTRIBUTION_UPLOAD_TIMEOUT_MS = 300000;
  */
 export interface ContributionApiItem {
   id: number;
+  collection?: number | null;
   status?: string;
   contributor?: number | null;
   contributorId?: number | null;
@@ -55,6 +58,7 @@ export interface ContributionApiItem {
   // in the submit keys (Trello T39); null otherwise and on list rows.
   edit_baseline?: unknown;
   editBaseline?: unknown;
+  county_intent?: unknown;
   [k: string]: unknown;
 }
 
@@ -75,6 +79,7 @@ export interface ContributionListResponse {
  */
 export interface Contribution {
   id: number;
+  collectionId: number | null;
   contributorId: number | null;
   status: string;
   contributorUsername: string;
@@ -96,6 +101,8 @@ export interface Contribution {
    * viewing an edit that awaits a decision (Trello T39).
    */
   editBaseline: Record<string, unknown> | null;
+  /** The server's verdict on the submission's county, or null (Trello T70). */
+  countyIntent: CountyIntent | null;
 }
 
 export interface CatalogCodeSuggestion {
@@ -135,6 +142,7 @@ export function mapApiItemToContribution(item: ContributionApiItem): Contributio
       : {};
   return {
     id: item.id,
+    collectionId: toNumberOrNull(item.collection),
     contributorId: toNumberOrNull(firstDefined(item.contributor, item.contributorId)),
     status: item.status ?? "pending",
     contributorUsername: String(
@@ -150,7 +158,17 @@ export function mapApiItemToContribution(item: ContributionApiItem): Contributio
     coverId: toNumberOrNull(firstDefined(item.cover_id, item.coverId)),
     sourceMarkingImage: sourceMarkingImageFromContribution(item),
     editBaseline: plainObjectOrNull(firstDefined(item.edit_baseline, item.editBaseline)),
+    countyIntent: countyIntentFromApi(item.county_intent),
   };
+}
+
+export function canReviewContribution(user: AuthUser | null, contribution: Contribution | null): boolean {
+  if (!user || !contribution || contribution.status !== "pending") return false;
+  if (user.is_superuser || user.role === "administrator") return true;
+  return (
+    user.role === "editor" && contribution.collectionId != null &&
+    (user.assigned_collections ?? []).some((collection) => collection.id === contribution.collectionId)
+  );
 }
 
 /** Query filters for GET /contributions/. camelCase here maps to snake_case params. */
@@ -345,6 +363,8 @@ export interface DecideOptions {
 export interface DecideResult {
   markingId: number | null;
   coverId: number | null;
+  /** Trello T37: the Cover submission approval created from a Marking that carried one. */
+  pendingCoverContributionId: number | null;
   raw: Record<string, unknown>;
 }
 
@@ -467,6 +487,9 @@ export async function decideContribution(
   return {
     markingId: toNumberOrNull(firstDefined(o.marking_id, o.markingId)),
     coverId: toNumberOrNull(firstDefined(o.cover_id, o.coverId)),
+    pendingCoverContributionId: toNumberOrNull(
+      firstDefined(o.pendingCoverContributionId, o.pending_cover_contribution_id),
+    ),
     raw: o,
   };
 }

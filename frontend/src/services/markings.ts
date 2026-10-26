@@ -1,5 +1,6 @@
 import apiClient, { ensureCsrfToken } from "@/lib/api";
 import { sortCoversEarliestFirst } from "@/lib/associatedCoverSort";
+import type { ComparisonRow } from "@/lib/editComparison";
 import { normalizeAngle } from "@/lib/imageRotation";
 import { listContributions } from "@/services/contributions";
 import {
@@ -1133,23 +1134,90 @@ export async function getCoverChangelog(coverId: number): Promise<MarkingChangel
   }
 }
 
-export async function restoreMarkingVersion(
-  markingId: number,
-  versionNo: number
-): Promise<{ detail?: string; restored_from_version_no?: number; new_version_no?: number } | null> {
+/** One current-vs-version field row of a restore preview (Trello T74). */
+export type RestorePreviewRelationship = {
+  added: number;
+  removed: number;
+  kept: number;
+  skipped: number;
+};
+
+export interface RestorePreview {
+  entry_type: "marking" | "cover";
+  entry_id: number;
+  version_no: number;
+  version_created_at: string | null;
+  version_action_label: string | null;
+  fields: ComparisonRow[];
+  relationships: Record<string, RestorePreviewRelationship>;
+  limitations: string[];
+  has_changes: boolean;
+}
+
+export type RestorePreviewResult = { ok: true; preview: RestorePreview } | { ok: false; message: string };
+
+export type RestoreVersionResult =
+  | { ok: true; detail: string; newVersionNo: number; limitations: string[] }
+  | { ok: false; message: string };
+
+function restoreErrorMessage(err: unknown, fallback: string): string {
+  const detail = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+  return typeof detail === "string" && detail ? detail : fallback;
+}
+
+async function getRestorePreview(path: string, versionNo: number): Promise<RestorePreviewResult> {
   try {
-    const res = await apiClient.post(
-      `/markings/${markingId}/restore-version/`,
+    const res = await apiClient.get<RestorePreview>(path, {
+      params: { version_no: versionNo },
+      withCredentials: true,
+      headers: { Accept: "application/json" },
+    });
+    return { ok: true, preview: res.data };
+  } catch (err: unknown) {
+    return { ok: false, message: restoreErrorMessage(err, "Could not load what this restore would change.") };
+  }
+}
+
+async function postRestoreVersion(path: string, versionNo: number): Promise<RestoreVersionResult> {
+  await ensureCsrfToken();
+  try {
+    const res = await apiClient.post<{ detail?: string; new_version_no?: number; limitations?: string[] }>(
+      path,
       { version_no: versionNo },
       {
         withCredentials: true,
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-      }
+      },
     );
-    return res.data ?? null;
-  } catch {
-    return null;
+    return {
+      ok: true,
+      detail: res.data?.detail ?? "",
+      newVersionNo: Number(res.data?.new_version_no ?? 0),
+      limitations: Array.isArray(res.data?.limitations) ? res.data.limitations : [],
+    };
+  } catch (err: unknown) {
+    return { ok: false, message: restoreErrorMessage(err, "Could not restore this version.") };
   }
+}
+
+/** GET /api/v2/markings/{id}/restore-preview/ -- what restoring a version would change (Trello T74). */
+export function getMarkingRestorePreview(markingId: number, versionNo: number): Promise<RestorePreviewResult> {
+  return getRestorePreview(`/markings/${markingId}/restore-preview/`, versionNo);
+}
+
+/** GET /api/v2/covers/{id}/restore-preview/ -- the Cover counterpart. */
+export function getCoverRestorePreview(coverId: number, versionNo: number): Promise<RestorePreviewResult> {
+  return getRestorePreview(`/covers/${coverId}/restore-preview/`, versionNo);
+}
+
+/** POST /api/v2/markings/{id}/restore-version/ -- restore the marking to that version. */
+export function restoreMarkingVersion(markingId: number, versionNo: number): Promise<RestoreVersionResult> {
+  return postRestoreVersion(`/markings/${markingId}/restore-version/`, versionNo);
+}
+
+/** POST /api/v2/covers/{id}/restore-version/ -- restore the cover to that version. */
+export function restoreCoverVersion(coverId: number, versionNo: number): Promise<RestoreVersionResult> {
+  return postRestoreVersion(`/covers/${coverId}/restore-version/`, versionNo);
 }
 
 /**
@@ -1615,12 +1683,26 @@ function mapCoverContributionToAssociatedCover(
   };
 }
 
-/** Cover contribution drafts for a marking (not yet materialized as CoverMarking rows). */
+/**
+ * The signed-in user's own cover drafts for a marking (not yet CoverMarking
+ * rows). The contributions list is owner-scoped by the API, so nobody else's
+ * drafts can come back. Trello T92: asks for draft rows only, at the largest
+ * page the API allows (100), instead of the unfiltered default page of 10 that
+ * used to hide a draft behind ten newer submissions. Anything past the page
+ * is unreachable here, which is acceptable: a contributor with more than a
+ * hundred open drafts has the Dashboard.
+ */
+export const COVER_DRAFTS_PAGE_SIZE = 100;
+
 export async function getCoverContributionDraftsForMarking(
   markingId: number,
 ): Promise<AssociatedCover[]> {
   try {
-    const { rawItems } = await listContributions();
+    const { rawItems } = await listContributions({
+      status: "draft",
+      pageSize: COVER_DRAFTS_PAGE_SIZE,
+      ordering: "-created_at",
+    });
     return rawItems
       .map((row) =>
         mapCoverContributionToAssociatedCover(row as Record<string, unknown>, markingId),
@@ -1639,9 +1721,11 @@ export async function loadAssociatedCoversForMarking(
   // Only editor-approved cover-marking links appear on the record's Associated
   // Covers panel (and its count). Covers still pending review (or rejected /
   // returned-for-revision) are hidden, mirroring how an unapproved marking
-  // contribution does not appear on the record. The contributor's own cover
-  // drafts -- pending, returned, or unsubmitted -- are reached from Dashboard /
-  // My Submissions, NOT from this panel.
+  // contribution does not appear on the record. Pending and returned cover
+  // submissions are reached from Dashboard / My Submissions. The signed-in
+  // user's own unsubmitted cover DRAFTS are the one exception (Trello T92):
+  // the record page fetches them separately with
+  // getCoverContributionDraftsForMarking and lists them outside the count.
   const approved = covers.filter((c) => c.reviewStatus === "approved");
   // Earliest observed date first, undated last (issues.md 174). The API
   // orders by link id, which is the order editors happened to attach them.
@@ -1768,11 +1852,9 @@ export async function getRecycleBinMarkings(
   };
 }
 
-/** GET /markings/?page_size=1 - returns total marking count. */
+/** Returns the exact visible Marking count without loading catalog rows. */
 export async function getMarkingCount(): Promise<number> {
-  const res = await apiClient.get<MarkingApiResponse>("/markings/", {
-    params: { page_size: "1" },
-  });
+  const res = await apiClient.get<{ count: number }>("/markings/count/");
   return typeof res.data.count === "number" ? res.data.count : 0;
 }
 

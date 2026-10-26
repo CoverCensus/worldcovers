@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-// issues.md 177 — the roster carries email addresses, so the route is for
+// issues.md 177 -- the roster carries email addresses, so the route is for
 // editors and administrators only. Contributors go to their dashboard, guests
 // to login, exactly as RequireSuperuser does for admin routes.
 import { render, screen } from "@testing-library/react";
@@ -9,7 +9,11 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { RequireEditor } from "./RequireEditor";
 import { useAuth } from "@/hooks/useAuth";
 
-jest.mock("@/hooks/useAuth", () => ({ useAuth: jest.fn() }));
+let mockStatus = "authenticated";
+jest.mock("@/hooks/useAuth", () => ({
+  useAuth: jest.fn(),
+  useAuthState: () => ({ user: mockedUseAuth(), status: mockStatus, error: "Server unavailable" }),
+}));
 const mockedUseAuth = useAuth as jest.Mock;
 
 function renderAt(path = "/editors") {
@@ -32,6 +36,23 @@ function renderAt(path = "/editors") {
 }
 
 describe("RequireEditor", () => {
+  beforeEach(() => { mockStatus = "authenticated"; });
+
+  it("waits for the server before redirecting a user without a local cache", () => {
+    mockStatus = "checking";
+    mockedUseAuth.mockReturnValue(null);
+    renderAt();
+    expect(screen.queryByText("login page")).toBeNull();
+    expect(screen.getByRole("status")).toBeTruthy();
+  });
+
+  it("offers retry when a session cannot be checked", () => {
+    mockStatus = "unavailable";
+    mockedUseAuth.mockReturnValue(null);
+    renderAt();
+    expect(screen.queryByText("login page")).toBeNull();
+    expect(screen.getByRole("button", { name: /Retry/ })).toBeTruthy();
+  });
   it("sends a guest to login", () => {
     mockedUseAuth.mockReturnValue(null);
     renderAt();
