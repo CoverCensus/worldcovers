@@ -36,6 +36,11 @@ Links a reference work to a cover or marking.
 
 An institutional curatorial unit associated with exactly one region. Contributions submitted within a collection's region are routed to that collection for editorial review. A collection is the unit of curatorial scope: it carries the human-facing identity (display name, description, active state) under which a region's holdings are presented and reviewed, independent of who is currently assigned to work it.
 
+The ASCC importer creates Collections only for State, Territory, and District
+Regions. County jurisdiction remains on PostOfficeRegion; a County-only Post
+Office uses its parent primary Region for responsibility. This is importer
+and permission behavior, not a Collection database constraint.
+
 *Fields:*
 
 * description - Curatorial description of the collection.  

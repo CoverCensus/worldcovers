@@ -47,7 +47,8 @@ linked Marking Regions; the Administrator has a separate override.
 Check responsibility before ordinary Image creation, updates, and deletion.
 Check both source and destination when moving an Image, including the linked
 Marking Regions for a Cover. Preserve existing Administrator overrides and
-Contributor restrictions.
+Contributor restrictions. A County-only Post Office uses its parent primary
+Region for responsibility; County jurisdiction remains on PostOfficeRegion.
 
 **Don't:** Rely on a hidden button, a filtered screen, or permission to enter
 the review area as proof that the user may change any Entry.
@@ -407,8 +408,9 @@ verification records.
 [account regressions](backend/common/tests/test_auth_reliability.py), and
 [shared-cache test](backend/common/tests/test_auth_shared_cache.py).
 
-**Open work:** [email signup rollout](ISSUE.md#contributor-email-verification)
-tracks real mail receipt, staged release, and acceptance. Back up auth data
+**Open work:** [Production rollout and remaining acceptance](ISSUE.md#contributor-email-verification)
+are tracked in ISSUE.md; the October 25 staging signup and permission checks
+are complete. Back up auth data
 and pause account creation while applying the migration and code together.
 After new signups exist, retain the verification guards during rollback;
 disable signup if needed rather than restoring an unguarded login route.
