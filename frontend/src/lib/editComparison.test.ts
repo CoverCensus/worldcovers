@@ -1,3 +1,4 @@
+import { readSubmission } from "@/lib/submission";
 import { compareCoverEdit, compareMarkingEdit } from "./editComparison";
 
 const lookups = { letteringOptions: [], dateFormatOptions: [] };
@@ -14,7 +15,7 @@ const changedKeys = (rows: { key: string; changed: boolean }[]) =>
 
 describe("compareMarkingEdit", () => {
   const compare = (sd: Record<string, unknown>, intent?: Parameters<typeof compareMarkingEdit>[5]) =>
-    compareMarkingEdit(marking, sd, lookups, [], 1, intent);
+    compareMarkingEdit(readSubmission(marking).data, readSubmission(sd).data, lookups, [], 1, intent);
 
   it("leaves untouched fields unchanged and flags the edited one", () => {
     // What the form resubmits after changing only the colour; it omits dates it did not change.
@@ -41,15 +42,15 @@ describe("compareMarkingEdit", () => {
 
   it("T70: a county the town already has is unchanged by id, an added one is noted, a differing one is left alone", () => {
     const withCounty = { ...marking, county: "Henrico", county_id: 5 };
-    const same = compareMarkingEdit(withCounty, { edit_marking_id: 7, county: "Henrico", county_id: "5" }, lookups, [], 1);
+    const same = compareMarkingEdit(readSubmission(withCounty).data, readSubmission({ edit_marking_id: 7, county: "Henrico", county_id: "5" }).data, lookups, [], 1);
     expect(changedKeys(same)).toEqual([]);
-    expect(changedKeys(compareMarkingEdit(withCounty, { edit_marking_id: 7, county: "", county_id: "" }, lookups, [], 1))).toEqual([]);
+    expect(changedKeys(compareMarkingEdit(readSubmission(withCounty).data, readSubmission({ edit_marking_id: 7, county: "", county_id: "" }).data, lookups, [], 1))).toEqual([]);
 
     const added = compare({ edit_marking_id: 7, county: "Accomack", county_id: "9" });
     expect(added.find((r) => r.key === "county")).toMatchObject({ current: "", proposed: "Accomack", changed: true });
 
     // Without a server verdict the row only shows the names.
-    const differs = compareMarkingEdit(withCounty, { edit_marking_id: 7, county: "Accomack", county_id: "9" }, lookups, [], 1);
+    const differs = compareMarkingEdit(readSubmission(withCounty).data, readSubmission({ edit_marking_id: 7, county: "Accomack", county_id: "9" }).data, lookups, [], 1);
     expect(differs.find((r) => r.key === "county")).toMatchObject({ current: "Henrico", proposed: "Accomack", changed: true });
     expect(differs.find((r) => r.key === "county")?.note).toBeUndefined();
   });
@@ -87,7 +88,7 @@ describe("compareCoverEdit", () => {
   };
 
   it("shows that an edit without a date clears it, and ignores an empty type", () => {
-    const rows = compareCoverEdit(cover, { edit_cover_id: "9", type: "", is_backstamp: "true" }, []);
+    const rows = compareCoverEdit(readSubmission(cover).data, readSubmission({ edit_cover_id: "9", type: "", is_backstamp: "true" }).data, []);
     expect(changedKeys(rows)).toEqual(["date", "backstamp"]);
     expect(rows.find((r) => r.key === "date")).toMatchObject({
       proposed: "", note: "This edit has no date, so approval clears it",
@@ -95,10 +96,10 @@ describe("compareCoverEdit", () => {
   });
 
   it("finds no change when the form resubmits the same cover", () => {
-    const rows = compareCoverEdit(cover, {
+    const rows = compareCoverEdit(readSubmission(cover).data, readSubmission({
       edit_cover_id: "9", type: "FC", is_institutional: "true", is_backstamp: "false",
       description: "Folded letter", cover_date_year: "1851", cover_date_month: "3",
-    }, []);
+    }).data, []);
     expect(changedKeys(rows)).toEqual([]);
   });
 });

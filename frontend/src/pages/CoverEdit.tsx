@@ -1,6 +1,7 @@
+import { SubmissionFormData } from "@/lib/submission";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
-  appendSubmissionCitations, parseReferenceWorkIds, parseReferenceWorkDetails, parseCitationDetail,
+  appendSubmissionCitations, referenceDetailsForForm, parseCitationDetail,
   type ReferenceDetailInput,
 } from "@/lib/submissionCitations";
 import {
@@ -378,7 +379,7 @@ export default function CoverEdit() {
             reviewNotes: contribution.reviewNotes ?? null,
           });
         }
-        const sd = contribution.submittedData as Record<string, unknown> | undefined;
+        const sd = contribution.submittedData;
         if (!sd || typeof sd !== "object" || !isCoverContributionData(sd)) {
           if (!cancelled) {
             setDraftLoadError("This draft is not a cover submission.");
@@ -392,10 +393,10 @@ export default function CoverEdit() {
         if (draftDate.unknown || draftDate.year || draftDate.month || draftDate.day) {
           setCoverDate(draftDate);
         }
-        setIsInstitutional(String(sd.is_institutional ?? sd.isInstitutional) === "true");
-        setIsBackstamp(String(sd.is_backstamp ?? sd.isBackstamp) === "true");
-        setDisplaySubmitterName(String(sd.display_submitter_name ?? sd.displaySubmitterName) === "true");
-        const editedCoverId = Number(sd.edit_cover_id ?? sd.editCoverId);
+        setIsInstitutional(String(sd.is_institutional) === "true");
+        setIsBackstamp(String(sd.is_backstamp) === "true");
+        setDisplaySubmitterName(String(sd.display_submitter_name) === "true");
+        const editedCoverId = Number(sd.edit_cover_id);
         setResumedEditCoverId(Number.isInteger(editedCoverId) && editedCoverId > 0 ? editedCoverId : null);
         const editedCover = Number.isInteger(editedCoverId) && editedCoverId > 0
           ? await getCoverById(editedCoverId)
@@ -407,20 +408,18 @@ export default function CoverEdit() {
             : true,
         );
         setDescription(String(sd.description ?? ""));
-        const loadedNoCoverImage = String(sd.no_cover_image ?? sd.noCoverImage) === "true";
+        const loadedNoCoverImage = String(sd.no_cover_image) === "true";
         setNoCoverImage(loadedNoCoverImage);
-        const comment = String(sd.contributor_comment ?? sd.comment_for_editor ?? "").trim();
+        const comment = String(sd.contributor_comment ?? "").trim();
         if (comment) setContributorComment(comment);
 
-        const refIds = parseReferenceWorkIds(
-          sd.reference_work_ids ?? sd.referenceWorkIds ?? sd["reference_work_ids[]"],
-        );
+        const refIds = sd.reference_work_ids ?? [];
         if (refIds.some((id) => !referenceWorks.some((work) => work.id === id))) {
           throw new Error("Could not load all selected Reference Works.");
         }
         setSelectedReferenceWorks(referenceWorks.filter((work) => refIds.includes(work.id)));
-        setReferenceDetailsById(parseReferenceWorkDetails(
-          sd.reference_work_details ?? sd.referenceWorkDetails,
+        setReferenceDetailsById(referenceDetailsForForm(
+          sd.reference_work_details,
         ));
 
         const metas = contributionImageMetasFromSubmittedData(sd);
@@ -431,18 +430,7 @@ export default function CoverEdit() {
         // so this is the only way the tile comes back.
         const carried = contribution.sourceMarkingImage;
         if (!loadedNoCoverImage && (draftImages.length > 0 || carried)) {
-          const tagsRaw = sd.cover_image_tags ?? sd.coverImageTags;
-          let tags: string[] = [];
-          if (typeof tagsRaw === "string") {
-            try {
-              const parsed = JSON.parse(tagsRaw) as unknown;
-              tags = Array.isArray(parsed) ? parsed.map((t) => String(t)) : [];
-            } catch {
-              tags = [];
-            }
-          } else if (Array.isArray(tagsRaw)) {
-            tags = tagsRaw.map((t) => String(t));
-          }
+          const tags = sd.cover_image_tags ?? [];
           const metaItems = draftImages.map((img, i) => ({
             kind: "existing" as const,
             key: normalizeImageUrl(img.imageUrl),
@@ -999,7 +987,7 @@ export default function CoverEdit() {
 
     setSubmitting(true);
     try {
-      const form = new FormData();
+      const form = new SubmissionFormData();
       form.append("submission_kind", "cover");
       if (asDraft) form.append("save_as_draft", "true");
       if (editContributionId != null) {

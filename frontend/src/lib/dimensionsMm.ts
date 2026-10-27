@@ -1,3 +1,4 @@
+import type { Submission } from "@/lib/submission";
 /**
  * Physical size in millimetres for catalog contributions.
  */
@@ -80,13 +81,13 @@ export function validateMmPair(width: string, height: string): { width?: string;
 }
 
 /** Read width/height from submitted_data / API (snake_case or camelCase). */
-export function submittedDataToWidthHeightStrings(sd: Record<string, unknown> | undefined | null): {
+export function submittedDataToWidthHeightStrings(sd: Submission | undefined | null): {
   width: string;
   height: string;
 } {
   if (!sd || typeof sd !== "object") return { width: "", height: "" };
-  const w = String(sd.width_mm ?? sd.widthMm ?? "").trim();
-  const h = String(sd.height_mm ?? sd.heightMm ?? "").trim();
+  const w = String(sd.width_mm ?? "").trim();
+  const h = String(sd.height_mm ?? "").trim();
   if (w || h) return { width: w, height: h };
   const leg = String(sd.dimensions ?? "").trim();
   const fromLeg = legacyDimensionTextToWidthHeight(leg);
@@ -95,10 +96,10 @@ export function submittedDataToWidthHeightStrings(sd: Record<string, unknown> | 
 }
 
 /** Dashboard / list: human-readable size from submission JSON. */
-export function formatSizeFromSubmittedData(sd: Record<string, unknown> | undefined | null): string {
+export function formatSizeFromSubmittedData(sd: Submission | undefined | null): string {
   if (!sd || typeof sd !== "object") return "";
-  const w = String(sd.width_mm ?? sd.widthMm ?? "").trim();
-  const h = String(sd.height_mm ?? sd.heightMm ?? "").trim();
+  const w = String(sd.width_mm ?? "").trim();
+  const h = String(sd.height_mm ?? "").trim();
   if (w && h) return `${w}x${h} mm`;
   const d = String(sd.dimensions ?? "").trim();
   if (!d) return "";

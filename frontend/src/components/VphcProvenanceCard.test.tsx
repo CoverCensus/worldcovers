@@ -1,6 +1,7 @@
 /**
  * @jest-environment jsdom
  */
+import { readSubmission } from "@/lib/submission";
 import { render, screen } from "@testing-library/react";
 import { VphcProvenanceCard } from "./VphcProvenanceCard";
 import { readVphcProvenance } from "@/lib/vphcProvenance";
@@ -20,7 +21,7 @@ const REAL_BLOB = {
 };
 
 function renderReal() {
-  return render(<VphcProvenanceCard provenance={readVphcProvenance(REAL_BLOB)!} />);
+  return render(<VphcProvenanceCard provenance={readVphcProvenance(readSubmission(REAL_BLOB).data)!} />);
 }
 
 describe("VphcProvenanceCard", () => {
@@ -51,9 +52,9 @@ describe("VphcProvenanceCard", () => {
   // 778 of the 2,062 ingested rows carry no flags. Those should read as clean,
   // not show an empty "Needs checking" heading.
   it("omits the needs-checking block when nothing is flagged", () => {
-    const provenance = readVphcProvenance({
+    const provenance = readVphcProvenance(readSubmission({
       vphc: { vphc_code: "VPHC-VA-ABINGDON-5", flags: [], why_unmatched: "" },
-    })!;
+    }).data)!;
     render(<VphcProvenanceCard provenance={provenance} />);
 
     expect(screen.queryByText("Needs checking")).toBeNull();
@@ -62,7 +63,7 @@ describe("VphcProvenanceCard", () => {
 
   it("renders nothing when the blob is empty", () => {
     const { container } = render(
-      <VphcProvenanceCard provenance={readVphcProvenance({ vphc: {} })!} />,
+      <VphcProvenanceCard provenance={readVphcProvenance(readSubmission({ vphc: {} }).data)!} />,
     );
 
     expect(container.innerHTML).toBe("");

@@ -20,6 +20,7 @@ jest.mock("@/services/letterings", () => ({ getLetterings: jest.fn().mockResolve
 jest.mock("@/constants/markingEnums", () => ({ getDateFormats: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/services/referenceWorks", () => ({ getReferenceWorks: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/services/markings", () => ({
+  ...jest.requireActual("@/services/markings"),
   normalizeImageUrl: (value: string) => value,
   getMarkingListImageUrl: () => null,
   getMarkingById: jest.fn().mockResolvedValue({ id: 7, town: "Burlington", state: "VT" }),
@@ -42,6 +43,26 @@ const editor: AuthUser = {
 beforeEach(() => jest.clearAllMocks());
 
 describe.each(["marking", "cover"])("%s Submission review permissions", (kind) => {
+  it("keeps known details readable and prevents approval of unrecognized fields", async () => {
+    (useAuth as jest.Mock).mockReturnValue(editor);
+    (getContribution as jest.Mock).mockResolvedValue(mapApiItemToContribution({
+      id: 9327, collection: 100, contributor: editor.id, status: "pending",
+      submitted_data: {
+        submission_kind: kind, type: kind === "cover" ? "FL" : "TOWNMARK",
+        description: "Recognized submitted description", new_field: "Unrecognized content",
+        ...(kind === "cover" ? { parent_marking_id: 7 } : {}),
+      },
+    }));
+    render(<TooltipProvider><MemoryRouter initialEntries={["/contribution/9327"]}>
+      <Routes><Route path="/contribution/:id" element={<ContributionDetail />} /></Routes>
+    </MemoryRouter></TooltipProvider>);
+    await screen.findByText("Recognized submitted description");
+    expect(screen.getByRole("alert").textContent).toContain("Approval is unavailable");
+    expect(screen.getByRole("button", { name: "Approve" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Return" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.queryByText(/Failed to render submitted data/)).toBeNull();
+  });
+
   const cases: { name: string; user: AuthUser | null; collection: number | null; status?: string; allowed: boolean }[] = [
     { name: "assigned Editor", user: editor, collection: 100, allowed: true },
     { name: "unassigned Editor viewing their own Submission", user: editor, collection: 200, allowed: false },

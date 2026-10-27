@@ -1,3 +1,5 @@
+import { SubmissionDataNotice } from "@/components/SubmissionDataNotice";
+
 import { useState, useEffect } from "react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
@@ -66,19 +68,11 @@ import {
 } from "@/services/contributions";
 
 
-/** Shape of the per-image metadata blobs stored in a contribution's submitted_data. */
 function toPositiveInt(value: unknown): number | null {
   const n = Number(value);
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-type ContributionImageMeta = {
-  storage_filename?: string;
-  original_filename?: string;
-  storageFilename?: string;
-  originalFilename?: string;
-  image_description?: string;
-};
 
 function buildContributionCatalogFields(input: MarkingFieldInput, countyName: string): CatalogFieldValues {
   return {
@@ -154,6 +148,7 @@ const ContributionDetail = () => {
     returnTo ?? dashboardHrefForTab(dashboardTab ?? fallbackTab);
   const backLabel = returnToLabel(returnTo);
   const canReview = canReviewContribution(user, contribution);
+  const unsupportedFields = contribution?.unsupportedSubmissionFields ?? [];
   /** True when this user submitted the Submission. */
   const isContributor =
     !!user &&
@@ -246,7 +241,7 @@ const ContributionDetail = () => {
   useEffect(() => {
     if (contributionId == null || !canReview) return;
     if (isCoverContributionData(contributionSubmittedData)) return;
-    const sd = (contributionSubmittedData ?? {}) as Record<string, unknown>;
+    const sd = (contributionSubmittedData ?? {});
     const referenceWorkIds = Array.isArray(sd.reference_work_ids)
       ? (sd.reference_work_ids as number[])
       : undefined;
@@ -297,6 +292,7 @@ const ContributionDetail = () => {
 
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
     if (!contribution || !canReview) return;
+    if (kind === "approve" && unsupportedFields.length > 0) return;
     if (kind !== "approve" && !comment.trim()) {
       setCommentError("A comment is required to reject or request revision.");
       return;
@@ -411,11 +407,7 @@ const ContributionDetail = () => {
     );
   }
 
-  const rawSubmitted = contribution.submittedData;
-  const sd: Record<string, unknown> =
-    typeof rawSubmitted === "object" && rawSubmitted !== null
-      ? (rawSubmitted as Record<string, unknown>)
-      : {};
+  const sd = contribution.submittedData;
   if (isCoverContributionData(sd)) {
     return (
       <CoverContributionDetail
@@ -426,12 +418,8 @@ const ContributionDetail = () => {
 
   const contributorComment = String(
     sd.contributor_comment ??
-      sd.contributorComment ??
-      sd.comment_for_editor ??
-      sd.commentForEditor ??
       sd.review_notes ??
-      sd.reviewNotes ??
-      sd.comment ??
+      sd.contributor_comment ??
       ""
   ).trim();
   // Trello T70: a county the contributor could not find in the list.
@@ -442,26 +430,10 @@ const ContributionDetail = () => {
   const imageRoot = baseImageUrl || "/media";
   const resolveStorageImageUrl = (storageFilename: string) =>
     normalizeImageUrl(`${imageRoot}/${storageFilename.replace(/^\/+/, "")}`);
-  const imageMetasRaw = (sd.image_metas ?? sd.imageMetas) as ContributionImageMeta[] | undefined;
-  const imageMetaSingle = sd.image_meta as ContributionImageMeta | undefined;
+  const imageMetasRaw = sd.image_metas;
+  const imageMetaSingle = sd.image_meta;
   const imageMetaList: Array<{ imageUrl: string; originalFilename?: string; description?: string }> = [];
-  const asImageUrlArray = (raw: unknown): string[] => {
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .map((item) => {
-        if (typeof item === "string") return item.trim();
-        if (!item || typeof item !== "object") return "";
-        const obj = item as Record<string, unknown>;
-        const fromUrl =
-          obj.url ?? obj.image_url ?? obj.imageUrl ?? obj.public_url ?? obj.publicUrl;
-        return typeof fromUrl === "string" ? fromUrl.trim() : "";
-      })
-      .filter((url) => url.length > 0);
-  };
-  const categorizedImageUrls = [
-    ...asImageUrlArray(sd.ratemark_images ?? sd.ratemarkImages ?? sd.RatemarkImages),
-    ...asImageUrlArray(sd.auxmark_images ?? sd.auxmarkImages ?? sd.AuxmarkImages),
-  ];
+  const categorizedImageUrls = [...(sd.ratemark_images ?? []), ...(sd.auxmark_images ?? [])];
   const seenImageUrls = new Set<string>();
   categorizedImageUrls.forEach((url) => {
     const normalized = normalizeImageUrl(url);
@@ -472,14 +444,14 @@ const ContributionDetail = () => {
   if (imageMetasRaw && Array.isArray(imageMetasRaw) && imageMetasRaw.length > 0) {
     for (const meta of imageMetasRaw) {
       if (meta && typeof meta === "object") {
-        const sf = meta.storage_filename ?? meta.storageFilename;
+        const sf = meta.storage_filename;
         if (sf) {
           const imageUrl = resolveStorageImageUrl(sf);
           if (!imageUrl || seenImageUrls.has(imageUrl)) continue;
           seenImageUrls.add(imageUrl);
           imageMetaList.push({
             imageUrl,
-            originalFilename: meta.original_filename ?? meta.originalFilename,
+            originalFilename: meta.original_filename,
             description: meta.image_description,
           });
         }
@@ -487,13 +459,13 @@ const ContributionDetail = () => {
     }
   }
   if (imageMetaList.length === 0 && imageMetaSingle) {
-    const sf = imageMetaSingle.storage_filename ?? imageMetaSingle.storageFilename;
+    const sf = imageMetaSingle.storage_filename;
     if (sf) {
       const imageUrl = resolveStorageImageUrl(sf);
       if (imageUrl) {
         imageMetaList.push({
           imageUrl,
-          originalFilename: imageMetaSingle.original_filename ?? imageMetaSingle.originalFilename,
+          originalFilename: imageMetaSingle.original_filename,
           description: imageMetaSingle.image_description,
         });
       }
@@ -530,7 +502,6 @@ const ContributionDetail = () => {
   try {
     const fieldData = { ...sd };
     delete fieldData.display_submitter_name;
-    delete fieldData.displaySubmitterName;
     const fieldInput = submittedDataToFieldInput(
       fieldData,
       { letteringOptions, dateFormatOptions },
@@ -768,7 +739,7 @@ const ContributionDetail = () => {
                       <Button
                         type="button"
                         onClick={() => submitDecision("approve")}
-                        disabled={submitting}
+                        disabled={submitting || unsupportedFields.length > 0}
                         className="bg-green-600 hover:bg-green-700"
                       >
                         <CheckCircle className="mr-2 h-4 w-4" />
@@ -834,6 +805,7 @@ const ContributionDetail = () => {
               </div>
 
               {editComparison && <EditComparisonCard entryLabel="marking" rows={editComparison} />}
+              <SubmissionDataNotice fields={unsupportedFields} />
               {pendingCover && (
                 <PendingCoverCard
                   summary={pendingCover}

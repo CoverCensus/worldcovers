@@ -26,7 +26,7 @@ jest.mock("@/constants/markingEnums", () => ({ getDateFormats: jest.fn().mockRes
 jest.mock("@/services/contributions", () => ({
   getContribution: jest.fn(), createContribution: jest.fn(),
   getDirectCatalogCodeSuggestion: jest.fn().mockResolvedValue({ catalogCode: "VA-7" }),
-  listContributions: jest.fn().mockResolvedValue({ rawItems: [] }),
+  listContributions: jest.fn().mockResolvedValue({ items: [] }),
 }));
 jest.mock("@/services/referenceWorks", () => ({
   ...jest.requireActual("@/services/referenceWorks"), getReferenceWorks: jest.fn().mockResolvedValue([]),

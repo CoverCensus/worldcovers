@@ -1,3 +1,4 @@
+import type { Submission } from "@/lib/submission";
 export type DateSeenGranularity =
   | "YEAR"
   | "MONTH"
@@ -160,7 +161,7 @@ export function validatePartialDate(input: PartialDateInput): PartialDateValidat
   };
 }
 
-export function partialDateInputFromSubmittedData(sd: Record<string, unknown>): PartialDateInput {
+export function partialDateInputFromSubmittedData(sd: Submission): PartialDateInput {
   return partialDateInputFromPayload(sd, {
     unknown: "cover_date_unknown",
     year: "cover_date_year",
@@ -168,9 +169,20 @@ export function partialDateInputFromSubmittedData(sd: Record<string, unknown>): 
     day: "cover_date_day",
     legacyDate: "cover_date",
     legacyGranularity: "cover_granularity",
-  }, {
-    legacyDate: "coverDate",
-    legacyGranularity: "coverGranularity",
+  });
+}
+
+export function markingBoundaryDateInputFromSubmission(
+  sd: Submission,
+  prefix: "marking_erd" | "marking_lrd",
+): PartialDateInput {
+  return partialDateInputFromPayload(sd, {
+    unknown: `${prefix}_unknown`,
+    year: `${prefix}_date_year`,
+    month: `${prefix}_date_month`,
+    day: `${prefix}_date_day`,
+    legacyDate: prefix,
+    legacyGranularity: `${prefix}_granularity`,
   });
 }
 

@@ -1,3 +1,4 @@
+import { readSubmission, SubmissionFormData, type Submission, type SubmissionRequest } from "@/lib/submission";
 /**
  * Contributions (v2 Contribution moderation tickets): list, read, submit, and
  * editor decisions (approve / reject / request-revision).
@@ -39,10 +40,23 @@ export interface ContributionApiItem {
   reviewNotes?: string | null;
   created_at?: string;
   createdAt?: string;
-  submitted_data?: Record<string, unknown>;
-  submittedData?: Record<string, unknown>;
+  submitted_data?: unknown;
+  submittedData?: unknown;
   display_name?: string;
   displayName?: string;
+  updatedAt?: string;
+  townDisplay?: string;
+  stateDisplay?: string;
+  typeDisplay?: string;
+  shapeDisplay?: string;
+  colorDisplay?: string;
+  sizeDisplay?: string;
+  imageUrl?: string;
+  description?: string;
+  isArchived?: boolean;
+  archivedAt?: string;
+  archivedByUsername?: string;
+  archiveReason?: string;
   marking_id?: number | null;
   markingId?: number | null;
   cover_id?: number | null;
@@ -73,9 +87,8 @@ export interface ContributionListResponse {
 /**
  * Normalized contribution for the SPA. Replaces the inline Contribution /
  * ContributionRecord / SubmittedData interfaces that used to live in the page
- * components. `submittedData` stays a loose record; callers read it through the
- * lib/contribution* accessors (contributionToFields, contributionImages,
- * contributionDisplay).
+ * components. `submittedData` is read once at this API boundary into the shared
+ * Submission type. Display helpers receive that type.
  */
 export interface Contribution {
   id: number;
@@ -85,8 +98,22 @@ export interface Contribution {
   contributorUsername: string;
   reviewNotes: string | null;
   createdAt: string;
-  submittedData: Record<string, unknown>;
+  submittedData: Submission;
+  unsupportedSubmissionFields?: string[];
   displayName?: string;
+  updatedAt?: string;
+  townDisplay?: string;
+  stateDisplay?: string;
+  typeDisplay?: string;
+  shapeDisplay?: string;
+  colorDisplay?: string;
+  sizeDisplay?: string;
+  imageUrl?: string;
+  description?: string;
+  isArchived?: boolean;
+  archivedAt?: string;
+  archivedByUsername?: string;
+  archiveReason?: string;
   markingId: number | null;
   coverId: number | null;
   /**
@@ -100,7 +127,7 @@ export interface Contribution {
    * the review page's current-vs-proposed table. Null unless a reviewer is
    * viewing an edit that awaits a decision (Trello T39).
    */
-  editBaseline: Record<string, unknown> | null;
+  editBaseline: Submission | null;
   /** The server's verdict on the submission's county, or null (Trello T70). */
   countyIntent: CountyIntent | null;
 }
@@ -122,8 +149,15 @@ function toNumberOrNull(v: unknown): number | null {
   return null;
 }
 
-function plainObjectOrNull(v: unknown): Record<string, unknown> | null {
-  return v != null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+function listImageUrl(item: ContributionApiItem): string {
+  const image = item.mainImage ?? item.main_image;
+  if (typeof image === "string") return image;
+  if (image && typeof image === "object") {
+    const row = image as { imageUrl?: unknown; image_url?: unknown };
+    const url = row.imageUrl ?? row.image_url;
+    if (typeof url === "string") return url;
+  }
+  return String(item.imageUrl ?? item.image_url ?? "");
 }
 
 /** First value that is neither null nor undefined, else null. */
@@ -136,10 +170,9 @@ function firstDefined(...vals: unknown[]): unknown {
 
 export function mapApiItemToContribution(item: ContributionApiItem): Contribution {
   const submittedRaw = item.submitted_data ?? item.submittedData ?? {};
-  const submittedData =
-    submittedRaw && typeof submittedRaw === "object"
-      ? (submittedRaw as Record<string, unknown>)
-      : {};
+  const parsed = readSubmission(submittedRaw);
+  const baselineRaw = firstDefined(item.edit_baseline, item.editBaseline);
+  const baseline = baselineRaw == null ? null : readSubmission(baselineRaw);
   return {
     id: item.id,
     collectionId: toNumberOrNull(item.collection),
@@ -150,14 +183,28 @@ export function mapApiItemToContribution(item: ContributionApiItem): Contributio
     ),
     reviewNotes: (item.review_notes ?? item.reviewNotes ?? null) as string | null,
     createdAt: String(item.created_at ?? item.createdAt ?? ""),
-    submittedData,
+    submittedData: parsed.data,
+    unsupportedSubmissionFields: [...parsed.unsupported, ...(baseline?.unsupported ?? [])],
     displayName: (item.display_name ?? item.displayName) as string | undefined,
+    updatedAt: String(item.updated_at ?? item.updatedAt ?? item.created_at ?? item.createdAt ?? ""),
+    townDisplay: String(item.town_display || item.townDisplay || parsed.data.town || ""),
+    stateDisplay: String(item.state_display || item.stateDisplay || parsed.data.state || ""),
+    typeDisplay: String(item.type_display || item.typeDisplay || item.type || parsed.data.type || ""),
+    shapeDisplay: String(item.shape_display || item.shapeDisplay || item.shapeName || item.shape || parsed.data.shape || ""),
+    colorDisplay: String(item.color_display || item.colorDisplay || item.color || parsed.data.color || ""),
+    sizeDisplay: String(item.sizeDisplay || item.size || parsed.data.dimensions || ""),
+    imageUrl: listImageUrl(item),
+    description: String(item.description || parsed.data.description || ""),
+    isArchived: (item.is_archived ?? item.isArchived) === true,
+    archivedAt: String(item.archived_at ?? item.archivedAt ?? ""),
+    archivedByUsername: String(item.archived_by_username ?? item.archivedByUsername ?? ""),
+    archiveReason: String(item.archive_reason ?? item.archiveReason ?? ""),
     // "marking" is what the detail serializer returns; without it the detail
     // page sees a null marking id and the approved-to-record redirect never fires.
     markingId: toNumberOrNull(firstDefined(item.marking_id, item.markingId, item.marking)),
     coverId: toNumberOrNull(firstDefined(item.cover_id, item.coverId)),
     sourceMarkingImage: sourceMarkingImageFromContribution(item),
-    editBaseline: plainObjectOrNull(firstDefined(item.edit_baseline, item.editBaseline)),
+    editBaseline: baseline?.data ?? null,
     countyIntent: countyIntentFromApi(item.county_intent),
   };
 }
@@ -207,8 +254,6 @@ export interface ContributionListResult {
   /** null when the API returns a bare array instead of a paginated envelope. */
   count: number | null;
   next: string | null;
-  /** Raw rows for callers (Dashboard) that derive image/display strings off the wire shape. */
-  rawItems: ContributionApiItem[];
 }
 
 /** GET /contributions/ with optional filters. Handles array or paginated responses. */
@@ -264,16 +309,16 @@ export async function listContributions(
   const next = !Array.isArray(data) && typeof (data as ContributionListResponse)?.next === "string"
     ? (data as ContributionListResponse).next as string
     : null;
-  return { items: rawItems.map(mapApiItemToContribution), count, next, rawItems };
+  return { items: rawItems.map(mapApiItemToContribution), count, next };
 }
 
 /** Load every submission owned by the signed-in user for My Submissions. */
 export async function listMyContributions(): Promise<{
-  items: ContributionApiItem[];
+  items: Contribution[];
   incomplete: boolean;
 }> {
   const pageSize = 100;
-  const all: ContributionApiItem[] = [];
+  const all: Contribution[] = [];
   for (let page = 1; ; page += 1) {
     let result: ContributionListResult;
     try {
@@ -282,7 +327,7 @@ export async function listMyContributions(): Promise<{
       if (page === 1) throw error;
       return { items: all, incomplete: true };
     }
-    all.push(...result.rawItems);
+    all.push(...result.items);
     if (!result.next) {
       return { items: all, incomplete: result.count !== null && all.length < result.count };
     }
@@ -325,7 +370,7 @@ function mapWriteResult(raw: unknown): ContributionWriteResult {
  * state; this function owns only CSRF + transport + response normalization.
  */
 export async function createContribution(
-  body: FormData | Record<string, unknown>,
+  body: SubmissionFormData | SubmissionRequest,
 ): Promise<ContributionWriteResult> {
   await ensureCsrfToken();
   const isMultipart = typeof FormData !== "undefined" && body instanceof FormData;
@@ -342,7 +387,7 @@ export async function createContribution(
  * catalog API. Thin wrapper over createContribution with the abandon flags.
  */
 export async function abandonCoverContributionDraft(contributionId: number): Promise<void> {
-  const form = new FormData();
+  const form = new SubmissionFormData();
   form.append("submission_kind", "cover");
   form.append("abandon_draft", "true");
   form.append("edit_contribution_id", String(contributionId));

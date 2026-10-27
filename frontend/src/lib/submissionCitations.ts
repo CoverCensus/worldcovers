@@ -1,3 +1,4 @@
+import type { Submission, SubmissionReference, SubmissionFormData } from "@/lib/submission";
 import type { EntryCitationItem } from "@/components/entry-detail/EntryCitationsCard";
 import type { ReferenceWorkRecord } from "@/services/referenceWorks";
 
@@ -6,10 +7,8 @@ export type ReferenceDetailInput = {
   citationUrl: string;
 };
 
-export type ReferenceDetailPayload = {
+export type ReferenceDetailPayload = Omit<SubmissionReference, "reference_work_id"> & {
   reference_work_id: number;
-  page_number?: string;
-  url?: string;
 };
 
 export function parseCitationDetail(text: string): ReferenceDetailInput {
@@ -24,88 +23,18 @@ export function parseCitationDetail(text: string): ReferenceDetailInput {
   return { pageNumber: page, citationUrl: url };
 }
 
-export function parseReferenceWorkIds(raw: unknown): number[] {
-  const values: unknown[] = [];
-  if (Array.isArray(raw)) {
-    values.push(...raw);
-  } else if (raw != null) {
-    values.push(raw);
+export function referenceDetailsForForm(rows: SubmissionReference[] = []): Record<number, ReferenceDetailInput> {
+  const result: Record<number, ReferenceDetailInput> = {};
+  for (const row of rows ?? []) {
+    const id = Number(row.reference_work_id);
+    if (!Number.isInteger(id) || id <= 0) continue;
+    result[id] = { pageNumber: row.page_number?.trim() ?? "", citationUrl: row.url?.trim() ?? "" };
   }
-
-  const parsed: number[] = [];
-  const seen = new Set<number>();
-
-  for (const value of values) {
-    if (Array.isArray(value)) {
-      value.forEach((v) => values.push(v));
-      continue;
-    }
-    const s = String(value ?? "").trim();
-    if (!s) continue;
-    if (s.startsWith("[") && s.endsWith("]")) {
-      try {
-        const json = JSON.parse(s);
-        if (Array.isArray(json)) {
-          json.forEach((v) => values.push(v));
-          continue;
-        }
-      } catch {
-        // Ignore malformed payloads from legacy records.
-      }
-    }
-    if (s.includes(",")) {
-      s.split(",").forEach((chunk) => values.push(chunk.trim()));
-      continue;
-    }
-    const n = Number.parseInt(s, 10);
-    if (Number.isNaN(n) || n <= 0 || seen.has(n)) continue;
-    seen.add(n);
-    parsed.push(n);
-  }
-
-  return parsed;
-}
-
-export function parseReferenceWorkDetails(raw: unknown): Record<number, ReferenceDetailInput> {
-  if (raw == null) return {};
-  let list: unknown = raw;
-  if (typeof raw === "string") {
-    const s = raw.trim();
-    if (!s) return {};
-    try {
-      list = JSON.parse(s);
-    } catch {
-      return {};
-    }
-  }
-  if (!Array.isArray(list)) {
-    if (list && typeof list === "object") {
-      list = Object.entries(list as Record<string, unknown>).map(([id, detail]) => ({
-        reference_work_id: id,
-        ...(detail && typeof detail === "object" ? detail : {}),
-      }));
-    } else {
-      return {};
-    }
-  }
-  const rows = list as unknown[];
-  const out: Record<number, ReferenceDetailInput> = {};
-  for (const row of rows) {
-    if (!row || typeof row !== "object") continue;
-    const rec = row as Record<string, unknown>;
-    const idRaw = rec.reference_work_id ?? rec.referenceWorkId;
-    const id = Number.parseInt(String(idRaw ?? ""), 10);
-    if (Number.isNaN(id) || id <= 0) continue;
-    out[id] = {
-      pageNumber: String(rec.page_number ?? rec.pageNumber ?? "").trim(),
-      citationUrl: String(rec.url ?? "").trim(),
-    };
-  }
-  return out;
+  return result;
 }
 
 export function appendSubmissionCitations(
-  form: FormData,
+  form: SubmissionFormData,
   ids: number[],
   details: ReferenceDetailPayload[],
 ): void {
@@ -116,14 +45,14 @@ export function appendSubmissionCitations(
 }
 
 export function submissionCitations(
-  data: Record<string, unknown>,
+  data: Submission,
   referenceWorks: ReferenceWorkRecord[],
 ): EntryCitationItem[] {
-  const rawIds = data.reference_work_ids ?? data.referenceWorkIds ?? data["reference_work_ids[]"];
-  const details = parseReferenceWorkDetails(data.reference_work_details ?? data.referenceWorkDetails);
+  const rawIds = data.reference_work_ids;
+  const details = referenceDetailsForForm(data.reference_work_details ?? []);
   const ids = rawIds == null
     ? Object.keys(details).map(Number)
-    : parseReferenceWorkIds(rawIds);
+    : rawIds;
   return ids.map((id) => {
     const detail = details[id];
     return {

@@ -1,3 +1,4 @@
+import type { Submission } from "@/lib/submission";
 // T39: what approving an edit would change, field by field.
 //
 // The API sends the target's current values (edit_baseline) in the same keys
@@ -17,7 +18,7 @@ import { submissionCitations } from "@/lib/submissionCitations";
 import type { CountyIntent } from "@/lib/contributionDisplay";
 import type { ReferenceWorkRecord } from "@/services/referenceWorks";
 
-type Data = Record<string, unknown>;
+type Data = Submission;
 
 export type ComparisonRow = {
   key: string;
@@ -33,47 +34,41 @@ export type ComparisonRow = {
  * One field's submit keys. `emptyKeeps`: approval ignores an empty value for
  * this field (cover type, institutional, backstamp), so "" is not a clear.
  */
-type FieldKeys = { name: string; keys: string[]; emptyKeeps?: boolean };
+type FieldKeys = { name: string; keys: (keyof Submission)[]; emptyKeeps?: boolean };
 
-const CITATION_KEYS = [
-  "reference_work_ids", "referenceWorkIds", "reference_work_ids[]",
-  "reference_work_details", "referenceWorkDetails",
-];
+const CITATION_KEYS: (keyof Submission)[] = ["reference_work_ids", "reference_work_details"];
 
-const boundaryKeys = (prefix: "marking_erd" | "marking_lrd", camel: string) => [
+const boundaryKeys = (prefix: "marking_erd" | "marking_lrd"): (keyof Submission)[] => [
   prefix, `${prefix}_granularity`, `${prefix}_unknown`,
   `${prefix}_date_year`, `${prefix}_date_month`, `${prefix}_date_day`,
-  camel, `${camel}Granularity`, `${camel}Unknown`,
-  `${camel}DateYear`, `${camel}DateMonth`, `${camel}DateDay`,
 ];
 
 const MARKING_FIELDS: FieldKeys[] = [
-  { name: "catalogCode", keys: ["catalog_code", "catalogCode"] },
+  { name: "catalogCode", keys: ["catalog_code"] },
   { name: "state", keys: ["state"] },
   // T70: "" means the edit says nothing about the county (approval leaves links alone).
   { name: "county", keys: ["county", "county_id"], emptyKeeps: true },
   { name: "town", keys: ["town"] },
-  { name: "type", keys: ["type", "marking_type", "markingType"] },
-  { name: "inscription", keys: ["inscription_txt", "inscriptionTxt"] },
-  { name: "manuscript", keys: ["is_manuscript", "isManuscript"] },
-  { name: "irregular", keys: ["is_irreg", "isIrreg", "isIrregular"] },
-  { name: "shape", keys: ["shape", "shape_id", "shapeId"] },
+  { name: "type", keys: ["type"] },
+  { name: "inscription", keys: ["inscription_txt"] },
+  { name: "manuscript", keys: ["is_manuscript"] },
+  { name: "irregular", keys: ["is_irreg"] },
+  { name: "shape", keys: ["shape", "shape_id"] },
   {
     name: "lettering",
     keys: [
-      "lettering_style_id", "letteringStyleId", "lettering_id", "lettering_style",
-      "letteringStyle", "lettering_style_name", "letteringStyleName", "lettering",
+      "lettering_style_id", "lettering_id", "lettering_style", "lettering_style_name", "lettering",
     ],
   },
-  { name: "color", keys: ["color", "color_id", "colorId"] },
-  { name: "width", keys: ["width_mm", "widthMm"] },
-  { name: "height", keys: ["height_mm", "heightMm"] },
+  { name: "color", keys: ["color", "color_id"] },
+  { name: "width", keys: ["width_mm"] },
+  { name: "height", keys: ["height_mm"] },
   { name: "impression", keys: ["impression"] },
-  { name: "rate", keys: ["rate_val", "rateVal"] },
-  { name: "dateFmt", keys: ["date_fmt", "dateFmt"] },
-  { name: "description", keys: ["desc", "description"] },
-  { name: "erd", keys: boundaryKeys("marking_erd", "markingErd") },
-  { name: "lrd", keys: boundaryKeys("marking_lrd", "markingLrd") },
+  { name: "rate", keys: ["rate_val"] },
+  { name: "dateFmt", keys: ["date_fmt"] },
+  { name: "description", keys: ["description"] },
+  { name: "erd", keys: boundaryKeys("marking_erd") },
+  { name: "lrd", keys: boundaryKeys("marking_lrd") },
   { name: "citations", keys: CITATION_KEYS },
 ];
 
@@ -85,14 +80,14 @@ const COVER_FIELDS: FieldKeys[] = [
   { name: "citations", keys: CITATION_KEYS },
 ];
 
-const COVER_DATE_KEYS = [
+const COVER_DATE_KEYS: (keyof Submission)[] = [
   "cover_date_unknown", "cover_date_year", "cover_date_month", "cover_date_day",
-  "cover_date", "cover_granularity", "coverDate", "coverGranularity",
+  "cover_date", "cover_granularity",
 ];
 
 const isEmpty = (value: unknown) => value == null || String(value).trim() === "";
 
-function markingKeys(name: string): string[] {
+function markingKeys(name: string): (keyof Submission)[] {
   const field = MARKING_FIELDS.find((f) => f.name === name);
   if (!field) throw new Error(`Unknown marking field "${name}"`);
   return field.keys;
@@ -108,7 +103,7 @@ function overlay(baseline: Data, sd: Data, fields: FieldKeys[]): Data {
   for (const field of fields) {
     if (!mentions(sd, field)) continue;
     for (const key of field.keys) delete merged[key];
-    for (const key of field.keys) if (key in sd) merged[key] = sd[key];
+    for (const key of field.keys) if (key in sd) Object.assign(merged, { [key]: sd[key] });
   }
   return merged;
 }
@@ -119,7 +114,7 @@ const yesNo = (value: boolean | null) => (value == null ? "" : value ? "Yes" : "
 /** "28.00" and "28" are the same size; compare sizes and rates as numbers. */
 function canonicalNumbers(data: Data): Data {
   const out = { ...data };
-  for (const key of ["width_mm", "widthMm", "height_mm", "heightMm", "rate_val", "rateVal"]) {
+  for (const key of ["width_mm", "height_mm", "rate_val"] as const) {
     const n = Number(text(out[key]));
     if (text(out[key]) && Number.isFinite(n)) out[key] = String(n);
   }
@@ -222,7 +217,7 @@ export function compareCoverEdit(
   // Approval rebuilds the cover's date from the edit alone
   // (_sync_cover_date_seen), so an edit without a date clears it.
   for (const key of COVER_DATE_KEYS) delete proposed[key];
-  for (const key of COVER_DATE_KEYS) if (key in sd) proposed[key] = sd[key];
+  for (const key of COVER_DATE_KEYS) if (key in sd) Object.assign(proposed, { [key]: sd[key] });
   const date = (data: Data) => formatPartialDateInput(partialDateInputFromSubmittedData(data));
   const bool = (value: unknown) =>
     value === true || text(value) === "true" ? "Yes" : value === false || text(value) === "false" ? "No" : "";
