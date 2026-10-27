@@ -10,7 +10,7 @@ from pathlib import Path
 
 from decouple import config
 
-from woco.site_role import derive_site_role, validate_site_role
+from woco.site_role import absolute_frontend_url, derive_site_role, validate_site_role
 
 
 ###
@@ -441,9 +441,11 @@ LOGIN_REQUEST_ADMIN_EMAIL = config("LOGIN_REQUEST_ADMIN_EMAIL", default="")
 
 ###################################################################################################
 
-FRONTEND_BASE_URL = config("FRONTEND_BASE_URL", default=f"https://{DJANGO_APP_HOSTNAME}")
+FRONTEND_BASE_URL = absolute_frontend_url(
+    config("FRONTEND_BASE_URL", default=f"https://{DJANGO_APP_HOSTNAME}")
+)
 HEADLESS_FRONTEND_URLS = {
-    "account_confirm_email": f"{FRONTEND_BASE_URL.rstrip('/')}/verify-email?key={{key}}",
-    "account_signup": f"{FRONTEND_BASE_URL.rstrip('/')}/auth",
-    "account_reset_password": f"{FRONTEND_BASE_URL.rstrip('/')}/auth",
+    "account_confirm_email": f"{FRONTEND_BASE_URL}/verify-email?key={{key}}",
+    "account_signup": f"{FRONTEND_BASE_URL}/auth",
+    "account_reset_password": f"{FRONTEND_BASE_URL}/auth",
 }

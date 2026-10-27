@@ -446,10 +446,7 @@ class ForgotPasswordApiView(APIView):
         uid = urlsafe_base64_encode(force_bytes(user.pk))
         token = _password_reset_token_generator.make_token(user)
 
-        frontend_base = getattr(settings, "FRONTEND_BASE_URL", None) or f"https://{settings.DJANGO_APP_HOSTNAME}"
-        if not frontend_base.startswith(("http://", "https://")):
-            frontend_base = f"https://{frontend_base.lstrip('/')}"
-        reset_link = f"{frontend_base.rstrip('/')}/reset-password?uid={uid}&token={token}"
+        reset_link = f"{settings.FRONTEND_BASE_URL}/reset-password?uid={uid}&token={token}"
 
         site_name = settings.SITE_NAME
         site_name_html = escape(site_name)

@@ -14,7 +14,9 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from common.api.auth import PENDING_LOGIN_REQUESTS_LIMIT
-from woco.site_role import derive_site_role, validate_site_role
+from django.conf import settings
+
+from woco.site_role import absolute_frontend_url, derive_site_role, validate_site_role
 
 User = get_user_model()
 
@@ -40,6 +42,20 @@ class SiteRoleDerivationTests(SimpleTestCase):
         self.assertEqual(validate_site_role("staging"), "staging")
         with self.assertRaises(ImproperlyConfigured):
             validate_site_role("development")
+
+
+    def test_frontend_url_always_has_a_scheme(self):
+        # T109: prod's FRONTEND_BASE_URL is "hellowoco.app"; without a scheme
+        # allauth resolved the confirm link against the signup API path.
+        self.assertEqual(absolute_frontend_url("hellowoco.app"), "https://hellowoco.app")
+        self.assertEqual(absolute_frontend_url(" hellowoco.app/ "), "https://hellowoco.app")
+        self.assertEqual(absolute_frontend_url("https://woco.dev/"), "https://woco.dev")
+        self.assertEqual(absolute_frontend_url("http://localhost:8080"), "http://localhost:8080")
+
+    def test_account_email_links_are_absolute(self):
+        for name, url in settings.HEADLESS_FRONTEND_URLS.items():
+            with self.subTest(name=name):
+                self.assertTrue(url.startswith(("https://", "http://")), url)
 
 
 class SiteInfoTests(TestCase):
