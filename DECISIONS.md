@@ -1147,7 +1147,9 @@ including the allauth account routes (`/auth/login/`, `/auth/signup/`,
 `/auth/email/verify/`, `/auth/session/`). Register a slashless route in
 both forms (`path(route + suffix, ...)` over `("", "/")`) and list both
 forms in `common.auth_diagnostics.OPERATIONS`, which is what gives the
-account responses `Cache-Control: no-store` and an `X-Request-ID`.
+account responses `Cache-Control: no-store` and an `X-Request-ID`. The
+two `/filters` calls in `frontend/src/lib/api.ts` are slashless but dead
+(no caller, no backend route); do not copy them.
 
 **Don't:** Add an SPA call to a slashless URL, or rely on the server's
 nginx config to route one. Do not drop the slashless account routes while
