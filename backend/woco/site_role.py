@@ -35,7 +35,7 @@ def absolute_frontend_url(value: str) -> str:
     path, so the signup confirm link pointed at /api/v2/auth/signup/... (T109).
     """
     url = value.strip().rstrip("/")
-    if not url.startswith(("http://", "https://")):
+    if urlsplit(url).scheme.lower() not in ("http", "https"):
         url = f"https://{url.lstrip('/')}"
     return url
 

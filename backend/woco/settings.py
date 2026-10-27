@@ -441,8 +441,9 @@ LOGIN_REQUEST_ADMIN_EMAIL = config("LOGIN_REQUEST_ADMIN_EMAIL", default="")
 
 ###################################################################################################
 
+# An empty FRONTEND_BASE_URL= in .env falls back to this site's own host.
 FRONTEND_BASE_URL = absolute_frontend_url(
-    config("FRONTEND_BASE_URL", default=f"https://{DJANGO_APP_HOSTNAME}")
+    config("FRONTEND_BASE_URL", default="") or DJANGO_APP_HOSTNAME
 )
 HEADLESS_FRONTEND_URLS = {
     "account_confirm_email": f"{FRONTEND_BASE_URL}/verify-email?key={{key}}",

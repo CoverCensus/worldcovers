@@ -6,6 +6,7 @@ reports new rows. Two endpoints fix the two halves: GET /site/ tells the SPA
 which site it is on (so the test site can point requesters at production), and
 GET /login-requests/pending/ shows Administrators the rows waiting on them.
 """
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
 from django.core.exceptions import ImproperlyConfigured
@@ -14,8 +15,6 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from common.api.auth import PENDING_LOGIN_REQUESTS_LIMIT
-from django.conf import settings
-
 from woco.site_role import absolute_frontend_url, derive_site_role, validate_site_role
 
 User = get_user_model()
@@ -43,7 +42,6 @@ class SiteRoleDerivationTests(SimpleTestCase):
         with self.assertRaises(ImproperlyConfigured):
             validate_site_role("development")
 
-
     def test_frontend_url_always_has_a_scheme(self):
         # T109: prod's FRONTEND_BASE_URL is "hellowoco.app"; without a scheme
         # allauth resolved the confirm link against the signup API path.
@@ -51,6 +49,7 @@ class SiteRoleDerivationTests(SimpleTestCase):
         self.assertEqual(absolute_frontend_url(" hellowoco.app/ "), "https://hellowoco.app")
         self.assertEqual(absolute_frontend_url("https://woco.dev/"), "https://woco.dev")
         self.assertEqual(absolute_frontend_url("http://localhost:8080"), "http://localhost:8080")
+        self.assertEqual(absolute_frontend_url("HTTPS://hellowoco.app"), "HTTPS://hellowoco.app")
 
     def test_account_email_links_are_absolute(self):
         for name, url in settings.HEADLESS_FRONTEND_URLS.items():
