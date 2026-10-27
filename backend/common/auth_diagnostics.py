@@ -19,9 +19,13 @@ class OmitAccessQuery(logging.Filter):
 
 OPERATIONS = {
     "/api/v2/auth/signup": "signup",
+    "/api/v2/auth/signup/": "signup",
     "/api/v2/auth/login": "login",
+    "/api/v2/auth/login/": "login",
     "/api/v2/auth/email/verify": "verify_email",
+    "/api/v2/auth/email/verify/": "verify_email",
     "/api/v2/auth/session": "session",
+    "/api/v2/auth/session/": "session",
     "/api/v2/login/": "login",
     "/api/login/": "login",
     "/api/login": "login",

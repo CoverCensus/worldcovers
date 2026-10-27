@@ -90,9 +90,19 @@ def browser_view(view_class: type[APIView], *, signup: bool = False):
     return handle
 
 
+ACCOUNT_VIEWS = {
+    "signup": browser_view(AccountSignupView, signup=True),
+    "login": browser_view(AccountLoginView),
+    "email/verify": browser_view(VerifyEmailView),
+    "session": browser_view(SessionView),
+}
+
+# Serve each route with and without a trailing slash. The SPA calls the slashed
+# form like every other /api/v2/ route; hellowoco.app's nginx 301s the
+# slashless one, and a browser replays a redirected POST as a GET (T109). The
+# slashless form stays for clients holding an older bundle.
 urlpatterns = [
-    path("signup", browser_view(AccountSignupView, signup=True)),
-    path("login", browser_view(AccountLoginView)),
-    path("email/verify", browser_view(VerifyEmailView)),
-    path("session", browser_view(SessionView)),
+    path(route + suffix, view)
+    for route, view in ACCOUNT_VIEWS.items()
+    for suffix in ("", "/")
 ]

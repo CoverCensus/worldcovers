@@ -11,7 +11,7 @@ interface AccountResponse {
 
 export async function accountPost(path: string, values: Record<string, string>): Promise<AccountResponse> {
   await ensureCsrfToken();
-  const { data, status, headers } = await apiClient.post<AccountResponse>(`/auth/${path}`, values, {
+  const { data, status, headers } = await apiClient.post<AccountResponse>(`/auth/${path}/`, values, {
     validateStatus: (code) => code < 500,
   });
   if (status !== 200 && status !== 401) {
