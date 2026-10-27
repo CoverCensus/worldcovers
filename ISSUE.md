@@ -26,10 +26,12 @@ Hosted checks completed on `woco.dev` v1.9.4 on 2026-10-25 in the session
 - Logout cleared both open tabs for the Contributor and Editor.
 
 The check found review buttons visible outside the assigned Collection,
-although the API correctly denied approval. Local commit `594075f` fixes
+although the API correctly denied approval. Commit `594075f` fixes
 button visibility and code previews on Marking and Cover Submission pages
 and sets VERSION to 1.9.6. All 680 frontend tests, type checking, and build
-passed. That commit is not yet published or deployed.
+passed. The fix is now published on staging and included in the merged
+[production promotion #212](https://github.com/CoverCensus/worldcovers/pull/212).
+That publication result is separate from the dated browser checks above.
 
 Evidence: staging Marking 105553 and Submission 9327; browser evidence in
 `/private/tmp/woco-onboarding-2026-10-25/`; regression tests in
@@ -46,7 +48,23 @@ change. Do not roll back to unguarded login after unverified accounts exist;
 keep verification guards and disable signup while correcting a failure.
 No rollout or account change is authorized by this status update.
 
-## Review baseline (2026-10-25)
+## Review baseline (2026-10-26)
+
+Focused review of T93, the related T37 workflow, account publication notes,
+and local setup instructions. Local `staging` and published staging both
+point to `eb593941c37bb0abe3a5c55b5f256a9e41665d6f`, upstream `origin/staging`.
+Published main is `fdf2c48eb16bb083e1d042a4790d0c01821e7a4d` (PR #212).
+There are no unpublished commits. The shared Submission implementation,
+tests, and related documentation remain uncommitted and are not deployed.
+This sync reuses the local test and browser results recorded under T93;
+it ran no application tests or hosted data operations.
+
+## Historical review baselines
+
+The following revisions, publication states, and board states describe their
+review dates. They are not the current baseline.
+
+**Previous focused review, 2026-10-25:**
 
 Reviewed current source, test evidence, previous sessions, and live Trello.
 Published staging is `0c8fd522c27693872d8ceff105ae787c615bd73e`; published
@@ -55,11 +73,6 @@ main is `84105ec04d3030fe0831e6af57805d071d8a92de`. Local `staging` is at
 October 18/19 changes below are published. No tests or live data operations
 were rerun for this synchronization. Michael approved these corrections and
 confirmed that Michigan is in production and all its checks are complete.
-
-## Historical review baselines
-
-The following revisions, publication states, and board states describe their
-review dates. They are not the current baseline.
 
 **Latest focused review before email signup:** 2026-10-19, checked Dates Seen and Manuscript
 display/search changes against live Trello, including archived cards.
@@ -918,7 +931,7 @@ scope and acceptance; no new task is needed.
 | [T90](https://trello.com/c/A3dTmufk/208-t90-upgrade-django-rest-framework-to-3183-for-three-high-severity-advisories) | Upgrade Django REST framework to 3.18.3 for three high-severity advisories | Testing |
 | [T91](https://trello.com/c/Ffca8oa3/209-t91-add-the-ianthom-foundation-funding-line-to-acknowledgements) | Add the IanThom Foundation funding line to Acknowledgements | Testing |
 | [T92](https://trello.com/c/GRCAFvqL/210-t92-offer-a-provisional-cover-from-a-cover-like-upload-during-a-marking-edit) | Offer a provisional Cover from a cover-like upload during a Marking edit | Testing |
-| [T93](https://trello.com/c/obBYLbrF/211-t93-review-page-fails-on-a-marking-submission-that-carries-a-staged-cover) | Review page fails on a Marking submission that carries a staged Cover | To Do |
+| [T93](https://trello.com/c/obBYLbrF/211-t93-review-page-fails-on-a-marking-submission-that-carries-a-staged-cover) | Review page fails on a Marking submission that carries a staged Cover | Testing under Michael; local fix, hosted verification remains |
 | [T94](https://trello.com/c/3PutrcL0/212-t94-scope-the-maine-philatelic-society-data-import) | Scope the Maine Philatelic Society data import | To Do |
 | [T95](https://trello.com/c/FXv46Rqx/213-t95-keep-the-list-position-after-viewing-a-marking-add-previous-next-on-the-marking-page) | Keep the list position after viewing a Marking; add Previous/Next on the Marking page | To Do |
 | [T96](https://trello.com/c/PTNeonZ9/214-t96-show-submission-counts-on-the-dashboard-needs-revision-drafts-pending-each-a-link) | Show submission counts on the Dashboard: needs revision, drafts, pending, each a link | Testing |
@@ -939,6 +952,36 @@ no domain purchase, DNS change, SSO implementation, or email sending follows
 from that result. T93's staged-Cover review report remains separate from the
 completed signup check. T87's saved-caption editing shipped in PR #192, with
 production deployment recorded October 20; it remains Testing.
+
+### T93 - Shared frontend Submission definition
+
+The local fix replaces page-specific JSON field lists with the typed readers
+in `frontend/src/lib/submission.ts`. Forms, draft loading, lists, comparisons,
+and review pages use that shared definition. It includes `pending_cover`,
+`pending_cover_contribution_id`, and `created_from_contribution_id`. Unknown
+fields leave known details readable and disable approval on the individual
+review page. This does not add a backend Submission model or extend that
+approval safeguard to bulk review.
+
+Local checks passed: 703 frontend tests in 118 suites, type checking, and
+build; lint had no errors and three existing coverage-output warnings.
+The October 26 browser demonstration at `http://localhost:8080` saved and
+reopened Contribution 20, submitted it, reviewed the accompanying Cover,
+approved the Marking, then reviewed and approved child Contribution 21.
+Marking 111470 (`APMC-VT-M0002`) shows Associated Covers (1), linked to Cover
+2694 (`APMC-VT-C0001`), with Envelope, year 1851, and Backstamp retained.
+Both Entries are labeled local tests. No-image confirmations were used;
+this demonstration did not verify uploads, crops, or image transfer.
+
+The implementation remains uncommitted and is not deployed. Remaining:
+publish and deploy through the normal release process; establish the site
+of the reported Contribution 4339 and verify its review page there; repeat
+the combined workflow with images on the deployed revision. Record site,
+revision, and results. T37 retains its broader image checks and acceptance;
+T92 remains the separate provisional Cover workflow from a Marking edit.
+Evidence: `frontend/src/lib/submission.test.ts`,
+`frontend/src/pages/ContributionDetail.pendingCover.test.tsx`, and
+DECISIONS.md, "Use One Frontend Submission Definition".
 
 # MD/MI editor-review batch (Ian email, 18 Jun 2026)
 
@@ -1377,7 +1420,7 @@ remain separate. Routes are registered in `frontend/src/App.tsx`.
 | Feature | Where implemented | Status |
 |---------|-------------------|--------------|
 | F2 Collection Discovery | SPA (`/`, `/search`, `/record/:id`, `/covers/:coverId`); S5 document exports not found | To Do: S5; Testing: T78 (fix published and production deployment succeeded; current production verification, acceptance, and the public-identity policy question remain open) |
-| F3 Submission Workflow | SPA contribution and editor review flows, including bulk approval/rejection (see notes below) | Testing: T72; Doing: S35 (implemented; verification and acceptance remain) |
+| F3 Submission Workflow | SPA contribution and editor review flows, including bulk approval/rejection (see notes below) | Testing: T72, T93 (local shared Submission fix; not deployed); Doing: S35 (implemented; verification and acceptance remain) |
 | F4 Comment Workflow | Deferred: standalone Entry comments; existing notes to the Editor are part of Submissions | Backlog: S16, S17 |
 | F5 Image Attachments | SPA (image upload inside contribution forms) | Testing: T73 |
 | F6 Reference Work Management | Editors add and edit through the SPA Reference Works page (`/reference-works`, October 22) and `/api/v2/reference-works/`; Django `/admin/` remains; no delete in the application | Testing: S19 |

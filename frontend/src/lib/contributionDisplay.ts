@@ -1,39 +1,17 @@
+import { isCoverSubmission as isCoverContributionData, type Submission } from "@/lib/submission";
 /** Helpers to distinguish cover vs marking rows in Contribution.submitted_data. */
 import {
   formatPartialDateInput,
-  partialDateInputFromPayload,
+  markingBoundaryDateInputFromSubmission,
   partialDateInputFromSubmittedData,
   type PartialDateInput,
 } from "@/lib/partialDate";
 import { formatSizeFromSubmittedData } from "@/lib/dimensionsMm";
 import { ENTRY_LABELS } from "@/labels/entry";
-import { COVER_TYPE_LABELS, isCoverTypeCode } from "@/lib/coverTypes";
+import { COVER_TYPE_LABELS } from "@/lib/coverTypes";
 
 
-export function isCoverContributionData(sd: Record<string, unknown> | null | undefined): boolean {
-  if (!sd || typeof sd !== "object") return false;
-  const kind = String(sd.submission_kind ?? sd.submissionKind ?? "")
-    .trim()
-    .toLowerCase();
-  if (kind === "cover") return true;
-  if (kind === "marking") return false;
-
-  const type = String(sd.type ?? "")
-    .trim()
-    .toUpperCase();
-  const hasCoverType = isCoverTypeCode(type);
-  const hasMarkingType =
-    type === "TOWNMARK" || type === "RATEMARK" || type === "AUXMARK";
-  const hasTown = String(sd.town ?? "").trim().length > 0;
-  const parentRaw = sd.parent_marking_id ?? sd.marking_id ?? sd.parentMarkingId;
-  const hasParent =
-    parentRaw != null && String(parentRaw).trim() !== "" && String(parentRaw) !== "0";
-  const partialDate = partialDateInputFromSubmittedData(sd);
-  const hasCoverDate =
-    partialDate.unknown || partialDate.year.length > 0 || partialDate.month.length > 0 || partialDate.day.length > 0;
-
-  return Boolean(hasParent && (hasCoverType || hasCoverDate) && !hasTown && !hasMarkingType);
-}
+export { isCoverSubmission as isCoverContributionData } from "@/lib/submission";
 
 /**
  * "Cover" or "Marking" for a contribution -- Ian, 2026-09-21: "from this I do
@@ -46,27 +24,27 @@ export function isCoverContributionData(sd: Record<string, unknown> | null | und
  * misclassification visible and reportable instead of silent.
  */
 export function entryKindForContribution(
-  sd: Record<string, unknown>,
+  sd: Submission,
 ): "Cover" | "Marking" {
   return isCoverContributionData(sd) ? "Cover" : "Marking";
 }
 
-export function parentMarkingIdFromContribution(sd: Record<string, unknown>): number | null {
-  const raw = sd.parent_marking_id ?? sd.marking_id ?? sd.parentMarkingId;
+export function parentMarkingIdFromContribution(sd: Submission): number | null {
+  const raw = sd.parent_marking_id;
   if (raw == null || raw === "") return null;
   const n = parseInt(String(raw), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-export function materializedCoverIdFromContribution(sd: Record<string, unknown>): number | null {
-  const raw = sd.cover_id ?? sd.coverId;
+export function materializedCoverIdFromContribution(sd: Submission): number | null {
+  const raw = sd.cover_id;
   if (raw == null || raw === "") return null;
   const n = parseInt(String(raw), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 export function coverContributionDisplayName(
-  sd: Record<string, unknown>,
+  sd: Submission,
   contributionId: number,
   parentLocation?: { town?: string | null; state?: string | null },
 ): string {
@@ -84,7 +62,7 @@ export function coverContributionDisplayName(
 
 export function coverContributionDisplayLabel(
   contribution: { displayName?: unknown; display_name?: unknown },
-  sd: Record<string, unknown>,
+  sd: Submission,
   contributionId: number,
   parentLocation?: { town?: string | null; state?: string | null },
 ): string {
@@ -113,7 +91,7 @@ export interface ContributionCardPresentation {
 
 interface ContributionCardPresentationInput {
   id: number;
-  submittedData: Record<string, unknown>;
+  submittedData: Submission;
   town?: unknown;
   state?: unknown;
   type?: unknown;
@@ -127,44 +105,20 @@ function displayValue(value: unknown): string {
   return text === "-" || text.toLowerCase() === "unknown" ? "" : text;
 }
 
-function markingBoundaryDate(
-  sd: Record<string, unknown>,
-  prefix: "marking_erd" | "marking_lrd",
-): string {
-  const camelPrefix = prefix === "marking_erd" ? "markingErd" : "markingLrd";
-  return formatPartialDateInput(
-    partialDateInputFromPayload(
-      sd,
-      {
-        unknown: `${prefix}_unknown`,
-        year: `${prefix}_date_year`,
-        month: `${prefix}_date_month`,
-        day: `${prefix}_date_day`,
-        legacyDate: prefix,
-        legacyGranularity: `${prefix}_granularity`,
-      },
-      {
-        unknown: `${camelPrefix}Unknown`,
-        year: `${camelPrefix}DateYear`,
-        month: `${camelPrefix}DateMonth`,
-        day: `${camelPrefix}DateDay`,
-        legacyDate: camelPrefix,
-        legacyGranularity: `${camelPrefix}Granularity`,
-      },
-    ),
-  );
+function markingBoundaryDate(sd: Submission, prefix: "marking_erd" | "marking_lrd"): string {
+  return formatPartialDateInput(markingBoundaryDateInputFromSubmission(sd, prefix));
 }
 
-function markingDateLabel(sd: Record<string, unknown>): string {
+function markingDateLabel(sd: Submission): string {
   const earliest =
     markingBoundaryDate(sd, "marking_erd") ||
-    displayValue(sd.first_seen ?? sd.firstSeen);
+    displayValue(sd.first_seen);
   const latest =
     markingBoundaryDate(sd, "marking_lrd") ||
-    displayValue(sd.last_seen ?? sd.lastSeen);
+    displayValue(sd.last_seen);
   if (earliest && latest && earliest !== latest) return `${earliest} - ${latest}`;
   if (earliest || latest) return earliest || latest;
-  return displayValue(sd.date_range ?? sd.dateRange);
+  return displayValue(sd.date_range);
 }
 
 export function contributionCardPresentation({
@@ -196,7 +150,7 @@ export function contributionCardPresentation({
     const coverDate = formatPartialDateInput(partialDateInputFromSubmittedData(sd));
     if (coverDate) fields.push({ label: "Cover date", value: coverDate });
   } else {
-    const inscription = displayValue(sd.inscription_txt ?? sd.inscriptionTxt);
+    const inscription = displayValue(sd.inscription_txt);
     const dateSeen = markingDateLabel(sd);
     const shapeLabel = displayValue(shape) || displayValue(sd.shape);
     const sizeLabel = displayValue(size) || formatSizeFromSubmittedData(sd);
@@ -232,12 +186,12 @@ function truthy(v: unknown): boolean {
 }
 
 export function pendingCoverFromSubmittedData(
-  sd: Record<string, unknown> | null | undefined,
+  sd: Submission | null | undefined,
 ): PendingCoverSummary | null {
   const raw = sd?.pending_cover;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const pc = raw as Record<string, unknown>;
-  const metas = Array.isArray(pc.image_metas) ? (pc.image_metas as Array<Record<string, unknown>>) : [];
+  const pc = raw;
+  const metas = pc.image_metas ?? [];
   return {
     type: String(pc.type ?? "").trim().toUpperCase(),
     date: partialDateInputFromSubmittedData(pc),
@@ -253,7 +207,7 @@ export function pendingCoverFromSubmittedData(
 
 /** Set on the Marking submission once approval created its Cover submission. */
 export function pendingCoverContributionIdFromSubmittedData(
-  sd: Record<string, unknown> | null | undefined,
+  sd: Submission | null | undefined,
 ): number | null {
   const raw = sd?.pending_cover_contribution_id;
   if (raw == null || raw === "") return null;
@@ -263,7 +217,7 @@ export function pendingCoverContributionIdFromSubmittedData(
 
 /** Set on a cover contribution that approval created from a Marking submission. */
 export function createdFromContributionIdFromSubmittedData(
-  sd: Record<string, unknown> | null | undefined,
+  sd: Submission | null | undefined,
 ): number | null {
   const raw = sd?.created_from_contribution_id;
   if (raw == null || raw === "") return null;
@@ -273,7 +227,7 @@ export function createdFromContributionIdFromSubmittedData(
 
 /** Trello T70: a county the contributor typed because it was not in the list. Never applied by approval. */
 export function countyProposedFromSubmittedData(
-  sd: Record<string, unknown> | null | undefined,
+  sd: Submission | null | undefined,
 ): string {
   return String(sd?.county_proposed ?? "").trim();
 }

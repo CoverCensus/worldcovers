@@ -1,12 +1,13 @@
+import { readSubmission } from "@/lib/submission";
 import { readVphcProvenance, describeVphcUnmatchedReason } from "./vphcProvenance";
 
 describe("readVphcProvenance", () => {
   it("returns null for a contribution that did not come from the ingest", () => {
-    expect(readVphcProvenance({ state: "VA", town: "Richmond" })).toBeNull();
+    expect(readVphcProvenance(readSubmission({ state: "VA", town: "Richmond" }).data)).toBeNull();
   });
 
   it("reads the blob apply_vphc_ledger writes", () => {
-    const p = readVphcProvenance({
+    const p = readVphcProvenance(readSubmission({
       vphc: {
         src: "T1:r8",
         flags: [],
@@ -17,7 +18,7 @@ describe("readVphcProvenance", () => {
         rules_version: 2,
         why_unmatched: "",
       },
-    });
+    }).data);
 
     expect(p).not.toBeNull();
     expect(p!.code).toBe("VPHC-VA-ABINGDON-5");
@@ -30,9 +31,9 @@ describe("readVphcProvenance", () => {
   // A reviewer scanning the queue should meet the flags that mean "this may be
   // wrong" before the ones that mean "we fixed this for you".
   it("sorts uncertain flags ahead of repaired ones", () => {
-    const p = readVphcProvenance({
+    const p = readVphcProvenance(readSubmission({
       vphc: { flags: ["century_inferred", "state_unknown", "county_repaired", "date_unresolved"] },
-    });
+    }).data);
 
     expect(p!.flags.map((f) => f.code)).toEqual([
       "date_unresolved",
@@ -49,7 +50,7 @@ describe("readVphcProvenance", () => {
   });
 
   it("explains a flag with the pipeline's own wording", () => {
-    const p = readVphcProvenance({ vphc: { flags: ["date_low_confidence"] } });
+    const p = readVphcProvenance(readSubmission({ vphc: { flags: ["date_low_confidence"] } }).data);
     expect(p!.flags[0].label).toBe("Date low confidence");
     expect(p!.flags[0].reason).toContain("run was too short to corroborate the century");
   });
@@ -57,17 +58,17 @@ describe("readVphcProvenance", () => {
   // The crossexam vocabulary can grow. A flag we don't recognise is the one a
   // reviewer most needs to see, so it must survive rather than be filtered out.
   it("keeps a flag that is not in the glossary", () => {
-    const p = readVphcProvenance({ vphc: { flags: ["some_new_flag"] } });
+    const p = readVphcProvenance(readSubmission({ vphc: { flags: ["some_new_flag"] } }).data);
     expect(p!.flags).toHaveLength(1);
     expect(p!.flags[0].label).toBe("Some new flag");
     expect(p!.flags[0].severity).toBe("uncertain");
   });
 
-  it("survives a malformed blob", () => {
-    expect(readVphcProvenance({ vphc: "nope" })).toBeNull();
-    expect(readVphcProvenance({ vphc: ["nope"] })).toBeNull();
-    expect(readVphcProvenance({ vphc: {} })!.flags).toEqual([]);
-    expect(readVphcProvenance({ vphc: { flags: "not-an-array" } })!.flags).toEqual([]);
+  it("rejects malformed provenance at the boundary", () => {
+    expect(() => readSubmission({ vphc: "nope" })).toThrow(/Submission.vphc/);
+    expect(() => readSubmission({ vphc: ["nope"] })).toThrow(/Submission.vphc/);
+    expect(readVphcProvenance(readSubmission({ vphc: {} }).data)!.flags).toEqual([]);
+    expect(() => readSubmission({ vphc: { flags: "not-an-array" } })).toThrow(/Submission.vphc.flags/);
   });
 });
 

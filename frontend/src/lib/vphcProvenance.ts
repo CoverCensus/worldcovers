@@ -1,3 +1,4 @@
+import type { Submission } from "@/lib/submission";
 // Reader for the `vphc` provenance blob that apply_vphc_ledger attaches to
 // every contribution produced by the VPHC ingest.
 //
@@ -108,10 +109,10 @@ export function describeVphcUnmatchedReason(code: string): string {
 
 // Returns null for any contribution that did not come from the VPHC ingest,
 // which is what the caller uses to decide whether to render the strip at all.
-export function readVphcProvenance(sd: Record<string, unknown>): VphcProvenance | null {
+export function readVphcProvenance(sd: Submission): VphcProvenance | null {
   const raw = sd.vphc;
   if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const blob = raw as Record<string, unknown>;
+  const blob = raw;
 
   const rawFlags = Array.isArray(blob.flags) ? blob.flags : [];
   const flags = rawFlags

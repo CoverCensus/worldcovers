@@ -1,3 +1,4 @@
+import { readSubmission } from "@/lib/submission";
 import { submittedDataToFieldInput } from "./contributionToFields";
 
 const lookups = {
@@ -7,15 +8,15 @@ const lookups = {
 
 describe("submittedDataToFieldInput", () => {
   it("shows submitted Dates Seen at their recorded precision", () => {
-    const fields = submittedDataToFieldInput({ marking_dates_seen: [
+    const fields = submittedDataToFieldInput(readSubmission({ marking_dates_seen: [
       { date_year: 1840, granularity: "YEAR", date: "1840-01-01" },
       { date_month: 6, date_day: 12, granularity: "MONTH_DAY", date: null },
-    ] }, lookups, { contributionId: 56 });
+    ] }).data, lookups, { contributionId: 56 });
     expect(fields.datesSeen).toBe("1840, JUN 12 (year unknown)");
   });
   it("accepts the T70 county keys and maps the county name", () => {
     const fields = submittedDataToFieldInput(
-      { state: "Virginia", town: "Onancock", county: "Accomack", county_id: "9", county_proposed: "" },
+      readSubmission({ state: "Virginia", town: "Onancock", county: "Accomack", county_id: "9", county_proposed: "" }).data,
       lookups,
       { contributionId: 56 },
     );
@@ -23,7 +24,7 @@ describe("submittedDataToFieldInput", () => {
   });
   it("accepts pending marking ERD/LRD keys and formats them by precision", () => {
     const fieldInput = submittedDataToFieldInput(
-      {
+      readSubmission({
         submission_kind: "marking",
         state: "VA",
         town: "Richmond",
@@ -32,7 +33,7 @@ describe("submittedDataToFieldInput", () => {
         marking_erd_granularity: "YEAR",
         marking_lrd: "1850-12-31",
         marking_lrd_granularity: "DAY",
-      },
+      }).data,
       lookups,
       { contributionId: 56 },
     );
@@ -43,12 +44,12 @@ describe("submittedDataToFieldInput", () => {
 
   it("falls back to marking ERD/LRD when legacy seen fields are empty", () => {
     const fieldInput = submittedDataToFieldInput(
-      {
+      readSubmission({
         first_seen: "",
         last_seen: "",
         marking_erd: "1845-01-01",
         marking_lrd: "1850-12-31",
-      },
+      }).data,
       lookups,
       { contributionId: 56 },
     );
@@ -59,7 +60,7 @@ describe("submittedDataToFieldInput", () => {
 
   it("formats marking ERD/LRD component dates without a year", () => {
     const fieldInput = submittedDataToFieldInput(
-      {
+      readSubmission({
         submission_kind: "marking",
         state: "VA",
         town: "Richmond",
@@ -68,7 +69,7 @@ describe("submittedDataToFieldInput", () => {
         marking_erd_date_day: "1",
         marking_lrd_date_year: "1850",
         marking_lrd_date_day: "14",
-      },
+      }).data,
       lookups,
       { contributionId: 56 },
     );
@@ -79,14 +80,14 @@ describe("submittedDataToFieldInput", () => {
 
   it("formats explicit unknown marking ERD/LRD flags", () => {
     const fieldInput = submittedDataToFieldInput(
-      {
+      readSubmission({
         submission_kind: "marking",
         state: "VA",
         town: "Richmond",
         type: "TOWNMARK",
         marking_erd_unknown: true,
         marking_lrd_unknown: true,
-      },
+      }).data,
       lookups,
       { contributionId: 56 },
     );
@@ -97,14 +98,14 @@ describe("submittedDataToFieldInput", () => {
 
   it("preserves manuscript and irregular flags from string form payloads", () => {
     const fieldInput = submittedDataToFieldInput(
-      {
+      readSubmission({
         submission_kind: "marking",
         state: "VA",
         town: "Richmond",
         type: "TOWNMARK",
         is_manuscript: "true",
         is_irreg: "false",
-      },
+      }).data,
       lookups,
       { contributionId: 57 },
     );
@@ -115,14 +116,14 @@ describe("submittedDataToFieldInput", () => {
 
   it("preserves manuscript and irregular flags from camelCase payloads", () => {
     const fieldInput = submittedDataToFieldInput(
-      {
+      readSubmission({
         submissionKind: "marking",
         state: "VA",
         town: "Richmond",
         type: "TOWNMARK",
         isManuscript: true,
         isIrreg: true,
-      },
+      }).data,
       lookups,
       { contributionId: 58 },
     );
@@ -133,7 +134,7 @@ describe("submittedDataToFieldInput", () => {
 
   it("accepts attribution opt-in metadata without rendering it as a field", () => {
     const fieldInput = submittedDataToFieldInput(
-      {
+      readSubmission({
         submission_kind: "marking",
         state: "VA",
         town: "Richmond",
@@ -142,7 +143,7 @@ describe("submittedDataToFieldInput", () => {
         displaySubmitterName: true,
         no_marking_image: true,
         noMarkingImage: true,
-      },
+      }).data,
       lookups,
       { contributionId: 38 },
     );
@@ -156,7 +157,7 @@ describe("submittedDataToFieldInput", () => {
   // matters most for the adapter's allowlist.
   it("renders a VPHC ingest payload without tripping the allowlist", () => {
     const fieldInput = submittedDataToFieldInput(
-      {
+      readSubmission({
         submission_kind: "marking",
         type: "TOWNMARK",
         state: "VA",
@@ -178,7 +179,7 @@ describe("submittedDataToFieldInput", () => {
           rules_version: 2,
           why_unmatched: "ambiguous",
         },
-      },
+      }).data,
       lookups,
       { contributionId: 4173 },
     );
@@ -190,7 +191,7 @@ describe("submittedDataToFieldInput", () => {
 
   it("displays the bare lettering name a VPHC edit submission carries", () => {
     const fieldInput = submittedDataToFieldInput(
-      { edit_marking_id: 91, lettering: "Serif" },
+      readSubmission({ edit_marking_id: 91, lettering: "Serif" }).data,
       lookups,
       { contributionId: 4173 },
     );
@@ -202,7 +203,7 @@ describe("submittedDataToFieldInput", () => {
   // lettering, which must read as "absent" rather than the string "null".
   it("treats a null lettering as no lettering", () => {
     const fieldInput = submittedDataToFieldInput(
-      { edit_marking_id: 91, lettering: null },
+      readSubmission({ edit_marking_id: 91, lettering: null }).data,
       lookups,
       { contributionId: 4173 },
     );
@@ -210,19 +211,19 @@ describe("submittedDataToFieldInput", () => {
     expect(fieldInput.letteringName).toBe("");
   });
 
-  it("still throws on a genuinely unknown key", () => {
-    expect(() =>
-      submittedDataToFieldInput({ some_new_field: "x" }, lookups, { contributionId: 99 }),
-    ).toThrow(/Unknown submitted_data key "some_new_field"/);
+  it("keeps known fields readable and reports an unknown key at the boundary", () => {
+    const parsed = readSubmission({ town: "Richmond", some_new_field: "x" });
+    expect(parsed.unsupported).toEqual(["Submission.some_new_field"]);
+    expect(submittedDataToFieldInput(parsed.data, lookups, { contributionId: 99 }).town).toBe("Richmond");
   });
 
   it("does not display ARC semi-circle dimensions as a diameter", () => {
     const fieldInput = submittedDataToFieldInput(
-      {
+      readSubmission({
         shape: "ARC - Arc or Semi-circle",
         width_mm: "32",
         height_mm: "19",
-      },
+      }).data,
       lookups,
       { contributionId: 57 },
     );

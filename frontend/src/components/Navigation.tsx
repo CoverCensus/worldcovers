@@ -10,7 +10,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Menu, X, LogOut, KeyRound, ChevronDown, LayoutDashboard, Settings } from "lucide-react";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { signOut } from "@/lib/auth";
@@ -24,6 +24,9 @@ export const Navigation = () => {
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const user = useAuth();
   const navigate = useNavigate();
+  // T108: on the home page the seal is large and hangs below the bar over the hero;
+  // on inner pages it stays inside the bar so it never covers page content.
+  const isHome = useLocation().pathname === "/";
   const { toast } = useToast();
 
   const hasEditorAccess =
@@ -73,15 +76,25 @@ export const Navigation = () => {
   return (
     <nav className="bg-card border-b border-border sticky top-0 z-50 shadow-archival-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
+        <div className="flex justify-between items-center h-20">
           {/* Logo: the Society seal opens uspcs.org (T99); the name still goes home. */}
           <div className="flex items-center space-x-2">
             <ExternalLink
               href={ORG_URL}
               aria-label={`${ORG_NAME} website`}
-              className="flex items-center"
+              className={isHome ? "flex items-start self-start pt-8 md:pt-16" : "flex items-center"}
             >
-              <img src={sealImage} alt={ORG_NAME} width={32} height={32} className="w-8 h-8 rounded-sm" />
+              <img
+                src={sealImage}
+                alt={ORG_NAME}
+                width={isHome ? 128 : 64}
+                height={isHome ? 128 : 64}
+                className={
+                  isHome
+                    ? "w-24 h-24 md:w-32 md:h-32 rounded-full bg-card ring-4 ring-card shadow-archival-md"
+                    : "w-16 h-16 rounded-sm"
+                }
+              />
             </ExternalLink>
             <NavLink
               to="/"

@@ -1,6 +1,7 @@
+import { SubmissionFormData, type Submission, type SubmissionRequest, type PendingCoverSubmission } from "@/lib/submission";
 import { Navigation } from "@/components/Navigation";
 import {
-  appendSubmissionCitations, parseReferenceWorkIds, parseReferenceWorkDetails, parseCitationDetail,
+  appendSubmissionCitations, referenceDetailsForForm, parseCitationDetail,
   type ReferenceDetailInput, type ReferenceDetailPayload,
 } from "@/lib/submissionCitations";
 import { Footer } from "@/components/Footer";
@@ -42,7 +43,7 @@ import {
 import { DRAFT_COVER_FROM_EDIT, PENDING_COVER_SECTION } from "@/labels/guidelines";
 import {
   partialDateInputFromDateSeen,
-  partialDateInputFromPayload,
+  markingBoundaryDateInputFromSubmission as markingBoundaryDateFromPayload,
   partialDateInputFromSubmittedData,
   validatePartialDate,
   type PartialDateInput,
@@ -133,31 +134,7 @@ const EMPTY_PARTIAL_DATE: PartialDateInput = {
 
 type MarkingBoundaryPrefix = "marking_erd" | "marking_lrd";
 
-function markingBoundaryDateFromPayload(
-  sd: Record<string, unknown>,
-  prefix: MarkingBoundaryPrefix,
-): PartialDateInput {
-  const camelPrefix = prefix === "marking_erd" ? "markingErd" : "markingLrd";
-  return partialDateInputFromPayload(
-    sd,
-    {
-      unknown: `${prefix}_unknown`,
-      year: `${prefix}_date_year`,
-      month: `${prefix}_date_month`,
-      day: `${prefix}_date_day`,
-      legacyDate: prefix,
-      legacyGranularity: `${prefix}_granularity`,
-    },
-    {
-      unknown: `${camelPrefix}Unknown`,
-      year: `${camelPrefix}DateYear`,
-      month: `${camelPrefix}DateMonth`,
-      day: `${camelPrefix}DateDay`,
-      legacyDate: camelPrefix,
-      legacyGranularity: `${camelPrefix}Granularity`,
-    },
-  );
-}
+
 
 function partialDateKey(value: PartialDateInput): string {
   return JSON.stringify({
@@ -173,7 +150,7 @@ function partialDateHasValue(value: PartialDateInput): boolean {
 }
 
 function appendMarkingBoundaryDate(
-  form: FormData,
+  form: SubmissionFormData,
   prefix: MarkingBoundaryPrefix,
   value: PartialDateValue,
 ) {
@@ -194,7 +171,7 @@ function appendMarkingBoundaryDate(
 function markingBoundaryDatePayload(
   prefix: MarkingBoundaryPrefix,
   value: PartialDateValue,
-): Record<string, unknown> {
+): Submission {
   if (value.unknown) return { [`${prefix}_unknown`]: true };
   return {
     [`${prefix}_unknown`]: false,
@@ -360,58 +337,6 @@ function sameMediaPath(a: string, b: string): boolean {
   const ta = tail(a);
   const tb = tail(b);
   return ta !== "" && tb !== "" && (ta === tb || ta.endsWith(`/${tb}`) || tb.endsWith(`/${ta}`));
-}
-
-function submittedValue(
-  sd: Record<string, unknown>,
-  snakeKey: string,
-  camelKey?: string,
-): unknown {
-  return sd[snakeKey] ?? (camelKey ? sd[camelKey] : undefined);
-}
-
-function submittedString(
-  sd: Record<string, unknown>,
-  snakeKey: string,
-  camelKey?: string,
-): string {
-  const value = submittedValue(sd, snakeKey, camelKey);
-  return value != null && value !== "" ? String(value).trim() : "";
-}
-
-function submittedBool(
-  sd: Record<string, unknown>,
-  snakeKey: string,
-  camelKey?: string,
-): boolean {
-  const value = submittedValue(sd, snakeKey, camelKey);
-  if (value === true) return true;
-  if (value === false || value == null) return false;
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string") {
-    return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
-  }
-  return false;
-}
-
-function submittedNumber(
-  sd: Record<string, unknown>,
-  snakeKey: string,
-  camelKey?: string,
-): number {
-  const value = submittedValue(sd, snakeKey, camelKey);
-  if (typeof value === "number") return value;
-  if (typeof value === "string" && value.trim() !== "") return Number(value);
-  return NaN;
-}
-
-function submittedArray(
-  sd: Record<string, unknown>,
-  snakeKey: string,
-  camelKey?: string,
-): unknown[] {
-  const value = submittedValue(sd, snakeKey, camelKey);
-  return Array.isArray(value) ? value : [];
 }
 
 const Contribute = () => {
@@ -973,7 +898,7 @@ const Contribute = () => {
       .then((contribution) => {
         if (cancelled) return;
         setLoadedContributionStatus(String(contribution.status ?? "").toLowerCase() || null);
-        const sd = contribution.submittedData as Record<string, unknown> | undefined;
+        const sd = contribution.submittedData;
         if (!sd || typeof sd !== "object") {
           setEditLoadDone(true);
           return;
@@ -985,9 +910,7 @@ const Contribute = () => {
         const colorVal = getStr(sd.color);
         const typeVal = getStr(sd.type);
         const loadedCatalogCode = getStr(
-          (sd as Record<string, unknown>).catalog_code ??
-            (sd as Record<string, unknown>).catalogCode ??
-            (sd as Record<string, unknown>).code,
+          sd.catalog_code,
         );
         setState(stateVal);
         setTown(townVal);
@@ -1000,31 +923,29 @@ const Contribute = () => {
         }
         if (typeVal) setMarkingType(typeVal);
         setDisplaySubmitterName(
-          String(submittedValue(sd, "display_submitter_name", "displaySubmitterName")) === "true",
+          String(sd.display_submitter_name) === "true",
         );
         setContributorComment(
-          getStr(submittedValue(sd, "contributor_comment", "contributorComment")),
+          getStr(sd.contributor_comment),
         );
-        const loadedNoMarkingImage = submittedBool(sd, "no_marking_image", "noMarkingImage");
+        const loadedNoMarkingImage = sd.no_marking_image === true;
         setNoMarkingImage(loadedNoMarkingImage);
         setShape(shapeVal || "");
         setColor(colorVal || "");
-        const wh = submittedDataToWidthHeightStrings(sd as Record<string, unknown>);
+        const wh = submittedDataToWidthHeightStrings(sd);
         setWidthMm(wh.width);
         setHeightMm(wh.height);
-        setIsManuscript(submittedBool(sd, "is_manuscript", "isManuscript"));
+        setIsManuscript(sd.is_manuscript === true);
         const loadedImpression = getStr(sd.impression);
         setImpression(loadedImpression || "Normal");
-        setIsIrregular(submittedBool(sd, "is_irreg", "isIrreg"));
-        setInscriptionText(getStr(submittedValue(sd, "inscription_txt", "inscriptionTxt")));
-        setDescription(getStr(submittedValue(sd, "desc", "description")));
-        const draftRate = getStr(submittedValue(sd, "rate_val", "rateVal"));
+        setIsIrregular(sd.is_irreg === true);
+        setInscriptionText(getStr(sd.inscription_txt));
+        setDescription(getStr(sd.description));
+        const draftRate = getStr(sd.rate_val);
         setRateValue(formatRateNumber(draftRate) || draftRate);
-        const referenceWorkIds = parseReferenceWorkIds(
-          sd.reference_work_ids ?? sd.referenceWorkIds ?? sd["reference_work_ids[]"]
-        );
-        const referenceDetails = parseReferenceWorkDetails(
-          submittedValue(sd, "reference_work_details", "referenceWorkDetails")
+        const referenceWorkIds = (sd.reference_work_ids ?? []);
+        const referenceDetails = referenceDetailsForForm(
+          sd.reference_work_details
         );
         setPendingReferenceWorkIds(referenceWorkIds);
         setReferenceDetailsById(referenceDetails);
@@ -1032,10 +953,10 @@ const Contribute = () => {
           setSelectedReferenceWorks([]);
         }
         const lid =
-          submittedValue(sd, "lettering_id") ??
-          submittedValue(sd, "lettering_style_id", "letteringStyleId");
+          sd.lettering_id ??
+          sd.lettering_style_id;
         setLetteringId(lid != null ? String(lid) : "");
-        const dateFmtCode = getStr(sd.date_fmt ?? sd.dateFmt);
+        const dateFmtCode = getStr(sd.date_fmt);
         if (dateFmtCode) {
           // dateFormatOptions is loaded by a separate effect; resolve once
           // the options arrive. For draft-rehydrate we look up by description
@@ -1066,9 +987,9 @@ const Contribute = () => {
         // Trello T37: a saved Cover rides the draft as pending_cover.
         const savedPendingCover = sd.pending_cover;
         if (savedPendingCover && typeof savedPendingCover === "object" && !Array.isArray(savedPendingCover)) {
-          const pc = savedPendingCover as Record<string, unknown>;
+          const pc = savedPendingCover;
           const mediaBase = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "") || "/media";
-          const pcMetas = Array.isArray(pc.image_metas) ? (pc.image_metas as Array<{ storage_filename?: string }>) : [];
+          const pcMetas = pc.image_metas ?? [];
           setPendingCoverOn(true);
           setPendingCoverFields({
             type: String(pc.type ?? "").trim().toUpperCase(),
@@ -1093,16 +1014,12 @@ const Contribute = () => {
         // edit-marking flow) so the remove button records removals in
         // `removedExistingImageKeys` and the contributor can reorder / set the
         // default across them and any new uploads.
-        const submittedMarkingImages = submittedArray(sd, "marking_images", "markingImages")
+        const submittedMarkingImages = (sd.marking_images ?? [])
           .map((v) => (typeof v === "string" ? v.trim() : ""))
           .filter((v) => v.length > 0);
-        const metas = submittedArray(sd, "marking_image_metas", "markingImageMetas") as Array<{
-          storage_filename?: string;
-          storageFilename?: string;
-          image_description?: string;
-        }>;
+        const metas = sd.marking_image_metas ?? [];
         const metaFilename = (m: (typeof metas)[number]) =>
-          (m?.storage_filename ?? m?.storageFilename ?? "").replace(/^\/+/, "");
+          (m?.storage_filename ?? "").replace(/^\/+/, "");
         let existingUrls: string[] = submittedMarkingImages;
         if (existingUrls.length === 0) {
           const baseUrl =
@@ -1144,21 +1061,13 @@ const Contribute = () => {
         // the marking's current images (the draft only snapshots field
         // edits, not images) and (b) we can compare its modified_date to
         // the baseline stamped in submitted_data and flag a stale draft.
-        const editMarkingIdNum = submittedNumber(sd, "edit_marking_id", "editMarkingId");
+        const editMarkingIdNum = Number(sd.edit_marking_id);
         setCanChangeSubmitterName(!(Number.isFinite(editMarkingIdNum) && editMarkingIdNum > 0));
         if (Number.isFinite(editMarkingIdNum) && editMarkingIdNum > 0) {
           setResumedEditMarkingId(editMarkingIdNum);
-          const baselineRaw = submittedValue(
-            sd,
-            "marking_modified_at_baseline",
-            "markingModifiedAtBaseline",
-          );
+          const baselineRaw = sd.marking_modified_at_baseline;
           const baseline = typeof baselineRaw === "string" ? baselineRaw : null;
-          const removedKeys = submittedArray(
-            sd,
-            "removed_existing_image_keys",
-            "removedExistingImageKeys",
-          );
+          const removedKeys = sd.removed_existing_image_keys ?? [];
           if (removedKeys.length > 0) {
             setRemovedExistingImageKeys(removedKeys.map((k) => String(k)));
           }
@@ -1369,12 +1278,10 @@ const Contribute = () => {
     };
 
     listContributions({ status: "draft", ordering: "-created_at" })
-      .then(({ rawItems }) => {
+      .then(({ items }) => {
         if (cancelled) return;
-        const match = rawItems.find((r) => {
-          const sd = (r.submitted_data ?? r.submittedData) as
-            | Record<string, unknown>
-            | undefined;
+        const match = items.find((r) => {
+          const sd = r.submittedData;
           const epi = sd?.edit_marking_id;
           if (epi == null || epi === "") return false;
           return Number(epi) === Number(editMarkingId);
@@ -1566,7 +1473,7 @@ const Contribute = () => {
     const file = item.originalFile ?? item.file;
     setDraftCoverSaving(true);
     try {
-      const form = new FormData();
+      const form = new SubmissionFormData();
       form.append("submission_kind", "cover");
       form.append("save_as_draft", "true");
       // State routes the draft to its Collection. The loaded record usually has
@@ -2083,7 +1990,7 @@ const Contribute = () => {
 
     setSubmitting(true);
     try {
-      let body: FormData | Record<string, unknown>;
+      let body: SubmissionFormData | SubmissionRequest;
 
       const derivedIsCircular = isCircularType(shapeVal);
       const widthToSend = widthMm.trim();
@@ -2129,7 +2036,7 @@ const Contribute = () => {
       const sendPendingCover = showPendingCoverSection && pendingCoverOn;
       const dropPendingCover = showPendingCoverSection && !pendingCoverOn && isEditContribution;
       if (allImageFiles.length > 0 || isEditMarking || sendPendingCover) {
-        const form = new FormData();
+        const form = new SubmissionFormData();
         if (isStateEditor && !isMarkingEditAction) {
           form.append("marking_dates_seen", JSON.stringify(datesToSend));
         }
@@ -2228,7 +2135,7 @@ const Contribute = () => {
               is_backstamp: pendingCoverFields.isBackstamp,
               description: pendingCoverFields.description.trim(),
               no_cover_image: pendingCoverFields.noImage,
-            }),
+            } satisfies PendingCoverSubmission),
           );
           for (const file of pendingCoverFiles) {
             form.append("pending_cover_image", file, file.name);
@@ -2906,7 +2813,7 @@ const Contribute = () => {
                             try {
                               await createContribution({
                                 edit_contribution_id: editContributionId,
-                                abandon_draft: "true",
+                                abandon_draft: true,
                               });
                               navigate(`/edit/${resumedEditMarkingId}`, { replace: true });
                             } catch (err: unknown) {

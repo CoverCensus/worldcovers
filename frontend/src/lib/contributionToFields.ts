@@ -1,18 +1,15 @@
+import type { Submission } from "@/lib/submission";
 // Adapter: turn a contribution's submitted_data blob into the structured
 // MarkingFieldInput consumed by buildMarkingFields. The goal is that
 // ContributionDetail renders the same field sequence as RecordDetail.
 //
-// Fail-loud policy: every key we read OR deliberately ignore is listed in
-// KNOWN_SUBMITTED_DATA_KEYS. Any key we have not seen before causes the
-// adapter to throw; ContributionDetail catches the throw and renders a
-// visible error banner. This keeps the page from silently dropping fields
-// when the backend payload grows.
+// Input is the shared Submission type, read at the API boundary.
 
 import type { MarkingFieldInput } from "@/lib/markingFields";
 import { formatRateValue } from "@/lib/rateDisplay";
 import {
   formatPartialDateInput,
-  partialDateInputFromPayload,
+  markingBoundaryDateInputFromSubmission,
   formatDateSeenLike,
 } from "@/lib/partialDate";
 import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
@@ -22,118 +19,6 @@ export interface ContributionLookups {
   letteringOptions: { id: number; name: string }[];
   dateFormatOptions: { id: number; name: string; description?: string }[];
 }
-
-// Every submitted_data key the adapter knows about. Split into
-// "consumed" (mapped into the field view) and "ignored" (meta keys that
-// don't appear in the catalog field list -- comments, image arrays, etc.).
-// To add a new field: add the key here AND map it inside
-// submittedDataToFieldInput. To deliberately ignore a new meta key: add
-// the key here only.
-export const KNOWN_SUBMITTED_DATA_KEYS: ReadonlySet<string> = new Set([
-  // consumed: identity / location / type
-  "state",
-  "town",
-  // Trello T70: the town's county. county_id is what approval links; county
-  // is the display name; county_proposed is a county not in the list, shown
-  // to the Editor and never applied. snake_case only: the form sends these
-  // keys itself, and the API bounds exactly these names.
-  "county", "county_id", "county_proposed",
-  "type",
-  "marking_type", "markingType",
-  "is_manuscript", "isManuscript",
-  // consumed: inscription text
-  "inscription_txt", "inscriptionTxt",
-  // consumed: dates seen
-  "first_seen", "firstSeen",
-  "last_seen", "lastSeen",
-  "date_range", "dateRange",
-  "dates_observed", "datesObserved",
-  "marking_dates_seen",
-  // consumed: editor-only ERD/LRD (fall back to these for earliest/latest)
-  "marking_erd", "markingErd",
-  "marking_erd_granularity", "markingErdGranularity",
-  "marking_erd_unknown", "markingErdUnknown",
-  "marking_erd_date_year", "markingErdDateYear",
-  "marking_erd_date_month", "markingErdDateMonth",
-  "marking_erd_date_day", "markingErdDateDay",
-  "marking_lrd", "markingLrd",
-  "marking_lrd_granularity", "markingLrdGranularity",
-  "marking_lrd_unknown", "markingLrdUnknown",
-  "marking_lrd_date_year", "markingLrdDateYear",
-  "marking_lrd_date_month", "markingLrdDateMonth",
-  "marking_lrd_date_day", "markingLrdDateDay",
-  // consumed: physical attributes
-  "shape", "shape_id", "shapeId",
-  "color", "color_id", "colorId",
-  "rate_val", "rateVal",
-  "impression",
-  "is_irreg", "isIrreg", "isIrregular",
-  "width_mm", "widthMm",
-  "height_mm", "heightMm",
-  // consumed: lookup-resolved fields (id forms + nested + name fallbacks)
-  "lettering_style_id", "letteringStyleId",
-  "lettering_id",
-  "lettering_style", "letteringStyle",
-  "lettering_style_name", "letteringStyleName",
-  // "lettering" is the bare name form. contribution_apply resolves the
-  // Lettering FK through it (_resolve_fk name_key), so a payload carrying it
-  // WILL set lettering on approval -- it has to be shown, not ignored.
-  "lettering",
-  "date_fmt", "dateFmt",
-  // consumed: free-text catalog suggestions from the contributor
-  "description",
-  "desc",
-  // ignored: contributor comments (rendered separately above the field list)
-  "contributor_comment", "contributorComment",
-  "comment_for_editor", "commentForEditor",
-  "review_notes", "reviewNotes",
-  "comment",
-  // ignored: attribution opt-in (rendered outside the catalog field list)
-  "display_submitter_name", "displaySubmitterName",
-  // ignored: image payloads (rendered in the carousel above the field list)
-  "image_meta",
-  "image_metas", "imageMetas",
-  "no_marking_image", "noMarkingImage",
-  "marking_images", "markingImages",
-  "marking_image_metas", "markingImageMetas",
-  "marking_image_tags", "markingImageTags",
-  "cover_image_metas", "coverImageMetas",
-  "cover_image_tags", "coverImageTags",
-  "ratemark_images", "ratemarkImages", "RatemarkImages",
-  "auxmark_images", "auxmarkImages", "AuxmarkImages",
-  // ignored: bookkeeping that doesn't appear in the field list
-  "original_marking_id", "originalMarkingId",
-  // ignored: marking-edit draft bookkeeping. edit_marking_id is the target
-  // marking; marking_modified_at_baseline is the timestamp captured when the
-  // draft was last saved so resume can detect upstream edits.
-  "edit_marking_id", "editMarkingId",
-  "existing_image_tags", "existingImageTags",
-  "marking_modified_at_baseline", "markingModifiedAtBaseline",
-  "post_office_id", "postOfficeId",
-  "submission_kind", "submissionKind",
-  "entity_type", "entityType",
-  "routing_deferred", "routingDeferred",
-  "catalog_code", "catalogCode",
-  "catalog_code_source", "catalogCodeSource",
-  "catalog_code_reference_code", "catalogCodeReferenceCode",
-  "catalog_code_region_abbrev", "catalogCodeRegionAbbrev",
-  // ignored: submit-mode controls that older rows captured into
-  // submitted_data before the backend started stripping them.
-  "save_as_draft", "saveAsDraft",
-  "status",
-  // ignored: VPHC ingest provenance (apply_vphc_ledger). A nested blob of
-  // source coordinates and uncertainty -- src, cancel_no, vphc_code,
-  // rules_version, why_unmatched, flags, county, state. None of it is a
-  // catalog field, and contribution_apply never reads it, so it has no row
-  // in the field list. The reviewer-facing parts already reach the page by
-  // other routes: the cancel number as the reference-work citation detail,
-  // and the human-readable source line inside "desc".
-  "vphc",
-  // ignored: reference-work payload from the contribute form
-  "reference_work_ids", "referenceWorkIds",
-  "reference_work_ids[]",
-  "reference_work_details", "referenceWorkDetails",
-]);
 
 function toStr(v: unknown): string {
   return v == null ? "" : String(v).trim();
@@ -147,22 +32,6 @@ function normalizeMarkingType(raw: string): MarkingTypeValue | null {
   return null;
 }
 
-function booleanValue(value: unknown): boolean | null {
-  if (value === true) return true;
-  if (value === false || value == null) return false;
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (["1", "true", "yes", "on"].includes(normalized)) return true;
-    if (["0", "false", "no", "off", ""].includes(normalized)) return false;
-  }
-  return null;
-}
-
-function isManuscriptValue(sd: Record<string, unknown>): boolean {
-  return booleanValue(sd.is_manuscript ?? sd.isManuscript) === true;
-}
-
 function yearOnly(value: unknown): string {
   const s = toStr(value);
   if (!s) return "";
@@ -170,30 +39,8 @@ function yearOnly(value: unknown): string {
   return m ? m[1] : s;
 }
 
-function markingBoundaryDate(sd: Record<string, unknown>, prefix: "marking_erd" | "marking_lrd"): string {
-  const camelPrefix = prefix === "marking_erd" ? "markingErd" : "markingLrd";
-  const formatted = formatPartialDateInput(
-    partialDateInputFromPayload(
-      sd,
-      {
-        unknown: `${prefix}_unknown`,
-        year: `${prefix}_date_year`,
-        month: `${prefix}_date_month`,
-        day: `${prefix}_date_day`,
-        legacyDate: prefix,
-        legacyGranularity: `${prefix}_granularity`,
-      },
-      {
-        unknown: `${camelPrefix}Unknown`,
-        year: `${camelPrefix}DateYear`,
-        month: `${camelPrefix}DateMonth`,
-        day: `${camelPrefix}DateDay`,
-        legacyDate: camelPrefix,
-        legacyGranularity: `${camelPrefix}Granularity`,
-      },
-    ),
-  );
-  return formatted;
+function markingBoundaryDate(sd: Submission, prefix: "marking_erd" | "marking_lrd"): string {
+  return formatPartialDateInput(markingBoundaryDateInputFromSubmission(sd, prefix));
 }
 
 function firstNonEmpty(...values: unknown[]): string {
@@ -204,19 +51,19 @@ function firstNonEmpty(...values: unknown[]): string {
   return "";
 }
 
-function readEarliestLatest(sd: Record<string, unknown>): { earliest: string; latest: string } {
-  const dr = toStr(sd.date_range ?? sd.dateRange);
+function readEarliestLatest(sd: Submission): { earliest: string; latest: string } {
+  const dr = toStr(sd.date_range);
   const drParts = dr ? dr.split(/\s*-\s*/).map((s) => s.trim()) : [];
   const erd = markingBoundaryDate(sd, "marking_erd");
   const lrd = markingBoundaryDate(sd, "marking_lrd");
-  const e = erd || yearOnly(firstNonEmpty(sd.first_seen, sd.firstSeen, drParts[0]));
-  const l = lrd || yearOnly(firstNonEmpty(sd.last_seen, sd.lastSeen, drParts[1]));
+  const e = erd || yearOnly(firstNonEmpty(sd.first_seen, drParts[0]));
+  const l = lrd || yearOnly(firstNonEmpty(sd.last_seen, drParts[1]));
   return { earliest: e, latest: l };
 }
 
-function formatDimensions(sd: Record<string, unknown>, shapeName: string, isManuscript: boolean): string {
-  const w = toStr(sd.width_mm ?? sd.widthMm);
-  const h = toStr(sd.height_mm ?? sd.heightMm);
+function formatDimensions(sd: Submission, shapeName: string, isManuscript: boolean): string {
+  const w = toStr(sd.width_mm);
+  const h = toStr(sd.height_mm);
   if (!isManuscript && isTrueCircleShapeName(shapeName)) {
     const d = w || h;
     if (d) return `${d} mm diameter`;
@@ -228,36 +75,22 @@ function formatDimensions(sd: Record<string, unknown>, shapeName: string, isManu
   return "";
 }
 
-function readImpression(sd: Record<string, unknown>): string {
+function readImpression(sd: Submission): string {
   const s = toStr(sd.impression);
   if (!s) return "";
   if (s.toLowerCase() === "normal") return "";
   return s;
 }
 
-function readIsIrreg(sd: Record<string, unknown>): boolean | null {
-  return booleanValue(sd.is_irreg ?? sd.isIrreg ?? sd.isIrregular);
+function readIsIrreg(sd: Submission): boolean | null {
+  return sd.is_irreg === true;
 }
 
-function readNestedId(value: unknown, snake: string, camel: string): number | undefined {
-  if (value == null || typeof value !== "object") return undefined;
-  const obj = value as Record<string, unknown>;
-  const v = obj[snake] ?? obj[camel];
-  if (typeof v === "number") return v;
-  if (typeof v === "string" && v.trim() !== "") {
-    const n = parseInt(v, 10);
-    return Number.isNaN(n) ? undefined : n;
-  }
-  return undefined;
-}
-
-function readLetteringId(sd: Record<string, unknown>): number | undefined {
+function readLetteringId(sd: Submission): number | undefined {
   const direct =
     sd.lettering_style_id ??
-    sd.letteringStyleId ??
     sd.lettering_id ??
-    readNestedId(sd.lettering_style, "lettering_style_id", "letteringStyleId") ??
-    readNestedId(sd.letteringStyle, "lettering_style_id", "letteringStyleId");
+    (typeof sd.lettering_style === "object" ? sd.lettering_style?.id : undefined);
   if (typeof direct === "number") return direct;
   if (typeof direct === "string" && direct.trim() !== "") {
     const n = parseInt(direct, 10);
@@ -270,17 +103,17 @@ function readLetteringId(sd: Record<string, unknown>): number | undefined {
 // embedded *_name field if the id isn't usable, then to the bare "lettering"
 // name the backend resolves the FK from. Returns "" when none is available
 // (renderer prints "-").
-function resolveLettering(sd: Record<string, unknown>, lookups: ContributionLookups): string {
+function resolveLettering(sd: Submission, lookups: ContributionLookups): string {
   const id = readLetteringId(sd);
   if (id != null) {
     const opt = lookups.letteringOptions.find((o) => o.id === id);
     if (opt) return opt.name;
   }
-  return toStr(sd.lettering_style_name ?? sd.letteringStyleName ?? sd.lettering);
+  return toStr(sd.lettering_style_name ?? sd.lettering);
 }
 
-function resolveDateFormat(sd: Record<string, unknown>, lookups: ContributionLookups): string {
-  const code = toStr(sd.date_fmt ?? sd.dateFmt);
+function resolveDateFormat(sd: Submission, lookups: ContributionLookups): string {
+  const code = toStr(sd.date_fmt);
   if (!code) return "";
   const opt = lookups.dateFormatOptions.find(
     (o) =>
@@ -293,35 +126,21 @@ function resolveDateFormat(sd: Record<string, unknown>, lookups: ContributionLoo
 // The contributor's description is the analogue of RecordDetail's
 // editor-only "Catalog text" field. Reference works are rendered
 // separately via the contribution payload's reference_work_* keys.
-function buildCatalogText(sd: Record<string, unknown>): string {
-  return toStr(sd.description ?? sd.desc);
+function buildCatalogText(sd: Submission): string {
+  return toStr(sd.description);
 }
 
 export function submittedDataToFieldInput(
-  sd: Record<string, unknown>,
+  sd: Submission,
   lookups: ContributionLookups,
   opts: { contributionId: number },
 ): MarkingFieldInput {
-  // Strict allowlist check first. Any unrecognized key is a programmer
-  // signal that the contribution payload has grown and the adapter needs
-  // to be updated. Throwing surfaces the gap visibly in the UI rather
-  // than silently dropping the data.
-  for (const key of Object.keys(sd)) {
-    if (!KNOWN_SUBMITTED_DATA_KEYS.has(key)) {
-      throw new Error(
-        `Unknown submitted_data key "${key}" on contribution ${opts.contributionId}. ` +
-          `Add the key to KNOWN_SUBMITTED_DATA_KEYS in lib/contributionToFields.ts ` +
-          `and either map it in submittedDataToFieldInput or list it as deliberately ignored.`,
-      );
-    }
-  }
-
-  const rawType = toStr(sd.type ?? sd.marking_type ?? sd.markingType);
+  const rawType = toStr(sd.type);
   const type =
     normalizeMarkingType(rawType) ??
-    (toStr(sd.rate_val ?? sd.rateVal) ? "RATEMARK" : null);
+    (toStr(sd.rate_val) ? "RATEMARK" : null);
 
-  const isManuscript = isManuscriptValue(sd);
+  const isManuscript = sd.is_manuscript === true;
   const shapeName = toStr(sd.shape);
   const { earliest, latest } = readEarliestLatest(sd);
 
@@ -333,7 +152,7 @@ export function submittedDataToFieldInput(
     state: toStr(sd.state),
     county: toStr(sd.county),
     town: toStr(sd.town),
-    inscriptionTxt: toStr(sd.inscription_txt ?? sd.inscriptionTxt),
+    inscriptionTxt: toStr(sd.inscription_txt),
     earliestSeen: earliest,
     latestSeen: latest,
     datesSeen: mapApiMarkingToRecord({
@@ -341,7 +160,7 @@ export function submittedDataToFieldInput(
         .map((date, index) => ({ ...date, id: index + 1 })),
     }).datesSeen.map(formatDateSeenLike).join(", "),
     shapeName,
-    rateValFormatted: formatRateValue(toStr(sd.rate_val ?? sd.rateVal)),
+    rateValFormatted: formatRateValue(toStr(sd.rate_val)),
     dateFmt: resolveDateFormat(sd, lookups),
     impression: readImpression(sd),
     isIrreg: readIsIrreg(sd),

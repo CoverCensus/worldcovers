@@ -64,7 +64,7 @@ describe("listMyContributions", () => {
 
     const result = await listMyContributions();
 
-    expect(result.items).toEqual(drafts);
+    expect(result.items.map(({ id, status }) => ({ id, status }))).toEqual(drafts);
     expect(result.incomplete).toBe(true);
     expect(mockedGet).toHaveBeenCalledTimes(1);
   });
@@ -77,7 +77,7 @@ describe("listMyContributions", () => {
 
     const result = await listMyContributions();
 
-    expect(result.items).toEqual(drafts);
+    expect(result.items.map(({ id, status }) => ({ id, status }))).toEqual(drafts);
     expect(result.incomplete).toBe(true);
     expect(mockedGet).toHaveBeenCalledTimes(2);
   });
@@ -86,6 +86,25 @@ describe("listMyContributions", () => {
 const paramsOfLastCall = () => mockedGet.mock.calls[0][1].params;
 
 describe("listContributions query params", () => {
+  it("returns normalized Submission data, baselines, and list display fields", async () => {
+    mockedGet.mockResolvedValueOnce(page([{
+      id: 4339, status: "pending", display_name: "Burlington Marking",
+      state_display: "Vermont", town_display: "Burlington",
+      main_image: { image_url: "/media/marking.png" },
+      submitted_data: { desc: "Current text", isManuscript: "false", pendingCover: { type: "ENV" } },
+      edit_baseline: { desc: "Old text", is_manuscript: false, future_field: "Not yet supported" },
+    }]));
+    const result = await listContributions();
+    expect(result.items[0]).toMatchObject({
+      displayName: "Burlington Marking", stateDisplay: "Vermont", townDisplay: "Burlington",
+      imageUrl: "/media/marking.png", description: "Current text",
+      submittedData: { description: "Current text", is_manuscript: false, pending_cover: { type: "ENV" } },
+      editBaseline: { description: "Old text", is_manuscript: false },
+      unsupportedSubmissionFields: ["Submission.future_field"],
+    });
+    expect(result).not.toHaveProperty("rawItems");
+  });
+
   beforeEach(() => {
     mockedGet.mockReset();
     mockedGet.mockResolvedValue(page());

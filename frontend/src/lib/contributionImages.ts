@@ -1,17 +1,12 @@
+import type { Submission, SubmissionImage } from "@/lib/submission";
 import apiClient from "@/lib/api";
 import type { MarkingImage } from "@/services/markings";
 
 /** Build a public URL for a contribution image meta dict (storage_filename or direct url). */
-export function contributionMetaImageUrl(meta: unknown): string | null {
+export function contributionMetaImageUrl(meta: SubmissionImage): string | null {
   if (!meta || typeof meta !== "object") return null;
-  const obj = meta as Record<string, unknown>;
-  for (const key of ["url", "image_url", "imageUrl", "public_url", "publicUrl"]) {
-    const raw = obj[key];
-    if (typeof raw === "string" && raw.trim()) {
-      return absolutizeMediaPath(raw.trim());
-    }
-  }
-  const sf = obj.storage_filename ?? obj.storageFilename;
+  if (meta.url?.trim()) return absolutizeMediaPath(meta.url.trim());
+  const sf = meta.storage_filename;
   if (typeof sf !== "string" || !sf.trim()) return null;
   const relative = sf.startsWith("/") ? sf : `/${sf.replace(/^\/+/, "")}`;
   const mediaPath = relative.startsWith("/media/") ? relative : `/media/${relative.replace(/^\/+/, "")}`;
@@ -41,46 +36,33 @@ function absolutizeMediaPath(path: string): string | null {
 
 /** Cover/marking image metas stored on Contribution.submitted_data. */
 export function contributionImageMetasFromSubmittedData(
-  sd: Record<string, unknown>,
-): unknown[] {
+  sd: Submission,
+): SubmissionImage[] {
   const keys = [
     "cover_image_metas",
-    "coverImageMetas",
     "marking_image_metas",
-    "markingImageMetas",
     "image_metas",
-    "imageMetas",
-  ];
+  ] as const;
   for (const key of keys) {
     const raw = sd[key];
     if (Array.isArray(raw) && raw.length > 0) return raw;
   }
-  const single = sd.image_meta ?? sd.imageMeta;
+  const single = sd.image_meta;
   return single && typeof single === "object" ? [single] : [];
 }
 
 /** Synthetic MarkingImage rows for draft previews (negative imageId = not persisted as Image yet). */
 export function markingImagesFromContributionMetas(
-  metas: unknown[],
+  metas: SubmissionImage[],
   subjectId: number,
 ): MarkingImage[] {
   const rows: MarkingImage[] = [];
   metas.forEach((meta, idx) => {
     const imageUrl = contributionMetaImageUrl(meta);
     if (!imageUrl) return;
-    const obj = meta && typeof meta === "object" ? (meta as Record<string, unknown>) : {};
-    const storageFilename =
-      typeof obj.storage_filename === "string"
-        ? obj.storage_filename
-        : typeof obj.storageFilename === "string"
-          ? obj.storageFilename
-          : "";
-    const originalFilename =
-      typeof obj.original_filename === "string"
-        ? obj.original_filename
-        : typeof obj.originalFilename === "string"
-          ? obj.originalFilename
-          : "";
+    const obj = meta;
+    const storageFilename = obj.storage_filename ?? "";
+    const originalFilename = obj.original_filename ?? "";
     // Read dimensions from the same submitted_data keys contribution_apply
     // uses when it creates the real Image row, so a draft preview and the row
     // it becomes agree. Absent or unparseable means 0, which the shape
@@ -100,8 +82,8 @@ export function markingImagesFromContributionMetas(
       imageDescription: typeof obj.image_description === "string" ? obj.image_description : "",
       isTracing: false,
       displayOrder: idx,
-      imageWidth: metaDimension(obj.image_width ?? obj.imageWidth),
-      imageHeight: metaDimension(obj.image_height ?? obj.imageHeight),
+      imageWidth: metaDimension(obj.image_width),
+      imageHeight: metaDimension(obj.image_height),
     });
   });
   return rows;

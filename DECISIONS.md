@@ -654,6 +654,24 @@ and 10-22). The parent-FK design in the memo remains the upgrade path if
 side-by-side review is wanted. Evidence: `test_pending_cover.py`,
 `Contribute.pendingCover.test.tsx`, `contributionDisplay.pendingCover.test.ts`.
 
+## Use One Frontend Submission Definition
+
+**Do:** Define Submission fields and their input readers together in
+`frontend/src/lib/submission.ts`. Use its inferred types in forms, draft
+loading, lists, comparisons, and review pages. Read API data once, including
+legacy names and nested Cover data. Preserve omitted, empty, and null values.
+Add review tests when a field changes what an Editor must see.
+
+**Don't:** Cast `submittedData` to an open JSON record or add a separate
+page-level key whitelist. If an API field is unrecognized, keep known details
+readable and disable approval on that review page until it can show the data.
+
+**Why:** Separate field lists missed `pending_cover` and earlier VPHC fields,
+which prevented Editors from reading valid Submissions. Django still stores
+the data on a Contribution; this change defines its frontend shape. Evidence:
+`submission.test.ts`, `ContributionDetail.pendingCover.test.tsx`, and
+`ContributionDetail.permissions.test.tsx`.
+
 ## Approve Images In The Order The Contributor Arranged
 
 **Do:** Record the carried marking image's gallery index as

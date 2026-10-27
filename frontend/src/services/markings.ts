@@ -1,8 +1,9 @@
+import { type Submission } from "@/lib/submission";
 import apiClient, { ensureCsrfToken } from "@/lib/api";
 import { sortCoversEarliestFirst } from "@/lib/associatedCoverSort";
 import type { ComparisonRow } from "@/lib/editComparison";
 import { normalizeAngle } from "@/lib/imageRotation";
-import { listContributions } from "@/services/contributions";
+import { listContributions, type Contribution } from "@/services/contributions";
 import {
   coverContributionDisplayLabel,
   isCoverContributionData,
@@ -1566,21 +1567,10 @@ export async function loadAssociatedMarkingsForCover(
 }
 
 function resolveCoverSubmissionThumbnail(
-  submittedData: Record<string, unknown>,
-  contrib?: Record<string, unknown>,
+  submittedData: Submission,
+  contrib?: Contribution,
 ): string | null {
-  const c = contrib ?? {};
-  const mainImage = c.mainImage as { imageUrl?: unknown } | string | null | undefined;
-  const mainImageFromList =
-    (mainImage && typeof mainImage === "object" && typeof mainImage.imageUrl === "string"
-      ? mainImage.imageUrl
-      : null) ?? (typeof mainImage === "string" ? mainImage : null);
-  const direct = normalizeImageUrl(
-    mainImageFromList ??
-      (typeof c.imageUrl === "string" ? c.imageUrl : null) ??
-      (typeof c.image_url === "string" ? c.image_url : null) ??
-      null,
-  );
+  const direct = normalizeImageUrl(contrib?.imageUrl);
   if (direct) return direct;
 
   for (const meta of contributionImageMetasFromSubmittedData(submittedData)) {
@@ -1590,7 +1580,7 @@ function resolveCoverSubmissionThumbnail(
   return null;
 }
 
-function datesSeenFromCoverSubmission(sd: Record<string, unknown>): AssociatedDateSeen[] {
+function datesSeenFromCoverSubmission(sd: Submission): AssociatedDateSeen[] {
   const input = partialDateInputFromSubmittedData(sd);
   const parsed = validatePartialDate(input);
   if (!parsed.ok || parsed.value.unknown || parsed.value.granularity == null) return [];
@@ -1605,32 +1595,27 @@ function datesSeenFromCoverSubmission(sd: Record<string, unknown>): AssociatedDa
 }
 
 function mapCoverContributionToAssociatedCover(
-  contrib: Record<string, unknown>,
+  contrib: Contribution,
   markingId: number,
 ): AssociatedCover | null {
   const id = toIdOrNull(contrib.id);
   if (id == null) return null;
-  const sdRaw = contrib.submittedData ?? contrib.submitted_data;
-  if (!sdRaw || typeof sdRaw !== "object") return null;
-  const sd = sdRaw as Record<string, unknown>;
+  const sd = contrib.submittedData;
   if (!isCoverContributionData(sd)) return null;
   if (parentMarkingIdFromContribution(sd) !== markingId) return null;
 
   const status = String(contrib.status ?? "draft").trim().toLowerCase();
   if (status !== "draft") return null;
   const sdMaterialized =
-    sd.materialized_cover_marking_id ??
-    sd.materializedCoverMarkingId ??
-    sd.cover_marking_id ??
-    sd.coverMarkingId;
+    sd.materialized_cover_marking_id;
   if (sdMaterialized != null && String(sdMaterialized).trim() !== "") return null;
 
   // Only "draft" rows reach this point (guarded above), so a draft cover is
   // always surfaced as "pending" review.
   const reviewStatus: CoverMarkingReviewStatus = "pending";
 
-  const widthRaw = sd.width_mm ?? sd.widthMm ?? sd.width;
-  const heightRaw = sd.height_mm ?? sd.heightMm ?? sd.height;
+  const widthRaw = sd.width_mm;
+  const heightRaw = sd.height_mm;
   const typeRaw = sd.type;
   const type =
     typeof typeRaw === "string" && typeRaw.trim() ? typeRaw.trim() : null;
@@ -1641,15 +1626,10 @@ function mapCoverContributionToAssociatedCover(
     contributionStatus: status,
     displayLabel: coverContributionDisplayLabel(contrib, sd, id),
     reviewStatus,
-    reviewNotes:
-      typeof contrib.review_notes === "string"
-        ? contrib.review_notes
-        : typeof contrib.reviewNotes === "string"
-          ? contrib.reviewNotes
-          : null,
+    reviewNotes: contrib.reviewNotes,
     reviewedAt: null,
     reviewerUsername: "",
-    isBackstamp: Boolean(sd.is_backstamp ?? sd.isBackstamp),
+    isBackstamp: Boolean(sd.is_backstamp),
     placement:
       typeof sd.placement === "string" && sd.placement.trim()
         ? sd.placement.trim()
@@ -1663,18 +1643,10 @@ function mapCoverContributionToAssociatedCover(
       width: widthRaw != null && String(widthRaw).trim() ? String(widthRaw) : null,
       height: heightRaw != null && String(heightRaw).trim() ? String(heightRaw) : null,
       hasAdhesive:
-        typeof sd.has_adhesive === "boolean"
-          ? sd.has_adhesive
-          : typeof sd.hasAdhesive === "boolean"
-            ? sd.hasAdhesive
-            : null,
+        typeof sd.has_adhesive === "boolean" ? sd.has_adhesive : null,
       isInstitutional:
-        typeof sd.is_institutional === "boolean"
-          ? sd.is_institutional
-          : typeof sd.isInstitutional === "boolean"
-            ? sd.isInstitutional
-            : null,
-      displaySubmitterName: Boolean(sd.display_submitter_name ?? sd.displaySubmitterName),
+        typeof sd.is_institutional === "boolean" ? sd.is_institutional : null,
+      displaySubmitterName: Boolean(sd.display_submitter_name),
       canChangeSubmitterName: false,
       description: typeof sd.description === "string" ? sd.description : "",
       datesSeen: datesSeenFromCoverSubmission(sd),
@@ -1698,14 +1670,14 @@ export async function getCoverContributionDraftsForMarking(
   markingId: number,
 ): Promise<AssociatedCover[]> {
   try {
-    const { rawItems } = await listContributions({
+    const { items } = await listContributions({
       status: "draft",
       pageSize: COVER_DRAFTS_PAGE_SIZE,
       ordering: "-created_at",
     });
-    return rawItems
+    return items
       .map((row) =>
-        mapCoverContributionToAssociatedCover(row as Record<string, unknown>, markingId),
+        mapCoverContributionToAssociatedCover(row, markingId),
       )
       .filter((x): x is AssociatedCover => x !== null);
   } catch {

@@ -1,3 +1,5 @@
+import { SubmissionDataNotice } from "@/components/SubmissionDataNotice";
+import { type Submission } from "@/lib/submission";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { CheckCircle, ExternalLink, Loader2, MessageSquare, Pencil, Trash2, XCircle } from "lucide-react";
@@ -76,26 +78,13 @@ function coverTypeLabel(typeCode: string): string {
   return sharedCoverTypeLabel(typeCode) || "--";
 }
 
-function formatCoverDate(sd: Record<string, unknown>): string {
+function formatCoverDate(sd: Submission): string {
   return formatPartialDateInput(partialDateInputFromSubmittedData(sd)) || "--";
 }
 
-function tracingFlagsFromSubmittedData(sd: Record<string, unknown>, imageCount: number): boolean[] {
-  const raw = sd.cover_image_tags ?? sd.coverImageTags;
-  if (typeof raw === "string") {
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (Array.isArray(parsed)) {
-        return parsed.map((tag) => String(tag).toLowerCase() === "tracing");
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  if (Array.isArray(raw)) {
-    return raw.map((tag) => String(tag).toLowerCase() === "tracing");
-  }
-  return Array.from({ length: imageCount }, () => false);
+function tracingFlagsFromSubmittedData(sd: Submission, imageCount: number): boolean[] {
+  return sd.cover_image_tags?.map((tag) => tag.toLowerCase() === "tracing")
+    ?? Array.from({ length: imageCount }, () => false);
 }
 
 
@@ -144,6 +133,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   const isStateEditor =
     user?.role === "editor" || user?.role === "administrator" || user?.is_superuser === true;
   const canReview = canReviewContribution(user, contribution);
+  const unsupportedFields = contribution?.unsupportedSubmissionFields ?? [];
 
   useEffect(() => {
     if (initialContribution) {
@@ -188,7 +178,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     };
   }, [carouselApi]);
 
-  const sd = useMemo<Record<string, unknown>>(
+  const sd = useMemo<Submission>(
     () => contribution?.submittedData ?? {},
     [contribution?.submittedData],
   );
@@ -237,12 +227,10 @@ export default function CoverContributionDetail({ initialContribution = null }: 
       .map((meta, index) => {
         const imageUrl = contributionMetaImageUrl(meta);
         if (!imageUrl) return null;
-        const obj = meta && typeof meta === "object" ? (meta as Record<string, unknown>) : {};
+        const obj = meta;
         const originalFilename =
           typeof obj.original_filename === "string"
             ? obj.original_filename
-            : typeof obj.originalFilename === "string"
-              ? obj.originalFilename
               : undefined;
         return {
           imageUrl,
@@ -365,6 +353,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
 
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
     if (!contribution || !canReview) return;
+    if (kind === "approve" && unsupportedFields.length > 0) return;
     if (kind !== "approve" && !comment.trim()) {
       setCommentError("A comment is required to reject or request revision.");
       return;
@@ -490,9 +479,6 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   };
   const contributorComment = String(
     sd.contributor_comment ??
-      sd.contributorComment ??
-      sd.comment_for_editor ??
-      sd.commentForEditor ??
       "",
   ).trim();
   const typeCode = String(sd.type ?? "").trim().toUpperCase();
@@ -544,6 +530,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
             currentIndex={carouselCurrent}
             emptyMessage="No images linked to this cover submission yet."
           />
+          <SubmissionDataNotice fields={unsupportedFields} />
           {canReview && (
             <Card className="shadow-archival-lg border-primary/20">
               <CardHeader>
@@ -590,7 +577,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                   <Button
                     type="button"
                     onClick={() => void submitDecision("approve")}
-                    disabled={submitting}
+                    disabled={submitting || unsupportedFields.length > 0}
                     className="bg-green-600 hover:bg-green-700"
                   >
                     <CheckCircle className="mr-2 h-4 w-4" />
@@ -702,9 +689,9 @@ export default function CoverContributionDetail({ initialContribution = null }: 
               <CoverRecordDetailFields
                 type={coverTypeLabel(typeCode)}
                 date={formatCoverDate(sd)}
-                institutionallyOwned={boolLabel(sd.is_institutional ?? sd.isInstitutional)}
-                backstamp={boolLabel(sd.is_backstamp ?? sd.isBackstamp)}
-                description={String(sd.description ?? sd.desc ?? "")}
+                institutionallyOwned={boolLabel(sd.is_institutional)}
+                backstamp={boolLabel(sd.is_backstamp)}
+                description={String(sd.description ?? "")}
               />
               {contributorComment && (
                 <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">

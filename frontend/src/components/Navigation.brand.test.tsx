@@ -38,6 +38,26 @@ describe("Navigation branding (T98)", () => {
     expect(home.className).not.toContain("hidden");
   });
 
+  it("T108: the seal is large on the home page and bar-sized on inner pages", () => {
+    const { unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Navigation />
+      </MemoryRouter>,
+    );
+    const homeSeal = screen.getByRole("img", { name: ORG_NAME });
+    expect(homeSeal.getAttribute("width")).toBe("128");
+    expect(homeSeal.className).toContain("md:w-32");
+    unmount();
+    render(
+      <MemoryRouter initialEntries={["/search"]}>
+        <Navigation />
+      </MemoryRouter>,
+    );
+    const innerSeal = screen.getByRole("img", { name: ORG_NAME });
+    expect(innerSeal.getAttribute("width")).toBe("64");
+    expect(innerSeal.className).toContain("w-16");
+  });
+
   it("no longer renders the old WorldCovers name or the W tile", () => {
     render(
       <MemoryRouter>

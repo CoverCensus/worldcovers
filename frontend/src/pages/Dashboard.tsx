@@ -1,3 +1,6 @@
+import type { Contribution } from "@/services/contributions";
+import { contributionImageMetasFromSubmittedData, contributionMetaImageUrl } from "@/lib/contributionImages";
+
 import { Navigation } from "@/components/Navigation";
 import { EditorNavigation } from "@/components/EditorNavigation";
 import { Footer } from "@/components/Footer";
@@ -81,60 +84,18 @@ const EDITOR_DEBOUNCE_MS = 800;
 /** Only a well-formed date goes to the API; see the editorFrom/editorTo note. */
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-function resolveSubmissionImageUrl(
-  c: Record<string, unknown>,
-  submittedData: Record<string, unknown>,
-): string | null {
-  const mainImage = c.mainImage as { imageUrl?: unknown } | string | null | undefined;
-  const mainImageFromList =
-    (mainImage && typeof mainImage === "object" && typeof mainImage.imageUrl === "string"
-      ? mainImage.imageUrl
-      : null) ??
-    (typeof mainImage === "string" ? mainImage : null);
-
-  const direct = normalizeImageUrl(
-    mainImageFromList ??
-      (typeof c.imageUrl === "string" ? c.imageUrl : null) ??
-      (typeof c.image_url === "string" ? c.image_url : null) ??
-      null,
-  );
+function resolveSubmissionImageUrl(c: Contribution): string | null {
+  const direct = normalizeImageUrl(c.imageUrl);
   if (direct) return direct;
-
-  const asUrlArray = (raw: unknown): string[] => {
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .map((item) => {
-        if (typeof item === "string") return item.trim();
-        if (!item || typeof item !== "object") return "";
-        const obj = item as Record<string, unknown>;
-        const fromUrl = obj.url ?? obj.image_url ?? obj.imageUrl ?? obj.public_url ?? obj.publicUrl;
-        return typeof fromUrl === "string" ? fromUrl.trim() : "";
-      })
-      .filter((url) => url.length > 0);
-  };
-  const categorized = asUrlArray(submittedData.marking_images ?? submittedData.markingImages);
-  for (const url of categorized) {
+  for (const url of c.submittedData.marking_images ?? []) {
     const normalized = normalizeImageUrl(url);
     if (normalized) return normalized;
   }
-
-  const baseImageUrl = (import.meta.env.VITE_IMAGE_URL as string | undefined) ?? "";
-  const imageRoot = baseImageUrl.replace(/\/+$/, "") || "/media";
-  const fromMeta = (meta: unknown): string | null => {
-    if (!meta || typeof meta !== "object") return null;
-    const obj = meta as Record<string, unknown>;
-    const sf = obj.storage_filename ?? obj.storageFilename;
-    if (typeof sf !== "string" || !sf) return null;
-    return normalizeImageUrl(`${imageRoot}/${sf.replace(/^\/+/, "")}`);
-  };
-  const metas = submittedData.image_metas ?? submittedData.imageMetas;
-  if (Array.isArray(metas)) {
-    for (const meta of metas) {
-      const url = fromMeta(meta);
-      if (url) return url;
-    }
+  for (const meta of contributionImageMetasFromSubmittedData(c.submittedData)) {
+    const url = contributionMetaImageUrl(meta);
+    if (url) return normalizeImageUrl(url);
   }
-  return fromMeta(submittedData.image_meta ?? submittedData.imageMeta);
+  return null;
 }
 
 type DashboardTab = "submissions" | "editor";
@@ -702,10 +663,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       try {
         // Fetch all contributor-owned contributions so submissions and edit
         // drafts appear in one canonical My Submissions list.
-        // rawItems carry dynamic camelCase-or-snake_case display fields the mapper reads positionally.
         const result = await listMyContributions();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const list = result.items as any[];
+        const list = result.items;
         if (result.incomplete) {
           toast({
             title: "Some submissions could not be loaded",
@@ -718,35 +677,25 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           return;
         }
         const mapped: DashboardItem[] = list.map((c) => {
-          const submittedData =
-            c.submittedData && typeof c.submittedData === "object"
-              ? c.submittedData
-              : c.submitted_data && typeof c.submitted_data === "object"
-                ? c.submitted_data
-                : {};
-          const state = (c.stateDisplay || c.state_display || submittedData.state || "").trim();
-          const town = (c.townDisplay || c.town_display || submittedData.town || "").trim();
+          const submittedData = c.submittedData;
+          const state = (c.stateDisplay || submittedData.state || "").trim();
+          const town = (c.townDisplay || submittedData.town || "").trim();
 
-          const imageUrl = resolveSubmissionImageUrl(c, submittedData);
+          const imageUrl = resolveSubmissionImageUrl(c);
 
           // Cover contributions edit through CoverEdit (/record/:markingId/cover/new),
           // not the marking Contribute form. Detect by submitted_data and capture
           // the parent marking id needed to build that route.
-          const sd = submittedData as Record<string, unknown>;
+          const sd = submittedData;
           const isCover = isCoverContributionData(sd);
           const coverParentMarkingId = isCover ? parentMarkingIdFromContribution(sd) : null;
-          const coverId =
-            typeof c.cover_id === "number"
-              ? c.cover_id
-              : typeof c.coverId === "number"
-                ? c.coverId
-                : materializedCoverIdFromContribution(sd);
+          const coverId = c.coverId ?? materializedCoverIdFromContribution(sd);
           const typeValue =
-            c.typeDisplay || c.type_display || c.type || submittedData.type || "";
+            c.typeDisplay || submittedData.type || "";
           const shapeValue =
-            c.shapeName || c.shapeDisplay || c.shape_display || c.shape || submittedData.shape || "";
-          const colorValue = c.colorDisplay || c.color_display || c.color || submittedData.color || "";
-          const sizeValue = c.sizeDisplay || c.size || submittedData.dimensions || "";
+            c.shapeDisplay || submittedData.shape || "";
+          const colorValue = c.colorDisplay || submittedData.color || "";
+          const sizeValue = c.sizeDisplay || submittedData.dimensions || "";
           const presentation = contributionCardPresentation({
             id: c.id,
             submittedData: sd,
@@ -758,15 +707,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             size: sizeValue,
           });
 
-          const markingId =
-            typeof c.marking_id === "number"
-              ? c.marking_id
-              : typeof c.markingId === "number"
-                ? c.markingId
-                : typeof c.marking?.id === "number"
-                  ? c.marking.id
-                  : null;
-          const isCatalogEdit = !!(markingId || submittedData.original_marking_id || submittedData.originalMarkingId);
+          const markingId = c.markingId;
+          const isCatalogEdit = !!(markingId || submittedData.original_marking_id);
 
           return {
             id: c.id,
@@ -777,8 +719,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             shape: String(shapeValue),
             color: String(colorValue),
             status: String(c.status || "pending"),
-            created_at: String(c.createdAt || c.created_at || ""),
-            updated_at: String(c.updatedAt || c.updated_at || c.createdAt || c.created_at || ""),
+            created_at: String(c.createdAt || ""),
+            updated_at: String(c.updatedAt || c.createdAt || ""),
             description: c.description || submittedData.description || "",
             image_url: imageUrl,
             marking_id: markingId ?? null,
@@ -976,33 +918,26 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       page: editorHistoryPage,
       pageSize: editorHistoryPageSize,
     })
-      .then(({ rawItems, count }) => {
+      .then(({ items, count }) => {
         if (seq !== editorFetchSeq.current) return;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const list = rawItems as any[];
+        const list = items;
         setEditorHistoryTotal(count);
         const mapped = list.map((c) => {
-          const submittedData = (c as { submitted_data?: Record<string, unknown>; submittedData?: Record<string, unknown> }).submitted_data
-            ?? (c as { submittedData?: Record<string, unknown> }).submittedData
-            ?? {};
-          const sd = submittedData as Record<string, unknown>;
+          const submittedData = c.submittedData;
+          const sd = submittedData;
           const isCover = isCoverContributionData(sd);
-          const townDisplay = c.town_display ?? (c as { townDisplay?: string }).townDisplay ?? "";
-          const stateDisplay = c.state_display ?? (c as { stateDisplay?: string }).stateDisplay ?? "";
+          const townDisplay = c.townDisplay ?? "";
+          const stateDisplay = c.stateDisplay ?? "";
           const typeDisplay =
-            c.type_display ??
-            (c as { typeDisplay?: string }).typeDisplay ??
+            c.typeDisplay ??
             sd.type ??
             "";
           const shapeDisplay =
-            c.shape_display ??
-            (c as { shapeDisplay?: string }).shapeDisplay ??
+            c.shapeDisplay ??
             sd.shape ??
             "";
           const colorDisplay = String(
-            c.color_display ??
-              (c as { colorDisplay?: string }).colorDisplay ??
-              c.color ??
+            c.colorDisplay ??
               sd.color ??
               "",
           );
@@ -1017,38 +952,34 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
           });
           return {
             id: c.id,
-            contributor_username: c.contributor_username ?? (c as { contributorUsername?: string }).contributorUsername ?? "",
+            contributor_username: c.contributorUsername ?? "",
             presentation,
             state_display: stateDisplay,
             town_display: townDisplay,
             shape_display: String(shapeDisplay),
             color_display: colorDisplay,
-            marking_id: c.marking_id ?? (c as { markingId?: number | null }).markingId ?? null,
+            marking_id: c.markingId ?? null,
             cover_id:
-              c.cover_id ??
-              (c as { coverId?: number | null }).coverId ??
+              c.coverId ??
               materializedCoverIdFromContribution(sd),
             isCover,
             status: String(c.status ?? "pending"),
-            created_at: String(c.created_at ?? (c as { createdAt?: string }).createdAt ?? ""),
+            created_at: String(c.createdAt ?? ""),
             updated_at: String(
-              c.updated_at ??
-                (c as { updatedAt?: string }).updatedAt ??
-                c.created_at ??
-                (c as { createdAt?: string }).createdAt ??
+              c.updatedAt ??
+                c.createdAt ??
                 "",
             ),
-            review_notes: c.review_notes ?? (c as { reviewNotes?: string | null }).reviewNotes ?? null,
-            image_url: resolveSubmissionImageUrl(c as Record<string, unknown>, submittedData as Record<string, unknown>),
-            is_archived: Boolean(c.is_archived ?? (c as { isArchived?: boolean }).isArchived),
+            review_notes: c.reviewNotes ?? null,
+            image_url: resolveSubmissionImageUrl(c),
+            is_archived: Boolean(c.isArchived),
             archived_at:
-              c.archived_at ?? (c as { archivedAt?: string | null }).archivedAt ?? null,
+              c.archivedAt ?? null,
             archived_by_username:
-              c.archived_by_username ??
-              (c as { archivedByUsername?: string | null }).archivedByUsername ??
+              c.archivedByUsername ??
               null,
             archive_reason: String(
-              c.archive_reason ?? (c as { archiveReason?: string }).archiveReason ?? "",
+              c.archiveReason ?? "",
             ),
           };
         });

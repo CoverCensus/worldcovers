@@ -164,6 +164,18 @@ workspace notes and archives are optional and are not part of these skills.
 
 ### Local Development
 
+After updating an existing checkout, stop the local servers and apply the
+database updates before restarting:
+
+```sh
+./woco migrate
+./woco createcachetable
+```
+
+`./woco dev` starts servers; it does not run these commands. Missing migrations
+or the account rate-limit cache table can prevent site and admin login.
+`./woco setup dev` and hosted deployment already run both commands.
+
 For day-to-day development, run:
 
 ```sh

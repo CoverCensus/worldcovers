@@ -1,3 +1,4 @@
+import { readSubmission } from "@/lib/submission";
 import {
   formatPartialDateInput,
   partialDateInputFromSubmittedData,
@@ -73,18 +74,18 @@ describe("partial date helpers", () => {
 
   it("hydrates legacy and component contribution payloads", () => {
     expect(
-      partialDateInputFromSubmittedData({
+      partialDateInputFromSubmittedData(readSubmission({
         cover_date: "1850-06-01",
         cover_granularity: "MONTH",
-      }),
+      }).data),
     ).toEqual({ unknown: false, year: "1850", month: "6", day: "" });
     expect(
-      partialDateInputFromSubmittedData({
+      partialDateInputFromSubmittedData(readSubmission({
         cover_date_year: "1850",
         cover_date_day: "14",
-      }),
+      }).data),
     ).toEqual({ unknown: false, year: "1850", month: "", day: "14" });
-    expect(partialDateInputFromSubmittedData({ cover_date_unknown: "true" })).toEqual({
+    expect(partialDateInputFromSubmittedData(readSubmission({ cover_date_unknown: "true" }).data)).toEqual({
       unknown: true,
       year: "",
       month: "",
