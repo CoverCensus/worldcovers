@@ -27,6 +27,19 @@ def derive_site_role(hostname: str, production_url: str) -> str:
     return "staging"
 
 
+def absolute_frontend_url(value: str) -> str:
+    """FRONTEND_BASE_URL with a scheme and no trailing slash.
+
+    Production's .env holds a bare host ("hellowoco.app"). allauth treats a
+    scheme-less frontend URL as relative and resolves it against the request
+    path, so the signup confirm link pointed at /api/v2/auth/signup/... (T109).
+    """
+    url = value.strip().rstrip("/")
+    if urlsplit(url).scheme.lower() not in ("http", "https"):
+        url = f"https://{url.lstrip('/')}"
+    return url
+
+
 def validate_site_role(value: str) -> str:
     if value not in SITE_ROLES:
         raise ImproperlyConfigured(
