@@ -1139,3 +1139,29 @@ the next change a one-line edit. Internal identifiers are not branding.
 [account adapter](backend/common/account_adapter.py),
 [brand wording tests](backend/common/tests/test_brand_wording.py),
 [header test](frontend/src/components/Navigation.brand.test.tsx).
+
+## End Every SPA API URL In A Slash
+
+**Do:** Call every `/api/v2/` route from the SPA with a trailing slash,
+including the allauth account routes (`/auth/login/`, `/auth/signup/`,
+`/auth/email/verify/`, `/auth/session/`). Register a slashless route in
+both forms (`path(route + suffix, ...)` over `("", "/")`) and list both
+forms in `common.auth_diagnostics.OPERATIONS`, which is what gives the
+account responses `Cache-Control: no-store` and an `X-Request-ID`.
+
+**Don't:** Add an SPA call to a slashless URL, or rely on the server's
+nginx config to route one. Do not drop the slashless account routes while
+an older bundle may still be cached.
+
+**Why:** On 2026-10-26 hellowoco.app's nginx answered every slashless
+`/api/v2/auth/*` request with its own 301 to the slashed URL. A browser
+replays a redirected POST as a GET, and the slashed URL was a Django 404,
+so sign-in, signup and email verification failed for everyone on
+production while woco.dev, serving the same bundle, worked. The repo nginx
+template has no such rule; production's config had drifted from it.
+Password reset kept working because its URLs already ended in a slash.
+
+**Evidence:** [account routes](backend/common/api/account.py),
+[diagnostics map](backend/common/auth_diagnostics.py),
+[route test](backend/common/tests/test_auth_reliability.py),
+[SPA call](frontend/src/services/account.ts).

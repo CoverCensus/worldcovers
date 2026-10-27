@@ -19,7 +19,7 @@ from common.account_access import LEGACY_EMAIL_GROUP
 
 User = get_user_model()
 PASSWORD = "CorrectHorse1!"
-LOGIN_PATHS = ["/api/v2/auth/login", "/api/v2/login/", "/api/login/", "/api/login"]
+LOGIN_PATHS = ["/api/v2/auth/login", "/api/v2/login/", "/api/login/", "/api/login", "/api/v2/auth/login/"]
 LOGOUT_PATHS = ["/api/v2/logout/", "/api/logout/", "/api/logout"]
 
 
@@ -54,6 +54,17 @@ class AuthReliabilityTests(TestCase):
                 data = {"username": self.user.email, "password": PASSWORD}
                 self.assertEqual(self.client.post(path, data, content_type="application/json").status_code, 403)
                 self.assertEqual(self.post(path, data).status_code, 200)
+
+    def test_account_routes_answer_with_and_without_trailing_slash(self):
+        # T109: hellowoco.app's nginx 301s slashless /api/v2/auth/* URLs, and a
+        # browser replays a redirected POST as a GET. Both forms must reach the view.
+        for route in ("signup", "login", "email/verify", "session"):
+            for path in (f"/api/v2/auth/{route}", f"/api/v2/auth/{route}/"):
+                with self.subTest(path=path):
+                    response = self.client.get(path)
+                    self.assertNotIn(response.status_code, (301, 404))
+                    self.assertEqual(response.headers["Cache-Control"], "no-store")
+                    self.assertIn("X-Request-ID", response.headers)
 
     def test_password_change_ends_both_sessions_and_preserves_spaces(self):
         self.user.set_password(" " + PASSWORD + " ")

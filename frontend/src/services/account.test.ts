@@ -20,7 +20,7 @@ it("keeps an email-shaped username on the username-first login path", async () =
   (fetchCurrentUser as jest.Mock).mockResolvedValue(user);
   (fetchCurrentUser as jest.Mock).mockResolvedValue(user);
   await signIn(user.username, "StrongPass1!");
-  expect(apiClient.post).toHaveBeenCalledWith("/auth/login", { username: user.username, password: "StrongPass1!" }, expect.any(Object));
+  expect(apiClient.post).toHaveBeenCalledWith("/auth/login/", { username: user.username, password: "StrongPass1!" }, expect.any(Object));
 });
 
 it("recovers a lost login response from the server session without posting twice", async () => {
@@ -76,7 +76,7 @@ it("loads the existing role payload only after authentication", async () => {
   (apiClient.post as jest.Mock).mockResolvedValue({ status: 200, data: { meta: { is_authenticated: true } } });
   (fetchCurrentUser as jest.Mock).mockResolvedValue(user);
   expect(await signIn("editor", "StrongPass1!")).toBe(true);
-  expect(apiClient.post).toHaveBeenCalledWith("/auth/login", { username: "editor", password: "StrongPass1!" }, expect.any(Object));
+  expect(apiClient.post).toHaveBeenCalledWith("/auth/login/", { username: "editor", password: "StrongPass1!" }, expect.any(Object));
   expect(fetchCurrentUser).toHaveBeenCalledWith(true, "editor");
   expect(setStoredUser).toHaveBeenCalledWith(user);
 });
