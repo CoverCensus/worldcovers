@@ -1167,3 +1167,24 @@ Password reset kept working because its URLs already ended in a slash.
 [diagnostics map](backend/common/auth_diagnostics.py),
 [route test](backend/common/tests/test_auth_reliability.py),
 [SPA call](frontend/src/services/account.ts).
+
+## Build Every Account Email Link From settings.FRONTEND_BASE_URL
+
+**Do:** Build links in account emails (confirm, reset, activation) from
+`settings.FRONTEND_BASE_URL`, which `woco.site_role.absolute_frontend_url`
+normalizes once at start-up: a scheme is added when the `.env` value has
+none, and the trailing slash is removed.
+
+**Don't:** Re-normalize the value at a call site, or build an email link
+from a raw `.env` value.
+
+**Why:** Production's `.env` sets `FRONTEND_BASE_URL=hellowoco.app` with no
+scheme. The reset and activation emails each added `https://` themselves,
+but `HEADLESS_FRONTEND_URLS` did not, so allauth treated the confirm link as
+relative and resolved it against the signup API path:
+`https://hellowoco.app/api/v2/auth/signup/hellowoco.app/verify-email?key=...`,
+a 404 for every new account (2026-10-27, found once signup worked again).
+
+**Evidence:** [normalizer](backend/woco/site_role.py),
+[settings](backend/woco/settings.py),
+[tests](backend/common/tests/test_site_and_pending_requests.py).
