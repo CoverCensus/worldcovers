@@ -63,10 +63,7 @@ def send_activation_email_when_user_activated(sender, instance, **kwargs):
 
 def _send_activation_email(to_email: str, *, password_ready: bool = True) -> None:
     """Tell a legacy account holder how to use the newly enabled account."""
-    frontend_base = getattr(settings, "FRONTEND_BASE_URL", None) or f"https://{settings.DJANGO_APP_HOSTNAME}"
-    if not frontend_base.startswith(("http://", "https://")):
-        frontend_base = f"https://{frontend_base.lstrip('/')}"
-    login_url = f"{frontend_base.rstrip('/')}/auth"
+    login_url = f"{settings.FRONTEND_BASE_URL}/auth"
     site_name = settings.SITE_NAME
     site_name_html = escape(site_name)
     next_step = ("You can now sign in here:" if password_ready else
