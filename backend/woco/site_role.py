@@ -27,6 +27,27 @@ def derive_site_role(hostname: str, production_url: str) -> str:
     return "staging"
 
 
+def served_hostnames(primary: str, extras: str) -> list[str]:
+    """Every public hostname this install answers on (Trello T105).
+
+    DJANGO_APP_HOSTNAME stays the one name for emails, the site role and the
+    from-address; DJANGO_APP_EXTRA_HOSTNAMES (comma-separated) adds names that
+    serve the same site, e.g. americanpostmarkcatalog.org next to hellowoco.app.
+    A mistyped extra only makes that name answer 400; the primary is unaffected.
+    """
+    names: list[str] = []
+    for raw in [primary, *extras.split(",")]:
+        host = raw.strip().lower()
+        if host and host not in names:
+            names.append(host)
+    return names
+
+
+def allowed_hosts(hostnames: list[str]) -> list[str]:
+    """Each served name and its www. form, for ALLOWED_HOSTS."""
+    return [name for host in hostnames for name in (host, f"www.{host}")]
+
+
 def absolute_frontend_url(value: str) -> str:
     """FRONTEND_BASE_URL with a scheme and no trailing slash.
 

@@ -10,12 +10,19 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
 from django.core.exceptions import ImproperlyConfigured
-from django.test import SimpleTestCase, TestCase, override_settings
+from django.test import Client, SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from common.account_access import LEGACY_EMAIL_GROUP
 from common.api.auth import PENDING_LOGIN_REQUESTS_LIMIT
-from woco.site_role import absolute_frontend_url, derive_site_role, validate_site_role
+from woco.site_role import (
+    absolute_frontend_url,
+    allowed_hosts,
+    derive_site_role,
+    served_hostnames,
+    validate_site_role,
+)
 
 User = get_user_model()
 
@@ -51,10 +58,53 @@ class SiteRoleDerivationTests(SimpleTestCase):
         self.assertEqual(absolute_frontend_url("http://localhost:8080"), "http://localhost:8080")
         self.assertEqual(absolute_frontend_url("HTTPS://hellowoco.app"), "HTTPS://hellowoco.app")
 
+    def test_extra_hostnames_are_added_after_the_primary(self):
+        # T105: empty extras must leave today's single-name lists unchanged.
+        self.assertEqual(served_hostnames("hellowoco.app", ""), ["hellowoco.app"])
+        self.assertEqual(
+            served_hostnames("hellowoco.app", " AmericanPostmarkCatalog.org , ,hellowoco.app"),
+            ["hellowoco.app", "americanpostmarkcatalog.org"],
+        )
+
     def test_account_email_links_are_absolute(self):
         for name, url in settings.HEADLESS_FRONTEND_URLS.items():
             with self.subTest(name=name):
                 self.assertTrue(url.startswith(("https://", "http://")), url)
+
+
+NEW_NAME = "americanpostmarkcatalog.org"
+
+
+class SecondHostnameSignInTests(TestCase):
+    """T105: a listed second name serves the site and sign-in passes CSRF on it.
+
+    Only ALLOWED_HOSTS changes: Django accepts a same-origin Origin header for
+    any allowed host, so CSRF_TRUSTED_ORIGINS is not what makes this work.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user("member", "member@example.com", "CorrectHorse1!")
+        self.user.groups.add(Group.objects.get(name=LEGACY_EMAIL_GROUP))
+        self.client = Client(enforce_csrf_checks=True, HTTP_HOST=NEW_NAME)
+
+    def sign_in(self):
+        self.client.get("/api/v2/me/", secure=True)
+        return self.client.post(
+            "/api/v2/auth/login/",
+            {"username": self.user.email, "password": "CorrectHorse1!"},
+            content_type="application/json",
+            secure=True,
+            HTTP_ORIGIN=f"https://{NEW_NAME}",
+            HTTP_X_CSRFTOKEN=self.client.cookies["csrftoken"].value,
+        )
+
+    def test_listed_second_name_signs_in(self):
+        with self.settings(ALLOWED_HOSTS=allowed_hosts(served_hostnames("hellowoco.app", NEW_NAME))):
+            self.assertEqual(self.sign_in().status_code, 200)
+
+    def test_unlisted_name_is_refused(self):
+        with self.settings(ALLOWED_HOSTS=allowed_hosts(["hellowoco.app"])):
+            self.assertEqual(self.client.get("/api/v2/me/", secure=True).status_code, 400)
 
 
 class SiteInfoTests(TestCase):
