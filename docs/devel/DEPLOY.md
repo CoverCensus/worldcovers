@@ -119,6 +119,47 @@ Expected host layout:
   backups/
 ```
 
+## Serving A Second Hostname
+
+`DJANGO_APP_EXTRA_HOSTNAMES` (comma-separated, empty by default) lets one host
+answer on more names than `DJANGO_APP_HOSTNAME`, with the same site behind
+each (Trello T105: americanpostmarkcatalog.org next to hellowoco.app). Each
+extra name goes into `ALLOWED_HOSTS` (with its `www.` form),
+`CSRF_TRUSTED_ORIGINS` and `CORS_ALLOWED_ORIGINS` (bare name, https). Entries
+must be plain hostnames: `*`, a leading dot, a scheme or a port refuses to
+start. Emails, sign-up links, the from-address and the site role stay on
+`DJANGO_APP_HOSTNAME`. Sessions are per name: signing in on one name does not
+sign you in on the other. Django's HSTS header (`includeSubDomains`,
+`preload`) then covers the new domain too: every future subdomain of it must
+serve HTTPS. Do not submit it to the browser preload list.
+
+Order, as `root` on the host:
+
+1. Add `DJANGO_APP_EXTRA_HOSTNAMES=americanpostmarkcatalog.org` to
+   `/srv/woco/backend/.env`, then `systemctl restart worldcovers`.
+2. Add `americanpostmarkcatalog.org www.americanpostmarkcatalog.org` to every
+   `server_name` line of the live nginx site, then `nginx -t` and
+   `systemctl reload nginx`.
+3. Point DNS for both names at this host, DNS only (not proxied), same A and
+   AAAA as the primary, and delete the temporary Cloudflare redirect rules
+   for them.
+4. Run `certbot certificates` and note the existing certificate's name and
+   domains (2026-10-30: hellowoco.app, www.hellowoco.app). Re-issue it with
+   those domains plus the two new ones:
+
+```sh
+certbot --nginx --cert-name hellowoco.app -d hellowoco.app -d www.hellowoco.app \
+  -d americanpostmarkcatalog.org -d www.americanpostmarkcatalog.org
+```
+
+HTTPS on the new name fails between steps 3 and 4, so run them together at a
+quiet hour. Check from outside: `curl -sI https://americanpostmarkcatalog.org/`
+answers 200 with no redirect, and hellowoco.app still answers 200.
+
+Undo: empty the variable and restart, then point the new name somewhere else
+in DNS (back to the Cloudflare redirect rules, proxied), or it answers 400.
+nginx and the certificate can keep the extra names.
+
 ## GitHub Actions Deploy Flow
 
 Pull requests and both deployment branches call `verify.yml`. Its frontend

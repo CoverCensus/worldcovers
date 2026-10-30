@@ -10,7 +10,13 @@ from pathlib import Path
 
 from decouple import config
 
-from woco.site_role import absolute_frontend_url, derive_site_role, validate_site_role
+from woco.site_role import (
+    absolute_frontend_url,
+    allowed_hosts,
+    derive_site_role,
+    served_hostnames,
+    validate_site_role,
+)
 
 
 ###
@@ -49,6 +55,11 @@ INTERNAL_IPS = [
 ]
 
 DJANGO_APP_HOSTNAME = config("DJANGO_APP_HOSTNAME", default="hellowoco.app")
+# More names that serve this same site (Trello T105), comma-separated; empty
+# means DJANGO_APP_HOSTNAME only. Emails and the site role keep the primary.
+SERVED_HOSTNAMES = served_hostnames(
+    DJANGO_APP_HOSTNAME, config("DJANGO_APP_EXTRA_HOSTNAMES", default="")
+)
 
 # Product name shown in email subjects and bodies, the API schema and the admin
 # header. The USPCS decided on 2026-10-23 that the catalog presents as "APMC"
@@ -69,8 +80,7 @@ WOCO_SITE_ROLE = validate_site_role(
 )
 
 ALLOWED_HOSTS = [
-    DJANGO_APP_HOSTNAME, 
-    f"www.{DJANGO_APP_HOSTNAME}",
+    *allowed_hosts(SERVED_HOSTNAMES),
     *INTERNAL_IPS
 ]
 
@@ -393,7 +403,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:8000",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    f"https://{DJANGO_APP_HOSTNAME}"
+    *(f"https://{host}" for host in SERVED_HOSTNAMES),
 ]
 
 # CSRF: allow frontend origins so cookie-based auth works with same-host.
@@ -402,7 +412,7 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:8000",
-    f"https://{DJANGO_APP_HOSTNAME}",
+    *(f"https://{host}" for host in SERVED_HOSTNAMES),
 ]
 
 # Security Settings (for production)
