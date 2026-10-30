@@ -65,6 +65,9 @@ class SiteRoleDerivationTests(SimpleTestCase):
             served_hostnames("hellowoco.app", " AmericanPostmarkCatalog.org , ,hellowoco.app"),
             ["hellowoco.app", "americanpostmarkcatalog.org"],
         )
+        for bad in ("*", ".org", "https://americanpostmarkcatalog.org", "apmc.org:8443"):
+            with self.subTest(bad=bad), self.assertRaises(ImproperlyConfigured):
+                served_hostnames("hellowoco.app", bad)
 
     def test_account_email_links_are_absolute(self):
         for name, url in settings.HEADLESS_FRONTEND_URLS.items():
@@ -103,7 +106,8 @@ class SecondHostnameSignInTests(TestCase):
             self.assertEqual(self.sign_in().status_code, 200)
 
     def test_unlisted_name_is_refused(self):
-        with self.settings(ALLOWED_HOSTS=allowed_hosts(["hellowoco.app"])):
+        with self.settings(ALLOWED_HOSTS=allowed_hosts(["hellowoco.app"])), \
+                self.assertLogs("django.security.DisallowedHost", level="ERROR"):
             self.assertEqual(self.client.get("/api/v2/me/", secure=True).status_code, 400)
 
 

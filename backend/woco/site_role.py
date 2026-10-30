@@ -7,11 +7,16 @@ neither server needs a new .env entry. WOCO_SITE_ROLE overrides the derivation
 and is validated at start-up: a typo must fail loudly, because an unknown value
 would otherwise read as production and bring back the stranded-request bug.
 """
+import re
 from urllib.parse import urlsplit
 
 from django.core.exceptions import ImproperlyConfigured
 
 SITE_ROLES = ("production", "staging")
+
+# A plain dotted hostname: no scheme, port, path, "*" or leading dot, so an
+# extra name can never widen ALLOWED_HOSTS to a wildcard (T105 review).
+PLAIN_HOSTNAME = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+")
 
 
 def production_host(production_url: str) -> str:
@@ -33,14 +38,20 @@ def served_hostnames(primary: str, extras: str) -> list[str]:
     DJANGO_APP_HOSTNAME stays the one name for emails, the site role and the
     from-address; DJANGO_APP_EXTRA_HOSTNAMES (comma-separated) adds names that
     serve the same site, e.g. americanpostmarkcatalog.org next to hellowoco.app.
-    A mistyped extra only makes that name answer 400; the primary is unaffected.
+    An extra that is not a plain hostname refuses to start, like
+    WOCO_SITE_ROLE: "*" or ".org" would otherwise accept any host.
     """
-    names: list[str] = []
-    for raw in [primary, *extras.split(",")]:
+    names = [primary.strip().lower()]
+    for raw in extras.split(","):
         host = raw.strip().lower()
-        if host and host not in names:
-            names.append(host)
-    return names
+        if not host or host in names:
+            continue
+        if not PLAIN_HOSTNAME.fullmatch(host):
+            raise ImproperlyConfigured(
+                f"DJANGO_APP_EXTRA_HOSTNAMES entries must be plain hostnames, got {raw.strip()!r}"
+            )
+        names.append(host)
+    return [name for name in names if name]
 
 
 def allowed_hosts(hostnames: list[str]) -> list[str]:
