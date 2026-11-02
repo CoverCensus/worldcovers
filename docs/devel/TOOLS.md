@@ -4,7 +4,8 @@ This document covers data/tooling scripts and checked-in Django management comma
 
 Source of truth for command availability:
 
-- Data and utility scripts live under `tools/`.
+- Host and integration scripts live under `tools/`. Extraction implementations
+  live in the optional private [bodger repository](https://github.com/CoverCensus/bodger).
 - Deployment scripts and host config templates live under `deploy/`.
 - Django commands live under `backend/common/management/commands/`.
 - Run `./woco help` from repo root to list commands in the current checkout.
@@ -32,11 +33,11 @@ which is exactly when you need it).
 | `rebuild_staging_db.sh` | Ensure DB exists, migrate, create admin, import | `tools/rebuild_staging_db.sh` |
 | `wipe_user_data.sh` | Wipe submissions, optionally reload a bundle | `tools/wipe_user_data.sh` |
 | `setup_worldcovers_db.sql` | Create database, app user, and grants | `tools/setup_worldcovers_db.sql` |
-| `ascc_page_processor.py` | Render and split ASCC catalog pages | `tools/ascc_page_processor.py` |
-| `ascc_page_extract.py` | Extract ASCC listing text from page chunks | `tools/ascc_page_extract.py` |
-| `ascc_image_extract.py` | Extract marking images from page chunks | `tools/ascc_image_extract.py` |
-| `fphc_extract.py` | Dump native FPHC text, tables, images, and printed organization | `tools/fphc_extract.py` |
-| `ascc_data_munger.py` | Build Django-shape ASCC CSV bundles | `tools/ascc_data_munger.py` |
+| `ascc_page_processor.py` | Render and split ASCC catalog pages | `bodger/tools/ascc_page_processor.py` |
+| `ascc_page_extract.py` | Extract ASCC listing text from page chunks | `bodger/tools/ascc_page_extract.py` |
+| `ascc_image_extract.py` | Extract marking images from page chunks | `bodger/tools/ascc_image_extract.py` |
+| `fphc_extract.py` | Dump native FPHC text, tables, images, and printed organization | `bodger/tools/fphc_extract.py` |
+| `ascc_data_munger.py` | Build Django-shape ASCC CSV bundles | `bodger/tools/ascc_data_munger.py` |
 | `ascc import` | Load an ASCC CSV bundle | `backend/common/management/commands/import_ascc_bundle.py` |
 | `ascc drop` | Delete one region's imported catalog data | `backend/common/management/commands/drop_ascc_state.py` |
 | `import_apmc_bundle` | Umbrella importer; delegates to ASCC today | `backend/common/management/commands/import_apmc_bundle.py` |
@@ -168,16 +169,18 @@ Use the state-centered wrapper for demos and normal runs:
 ./woco ascc run VA
 ```
 
-The wrapper preserves the existing `tools/wip/in`, `tools/wip/cache`, and
-`tools/wip/out` layout. For state `VA`, the main handoff files are:
+Extraction commands require the optional bodger checkout and its environment;
+see [setup and paths](PIPELINE.md#optional-bodger-setup). Source files and caches
+are in bodger. Final ASCC bundles and served media stay in WorldCovers. In the
+paths below, `bodger/` means the selected checkout:
 
 ```text
-tools/wip/cache/v1/VA/catalog_rows.csv
-tools/wip/cache/v1/VA/image_refs.csv
+bodger/tools/wip/cache/v1/VA/catalog_rows.csv
+bodger/tools/wip/cache/v1/VA/image_refs.csv
 tools/wip/out/v1_va/
 tools/wip/out/v1_va/source_marking_map.csv
 tools/wip/out/v1_va/v1_pipeline_warnings.csv
-tools/wip/cache/v1/VA/run.json
+bodger/tools/wip/cache/v1/VA/run.json
 ```
 
 `./woco ascc munge VA` builds the bundle without importing it.
@@ -197,8 +200,8 @@ Clean generated cache/output files without touching source PDFs or seed CSVs:
 
 With a state, `clean` removes generated cache files for that state plus
 `tools/wip/out/<state>/` and `tools/wip/out/v1_<state>/`. Without a state, it
-clears generated contents under `tools/wip/cache/` and `tools/wip/out/` for all
-states while preserving placeholder files.
+clears generated contents under bodger's `tools/wip/cache/` and WorldCovers'
+`tools/wip/out/` for all states while preserving placeholder files.
 
 Expected exit code for each successful command: `0`.
 
@@ -232,13 +235,14 @@ Extract the 457-page 2021 second edition of *Florida Postal History
 1763-1861* from the local PDF:
 
 ```sh
-uv run python tools/fphc_extract.py
+./woco bodger fphc_extract
 ```
 
 Install Poppler (`brew install poppler` on macOS) for `pdfimages`.
-`uv sync` installs the Python extraction and rendering libraries in the
-development environment. Expected exit code: `0`.
+Run `uv sync --locked` in bodger to install its extraction libraries.
+WorldCovers does not install them. Expected exit code: `0`.
 
+The FPHC paths below are relative to the bodger checkout.
 The source stays at `tools/wip/in/Florida Postal History Catalog.pdf`.
 Intermediates go under `tools/wip/cache/fphc/`, separated by source checksum,
 extraction version, and pdfplumber version. The completed dump goes under
@@ -292,7 +296,7 @@ describe layout and do not identify Markings or create Cover associations.
 For a sample, use a separate output directory:
 
 ```sh
-uv run python tools/fphc_extract.py \
+./woco bodger fphc_extract \
   --pages 53-57,60,72-73,100,201,229,277,302,308,314-315,318,409-410,452 \
   --out-dir tools/wip/out/fphc_sample
 ```

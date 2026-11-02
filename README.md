@@ -21,8 +21,8 @@ and site.
 
 Start with the [vision](./docs/vision.md) for scope, the
 [model](./docs/devel/model.md) for domain records, and the
-[ASCC pipeline](./docs/devel/PIPELINE.md) or
-[VPHC commands](./docs/devel/TOOLS.md#vphc-commands) for data preparation.
+[optional bodger tools](./docs/devel/PIPELINE.md) for catalog extraction or
+[VPHC commands](./docs/devel/TOOLS.md#vphc-commands) for prepared data imports.
 The [verification guide](./docs/devel/BUILD.md#verification) covers tests.
 New state Editors should read [Getting Started](./docs/getting-started.md).
 
@@ -42,6 +42,10 @@ material belongs under `docs/devel/`; adding a document does not publish it.
 For design and scope details, see [docs/devel/design.md](./docs/devel/design.md)
 
 ## Quickstart
+
+Bodger is optional. The setup below installs WorldCovers without access to
+the private bodger repository. Base catalog work, Entry submission and review,
+and imports of prepared bundles do not require the extraction tools.
 
 Prerequisites:
 

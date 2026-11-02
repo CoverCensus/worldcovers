@@ -23,7 +23,7 @@ class _PatchedRoots:
         self.saved = {}
 
     def __enter__(self):
-        names = ("REPO_ROOT", "WIP_DIR", "WIP_IN", "WIP_CACHE", "WIP_OUT", "BACKEND_MEDIA")
+        names = ("REPO_ROOT", "WIP_DIR", "WIP_IN", "WIP_CACHE", "WIP_OUT", "BACKEND_MEDIA", "BODGER_MEDIA")
         self.saved = {name: getattr(ascc_cli, name) for name in names}
         ascc_cli.REPO_ROOT = self.root
         ascc_cli.WIP_DIR = self.root / "tools" / "wip"
@@ -31,6 +31,7 @@ class _PatchedRoots:
         ascc_cli.WIP_CACHE = ascc_cli.WIP_DIR / "cache"
         ascc_cli.WIP_OUT = ascc_cli.WIP_DIR / "out"
         ascc_cli.BACKEND_MEDIA = self.root / "backend" / "media"
+        ascc_cli.BODGER_MEDIA = self.root / "bodger-media"
         for path in (ascc_cli.WIP_IN, ascc_cli.WIP_CACHE, ascc_cli.WIP_OUT):
             path.mkdir(parents=True, exist_ok=True)
         return self
