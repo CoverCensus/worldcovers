@@ -276,12 +276,12 @@ The Python audit checks application and development dependencies. Findings,
 an outdated lockfile, or an audit service failure stop verification. The npm
 audit stops verification for findings rated moderate or higher.
 
-[verify.yml](../../.github/workflows/verify.yml) defines the shared CI checks.
-Pull requests and both deploy workflows call it. CI uses Node 22, the pinned
-Python version, and a MariaDB service: 12.3 LTS for staging deploys and PRs
-targeting `staging`, and 10.11 for production deploys and other PRs. Deployment
-starts only after both the frontend and backend jobs pass. The frontend build
-is also uploaded as an artifact; the server deploy builds the frontend again.
+These checks are run locally by the person who merges and deploys; there is
+no CI service since 2026-10-30 (see [DEPLOY.md](DEPLOY.md#deploy-flow)). Use
+Node 22, the pinned Python version, and MariaDB: 12.3 LTS when the target is
+`staging`, 10.11 when the target is `main`/production. Deploy only after both
+the frontend and backend checks pass on the merged commit; the server deploy
+builds the frontend again.
 
 ## Seeding and ETL
 

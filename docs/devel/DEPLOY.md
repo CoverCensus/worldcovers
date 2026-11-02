@@ -9,10 +9,9 @@ for creating that host profile; it is not a generic Linux provisioning script.
 
 Source of truth:
 
-- `.github/workflows/verify.yml`: shared frontend and backend checks
-- `.github/workflows/pr-checks.yml`: verification on pull requests
-- `.github/workflows/build-and-deploy.yml`: staging deploy to `woco.dev`
-- `.github/workflows/deploy-prod.yml`: production deploy to `hellowoco.app`
+- [Deploy Flow](#deploy-flow) below: the manual steps for `woco.dev` and
+  `hellowoco.app` (GitHub Actions deploys were retired on 2026-10-30)
+- [BUILD.md](BUILD.md#verification): the checks that must pass before a deploy
 - `deploy/provision.sh`: one-time Ubuntu 24.04 root host build (see below)
 - `deploy/deploy.sh`: unprivileged app build and migration steps
 - `deploy/worldcovers.service`: gunicorn systemd service definition
@@ -89,7 +88,7 @@ Use the production hostname in that command when provisioning production.
 ## Hosts
 
 Both hosts keep the repo at `/srv/woco`, owned by `wocod:wocod`.
-GitHub Actions deploys over SSH as `wocod`; it never SSHes as `root`.
+Deploys run over SSH as `wocod`; nothing deploys as `root`.
 
 ```text
 staging:
@@ -160,19 +159,26 @@ Undo: empty the variable and restart, then point the new name somewhere else
 in DNS (back to the Cloudflare redirect rules, proxied), or it answers 400.
 nginx and the certificate can keep the extra names.
 
-## GitHub Actions Deploy Flow
+## Deploy Flow
 
-Pull requests and both deployment branches call `verify.yml`. Its frontend
-job runs the fingerprint scan, dependency audit, lint, type checks, tests,
-and build. Its backend job runs the tools pytest suite, Django system checks,
-and the `common` test suite. The shared workflow accepts a `mariadb-version`
-input, which defaults to `10.11` for production. Staging passes `12.3`; PRs
-targeting `staging` use the same version. See
-[BUILD.md](BUILD.md#verification) for local commands.
+Deploys are manual since 2026-10-30. After a maintainer account was used to
+force-push malicious commits (workspace issue #228), GitHub Actions was
+disabled for the repository and the workflow files were removed, so nothing
+builds or deploys on a merge. A maintainer runs the steps below by hand after
+the PR has merged. Re-enabling automatic deploys is a deliberate decision,
+not a settings toggle: it needs new workflow files, new deploy keys, and a
+required-status-check rule on `main` and `staging`.
 
-Both deploy jobs require verification to pass before they connect to the
-host. Pushes to `staging` deploy to `woco.dev`; pushes to `main` deploy to
-`hellowoco.app`. Both workflows also support manual dispatch.
+Before deploying, run the verification checks locally on the exact commit
+that merged: the fingerprint scan, dependency audits, lint, type checks,
+tests, and build for the frontend; the tools pytest suite, Django system
+checks, and the `common` test suite for the backend. Use MariaDB `12.3` when
+checking a `staging` deploy and `10.11` for production. See
+[BUILD.md](BUILD.md#verification) for the commands. Deploy only if every
+check passes.
+
+Merges to `staging` are deployed to `woco.dev`; merges to `main` are deployed
+to `hellowoco.app`. Run one deployment at a time.
 
 Staging deploy over SSH as `wocod`:
 
@@ -320,16 +326,12 @@ Install only `worldcovers-actions-staging.pub` for
 `wocod@woco.dev`. Install only `worldcovers-actions-prod.pub` for
 `wocod@hellowoco.app`.
 
-Update GitHub Actions secrets:
-
-```text
-STAGING_DEPLOY_SSH_KEY = private key from worldcovers-actions-staging
-PROD_DEPLOY_SSH_KEY = private key from worldcovers-actions-prod
-```
-
-After both new deploys succeed, delete the old shared `DEPLOY_SSH_KEY` secret
-and remove its public key from all server `authorized_keys` files, including
-root on staging if it was added there.
+These key pairs are only needed if automatic deploys are restored; while
+deploys are manual, each maintainer uses their own SSH key as `wocod`. If
+Actions is restored, store the private keys as repository secrets
+(`STAGING_DEPLOY_SSH_KEY`, `PROD_DEPLOY_SSH_KEY`) and, after both new deploys
+succeed, remove every older automation public key from all server
+`authorized_keys` files, including root on staging if one was added there.
 
 ## SSH Policy
 

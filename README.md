@@ -189,8 +189,8 @@ admin, media, and static requests are proxied to Django.
 With `DEBUG=False`, `./woco dev` builds `frontend/dist/` and serves the built
 SPA through Django at `http://127.0.0.1:8000`.
 
-For local test commands and the checks required by GitHub Actions, see
-[BUILD.md](./docs/devel/BUILD.md#verification).
+For local test commands and the verification checks that must pass before a
+deploy, see [BUILD.md](./docs/devel/BUILD.md#verification).
 
 ## Deployment And Operations
 
@@ -203,18 +203,16 @@ for the current configuration and planned changes.
 
 The deployment source of truth is:
 
-- [.github/workflows/verify.yml](./.github/workflows/verify.yml)
-- [.github/workflows/pr-checks.yml](./.github/workflows/pr-checks.yml)
-- [.github/workflows/build-and-deploy.yml](./.github/workflows/build-and-deploy.yml)
-- [.github/workflows/deploy-prod.yml](./.github/workflows/deploy-prod.yml)
+- [docs/devel/DEPLOY.md](./docs/devel/DEPLOY.md#deploy-flow) (manual deploy steps)
 - [deploy/provision.sh](./deploy/provision.sh)
 - [deploy/deploy.sh](./deploy/deploy.sh)
 - [deploy/worldcovers.service](./deploy/worldcovers.service)
 - [deploy/worldcovers-apply-unit.sh](./deploy/worldcovers-apply-unit.sh)
 
-GitHub Actions stops and starts the `worldcovers` service around each deploy.
-The staging and production workflows each run one deployment at a time.
-A running deployment is not canceled by a newer queued run.
+Deploys are run by hand by a maintainer since 2026-10-30 (see
+[DEPLOY.md](./docs/devel/DEPLOY.md#deploy-flow)); the GitHub Actions
+workflows were removed from the repository. The operator stops and starts the
+`worldcovers` service around each deploy and runs one deployment at a time.
 Staging can apply a changed systemd unit through the audited helper; production
 fails closed until a root operator reviews and applies unit changes manually.
 `deploy/deploy.sh` runs dependency sync, migrations, frontend build, and
