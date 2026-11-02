@@ -8,9 +8,9 @@ This module keeps the demo-facing workflow small:
     ./woco ascc run VA --dry-run
     ./woco ascc ocr VA --pdf ~/Downloads/va-catalog.pdf
 
-It preserves the existing tools/wip/in, tools/wip/cache, and tools/wip/out
-layout. The older OCR tools remain stage implementations; this CLI owns the
-public argument names, canonical filenames, and run manifest.
+Extraction stages and their input/cache directories live in optional bodger.
+Final bundles and served media remain in WorldCovers. This CLI owns the public
+arguments, canonical filenames, and run manifests.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from ascc_pipeline import checks as pipeline_checks
 from ascc_pipeline import commands as pipeline_commands
 from ascc_pipeline import manifest as pipeline_manifest
 from ascc_pipeline import paths as pipeline_paths
-from v1_massachusetts import BPM_REFERENCE_CODE
+import bodger_tools
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -41,6 +41,9 @@ WIP_IN = WIP_DIR / "in"
 WIP_CACHE = WIP_DIR / "cache"
 WIP_OUT = WIP_DIR / "out"
 BACKEND_MEDIA = REPO_ROOT / "backend" / "media"
+BODGER_MEDIA = WIP_OUT / "media"
+BODGER_PYTHON = sys.executable
+BPM_REFERENCE_CODE = "BPM2"
 
 GENERATED_BUNDLE_STEMS = pipeline_paths.GENERATED_BUNDLE_STEMS
 DEFAULT_OCR_REFERENCE_WORK = pipeline_paths.DEFAULT_OCR_REFERENCE_WORK
@@ -51,6 +54,20 @@ V1StatePaths = pipeline_paths.V1StatePaths
 
 class AsccCliError(Exception):
     """Raised for user-correctable ASCC CLI failures."""
+
+
+def configure_bodger() -> None:
+    global TOOLS_DIR, WIP_DIR, WIP_IN, WIP_CACHE, BODGER_PYTHON, BODGER_MEDIA
+    try:
+        root, python = bodger_tools.installation()
+    except bodger_tools.BodgerError as exc:
+        raise AsccCliError(str(exc)) from exc
+    TOOLS_DIR = root / "tools"
+    WIP_DIR = TOOLS_DIR / "wip"
+    WIP_IN = WIP_DIR / "in"
+    WIP_CACHE = WIP_DIR / "cache"
+    BODGER_MEDIA = WIP_DIR / "out" / "media"
+    BODGER_PYTHON = str(python)
 
 
 def pipeline_roots() -> pipeline_paths.PipelineRoots:
@@ -285,6 +302,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command not in ("import", "drop"):
+            configure_bodger()
         if args.command == "doctor":
             return command_doctor(args)
         if args.command == "run":
@@ -572,7 +591,7 @@ def require_dir(path: Path, label: str) -> None:
 
 
 def page_processor_cmd(paths: StatePaths, args) -> list[str]:
-    cmd = [sys.executable, str(TOOLS_DIR / "ascc_page_processor.py"), paths.basename]
+    cmd = [BODGER_PYTHON, str(TOOLS_DIR / "ascc_page_processor.py"), paths.basename]
     add_provider_args(cmd, args)
     if args.pages:
         cmd.extend(["--pages", args.pages])
@@ -581,7 +600,7 @@ def page_processor_cmd(paths: StatePaths, args) -> list[str]:
 
 def page_extract_cmd(paths: StatePaths, args) -> list[str]:
     cmd = [
-        sys.executable,
+        BODGER_PYTHON,
         str(TOOLS_DIR / "ascc_page_extract.py"),
         paths.basename,
         "--output-csv",
@@ -595,7 +614,7 @@ def page_extract_cmd(paths: StatePaths, args) -> list[str]:
 
 def image_extract_cmd(paths: StatePaths, args) -> list[str]:
     cmd = [
-        sys.executable,
+        BODGER_PYTHON,
         str(TOOLS_DIR / "ascc_image_extract.py"),
         paths.basename,
         "--ocr-rows",
@@ -611,7 +630,7 @@ def image_extract_cmd(paths: StatePaths, args) -> list[str]:
 
 def munger_cmd(paths: StatePaths, args) -> list[str]:
     return [
-        sys.executable,
+        BODGER_PYTHON,
         str(TOOLS_DIR / "ascc_data_munger.py"),
         "--input",
         str(paths.catalog_rows),
@@ -628,7 +647,7 @@ def munger_cmd(paths: StatePaths, args) -> list[str]:
 
 def v1_catalog_cmd(paths: V1StatePaths, args) -> list[str]:
     return [
-        sys.executable,
+        BODGER_PYTHON,
         str(TOOLS_DIR / "v1_catalog_rows.py"),
         paths.state,
         "--raw",
@@ -655,7 +674,7 @@ def v1_overlay_cmd(
     preserve_images: bool = False,
 ) -> list[str]:
     cmd = [
-        sys.executable,
+        BODGER_PYTHON,
         str(TOOLS_DIR / "v1_bundle_overlay.py"),
         "--state",
         paths.state,
@@ -681,7 +700,7 @@ def v1_overlay_cmd(
 
 def v1_image_cmd(paths: V1StatePaths, args, image_root: Path) -> list[str]:
     cmd = [
-        sys.executable,
+        BODGER_PYTHON,
         str(TOOLS_DIR / "v1_attach_images.py"),
         "--state",
         paths.state,
@@ -812,8 +831,11 @@ def remove_path(path: Path) -> int:
 
 def copy_marking_images(paths: StatePaths) -> int:
     paths.media_dir.mkdir(parents=True, exist_ok=True)
+    bodger_media = BODGER_MEDIA / paths.state.lower()
+    bodger_media.mkdir(parents=True, exist_ok=True)
     images = sorted(paths.images_dir.glob("*.png"))
     for image in images:
+        shutil.copy2(image, bodger_media / image.name)
         shutil.copy2(image, paths.media_dir / image.name)
     print()
     print(f"copied marking images: {len(images)} -> {paths.media_dir}")
