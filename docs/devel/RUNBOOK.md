@@ -4,8 +4,7 @@ Day-to-day commands for running WorldCovers on staging and production.
 
 Source of truth:
 
-- Staging deployment flow: `.github/workflows/build-and-deploy.yml`
-- Production deployment flow: `.github/workflows/deploy-prod.yml`
+- Deployment flow (manual, both hosts): `docs/devel/DEPLOY.md`, section Deploy Flow
 - App build steps: `deploy/deploy.sh`
 - Data refresh: `tools/reload_data.sh`
 - Service definition: `deploy/worldcovers.service`
