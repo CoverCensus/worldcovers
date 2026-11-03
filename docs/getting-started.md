@@ -11,23 +11,24 @@ Help. This guide links to it rather than repeating it.
 ## Step 1 -- Create your account
 
 1. Go to **https://hellowoco.app/auth** or click **Login** in the top navigation.
-2. Below the sign-in form, under **New to the catalog?**, click **Create account**.
+2. Below the sign-in form, under **New to the catalog?**, click **Create account**. A small pop-up
+   window opens over the page.
 3. Enter your **First name**, **Last name**, **Email**, a **Password** and the same password again
    under **Confirm password**, then click **Create account**. A password needs at least eight
    characters, including an uppercase letter, a lowercase letter, a number, and a special
    character such as `!`.
-4. The page changes to **Check your email**. Open the message from the catalog and follow the
+4. The pop-up changes to **Check your email**. Open the message from the catalog and follow the
    verification link. Check your spam folder if it has not arrived after a few minutes.
-5. The link opens a page headed **Verify your email**. If it asks you to, click **Confirm email**.
-   When it says your email is verified, click **Sign in** and use your email and password.
+5. The link opens a page headed **Verify your email**. Click **Confirm email**. When it says your
+   email is verified, click **Sign in** and use your email and password.
 
 <!-- screenshot: the Create account form under "New to the catalog?" -->
 <!-- screenshot: the "Check your email" message after submitting the form -->
 
 Creating an account makes you a **Contributor**: you can browse, search and submit. **Editor
 access is assigned separately.** Once you have signed in for the first time, tell the person who
-invited you; the project team then assigns your state or states to your account, and the editor
-tools described in Step 5 and Step 7 appear.
+invited you. The project team then assigns your state or states to your account, and the editor
+tools appear (see Steps 5 and 7).
 
 If the verification email never arrives, check spam, then try signing in with your email and
 password: an account that has not been verified yet is sent a fresh link. Do not create a second
@@ -86,11 +87,11 @@ Click any result to open its record page.
 
 What you are looking at:
 
-- **Inscription Text** -- what is actually struck or written on the marking, abbreviations and all.
+- The inscription -- what is actually struck or written on the marking, abbreviations and all.
 - **Color** -- the ink color. Blank is legitimate when the source catalog never stated one.
-- **Dates** -- the earliest and latest dates recorded.
-- **Shape, dimensions, lettering** -- the physical description of the handstamp. A manuscript
-  marking (written by hand) has no shape.
+- **Earliest Seen** and the latest date -- the dates recorded for the marking.
+- **Shape**, **Dimensions** and **Lettering Style** -- the physical description of the handstamp.
+  A manuscript marking (written by hand) has no shape.
 - **Associated Covers** -- the actual covers recorded as bearing this marking.
 
 ---
@@ -145,8 +146,8 @@ does not have, and **Submit Edit to Existing Marking** to correct one that it do
 
 To record an actual cover bearing a marking, use **Submit New Cover** from that marking's record.
 If you upload a whole-cover scan while editing a marking, the form offers to make it a Cover for
-that marking instead: the image becomes a Cover draft, listed only to you under Associated
-Covers on the record and in your Dashboard, until you finish and submit it.
+that marking instead. The image becomes a Cover draft. Until you finish and submit it, the draft is
+listed only to you, under Associated Covers on the record and in your Dashboard.
 
 ![The Submit New Cover form: Type and Date fields, the Cover images upload area, and the Institutionally Owned, Backstamp and submitter-name checkboxes below it](/assets/guide/10-submit-cover-form.png)
 
@@ -165,7 +166,8 @@ as given, but everything submitted from here on needs a picture as proof.
 You can **Save Draft** and come back to it. When you submit, you will see **Submission received**,
 and the entry goes into the review queue rather than straight into the catalog.
 
-Everything you have submitted is listed under **Dashboard** in the menu under your name.
+Everything you have submitted is listed under **Dashboard** in the menu under your name (the item
+is called **My Submissions** until you are made an Editor).
 
 ![The Dashboard's My Submissions tab showing a submission with a Draft badge and an Edit Draft button](/assets/guide/11-dashboard.png)
 
@@ -179,11 +181,12 @@ until an Editor for that state reviews it. This is the second half of your job.
 ### Finding what is waiting
 
 1. Open the menu under your name and choose **Dashboard**. Editors see the **Editor Dashboard**:
-   "Review pending submissions and see contribution history in your assigned states."
+   "Review pending submissions and see contribution history in your assigned states." Make sure
+   the **User Submissions** tab is selected.
 2. Set the **Status** filter to **Pending** to list only the submissions waiting for a decision.
-   The other settings -- **Needs Revision**, **Approved**, **Rejected** -- show what you have
-   already dealt with. The search box (*Search across fields...*) narrows the list by town or any
-   other field.
+   The other settings, such as **Needs Revision**, **Approved** and **Rejected**, show what you
+   have already dealt with. The search box (*Search across fields...*) narrows the list by town or
+   any other field.
 3. Open a submission by clicking its image.
 
 <!-- screenshot: the Editor Dashboard with the Status filter set to Pending -->
@@ -195,7 +198,7 @@ Compare the proposal with the image and with the printed catalog, then choose on
 
 - **Approve** -- the entry goes into the catalog. For a new Marking the catalog code is generated
   at this moment.
-- **Return** -- the submission goes back to the contributor as **Needs revision**, with your
+- **Return** -- the submission goes back to the contributor as **Needs Revision**, with your
   comment telling them what to change. They edit it and submit again, and it reappears under
   **Pending**.
 - **Reject** -- the submission is closed and does not enter the catalog.
@@ -203,8 +206,9 @@ Compare the proposal with the image and with the printed catalog, then choose on
 The **Comment** box is optional for an approval and required for a return or a rejection. Write it
 for the contributor: say what is wrong and what would make it right.
 
-A new Marking submitted together with its Cover arrives as two linked submissions. Approve the
-Marking first; the Cover follows.
+A new Marking submitted together with its Cover arrives as one submission. When you approve the
+Marking, a second, pending Cover submission appears for it. Open and approve that one too; the
+Cover is not in the catalog until you do.
 
 <!-- screenshot: the "Review this submission" panel with the Approve, Reject and Return buttons -->
 
@@ -217,15 +221,15 @@ printed catalog. Submissions have no such box: approving, returning or rejecting
 
 Two recorded training sessions walk through the same screens:
 
-- Bob Zahm's session, 19 October 2026: https://youtu.be/VvQ1ZWW1cpk
-- Ian Gibson-Smith's walkthrough: https://www.youtube.com/watch?v=cLGOXS7Q7Ko
+- A State Editor's recorded training session, 19 October 2026: https://youtu.be/VvQ1ZWW1cpk
+- The project lead's walkthrough: https://www.youtube.com/watch?v=cLGOXS7Q7Ko
 
 ---
 
 ## If something goes wrong
 
-- **"Create account" did nothing.** It opens a form on the same page. If nothing appeared, scroll
-  up.
+- **"Create account" did nothing.** It opens a small pop-up window over the page. If nothing
+  appeared, reload the page and click it again.
 - **No verification email.** Check spam. Then sign in with your email and password: an unverified
   account is sent a fresh link. Do not create a second account.
 - **Account deactivated.** Contact the support address in the message to request restored access.
@@ -238,5 +242,5 @@ Two recorded training sessions walk through the same screens:
 - **You are signed in but see no Editor Dashboard or Reviewed / confirmed checkbox.** Editor access
   is assigned by the project team after your account exists; tell the person who invited you.
 
-The system is in beta. Bugs and rough edges are expected, and reports of them are welcome -- that is
-what this stage is for.
+The site is still being tested and improved. Bugs and rough edges are expected, and reports of them
+are welcome -- that is what this stage is for.
