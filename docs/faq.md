@@ -6,6 +6,9 @@ Guests can browse the catalog and documentation pages. Actions that modify data,
 ## Where can I find definitions for system terms?
 Open the Glossary article in Help. It explains commonly used terms such as cover, marking, contribution, and citation.
 
+## Where can I see the values in the drop-down lists?
+The Glossary article in Help lists them: the **Shape Codes** and **Date Format Codes** sections give every code with its meaning, and the **Lettering**, **Impression**, **Color** and **Cover** entries list the choices those fields offer. The forms show the same values; the Glossary is the printable reference.
+
 ## How do I submit a correction or new record?
 Sign in and use the contribution workflow to propose your change. Contributions are reviewed before being published.
 
@@ -24,3 +27,5 @@ For catalog data, sign in and submit a correction through the contribution workf
 ## Can I reuse catalog data or images, and how do I credit them?
 Open the Rights and Attribution article in Help. It explains the difference between the software licence and the catalog data statement, where the records and images come from, how Contributor credit works, how to write a credit line, and which terms are not yet confirmed.
 
+## What does the message on an old thumbnail mean?
+Many listings came over from the earlier worldcovers.org site with a cover image attached but no date or other cover details. The message on such a thumbnail is an invitation: choose **Create cover from this image** to move that image into the cover census as a Cover of its own. The form that opens asks for the details the old site never recorded, such as the date; fill in what you can and submit it for Editor review.
