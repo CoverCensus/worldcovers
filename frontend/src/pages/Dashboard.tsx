@@ -1682,7 +1682,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 </Card>
               ) : (
                 <div className="space-y-4">
-                  {paginatedSubmissions.map((submission) => (
+                  {paginatedSubmissions.map((submission) => {
+                    const target = openTarget(submission);
+                    return (
                     <Card
                       key={submission.id}
                       className="shadow-archival-md hover:shadow-archival-lg transition-shadow"
@@ -1705,13 +1707,22 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             <div className="flex items-start justify-between gap-2 mb-2">
                               <div className="flex items-center gap-2 flex-wrap min-w-0">
                                 <h3 className="font-heading text-xl font-semibold text-foreground">
-                                  {submission.presentation.title}
+                                  <Link
+                                    to={target.to}
+                                    state={target.state}
+                                    className="rounded hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                  >
+                                    {submission.presentation.title}
+                                  </Link>
                                 </h3>
                                 <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-xs">
                                   {submission.presentation.entryKind}
                                 </Badge>
                               </div>
-                              {getStatusBadge(submission.status)}
+                              {getStatusBadge(submission.status, {
+                                onClick: () => goOpenDashboardItem(submission),
+                                className: "cursor-pointer",
+                              })}
                             </div>
 
                             <ContributionSummaryFields
@@ -1752,7 +1763,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         </div>
                       </CardContent>
                     </Card>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
@@ -2415,6 +2427,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     {editorHistoryItems.map((item) => {
                       const displayLabel = item.presentation.title;
                       const statusClassName = statusColorClass(item.status);
+                      const target = openTarget(item);
                       return (
                         <li
                           key={item.id}
@@ -2447,9 +2460,13 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               />
                             </button>
                             <div className="min-w-0">
-                              <span className="font-medium text-foreground block truncate">
+                              <Link
+                                to={target.to}
+                                state={target.state}
+                                className="font-medium text-foreground block truncate rounded hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              >
                                 {displayLabel}
-                              </span>
+                              </Link>
                               <span className="text-muted-foreground text-sm">
                                 by {item.contributor_username}
                               </span>
@@ -2474,7 +2491,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             <Badge variant="outline" className="rounded-full px-3 py-1 text-xs font-semibold">
                               {item.presentation.entryKind}
                             </Badge>
-                            <Badge className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${statusClassName}`}>
+                            <Badge
+                              className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm cursor-pointer ${statusClassName}`}
+                              onClick={() => goOpenDashboardItem(item)}
+                            >
                               {item.status === "needs_revision"
                                 ? "Needs Revision"
                                 : item.status === "approved"
