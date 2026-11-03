@@ -1188,3 +1188,29 @@ a 404 for every new account (2026-10-27, found once signup worked again).
 **Evidence:** [normalizer](backend/woco/site_role.py),
 [settings](backend/woco/settings.py),
 [tests](backend/common/tests/test_site_and_pending_requests.py).
+
+## Open A Row From Its Title
+
+**Do:** In a list of records or submissions, make the title the real
+link (a router `Link` with an `href`), and let one helper decide where a
+row opens so the image, the title and any badge agree
+(`frontend/src/lib/dashboardItemTarget.ts` for the Dashboard). Extra
+click targets such as a status badge are redundant mouse clicks with no
+`tabIndex` or `role`, so keyboard and screen-reader users meet one link
+per row.
+
+**Don't:** Make a whole row clickable when it holds other controls (a
+checkbox, Archive or Edit buttons), or add a second focusable link to the
+same destination inside one row. Do not build a row's target inline in
+JSX.
+
+**Why:** Editors could not find how to open a pending submission because
+only the image was a control (T97). A heading-as-link is the pattern
+screen readers list and keyboards reach; a real `href` lets an editor
+middle-click a queue into tabs with the return-to query intact. A
+clickable row around nested controls needs propagation guards on every
+control and still reads as one giant link.
+
+**Evidence:** [row target helper](frontend/src/lib/dashboardItemTarget.ts),
+[its tests](frontend/src/lib/dashboardItemTarget.test.ts),
+[Dashboard rows](frontend/src/pages/Dashboard.tsx), Trello T97.
