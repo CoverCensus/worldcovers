@@ -8,46 +8,37 @@ Help. This guide links to it rather than repeating it.
 
 ---
 
-## The two sites, and why there are two
-
-| Site | What it is | What you do there |
-|---|---|---|
-| **hellowoco.app** | The production site. | Request your login here. |
-| **woco.dev** | The development site. Each new state lands here first. | Review your state here. |
-
-Request your account on **hellowoco.app**. The project team copies approved accounts to
-**woco.dev** for review work. This is a one-way operator task, not an instant sync.
-
-> **Do not create an account directly on woco.dev.** It will not carry back to hellowoco.app, and
-> later account copies can replace its settings. Start at hellowoco.app every time. woco.dev says
-> so itself: its pages carry a "Test site" badge and its "Request a login" button sends you to
-> hellowoco.app.
-
----
-
-## Step 1 -- Request your login
+## Step 1 -- Create your account
 
 1. Go to **https://hellowoco.app/auth** or click **Login** in the top navigation.
-2. Below the sign-in form, find **New to the catalog?** and click the
-   **Request a login** button. You do not need to fill in the sign-in form.
-3. In **Request Login Access**, enter **First Name**, **Last Name**, and
-   **Email**, then click **Submit Request**.
-4. **Request submitted!** means the request was received. An editor must
-   review it before you can sign in. There is no automatic confirmation email
-   or automatic temporary password.
-5. If you have not heard back within a week, contact the support email shown
-   in the confirmation, or the person who invited you. Do not submit a second
-   request for the same address.
+2. Below the sign-in form, under **New to the catalog?**, click **Create account**.
+3. Enter your **First name**, **Last name**, **Email**, a **Password** and the same password again
+   under **Confirm password**, then click **Create account**. A password needs at least eight
+   characters, including an uppercase letter, a lowercase letter, a number, and a special
+   character such as `!`.
+4. The page changes to **Check your email**. Open the message from the catalog and follow the
+   verification link. Check your spam folder if it has not arrived after a few minutes.
+5. The link opens a page headed **Verify your email**. If it asks you to, click **Confirm email**.
+   When it says your email is verified, click **Sign in** and use your email and password.
 
-If the site says your account is **waiting for approval**, wait for that
-review or contact support. A password reset cannot approve the account.
+<!-- screenshot: the Create account form under "New to the catalog?" -->
+<!-- screenshot: the "Check your email" message after submitting the form -->
+
+Creating an account makes you a **Contributor**: you can browse, search and submit. **Editor
+access is assigned separately.** Once you have signed in for the first time, tell the person who
+invited you; the project team then assigns your state or states to your account, and the editor
+tools described in Step 5 and Step 7 appear.
+
+If the verification email never arrives, check spam, then try signing in with your email and
+password: an account that has not been verified yet is sent a fresh link. Do not create a second
+account with the same address.
 
 ---
 
-## Step 2 -- Set your password and sign in
+## Step 2 -- Forgotten or changed passwords
 
-After your account is approved, follow any instructions the project team
-sends you. If your active account has no password yet:
+If you cannot remember your password, or the project team set your account up for you and you
+have never had one:
 
 1. Return to **https://hellowoco.app/auth** and click **Forgot password?**.
 2. Enter the email address used for your account and submit the form.
@@ -69,11 +60,6 @@ current password, then the new password twice.
 ![The account menu open, listing Dashboard, Change password and Logout](/assets/guide/03-account-menu.png)
 
 ![The Change Password dialog with Current password, New password and Confirm new password fields](/assets/guide/04-change-password.png)
-
-For state review, go to **https://woco.dev** after the project team has copied
-your account there. Use the password from the most recent account copy. If
-that password does not work, ask the team to sync the account again. Changing
-your password on production does not update staging immediately.
 
 ---
 
@@ -146,8 +132,7 @@ applies wherever one catalog line has been expanded into several records.
 
 Write them down and send them to the project team. If the errors are widespread, the state gets
 re-run through the import with fixes rather than being corrected by hand. Once you judge the
-remaining margin of error acceptable, you approve the state, and the data is moved to
-hellowoco.app for final cleanup.
+remaining margin of error acceptable, tell the project team that you approve the state.
 
 ---
 
@@ -186,22 +171,72 @@ Everything you have submitted is listed under **Dashboard** in the menu under yo
 
 ---
 
+## Step 7 -- Reviewing submissions (Editors)
+
+Contributors propose new Markings, new Covers and edits. Nothing they submit reaches the catalog
+until an Editor for that state reviews it. This is the second half of your job.
+
+### Finding what is waiting
+
+1. Open the menu under your name and choose **Dashboard**. Editors see the **Editor Dashboard**:
+   "Review pending submissions and see contribution history in your assigned states."
+2. Set the **Status** filter to **Pending** to list only the submissions waiting for a decision.
+   The other settings -- **Needs Revision**, **Approved**, **Rejected** -- show what you have
+   already dealt with. The search box (*Search across fields...*) narrows the list by town or any
+   other field.
+3. Open a submission by clicking its image.
+
+<!-- screenshot: the Editor Dashboard with the Status filter set to Pending -->
+
+### Making the decision
+
+On the submission page, the **Review this submission** panel sits beside the proposed details.
+Compare the proposal with the image and with the printed catalog, then choose one of three actions:
+
+- **Approve** -- the entry goes into the catalog. For a new Marking the catalog code is generated
+  at this moment.
+- **Return** -- the submission goes back to the contributor as **Needs revision**, with your
+  comment telling them what to change. They edit it and submit again, and it reappears under
+  **Pending**.
+- **Reject** -- the submission is closed and does not enter the catalog.
+
+The **Comment** box is optional for an approval and required for a return or a rejection. Write it
+for the contributor: say what is wrong and what would make it right.
+
+A new Marking submitted together with its Cover arrives as two linked submissions. Approve the
+Marking first; the Cover follows.
+
+<!-- screenshot: the "Review this submission" panel with the Approve, Reject and Return buttons -->
+
+### Two different checkboxes
+
+The **Reviewed / confirmed** checkbox from Step 5 belongs to catalog records that came from the
+printed catalog. Submissions have no such box: approving, returning or rejecting is the review.
+
+### Watch it done
+
+Two recorded training sessions walk through the same screens:
+
+- Bob Zahm's session, 19 October 2026: https://youtu.be/VvQ1ZWW1cpk
+- Ian Gibson-Smith's walkthrough: https://www.youtube.com/watch?v=cLGOXS7Q7Ko
+
+---
+
 ## If something goes wrong
 
-- **"Request a login" did nothing.** It opens a window on the same page. If nothing appeared, scroll
+- **"Create account" did nothing.** It opens a form on the same page. If nothing appeared, scroll
   up.
-- **Waiting for approval.** An editor must approve the account. Resetting the password will not
-  change that status. Follow up after a week if you have not heard back.
+- **No verification email.** Check spam. Then sign in with your email and password: an unverified
+  account is sent a fresh link. Do not create a second account.
 - **Account deactivated.** Contact the support address in the message to request restored access.
-- **Account has no password.** Once it is active, use **Forgot password?** to set one.
 - **Reset email could not be sent.** Contact support for help; repeated requests will not fix the
   mail service. If a successful request produces no email, check spam and then contact support.
-- **Signed in on hellowoco.app but not woco.dev.** Ask the project team to copy your current
-  account to staging. Do not create a second account on woco.dev.
-- **A search for your state returns nothing.** Not every state is loaded on every site yet. States
-  land on woco.dev first.
-- **You cannot see the Reviewed / confirmed checkbox.** It is shown only to editors, and only for
-  the states you are responsible for.
+- **A search for your state returns nothing.** Not every state is loaded yet. Ask the project team
+  when yours is due.
+- **The page carries a "Test site" badge.** You are on the development copy, which is only for
+  testing upgrades. Close it and use https://hellowoco.app.
+- **You are signed in but see no Editor Dashboard or Reviewed / confirmed checkbox.** Editor access
+  is assigned by the project team after your account exists; tell the person who invited you.
 
 The system is in beta. Bugs and rough edges are expected, and reports of them are welcome -- that is
 what this stage is for.
