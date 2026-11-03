@@ -60,7 +60,7 @@ import { BulkReviewBar } from "@/components/BulkReviewBar";
 import { PendingLoginRequestsCard } from "@/components/PendingLoginRequestsCard";
 import { SubmissionCountsBar, type SubmissionCountTarget } from "@/components/SubmissionCountsBar";
 import { getStatusBadge, statusColorClass } from "@/lib/statusBadge";
-import { withReturnTo } from "@/lib/returnTo";
+import { dashboardItemTarget, type DashboardOpenable } from "@/lib/dashboardItemTarget";
 import { catalogHref } from "@/lib/catalogParams";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -322,16 +322,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Resume a draft submission. Cover drafts edit through CoverEdit; marking drafts
   // through the Contribute form. A cover draft with no resolvable parent marking
   // falls back to the marking form rather than building a broken /record route.
+  // `from` rides along so the form returns here (the dashboard view on screen)
+  // on save/back instead of dumping the user on the parent marking record.
   const goEditDraft = (s: DashboardItem) => {
-    if (s.isCover && s.cover_parent_marking_id != null) {
-      // Pass `from` so CoverEdit returns here (the dashboard) on save/back,
-      // instead of dumping the user on the parent marking record.
-      navigate(`/record/${s.cover_parent_marking_id}/cover/new?edit=${s.id}`, {
-        state: { from: dashboardFrom() },
-      });
-      return;
-    }
-    navigate(`/contribute?edit=${s.id}`, { state: { from: dashboardFrom() } });
+    const target = dashboardItemTarget(
+      { ...s, status: "draft" },
+      dashboardFrom(),
+      dashboardReturnState(),
+    );
+    navigate(target.to, { state: target.state });
   };
 
   const goEditSubmission = (s: DashboardItem) => {
@@ -468,27 +467,20 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     }
   };
 
-  const goOpenDashboardItem = (item: {
-    id: number;
-    status: string;
-    marking_id?: number | null;
-    cover_id?: number | null;
-    isCover?: boolean;
-  }) => {
-    const statusNorm = String(item.status || "").toLowerCase();
-    if (statusNorm === "draft") {
-      goEditDraft(item as DashboardItem);
-      return;
-    }
-    // Issue #147: state alone was not enough. It is dropped by a reload and
-    // never present when someone opens the row in a new tab or follows a
-    // mailed link, and the editor was then returned to a defaulted queue --
-    // "repeat the entire search process again including changing the number of
-    // records shown" (Todd Hause, AL editor, 2026-08-31). dashboardFrom() is
-    // the view currently on screen, query string and all.
-    navigate(withReturnTo(`/contribution/${item.id}`, dashboardFrom()), {
-      state: dashboardReturnState(),
-    });
+  // Where a row opens: the image button, the title link and the status badge
+  // all ask dashboardItemTarget (T97), so they cannot disagree. Issue #147:
+  // state alone was not enough. It is dropped by a reload and never present
+  // when someone opens the row in a new tab or follows a mailed link, and the
+  // editor was then returned to a defaulted queue -- "repeat the entire search
+  // process again including changing the number of records shown" (Todd Hause,
+  // AL editor, 2026-08-31). dashboardFrom() is the view currently on screen,
+  // query string and all, and rides in the return-to query.
+  const openTarget = (item: DashboardOpenable) =>
+    dashboardItemTarget(item, dashboardFrom(), dashboardReturnState());
+
+  const goOpenDashboardItem = (item: DashboardOpenable) => {
+    const target = openTarget(item);
+    navigate(target.to, { state: target.state });
   };
   // `?tab=` wins when present; otherwise fall back to the route's initialTab so
   // the Navigation menu's location-state links keep working unchanged.
