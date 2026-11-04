@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Trash2, Crop, RotateCw } from "lucide-react";
+import { OpenFullSizeLink } from "@/components/OpenFullSizeLink";
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import type { FormEvent, MouseEvent } from "react";
 import { Link, useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
@@ -2441,6 +2442,12 @@ const Contribute = () => {
                             Default
                           </span>
                         )}
+                      </div>
+                      <div className="px-2 pb-1">
+                        <OpenFullSizeLink
+                          file={item.kind === "new" ? item.file : undefined}
+                          href={item.kind === "existing" ? item.url : undefined}
+                        />
                       </div>
                       <ImageCaptionInput
                         id={`gallery-caption-${item.key}`}

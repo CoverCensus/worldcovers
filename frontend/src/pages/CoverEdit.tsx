@@ -27,6 +27,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import { OpenFullSizeLink } from "@/components/OpenFullSizeLink";
 import axios from "axios";
 import { getContribution, createContribution } from "@/services/contributions";
 import { getCoverById } from "@/services/covers";
@@ -1388,6 +1389,7 @@ export default function CoverEdit() {
                                         </span>
                                       )}
                                     </div>
+                                    <OpenFullSizeLink href={url} />
                                     {item.kind === "existing" &&
                                       item.img.subjectType === "MARKING" &&
                                       item.img.imageId > 0 && (
