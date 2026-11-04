@@ -113,16 +113,18 @@ values as empty can erase information the Contributor never changed.
 
 **Evidence:** [Edit story S7](docs/devel/design.md#stories);
 [approval helpers](backend/common/contribution_apply.py)
-(`_apply_marking_edit`, `_apply_cover_edit`, `_sync_citations`);
+(`_apply_marking_edit`, `_apply_cover_edit`, `_sync_citations`,
+`_sync_cover_date_seen`);
 [merge tests](backend/common/tests/test_marking_edit_merge.py) and
 [Cover/edit tests](backend/common/tests/test_cover_contribution_apply.py);
 [submission tests](backend/common/tests/test_submission_citations.py) and
 [form tests](frontend/src/pages/SubmissionCitations.test.tsx).
 
-**Open work:** The cover date is the one exception: approval rebuilds it from
-the edit, so an edit without a date clears it (Trello T88 asks Michael whether
-it should keep it instead). The review comparison is below in "Compare An Edit
-Against The Current Entry Before Approval".
+The Cover date follows the same rule since T88 (2026-11-04): approval
+rewrites the cover's DateSeen only when the edit mentions a cover date key
+(`_COVER_DATE_KEYS`); a present-but-blank key or `cover_date_unknown` still
+clears it. The review comparison is below in "Compare An Edit Against The
+Current Entry Before Approval".
 [T72](ISSUE.md#t72---preserve-all-citations-in-multipart-submissions) tracks
 hosted verification and acceptance of Citation preservation and explicit
 clearing through the form workflow. [T40](ISSUE.md#other-follow-ups) covers
@@ -869,7 +871,7 @@ from (`backend/common/edit_baseline.py`). `lib/editComparison.ts` lays the
 edit's fields over that baseline the way approval does: an omitted field keeps
 its value, `""` clears it, a manuscript drops shape and lettering, marking
 ERD/LRD are added as recorded dates, an empty Cover type or flag keeps its
-value, and an edit with no Cover date clears that date. Both columns go through
+value, and an omitted Cover date keeps its value (T88). Both columns go through
 the same formatter. Changed rows carry a "Changed" badge as well as a tint, and
 every compared row stays listed.
 
