@@ -22,5 +22,16 @@ it("steps to the neighbour on click and disables a missing side", () => {
   const previous = screen.getByRole("button", { name: "Previous marking" }) as HTMLButtonElement;
   expect(previous.disabled).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Next marking" }));
-  expect(onStep).toHaveBeenCalledWith({ id: 12, page: 1 });
+  expect(onStep).toHaveBeenCalledWith({ id: 12, page: 1 }, "next");
+});
+
+it("gives focus back to the control the viewer just used", () => {
+  render(
+    <CatalogNeighbourNav
+      neighbours={{ previous: { id: 3, page: 1 }, next: { id: 5, page: 1 }, position: null, step: jest.fn() }}
+      onStep={jest.fn()}
+      focus="next"
+    />,
+  );
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Next marking" }));
 });

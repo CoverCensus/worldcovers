@@ -1197,7 +1197,10 @@ issue #87 (`frontend/src/lib/catalogCursor.ts`). Scroll the opened row
 back into view when the same view renders again. Derive Previous/Next on
 a Marking page by replaying that stored query, so the sequence is the
 list's own sort (the backend ordering always ends in `id`). Skip the
-route-level scroll-to-top on a history pop.
+route-level scroll-to-top on a history pop. Stepping moves the cursor
+with the viewer, so after a chain of steps Back returns to the last row
+stepped to, not to an earlier record reached through the browser's own
+history; a record opened from the Dashboard gets no catalog neighbours.
 
 **Don't:** Use `navigate(-1)` or router location state for the return
 path (a deep link leaves the site; state is lost on reload). Store a

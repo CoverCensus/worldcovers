@@ -9,9 +9,13 @@ import type { CatalogNeighbour, CatalogNeighbours } from "@/hooks/useCatalogNeig
 export function CatalogNeighbourNav({
   neighbours,
   onStep,
+  focus = null,
 }: {
   neighbours: CatalogNeighbours | null;
-  onStep: (neighbour: CatalogNeighbour) => void;
+  onStep: (neighbour: CatalogNeighbour, direction: "previous" | "next") => void;
+  /** The control the viewer just used: it takes focus again on the new page
+   *  (the record page remounts per id, so focus would otherwise drop to body). */
+  focus?: "previous" | "next" | null;
 }) {
   if (!neighbours) return null;
   const { previous, next, position } = neighbours;
@@ -23,13 +27,14 @@ export function CatalogNeighbourNav({
         size="sm"
         aria-label="Previous marking"
         disabled={previous == null}
-        onClick={() => previous && onStep(previous)}
+        autoFocus={focus === "previous"}
+        onClick={() => previous && onStep(previous, "previous")}
       >
         <ArrowLeft aria-hidden="true" />
         Previous
       </Button>
       {position && (
-        <span aria-live="polite" className="whitespace-nowrap px-1">
+        <span className="whitespace-nowrap px-1">
           Record {position.n.toLocaleString()} of {position.total.toLocaleString()}
         </span>
       )}
@@ -39,7 +44,8 @@ export function CatalogNeighbourNav({
         size="sm"
         aria-label="Next marking"
         disabled={next == null}
-        onClick={() => next && onStep(next)}
+        autoFocus={focus === "next"}
+        onClick={() => next && onStep(next, "next")}
       >
         Next
         <ArrowRight aria-hidden="true" />

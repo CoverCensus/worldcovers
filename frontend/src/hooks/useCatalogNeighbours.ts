@@ -30,8 +30,11 @@ export interface CatalogNeighbours {
 const STALE_MS = 5 * 60 * 1000;
 
 function usePage(query: CatalogQuery | null, page: number, enabled: boolean) {
+  // Keyed on the view without its page, so a page prefetched before a step
+  // across the edge is the cache hit the next record page lands on.
+  const view = query ? searchWithPage(query.search, 1) : "";
   return useQuery({
-    queryKey: ["catalog-neighbours", query?.search ?? "", query?.pageSize ?? 0, page],
+    queryKey: ["catalog-neighbours", view, query?.pageSize ?? 0, page],
     queryFn: () => getMarkingsPage(page, query!.pageSize, query!.options),
     enabled: enabled && query != null && page >= 1,
     staleTime: STALE_MS,
