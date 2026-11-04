@@ -87,12 +87,18 @@ describe("compareCoverEdit", () => {
     cover_date_year: "1851", cover_date_month: "3", reference_work_ids: [],
   };
 
-  it("shows that an edit without a date clears it, and ignores an empty type", () => {
+  it("keeps the date when the edit has none, and ignores an empty type", () => {
     const rows = compareCoverEdit(readSubmission(cover).data, readSubmission({ edit_cover_id: "9", type: "", is_backstamp: "true" }).data, []);
-    expect(changedKeys(rows)).toEqual(["date", "backstamp"]);
-    expect(rows.find((r) => r.key === "date")).toMatchObject({
-      proposed: "", note: "This edit has no date, so approval clears it",
-    });
+    expect(changedKeys(rows)).toEqual(["backstamp"]);
+    const dateRow = rows.find((r) => r.key === "date");
+    expect(dateRow?.proposed).toBe(dateRow?.current);
+    expect(dateRow?.note).toBeUndefined();
+  });
+
+  it("shows a cleared date when the edit says the date is unknown", () => {
+    const rows = compareCoverEdit(readSubmission(cover).data, readSubmission({ edit_cover_id: "9", cover_date_unknown: "true" }).data, []);
+    expect(changedKeys(rows)).toEqual(["date"]);
+    expect(rows.find((r) => r.key === "date")?.proposed).toBe("Date unknown");
   });
 
   it("finds no change when the form resubmits the same cover", () => {
