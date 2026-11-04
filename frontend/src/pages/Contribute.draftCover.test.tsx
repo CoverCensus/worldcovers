@@ -84,7 +84,7 @@ async function uploadWholeCover() {
 }
 
 // Trello T110: the tile offers the picked file at full size in a new tab.
-it("offers the original upload at full size from its tile", async () => {
+it("offers the picked file at full size from its tile", async () => {
   open("/edit/7", "/edit/:id");
   await screen.findByRole("button", { name: /save as draft/i });
   await uploadWholeCover();

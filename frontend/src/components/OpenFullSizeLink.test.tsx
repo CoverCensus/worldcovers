@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
-// Trello T110: each upload tile offers the original file at full size.
-import { render, screen } from "@testing-library/react";
+// Trello T110: each upload tile offers the picked file at full size.
+import { fireEvent, render, screen } from "@testing-library/react";
 import { OpenFullSizeLink } from "./OpenFullSizeLink";
 
 beforeAll(() => {
@@ -27,12 +27,19 @@ it("uses a stored image's URL as given and makes no blob URL for it", () => {
   expect(URL.createObjectURL).not.toHaveBeenCalled();
 });
 
-it("does not stop the click from opening the tab, only from reaching the drop zone", () => {
+it("keeps its click and its Enter key from reaching the drop zone around it", () => {
   const parentClick = jest.fn();
-  render(<div onClick={parentClick}><OpenFullSizeLink href="/media/x.png" /></div>);
+  const parentKeyDown = jest.fn();
+  render(
+    <div onClick={parentClick} onKeyDown={parentKeyDown}>
+      <OpenFullSizeLink href="/media/x.png" />
+    </div>,
+  );
   const link = screen.getByRole("link", { name: "Open full size" });
-  link.click();
+  fireEvent.click(link);
+  fireEvent.keyDown(link, { key: "Enter" });
   expect(parentClick).not.toHaveBeenCalled();
+  expect(parentKeyDown).not.toHaveBeenCalled();
 });
 
 it("renders nothing without a file or a URL", () => {
