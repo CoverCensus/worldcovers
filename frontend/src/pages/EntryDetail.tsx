@@ -7,9 +7,11 @@ import CoverDetailPage from "./CoverDetail";
  * two-column layout via shared entry-detail components.
  */
 export default function EntryDetail() {
-  const { coverId } = useParams();
+  const { id, coverId } = useParams();
   if (coverId != null && String(coverId).trim() !== "") {
     return <CoverDetailPage />;
   }
-  return <RecordDetail />;
+  // Keyed by id so stepping Previous/Next (Trello T95) mounts a fresh page:
+  // carousel index, dialogs and the catalog cursor read are per record.
+  return <RecordDetail key={id} />;
 }

@@ -32,6 +32,9 @@ import {
 import { dashboardHrefForTab } from "@/lib/dashboardParams";
 import { coverTypeLabel as sharedCoverTypeLabel } from "@/lib/coverTypes";
 import { catalogHref } from "@/lib/catalogParams";
+import { returnToLabel } from "@/lib/returnTo";
+import { useCatalogNeighbours, type CatalogNeighbour } from "@/hooks/useCatalogNeighbours";
+import { CatalogNeighbourNav } from "@/components/entry-detail/CatalogNeighbourNav";
 import { buildMarkingFields } from "@/lib/markingFields";
 import { formatRateValue } from "@/lib/rateDisplay";
 import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
@@ -346,6 +349,9 @@ const RecordDetail = () => {
   const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
 
   const markingId = id ? parseInt(String(id).replace(/^api-/, ""), 10) : null;
+  // Trello T95: Previous/Next through the catalog list this record was
+  // opened from; null when there is no list context (new tab, deep link).
+  const neighbours = useCatalogNeighbours(markingId);
 
   // Editors see the Record History panel; everyone else doesn't even fire the
   // changelog request. Mirrors the same role gate used for the destructive
@@ -595,6 +601,11 @@ const RecordDetail = () => {
     // a bare path would clear the filters, sort and page the browser had set.
     else navigate(catalogHref());
   };
+  const backLabel = fromDashboard ? "Back to Dashboard" : returnToLabel(catalogHref());
+  const stepToNeighbour = (neighbour: CatalogNeighbour) => {
+    neighbours?.step(neighbour);
+    navigate(`/record/${neighbour.id}`, { state: { fromSearch: true } });
+  };
 
   if (loading) {
     return (
@@ -614,7 +625,7 @@ const RecordDetail = () => {
         <Navigation />
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <p className="text-muted-foreground">{error || "Record not found"}</p>
-          <Button variant="outline" onClick={handleBack}>Back</Button>
+          <Button variant="outline" size="lg" onClick={handleBack}>{backLabel}</Button>
         </div>
         <Footer />
       </div>
@@ -915,10 +926,13 @@ const RecordDetail = () => {
         <div className="max-w-7xl mx-auto px-4 pb-8 pt-3 sm:px-6 lg:px-8">
           <div className="mb-6 flex items-start justify-between gap-4">
             <div className="flex flex-col items-start gap-1">
-              <Button variant="ghost" onClick={handleBack} className="-ml-4">
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                {fromDashboard ? "Back to Dashboard" : "Back"}
-              </Button>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                <Button variant="ghost" size="lg" onClick={handleBack} className="-ml-4 px-4 text-base [&_svg]:size-5">
+                  <ArrowLeft aria-hidden="true" />
+                  {backLabel}
+                </Button>
+                <CatalogNeighbourNav neighbours={neighbours} onStep={stepToNeighbour} />
+              </div>
               <h1 className="font-heading text-[2.35rem] font-semibold text-foreground">
                 Marking
               </h1>
