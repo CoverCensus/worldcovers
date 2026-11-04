@@ -122,9 +122,12 @@ values as empty can erase information the Contributor never changed.
 
 The Cover date follows the same rule since T88 (2026-11-04): approval
 rewrites the cover's DateSeen only when the edit mentions a cover date key
-(`_COVER_DATE_KEYS`); a present-but-blank key or `cover_date_unknown` still
-clears it. The review comparison is below in "Compare An Edit Against The
-Current Entry Before Approval".
+(`_COVER_DATE_KEYS`); any mention, even a blank key or
+`cover_date_unknown=false`, rebuilds the date from the edit alone, so a
+mention without a usable date clears it. The Cover form refuses a blank
+date, so its explicit clear is "Date unknown"; T88 protects API, script and
+older payloads. The review comparison is below in "Compare An Edit Against
+The Current Entry Before Approval".
 [T72](ISSUE.md#t72---preserve-all-citations-in-multipart-submissions) tracks
 hosted verification and acceptance of Citation preservation and explicit
 clearing through the form workflow. [T40](ISSUE.md#other-follow-ups) covers

@@ -99,10 +99,9 @@ _CITATION_ID_KEYS = (
     "reference_work_ids[]",
 )
 
-# Every key through which a payload can speak to a cover's date: the component
-# spellings the form sends, the "unknown" flag, and the legacy single-date
-# spellings (snake and camel). _sync_cover_date_seen treats an edit that
-# mentions none of them as "keep the stored date" (Trello T88).
+# The keys _sync_cover_date_seen treats as a mention of the cover's date: the
+# component spellings the form sends, the "unknown" flag, and the legacy
+# single-date spellings (snake and camel).
 _COVER_DATE_KEYS = (
     "cover_date_unknown",
     "cover_date_year",
@@ -1698,9 +1697,10 @@ def _sync_cover_date_seen(cover_id, payload: dict, actor) -> None:
 
     A payload that mentions none of _COVER_DATE_KEYS leaves the stored date
     alone, like every other field an edit omits (RFC 7396 merge; see
-    _payload_mentions and _sync_citations). A key that is present but blank
-    still clears, and cover_date_unknown=true still clears. On the create
-    path the subject has no date yet, so the early return changes nothing.
+    _payload_mentions and _sync_citations; Trello T88). Any mention, even a
+    blank key or cover_date_unknown=false, rebuilds the date from the payload
+    alone, so a mention without a usable date clears it. On the create path
+    the subject has no date yet, so the early return changes nothing.
     """
     if not _payload_mentions(payload, *_COVER_DATE_KEYS):
         return
