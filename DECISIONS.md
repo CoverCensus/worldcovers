@@ -1188,3 +1188,31 @@ a 404 for every new account (2026-10-27, found once signup worked again).
 **Evidence:** [normalizer](backend/woco/site_role.py),
 [settings](backend/woco/settings.py),
 [tests](backend/common/tests/test_site_and_pending_requests.py).
+
+## Return To The Row You Left
+
+**Do:** Keep the catalog cursor (the exact list query the catalog ran and
+the row that was opened) in sessionStorage beside the view mirror from
+issue #87 (`frontend/src/lib/catalogCursor.ts`). Scroll the opened row
+back into view when the same view renders again. Derive Previous/Next on
+a Marking page by replaying that stored query, so the sequence is the
+list's own sort (the backend ordering always ends in `id`). Skip the
+route-level scroll-to-top on a history pop.
+
+**Don't:** Use `navigate(-1)` or router location state for the return
+path (a deep link leaves the site; state is lost on reload). Store a
+pixel scroll offset (it breaks when the page size or viewport changes).
+Parse the catalog URL a second time to rebuild the list query; the
+catalog hands over the options object it used.
+
+**Why:** Mike Ludeman (Texas editor, 2026-10-21): Back from a marking
+dropped him at the top of a 1,200-row list and there was no way to step
+to the next marking. The global scroll reset in `App.tsx` ran on the
+browser's Back as well as on a push. `docs/devel/ENGINEERING-ARCHIVE.md`
+already records why the return path is a sessionStorage mirror, not
+router state; the cursor extends that one mechanism (Trello T95).
+
+**Evidence:** [cursor](frontend/src/lib/catalogCursor.ts),
+[scroll reset](frontend/src/components/ScrollToTop.tsx),
+[neighbours](frontend/src/hooks/useCatalogNeighbours.ts),
+[catalog restore test](frontend/src/pages/Search.returnRow.test.tsx).
