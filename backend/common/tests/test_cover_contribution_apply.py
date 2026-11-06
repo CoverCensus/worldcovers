@@ -1650,3 +1650,70 @@ class CarriedOverImageOnCoverEditTests(TestCase):
         # The existing row is left alone: an empty desired set with a carried
         # image means "carry it", not "delete everything else".
         self.assertTrue(Image.objects.filter(pk=self.existing.pk).exists())
+
+
+class CoverEditWithoutDateKeysTests(TestCase):
+    """
+    Trello T88: a Cover edit that mentions no date key keeps the cover's date,
+    like every other field an edit omits. An explicit blank or the "unknown"
+    flag still clears it.
+    """
+
+    def setUp(self):
+        self.user = _make_user("t88-editor")
+        self.collection = _make_collection(self.user)
+        self.parent = _make_parent_marking(self.user, self.collection.region)
+        self.cover = Cover.objects.create(
+            code="ASCC1-VA-C0788",
+            type="FC",
+            created_by=self.user,
+            modified_by=self.user,
+        )
+        self.link = CoverMarking.objects.create(
+            cover=self.cover,
+            marking=self.parent,
+            review_status=CoverMarking.REVIEW_APPROVED,
+            created_by=self.user,
+            modified_by=self.user,
+        )
+        self.stored = DateSeen.objects.create(
+            subject_type=DateSeen.SUBJECT_COVER,
+            subject_id=self.cover.pk,
+            date=date(1850, 6, 1),
+            granularity="DAY",
+            created_by=self.user,
+            modified_by=self.user,
+        )
+
+    def _apply_edit(self, drop=(), **extra):
+        sd = _cover_submitted_data(
+            self.parent,
+            edit_cover_id=self.cover.pk,
+            edit_cover_marking_id=self.link.pk,
+            **extra,
+        )
+        for key in drop:
+            sd.pop(key, None)
+        contrib = _make_cover_contribution(self.user, sd, self.collection)
+        apply_cover_contribution_to_catalog(contrib)
+        return list(
+            DateSeen.objects.filter(
+                subject_type=DateSeen.SUBJECT_COVER, subject_id=self.cover.pk
+            ).values_list("pk", "date", "granularity")
+        )
+
+    def test_edit_without_date_keys_keeps_the_stored_date(self):
+        rows = self._apply_edit(
+            drop=("cover_date", "cover_granularity"), is_backstamp="false"
+        )
+        self.assertEqual(rows, [(self.stored.pk, date(1850, 6, 1), "DAY")])
+
+    def test_edit_with_unknown_flag_still_clears_the_date(self):
+        rows = self._apply_edit(
+            drop=("cover_date", "cover_granularity"), cover_date_unknown=True
+        )
+        self.assertEqual(rows, [])
+
+    def test_edit_with_blank_date_key_still_clears_the_date(self):
+        rows = self._apply_edit(drop=("cover_granularity",), cover_date="")
+        self.assertEqual(rows, [])
