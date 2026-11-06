@@ -83,6 +83,16 @@ async function uploadWholeCover() {
   await screen.findByText(/may show a whole Cover/);
 }
 
+// Trello T110: the tile offers the picked file at full size in a new tab.
+it("offers the picked file at full size from its tile", async () => {
+  open("/edit/7", "/edit/:id");
+  await screen.findByRole("button", { name: /save as draft/i });
+  await uploadWholeCover();
+  const link = screen.getByRole("link", { name: "Open full size" });
+  expect(link.getAttribute("href")).toBe("blob:preview");
+  expect(link.getAttribute("target")).toBe("_blank");
+});
+
 it("turns the upload into a Cover draft for the Marking and drops it from the edit", async () => {
   let finishCreate!: (value: unknown) => void;
   (createContribution as jest.Mock).mockImplementation(() => new Promise((resolve) => { finishCreate = resolve; }));
