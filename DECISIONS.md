@@ -1194,27 +1194,28 @@ a 404 for every new account (2026-10-27, found once signup worked again).
 [settings](backend/woco/settings.py),
 [tests](backend/common/tests/test_site_and_pending_requests.py).
 
-## Help Names One Site
+## Open A Row From Its Title
 
-**Do:** Write every published Help document (`docs/*.md` on the
-`PUBLISHED_DOCS` allowlist) for the production site only. Quote the
-interface's own labels for each step, and when a flow changes on the
-site, change the article in the same PR. Mention the development copy at
-most as the one troubleshooting line about the "Test site" badge, with no
-hostname. Leave screenshot slots as HTML comments until the picture
-exists.
+**Do:** In a list of records or submissions, make the title the real
+link (a router `Link` with an `href`), and let one helper decide where a
+row opens so the image, the title and any badge agree
+(`frontend/src/lib/dashboardItemTarget.ts` for the Dashboard). Extra
+click targets such as a status badge are redundant mouse clicks with no
+`tabIndex` or `role`, so keyboard and screen-reader users meet one link
+per row.
 
-**Don't:** Name the development site, describe a second place where
-data lands first, or keep a step for a form that no longer exists. Do not
-add a second "editor's guide" article; the review walkthrough is Step 7
-of the one guide editors already know.
+**Don't:** Make a whole row clickable when it holds other controls (a
+checkbox, Archive or Edit buttons), or add a second focusable link to the
+same destination inside one row. Do not build a row's target inline in
+JSX.
 
-**Why:** Editors read Help as instructions. The guide told them states
-appear on the development copy first and that accounts come from a
-request form; one editor could not find his states on the production
-site and nearly resigned, and the request form had been replaced by
-self-signup for a week. A content test now fails on the next hostname or
-flow drift instead of an editor finding it.
+**Why:** Editors could not find how to open a pending submission because
+only the image was a control (T97). A heading-as-link is the pattern
+screen readers list and keyboards reach; a real `href` lets an editor
+middle-click a queue into tabs with the return-to query intact. A
+clickable row around nested controls needs propagation guards on every
+control and still reads as one giant link.
 
-**Evidence:** [allowlist tests](backend/common/tests/test_help_docs_allowlist.py),
-[getting started](docs/getting-started.md), Trello T100.
+**Evidence:** [row target helper](frontend/src/lib/dashboardItemTarget.ts),
+[its tests](frontend/src/lib/dashboardItemTarget.test.ts),
+[Dashboard rows](frontend/src/pages/Dashboard.tsx), Trello T97.
