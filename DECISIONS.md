@@ -1194,27 +1194,33 @@ a 404 for every new account (2026-10-27, found once signup worked again).
 [settings](backend/woco/settings.py),
 [tests](backend/common/tests/test_site_and_pending_requests.py).
 
-## Help Names One Site
+## Return To The Row You Left
 
-**Do:** Write every published Help document (`docs/*.md` on the
-`PUBLISHED_DOCS` allowlist) for the production site only. Quote the
-interface's own labels for each step, and when a flow changes on the
-site, change the article in the same PR. Mention the development copy at
-most as the one troubleshooting line about the "Test site" badge, with no
-hostname. Leave screenshot slots as HTML comments until the picture
-exists.
+**Do:** Keep the catalog cursor (the exact list query the catalog ran and
+the row that was opened) in sessionStorage beside the view mirror from
+issue #87 (`frontend/src/lib/catalogCursor.ts`). Scroll the opened row
+back into view when the same view renders again. Derive Previous/Next on
+a Marking page by replaying that stored query, so the sequence is the
+list's own sort (the backend ordering always ends in `id`). Skip the
+route-level scroll-to-top on a history pop. Stepping moves the cursor
+with the viewer, so after a chain of steps Back returns to the last row
+stepped to, not to an earlier record reached through the browser's own
+history; a record opened from the Dashboard gets no catalog neighbours.
 
-**Don't:** Name the development site, describe a second place where
-data lands first, or keep a step for a form that no longer exists. Do not
-add a second "editor's guide" article; the review walkthrough is Step 7
-of the one guide editors already know.
+**Don't:** Use `navigate(-1)` or router location state for the return
+path (a deep link leaves the site; state is lost on reload). Store a
+pixel scroll offset (it breaks when the page size or viewport changes).
+Parse the catalog URL a second time to rebuild the list query; the
+catalog hands over the options object it used.
 
-**Why:** Editors read Help as instructions. The guide told them states
-appear on the development copy first and that accounts come from a
-request form; one editor could not find his states on the production
-site and nearly resigned, and the request form had been replaced by
-self-signup for a week. A content test now fails on the next hostname or
-flow drift instead of an editor finding it.
+**Why:** Mike Ludeman (Texas editor, 2026-10-21): Back from a marking
+dropped him at the top of a 1,200-row list and there was no way to step
+to the next marking. The global scroll reset in `App.tsx` ran on the
+browser's Back as well as on a push. `docs/devel/ENGINEERING-ARCHIVE.md`
+already records why the return path is a sessionStorage mirror, not
+router state; the cursor extends that one mechanism (Trello T95).
 
-**Evidence:** [allowlist tests](backend/common/tests/test_help_docs_allowlist.py),
-[getting started](docs/getting-started.md), Trello T100.
+**Evidence:** [cursor](frontend/src/lib/catalogCursor.ts),
+[scroll reset](frontend/src/components/ScrollToTop.tsx),
+[neighbours](frontend/src/hooks/useCatalogNeighbours.ts),
+[catalog restore test](frontend/src/pages/Search.returnRow.test.tsx).

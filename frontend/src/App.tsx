@@ -2,8 +2,9 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
-import { lazy, Suspense, useEffect, type ReactNode } from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { lazy, Suspense } from "react";
+import { ScrollToTop } from "@/components/ScrollToTop";
 import { RequireAuth } from "@/components/RequireAuth";
 import { Spinner } from "@/components/ui/spinner";
 import Index from "./pages/Index";
@@ -31,14 +32,6 @@ const PostOfficeDetail = lazy(() => import("./pages/PostOfficeDetail"));
 const ReferenceWorks = lazy(() => import("./pages/ReferenceWorks"));
 
 const queryClient = new QueryClient();
-// Scroll to top on every route change so pages open at the top.
-const ScrollToTop = ({ children }: { children: ReactNode }) => {
-  const location = useLocation();
-  useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-  }, [location.pathname, location.search]);
-  return <>{children}</>;
-};
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>

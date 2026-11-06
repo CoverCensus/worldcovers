@@ -32,6 +32,8 @@ import {
 import { dashboardHrefForTab } from "@/lib/dashboardParams";
 import { coverTypeLabel as sharedCoverTypeLabel } from "@/lib/coverTypes";
 import { catalogHref } from "@/lib/catalogParams";
+import { useCatalogNeighbours, type CatalogNeighbour } from "@/hooks/useCatalogNeighbours";
+import { CatalogNeighbourNav } from "@/components/entry-detail/CatalogNeighbourNav";
 import { buildMarkingFields } from "@/lib/markingFields";
 import { formatRateValue } from "@/lib/rateDisplay";
 import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
@@ -346,6 +348,18 @@ const RecordDetail = () => {
   const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
 
   const markingId = id ? parseInt(String(id).replace(/^api-/, ""), 10) : null;
+  const locationState = location.state as {
+    fromDashboard?: boolean;
+    dashboardTab?: "submissions" | "editor";
+    /** Which Previous/Next control the viewer used to get here (Trello T95). */
+    focus?: "previous" | "next";
+  } | null;
+  const fromDashboard = locationState?.fromDashboard === true;
+  const dashboardTab = locationState?.dashboardTab;
+  // Trello T95: Previous/Next through the catalog list this record was
+  // opened from; null when there is no list context (new tab, deep link) and
+  // never for a record opened from the Dashboard, whose Back goes there.
+  const neighbours = useCatalogNeighbours(fromDashboard ? null : markingId);
 
   // Editors see the Record History panel; everyone else doesn't even fire the
   // changelog request. Mirrors the same role gate used for the destructive
@@ -580,12 +594,6 @@ const RecordDetail = () => {
     void applyImageOrder(next);
   };
 
-  const locationState = location.state as {
-    fromDashboard?: boolean;
-    dashboardTab?: "submissions" | "editor";
-  } | null;
-  const fromDashboard = locationState?.fromDashboard === true;
-  const dashboardTab = locationState?.dashboardTab;
   // Issue #87: this used to send everyone to /search, so an editor who opened a
   // record from their review queue was dumped into catalog search. When they
   // arrived from the dashboard, go back to the dashboard view they left.
@@ -594,6 +602,13 @@ const RecordDetail = () => {
     // Not a plain "/search": this is a forward navigation, not a history pop, so
     // a bare path would clear the filters, sort and page the browser had set.
     else navigate(catalogHref());
+  };
+  const backLabel = fromDashboard ? "Back to Dashboard" : "Back to catalog";
+  const stepToNeighbour = (neighbour: CatalogNeighbour, direction: "previous" | "next") => {
+    neighbours?.step(neighbour);
+    // The page remounts per record (EntryDetail keys it by id), so the control
+    // that was pressed is told to take focus again on the new page.
+    navigate(`/record/${neighbour.id}`, { state: { fromSearch: true, focus: direction } });
   };
 
   if (loading) {
@@ -614,7 +629,7 @@ const RecordDetail = () => {
         <Navigation />
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <p className="text-muted-foreground">{error || "Record not found"}</p>
-          <Button variant="outline" onClick={handleBack}>Back</Button>
+          <Button variant="outline" size="lg" onClick={handleBack}>{backLabel}</Button>
         </div>
         <Footer />
       </div>
@@ -915,10 +930,17 @@ const RecordDetail = () => {
         <div className="max-w-7xl mx-auto px-4 pb-8 pt-3 sm:px-6 lg:px-8">
           <div className="mb-6 flex items-start justify-between gap-4">
             <div className="flex flex-col items-start gap-1">
-              <Button variant="ghost" onClick={handleBack} className="-ml-4">
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                {fromDashboard ? "Back to Dashboard" : "Back"}
-              </Button>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                <Button variant="ghost" size="lg" onClick={handleBack} className="-ml-4 px-4 text-base [&_svg]:size-5">
+                  <ArrowLeft aria-hidden="true" />
+                  {backLabel}
+                </Button>
+                <CatalogNeighbourNav
+                  neighbours={neighbours}
+                  onStep={stepToNeighbour}
+                  focus={locationState?.focus ?? null}
+                />
+              </div>
               <h1 className="font-heading text-[2.35rem] font-semibold text-foreground">
                 Marking
               </h1>
