@@ -1188,3 +1188,28 @@ a 404 for every new account (2026-10-27, found once signup worked again).
 **Evidence:** [normalizer](backend/woco/site_role.py),
 [settings](backend/woco/settings.py),
 [tests](backend/common/tests/test_site_and_pending_requests.py).
+
+## Help Names One Site
+
+**Do:** Write every published Help document (`docs/*.md` on the
+`PUBLISHED_DOCS` allowlist) for the production site only. Quote the
+interface's own labels for each step, and when a flow changes on the
+site, change the article in the same PR. Mention the development copy at
+most as the one troubleshooting line about the "Test site" badge, with no
+hostname. Leave screenshot slots as HTML comments until the picture
+exists.
+
+**Don't:** Name the development site, describe a second place where
+data lands first, or keep a step for a form that no longer exists. Do not
+add a second "editor's guide" article; the review walkthrough is Step 7
+of the one guide editors already know.
+
+**Why:** Editors read Help as instructions. The guide told them states
+appear on the development copy first and that accounts come from a
+request form; one editor could not find his states on the production
+site and nearly resigned, and the request form had been replaced by
+self-signup for a week. A content test now fails on the next hostname or
+flow drift instead of an editor finding it.
+
+**Evidence:** [allowlist tests](backend/common/tests/test_help_docs_allowlist.py),
+[getting started](docs/getting-started.md), Trello T100.
