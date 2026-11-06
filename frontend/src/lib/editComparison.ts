@@ -72,17 +72,20 @@ const MARKING_FIELDS: FieldKeys[] = [
   { name: "citations", keys: CITATION_KEYS },
 ];
 
+const COVER_DATE_KEYS: (keyof Submission)[] = [
+  "cover_date_unknown", "cover_date_year", "cover_date_month", "cover_date_day",
+  "cover_date", "cover_granularity",
+];
+
 const COVER_FIELDS: FieldKeys[] = [
   { name: "type", keys: ["type"], emptyKeeps: true },
+  // An omitted date keeps its value like every other field; approval only
+  // rewrites it when the edit mentions a date key (_sync_cover_date_seen, T88).
+  { name: "date", keys: COVER_DATE_KEYS },
   { name: "institutional", keys: ["is_institutional"], emptyKeeps: true },
   { name: "backstamp", keys: ["is_backstamp"], emptyKeeps: true },
   { name: "description", keys: ["description"] },
   { name: "citations", keys: CITATION_KEYS },
-];
-
-const COVER_DATE_KEYS: (keyof Submission)[] = [
-  "cover_date_unknown", "cover_date_year", "cover_date_month", "cover_date_day",
-  "cover_date", "cover_granularity",
 ];
 
 const isEmpty = (value: unknown) => value == null || String(value).trim() === "";
@@ -214,20 +217,13 @@ export function compareCoverEdit(
   referenceWorks: ReferenceWorkRecord[],
 ): ComparisonRow[] {
   const proposed = overlay(baseline, sd, COVER_FIELDS);
-  // Approval rebuilds the cover's date from the edit alone
-  // (_sync_cover_date_seen), so an edit without a date clears it.
-  for (const key of COVER_DATE_KEYS) delete proposed[key];
-  for (const key of COVER_DATE_KEYS) if (key in sd) Object.assign(proposed, { [key]: sd[key] });
   const date = (data: Data) => formatPartialDateInput(partialDateInputFromSubmittedData(data));
   const bool = (value: unknown) =>
     value === true || text(value) === "true" ? "Yes" : value === false || text(value) === "false" ? "No" : "";
 
   return [
     row("type", "Type", coverTypeLabel(text(baseline.type)), coverTypeLabel(text(proposed.type))),
-    row(
-      "date", "Date", date(baseline), date(proposed),
-      COVER_DATE_KEYS.some((key) => !isEmpty(sd[key])) ? undefined : "This edit has no date, so approval clears it",
-    ),
+    row("date", "Date", date(baseline), date(proposed)),
     row("institutional", "Institutionally Owned", bool(baseline.is_institutional), bool(proposed.is_institutional)),
     row("backstamp", "Backstamp", bool(baseline.is_backstamp), bool(proposed.is_backstamp)),
     row("description", "Description", text(baseline.description), text(proposed.description)),
