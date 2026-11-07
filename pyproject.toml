@@ -81,12 +81,8 @@ include = ["woco_cli.py"]
 # PEP 735 dev group. Installed locally by default with 'uv sync';
 # excluded on the server with 'uv sync --no-dev'.
 dev = [
-    "anthropic",
     "ipykernel",
     "jinja2",
-    "numpy",
-    "openai",
-    "pdfplumber>=0.11.10",
     # tools/tests are pytest-style (parametrize, tmp_path). CI runs them with
     # pytest, not unittest -- unittest only collects TestCase subclasses, so it
     # would import those files and silently run none of their assertions.

@@ -1,325 +1,179 @@
 # ASCC Catalog Pipeline
 
-This runbook documents the public ASCC workflow exposed through `./woco ascc`.
-Run commands from the repo root (`/Users/mpc/Developer/worldcovers` in a local
-checkout, `/srv/woco` on staging). Unless noted otherwise, the expected
-successful exit code is `0`.
+The WorldCovers `./woco ascc` wrapper runs optional extraction tools from
+[bodger](https://github.com/CoverCensus/bodger). WorldCovers retains the
+wrapper, database import commands, and host operations. Bodger retains the
+munger, OCR, legacy conversion, FPHC, and VPHC extraction implementations
+and their tests.
 
-The canonical path uses the legacy v1 export as source data, builds a v2 import
-bundle, applies supported v1 split-column evidence into that bundle, and
-optionally imports it. The scanned-PDF OCR pipeline is independent and is
-explicitly named `./woco ascc ocr`.
+Base WoCo setup, catalog work, Entry submission and review, and imports of
+prepared bundles do not require bodger, private GitHub access, or OCR keys.
+This integration has no subscription check. Service terms and licensing
+changes are separate decisions; the existing licenses remain in force.
+
+## Optional Bodger Setup
+
+An operator with access to the private repository can install it separately:
+
+```sh
+git clone git@github.com:CoverCensus/bodger.git ../bodger
+git -C ../bodger checkout 625575d2733f00f9a442249fbf1704beafd67948
+uv sync --project ../bodger --locked
+mkdir -p ../bodger/tools/wip/in ../bodger/tools/wip/cache ../bodger/tools/wip/out
+```
+
+That revision is the published extraction baseline for this integration.
+There is no submodule or private package dependency in WoCo's lockfile.
+The commands do not clone, install, or update bodger automatically.
+
+The default checkout is the directory `bodger` beside WorldCovers. For
+another location, set `BODGER_ROOT` to its absolute path in the shell or
+WorldCovers' root `.env`. An empty value uses the default. Extraction uses
+`<BODGER_ROOT>/.venv/bin/python`, not WoCo's Django environment. This also
+lets the VPHC comparison tools enforce their no-database-driver rule.
+
+Keep private inputs in bodger's `tools/wip/in/`. Intermediate files and
+run manifests use bodger's `tools/wip/cache/`. The ASCC wrapper writes final
+bundles to WorldCovers' `tools/wip/out/` and served images to WorldCovers'
+`backend/media/`, so the existing push/import commands keep their paths.
+For OCR metadata, images are also copied to bodger's ignored
+`tools/wip/out/media/<state>/`. Direct stage commands use bodger's own
+output defaults unless overridden.
+
+Existing WorldCovers inputs are not moved automatically. Copy the selected
+source files into bodger's `tools/wip/in/` before running extraction. Both
+repositories ignore their `tools/wip/` directories. Keep source catalogs,
+private data, generated output, and API credentials out of Git.
 
 ## Command Summary
+
+Run these commands from the WorldCovers root:
 
 ```sh
 ./woco ascc doctor VA
 ./woco ascc munge VA
 ./woco ascc run VA --dry-run
 ./woco ascc run VA
-./woco ascc import tools/wip/out/v1_va --dry-run
 ./woco ascc ocr VA --pdf ~/Downloads/va-catalog.pdf
 ./woco ascc clean VA
 ```
 
-Use `doctor` before a run to catch missing inputs. Use `munge` when you only
-want the CSV bundle. Use `run` when you want the same bundle build followed by
-an import. Use `--dry-run` on `run` to validate through the importer and roll
-back.
+These commands require bodger. Missing tools or a missing environment produce
+a setup error. `./woco ascc --help` works without bodger.
+
+These import and catalog maintenance commands do not require bodger:
+
+```sh
+./woco ascc import tools/wip/out/v1_va --dry-run
+./woco ascc drop USA-VA1 --dry-run
+```
+
+The prepared bundle can come from any compatible source. Import does not
+run extraction or require an OCR account.
 
 ## Codebase Overview
 
-`./woco` is the only normal operator entrypoint. It dispatches `./woco ascc`
-to `tools/ascc_cli.py`, which owns public command names, argument parsing, and
-user-facing help.
+`woco_cli.py` dispatches `./woco ascc` to `tools/ascc_cli.py`. The wrapper
+uses `tools/bodger_tools.py` to locate bodger and its interpreter only for
+extraction. `tools/ascc_pipeline/` retains WorldCovers orchestration helpers.
+Database checks and imports use WoCo's interpreter and `backend/manage.py`.
 
-`tools/ascc_pipeline/` owns shared orchestration policy:
-
-- `paths.py`: state normalization, bundle/cache/media paths, import stems, and
-  the defaults `ASCC6` for v1 and `ASCC5` for OCR.
-- `commands.py`: subprocess and import command construction.
-- `checks.py`: doctor check records and reference-work validation.
-- `manifest.py`: CSV counting helpers used by run manifests.
-
-Stage scripts remain implementation units. The v1 stage scripts build
-v1-derived bundles and warnings. The OCR stage scripts process scanned PDFs
-into catalog rows and then bundles. Direct script use is for debugging and must
-pass explicit inputs; it must not rely on hidden VA, ASCC1, ASCC2, or flat
-`tools/wip/out` defaults.
-
-Bundle import stays in Django through `import_ascc_bundle`. Deployment scripts
-move files and then import one explicit bundle directory; they do not guess
-`tools/wip/out`.
-
-## Canonical V1 Flow
-
-Use this path when the source of truth is the legacy v1 export. It reads
-`tblRawStateData.txtRawStateData`, creates synthetic catalog rows, runs the
-munger, attaches v1 images, and applies supported v1 split-column fields before
-import.
-
-By default, `munge` and `run` cite `ASCC6`, the sixth edition. Pass
-`--reference-work CODE` only when a different citation is intended.
-
-Required inputs in `tools/wip/in/`:
-
-```text
-tblStates.csv
-tblRawStateData.csv
-tblTownmarkImages.csv
-regions.csv
-reference_works.csv
-```
-
-Optional image roots:
-
-- `--v1-image-root <dir>`: explicit directory containing files named by
-  `tblTownmarkImages.txtFilename`.
-- `V1_IMAGE_ROOT`: environment fallback.
-- `backups/images/<state-name>/`: used by default when present.
-- `tools/wip/in/v1_images`: final fallback.
-
-Missing v1 image files are skipped by default and written to the image report.
-Pass `--strict-v1-images` when a run should fail on a missing image root or
-referenced image file.
-
-### 1. Check Inputs
+The direct extraction wrapper is:
 
 ```sh
-./woco ascc doctor VA
+./woco bodger --help
+./woco bodger fphc_extract --help
+./woco bodger vphc_extract --help
+./woco bodger vphc_crossexam --help
+./woco bodger vphc_manuscript_ledger --help
 ```
 
-`doctor` checks the v1 seed files, `tools/wip` directories, the selected image
-root, and database availability. The database check is informational for
-`doctor`; it is not required to build a bundle.
+It forwards arguments and exit status to the selected bodger script.
+New catalog scripts added under bodger's `tools/` can use this wrapper
+without a matching change to WorldCovers. Use a lowercase script name
+without `.py` or a path.
+Relative path arguments are relative to the caller's working directory;
+script defaults remain relative to bodger. It does not load Django.
 
-### 2. Build The Bundle
+## Canonical v1 Flow
 
-```sh
-./woco ascc munge VA
-```
+Put the legacy `tblStates.csv`, `tblRawStateData.csv`, and
+`tblTownmarkImages.csv` exports and the `regions.csv` and
+`reference_works.csv` seeds in bodger's `tools/wip/in/`. The selected
+Reference Work must exist in the seed table. The default is `ASCC6`.
 
-For state `VA`, `munge` writes:
+`doctor` checks inputs. `munge` builds a fresh bundle without importing it.
+`run` builds the same bundle and imports it through WorldCovers. Pass
+`--dry-run` to roll back the database import; generated files are still
+written. Missing legacy images produce warnings by default. Pass
+`--strict-v1-images` to fail on them. `--v1-image-root` selects their directory.
 
-```text
-tools/wip/cache/v1/VA/catalog_rows.csv
-tools/wip/cache/v1/VA/image_refs.csv
-tools/wip/cache/v1/VA/slice.csv
-tools/wip/cache/v1/VA/run.json
-tools/wip/out/v1_va/
-tools/wip/out/v1_va/source_marking_map.csv
-tools/wip/out/v1_va/v1_pipeline_warnings.csv
-```
-
-The munger receives `--region-abbrev VA` explicitly. That matters because v1
-catalog rows are stored under the generic filename `catalog_rows.csv`; without
-the explicit region, the munger would derive `CA` from the filename.
-
-The v1 overlay records unsupported split-column evidence in
-`v1_pipeline_warnings.csv` instead of importing unsupported values silently.
-
-### 3. Validate Or Import
-
-Dry-run the generated bundle:
-
-```sh
-./woco ascc run VA --dry-run
-```
-
-Build and commit the generated bundle:
-
-```sh
-./woco ascc run VA
-```
-
-`run` always performs the v1 bundle build first, then calls the importer on
-`tools/wip/out/v1_<state>`. Import flags are passed through:
-
-```sh
-./woco ascc run VA --dry-run --allow-missing
-./woco ascc run VA --truncate
-./woco ascc run VA --only markings,images
-./woco ascc run VA --skip-report tools/wip/out/v1_va/skips.csv
-```
-
-Use `--truncate` only when the target catalog tables should be replaced.
-
-To import an already-built bundle without re-running the v1 build:
-
-```sh
-./woco ascc import tools/wip/out/v1_va --dry-run
-./woco ascc import tools/wip/out/v1_va
-```
+For VA, the final bundle is `tools/wip/out/v1_va/` in WorldCovers. Review
+`source_marking_map.csv` and `v1_pipeline_warnings.csv` before importing.
+The first maps generated Markings back to source listings. Source rows,
+image references, and `run.json` remain under bodger's
+`tools/wip/cache/v1/VA/`.
 
 ## Scanned PDF OCR Flow
 
-Use this path only when the source is a scanned ASCC state PDF rather than the
-legacy v1 export.
+This path is separate from the legacy-export path. It requires Poppler's
+`pdftoppm`, the source PDF, and the seed/export files named in bodger's
+[stage runbook](https://github.com/CoverCensus/bodger/blob/625575d2733f00f9a442249fbf1704beafd67948/docs/devel/TOOLS.md).
 
-Required inputs in `tools/wip/in/`:
-
-```text
-<STATE>.pdf
-regions.csv
-reference_works.csv
-tblStates.csv
-tblRawStateData.csv
-tblTownmarkImages.csv
-```
-
-Required tools and environment:
-
-- `pdftoppm` must be on `PATH`.
-- Set `OPENROUTER_API_KEY` for the default OpenRouter provider.
-- Or set `ANTHROPIC_API_KEY` and pass `--provider anthropic`.
-- Optional: set `PIPELINE_LLM_PROVIDER` and `PIPELINE_LLM_MODEL`.
-
-Run the OCR wrapper:
+Set `OPENROUTER_API_KEY`, or set `ANTHROPIC_API_KEY` and pass
+`--provider anthropic`. Shell variables take precedence over `.env` values.
+The wrapper loads WorldCovers' root `.env`, then bodger's root `.env`
+without replacing values already set. Vision stages send page images to
+the selected provider.
 
 ```sh
-OPENROUTER_API_KEY=<key> ./woco ascc ocr VA --pdf ~/Downloads/va-catalog.pdf
-ANTHROPIC_API_KEY=<key> ./woco ascc ocr VA --pdf ~/Downloads/va-catalog.pdf --provider anthropic
+./woco ascc ocr VA --pdf ~/Downloads/va-catalog.pdf --import-check never
 ```
 
-For state `VA`, `ocr` writes:
-
-```text
-tools/wip/in/VA.pdf
-tools/wip/cache/VA_ocr_rows.csv
-tools/wip/cache/VA_catalog_rows.csv
-tools/wip/cache/VA_images/
-tools/wip/cache/VA_run.json
-tools/wip/out/va/
-backend/media/va/
-```
-
-`ocr` resumes by default:
-
-- If `tools/wip/cache/VA_catalog_rows.csv` exists, it skips OCR and image-count
-  verification and resumes at munger.
-- If only `tools/wip/cache/VA_ocr_rows.csv` exists, it skips page processing
-  and OCR extraction and resumes at image-count verification.
-- Pass `--force` to rebuild OCR rows and catalog rows from the PDF.
-
-Other `ocr` flags:
-
-- `--pages <range>`: process only the given page range of the PDF.
-- `--model <model>`: override the provider's default vision model.
-- `--import-check auto|always|never`: control the post-build dry-run
-  import validation (default: `auto`).
-
-## OCR Internals
-
-Most users should use `./woco ascc ocr`. The lower-level steps below are useful
-for debugging the scanned-PDF path.
-
-The OCR basename is the input PDF stem, for example `VA_ASCC_CTLG`. It must
-start with the two-letter region abbreviation.
-
-```sh
-uv run python tools/ascc_page_processor.py VA_ASCC_CTLG --stages render
-uv run python tools/ascc_page_processor.py VA_ASCC_CTLG --stages halves
-uv run python tools/ascc_page_processor.py VA_ASCC_CTLG --stages chunks
-uv run python tools/ascc_page_extract.py VA_ASCC_CTLG
-uv run python tools/ascc_image_extract.py VA_ASCC_CTLG \
-  --ocr-rows tools/wip/cache/VA_ocr_rows.csv \
-  --strict \
-  --catalog-rows-out tools/wip/cache/VA_catalog_rows.csv
-uv run python tools/ascc_data_munger.py \
-  --input tools/wip/cache/VA_catalog_rows.csv \
-  --input-dir tools/wip/in \
-  --out-dir tools/wip/out/va \
-  --reference-work-code ASCC5 \
-  --region-abbrev VA
-./woco ascc import tools/wip/out/va --dry-run
-```
-
-Lower-level OCR scripts do not provide the same orchestration as `ocr`. If you
-run them manually, make sure marking images are available in
-`backend/media/<state>/` before importing.
-
-## Cleaning Generated Files
-
-Clean one state's generated files:
-
-```sh
-./woco ascc clean VA
-```
-
-Clean generated cache and output files for all states:
-
-```sh
-./woco ascc clean
-```
-
-The clean commands preserve source files under `tools/wip/in/`.
+OCR writes source/cache files under bodger and the final bundle under
+WorldCovers' `tools/wip/out/va/`. Existing verified catalog rows skip OCR;
+existing raw OCR rows skip page processing and text extraction. `--force`
+rebuilds those stages. Other options include `--pages`, `--model`, and
+`--import-check auto|always|never`. Import checks validate through
+WorldCovers with a database rollback; they do not publish the bundle.
 
 ## Import Notes
 
-The ASCC importer loads bundle CSVs in dependency order:
-
-```text
-colors
-letterings
-shapes
-regions
-reference_works
-post_offices
-post_office_regions
-markings
-covers
-cover_valuations
-dates_seen
-cover_markings
-citations
-images
-```
-
-`covers`, `cover_valuations`, and `cover_markings` may be absent from current
-bundles. The importer skips those optional stems without `--allow-missing`.
-
-Useful importer flags:
+The ASCC importer loads bundle CSVs in dependency order. The optional
+`covers`, `cover_valuations`, and `cover_markings` tables can be absent.
 
 ```sh
 ./woco ascc import tools/wip/out/v1_va --dry-run
-./woco ascc import tools/wip/out/v1_va --truncate
 ./woco ascc import tools/wip/out/v1_va --only markings,images
 ./woco ascc import tools/wip/out/v1_va --allow-missing
 ```
 
-`--dry-run` validates and rolls back. `--truncate` deletes catalog rows before
-loading and should be used only against a database that should be replaced.
+Existing natural-key rows are skipped. `--dry-run` rolls back database
+changes. `--truncate` deletes catalog import tables before loading and
+requires a target that should be replaced. See [TOOLS.md](TOOLS.md).
+
+## Cleaning Generated Files
+
+`./woco ascc clean VA` removes that state's ASCC cache files in bodger and
+its final bundles in WorldCovers. Without a state, `clean` clears bodger's
+cache and WorldCovers' output directory. Source input directories are
+preserved. Review the generated files before cleaning them.
 
 ## Verification
 
-After a committed import, start the dev stack:
+Run the WorldCovers integration and operator tests with:
 
 ```sh
-./woco dev
+PYTHONPATH=.:tools .venv/bin/python -m pytest tools/tests -q
 ```
 
-Then verify:
-
-- Search for a marking from the imported state.
-- Confirm the listing renders.
-- Confirm marking images render.
-- Check `/api/v2/markings/?page=1` returns the expected count.
-
-For direct media/API checks, use state-specific examples:
+Run extraction tests separately in bodger:
 
 ```sh
-curl -s http://localhost:8000/api/v2/markings/1/ | python3 -m json.tool
-curl -s -o /dev/null -w '%{http_code} %{content_type}\n' \
-  http://localhost:8000/media/va/va-419-2-1.png
+uv run --project ../bodger --locked pytest ../bodger/tools/tests -q
 ```
 
-## Known Caveats
-
-- The ASCC CLI loads the repo-root `.env` (not `backend/.env`); see
-  [BUILD.md](BUILD.md#environment-files) for the full env-file layout.
-- Free-tier OpenRouter keys without credit fail on paid vision models.
-- The OCR path requires `pdftoppm`; the v1 path does not.
-- `reference_works.csv` must contain the selected `--reference-work` code.
-- The v1 wrapper defaults to `ASCC6`; the OCR wrapper defaults to `ASCC5`.
-- Non-numeric valuations still need a supported catalog representation before
-  they can import as valuations.
+After an authorized import, check selected source examples in the target
+site. Verify Marking fields, dates, Citations, images, and expected counts.
+Passing local tests does not establish source completeness or Editor
+acceptance. No catalog data is imported by the test commands above.
