@@ -45,7 +45,20 @@ export function statusColorClass(status: string): string {
   return STATUS_CLASS[submissionStatusKey(status)];
 }
 
-export function getStatusBadge(status: string) {
+/**
+ * The status pill. `onClick` makes it a redundant click target (T97): a mouse
+ * shortcut to the same place as the row's title link, with no tab stop of its
+ * own, so keyboard and screen-reader users meet one link per row.
+ */
+export function getStatusBadge(
+  status: string,
+  props: { onClick?: () => void; className?: string } = {},
+) {
   const key = submissionStatusKey(status);
-  return <Badge className={`${PILL_BASE} ${STATUS_CLASS[key]}`}>{STATUS_LABEL[key]}</Badge>;
+  const extra = props.className ? ` ${props.className}` : "";
+  return (
+    <Badge className={`${PILL_BASE} ${STATUS_CLASS[key]}${extra}`} onClick={props.onClick}>
+      {STATUS_LABEL[key]}
+    </Badge>
+  );
 }
