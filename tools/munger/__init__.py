@@ -1,1 +1,0 @@
-"""ASCC munger package."""

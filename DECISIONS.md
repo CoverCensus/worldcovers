@@ -567,6 +567,28 @@ and clean up.
 **Evidence:** Michael's instruction, 2026-09-24;
 [pipeline paths](docs/devel/PIPELINE.md) and [ignore rules](.gitignore).
 
+## Keep Bodger Optional For Base WorldCovers
+
+**Do:** Require a separate bodger checkout only for catalog extraction and
+munging. Run its scripts with its own Python environment. Keep prepared-bundle
+imports and base WoCo commands independent of bodger and private GitHub access.
+
+**Don't:** Add bodger to the default WoCo dependency set, import its modules
+during application startup, or run its VPHC comparison scripts in Django's
+environment. Do not add a subscription check to base catalog functions.
+
+**Why:** A society must be able to build its catalog from its own Entries
+without buying extraction services. Bodger's VPHC tools also reject database
+drivers, so sharing WoCo's environment breaks their stated boundary.
+
+**Evidence:** Michael's instruction, 2026-11-02;
+[integration](tools/bodger_tools.py), [ASCC wrapper](tools/ascc_cli.py),
+[boundary tests](tools/tests/test_bodger_tools.py),
+[setup and paths](docs/devel/PIPELINE.md).
+
+**Open work:** ISSUE.md T58: this branch needs review and acceptance.
+Annual service access and licensing terms are proposals, not implemented policy.
+
 ## Keep Commit Work In Sync With Trello
 
 **Do:** Assign the relevant Trello cards and move only the work in the current

@@ -299,7 +299,7 @@ Evidence: [filter options](frontend/src/hooks/useFilterOptions.ts),
 [Cover form](frontend/src/pages/CoverEdit.tsx),
 [Cover approval](backend/common/contribution_apply.py),
 [submission labels](frontend/src/lib/contributionDisplay.ts), and
-[date emission](tools/ascc_data_munger.py).
+[date emission](https://github.com/CoverCensus/bodger/blob/625575d2733f00f9a442249fbf1704beafd67948/tools/ascc_data_munger.py).
 Existing tests were inspected, not run: `ThumbnailImageActions.test.tsx`,
 `coverFromImageHandoff.test.ts`, `contributionDisplay.test.ts`, and
 `test_cover_contribution_apply.py`. These support the code findings, not
@@ -692,7 +692,7 @@ September 28 source review for T49: commit `9f34260` adds source
 aliases for merged (L) rows, targets the preceding device and color,
 preserves catalog date evidence through the v1 overlay, and resolves
 duplicate source context before merging equal generated results.
-[Regression tests](tools/tests/test_ma_regressions.py) cover color/date pairs,
+[Regression tests](https://github.com/CoverCensus/bodger/blob/625575d2733f00f9a442249fbf1704beafd67948/tools/tests/test_ma_regressions.py) cover color/date pairs,
 source precision, standalone Marking types, and retained Images and Cover
 links. Tests were inspected, not run in that review. The commit is published;
 full-bundle verification, cross-state checks, and site-specific repair remain
@@ -767,14 +767,16 @@ that evidence describes the defect before PR #171.
 
 ## Deferred offline wishes
 
-All are Backlog and unassigned. Michael explicitly deferred this entire
-section. These ideas are not evidence that a feature or audit once existed.
+Michael originally deferred this section. On 2026-11-02 he activated T58;
+the other items remain deferred. Trello still lists T58 in Backlog pending
+an approved board update. These ideas are not evidence that a feature or
+audit once existed.
 
 | Task | Wish | Scope |
 | --- | --- | --- |
 | [T56](https://trello.com/c/zwtdxlSz) | Detect predominant color from uploaded images | Suggest a Marking or Cover color from the image. Define the intended ink/material region so background pixels do not dominate. This is deferred; no implementation or method selected. |
 | [T57](https://trello.com/c/aGwVExGE) | Convert known catalog text to fields and back | Parse hand-entered catalog text in a known format into fields and regenerate text from edits. Separate this interactive wish from existing offline extraction. |
-| [T58](https://trello.com/c/MhF6jQex) | Separate catalog extraction into its own repository | Consider an extraction repository with catalog-specific branches; submodule is only a possibility. No repository split or branching scheme selected. |
+| [T58](https://trello.com/c/MhF6jQex) | Separate catalog extraction into its own repository | Michael selected private `CoverCensus/bodger` on 2026-11-02. ASCC, FPHC, and Reese's VPHC extraction tools are published there at `625575d`. The `codex/optional-bodger-tools` branch removes the duplicate implementations and makes bodger optional for extraction commands only. Base WoCo functions and prepared-bundle imports stay independent. The integration is ready for PR review against staging; merge, deployment, acceptance, and the Trello update remain pending. Annual service access and any licensing changes remain proposals. |
 | [T59](https://trello.com/c/kvaWqzCg) | Suggest atomic fields from free text | Suggest structured values from descriptions or snippets for human review. Distinct from known-format parsing; no AI provider selected. |
 | [T60](https://trello.com/c/E6Wbp7yu) | Evaluate an extensible versioning layer for CoverCensus | Consider a dedicated layer such as Dolt instead of embedded Django revision logic. Dolt is a candidate, not a selected technology; define CoverCensus scope first. |
 | [T61](https://trello.com/c/LXCEAOzU) | Audit licensing and fully free distribution compatibility | Audit licenses and dependencies and test a fully free distribution, with Trisquel proposed. This is a desired audit, not a completed finding or legal conclusion. |
@@ -1071,7 +1073,7 @@ Reese needs a follow-up only if review reproduces an application defect.
 **Status:** Testing - [T9](https://trello.com/c/TF3jpD2V) - **Assigned:** Michael (`grubermeister`) - **Depends on:** none - **Source:** Greg Stone
 The unknown-date/size parser defect is fixed in
 [PR #71](https://github.com/CoverCensus/worldcovers/pull/71), with targeted
-coverage in `tools/tests/test_munger_field_classify.py`. Do not reimplement
+coverage in [bodger's parser tests](https://github.com/CoverCensus/bodger/blob/625575d2733f00f9a442249fbf1704beafd67948/tools/tests/test_munger_field_classify.py). Do not reimplement
 that fix. The PR reports an MD/MI/FL/DE staging re-import, not a fresh audit
 of all affected Virginia records.
 
