@@ -1639,3 +1639,28 @@ class Citation(TimestampedModel):
 
     def __str__(self):
         return f'{self.reference_work} -> {self.subject_type} #{self.subject_id}'
+
+
+class CatalogSourceItem(models.Model):
+    """One source item and its reviewed destination. Keep the original evidence."""
+
+    reference_work = models.ForeignKey(ReferenceWork, on_delete=models.PROTECT)
+    kind = models.CharField(max_length=12)
+    source_key = models.CharField(max_length=80)
+    evidence = models.JSONField(default=dict)
+    decision = models.JSONField(default=dict)
+    contribution = models.OneToOneField(
+        Contribution, null=True, on_delete=models.SET_NULL, related_name="catalog_source"
+    )
+    post_office = models.ForeignKey(PostOffice, null=True, on_delete=models.SET_NULL)
+    marking = models.ForeignKey(Marking, null=True, on_delete=models.SET_NULL)
+    cover = models.ForeignKey(Cover, null=True, on_delete=models.SET_NULL)
+    applied = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reference_work", "kind", "source_key"],
+                name="catalog_source_item_unique",
+            )
+        ]

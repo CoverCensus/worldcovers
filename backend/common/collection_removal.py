@@ -99,7 +99,9 @@ def delete_contents(scope: dict[str, set[int]]) -> list[tuple[str, int]]:
     ).exclude(
         cover_versions__cover_id__in=catalog.Cover.all_objects.exclude(pk__in=covers).values("pk"),
     )
+    from common.collection_archive import source_items_for
     operations = [
+        ("catalog_source_items", source_items_for(offices, markings, covers, contributions)),
         ("images", images), ("citations", catalog.Citation.objects.filter(subject)),
         ("dates_seen", catalog.DateSeen.objects.filter(subject)),
         ("cover_valuations", catalog.CoverValuation.objects.filter(cover_id__in=covers)),

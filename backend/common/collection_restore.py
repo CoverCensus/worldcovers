@@ -36,6 +36,7 @@ from common.date_range import (
 from common.management.commands.verify_media_integrity import _sha256
 
 NATURAL_KEYS = {
+    "common.catalogsourceitem": ("reference_work", "kind", "source_key"),
     "common.region": ("name", "abbrev", "region_tier", "parent_region", "established_date", "defunct_date"),
     "common.collection": ("region",),
     "common.color": ("name",), "common.shape": ("name",),
@@ -274,7 +275,7 @@ def verify_graph(manifest: dict[str, Any], records: dict[str, Any]) -> dict[str,
 
 def verify_membership(manifest: dict[str, Any], records: dict[str, Any], ids: dict[str, Any]) -> None:
     """An extra child or link is a difference too, not a successful copy."""
-    from common.collection_archive import collection_scope
+    from common.collection_archive import collection_scope, source_items_for
 
     expected = {
         label: {ids[key] for key, row in records.items() if row["model"] == label and not row["external"]}
@@ -290,6 +291,7 @@ def verify_membership(manifest: dict[str, Any], records: dict[str, Any], ids: di
     subject = Q(subject_type="MARKING", subject_id__in=markings) | Q(subject_type="COVER", subject_id__in=covers)
     queries = [model.objects.filter(subject) for model in (catalog.Image, catalog.Citation, catalog.DateSeen)]
     queries.extend((
+        source_items_for(scope["post_offices"], markings, covers, scope["contributions"]),
         catalog.CoverMarking.objects.filter(Q(cover_id__in=covers) | Q(marking_id__in=markings)),
         catalog.MarkingVersion.objects.filter(marking_id__in=markings),
         catalog.CoverVersion.objects.filter(cover_id__in=covers),
