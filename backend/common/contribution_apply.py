@@ -129,6 +129,14 @@ def apply_contribution_to_catalog(contrib):
     (+ Images + Citations) from contrib.submitted_data. Caller must wrap
     in a transaction; this function does not.
     """
+    source = getattr(contrib, "catalog_source", None)
+    if source is not None:
+        from common.catalog_source_approval import approve_source_entry
+
+        try:
+            return approve_source_entry(source, contrib)
+        except (DjangoValidationError, ValueError) as exc:
+            raise ContributionApplyError(str(exc)) from exc
     payload = contrib.submitted_data or {}
     actor = contrib.contributor
 

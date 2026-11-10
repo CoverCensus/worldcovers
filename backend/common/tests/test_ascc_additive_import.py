@@ -7,7 +7,10 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase
 
+from common.api.v2.views import _approve_contribution
 from common.models import (
+    CatalogSourceItem,
+    Contribution,
     Citation,
     Color,
     Collection,
@@ -268,8 +271,85 @@ class AsccAdditiveImportTests(TestCase):
             }, user)],
         )
 
+    def test_reviewed_import_preserves_source_evidence_and_routes_to_virginia(self):
+        stamp = {"created_by": self.user, "modified_by": self.user}
+        other = ReferenceWork.objects.create(
+            code="BPM2", title="Second source", authorship="A", publisher="B",
+            publication_year=1990, **stamp,
+        )
+        path = self.bundle / "citations.csv"
+        with path.open(newline="") as stream:
+            citations = list(csv.DictReader(stream))
+        extra = dict(citations[0], reference_work=other.code, citation_detail="p. 17")
+        _write_csv(path, list(extra), [*citations, extra])
+
+        def load(*args):
+            call_command("import_ascc_bundle", str(self.bundle), *args, actor=self.user.pk)
+
+        load("--dry-run")
+        self.assertFalse(CatalogSourceItem.objects.exists())
+        load()
+        load()
+        self.assertFalse(Marking.objects.exists())
+        self.assertFalse(Cover.objects.exists())
+        tickets = Contribution.objects.filter(collection__region__code="USA-VA1", status="pending")
+        self.assertEqual(tickets.count(), 2)
+        for kind in ("MARKING", "COVER"):
+            source = CatalogSourceItem.objects.get(kind=kind)
+            self.assertEqual(source.contribution.submitted_data["state"], "Virginia")
+            _approve_contribution(source.contribution, actor=self.user, review_notes="Checked")
+        load()
+        self.assertEqual(Contribution.objects.count(), 2)
+        self.assertTrue(Cover.objects.get().is_institutional)
+        self.assertEqual(CoverValuation.objects.get().amt, 10)
+        self.assertEqual(Image.objects.get().subject_id, Marking.objects.get().pk)
+        self.assertEqual(CoverMarking.objects.get().marking_id, Marking.objects.get().pk)
+        self.assertCountEqual(Citation.objects.values_list("subject_type", "reference_work__code", "citation_detail"),
+                              [("MARKING", "ASCC1", "p. 1"), ("MARKING", "BPM2", "p. 17"),
+                               ("COVER", "ASCC1", "")])
+
+    def test_ascc_approval_fills_existing_marking_and_keeps_both_citations(self):
+        stamp = {"created_by": self.user, "modified_by": self.user}
+        region = Region.objects.create(code="USA-VA1", name="Virginia", abbrev="VA",
+                                       region_tier="STATE", **stamp)
+        office = PostOffice.objects.create(code="VPHC-R", name="Richmond", **stamp)
+        PostOfficeRegion.objects.create(post_office=office, region=region, **stamp)
+        marking = Marking.objects.create(code="VPHC1-R1", type="TOWNMARK", post_office=office,
+                                        inscription_txt="Richmond", catalog_txt="Earlier listing",
+                                        width=26, height=27, is_manuscript=False,
+                                        color=Color.objects.create(name="BLACK", **stamp), **stamp)
+        ref = ReferenceWork.objects.create(code="VPHC1", title="Virginia", authorship="A",
+                                           publisher="B", publication_year=1982, **stamp)
+        Citation.objects.create(reference_work=ref, subject_type="MARKING", subject_id=marking.pk,
+                                citation_detail="p. 10", **stamp)
+        call_command("import_ascc_bundle", str(self.bundle), actor=self.user.pk)
+        source = CatalogSourceItem.objects.get(kind="MARKING")
+        self.assertEqual(source.marking_id, marking.pk)
+        self.assertIn("shape", source.decision["fills"])
+        self.assertEqual(PostOffice.objects.count(), 1)
+        self.assertIsNone(marking.shape_id)
+        _approve_contribution(source.contribution, actor=self.user, review_notes="Both sources checked")
+        marking.refresh_from_db()
+        self.assertEqual(marking.code, "VPHC1-R1")
+        self.assertEqual(marking.catalog_txt, "Earlier listing")
+        self.assertEqual(marking.shape.code, "C")
+        self.assertCountEqual(Citation.objects.filter(subject_type="MARKING", subject_id=marking.pk)
+                              .values_list("reference_work__code", "citation_detail"),
+                              [("VPHC1", "p. 10"), ("ASCC1", "p. 1")])
+        call_command("import_ascc_bundle", str(self.bundle), actor=self.user.pk)
+        self.assertEqual(Marking.objects.count(), 1)
+        self.assertEqual(Contribution.objects.count(), 2)
+
+    def test_review_adopts_a_previously_loaded_ascc_bundle(self):
+        call_command("import_ascc_bundle", str(self.bundle), direct=True)
+        old = (Marking.objects.get().pk, Cover.objects.get().pk)
+        call_command("import_apmc_bundle", str(self.bundle), actor=self.user.pk)
+        self.assertEqual(CatalogSourceItem.objects.filter(applied=True).count(), 3)
+        self.assertFalse(Contribution.objects.exists())
+        self.assertEqual(old, (Marking.objects.get().pk, Cover.objects.get().pk))
+
     def test_import_reimport_skips_existing_and_preserves_manual_edit(self):
-        call_command("import_ascc_bundle", str(self.bundle), verbosity=0)
+        call_command("import_ascc_bundle", str(self.bundle), direct=True, verbosity=0)
 
         marking = Marking.objects.get(code="ASCC1-VA-M1001")
         self.assertEqual(marking.post_office.code, "USA-VA1-1")
@@ -288,7 +368,7 @@ class AsccAdditiveImportTests(TestCase):
 
         marking.inscription_txt = "MANUAL EDIT"
         marking.save()
-        call_command("import_ascc_bundle", str(self.bundle), verbosity=0)
+        call_command("import_ascc_bundle", str(self.bundle), direct=True, verbosity=0)
 
         self.assertEqual(Marking.objects.count(), 1)
         self.assertEqual(PostOffice.objects.count(), 1)
@@ -296,12 +376,13 @@ class AsccAdditiveImportTests(TestCase):
         self.assertEqual(Marking.objects.get().inscription_txt, "MANUAL EDIT")
 
     def test_reimport_writes_skipped_row_report(self):
-        call_command("import_ascc_bundle", str(self.bundle), verbosity=0)
+        call_command("import_ascc_bundle", str(self.bundle), direct=True, verbosity=0)
 
         report_path = self.bundle / "skips.csv"
         call_command(
             "import_ascc_bundle",
             str(self.bundle),
+            direct=True,
             skip_report=str(report_path),
             verbosity=0,
         )
@@ -331,7 +412,7 @@ class AsccAdditiveImportTests(TestCase):
         )
 
     def test_imported_institutional_cover_enables_marking_filter(self):
-        call_command("import_ascc_bundle", str(self.bundle), verbosity=0)
+        call_command("import_ascc_bundle", str(self.bundle), direct=True, verbosity=0)
         self.client.force_login(self.user)
         post_office = PostOffice.objects.get(code="USA-VA1-1")
         plain = Marking.objects.create(
@@ -382,7 +463,7 @@ class AsccAdditiveImportTests(TestCase):
         }, self.user))
         _write_csv(path, fieldnames, rows)
 
-        call_command("import_ascc_bundle", str(self.bundle), verbosity=0)
+        call_command("import_ascc_bundle", str(self.bundle), direct=True, verbosity=0)
 
         marking = Marking.objects.get(code="ASCC1-VA-M1002")
         self.assertIsNone(marking.shape_id)
@@ -401,7 +482,7 @@ class AsccAdditiveImportTests(TestCase):
             )
 
         for _ in range(2):
-            call_command("import_ascc_bundle", str(self.bundle), verbosity=0)
+            call_command("import_ascc_bundle", str(self.bundle), direct=True, verbosity=0)
 
             self.assertSetEqual(
                 set(Collection.objects.values_list("region__region_tier", flat=True)),
@@ -411,7 +492,7 @@ class AsccAdditiveImportTests(TestCase):
             self.assertEqual(Region.objects.count(), 8)
 
     def test_truncate_recreates_collections_without_stale_assignments(self):
-        call_command("import_ascc_bundle", str(self.bundle), verbosity=0)
+        call_command("import_ascc_bundle", str(self.bundle), direct=True, verbosity=0)
         collection = Collection.objects.get(region__code="USA-VA1")
         CollectionAssignment.objects.create(
             user=self.user,
@@ -430,7 +511,7 @@ class AsccAdditiveImportTests(TestCase):
         self.assertEqual(Marking.objects.count(), 1)
 
     def test_drop_ascc_state_dry_run_then_delete(self):
-        call_command("import_ascc_bundle", str(self.bundle), verbosity=0)
+        call_command("import_ascc_bundle", str(self.bundle), direct=True, verbosity=0)
 
         call_command("drop_ascc_state", "VA", dry_run=True, verbosity=0)
         self.assertEqual(Marking.objects.count(), 1)

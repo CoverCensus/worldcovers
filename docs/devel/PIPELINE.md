@@ -144,13 +144,14 @@ The ASCC importer loads bundle CSVs in dependency order. The optional
 
 ```sh
 ./woco ascc import tools/wip/out/v1_va --dry-run
-./woco ascc import tools/wip/out/v1_va --only markings,images
+./woco ascc import tools/wip/out/v1_va --review-report /tmp/ascc-va.csv
 ./woco ascc import tools/wip/out/v1_va --allow-missing
 ```
 
-Existing natural-key rows are skipped. `--dry-run` rolls back database
-changes. `--truncate` deletes catalog import tables before loading and
-requires a target that should be replaced. See [TOOLS.md](TOOLS.md).
+The default import resolves Post Offices and queues Markings and Covers
+for Editor review. Repeating a bundle skips its recorded source listings.
+`--dry-run` rolls back database changes. Explicit `--truncate` clears the
+catalog tables and performs a direct reload. See [TOOLS.md](TOOLS.md#ascc-import).
 
 ## Cleaning Generated Files
 

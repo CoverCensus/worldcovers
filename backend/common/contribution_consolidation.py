@@ -160,7 +160,7 @@ def consolidate_superseded_contributions(
     Drafts are intentionally retained because a draft is still editable working
     state, not dashboard history. The current row is never deleted.
     """
-    if current.status == Contribution.STATUS_DRAFT:
+    if current.status == Contribution.STATUS_DRAFT or getattr(current, "catalog_source", None):
         return 0
     resolved = target or contribution_target(current)
     if resolved is None:
@@ -168,7 +168,7 @@ def consolidate_superseded_contributions(
 
     target_obj = _target_object(resolved)
     candidates = (
-        Contribution.objects.filter(contributor=current.contributor)
+        Contribution.objects.filter(contributor=current.contributor, catalog_source__isnull=True)
         .exclude(pk=current.pk)
         .exclude(status=Contribution.STATUS_DRAFT)
         .order_by("modified_date", "pk")

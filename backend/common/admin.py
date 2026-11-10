@@ -312,7 +312,12 @@ class PostOfficeRegionResource(TimestampedModelResource):
 
     class Meta(TimestampedModelResource.Meta):
         model = PostOfficeRegion
-        import_id_fields = ['post_office', 'region']
+        import_id_fields = ['post_office', 'region', 'valid_from']
+
+    def before_import(self, dataset, **kwargs):
+        if "valid_from" not in dataset.headers:
+            dataset.append_col([""] * len(dataset), header="valid_from")
+        return super().before_import(dataset, **kwargs)
 
 
 class CoverResource(TimestampedModelResource):

@@ -263,6 +263,10 @@ def add_v1_options(parser: argparse.ArgumentParser) -> None:
 
 
 def add_run_import_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--actor", type=int, help="user ID for the import Submissions")
+    parser.add_argument("--refresh-pending", action="store_true", help="refresh pending proposals")
+    parser.add_argument("--review-report", help="path for the catalog review CSV")
+    parser.add_argument("--direct", action="store_true", help="load by exact code for maintenance")
     parser.add_argument(
         "--dry-run",
         action="store_true",

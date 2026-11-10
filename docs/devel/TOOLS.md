@@ -97,9 +97,8 @@ Run on the selected host as `wocod`:
 sudo -u wocod /srv/woco/tools/refresh_data.sh tools/wip/out/v1_va
 ```
 
-Calls `./woco ascc import` without `--truncate`. Existing natural-key rows
-are skipped, including rows whose values differ. This adds missing records;
-it does not replace existing records. Expected exit code: `0`.
+Calls the reviewed ASCC import. It resolves Post Offices and queues Entry
+Submissions in the relevant Collections. Expected exit code: `0`.
 
 <a id="toolsreload_datash"></a>
 
@@ -242,7 +241,8 @@ Install Poppler (`brew install poppler` on macOS) for `pdfimages`.
 Run `uv sync --locked` in bodger to install its extraction libraries.
 WorldCovers does not install them. Expected exit code: `0`.
 
-The FPHC paths below are relative to the bodger checkout.
+FPHC default paths are relative to the bodger checkout. Explicit relative
+path arguments are relative to the directory where you run the command.
 The source stays at `tools/wip/in/Florida Postal History Catalog.pdf`.
 Intermediates go under `tools/wip/cache/fphc/`, separated by source checksum,
 extraction version, and pdfplumber version. The completed dump goes under
@@ -298,8 +298,11 @@ For a sample, use a separate output directory:
 ```sh
 ./woco bodger fphc_extract \
   --pages 53-57,60,72-73,100,201,229,277,302,308,314-315,318,409-410,452 \
-  --out-dir tools/wip/out/fphc_sample
+  --out-dir ../bodger/tools/wip/out/fphc_sample
 ```
+
+This sample assumes the default sibling checkout. For a custom `BODGER_ROOT`,
+substitute that checkout's path in `--out-dir`.
 
 All pages are still read to establish office boundaries. A sample dump
 keeps complete office spans and the full index for context. `--pdf`,
@@ -311,25 +314,81 @@ This tool does not run OCR, create WoCo records, infer historical identities,
 or import a database bundle. Native text failures appear as exceptions;
 handwriting inside images remains in the image assets for later work.
 
+### Build and import the FPHC2 bundle
+
+Run `./woco fphc extract` to save the native PDF extract in Bodger. Run
+`./woco fphc munge` to build WorldCovers `tools/wip/out/fphc2_fl` and stage
+the accepted image files in `backend/media/fl`. Use a fresh output directory.
+Pass `--input /absolute/path/to/manifest.json` for an existing extraction.
+The Bodger seed files must contain FL and FPHC2. The bundle includes a
+source map, review warnings, and the edition and rule version.
+
+After applying migrations, preview the bundle against the intended database:
+
+```sh
+./woco fphc import tools/wip/out/fphc2_fl --dry-run --review-report /tmp/fl-preview.csv
+./woco fphc import tools/wip/out/fphc2_fl --actor 1
+```
+
+The first command writes the proposed actions and rolls back its database
+transaction. The second loads reference data, resolves Post Offices, and
+queues Marking and Cover Submissions for Florida Editors. The default
+report is `fphc_review.csv` in the bundle directory. Approve Markings
+before their Covers. Existing FPHC2 bundle records with verified source
+codes keep their identities.
+
+A unique Florida office name can resolve a Post Office. A Marking reuse
+proposal requires a matching office, kind, and inscription, compatible
+known fields, and either a full Townmark date or matching size and ink.
+A Cover reuse proposal requires an identical front or back image and a
+shared linked Marking. Ambiguous or conflicting evidence gives a separate
+listing with its FPHC Citation. The report identifies candidates and fields
+proposed for filling. Source rows held by the munger remain in its warning
+file and do not enter the Editor queue.
+
+Approval fills blanks, adds source observations and Citations, and keeps
+existing catalog text and codes. WorldCovers stores the source wording and
+each decision under the Reference Work, kind, and bundle code. Reimporting
+the same bundle skips recorded items, including pending and rejected ones.
+If a pending proposal goes stale, preview again with `--refresh-pending
+--dry-run`, then use `--refresh-pending` to refresh pending Submissions for
+review. A changed, already applied source item requires a separate editorial
+decision. Import runs entirely in WorldCovers.
+The same subcommands work with `python backend/manage.py fphc`.
+
 ## Management Commands
 
 ### `ascc import`
 
-Load a Django-shape ASCC CSV bundle into catalog tables.
+Preview a prepared ASCC bundle, then submit it to the Editors for the
+Collections named by its Post Office Region links.
 
 ```sh
-./woco ascc import tools/wip/out/v1_va --dry-run
-./woco ascc import tools/wip/out/v1_va
+./woco ascc import tools/wip/out/v1_fl --dry-run --review-report /tmp/ascc-fl.csv
+./woco ascc import tools/wip/out/v1_fl --actor 1
 ```
 
-Useful flags:
+ASCC and FPHC use the same match and approval rules. The importer resolves
+Post Offices and loads lookup records immediately. Each new Marking or Cover
+source listing gets one Submission. Approval fills blanks on a unique,
+corroborated match or creates a separately cited Entry. Approve linked
+Markings before Covers. The source mapping keeps the edition, source code,
+and original evidence even when the target keeps another catalog's code.
+A repeat run skips pending, approved, and rejected listings. Previously
+loaded ASCC records with verified codes and source evidence keep their IDs.
 
-- `--dry-run`: validate and roll back.
-- `--truncate`: delete catalog rows before loading.
-- `--only colors,markings`: load selected stems in dependency order.
-- `--allow-missing`: skip absent CSV stems.
-- `--skip-report PATH`: write skipped-row diagnostics to `PATH`; defaults to
-  `import_ascc_bundle_skips.csv` inside the bundle directory.
+The default report is `ascc_review.csv` inside the bundle directory.
+Use `--refresh-pending --dry-run` to preview stale proposals before
+refreshing them with `--refresh-pending`. A changed, applied source
+listing requires an editorial decision. Omitted optional Cover files are
+supported. With `--allow-missing`, every included Entry still needs enough
+information to identify its source, Post Office, and linked Markings.
+
+For maintenance, `--direct` uses the older exact-code loader. It bypasses
+Editor review. Partial loads of Entries or their evidence require this
+flag. Explicit `--truncate` still clears the catalog tables and performs a
+direct reload. In direct mode, `--skip-report PATH` writes skipped-row
+diagnostics. In reviewed mode it is an alias for `--review-report PATH`.
 
 Canonical load order:
 
