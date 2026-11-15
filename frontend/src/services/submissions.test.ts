@@ -3,7 +3,7 @@
  * page the browser is already holding.
  *
  * Dashboard.tsx filtered `editorHistoryItems`, which is one server page. At
- * 2,440 queued contributions that meant searching "farm" returned nothing on
+ * 2,440 queued submissions that meant searching "farm" returned nothing on
  * page 1 of 25 while Farmville sat on page 16 -- and a lookup that finds
  * nothing reads as "the record isn't there", not as a broken filter.
  *
@@ -11,7 +11,7 @@
  * to appear in the query params, or the queue is page-local again the moment
  * someone adds a caller.
  */
-import { listContributions, listMyContributions } from "./contributions";
+import { listSubmissions, listMySubmissions } from "./submissions";
 import apiClient from "@/lib/api";
 
 jest.mock("@/lib/api", () => ({
@@ -26,14 +26,14 @@ const page = (results: unknown[] = []) => ({
   data: { count: results.length, next: null, previous: null, results },
 });
 
-describe("listMyContributions", () => {
+describe("listMySubmissions", () => {
   beforeEach(() => mockedGet.mockReset());
 
   it("requests enough rows to show all 17 drafts", async () => {
     const drafts = Array.from({ length: 17 }, (_, i) => ({ id: i + 1, status: "draft" }));
     mockedGet.mockResolvedValueOnce({ data: { count: 17, results: drafts } });
 
-    const result = await listMyContributions();
+    const result = await listMySubmissions();
 
     expect(result.items.map((item) => item.id)).toEqual(drafts.map((item) => item.id));
     expect(result.incomplete).toBe(false);
@@ -48,7 +48,7 @@ describe("listMyContributions", () => {
       .mockResolvedValueOnce({ data: { count: 117, next: "?page=2", results: drafts.slice(0, 100) } })
       .mockResolvedValueOnce({ data: { count: 117, next: null, results: drafts.slice(100) } });
 
-    const result = await listMyContributions();
+    const result = await listMySubmissions();
 
     expect(result.items.map((item) => item.id)).toEqual(drafts.map((item) => item.id));
     expect(result.incomplete).toBe(false);
@@ -62,7 +62,7 @@ describe("listMyContributions", () => {
     const drafts = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, status: "draft" }));
     mockedGet.mockResolvedValueOnce({ data: { count: 17, next: null, results: drafts } });
 
-    const result = await listMyContributions();
+    const result = await listMySubmissions();
 
     expect(result.items.map(({ id, status }) => ({ id, status }))).toEqual(drafts);
     expect(result.incomplete).toBe(true);
@@ -75,7 +75,7 @@ describe("listMyContributions", () => {
       .mockResolvedValueOnce({ data: { count: 117, next: "?page=2", results: drafts } })
       .mockRejectedValueOnce(new Error("Invalid page."));
 
-    const result = await listMyContributions();
+    const result = await listMySubmissions();
 
     expect(result.items.map(({ id, status }) => ({ id, status }))).toEqual(drafts);
     expect(result.incomplete).toBe(true);
@@ -85,7 +85,7 @@ describe("listMyContributions", () => {
 
 const paramsOfLastCall = () => mockedGet.mock.calls[0][1].params;
 
-describe("listContributions query params", () => {
+describe("listSubmissions query params", () => {
   it("returns normalized Submission data, baselines, and list display fields", async () => {
     mockedGet.mockResolvedValueOnce(page([{
       id: 4339, status: "pending", display_name: "Burlington Marking",
@@ -94,7 +94,7 @@ describe("listContributions query params", () => {
       submitted_data: { desc: "Current text", isManuscript: "false", pendingCover: { type: "ENV" } },
       edit_baseline: { desc: "Old text", is_manuscript: false, future_field: "Not yet supported" },
     }]));
-    const result = await listContributions();
+    const result = await listSubmissions();
     expect(result.items[0]).toMatchObject({
       displayName: "Burlington Marking", stateDisplay: "Vermont", townDisplay: "Burlington",
       imageUrl: "/media/marking.png", description: "Current text",
@@ -111,15 +111,15 @@ describe("listContributions query params", () => {
   });
 
   it("sends the search text as ?q=", async () => {
-    await listContributions({ mode: "editor", q: "farm" });
+    await listSubmissions({ mode: "editor", q: "farm" });
 
     const [url, config] = mockedGet.mock.calls[0];
-    expect(url).toBe("/contributions/");
+    expect(url).toBe("/submissions/");
     expect(config.params.q).toBe("farm");
   });
 
   it("sends town, shape, colour and the date range", async () => {
-    await listContributions({
+    await listSubmissions({
       mode: "editor",
       town: "Farmville",
       shape: "C - Circle",
@@ -138,7 +138,7 @@ describe("listContributions query params", () => {
   });
 
   it("omits blank filters and the 'all' sentinel", async () => {
-    await listContributions({
+    await listSubmissions({
       mode: "editor",
       q: "",
       town: "   ",
@@ -156,19 +156,19 @@ describe("listContributions query params", () => {
   });
 
   it("trims whitespace off q and town", async () => {
-    await listContributions({ q: "  farm  ", town: "  Farmville  " });
+    await listSubmissions({ q: "  farm  ", town: "  Farmville  " });
 
     expect(paramsOfLastCall()).toMatchObject({ q: "farm", town: "Farmville" });
   });
 
   it("sends the ordering it is given", async () => {
-    await listContributions({ mode: "editor", ordering: "town,id" });
+    await listSubmissions({ mode: "editor", ordering: "town,id" });
 
     expect(paramsOfLastCall().ordering).toBe("town,id");
   });
 
   it("still sends the params it always did", async () => {
-    await listContributions({ mode: "editor", status: "pending", state: "VA", page: 3, pageSize: 100 });
+    await listSubmissions({ mode: "editor", status: "pending", state: "VA", page: 3, pageSize: 100 });
 
     expect(paramsOfLastCall()).toMatchObject({
       mode: "editor",

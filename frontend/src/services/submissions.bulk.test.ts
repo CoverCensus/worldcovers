@@ -1,9 +1,9 @@
 import apiClient from "@/lib/api";
 import {
   BULK_REVIEW_BATCH_SIZE,
-  bulkReviewContributions,
-  listContributionIds,
-} from "./contributions";
+  bulkReviewSubmissions,
+  listSubmissionIds,
+} from "./submissions";
 
 jest.mock("@/lib/api", () => ({
   __esModule: true,
@@ -31,14 +31,14 @@ function okResponse(ids: number[], failed: { id: number; reason: string }[] = []
   return { data: { approved: ids, failed } };
 }
 
-describe("bulkReviewContributions", () => {
+describe("bulkReviewSubmissions", () => {
   it("splits into batches of the documented size", async () => {
     const ids = Array.from({ length: 60 }, (_, i) => i + 1);
     mockClient.post.mockImplementation((_url, body) =>
       Promise.resolve(okResponse((body as { ids: number[] }).ids)),
     );
 
-    const result = await bulkReviewContributions("approve", ids);
+    const result = await bulkReviewSubmissions("approve", ids);
 
     expect(mockClient.post).toHaveBeenCalledTimes(3); // 25 + 25 + 10
     const sizes = mockClient.post.mock.calls.map(
@@ -56,7 +56,7 @@ describe("bulkReviewContributions", () => {
       .mockResolvedValueOnce(okResponse([1, 2], [{ id: 3, reason: "not pending" }]))
       .mockResolvedValueOnce(okResponse([4]));
 
-    const result = await bulkReviewContributions(
+    const result = await bulkReviewSubmissions(
       "approve",
       Array.from({ length: 26 }, (_, i) => i + 1),
     );
@@ -73,7 +73,7 @@ describe("bulkReviewContributions", () => {
       .mockRejectedValueOnce({ response: { data: { detail: "Gateway timeout" } } })
       .mockResolvedValueOnce(okResponse([26]));
 
-    const result = await bulkReviewContributions(
+    const result = await bulkReviewSubmissions(
       "approve",
       Array.from({ length: 26 }, (_, i) => i + 1),
     );
@@ -88,10 +88,10 @@ describe("bulkReviewContributions", () => {
   it("reads the response key matching the action", async () => {
     mockClient.post.mockResolvedValue({ data: { rejected: [7], failed: [] } });
 
-    const result = await bulkReviewContributions("reject", [7]);
+    const result = await bulkReviewSubmissions("reject", [7]);
 
     expect(mockClient.post).toHaveBeenCalledWith(
-      "/contributions/bulk-reject/",
+      "/submissions/bulk-reject/",
       expect.objectContaining({ ids: [7] }),
       expect.anything(),
     );
@@ -104,7 +104,7 @@ describe("bulkReviewContributions", () => {
     );
     const seen: Array<[number, number]> = [];
 
-    await bulkReviewContributions(
+    await bulkReviewSubmissions(
       "approve",
       Array.from({ length: 30 }, (_, i) => i + 1),
       { onProgress: (done, total) => seen.push([done, total]) },
@@ -123,7 +123,7 @@ describe("bulkReviewContributions", () => {
       return Promise.resolve(okResponse((body as { ids: number[] }).ids));
     });
 
-    const result = await bulkReviewContributions(
+    const result = await bulkReviewSubmissions(
       "approve",
       Array.from({ length: 60 }, (_, i) => i + 1),
       { signal: controller.signal },
@@ -134,14 +134,14 @@ describe("bulkReviewContributions", () => {
   });
 });
 
-describe("listContributionIds", () => {
+describe("listSubmissionIds", () => {
   it("sends the queue filters and omits pagination", async () => {
     // The id list is the whole match set. A page param here would make
     // "select all matching" mean "select all on this page" again -- the exact
     // defect #109 fixed.
     mockClient.get.mockResolvedValue({ data: { ids: [1, 2], count: 2 } });
 
-    await listContributionIds({
+    await listSubmissionIds({
       mode: "editor",
       q: "farm",
       source: "vphc",
@@ -159,7 +159,7 @@ describe("listContributionIds", () => {
   it("tolerates a malformed payload rather than throwing", async () => {
     mockClient.get.mockResolvedValue({ data: { ids: [1, "x", 3] } });
 
-    const result = await listContributionIds();
+    const result = await listSubmissionIds();
 
     expect(result.ids).toEqual([1, 3]);
     expect(result.count).toBe(2);

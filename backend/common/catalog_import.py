@@ -25,7 +25,7 @@ from common.models import (
     CatalogSourceItem,
     Citation,
     Collection,
-    Contribution,
+    Submission,
     PostOffice,
     PostOfficeRegion,
     ReferenceWork,
@@ -107,18 +107,18 @@ def queue_entry(item, collection, actor, town, references, parent_id=None):
     # A queued import is a proposal against specific evidence. Do not apply
     # different fields from those an Editor saw after a Submission revision.
     item.decision["review_payload"] = strip_catalog_code_keys(payload)
-    if item.contribution_id:
-        ticket = item.contribution
+    if item.submission_id:
+        ticket = item.submission
         ticket.submitted_data = payload
         ticket.save(update_fields=["submitted_data", "modified_date"])
     else:
-        item.contribution = Contribution.objects.create(
+        item.submission = Submission.objects.create(
             collection=collection,
             contributor=actor,
             created_by=actor,
             modified_by=actor,
             submitted_data=payload,
-            status=Contribution.STATUS_PENDING,
+            status=Submission.STATUS_PENDING,
         )
 
 
@@ -177,9 +177,9 @@ def refresh_receipt(item: CatalogSourceItem, data: dict, refresh: bool) -> bool:
     code = item.source_key
     if item.applied and not getattr(item, RELATIONS[item.kind] + "_id"):
         raise CommandError(f"The saved target of {code} was removed. Review its source mapping.")
-    if not item.applied and not item.contribution_id:
+    if not item.applied and not item.submission_id:
         raise CommandError(f"The Submission for {code} was removed. Review its source mapping.")
-    pending = not item.applied and item.contribution.status == Contribution.STATUS_PENDING
+    pending = not item.applied and item.submission.status == Submission.STATUS_PENDING
     if item.evidence != data:
         delta = {
             key: {"saved": item.evidence.get(key), "incoming": data.get(key)}

@@ -1,7 +1,7 @@
-import type { Submission } from "@/lib/submission";
-// Adapter: turn a contribution's submitted_data blob into the structured
+import type { SubmittedData } from "@/lib/submission";
+// Adapter: turn a submission's submitted_data blob into the structured
 // MarkingFieldInput consumed by buildMarkingFields. The goal is that
-// ContributionDetail renders the same field sequence as RecordDetail.
+// SubmissionDetail renders the same field sequence as RecordDetail.
 //
 // Input is the shared Submission type, read at the API boundary.
 
@@ -15,7 +15,7 @@ import {
 import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
 import { mapApiMarkingToRecord, type MarkingTypeValue } from "@/services/markings";
 
-export interface ContributionLookups {
+export interface SubmissionLookups {
   letteringOptions: { id: number; name: string }[];
   dateFormatOptions: { id: number; name: string; description?: string }[];
 }
@@ -39,7 +39,7 @@ function yearOnly(value: unknown): string {
   return m ? m[1] : s;
 }
 
-function markingBoundaryDate(sd: Submission, prefix: "marking_erd" | "marking_lrd"): string {
+function markingBoundaryDate(sd: SubmittedData, prefix: "marking_erd" | "marking_lrd"): string {
   return formatPartialDateInput(markingBoundaryDateInputFromSubmission(sd, prefix));
 }
 
@@ -51,7 +51,7 @@ function firstNonEmpty(...values: unknown[]): string {
   return "";
 }
 
-function readEarliestLatest(sd: Submission): { earliest: string; latest: string } {
+function readEarliestLatest(sd: SubmittedData): { earliest: string; latest: string } {
   const dr = toStr(sd.date_range);
   const drParts = dr ? dr.split(/\s*-\s*/).map((s) => s.trim()) : [];
   const erd = markingBoundaryDate(sd, "marking_erd");
@@ -61,7 +61,7 @@ function readEarliestLatest(sd: Submission): { earliest: string; latest: string 
   return { earliest: e, latest: l };
 }
 
-function formatDimensions(sd: Submission, shapeName: string, isManuscript: boolean): string {
+function formatDimensions(sd: SubmittedData, shapeName: string, isManuscript: boolean): string {
   const w = toStr(sd.width_mm);
   const h = toStr(sd.height_mm);
   if (!isManuscript && isTrueCircleShapeName(shapeName)) {
@@ -75,18 +75,18 @@ function formatDimensions(sd: Submission, shapeName: string, isManuscript: boole
   return "";
 }
 
-function readImpression(sd: Submission): string {
+function readImpression(sd: SubmittedData): string {
   const s = toStr(sd.impression);
   if (!s) return "";
   if (s.toLowerCase() === "normal") return "";
   return s;
 }
 
-function readIsIrreg(sd: Submission): boolean | null {
+function readIsIrreg(sd: SubmittedData): boolean | null {
   return sd.is_irreg === true;
 }
 
-function readLetteringId(sd: Submission): number | undefined {
+function readLetteringId(sd: SubmittedData): number | undefined {
   const direct =
     sd.lettering_style_id ??
     sd.lettering_id ??
@@ -103,7 +103,7 @@ function readLetteringId(sd: Submission): number | undefined {
 // embedded *_name field if the id isn't usable, then to the bare "lettering"
 // name the backend resolves the FK from. Returns "" when none is available
 // (renderer prints "-").
-function resolveLettering(sd: Submission, lookups: ContributionLookups): string {
+function resolveLettering(sd: SubmittedData, lookups: SubmissionLookups): string {
   const id = readLetteringId(sd);
   if (id != null) {
     const opt = lookups.letteringOptions.find((o) => o.id === id);
@@ -112,7 +112,7 @@ function resolveLettering(sd: Submission, lookups: ContributionLookups): string 
   return toStr(sd.lettering_style_name ?? sd.lettering);
 }
 
-function resolveDateFormat(sd: Submission, lookups: ContributionLookups): string {
+function resolveDateFormat(sd: SubmittedData, lookups: SubmissionLookups): string {
   const code = toStr(sd.date_fmt);
   if (!code) return "";
   const opt = lookups.dateFormatOptions.find(
@@ -125,15 +125,15 @@ function resolveDateFormat(sd: Submission, lookups: ContributionLookups): string
 
 // The contributor's description is the analogue of RecordDetail's
 // editor-only "Catalog text" field. Reference works are rendered
-// separately via the contribution payload's reference_work_* keys.
-function buildCatalogText(sd: Submission): string {
+// separately via the submission payload's reference_work_* keys.
+function buildCatalogText(sd: SubmittedData): string {
   return toStr(sd.description);
 }
 
 export function submittedDataToFieldInput(
-  sd: Submission,
-  lookups: ContributionLookups,
-  opts: { contributionId: number },
+  sd: SubmittedData,
+  lookups: SubmissionLookups,
+  opts: { submissionId: number },
 ): MarkingFieldInput {
   const rawType = toStr(sd.type);
   const type =

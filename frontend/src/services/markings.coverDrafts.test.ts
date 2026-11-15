@@ -4,7 +4,7 @@
  * draft older than ten other submissions never showed.
  */
 import apiClient from "@/lib/api";
-import { getCoverContributionDraftsForMarking } from "@/services/markings";
+import { getCoverSubmissionDraftsForMarking } from "@/services/markings";
 
 jest.mock("@/lib/api", () => ({
   __esModule: true,
@@ -28,7 +28,7 @@ const draft = (id: number, parent: number, status = "draft", extra: Record<strin
   },
 });
 
-describe("getCoverContributionDraftsForMarking", () => {
+describe("getCoverSubmissionDraftsForMarking", () => {
   beforeEach(() => mockedGet.mockReset());
 
   it("asks for draft rows at the largest page and keeps only this marking's cover drafts", async () => {
@@ -45,20 +45,20 @@ describe("getCoverContributionDraftsForMarking", () => {
       },
     });
 
-    const rows = await getCoverContributionDraftsForMarking(7);
+    const rows = await getCoverSubmissionDraftsForMarking(7);
 
     expect(mockedGet).toHaveBeenCalledTimes(1);
-    expect(mockedGet.mock.calls[0][0]).toBe("/contributions/");
+    expect(mockedGet.mock.calls[0][0]).toBe("/submissions/");
     expect(mockedGet.mock.calls[0][1]).toEqual({
       params: { status: "draft", page_size: 100, ordering: "-created_at" },
     });
-    expect(rows.map((r) => r.contributionDraftId)).toEqual([11]);
-    expect(rows[0].contributionStatus).toBe("draft");
+    expect(rows.map((r) => r.submissionDraftId)).toEqual([11]);
+    expect(rows[0].submissionStatus).toBe("draft");
     expect(rows[0].defaultImageUrl).toContain("cover-11.png");
   });
 
   it("returns no rows when the list is refused (anonymous or offline)", async () => {
     mockedGet.mockRejectedValueOnce(new Error("401"));
-    await expect(getCoverContributionDraftsForMarking(7)).resolves.toEqual([]);
+    await expect(getCoverSubmissionDraftsForMarking(7)).resolves.toEqual([]);
   });
 });

@@ -30,7 +30,7 @@ class EditorRosterTests(TestCase):
         self.unassigned = User.objects.create_user(
             "reviewer", email="reviewer@example.com", password="pw")
         group = Group.objects.create(name="Editors")
-        group.permissions.add(Permission.objects.get(codename="review_contribution"))
+        group.permissions.add(Permission.objects.get(codename="review_submission"))
         self.unassigned.groups.add(group)  # role without a state: not a state editor
 
         self.va = self._collection("Virginia", "VA")

@@ -8,13 +8,13 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase
 
-from common.api.v2.views import _approve_contribution
-from common.contribution_apply import ContributionApplyError
+from common.api.v2.views import _approve_submission
+from common.submission_apply import SubmissionApplyError
 from common.models import (
     CatalogSourceItem,
     Citation,
     Color,
-    Contribution,
+    Submission,
     Cover,
     CoverMarking,
     DateSeen,
@@ -172,20 +172,20 @@ class FloridaReconciliationTests(TestCase):
 
     def approve(self, code):
         source = CatalogSourceItem.objects.get(source_key=code)
-        return _approve_contribution(
-            source.contribution, actor=self.actor, review_notes="Checked against the source"
+        return _approve_submission(
+            source.submission, actor=self.actor, review_notes="Checked against the source"
         )
 
     def test_preview_queue_approve_and_repeat(self):
         self.load("--dry-run")
         self.assertFalse(CatalogSourceItem.objects.exists())
-        self.assertFalse(Contribution.objects.exists())
+        self.assertFalse(Submission.objects.exists())
         self.load()
         self.load()
-        self.assertEqual(Contribution.objects.filter(status="pending").count(), 2)
+        self.assertEqual(Submission.objects.filter(status="pending").count(), 2)
         self.assertEqual(PostOffice.objects.count(), 1)
         self.assertFalse(Cover.objects.exists())
-        with self.assertRaisesMessage(ContributionApplyError, "Approve the linked"):
+        with self.assertRaisesMessage(SubmissionApplyError, "Approve the linked"):
             self.approve(self.cover)
         self.approve(self.mark)
         self.approve(self.cover)
@@ -198,14 +198,14 @@ class FloridaReconciliationTests(TestCase):
         self.assertEqual(Image.objects.get().file_checksum, "a" * 64)
         self.assertEqual(DateSeen.objects.count(), 1)
         self.assertEqual(Citation.objects.count(), 4)
-        self.assertEqual(Contribution.objects.count(), 2)
+        self.assertEqual(Submission.objects.count(), 2)
         self.assertEqual(CatalogSourceItem.objects.filter(applied=True).count(), 3)
 
     def test_changed_target_requires_review_then_separate_listing(self):
         self.load()
         self.marking.width = 29
         self.marking.save()
-        with self.assertRaisesMessage(ContributionApplyError, "Refresh"):
+        with self.assertRaisesMessage(SubmissionApplyError, "Refresh"):
             self.approve(self.mark)
         self.load("--refresh-pending")
         source = CatalogSourceItem.objects.get(source_key=self.mark)
@@ -284,7 +284,7 @@ class FloridaReconciliationTests(TestCase):
             fields["decision"]["target"], {"$record": f"common.marking:{self.marking.pk}"}
         )
         self.assertEqual(
-            fields["contribution"], {"$record": f"common.contribution:{item.contribution_id}"}
+            fields["submission"], {"$record": f"common.submission:{item.submission_id}"}
         )
 
     def test_dated_office_spans_survive_repeat_import(self):

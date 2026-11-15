@@ -1,5 +1,5 @@
 import { SubmissionDataNotice } from "@/components/SubmissionDataNotice";
-import { type Submission } from "@/lib/submission";
+import { type SubmittedData } from "@/lib/submission";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { CheckCircle, ExternalLink, Loader2, MessageSquare, Pencil, Trash2, XCircle } from "lucide-react";
@@ -37,30 +37,30 @@ import { dashboardHref, dashboardHrefForTab } from "@/lib/dashboardParams";
 import { coverTypeLabel as sharedCoverTypeLabel } from "@/lib/coverTypes";
 import { readReturnTo } from "@/lib/returnTo";
 import {
-  coverContributionDisplayName,
-  isCoverContributionData,
-  parentMarkingIdFromContribution,
-  createdFromContributionIdFromSubmittedData,
-} from "@/lib/contributionDisplay";
+  coverSubmissionDisplayName,
+  isCoverSubmissionData,
+  parentMarkingIdFromSubmission,
+  createdFromSubmissionIdFromSubmittedData,
+} from "@/lib/submissionDisplay";
 import {
   formatPartialDateInput,
   partialDateInputFromSubmittedData,
 } from "@/lib/partialDate";
 import {
-  contributionImageMetasFromSubmittedData,
-  contributionMetaImageUrl,
-} from "@/lib/contributionImages";
+  submissionImageMetasFromSubmittedData,
+  submissionMetaImageUrl,
+} from "@/lib/submissionImages";
 // Separate line on purpose: another open PR touches the import above (merge safety).
 import { returnToLabel } from "@/lib/returnTo";
 import {
-  type Contribution,
-  canReviewContribution,
-  decideContribution,
-  deleteOwnContribution,
-  getContribution,
-  getContributionCatalogCodeSuggestion,
+  type Submission,
+  canReviewSubmission,
+  decideSubmission,
+  deleteOwnSubmission,
+  getSubmission,
+  getSubmissionCatalogCodeSuggestion,
   getDirectCatalogCodeSuggestion,
-} from "@/services/contributions";
+} from "@/services/submissions";
 import { getMarkingById, type MarkingRecord } from "@/services/markings";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
 
@@ -78,29 +78,29 @@ function coverTypeLabel(typeCode: string): string {
   return sharedCoverTypeLabel(typeCode) || "--";
 }
 
-function formatCoverDate(sd: Submission): string {
+function formatCoverDate(sd: SubmittedData): string {
   return formatPartialDateInput(partialDateInputFromSubmittedData(sd)) || "--";
 }
 
-function tracingFlagsFromSubmittedData(sd: Submission, imageCount: number): boolean[] {
+function tracingFlagsFromSubmittedData(sd: SubmittedData, imageCount: number): boolean[] {
   return sd.cover_image_tags?.map((tag) => tag.toLowerCase() === "tracing")
     ?? Array.from({ length: imageCount }, () => false);
 }
 
 
-interface CoverContributionDetailProps {
-  initialContribution?: Contribution | null;
+interface CoverSubmissionDetailProps {
+  initialSubmission?: Submission | null;
 }
 
-export default function CoverContributionDetail({ initialContribution = null }: CoverContributionDetailProps) {
+export default function CoverSubmissionDetail({ initialSubmission = null }: CoverSubmissionDetailProps) {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
   const user = useAuth();
 
-  const [contribution, setContribution] = useState<Contribution | null>(initialContribution);
-  const [loading, setLoading] = useState(!initialContribution);
+  const [submission, setSubmission] = useState<Submission | null>(initialSubmission);
+  const [loading, setLoading] = useState(!initialSubmission);
   const [error, setError] = useState<string | null>(null);
   const [carouselApi, setCarouselApi] = useState<CarouselApi>();
   const [carouselCurrent, setCarouselCurrent] = useState(0);
@@ -111,7 +111,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   const [catalogCodeLoading, setCatalogCodeLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // Withdraw/delete: the contributor may delete any of their own UNapproved
-  // cover submissions (backend IsOwnDeletableContribution on DELETE).
+  // cover submissions (backend IsOwnDeletableSubmission on DELETE).
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [parentMarking, setParentMarking] = useState<MarkingRecord | null>(null);
@@ -125,37 +125,37 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   } | null;
   const fromDashboard = locationState?.fromDashboard === true;
   const dashboardTab = locationState?.dashboardTab;
-  // Issue #147, same contract as ContributionDetail: `?from=` names the listing
+  // Issue #147, same contract as SubmissionDetail: `?from=` names the listing
   // the editor came from and survives a direct link, where location.state and
   // the sessionStorage mirror do not. Null when absent or off-origin, and every
   // caller falls back to issue #87's behaviour.
   const returnTo = readReturnTo(new URLSearchParams(location.search));
   const isStateEditor =
     user?.role === "editor" || user?.role === "administrator" || user?.is_superuser === true;
-  const canReview = canReviewContribution(user, contribution);
-  const unsupportedFields = contribution?.unsupportedSubmissionFields ?? [];
+  const canReview = canReviewSubmission(user, submission);
+  const unsupportedFields = submission?.unsupportedSubmissionFields ?? [];
 
   useEffect(() => {
-    if (initialContribution) {
-      setContribution(initialContribution);
+    if (initialSubmission) {
+      setSubmission(initialSubmission);
       setLoading(false);
       return;
     }
-    const contributionId = id ? Number.parseInt(String(id), 10) : null;
-    if (!contributionId || Number.isNaN(contributionId)) {
-      setError("Invalid contribution");
+    const submissionId = id ? Number.parseInt(String(id), 10) : null;
+    if (!submissionId || Number.isNaN(submissionId)) {
+      setError("Invalid submission");
       setLoading(false);
       return;
     }
 
     let cancelled = false;
-    getContribution(contributionId)
+    getSubmission(submissionId)
       .then((normalized) => {
         if (cancelled) return;
-        if (!isCoverContributionData(normalized.submittedData)) {
+        if (!isCoverSubmissionData(normalized.submittedData)) {
           throw new Error("Not a cover submission");
         }
-        setContribution(normalized);
+        setSubmission(normalized);
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load");
@@ -166,7 +166,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     return () => {
       cancelled = true;
     };
-  }, [id, initialContribution]);
+  }, [id, initialSubmission]);
 
   useEffect(() => {
     if (!carouselApi) return;
@@ -178,16 +178,16 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     };
   }, [carouselApi]);
 
-  const sd = useMemo<Submission>(
-    () => contribution?.submittedData ?? {},
-    [contribution?.submittedData],
+  const sd = useMemo<SubmittedData>(
+    () => submission?.submittedData ?? {},
+    [submission?.submittedData],
   );
-  const parentMarkingId = parentMarkingIdFromContribution(sd);
+  const parentMarkingId = parentMarkingIdFromSubmission(sd);
   // Trello T37: this cover row was created when a Marking submission that carried it was approved.
-  const createdFromContributionId = createdFromContributionIdFromSubmittedData(sd);
+  const createdFromSubmissionId = createdFromSubmissionIdFromSubmittedData(sd);
   const displayName =
-    contribution?.displayName?.trim() ||
-    coverContributionDisplayName(sd, contribution?.id ?? 0, {
+    submission?.displayName?.trim() ||
+    coverSubmissionDisplayName(sd, submission?.id ?? 0, {
       town: parentMarking?.town,
       state: parentMarking?.state,
     });
@@ -221,11 +221,11 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   }, [parentMarkingId]);
 
   const images = useMemo(() => {
-    const metas = contributionImageMetasFromSubmittedData(sd);
+    const metas = submissionImageMetasFromSubmittedData(sd);
     const tracingFlags = tracingFlagsFromSubmittedData(sd, metas.length);
     return metas
       .map((meta, index) => {
-        const imageUrl = contributionMetaImageUrl(meta);
+        const imageUrl = submissionMetaImageUrl(meta);
         if (!imageUrl) return null;
         const obj = meta;
         const originalFilename =
@@ -246,7 +246,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   // meta for its picture; the detail endpoint resolves the carried marking
   // image instead, and it shows first, as it did on the form. `images` stays
   // metas-only above so the tracing flags keep their positions.
-  const carried = contribution?.sourceMarkingImage ?? null;
+  const carried = submission?.sourceMarkingImage ?? null;
   const galleryImages = useMemo<EntryGalleryImage[]>(() => {
     const uploads: EntryGalleryImage[] = images.map((img) => ({
       imageUrl: img.imageUrl,
@@ -276,7 +276,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
 
   const citations = useMemo(() => submissionCitations(sd, referenceWorks), [referenceWorks, sd]);
   // Trello T39: an edit under review is set beside the cover as it is now.
-  const editBaseline = contribution?.editBaseline ?? null;
+  const editBaseline = submission?.editBaseline ?? null;
   const editComparison = useMemo(
     () => (editBaseline ? compareCoverEdit(editBaseline, sd, referenceWorks) : null),
     [editBaseline, referenceWorks, sd],
@@ -284,10 +284,10 @@ export default function CoverContributionDetail({ initialContribution = null }: 
 
   const isContributor =
     !!user &&
-    !!contribution &&
-    (contribution.contributorId === user.id ||
-      contribution.contributorUsername === user.username ||
-      contribution.contributorUsername === user.email);
+    !!submission &&
+    (submission.contributorId === user.id ||
+      submission.contributorUsername === user.username ||
+      submission.contributorUsername === user.email);
 
   const handleBack = () => {
     // Issue #87: keep the dashboard's page, page size and filters on the way back.
@@ -302,15 +302,15 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     navigate(dashboardHref());
   };
 
-  const contributionId = contribution?.id;
+  const submissionId = submission?.id;
 
-  // Preview only -- see the note in ContributionDetail.tsx. Firing the
-  // contribution-scoped endpoint from an effect PERSISTS the minted code into
+  // Preview only -- see the note in SubmissionDetail.tsx. Firing the
+  // submission-scoped endpoint from an effect PERSISTS the minted code into
   // submitted_data, so opening a pending row wrote to the database (issue #118).
   // The cover queue was not implicated in the 27 VPHC rows, but it is the same
   // defect. The direct endpoint computes the same code and saves nothing.
   useEffect(() => {
-    if (contributionId == null || !canReview) return;
+    if (submissionId == null || !canReview) return;
     if (parentMarkingId == null) return;
     let cancelled = false;
     setCatalogCodeLoading(true);
@@ -330,16 +330,16 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     return () => {
       cancelled = true;
     };
-  }, [contributionId, canReview, parentMarkingId]);
+  }, [submissionId, canReview, parentMarkingId]);
 
   const ensureCatalogCode = async (): Promise<string> => {
-    if (!contribution) return "";
+    if (!submission) return "";
     const current = catalogCode.trim();
     if (current) return current;
     setCatalogCodeLoading(true);
     setCatalogCodeError(null);
     try {
-      const suggestion = await getContributionCatalogCodeSuggestion(contribution.id, { force: true });
+      const suggestion = await getSubmissionCatalogCodeSuggestion(submission.id, { force: true });
       setCatalogCode(suggestion.catalogCode);
       return suggestion.catalogCode;
     } catch (err) {
@@ -352,7 +352,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   };
 
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
-    if (!contribution || !canReview) return;
+    if (!submission || !canReview) return;
     if (kind === "approve" && unsupportedFields.length > 0) return;
     if (kind !== "approve" && !comment.trim()) {
       setCommentError("A comment is required to reject or request revision.");
@@ -363,13 +363,13 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     setSubmitting(true);
     try {
       const finalCatalogCode = kind === "approve" ? await ensureCatalogCode() : "";
-      const result = await decideContribution(contribution.id, kind, {
+      const result = await decideSubmission(submission.id, kind, {
         reviewNotes: comment.trim() || undefined,
         ...(kind === "approve" ? { catalogCode: finalCatalogCode } : {}),
       });
       const actionLabel = kind === "approve" ? "Approved" : kind === "reject" ? "Rejected" : "Submission returned";
       // Issue #87: every decision returns to the review queue, matching the
-      // marking flow in ContributionDetail. Approving used to redirect to the
+      // marking flow in SubmissionDetail. Approving used to redirect to the
       // new cover, stranding the editor mid-queue; the cover is one click away
       // from the toast instead.
       const approvedCoverPath =
@@ -409,7 +409,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     );
   }
 
-  if (error || !contribution) {
+  if (error || !submission) {
     return (
       <EntryDetailLayout
         onBack={handleBack}
@@ -418,7 +418,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
         rightColumn={
           <Card className="shadow-archival-md">
             <CardContent className="pt-6">
-              <p className="text-muted-foreground">{error || "Contribution not found"}</p>
+              <p className="text-muted-foreground">{error || "Submission not found"}</p>
             </CardContent>
           </Card>
         }
@@ -426,7 +426,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     );
   }
 
-  const normalizedStatus = String(contribution.status || "").toLowerCase();
+  const normalizedStatus = String(submission.status || "").toLowerCase();
   const statusLabel =
     normalizedStatus === "approved"
       ? "Approved"
@@ -456,10 +456,10 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   const canDeleteOwn = isContributor && normalizedStatus !== "approved";
 
   const handleDeleteConfirm = async () => {
-    if (!contribution) return;
+    if (!submission) return;
     setDeleting(true);
     try {
-      await deleteOwnContribution(contribution.id);
+      await deleteOwnSubmission(submission.id);
       toast({
         title: "Submission deleted",
         description: "Your cover submission has been removed.",
@@ -482,9 +482,9 @@ export default function CoverContributionDetail({ initialContribution = null }: 
       "",
   ).trim();
   const typeCode = String(sd.type ?? "").trim().toUpperCase();
-  const showReviewNotes = !!contribution.reviewNotes?.trim();
+  const showReviewNotes = !!submission.reviewNotes?.trim();
   const showEditorFeedbackCard =
-    contribution.status !== "pending" || !!(contribution.reviewNotes && contribution.reviewNotes.trim());
+    submission.status !== "pending" || !!(submission.reviewNotes && submission.reviewNotes.trim());
   const associatedMarkingCount = parentMarkingId != null ? 1 : 0;
 
   const openParentMarking = () => {
@@ -495,11 +495,11 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   };
 
   const openApprovedCover = () => {
-    if (contribution.coverId == null) return;
+    if (submission.coverId == null) return;
     const path =
       parentMarkingId != null
-        ? `/record/${parentMarkingId}/cover/${contribution.coverId}`
-        : `/covers/${contribution.coverId}`;
+        ? `/record/${parentMarkingId}/cover/${submission.coverId}`
+        : `/covers/${submission.coverId}`;
     navigate(path, {
       state: { from: location.pathname + location.search },
     });
@@ -541,9 +541,9 @@ export default function CoverContributionDetail({ initialContribution = null }: 
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="cover-contribution-catalog-code">Catalog Cover code</Label>
+                  <Label htmlFor="cover-submission-catalog-code">Catalog Cover code</Label>
                   <Input
-                    id="cover-contribution-catalog-code"
+                    id="cover-submission-catalog-code"
                     value={catalogCode}
                     onChange={(e) => {
                       setCatalogCode(e.target.value);
@@ -558,9 +558,9 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                   {catalogCodeError ? <p className="text-sm text-destructive">{catalogCodeError}</p> : null}
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="cover-contribution-comment">Comment</Label>
+                  <Label htmlFor="cover-submission-comment">Comment</Label>
                   <Textarea
-                    id="cover-contribution-comment"
+                    id="cover-submission-comment"
                     placeholder="Optional for approvals, required for rejection/revision."
                     rows={4}
                     value={comment}
@@ -613,11 +613,11 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                   Editor feedback
                 </CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  {contribution.status === "approved"
+                  {submission.status === "approved"
                     ? "Your submission was approved and added to the catalog. If the editor left a comment below, use it as guidance for future submissions."
-                    : contribution.status === "rejected"
+                    : submission.status === "rejected"
                       ? "Your submission was not accepted. See the comment below for details."
-                      : contribution.status === "needs_revision"
+                      : submission.status === "needs_revision"
                         ? "The editor requested changes. Please update this submission and resubmit."
                         : "The reviewer left a comment for you. Use this feedback to improve your submission or add a new cover if requested."}
                 </p>
@@ -625,7 +625,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
               <CardContent className="space-y-3">
                 {showReviewNotes ? (
                   <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
-                    {contribution.reviewNotes?.trim()}
+                    {submission.reviewNotes?.trim()}
                   </p>
                 ) : null}
               </CardContent>
@@ -646,7 +646,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                       variant="outline"
                       size="sm"
                       onClick={() =>
-                        navigate(`/record/${parentMarkingId}/cover/new?edit=${contribution.id}`, {
+                        navigate(`/record/${parentMarkingId}/cover/new?edit=${submission.id}`, {
                           state: { from: location.pathname + location.search },
                         })
                       }
@@ -656,7 +656,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                       {normalizedStatus === "pending" ? "Edit" : "Edit before resubmitting"}
                     </Button>
                   )}
-                  {normalizedStatus === "approved" && contribution.coverId != null && (
+                  {normalizedStatus === "approved" && submission.coverId != null && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -700,8 +700,8 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                 </div>
               )}
               <p className="mt-4 text-sm text-muted-foreground">
-                Submitted {new Date(contribution.createdAt).toLocaleString()}
-                {contribution.contributorUsername ? ` by ${contribution.contributorUsername}` : ""}
+                Submitted {new Date(submission.createdAt).toLocaleString()}
+                {submission.contributorUsername ? ` by ${submission.contributorUsername}` : ""}
               </p>
             </CardContent>
           </Card>
@@ -733,11 +733,11 @@ export default function CoverContributionDetail({ initialContribution = null }: 
               ) : (
                 <p className="text-sm text-muted-foreground">No parent marking linked to this cover submission.</p>
               )}
-              {createdFromContributionId != null && (
+              {createdFromSubmissionId != null && (
                 <p className="text-sm text-muted-foreground" data-testid="created-from-note">
                   Created when{" "}
-                  <Link to={`/contribution/${createdFromContributionId}`} className="text-primary underline">
-                    Marking submission #{createdFromContributionId}
+                  <Link to={`/submission/${createdFromSubmissionId}`} className="text-primary underline">
+                    Marking submission #{createdFromSubmissionId}
                   </Link>{" "}
                   was approved; the contributor submitted both together.
                 </p>

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Wipe user-generated submission data (contributions, drafts, versions, recycle
+# Wipe user-generated submission data (submissions, drafts, versions, recycle
 # bins). Leaves the 14 catalog tables, auth Users, and editor Collection
 # assignments untouched.
 #

@@ -96,7 +96,7 @@ from .models import (
     Citation,
     Collection,
     CollectionAssignment,
-    Contribution,
+    Submission,
     FAQEntry,
 )
 
@@ -516,10 +516,10 @@ class CatalogRequestMarking(Marking):
 
 @admin.register(CatalogRequestMarking)
 class CatalogRequestMarkingAdmin(MarkingAdmin):
-    """Admin view restricted to Markings linked to a Contribution row."""
+    """Admin view restricted to Markings linked to a Submission row."""
 
     def get_queryset(self, request):
-        return super().get_queryset(request).filter(contribution__isnull=False)
+        return super().get_queryset(request).filter(submission__isnull=False)
 
 
 # ========== IMAGE ADMIN ==========
@@ -691,7 +691,7 @@ class CollectionUserChangeForm(DjangoUserAdmin.form):
         required=False,
         widget=FilteredSelectMultiple('Collections', is_stacked=False),
         help_text='Collections this Editor is responsible for. Editors automatically '
-                  'gain the review_contribution permission via the Editors group.',
+                  'gain the review_submission permission via the Editors group.',
     )
 
     role = forms.ChoiceField(
@@ -837,15 +837,15 @@ class CustomUserAdmin(DjangoUserAdmin):
     fieldsets = tuple(_base_fieldsets)
 
 
-# ========== CONTRIBUTION ADMIN ==========
+# ========== SUBMISSION ADMIN ==========
 
-@admin.register(Contribution)
-class ContributionAdmin(CompareVersionAdmin):
+@admin.register(Submission)
+class SubmissionAdmin(CompareVersionAdmin):
     list_display = ["id", "contributor", "status", "get_state", "get_town", "reviewer", "created_date"]
     list_filter = ["status"]
     search_fields = ["contributor__username", "submitted_data"]
     readonly_fields = ["created_date", "modified_date", "created_by", "modified_by", "marking"]
-    actions = ["reject_contributions"]
+    actions = ["reject_submissions"]
 
     def get_state(self, obj):
         return (obj.submitted_data or {}).get("state", "-")
@@ -855,13 +855,13 @@ class ContributionAdmin(CompareVersionAdmin):
         return (obj.submitted_data or {}).get("town", "-")
     get_town.short_description = "Town"
 
-    @admin.action(description="Reject selected contributions (no catalog change)")
-    def reject_contributions(self, request, queryset):
+    @admin.action(description="Reject selected submissions (no catalog change)")
+    def reject_submissions(self, request, queryset):
         rejected = 0
         for contrib in queryset:
-            if contrib.status != Contribution.STATUS_PENDING:
+            if contrib.status != Submission.STATUS_PENDING:
                 continue
-            contrib.status = Contribution.STATUS_REJECTED
+            contrib.status = Submission.STATUS_REJECTED
             contrib.reviewer = request.user
             contrib.modified_by = request.user
             contrib.save(update_fields=["status", "reviewer", "modified_date", "modified_by"])
@@ -869,7 +869,7 @@ class ContributionAdmin(CompareVersionAdmin):
         if rejected:
             self.message_user(
                 request,
-                f"Rejected {rejected} contribution(s).",
+                f"Rejected {rejected} submission(s).",
                 level=messages.SUCCESS,
             )
 

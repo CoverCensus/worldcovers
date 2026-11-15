@@ -1,9 +1,9 @@
 """
-Tests for contribution consolidation helpers and operator cleanup.
+Tests for submission consolidation helpers and operator cleanup.
 
 Runbook:
   cwd: repo root
-  command: .venv/bin/python backend/manage.py test common.tests.test_contribution_consolidation
+  command: .venv/bin/python backend/manage.py test common.tests.test_submission_consolidation
   expected exit code: 0
 """
 from io import StringIO
@@ -15,7 +15,7 @@ from django.test import TestCase
 from common.models import (
     Collection,
     Color,
-    Contribution,
+    Submission,
     Marking,
     PostOffice,
     Region,
@@ -26,7 +26,7 @@ from common.models import (
 User = get_user_model()
 
 
-class ConsolidateSupersededContributionsCommandTests(TestCase):
+class ConsolidateSupersededSubmissionsCommandTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="contributor", password="pw")
         self.region = Region.objects.create(
@@ -63,16 +63,16 @@ class ConsolidateSupersededContributionsCommandTests(TestCase):
         )
 
     def _create_pair(self):
-        old = Contribution.objects.create(
+        old = Submission.objects.create(
             contributor=self.user,
             collection=self.collection,
             submitted_data={"submission_kind": "marking", "state": "VA"},
-            status=Contribution.STATUS_APPROVED,
+            status=Submission.STATUS_APPROVED,
             marking=self.marking,
             created_by=self.user,
             modified_by=self.user,
         )
-        latest = Contribution.objects.create(
+        latest = Submission.objects.create(
             contributor=self.user,
             collection=self.collection,
             submitted_data={
@@ -80,7 +80,7 @@ class ConsolidateSupersededContributionsCommandTests(TestCase):
                 "edit_marking_id": self.marking.pk,
                 "state": "VA",
             },
-            status=Contribution.STATUS_PENDING,
+            status=Submission.STATUS_PENDING,
             created_by=self.user,
             modified_by=self.user,
         )
@@ -91,18 +91,18 @@ class ConsolidateSupersededContributionsCommandTests(TestCase):
         out = StringIO()
 
         call_command(
-            "consolidate_superseded_contributions",
+            "consolidate_superseded_submissions",
             dry_run=True,
             no_input=True,
             stdout=out,
         )
 
         self.assertIn("[DRY RUN]", out.getvalue())
-        self.assertTrue(Contribution.objects.filter(pk=old.pk).exists())
-        self.assertTrue(Contribution.objects.filter(pk=latest.pk).exists())
+        self.assertTrue(Submission.objects.filter(pk=old.pk).exists())
+        self.assertTrue(Submission.objects.filter(pk=latest.pk).exists())
         self.assertFalse(
             SubmissionTransaction.objects.filter(
-                action=SubmissionTransaction.ACTION_CONTRIBUTION_SUPERSEDED
+                action=SubmissionTransaction.ACTION_SUBMISSION_SUPERSEDED
             ).exists()
         )
 
@@ -111,20 +111,20 @@ class ConsolidateSupersededContributionsCommandTests(TestCase):
         out = StringIO()
 
         call_command(
-            "consolidate_superseded_contributions",
+            "consolidate_superseded_submissions",
             no_input=True,
             stdout=out,
         )
 
-        self.assertIn("deleted 1 superseded Contribution row(s)", out.getvalue())
-        self.assertFalse(Contribution.objects.filter(pk=old.pk).exists())
-        self.assertTrue(Contribution.objects.filter(pk=latest.pk).exists())
+        self.assertIn("deleted 1 superseded Submission row(s)", out.getvalue())
+        self.assertFalse(Submission.objects.filter(pk=old.pk).exists())
+        self.assertTrue(Submission.objects.filter(pk=latest.pk).exists())
         tombstone = SubmissionTransaction.objects.get(
-            action=SubmissionTransaction.ACTION_CONTRIBUTION_SUPERSEDED,
+            action=SubmissionTransaction.ACTION_SUBMISSION_SUPERSEDED,
             marking=self.marking,
         )
-        self.assertEqual(tombstone.before_payload["contribution_id"], old.pk)
+        self.assertEqual(tombstone.before_payload["submission_id"], old.pk)
         self.assertEqual(
-            tombstone.extra_payload["superseded_by_contribution_id"],
+            tombstone.extra_payload["superseded_by_submission_id"],
             latest.pk,
         )

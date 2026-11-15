@@ -48,7 +48,7 @@ router.register(r"dates-seen", views.DateSeenViewSet, basename="dates-seen")
 router.register(r"cover-valuations", views.CoverValuationViewSet, basename="cover-valuation")
 
 # Moderation, governance, admin
-router.register(r"contributions", views.ContributionViewSet, basename="contribution")
+router.register(r"submissions", views.SubmissionViewSet, basename="submission")
 router.register(r"collections", views.CollectionViewSet, basename="collection")
 
 urlpatterns = [

@@ -10,7 +10,7 @@
 import {
   insertCarriedTile,
   markingImageFromSourceMarkingImage,
-  sourceMarkingImageFromContribution,
+  sourceMarkingImageFromSubmission,
   sourceMarkingImageFromDescriptor,
   sourceMarkingImageFromState,
 } from "./coverFromImageHandoff";
@@ -42,7 +42,7 @@ describe("sourceMarkingImageFromState", () => {
   });
 
   it("refuses a draft-preview image, which has nothing to repoint", () => {
-    // Negative ids are the draft-contribution sentinel from contributionImages:
+    // Negative ids are the draft-submission sentinel from submissionImages:
     // not catalog rows, so approval could never repoint them.
     expect(
       sourceMarkingImageFromState({
@@ -66,11 +66,11 @@ describe("sourceMarkingImageFromState", () => {
   });
 });
 
-describe("sourceMarkingImageFromContribution", () => {
+describe("sourceMarkingImageFromSubmission", () => {
   // Trello T37: a saved draft has no router state, so the same descriptor
-  // comes back from the contribution detail endpoint in the server's shape.
+  // comes back from the submission detail endpoint in the server's shape.
   it("reads the snake_case descriptor the detail endpoint returns", () => {
-    const got = sourceMarkingImageFromContribution({
+    const got = sourceMarkingImageFromSubmission({
       source_marking_image: {
         id: 10856,
         image_url: "https://woco.dev/media/fl/alligator.png",
@@ -89,7 +89,7 @@ describe("sourceMarkingImageFromContribution", () => {
   });
 
   it("tolerates a camelCased response", () => {
-    const got = sourceMarkingImageFromContribution({
+    const got = sourceMarkingImageFromSubmission({
       sourceMarkingImage: { imageId: 10856, imageUrl: "/media/fl/alligator.png" },
     });
 
@@ -99,16 +99,16 @@ describe("sourceMarkingImageFromContribution", () => {
   it("returns nothing for an ordinary submission or one whose image moved away", () => {
     // The server answers null in both cases; a missing key means an older
     // server that predates the field.
-    expect(sourceMarkingImageFromContribution({ source_marking_image: null })).toBeNull();
-    expect(sourceMarkingImageFromContribution({})).toBeNull();
+    expect(sourceMarkingImageFromSubmission({ source_marking_image: null })).toBeNull();
+    expect(sourceMarkingImageFromSubmission({})).toBeNull();
   });
 
   it("refuses a descriptor with nothing to repoint or nothing to show", () => {
     expect(
-      sourceMarkingImageFromContribution({ source_marking_image: { id: 0, image_url: "/x.png" } }),
+      sourceMarkingImageFromSubmission({ source_marking_image: { id: 0, image_url: "/x.png" } }),
     ).toBeNull();
     expect(
-      sourceMarkingImageFromContribution({ source_marking_image: { id: 10856, image_url: "" } }),
+      sourceMarkingImageFromSubmission({ source_marking_image: { id: 10856, image_url: "" } }),
     ).toBeNull();
   });
 });

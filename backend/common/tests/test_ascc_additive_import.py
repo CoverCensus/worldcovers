@@ -7,10 +7,10 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase
 
-from common.api.v2.views import _approve_contribution
+from common.api.v2.views import _approve_submission
 from common.models import (
     CatalogSourceItem,
-    Contribution,
+    Submission,
     Citation,
     Color,
     Collection,
@@ -292,14 +292,14 @@ class AsccAdditiveImportTests(TestCase):
         load()
         self.assertFalse(Marking.objects.exists())
         self.assertFalse(Cover.objects.exists())
-        tickets = Contribution.objects.filter(collection__region__code="USA-VA1", status="pending")
+        tickets = Submission.objects.filter(collection__region__code="USA-VA1", status="pending")
         self.assertEqual(tickets.count(), 2)
         for kind in ("MARKING", "COVER"):
             source = CatalogSourceItem.objects.get(kind=kind)
-            self.assertEqual(source.contribution.submitted_data["state"], "Virginia")
-            _approve_contribution(source.contribution, actor=self.user, review_notes="Checked")
+            self.assertEqual(source.submission.submitted_data["state"], "Virginia")
+            _approve_submission(source.submission, actor=self.user, review_notes="Checked")
         load()
-        self.assertEqual(Contribution.objects.count(), 2)
+        self.assertEqual(Submission.objects.count(), 2)
         self.assertTrue(Cover.objects.get().is_institutional)
         self.assertEqual(CoverValuation.objects.get().amt, 10)
         self.assertEqual(Image.objects.get().subject_id, Marking.objects.get().pk)
@@ -328,7 +328,7 @@ class AsccAdditiveImportTests(TestCase):
         self.assertIn("shape", source.decision["fills"])
         self.assertEqual(PostOffice.objects.count(), 1)
         self.assertIsNone(marking.shape_id)
-        _approve_contribution(source.contribution, actor=self.user, review_notes="Both sources checked")
+        _approve_submission(source.submission, actor=self.user, review_notes="Both sources checked")
         marking.refresh_from_db()
         self.assertEqual(marking.code, "VPHC1-R1")
         self.assertEqual(marking.catalog_txt, "Earlier listing")
@@ -338,14 +338,14 @@ class AsccAdditiveImportTests(TestCase):
                               [("VPHC1", "p. 10"), ("ASCC1", "p. 1")])
         call_command("import_ascc_bundle", str(self.bundle), actor=self.user.pk)
         self.assertEqual(Marking.objects.count(), 1)
-        self.assertEqual(Contribution.objects.count(), 2)
+        self.assertEqual(Submission.objects.count(), 2)
 
     def test_review_adopts_a_previously_loaded_ascc_bundle(self):
         call_command("import_ascc_bundle", str(self.bundle), direct=True)
         old = (Marking.objects.get().pk, Cover.objects.get().pk)
         call_command("import_apmc_bundle", str(self.bundle), actor=self.user.pk)
         self.assertEqual(CatalogSourceItem.objects.filter(applied=True).count(), 3)
-        self.assertFalse(Contribution.objects.exists())
+        self.assertFalse(Submission.objects.exists())
         self.assertEqual(old, (Marking.objects.get().pk, Cover.objects.get().pk))
 
     def test_import_reimport_skips_existing_and_preserves_manual_edit(self):

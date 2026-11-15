@@ -1,7 +1,7 @@
 import { isCoverTypeCode } from "@/lib/coverTypes";
 import { partialDateInputFromSubmittedData } from "@/lib/partialDate";
 
-// The proposed content of a Submission. The Contribution holds its author,
+// The proposed content of a Submission. The Submission holds its author,
 // status, and review history. Drafts and edits can omit fields; an explicit
 // empty value can clear a field. Keep that distinction when reading or sending.
 //
@@ -148,7 +148,7 @@ function lookup(value: unknown, path: string, unsupported: string[]): string | n
   return readFields(value, lookupFields, path, unsupported);
 }
 
-const submissionFields = {
+const submittedDataFields = {
   ...coverFields,
   submission_kind: field(kind), entity_type: field(kind),
   state: field(text), state_abbrev: field(text), town: field(text),
@@ -188,15 +188,15 @@ const submissionFields = {
   catalog_code_reference_code: field(text), catalog_code_region_abbrev: field(text),
   reference_work_ids: field(referenceIds, "reference_work_ids[]"), reference_work_details: field(references),
   pending_cover: field((value, path, unsupported) => readFields(json(value), coverFields, path, unsupported)),
-  pending_cover_contribution_id: field(number), created_from_contribution_id: field(number),
+  pending_cover_submission_id: field(number), created_from_submission_id: field(number),
   vphc: field((value, path, unsupported) => readFields(value, provenanceFields, path, unsupported)),
   // Older saved rows contain these submit controls.
   save_as_draft: field(boolean), status: field(text),
 };
 
-export type Submission = ReadFields<typeof submissionFields>;
+export type SubmittedData = ReadFields<typeof submittedDataFields>;
 
-export function isCoverSubmission(sd: Submission | null | undefined): boolean {
+export function isCoverSubmittedData(sd: SubmittedData | null | undefined): boolean {
   if (!sd || typeof sd !== "object") return false;
   const kind = String(sd.submission_kind ?? "")
     .trim()
@@ -222,26 +222,26 @@ export function isCoverSubmission(sd: Submission | null | undefined): boolean {
 }
 
 
-export type SubmissionRead = { data: Submission; unsupported: string[] };
+export type SubmittedDataRead = { data: SubmittedData; unsupported: string[] };
 
 /** Read API data once. Extra fields do not erase recognized review content. */
-export function readSubmission(value: unknown): SubmissionRead {
+export function readSubmittedData(value: unknown): SubmittedDataRead {
   const unsupported: string[] = [];
-  const data = readFields(value ?? {}, submissionFields, "Submission", unsupported);
+  const data = readFields(value ?? {}, submittedDataFields, "Submission", unsupported);
   // Django uses a nonempty desc before description for Markings. Covers use
   // description. Match that rule when an older record has both names.
   const raw = object(value ?? {}, "Submission");
-  if (!isCoverSubmission(data) && raw.desc) data.description = text(raw.desc, "Submission.desc");
+  if (!isCoverSubmittedData(data) && raw.desc) data.description = text(raw.desc, "Submission.desc");
   return { data, unsupported };
 }
 
 // Request controls are not proposed catalog fields. File bytes travel only in
 // multipart requests. JSON and multipart forms use the same typed field names.
-export type SubmissionRequest = Submission & {
+export type SubmissionRequest = SubmittedData & {
   desc?: string;
   comment_for_editor?: string;
   marking_id?: number | string;
-  edit_contribution_id?: number;
+  edit_submission_id?: number;
   abandon_draft?: boolean;
   drop_pending_cover?: boolean;
   pending_cover_removed_image_keys?: string[];

@@ -2,7 +2,7 @@
 Issue #109 -- the editor review queue's search and filters must run in the
 database, not over the page the browser happens to be holding.
 
-Reproduced on woco.dev at 2,440 contributions: searching "farm" at 100 rows per
+Reproduced on woco.dev at 2,440 submissions: searching "farm" at 100 rows per
 page returned nothing on page 1 of 25. Farmville was on page 16. The filters
 lived in Dashboard.tsx and only ever saw the fetched page, so a lookup that
 missed did not read as a broken filter -- it read as "the record isn't there".
@@ -12,7 +12,7 @@ of ids, the technique from test_marking_list_fanout.py. A correct total is not
 evidence that pagination is correct, and page 1 looking fine is precisely the
 failure being fixed.
 
-Run: uv run python backend/manage.py test common.tests.test_contribution_queue_search
+Run: uv run python backend/manage.py test common.tests.test_submission_queue_search
 """
 from datetime import datetime, timezone as dt_timezone
 
@@ -25,8 +25,8 @@ from rest_framework.test import APIClient
 from common.models import (
     Collection,
     CollectionAssignment,
-    Contribution,
-    ContributionRecycleBin,
+    Submission,
+    SubmissionRecycleBin,
     Region,
     Shape,
 )
@@ -38,10 +38,10 @@ User = get_user_model()
 # LIMIT/OFFSET drops or repeats rows.
 PAGE_SIZE = 3
 
-URL = "/api/v2/contributions/"
+URL = "/api/v2/submissions/"
 
 
-class ContributionQueueSearchTests(TestCase):
+class SubmissionQueueSearchTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.admin = User.objects.create_superuser(
@@ -49,7 +49,7 @@ class ContributionQueueSearchTests(TestCase):
         )
         self.editor = User.objects.create_user(username="editor", password="pw")
         editors = Group.objects.create(name="Editors")
-        editors.permissions.add(Permission.objects.get(codename="review_contribution"))
+        editors.permissions.add(Permission.objects.get(codename="review_submission"))
         self.editor.groups.add(editors)
         self.contributor = User.objects.create_user(username="gstone", password="pw")
 
@@ -79,7 +79,7 @@ class ContributionQueueSearchTests(TestCase):
         # The needle goes in FIRST so that under the default `-created_date`
         # ordering it lands on the LAST page. A page-local implementation
         # cannot find it from page 1; that is the whole point of the AC test.
-        self.farmville = self._contribution(
+        self.farmville = self._submission(
             town="Farmville",
             extra={
                 "type": "RATEMARK",
@@ -90,13 +90,13 @@ class ContributionQueueSearchTests(TestCase):
             },
         )
         # Enough filler to guarantee several pages at PAGE_SIZE = 3.
-        self.filler = [self._contribution(town=f"Richmond {n}") for n in range(9)]
+        self.filler = [self._submission(town=f"Richmond {n}") for n in range(9)]
 
-    def _contribution(self, town="Richmond", status=Contribution.STATUS_PENDING,
+    def _submission(self, town="Richmond", status=Submission.STATUS_PENDING,
                       collection=None, contributor=None, extra=None):
         payload = {"state": "Virginia", "town": town}
         payload.update(extra or {})
-        return Contribution.objects.create(
+        return Submission.objects.create(
             contributor=contributor or self.contributor,
             collection=collection or self.collection,
             submitted_data=payload,
@@ -106,10 +106,10 @@ class ContributionQueueSearchTests(TestCase):
         )
 
     @staticmethod
-    def _backdate(contribution, when):
+    def _backdate(submission, when):
         # created_date is auto_now_add, so it cannot be set on create() or by
         # save(). .update() writes the column directly.
-        Contribution.objects.filter(pk=contribution.pk).update(created_date=when)
+        Submission.objects.filter(pk=submission.pk).update(created_date=when)
 
     def _get(self, **params):
         self.client.force_authenticate(self.editor)
@@ -161,7 +161,7 @@ class ContributionQueueSearchTests(TestCase):
         )
 
     def test_search_walk_serves_every_match_exactly_once(self):
-        self._contribution(town="Farmington")
+        self._submission(town="Farmington")
         matched = self.assertWalkIsClean("q=farm", q="farm")
         self.assertEqual(len(matched), 2)
 
@@ -219,8 +219,8 @@ class ContributionQueueSearchTests(TestCase):
         self.assertEqual(ids, [self.farmville.pk])
 
     def test_submitted_date_range_is_inclusive_of_both_endpoints(self):
-        early = self._contribution(town="Early")
-        late = self._contribution(town="Late")
+        early = self._submission(town="Early")
+        late = self._submission(town="Late")
         self._backdate(early, datetime(2026, 7, 1, 9, 0, tzinfo=dt_timezone.utc))
         self._backdate(late, datetime(2026, 7, 31, 23, 30, tzinfo=dt_timezone.utc))
 
@@ -234,7 +234,7 @@ class ContributionQueueSearchTests(TestCase):
     # -- drafts -------------------------------------------------------------
 
     def test_drafts_are_excluded_from_the_editor_queue_and_from_its_count(self):
-        draft = self._contribution(town="Draftsville", status=Contribution.STATUS_DRAFT)
+        draft = self._submission(town="Draftsville", status=Submission.STATUS_DRAFT)
 
         ids, count = self._ids(page_size=100)
 
@@ -244,7 +244,7 @@ class ContributionQueueSearchTests(TestCase):
         self.assertEqual(count, len(ids))
 
     def test_drafts_stay_visible_to_their_author(self):
-        draft = self._contribution(town="Draftsville", status=Contribution.STATUS_DRAFT)
+        draft = self._submission(town="Draftsville", status=Submission.STATUS_DRAFT)
 
         self.client.force_authenticate(self.contributor)
         response = self.client.get(URL, {"page_size": 100})
@@ -254,7 +254,7 @@ class ContributionQueueSearchTests(TestCase):
         self.assertIn(draft.pk, [row["id"] for row in results])
 
     def test_author_can_load_all_seventeen_submissions_on_one_large_page(self):
-        drafts = [self._contribution(status=Contribution.STATUS_DRAFT) for _ in range(7)]
+        drafts = [self._submission(status=Submission.STATUS_DRAFT) for _ in range(7)]
 
         self.client.force_authenticate(self.contributor)
         response = self.client.get(URL, {"page_size": 100, "page": 1})
@@ -267,12 +267,12 @@ class ContributionQueueSearchTests(TestCase):
             self.assertIn(draft.pk, [row["id"] for row in response.data["results"]])
 
     def test_author_can_list_and_open_draft_with_missing_collection(self):
-        draft = self._contribution(status=Contribution.STATUS_DRAFT)
+        draft = self._submission(status=Submission.STATUS_DRAFT)
         missing_collection_id = self.collection.pk + 1000
         self.assertFalse(Collection.objects.filter(pk=missing_collection_id).exists())
         # Reproduce a saved Submission whose Collection row no longer exists.
         with connection.constraint_checks_disabled():
-            Contribution.objects.filter(pk=draft.pk).update(
+            Submission.objects.filter(pk=draft.pk).update(
                 collection_id=missing_collection_id,
             )
         try:
@@ -295,14 +295,14 @@ class ContributionQueueSearchTests(TestCase):
             self.assertNotIn(draft.pk, [row["id"] for row in other_list.data["results"]])
             self.assertEqual(self.client.get(f"{URL}{draft.pk}/").status_code, 404)
         finally:
-            Contribution.objects.filter(pk=draft.pk).update(collection=self.collection)
+            Submission.objects.filter(pk=draft.pk).update(collection=self.collection)
 
     # -- ordering -----------------------------------------------------------
 
     def test_ordering_by_town_walks_every_row_exactly_once(self):
         # Ten rows sharing one town: without the `id` tiebreak the sort has no
         # deterministic order within the tie and LIMIT/OFFSET repeats rows.
-        tied = [self._contribution(town="Tiedtown") for _ in range(10)]
+        tied = [self._submission(town="Tiedtown") for _ in range(10)]
         walked = self.assertWalkIsClean("ordering=town", ordering="town")
         for row in tied:
             self.assertIn(row.pk, walked)
@@ -319,7 +319,7 @@ class ContributionQueueSearchTests(TestCase):
         # ~60% of the queued rows carry no `shape` key at all. Locks the
         # documented NULLIF behaviour so a JSON null and an absent key cannot
         # start sorting apart from each other silently.
-        explicit_null = self._contribution(town="Nulltown", extra={"shape": None})
+        explicit_null = self._submission(town="Nulltown", extra={"shape": None})
         ids, _ = self._ids(ordering="shape", page_size=100)
         absent = self.filler[0].pk
         self.assertLess(
@@ -345,8 +345,8 @@ class ContributionQueueSearchTests(TestCase):
     # -- guards on behaviour this PR must not change -------------------------
 
     def test_status_filter_still_works(self):
-        rejected = self._contribution(
-            town="Rejectville", status=Contribution.STATUS_REJECTED
+        rejected = self._submission(
+            town="Rejectville", status=Submission.STATUS_REJECTED
         )
         ids, count = self._ids(status="rejected", page_size=100)
         self.assertEqual(count, 1)
@@ -359,14 +359,14 @@ class ContributionQueueSearchTests(TestCase):
                 self.assertEqual(count, len(self.filler) + 1)
 
     def test_archived_mode_still_scopes_to_the_recycle_bin(self):
-        # Only a reviewed contribution can be archived (#89).
-        archived = self._contribution(
-            town="Archivedton", status=Contribution.STATUS_REJECTED
+        # Only a reviewed submission can be archived (#89).
+        archived = self._submission(
+            town="Archivedton", status=Submission.STATUS_REJECTED
         )
-        # ContributionRecycleBin is a plain Model, not TimestampedModel -- it
+        # SubmissionRecycleBin is a plain Model, not TimestampedModel -- it
         # carries archived_by/archived_at instead of created_by/modified_by.
-        ContributionRecycleBin.objects.create(
-            contribution=archived,
+        SubmissionRecycleBin.objects.create(
+            submission=archived,
             archived_by=self.editor,
             reason="Duplicate",
         )
@@ -387,7 +387,7 @@ class ContributionQueueSearchTests(TestCase):
             created_by=self.admin,
             modified_by=self.admin,
         )
-        hidden = self._contribution(town="Farmville", collection=other)
+        hidden = self._submission(town="Farmville", collection=other)
 
         ids, _ = self._ids(q="farm", page_size=100)
 

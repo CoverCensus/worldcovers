@@ -1,25 +1,25 @@
 """
-Delete superseded non-draft Contribution rows per contributor and target.
+Delete superseded non-draft Submission rows per contributor and target.
 
 Usage from repo root, with mysql.cnf and backend/.env present:
-    ./woco consolidate_superseded_contributions --dry-run
-    ./woco consolidate_superseded_contributions --no-input
+    ./woco consolidate_superseded_submissions --dry-run
+    ./woco consolidate_superseded_submissions --no-input
 
 Expected exit code: 0.
 """
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from common.contribution_consolidation import (
-    consolidate_superseded_contributions,
-    contribution_target,
+from common.submission_consolidation import (
+    consolidate_superseded_submissions,
+    submission_target,
 )
-from common.models import Contribution, SubmissionTransaction
+from common.models import Submission, SubmissionTransaction
 
 
 class Command(BaseCommand):
     help = (
-        "Delete older non-draft Contribution rows for the same contributor and "
+        "Delete older non-draft Submission rows for the same contributor and "
         "target Marking/Cover, preserving drafts and writing tombstone audit rows."
     )
 
@@ -45,7 +45,7 @@ class Command(BaseCommand):
         elif not no_input:
             self.stdout.write(
                 self.style.WARNING(
-                    "This will permanently delete older non-draft Contribution "
+                    "This will permanently delete older non-draft Submission "
                     "rows that are superseded by a newer row for the same "
                     "contributor and target. Record history remains in "
                     "SubmissionTransactions."
@@ -57,16 +57,16 @@ class Command(BaseCommand):
 
         groups = {}
         qs = (
-            Contribution.objects.exclude(status=Contribution.STATUS_DRAFT)
+            Submission.objects.exclude(status=Submission.STATUS_DRAFT)
             .select_related("contributor", "marking")
             .order_by("contributor_id", "modified_date", "pk")
         )
-        for contribution in qs:
-            target = contribution_target(contribution)
+        for submission in qs:
+            target = submission_target(submission)
             if target is None:
                 continue
-            key = (contribution.contributor_id, target.kind, target.id)
-            groups.setdefault(key, []).append(contribution)
+            key = (submission.contributor_id, target.kind, target.id)
+            groups.setdefault(key, []).append(submission)
 
         total = 0
         try:
@@ -76,8 +76,8 @@ class Command(BaseCommand):
                         continue
                     rows.sort(key=lambda row: (row.modified_date, row.pk))
                     keep = rows[-1]
-                    target = contribution_target(keep)
-                    deleted = consolidate_superseded_contributions(
+                    target = submission_target(keep)
+                    deleted = consolidate_superseded_submissions(
                         current=keep,
                         target=target,
                         actor=None,
@@ -99,12 +99,12 @@ class Command(BaseCommand):
         except Exception:
             self.stdout.write(
                 self.style.ERROR(
-                    "Contribution consolidation aborted; all changes rolled back."
+                    "Submission consolidation aborted; all changes rolled back."
                 )
             )
             raise
 
-        summary = "Done. deleted {0} superseded Contribution row(s).".format(total)
+        summary = "Done. deleted {0} superseded Submission row(s).".format(total)
         if dry_run:
             summary = "[DRY RUN] " + summary + " (rolled back)"
         self.stdout.write("")

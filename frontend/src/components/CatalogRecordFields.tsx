@@ -71,7 +71,7 @@ function searchFields(
       ];
 }
 
-function contributionFields(row: CatalogFieldValues): CatalogRecordField[] {
+function submissionFields(row: CatalogFieldValues): CatalogRecordField[] {
   const fields: CatalogRecordField[] = [
     { label: "Type", value: row.type },
     { label: "Manuscript", value: row.manuscript },
@@ -108,10 +108,10 @@ export function CatalogRecordFields({
 }: {
   row: CatalogFieldValues;
   record?: MarkingRecord;
-  variant?: "list" | "gallery" | "detail" | "contribution";
+  variant?: "list" | "gallery" | "detail" | "submission";
 }) {
   const reviewDescription =
-    variant === "contribution" && row.desc.trim() && row.desc.trim() !== "-" ? row.desc : "";
+    variant === "submission" && row.desc.trim() && row.desc.trim() !== "-" ? row.desc : "";
   const fields =
     variant === "detail"
       ? [
@@ -122,10 +122,10 @@ export function CatalogRecordFields({
           { label: "Dimensions", value: row.dimensions },
           { label: "Color", value: row.color },
         ]
-      : variant === "contribution"
-        ? contributionFields(row)
+      : variant === "submission"
+        ? submissionFields(row)
         : searchFields(row, variant);
-  const visibleFields = variant !== "contribution" && row.manuscript.trim().toLowerCase() === "yes"
+  const visibleFields = variant !== "submission" && row.manuscript.trim().toLowerCase() === "yes"
     ? fields.filter((field) => field.label !== "Shape" && field.label !== "Dimensions")
     : fields;
 

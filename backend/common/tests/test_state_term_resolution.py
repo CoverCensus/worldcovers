@@ -20,7 +20,7 @@ abbrev, with a county that sorts before the state alphabetically.
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from common.contribution_apply import _resolve_post_office
+from common.submission_apply import _resolve_post_office
 from common.models import PostOffice, PostOfficeRegion, Region
 
 User = get_user_model()
@@ -136,9 +136,9 @@ class ResolvePostOfficeTests(TestCase):
         self.assertEqual(po.region.name, "Virginia")
 
     def test_an_unknown_state_is_still_a_hard_error(self):
-        from common.contribution_apply import ContributionApplyError
+        from common.submission_apply import SubmissionApplyError
 
-        with self.assertRaises(ContributionApplyError):
+        with self.assertRaises(SubmissionApplyError):
             _resolve_post_office("Atlantis", "LYNCHBURG", self.user)
 
 

@@ -1,18 +1,18 @@
-import { type Submission } from "@/lib/submission";
+import { type SubmittedData } from "@/lib/submission";
 import apiClient, { ensureCsrfToken } from "@/lib/api";
 import { sortCoversEarliestFirst } from "@/lib/associatedCoverSort";
 import type { ComparisonRow } from "@/lib/editComparison";
 import { normalizeAngle } from "@/lib/imageRotation";
-import { listContributions, type Contribution } from "@/services/contributions";
+import { listSubmissions, type Submission } from "@/services/submissions";
 import {
-  coverContributionDisplayLabel,
-  isCoverContributionData,
-  parentMarkingIdFromContribution,
-} from "@/lib/contributionDisplay";
+  coverSubmissionDisplayLabel,
+  isCoverSubmissionData,
+  parentMarkingIdFromSubmission,
+} from "@/lib/submissionDisplay";
 import {
-  contributionImageMetasFromSubmittedData,
-  contributionMetaImageUrl,
-} from "@/lib/contributionImages";
+  submissionImageMetasFromSubmittedData,
+  submissionMetaImageUrl,
+} from "@/lib/submissionImages";
 import {
   partialDateInputFromSubmittedData,
   validatePartialDate,
@@ -66,7 +66,7 @@ export interface MarkingImage {
   displayOrder: number;
   /**
    * Pixel dimensions as stored. 0 when the source row recorded none --
-   * contribution_apply writes `int(meta.get("image_width") or 0)` -- which
+   * submission_apply writes `int(meta.get("image_width") or 0)` -- which
    * classifyImageShape treats as indeterminate, so unknown data prompts
    * nothing. issues.md 167 / Trello T37.
    */
@@ -536,7 +536,7 @@ export interface MarkingRecord {
   /** Submitter display name; null unless they opted in (server-gated). */
   submitterName: string | null;
   // Contributor's "comment for editor" and the editor's review feedback, sourced
-  // from the marking's approved Contribution. The backend returns "" to anyone
+  // from the marking's approved Submission. The backend returns "" to anyone
   // who is not that contributor or an editor, so a non-empty value is safe to show.
   commentForEditor: string;
   editorFeedback: string;
@@ -561,7 +561,7 @@ export interface MarkingChangelogEvent {
    */
   actor_email: string | null;
   source: string;
-  contribution_id: number | null;
+  submission_id: number | null;
   version_no: number | null;
   summary: string;
   diff: Array<{ field: string; before: unknown; after: unknown }>;
@@ -999,7 +999,7 @@ export async function getMarkingById(markingId: number): Promise<MarkingRecord |
   }
 }
 
-/** Region string used to route contributions to a Collection (abbrev preferred). */
+/** Region string used to route submissions to a Collection (abbrev preferred). */
 export function routingStateFromMarkingRecord(record: MarkingRecord | null): string {
   if (!record) return "";
   return (
@@ -1275,12 +1275,12 @@ export interface AssociatedCover {
   contributorComment?: string | null;
   coverDetails: AssociatedCoverDetails | null;
   /**
-   * When set, this row is a saved Contribution draft (not yet a CoverMarking).
+   * When set, this row is a saved Submission draft (not yet a CoverMarking).
    * Thumbnail opens the cover editor with `?edit={id}`.
    */
-  contributionDraftId?: number;
-  /** Contribution.status for draft rows (`draft`, `needs_revision`, ...). */
-  contributionStatus?: string;
+  submissionDraftId?: number;
+  /** Submission.status for draft rows (`draft`, `needs_revision`, ...). */
+  submissionStatus?: string;
   /** Human-readable title for draft rows (from submitted_data). */
   displayLabel?: string;
   /**
@@ -1567,20 +1567,20 @@ export async function loadAssociatedMarkingsForCover(
 }
 
 function resolveCoverSubmissionThumbnail(
-  submittedData: Submission,
-  contrib?: Contribution,
+  submittedData: SubmittedData,
+  contrib?: Submission,
 ): string | null {
   const direct = normalizeImageUrl(contrib?.imageUrl);
   if (direct) return direct;
 
-  for (const meta of contributionImageMetasFromSubmittedData(submittedData)) {
-    const url = contributionMetaImageUrl(meta);
+  for (const meta of submissionImageMetasFromSubmittedData(submittedData)) {
+    const url = submissionMetaImageUrl(meta);
     if (url) return normalizeImageUrl(url) ?? url;
   }
   return null;
 }
 
-function datesSeenFromCoverSubmission(sd: Submission): AssociatedDateSeen[] {
+function datesSeenFromCoverSubmission(sd: SubmittedData): AssociatedDateSeen[] {
   const input = partialDateInputFromSubmittedData(sd);
   const parsed = validatePartialDate(input);
   if (!parsed.ok || parsed.value.unknown || parsed.value.granularity == null) return [];
@@ -1594,15 +1594,15 @@ function datesSeenFromCoverSubmission(sd: Submission): AssociatedDateSeen[] {
   }];
 }
 
-function mapCoverContributionToAssociatedCover(
-  contrib: Contribution,
+function mapCoverSubmissionToAssociatedCover(
+  contrib: Submission,
   markingId: number,
 ): AssociatedCover | null {
   const id = toIdOrNull(contrib.id);
   if (id == null) return null;
   const sd = contrib.submittedData;
-  if (!isCoverContributionData(sd)) return null;
-  if (parentMarkingIdFromContribution(sd) !== markingId) return null;
+  if (!isCoverSubmissionData(sd)) return null;
+  if (parentMarkingIdFromSubmission(sd) !== markingId) return null;
 
   const status = String(contrib.status ?? "draft").trim().toLowerCase();
   if (status !== "draft") return null;
@@ -1622,9 +1622,9 @@ function mapCoverContributionToAssociatedCover(
 
   return {
     id: -id,
-    contributionDraftId: id,
-    contributionStatus: status,
-    displayLabel: coverContributionDisplayLabel(contrib, sd, id),
+    submissionDraftId: id,
+    submissionStatus: status,
+    displayLabel: coverSubmissionDisplayLabel(contrib, sd, id),
     reviewStatus,
     reviewNotes: contrib.reviewNotes,
     reviewedAt: null,
@@ -1657,7 +1657,7 @@ function mapCoverContributionToAssociatedCover(
 
 /**
  * The signed-in user's own cover drafts for a marking (not yet CoverMarking
- * rows). The contributions list is owner-scoped by the API, so nobody else's
+ * rows). The submissions list is owner-scoped by the API, so nobody else's
  * drafts can come back. Trello T92: asks for draft rows only, at the largest
  * page the API allows (100), instead of the unfiltered default page of 10 that
  * used to hide a draft behind ten newer submissions. Anything past the page
@@ -1666,18 +1666,18 @@ function mapCoverContributionToAssociatedCover(
  */
 export const COVER_DRAFTS_PAGE_SIZE = 100;
 
-export async function getCoverContributionDraftsForMarking(
+export async function getCoverSubmissionDraftsForMarking(
   markingId: number,
 ): Promise<AssociatedCover[]> {
   try {
-    const { items } = await listContributions({
+    const { items } = await listSubmissions({
       status: "draft",
       pageSize: COVER_DRAFTS_PAGE_SIZE,
       ordering: "-created_at",
     });
     return items
       .map((row) =>
-        mapCoverContributionToAssociatedCover(row, markingId),
+        mapCoverSubmissionToAssociatedCover(row, markingId),
       )
       .filter((x): x is AssociatedCover => x !== null);
   } catch {
@@ -1693,11 +1693,11 @@ export async function loadAssociatedCoversForMarking(
   // Only editor-approved cover-marking links appear on the record's Associated
   // Covers panel (and its count). Covers still pending review (or rejected /
   // returned-for-revision) are hidden, mirroring how an unapproved marking
-  // contribution does not appear on the record. Pending and returned cover
+  // submission does not appear on the record. Pending and returned cover
   // submissions are reached from Dashboard / My Submissions. The signed-in
   // user's own unsubmitted cover DRAFTS are the one exception (Trello T92):
   // the record page fetches them separately with
-  // getCoverContributionDraftsForMarking and lists them outside the count.
+  // getCoverSubmissionDraftsForMarking and lists them outside the count.
   const approved = covers.filter((c) => c.reviewStatus === "approved");
   // Earliest observed date first, undated last (issues.md 174). The API
   // orders by link id, which is the order editors happened to attach them.
@@ -1712,7 +1712,7 @@ export async function enrichAssociatedCoversWithDefaultImages(
   if (covers.length === 0) return [];
   return Promise.all(
     covers.map(async (c) => {
-      if (c.contributionDraftId != null) {
+      if (c.submissionDraftId != null) {
         if (c.defaultImageUrl) {
           return { ...c, defaultImageUrl: normalizeImageUrl(c.defaultImageUrl) ?? c.defaultImageUrl };
         }

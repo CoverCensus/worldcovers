@@ -1,17 +1,17 @@
 """
-Tests for cover-contribution materialization on approval.
+Tests for cover-submission materialization on approval.
 
 Run from the backend repo root (with the project venv active and DATABASE_URL
 set if the project requires it):
 
-    python manage.py test common.tests.test_cover_contribution_apply -v 2
+    python manage.py test common.tests.test_cover_submission_apply -v 2
 
 Expected exit code 0.
 
-These cover the change that lets a cover Contribution flow through the same
-approve workflow as a marking: a draft cover lives only as a Contribution, and
+These cover the change that lets a cover Submission flow through the same
+approve workflow as a marking: a draft cover lives only as a Submission, and
 on editor approval a Cover + CoverMarking (and child rows) are materialized --
-mirroring how a marking Contribution materializes a Marking.
+mirroring how a marking Submission materializes a Marking.
 """
 from datetime import date
 
@@ -19,17 +19,17 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APITestCase
 
-from common.contribution_apply import (
-    ContributionApplyError,
-    apply_contribution_to_catalog,
-    apply_cover_contribution_to_catalog,
+from common.submission_apply import (
+    SubmissionApplyError,
+    apply_submission_to_catalog,
+    apply_cover_submission_to_catalog,
 )
-from common.api.v2.serializers import ContributionDetailSerializer, ContributionListSerializer
+from common.api.v2.serializers import SubmissionDetailSerializer, SubmissionListSerializer
 from common.models import (
     Citation,
     Collection,
     Color,
-    Contribution,
+    Submission,
     Cover,
     CoverMarking,
     CoverVersion,
@@ -93,8 +93,8 @@ def _make_parent_marking(user, region=None, town="Richmond"):
 
 
 def _cover_submitted_data(parent_marking, **overrides):
-    """Build a cover Contribution.submitted_data blob shaped like the one the
-    v2 ContributionSubmitView writes for a cover draft."""
+    """Build a cover Submission.submitted_data blob shaped like the one the
+    v2 SubmissionSubmitView writes for a cover draft."""
     sd = {
         "submission_kind": "cover",
         "entity_type": "cover",
@@ -124,8 +124,8 @@ def _cover_submitted_data(parent_marking, **overrides):
     return sd
 
 
-def _make_cover_contribution(user, submitted_data, collection, status=Contribution.STATUS_PENDING):
-    return Contribution.objects.create(
+def _make_cover_submission(user, submitted_data, collection, status=Submission.STATUS_PENDING):
+    return Submission.objects.create(
         contributor=user,
         collection=collection,
         submitted_data=submitted_data,
@@ -147,7 +147,7 @@ def _make_reference_work(user, code="ASCC1", title="A Catalog"):
     )
 
 
-class CoverContributionApplyFunctionTests(TestCase):
+class CoverSubmissionApplyFunctionTests(TestCase):
     """Direct tests of the materialization helper (no HTTP / permissions)."""
 
     def setUp(self):
@@ -170,16 +170,16 @@ class CoverContributionApplyFunctionTests(TestCase):
                             ("UNK", "Unknown")):
             with self.subTest(code=code):
                 sd = _cover_submitted_data(self.parent, type=code)
-                contrib = _make_cover_contribution(self.user, sd, self.collection)
-                cover = apply_cover_contribution_to_catalog(contrib)["cover"]
+                contrib = _make_cover_submission(self.user, sd, self.collection)
+                cover = apply_cover_submission_to_catalog(contrib)["cover"]
                 self.assertEqual(cover.type, code)
                 self.assertEqual(cover.get_type_display(), label)
 
     def test_rejects_an_unknown_cover_type_on_approval(self):
         sd = _cover_submitted_data(self.parent, type="XX")
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        with self.assertRaises(ContributionApplyError):
-            apply_cover_contribution_to_catalog(contrib)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        with self.assertRaises(SubmissionApplyError):
+            apply_cover_submission_to_catalog(contrib)
 
     def test_materializes_cover_and_children(self):
         rw = self.parent_reference
@@ -189,9 +189,9 @@ class CoverContributionApplyFunctionTests(TestCase):
             reference_work_ids=[rw.pk],
             reference_work_details=[{"reference_work_id": rw.pk, "page_number": "42"}],
         )
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
 
-        result = apply_cover_contribution_to_catalog(contrib)
+        result = apply_cover_submission_to_catalog(contrib)
 
         self.assertEqual(result["kind"], "cover")
         cover = result["cover"]
@@ -236,9 +236,9 @@ class CoverContributionApplyFunctionTests(TestCase):
             image_meta=None,
             no_cover_image="true",
         )
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
 
-        cover = apply_cover_contribution_to_catalog(contrib)["cover"]
+        cover = apply_cover_submission_to_catalog(contrib)["cover"]
 
         self.assertFalse(
             Image.objects.filter(
@@ -254,27 +254,27 @@ class CoverContributionApplyFunctionTests(TestCase):
             image_metas=[],
             image_meta=None,
         )
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
 
         with self.assertRaisesMessage(
-            ContributionApplyError,
+            SubmissionApplyError,
             "Submission has no images; at least one image is required.",
         ):
-            apply_cover_contribution_to_catalog(contrib)
+            apply_cover_submission_to_catalog(contrib)
 
     def test_display_submitter_name_opt_in_flows_to_cover(self):
         # The submitter's opt-in choice rides submitted_data and must land on
         # the materialized Cover so the public detail page can honor it.
         sd = _cover_submitted_data(self.parent, display_submitter_name="true")
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        cover = apply_cover_contribution_to_catalog(contrib)["cover"]
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        cover = apply_cover_submission_to_catalog(contrib)["cover"]
         self.assertTrue(cover.display_submitter_name)
 
     def test_display_submitter_name_defaults_false_when_absent(self):
         # Privacy by default: no opt-in key -> name stays hidden.
         sd = _cover_submitted_data(self.parent)
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        cover = apply_cover_contribution_to_catalog(contrib)["cover"]
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        cover = apply_cover_submission_to_catalog(contrib)["cover"]
         self.assertFalse(cover.display_submitter_name)
 
     def test_unknown_cover_date_creates_no_date_seen(self):
@@ -284,9 +284,9 @@ class CoverContributionApplyFunctionTests(TestCase):
             cover_granularity="",
             cover_date_unknown="true",
         )
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
 
-        cover = apply_cover_contribution_to_catalog(contrib)["cover"]
+        cover = apply_cover_submission_to_catalog(contrib)["cover"]
 
         self.assertFalse(
             DateSeen.objects.filter(
@@ -321,8 +321,8 @@ class CoverContributionApplyFunctionTests(TestCase):
                     cover_granularity="",
                     **fields,
                 )
-                contrib = _make_cover_contribution(self.user, sd, self.collection)
-                cover = apply_cover_contribution_to_catalog(contrib)["cover"]
+                contrib = _make_cover_submission(self.user, sd, self.collection)
+                cover = apply_cover_submission_to_catalog(contrib)["cover"]
                 ds = DateSeen.objects.get(
                     subject_type=DateSeen.SUBJECT_COVER,
                     subject_id=cover.pk,
@@ -339,18 +339,18 @@ class CoverContributionApplyFunctionTests(TestCase):
         sd = _cover_submitted_data(
             self.parent, description="  Blue CDS, light cover toning.  "
         )
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        cover = apply_cover_contribution_to_catalog(contrib)["cover"]
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        cover = apply_cover_submission_to_catalog(contrib)["cover"]
         self.assertEqual(cover.description, "Blue CDS, light cover toning.")
 
     def test_description_defaults_empty_when_absent(self):
         sd = _cover_submitted_data(self.parent)
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        cover = apply_cover_contribution_to_catalog(contrib)["cover"]
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        cover = apply_cover_submission_to_catalog(contrib)["cover"]
         self.assertEqual(cover.description, "")
 
     def test_cover_code_increments_for_same_reference_region_prefix(self):
-        first = _make_cover_contribution(
+        first = _make_cover_submission(
             self.user,
             _cover_submitted_data(
                 self.parent,
@@ -359,7 +359,7 @@ class CoverContributionApplyFunctionTests(TestCase):
             ),
             self.collection,
         )
-        second = _make_cover_contribution(
+        second = _make_cover_submission(
             self.user,
             _cover_submitted_data(
                 self.parent,
@@ -369,8 +369,8 @@ class CoverContributionApplyFunctionTests(TestCase):
             self.collection,
         )
 
-        first_cover = apply_cover_contribution_to_catalog(first)["cover"]
-        second_cover = apply_cover_contribution_to_catalog(second)["cover"]
+        first_cover = apply_cover_submission_to_catalog(first)["cover"]
+        second_cover = apply_cover_submission_to_catalog(second)["cover"]
 
         self.assertEqual(first_cover.code, "ASCC1-VA-C0001")
         self.assertEqual(second_cover.code, "ASCC1-VA-C0002")
@@ -391,7 +391,7 @@ class CoverContributionApplyFunctionTests(TestCase):
             modified_by=self.user,
         )
 
-        va_contrib = _make_cover_contribution(
+        va_contrib = _make_cover_submission(
             self.user,
             _cover_submitted_data(
                 self.parent,
@@ -400,7 +400,7 @@ class CoverContributionApplyFunctionTests(TestCase):
             ),
             self.collection,
         )
-        ny_contrib = _make_cover_contribution(
+        ny_contrib = _make_cover_submission(
             self.user,
             _cover_submitted_data(
                 other_parent,
@@ -411,8 +411,8 @@ class CoverContributionApplyFunctionTests(TestCase):
             other_collection,
         )
 
-        va_cover = apply_cover_contribution_to_catalog(va_contrib)["cover"]
-        ny_cover = apply_cover_contribution_to_catalog(ny_contrib)["cover"]
+        va_cover = apply_cover_submission_to_catalog(va_contrib)["cover"]
+        ny_cover = apply_cover_submission_to_catalog(ny_contrib)["cover"]
 
         self.assertEqual(va_cover.code, "ASCC1-VA-C0001")
         self.assertEqual(ny_cover.code, "ASCC1-NY-C0001")
@@ -423,7 +423,7 @@ class CoverContributionApplyFunctionTests(TestCase):
             code="VPHC1",
             title="Virginia Postal History Catalog",
         )
-        ascc_contrib = _make_cover_contribution(
+        ascc_contrib = _make_cover_submission(
             self.user,
             _cover_submitted_data(
                 self.parent,
@@ -432,7 +432,7 @@ class CoverContributionApplyFunctionTests(TestCase):
             ),
             self.collection,
         )
-        vphc_contrib = _make_cover_contribution(
+        vphc_contrib = _make_cover_submission(
             self.user,
             _cover_submitted_data(
                 self.parent,
@@ -442,16 +442,16 @@ class CoverContributionApplyFunctionTests(TestCase):
             self.collection,
         )
 
-        ascc_cover = apply_cover_contribution_to_catalog(ascc_contrib)["cover"]
-        vphc_cover = apply_cover_contribution_to_catalog(vphc_contrib)["cover"]
+        ascc_cover = apply_cover_submission_to_catalog(ascc_contrib)["cover"]
+        vphc_cover = apply_cover_submission_to_catalog(vphc_contrib)["cover"]
 
         self.assertEqual(ascc_cover.code, "ASCC1-VA-C0001")
         self.assertEqual(vphc_cover.code, "VPHC1-VA-C0001")
 
     def test_image_view_is_cover_valid_never_full(self):
         sd = _cover_submitted_data(self.parent)
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        result = apply_cover_contribution_to_catalog(contrib)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        result = apply_cover_submission_to_catalog(contrib)
         cover = result["cover"]
         views = set(
             Image.objects.filter(subject_type="COVER", subject_id=cover.pk).values_list(
@@ -466,29 +466,29 @@ class CoverContributionApplyFunctionTests(TestCase):
         sd.pop("parent_marking_id")
         sd.pop("marking_id")
         sd.pop("marking", None)
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        with self.assertRaises(ContributionApplyError) as ctx:
-            apply_cover_contribution_to_catalog(contrib)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        with self.assertRaises(SubmissionApplyError) as ctx:
+            apply_cover_submission_to_catalog(contrib)
         self.assertIn("parent_marking_id", str(ctx.exception))
 
     def test_unknown_parent_marking_raises(self):
         sd = _cover_submitted_data(self.parent, parent_marking_id=999999, marking_id=999999)
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        with self.assertRaises(ContributionApplyError) as ctx:
-            apply_cover_contribution_to_catalog(contrib)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        with self.assertRaises(SubmissionApplyError) as ctx:
+            apply_cover_submission_to_catalog(contrib)
         self.assertIn("Unknown parent marking id", str(ctx.exception))
 
     def test_requires_at_least_one_image(self):
         sd = _cover_submitted_data(self.parent, cover_image_metas=[])
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        with self.assertRaises(ContributionApplyError) as ctx:
-            apply_cover_contribution_to_catalog(contrib)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        with self.assertRaises(SubmissionApplyError) as ctx:
+            apply_cover_submission_to_catalog(contrib)
         self.assertIn("image", str(ctx.exception).lower())
 
     def test_dispatch_returns_dict_for_cover(self):
         sd = _cover_submitted_data(self.parent)
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        result = apply_contribution_to_catalog(contrib)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        result = apply_submission_to_catalog(contrib)
         self.assertIsInstance(result, dict)
         self.assertEqual(result.get("kind"), "cover")
 
@@ -516,8 +516,8 @@ class CoverContributionApplyFunctionTests(TestCase):
             "color_id": color.pk,
             "marking_image_metas": [{"storage_filename": "md/x.jpg"}],
         }
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        result = apply_contribution_to_catalog(contrib)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        result = apply_submission_to_catalog(contrib)
         self.assertIsInstance(result, Marking)
 
     def test_marking_create_allows_non_manuscript_without_shape_or_color(self):
@@ -531,9 +531,9 @@ class CoverContributionApplyFunctionTests(TestCase):
             "is_irreg": "false",
             "marking_image_metas": [{"storage_filename": "va/no-shape.jpg"}],
         }
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
 
-        marking = apply_contribution_to_catalog(contrib)
+        marking = apply_submission_to_catalog(contrib)
 
         self.assertIsInstance(marking, Marking)
         self.assertFalse(marking.is_manuscript)
@@ -569,20 +569,20 @@ class CoverContributionApplyFunctionTests(TestCase):
             "color_id": "",
             "marking_image_metas": [{"storage_filename": "va/edit-clear-color.jpg"}],
         }
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
 
-        updated = apply_contribution_to_catalog(contrib)
+        updated = apply_submission_to_catalog(contrib)
 
         self.assertEqual(updated.pk, marking.pk)
         self.assertIsNone(updated.shape_id)
         self.assertIsNone(updated.color_id)
 
 
-class CoverContributionApproveEndpointTests(APITestCase):
-    """End-to-end tests of POST /contributions/<pk>/approve/ for covers.
+class CoverSubmissionApproveEndpointTests(APITestCase):
+    """End-to-end tests of POST /submissions/<pk>/approve/ for covers.
 
     A superuser bypasses the editor-assignment filter for action endpoints
-    (ContributionViewSet.get_queryset), so no CollectionAssignment is needed.
+    (SubmissionViewSet.get_queryset), so no CollectionAssignment is needed.
     """
 
     def setUp(self):
@@ -601,25 +601,25 @@ class CoverContributionApproveEndpointTests(APITestCase):
         )
 
     def _approve_url(self, pk):
-        return "/api/v2/contributions/{}/approve/".format(pk)
+        return "/api/v2/submissions/{}/approve/".format(pk)
 
     def _suggestion_url(self, pk):
-        return "/api/v2/contributions/{}/catalog-code-suggestion/".format(pk)
+        return "/api/v2/submissions/{}/catalog-code-suggestion/".format(pk)
 
-    def test_rejected_cover_contribution_can_be_saved_again(self):
+    def test_rejected_cover_submission_can_be_saved_again(self):
         sd = _cover_submitted_data(self.parent, cover_date="1850-06-01")
-        contrib = _make_cover_contribution(
+        contrib = _make_cover_submission(
             self.contributor,
             sd,
             self.collection,
-            status=Contribution.STATUS_REJECTED,
+            status=Submission.STATUS_REJECTED,
         )
         self.client.force_authenticate(self.contributor)
 
         resp = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
-                "edit_contribution_id": contrib.pk,
+                "edit_submission_id": contrib.pk,
                 "submission_kind": "cover",
                 "save_as_draft": "true",
                 "state": "VA",
@@ -634,23 +634,23 @@ class CoverContributionApproveEndpointTests(APITestCase):
 
         self.assertEqual(resp.status_code, 200, resp.data)
         contrib.refresh_from_db()
-        self.assertEqual(contrib.status, Contribution.STATUS_REJECTED)
+        self.assertEqual(contrib.status, Submission.STATUS_REJECTED)
         self.assertEqual(contrib.submitted_data["cover_date"], "1850-06-02")
 
-    def test_rejected_cover_contribution_can_be_resubmitted(self):
+    def test_rejected_cover_submission_can_be_resubmitted(self):
         sd = _cover_submitted_data(self.parent, cover_date="1850-06-01")
-        contrib = _make_cover_contribution(
+        contrib = _make_cover_submission(
             self.contributor,
             sd,
             self.collection,
-            status=Contribution.STATUS_REJECTED,
+            status=Submission.STATUS_REJECTED,
         )
         self.client.force_authenticate(self.contributor)
 
         resp = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
-                "edit_contribution_id": contrib.pk,
+                "edit_submission_id": contrib.pk,
                 "submission_kind": "cover",
                 "state": "VA",
                 "type": "FC",
@@ -664,23 +664,23 @@ class CoverContributionApproveEndpointTests(APITestCase):
 
         self.assertEqual(resp.status_code, 200, resp.data)
         contrib.refresh_from_db()
-        self.assertEqual(contrib.status, Contribution.STATUS_PENDING)
+        self.assertEqual(contrib.status, Submission.STATUS_PENDING)
         self.assertEqual(contrib.submitted_data["cover_date"], "1850-06-03")
 
-    def test_pending_cover_contribution_can_be_updated_before_review(self):
+    def test_pending_cover_submission_can_be_updated_before_review(self):
         sd = _cover_submitted_data(self.parent, cover_date="1850-06-01")
-        contrib = _make_cover_contribution(
+        contrib = _make_cover_submission(
             self.contributor,
             sd,
             self.collection,
-            status=Contribution.STATUS_PENDING,
+            status=Submission.STATUS_PENDING,
         )
         self.client.force_authenticate(self.contributor)
 
         resp = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
-                "edit_contribution_id": contrib.pk,
+                "edit_submission_id": contrib.pk,
                 "submission_kind": "cover",
                 "state": "VA",
                 "type": "FC",
@@ -694,7 +694,7 @@ class CoverContributionApproveEndpointTests(APITestCase):
 
         self.assertEqual(resp.status_code, 200, resp.data)
         contrib.refresh_from_db()
-        self.assertEqual(contrib.status, Contribution.STATUS_PENDING)
+        self.assertEqual(contrib.status, Submission.STATUS_PENDING)
         self.assertEqual(contrib.submitted_data["cover_date"], "1850-06-04")
 
     def test_resumed_carried_over_draft_repoints_exactly_one_row_on_approval(self):
@@ -729,24 +729,24 @@ class CoverContributionApproveEndpointTests(APITestCase):
         self.client.force_authenticate(self.contributor)
 
         draft = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {**base, "save_as_draft": "true", "source_marking_image_id": image.pk},
             format="json",
         )
         self.assertEqual(draft.status_code, 201, draft.data)
-        contribution_id = draft.data["id"]
+        submission_id = draft.data["id"]
         image.refresh_from_db()
         self.assertEqual(image.subject_type, Image.SUBJECT_MARKING, "draft must not move it")
 
         resaved = self.client.post(
-            "/api/v2/contributions/",
-            {**base, "save_as_draft": "true", "edit_contribution_id": contribution_id},
+            "/api/v2/submissions/",
+            {**base, "save_as_draft": "true", "edit_submission_id": submission_id},
             format="json",
         )
         self.assertEqual(resaved.status_code, 200, resaved.data)
         submitted = self.client.post(
-            "/api/v2/contributions/",
-            {**base, "edit_contribution_id": contribution_id},
+            "/api/v2/submissions/",
+            {**base, "edit_submission_id": submission_id},
             format="json",
         )
         self.assertEqual(submitted.status_code, 200, submitted.data)
@@ -754,10 +754,10 @@ class CoverContributionApproveEndpointTests(APITestCase):
         self.assertEqual(image.subject_type, Image.SUBJECT_MARKING, "submit must not move it")
 
         self.client.force_authenticate(self.editor)
-        approved = self.client.post(self._approve_url(contribution_id), {}, format="json")
+        approved = self.client.post(self._approve_url(submission_id), {}, format="json")
         self.assertEqual(approved.status_code, 200, approved.data)
 
-        contrib = Contribution.objects.get(pk=contribution_id)
+        contrib = Submission.objects.get(pk=submission_id)
         cover_id = int(contrib.submitted_data["cover_id"])
         image.refresh_from_db()
         self.assertEqual(image.subject_type, Image.SUBJECT_COVER)
@@ -783,7 +783,7 @@ class CoverContributionApproveEndpointTests(APITestCase):
             created_by=self.contributor,
             modified_by=self.contributor,
         )
-        original = Contribution.objects.create(
+        original = Submission.objects.create(
             contributor=self.contributor,
             collection=self.collection,
             submitted_data=_cover_submitted_data(
@@ -791,7 +791,7 @@ class CoverContributionApproveEndpointTests(APITestCase):
                 cover_id=cover.pk,
                 cover_marking_id=cover_marking.pk,
             ),
-            status=Contribution.STATUS_APPROVED,
+            status=Submission.STATUS_APPROVED,
             marking=self.parent,
             created_by=self.contributor,
             modified_by=self.contributor,
@@ -799,7 +799,7 @@ class CoverContributionApproveEndpointTests(APITestCase):
         self.client.force_authenticate(self.contributor)
 
         resp = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "submission_kind": "cover",
                 "save_as_draft": "true",
@@ -816,21 +816,21 @@ class CoverContributionApproveEndpointTests(APITestCase):
         )
 
         self.assertEqual(resp.status_code, 201, resp.data)
-        self.assertTrue(Contribution.objects.filter(pk=original.pk).exists())
-        draft = Contribution.objects.get(pk=resp.data["id"])
-        self.assertEqual(draft.status, Contribution.STATUS_DRAFT)
+        self.assertTrue(Submission.objects.filter(pk=original.pk).exists())
+        draft = Submission.objects.get(pk=resp.data["id"])
+        self.assertEqual(draft.status, Submission.STATUS_DRAFT)
         self.assertEqual(resp.data["cover_id"], cover.pk)
-        self.assertEqual(ContributionListSerializer(draft).data["cover_id"], cover.pk)
+        self.assertEqual(SubmissionListSerializer(draft).data["cover_id"], cover.pk)
         self.assertFalse(
             SubmissionTransaction.objects.filter(
-                action=SubmissionTransaction.ACTION_CONTRIBUTION_SUPERSEDED,
+                action=SubmissionTransaction.ACTION_SUBMISSION_SUPERSEDED,
                 cover=cover,
             ).exists()
         )
 
     def test_approve_endpoint_materializes_and_records(self):
         sd = _cover_submitted_data(self.parent)
-        contrib = _make_cover_contribution(self.contributor, sd, self.collection)
+        contrib = _make_cover_submission(self.contributor, sd, self.collection)
         self.client.force_authenticate(self.editor)
 
         resp = self.client.post(
@@ -844,12 +844,12 @@ class CoverContributionApproveEndpointTests(APITestCase):
         self.assertEqual(cover.code, "ASCC1-VA-C0001")
 
         contrib.refresh_from_db()
-        self.assertEqual(contrib.status, Contribution.STATUS_APPROVED)
+        self.assertEqual(contrib.status, Submission.STATUS_APPROVED)
         self.assertEqual(contrib.marking_id, self.parent.pk)
         self.assertEqual(contrib.submitted_data.get("cover_marking_id"),
                          CoverMarking.objects.get(cover_id=cover_id).pk)
-        list_data = ContributionListSerializer(contrib).data
-        detail_data = ContributionDetailSerializer(contrib).data
+        list_data = SubmissionListSerializer(contrib).data
+        detail_data = SubmissionDetailSerializer(contrib).data
         self.assertEqual(list_data["cover_id"], cover_id)
         self.assertEqual(detail_data["cover_id"], cover_id)
 
@@ -879,7 +879,7 @@ class CoverContributionApproveEndpointTests(APITestCase):
             created_by=self.contributor,
             modified_by=self.contributor,
         )
-        original = Contribution.objects.create(
+        original = Submission.objects.create(
             contributor=self.contributor,
             collection=self.collection,
             submitted_data=_cover_submitted_data(
@@ -887,12 +887,12 @@ class CoverContributionApproveEndpointTests(APITestCase):
                 cover_id=cover.pk,
                 cover_marking_id=cover_marking.pk,
             ),
-            status=Contribution.STATUS_APPROVED,
+            status=Submission.STATUS_APPROVED,
             marking=self.parent,
             created_by=self.contributor,
             modified_by=self.contributor,
         )
-        edit = _make_cover_contribution(
+        edit = _make_cover_submission(
             self.contributor,
             _cover_submitted_data(
                 self.parent,
@@ -912,35 +912,35 @@ class CoverContributionApproveEndpointTests(APITestCase):
 
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(resp.data["coverId"], cover.pk)
-        self.assertFalse(Contribution.objects.filter(pk=original.pk).exists())
+        self.assertFalse(Submission.objects.filter(pk=original.pk).exists())
         edit.refresh_from_db()
-        self.assertEqual(edit.status, Contribution.STATUS_APPROVED)
+        self.assertEqual(edit.status, Submission.STATUS_APPROVED)
         self.assertEqual(edit.marking_id, self.parent.pk)
         self.assertEqual(edit.submitted_data["cover_id"], cover.pk)
         tombstone = SubmissionTransaction.objects.get(
-            action=SubmissionTransaction.ACTION_CONTRIBUTION_SUPERSEDED,
+            action=SubmissionTransaction.ACTION_SUBMISSION_SUPERSEDED,
             cover=cover,
         )
-        self.assertEqual(tombstone.before_payload["contribution_id"], original.pk)
+        self.assertEqual(tombstone.before_payload["submission_id"], original.pk)
         self.assertEqual(
-            tombstone.extra_payload["superseded_by_contribution_id"],
+            tombstone.extra_payload["superseded_by_submission_id"],
             edit.pk,
         )
 
-    def test_contribution_no_longer_pending_after_approval(self):
+    def test_submission_no_longer_pending_after_approval(self):
         sd = _cover_submitted_data(self.parent)
-        contrib = _make_cover_contribution(self.contributor, sd, self.collection)
+        contrib = _make_cover_submission(self.contributor, sd, self.collection)
         self.client.force_authenticate(self.editor)
 
         resp = self.client.post(self._approve_url(contrib.pk), {"review_notes": ""}, format="json")
         self.assertEqual(resp.status_code, 200, getattr(resp, "data", resp))
 
         contrib.refresh_from_db()
-        self.assertNotEqual(contrib.status, Contribution.STATUS_PENDING)
+        self.assertNotEqual(contrib.status, Submission.STATUS_PENDING)
 
     def test_catalog_code_suggestion_persists_on_pending_cover(self):
         sd = _cover_submitted_data(self.parent)
-        contrib = _make_cover_contribution(self.contributor, sd, self.collection)
+        contrib = _make_cover_submission(self.contributor, sd, self.collection)
         self.client.force_authenticate(self.editor)
 
         resp = self.client.post(self._suggestion_url(contrib.pk), {}, format="json")
@@ -964,7 +964,7 @@ class CoverContributionApproveEndpointTests(APITestCase):
             created_by=self.contributor,
             modified_by=self.contributor,
         )
-        contrib = _make_cover_contribution(
+        contrib = _make_cover_submission(
             self.contributor,
             _cover_submitted_data(self.parent),
             self.collection,
@@ -978,7 +978,7 @@ class CoverContributionApproveEndpointTests(APITestCase):
 
     def test_cover_suggestion_falls_back_to_apmc_without_reference(self):
         parent = _make_parent_marking(self.contributor, self.collection.region)
-        contrib = _make_cover_contribution(
+        contrib = _make_cover_submission(
             self.contributor,
             _cover_submitted_data(parent),
             self.collection,
@@ -997,7 +997,7 @@ class CoverContributionApproveEndpointTests(APITestCase):
             created_by=self.contributor,
             modified_by=self.contributor,
         )
-        contrib = _make_cover_contribution(
+        contrib = _make_cover_submission(
             self.contributor,
             _cover_submitted_data(self.parent),
             self.collection,
@@ -1013,7 +1013,7 @@ class CoverContributionApproveEndpointTests(APITestCase):
         self.assertEqual(resp.status_code, 400, resp.data)
         self.assertIn("already exists", resp.data["detail"])
         contrib.refresh_from_db()
-        self.assertEqual(contrib.status, Contribution.STATUS_PENDING)
+        self.assertEqual(contrib.status, Submission.STATUS_PENDING)
 
     def test_direct_cover_suggestion_does_not_persist(self):
         self.client.force_authenticate(self.editor)
@@ -1153,8 +1153,8 @@ class MarkingErdLrdApplyTests(TestCase):
             marking_lrd="1851-01-01",
             marking_lrd_granularity="YEAR",
         )
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        marking = apply_contribution_to_catalog(contrib)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        marking = apply_submission_to_catalog(contrib)
 
         self.assertEqual(
             self._direct_dates(marking.pk),
@@ -1166,14 +1166,14 @@ class MarkingErdLrdApplyTests(TestCase):
 
     def test_display_submitter_name_opt_in_flows_to_marking(self):
         sd = self._marking_sd(display_submitter_name="true")
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        marking = apply_contribution_to_catalog(contrib)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        marking = apply_submission_to_catalog(contrib)
         self.assertTrue(marking.display_submitter_name)
 
     def test_display_submitter_name_defaults_false_when_absent(self):
         sd = self._marking_sd()
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        marking = apply_contribution_to_catalog(contrib)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        marking = apply_submission_to_catalog(contrib)
         self.assertFalse(marking.display_submitter_name)
 
     def test_no_marking_image_affirmation_allows_no_image_rows(self):
@@ -1183,9 +1183,9 @@ class MarkingErdLrdApplyTests(TestCase):
             image_meta=None,
             no_marking_image="true",
         )
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
 
-        marking = apply_contribution_to_catalog(contrib)
+        marking = apply_submission_to_catalog(contrib)
 
         self.assertFalse(
             Image.objects.filter(
@@ -1200,13 +1200,13 @@ class MarkingErdLrdApplyTests(TestCase):
             image_metas=[],
             image_meta=None,
         )
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
 
         with self.assertRaisesMessage(
-            ContributionApplyError,
+            SubmissionApplyError,
             "Submission has no images; at least one image is required.",
         ):
-            apply_contribution_to_catalog(contrib)
+            apply_submission_to_catalog(contrib)
 
     def test_new_marking_records_partial_erd_and_lrd_components(self):
         sd = self._marking_sd(
@@ -1215,8 +1215,8 @@ class MarkingErdLrdApplyTests(TestCase):
             marking_lrd_date_year="1851",
             marking_lrd_date_day="14",
         )
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        marking = apply_contribution_to_catalog(contrib)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        marking = apply_submission_to_catalog(contrib)
 
         rows = sorted(
             DateSeen.objects.filter(
@@ -1245,15 +1245,15 @@ class MarkingErdLrdApplyTests(TestCase):
 
     def test_invalid_erd_raises(self):
         sd = self._marking_sd(marking_erd="not-a-date")
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        with self.assertRaises(ContributionApplyError):
-            apply_contribution_to_catalog(contrib)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        with self.assertRaises(SubmissionApplyError):
+            apply_submission_to_catalog(contrib)
 
     def test_edit_without_dates_preserves_imported_history(self):
         # A bulk-imported marking carries several MARKING DateSeen rows. Editing
         # an unrelated field with no date fields must leave all of them intact.
-        marking = apply_contribution_to_catalog(
-            _make_cover_contribution(self.user, self._marking_sd(), self.collection)
+        marking = apply_submission_to_catalog(
+            _make_cover_submission(self.user, self._marking_sd(), self.collection)
         )
         for yr in (1845, 1848, 1851):
             DateSeen.objects.create(
@@ -1269,15 +1269,15 @@ class MarkingErdLrdApplyTests(TestCase):
         edit_sd = self._marking_sd(
             edit_marking_id=marking.pk, inscription_txt="NORFOLK VA (corrected)"
         )
-        apply_contribution_to_catalog(
-            _make_cover_contribution(self.user, edit_sd, self.collection)
+        apply_submission_to_catalog(
+            _make_cover_submission(self.user, edit_sd, self.collection)
         )
 
         self.assertEqual(self._direct_dates(marking.pk), before)
 
     def test_edit_extends_range_additively(self):
-        marking = apply_contribution_to_catalog(
-            _make_cover_contribution(
+        marking = apply_submission_to_catalog(
+            _make_cover_submission(
                 self.user,
                 self._marking_sd(
                     marking_erd="1845-01-01",
@@ -1293,8 +1293,8 @@ class MarkingErdLrdApplyTests(TestCase):
             marking_lrd="1860-01-01",
             marking_lrd_granularity="YEAR",
         )
-        apply_contribution_to_catalog(
-            _make_cover_contribution(self.user, edit_sd, self.collection)
+        apply_submission_to_catalog(
+            _make_cover_submission(self.user, edit_sd, self.collection)
         )
 
         # The 1860 boundary is added; 1845 and 1851 remain (non-destructive).
@@ -1306,8 +1306,8 @@ class MarkingErdLrdApplyTests(TestCase):
         self.assertEqual(annotated.latest_seen, date(1860, 1, 1))
 
     def test_edit_unknown_dates_clear_direct_marking_history(self):
-        marking = apply_contribution_to_catalog(
-            _make_cover_contribution(
+        marking = apply_submission_to_catalog(
+            _make_cover_submission(
                 self.user,
                 self._marking_sd(
                     marking_erd="1845-01-01",
@@ -1324,8 +1324,8 @@ class MarkingErdLrdApplyTests(TestCase):
             marking_erd_unknown=True,
             marking_lrd_unknown=True,
         )
-        apply_contribution_to_catalog(
-            _make_cover_contribution(self.user, edit_sd, self.collection)
+        apply_submission_to_catalog(
+            _make_cover_submission(self.user, edit_sd, self.collection)
         )
 
         self.assertEqual(self._direct_dates(marking.pk), [])
@@ -1338,8 +1338,8 @@ class MarkingErdLrdApplyTests(TestCase):
     def test_manual_erd_merges_with_earlier_cover_date(self):
         # Michael's model: a catalog ERD is later corrected by real covers. A
         # cover dated before the manual ERD must pull the displayed earliest down.
-        marking = apply_contribution_to_catalog(
-            _make_cover_contribution(
+        marking = apply_submission_to_catalog(
+            _make_cover_submission(
                 self.user, self._marking_sd(marking_erd="1850-01-01"), self.collection
             )
         )
@@ -1405,8 +1405,8 @@ class CarriedOverMarkingImageTests(TestCase):
             image_meta=None,
             **extra,
         )
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        return apply_cover_contribution_to_catalog(contrib)["cover"]
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        return apply_cover_submission_to_catalog(contrib)["cover"]
 
     def test_repoints_the_carried_over_image_onto_the_new_cover(self):
         cover = self._approve(source_marking_image_id=str(self.image.pk))
@@ -1441,7 +1441,7 @@ class CarriedOverMarkingImageTests(TestCase):
     def test_no_metas_without_a_carried_image_is_still_an_error(self):
         # The "at least one image" rule must not be weakened generally: only a
         # submission that names a carried-over image may omit uploads.
-        with self.assertRaises(ContributionApplyError):
+        with self.assertRaises(SubmissionApplyError):
             self._approve()
 
     def test_approval_survives_an_image_that_moved_away_first(self):
@@ -1515,8 +1515,8 @@ class CarriedOverMarkingImageTests(TestCase):
             source_marking_image_id=str(self.image.pk),
             **extra,
         )
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        cover = apply_cover_contribution_to_catalog(contrib)["cover"]
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        cover = apply_cover_submission_to_catalog(contrib)["cover"]
         rows = Image.objects.filter(
             subject_type=Image.SUBJECT_COVER, subject_id=cover.pk
         ).order_by("display_order")
@@ -1607,8 +1607,8 @@ class CarriedOverImageOnCoverEditTests(TestCase):
             source_marking_image_id=str(self.marking_image.pk),
             **extra,
         )
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        return apply_cover_contribution_to_catalog(contrib)["cover"]
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        return apply_cover_submission_to_catalog(contrib)["cover"]
 
     def test_cover_edit_repoints_the_carried_image_and_keeps_existing_rows(self):
         existing_meta = {
@@ -1694,8 +1694,8 @@ class CoverEditWithoutDateKeysTests(TestCase):
         )
         for key in drop:
             sd.pop(key, None)
-        contrib = _make_cover_contribution(self.user, sd, self.collection)
-        apply_cover_contribution_to_catalog(contrib)
+        contrib = _make_cover_submission(self.user, sd, self.collection)
+        apply_cover_submission_to_catalog(contrib)
         return list(
             DateSeen.objects.filter(
                 subject_type=DateSeen.SUBJECT_COVER, subject_id=self.cover.pk

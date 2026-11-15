@@ -1,4 +1,4 @@
-import { readSubmission } from "@/lib/submission";
+import { readSubmittedData } from "@/lib/submission";
 import { compareCoverEdit, compareMarkingEdit } from "./editComparison";
 
 const lookups = { letteringOptions: [], dateFormatOptions: [] };
@@ -15,7 +15,7 @@ const changedKeys = (rows: { key: string; changed: boolean }[]) =>
 
 describe("compareMarkingEdit", () => {
   const compare = (sd: Record<string, unknown>, intent?: Parameters<typeof compareMarkingEdit>[5]) =>
-    compareMarkingEdit(readSubmission(marking).data, readSubmission(sd).data, lookups, [], 1, intent);
+    compareMarkingEdit(readSubmittedData(marking).data, readSubmittedData(sd).data, lookups, [], 1, intent);
 
   it("leaves untouched fields unchanged and flags the edited one", () => {
     // What the form resubmits after changing only the colour; it omits dates it did not change.
@@ -42,15 +42,15 @@ describe("compareMarkingEdit", () => {
 
   it("T70: a county the town already has is unchanged by id, an added one is noted, a differing one is left alone", () => {
     const withCounty = { ...marking, county: "Henrico", county_id: 5 };
-    const same = compareMarkingEdit(readSubmission(withCounty).data, readSubmission({ edit_marking_id: 7, county: "Henrico", county_id: "5" }).data, lookups, [], 1);
+    const same = compareMarkingEdit(readSubmittedData(withCounty).data, readSubmittedData({ edit_marking_id: 7, county: "Henrico", county_id: "5" }).data, lookups, [], 1);
     expect(changedKeys(same)).toEqual([]);
-    expect(changedKeys(compareMarkingEdit(readSubmission(withCounty).data, readSubmission({ edit_marking_id: 7, county: "", county_id: "" }).data, lookups, [], 1))).toEqual([]);
+    expect(changedKeys(compareMarkingEdit(readSubmittedData(withCounty).data, readSubmittedData({ edit_marking_id: 7, county: "", county_id: "" }).data, lookups, [], 1))).toEqual([]);
 
     const added = compare({ edit_marking_id: 7, county: "Accomack", county_id: "9" });
     expect(added.find((r) => r.key === "county")).toMatchObject({ current: "", proposed: "Accomack", changed: true });
 
     // Without a server verdict the row only shows the names.
-    const differs = compareMarkingEdit(readSubmission(withCounty).data, readSubmission({ edit_marking_id: 7, county: "Accomack", county_id: "9" }).data, lookups, [], 1);
+    const differs = compareMarkingEdit(readSubmittedData(withCounty).data, readSubmittedData({ edit_marking_id: 7, county: "Accomack", county_id: "9" }).data, lookups, [], 1);
     expect(differs.find((r) => r.key === "county")).toMatchObject({ current: "Henrico", proposed: "Accomack", changed: true });
     expect(differs.find((r) => r.key === "county")?.note).toBeUndefined();
   });
@@ -88,7 +88,7 @@ describe("compareCoverEdit", () => {
   };
 
   it("keeps the date when the edit has none, and ignores an empty type", () => {
-    const rows = compareCoverEdit(readSubmission(cover).data, readSubmission({ edit_cover_id: "9", type: "", is_backstamp: "true" }).data, []);
+    const rows = compareCoverEdit(readSubmittedData(cover).data, readSubmittedData({ edit_cover_id: "9", type: "", is_backstamp: "true" }).data, []);
     expect(changedKeys(rows)).toEqual(["backstamp"]);
     const dateRow = rows.find((r) => r.key === "date");
     expect(dateRow?.proposed).toBe(dateRow?.current);
@@ -96,13 +96,13 @@ describe("compareCoverEdit", () => {
   });
 
   it("shows a cleared date when the edit says the date is unknown", () => {
-    const rows = compareCoverEdit(readSubmission(cover).data, readSubmission({ edit_cover_id: "9", cover_date_unknown: "true" }).data, []);
+    const rows = compareCoverEdit(readSubmittedData(cover).data, readSubmittedData({ edit_cover_id: "9", cover_date_unknown: "true" }).data, []);
     expect(changedKeys(rows)).toEqual(["date"]);
     expect(rows.find((r) => r.key === "date")?.proposed).toBe("Date unknown");
   });
 
   it("finds no change when the form resubmits the same cover", () => {
-    const rows = compareCoverEdit(readSubmission(cover).data, readSubmission({
+    const rows = compareCoverEdit(readSubmittedData(cover).data, readSubmittedData({
       edit_cover_id: "9", type: "FC", is_institutional: "true", is_backstamp: "false",
       description: "Folded letter", cover_date_year: "1851", cover_date_month: "3",
     }).data, []);

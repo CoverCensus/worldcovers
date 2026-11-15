@@ -1,24 +1,24 @@
-import type { Submission } from "@/lib/submission";
+import type { SubmittedData } from "@/lib/submission";
 // T39: what approving an edit would change, field by field.
 //
 // The API sends the target's current values (edit_baseline) in the same keys
 // the edit forms submit. Approval merges an edit the RFC 7396 way: a field the
 // edit leaves out keeps its current value, and an explicit "" clears it
-// (contribution_apply._apply_marking_edit / _apply_cover_edit). So the
+// (submission_apply._apply_marking_edit / _apply_cover_edit). So the
 // proposed side is the baseline with the edit's fields laid over it, and both
 // sides go through the same formatter so equal values print equally.
 import { markingTypeLabel } from "@/lib/catalogRecordDisplay";
 import {
   submittedDataToFieldInput,
-  type ContributionLookups,
-} from "@/lib/contributionToFields";
+  type SubmissionLookups,
+} from "@/lib/submissionToFields";
 import { coverTypeLabel } from "@/lib/coverTypes";
 import { formatPartialDateInput, partialDateInputFromSubmittedData } from "@/lib/partialDate";
 import { submissionCitations } from "@/lib/submissionCitations";
-import type { CountyIntent } from "@/lib/contributionDisplay";
+import type { CountyIntent } from "@/lib/submissionDisplay";
 import type { ReferenceWorkRecord } from "@/services/referenceWorks";
 
-type Data = Submission;
+type Data = SubmittedData;
 
 export type ComparisonRow = {
   key: string;
@@ -34,11 +34,11 @@ export type ComparisonRow = {
  * One field's submit keys. `emptyKeeps`: approval ignores an empty value for
  * this field (cover type, institutional, backstamp), so "" is not a clear.
  */
-type FieldKeys = { name: string; keys: (keyof Submission)[]; emptyKeeps?: boolean };
+type FieldKeys = { name: string; keys: (keyof SubmittedData)[]; emptyKeeps?: boolean };
 
-const CITATION_KEYS: (keyof Submission)[] = ["reference_work_ids", "reference_work_details"];
+const CITATION_KEYS: (keyof SubmittedData)[] = ["reference_work_ids", "reference_work_details"];
 
-const boundaryKeys = (prefix: "marking_erd" | "marking_lrd"): (keyof Submission)[] => [
+const boundaryKeys = (prefix: "marking_erd" | "marking_lrd"): (keyof SubmittedData)[] => [
   prefix, `${prefix}_granularity`, `${prefix}_unknown`,
   `${prefix}_date_year`, `${prefix}_date_month`, `${prefix}_date_day`,
 ];
@@ -72,7 +72,7 @@ const MARKING_FIELDS: FieldKeys[] = [
   { name: "citations", keys: CITATION_KEYS },
 ];
 
-const COVER_DATE_KEYS: (keyof Submission)[] = [
+const COVER_DATE_KEYS: (keyof SubmittedData)[] = [
   "cover_date_unknown", "cover_date_year", "cover_date_month", "cover_date_day",
   "cover_date", "cover_granularity",
 ];
@@ -90,7 +90,7 @@ const COVER_FIELDS: FieldKeys[] = [
 
 const isEmpty = (value: unknown) => value == null || String(value).trim() === "";
 
-function markingKeys(name: string): (keyof Submission)[] {
+function markingKeys(name: string): (keyof SubmittedData)[] {
   const field = MARKING_FIELDS.find((f) => f.name === name);
   if (!field) throw new Error(`Unknown marking field "${name}"`);
   return field.keys;
@@ -167,9 +167,9 @@ function countyRow(
 export function compareMarkingEdit(
   baseline: Data,
   sd: Data,
-  lookups: ContributionLookups,
+  lookups: SubmissionLookups,
   referenceWorks: ReferenceWorkRecord[],
-  contributionId: number,
+  submissionId: number,
   countyIntent?: CountyIntent | null,
 ): ComparisonRow[] {
   // state_abbrev is a comparison aid, not a submit key the formatter knows.
@@ -181,8 +181,8 @@ export function compareMarkingEdit(
       for (const key of markingKeys(name)) delete proposed[key];
     }
   }
-  const before = submittedDataToFieldInput(canonicalNumbers(current), lookups, { contributionId });
-  const after = submittedDataToFieldInput(canonicalNumbers(proposed), lookups, { contributionId });
+  const before = submittedDataToFieldInput(canonicalNumbers(current), lookups, { submissionId });
+  const after = submittedDataToFieldInput(canonicalNumbers(proposed), lookups, { submissionId });
   const added = "Approval adds this as a recorded date";
 
   // Either spelling of the current state is the same state.

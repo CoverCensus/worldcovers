@@ -5,9 +5,9 @@ per-row cost is what sets the batch size. Guessing it is how you end up with a
 button that times out halfway through a 2,443-row queue -- on a one-way door.
 
 This drives the REAL endpoint through APIClient rather than calling
-apply_contribution_to_catalog directly, so the number includes permission
+apply_submission_to_catalog directly, so the number includes permission
 checks, serialization, catalog-code minting, the before/after snapshots,
-consolidate_superseded_contributions and the audit rows -- everything a bulk
+consolidate_superseded_submissions and the audit rows -- everything a bulk
 request would pay for.
 
 Prints a measurement rather than asserting a threshold, so it cannot go flaky
@@ -23,7 +23,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from common.models import (
-    Collection, CollectionAssignment, Contribution, Marking, PostOffice,
+    Collection, CollectionAssignment, Submission, Marking, PostOffice,
     PostOfficeRegion, Region,
 )
 
@@ -44,7 +44,7 @@ class ApprovalCostTests(TestCase):
         cls.admin = User.objects.create_superuser("admin", "a@example.com", "pw")
         cls.editor = User.objects.create_user("editor", password="pw")
         group = Group.objects.create(name="Editors")
-        group.permissions.add(Permission.objects.get(codename="review_contribution"))
+        group.permissions.add(Permission.objects.get(codename="review_submission"))
         cls.editor.groups.add(group)
 
         region = Region.objects.create(
@@ -73,10 +73,10 @@ class ApprovalCostTests(TestCase):
         # Payloads shaped like the real queue -- the vphc blob and the generated
         # prose are what a bulk run actually carries, and a bare payload would
         # flatter the measurement.
-        Contribution.objects.bulk_create([
-            Contribution(
+        Submission.objects.bulk_create([
+            Submission(
                 contributor=cls.admin, collection=cls.collection,
-                status=Contribution.STATUS_PENDING,
+                status=Submission.STATUS_PENDING,
                 submitted_data={
                     "type": "TOWNMARK", "state": "Virginia", "town": "RICHMOND",
                     "inscription_txt": "RICHMOND VA %d" % i,
@@ -96,7 +96,7 @@ class ApprovalCostTests(TestCase):
         client.force_authenticate(self.editor)
 
         ids = list(
-            Contribution.objects.filter(status=Contribution.STATUS_PENDING)
+            Submission.objects.filter(status=Submission.STATUS_PENDING)
             .order_by("pk").values_list("pk", flat=True)[:SAMPLE]
         )
 
@@ -104,7 +104,7 @@ class ApprovalCostTests(TestCase):
         for pk in ids:
             start = time.perf_counter()
             response = client.post(
-                "/api/v2/contributions/{}/approve/".format(pk), {}, format="json")
+                "/api/v2/submissions/{}/approve/".format(pk), {}, format="json")
             timings.append((time.perf_counter() - start) * 1000)
             self.assertEqual(response.status_code, 200, response.data)
 

@@ -1,5 +1,5 @@
 // Canonical field order shared by RecordDetail (read-only catalog view) and
-// ContributionDetail (read-only contribution view). Keeping the order here
+// SubmissionDetail (read-only submission view). Keeping the order here
 // guarantees both pages render rows in the same sequence so reviewers can
 // scan them side-by-side without re-orienting.
 
@@ -19,14 +19,14 @@ export interface MarkingFieldRow {
   value: string;
   colorHex?: string;
   // RecordDetail honors this (rows where alwaysShow=true survive the
-  // hasDisplayValue filter even when blank). ContributionDetail ignores it
+  // hasDisplayValue filter even when blank). SubmissionDetail ignores it
   // and shows every row.
   alwaysShow: boolean;
   // Optional router target for a single linked field value.
   to?: string;
   // When non-empty, the renderer shows these chips instead of `value`. `value`
   // is still the visibility key (hasDisplayValue) and the fallback when no tags
-  // are supplied (e.g. ContributionDetail). (issue #28)
+  // are supplied (e.g. SubmissionDetail). (issue #28)
   tags?: MarkingFieldTag[];
 }
 
@@ -44,7 +44,7 @@ export interface MarkingFieldInput {
   crossListedPreStatehood?: boolean;
   // All territory/state affiliations as chips for the State/Territory row,
   // current-first. Optional: only RecordDetail supplies them (from
-  // record.regions); ContributionDetail omits them and the comma-joined
+  // record.regions); SubmissionDetail omits them and the comma-joined
   // `state` string renders instead. (issue #28)
   regionTags?: MarkingFieldTag[];
   // County is its own labelled field, not a chip alongside the state. It is
@@ -65,7 +65,7 @@ export interface MarkingFieldInput {
   latestSeenTo?: string;
   // Pre-formatted comma-joined list of all observed dates (via
   // formatDatesSeenList), populated only when a marking has multiple distinct
-  // dates; "" otherwise. Optional so the contribution path (a single
+  // dates; "" otherwise. Optional so the submission path (a single
   // submission) need not supply it. (issue #25)
   datesSeen?: string;
   shapeName: string;

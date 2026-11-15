@@ -6,7 +6,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from common.models import (
-    Citation, Collection, Color, Contribution, Cover, CoverMarking, DateSeen, Marking,
+    Citation, Collection, Color, Submission, Cover, CoverMarking, DateSeen, Marking,
     PostOffice, PostOfficeRegion, ReferenceWork, Region, Shape,
 )
 
@@ -45,14 +45,14 @@ class EditBaselineTests(TestCase):
             date_year=1851, date_month=3, granularity="MONTH", **audit,
         )
 
-    def baseline(self, submitted_data, status=Contribution.STATUS_PENDING, viewer=None):
-        contribution = Contribution.objects.create(
+    def baseline(self, submitted_data, status=Submission.STATUS_PENDING, viewer=None):
+        submission = Submission.objects.create(
             contributor=self.contributor, collection=self.collection,
             submitted_data=submitted_data, status=status,
             created_by=self.contributor, modified_by=self.contributor,
         )
         self.client.force_authenticate(viewer or self.editor)
-        response = self.client.get(f"/api/v2/contributions/{contribution.pk}/")
+        response = self.client.get(f"/api/v2/submissions/{submission.pk}/")
         self.assertEqual(response.status_code, 200, response.data)
         return response.data["edit_baseline"]
 
@@ -115,10 +115,10 @@ class EditBaselineTests(TestCase):
     def test_no_baseline_outside_a_reviewer_looking_at_a_pending_edit(self):
         edit = {"edit_marking_id": self.marking.pk, "state": "VA"}
         cases = {
-            "new submission": ({"state": "VA", "town": "Richmond"}, Contribution.STATUS_PENDING, None),
-            "approved edit": (edit, Contribution.STATUS_APPROVED, None),
-            "contributor viewing": (edit, Contribution.STATUS_PENDING, self.contributor),
-            "deleted target": ({"edit_marking_id": 999999}, Contribution.STATUS_PENDING, None),
+            "new submission": ({"state": "VA", "town": "Richmond"}, Submission.STATUS_PENDING, None),
+            "approved edit": (edit, Submission.STATUS_APPROVED, None),
+            "contributor viewing": (edit, Submission.STATUS_PENDING, self.contributor),
+            "deleted target": ({"edit_marking_id": 999999}, Submission.STATUS_PENDING, None),
         }
         for name, (data, status, viewer) in cases.items():
             with self.subTest(name):

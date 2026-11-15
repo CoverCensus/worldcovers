@@ -23,7 +23,7 @@ export interface ImageActionStateInput {
   /**
    * The image's catalog id, or null when it has none. Null covers two cases the
    * gallery cannot tell apart: an image the editor has selected but not yet
-   * saved, and a draft-contribution preview row (carried as a negative sentinel
+   * saved, and a draft-submission preview row (carried as a negative sentinel
    * and normalised to null by `buildGalleryImages`). Neither can be cropped or
    * moved, and "not saved to the catalog yet" is true of both.
    */

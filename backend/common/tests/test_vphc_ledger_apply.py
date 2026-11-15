@@ -1,6 +1,6 @@
 """The VPHC ledger applier.
 
-Pins the things that would fail silently: a contribution that approves cleanly,
+Pins the things that would fail silently: a submission that approves cleanly,
 uncertainty surviving into the record, images being additive, and duplicates
 being archived rather than deleted.
 """
@@ -16,12 +16,12 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 
-from common.contribution_apply import apply_contribution_to_catalog
+from common.submission_apply import apply_submission_to_catalog
 from common.models import (
     Citation,
     Collection,
     Color,
-    Contribution,
+    Submission,
     Marking,
     MarkingRecycleBin,
     PostOffice,
@@ -122,12 +122,12 @@ class VphcLedgerFixture(TestCase):
 
 
 class ApplyVphcLedgerTests(VphcLedgerFixture):
-    def test_creates_a_pending_contribution_that_approves_cleanly(self):
+    def test_creates_a_pending_submission_that_approves_cleanly(self):
         self.run_apply()
-        contribution = Contribution.objects.get()
-        self.assertEqual(contribution.status, Contribution.STATUS_PENDING)
+        submission = Submission.objects.get()
+        self.assertEqual(submission.status, Submission.STATUS_PENDING)
 
-        data = contribution.submitted_data
+        data = submission.submitted_data
         self.assertEqual(data["town"], "Abingdon")
         self.assertEqual(data["type"], "TOWNMARK")
         self.assertTrue(data["no_marking_image"])
@@ -140,11 +140,11 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         )
         self.assertIn("[VPHC: century inferred]", data["desc"])
 
-        marking = apply_contribution_to_catalog(contribution)
+        marking = apply_submission_to_catalog(submission)
         self.assertEqual(marking.post_office.name, "Abingdon")
         self.assertEqual(marking.color.name, "BLACK")
         self.assertEqual(float(marking.width), 30.5)
-        # The doubt still survives approval -- but on the contribution, not in
+        # The doubt still survives approval -- but on the submission, not in
         # the catalog record. `desc` is served by the AllowAny markings API, so
         # this assertion used to read "[VPHC: century inferred]" IS in
         # marking.desc, which is precisely what issue #110 changed: the marker
@@ -154,12 +154,12 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         self.assertIn(
             "Colours recorded but not in the catalog vocabulary: RED", marking.desc,
         )
-        contribution.refresh_from_db()
-        self.assertIn("[VPHC: century inferred]", contribution.submitted_data["desc"])
+        submission.refresh_from_db()
+        self.assertIn("[VPHC: century inferred]", submission.submitted_data["desc"])
 
     def test_the_society_is_credited(self):
         self.run_apply()
-        marking = apply_contribution_to_catalog(Contribution.objects.get())
+        marking = apply_submission_to_catalog(Submission.objects.get())
         citation = Citation.objects.get(subject_type="MARKING",
                                         subject_id=marking.pk)
         self.assertEqual(citation.reference_work.code, "VPHC1")
@@ -171,10 +171,10 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
     def test_uncertainty_is_queryable_before_approval(self):
         self.run_apply()
         self.assertEqual(
-            Contribution.objects.filter(
+            Submission.objects.filter(
                 submitted_data__vphc__flags__contains=["century_inferred"]
             ).count(), 1)
-        self.assertTrue(Contribution.objects.get().submitted_data[
+        self.assertTrue(Submission.objects.get().submitted_data[
             "contributor_comment"])
 
     def test_an_unknown_device_defaults_loudly_rather_than_failing(self):
@@ -182,7 +182,7 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         self.rows[0]["sheet_insc"] = ""
         self.write()
         self.run_apply()
-        data = Contribution.objects.get().submitted_data
+        data = Submission.objects.get().submitted_data
         self.assertEqual(data["type"], "TOWNMARK")
         self.assertIn("type_defaulted", data["vphc"]["flags"])
         self.assertIn("please correct", data["desc"])
@@ -212,7 +212,7 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
 
     def test_dry_run_writes_nothing(self):
         self.run_apply(dry_run=True)
-        self.assertEqual(Contribution.objects.count(), 0)
+        self.assertEqual(Submission.objects.count(), 0)
 
     def test_missing_reference_work_is_refused(self):
         self.reference.delete()
@@ -252,13 +252,13 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         self.write()
         self.run_apply(only="update")
 
-        contribution = Contribution.objects.get(
+        submission = Submission.objects.get(
             submitted_data__edit_marking_id=self.doomed.pk)
         # VPHC1 first: catalog_codes derives the code prefix from the first id.
-        self.assertEqual(contribution.submitted_data["reference_work_ids"],
+        self.assertEqual(submission.submitted_data["reference_work_ids"],
                          [self.reference.pk, ascc.pk])
 
-        apply_contribution_to_catalog(contribution)
+        apply_submission_to_catalog(submission)
         self.assertEqual(
             set(Citation.objects.filter(
                 subject_type="MARKING", subject_id=self.doomed.pk
@@ -283,20 +283,20 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         self.write()
         self.run_apply()
 
-        contributions = list(Contribution.objects.all())
-        self.assertEqual(len(contributions), 3)
+        submissions = list(Submission.objects.all())
+        self.assertEqual(len(submissions), 3)
         self.assertEqual(
-            sorted(c.submitted_data["color"] for c in contributions),
+            sorted(c.submitted_data["color"] for c in submissions),
             ["BLACK", "BLUE", "RED"],
         )
         # The colours are rows now, so repeating them as prose would say the
         # same thing twice and re-assert the collapsed grain.
-        for contribution in contributions:
-            self.assertNotIn("Colours recorded", contribution.submitted_data["desc"])
+        for submission in submissions:
+            self.assertNotIn("Colours recorded", submission.submitted_data["desc"])
         # Everything else about the listing is shared, not re-derived.
-        for contribution in contributions:
-            self.assertEqual(contribution.submitted_data["town"], "Abingdon")
-            self.assertEqual(contribution.submitted_data["vphc"]["cancel_no"], "6")
+        for submission in submissions:
+            self.assertEqual(submission.submitted_data["town"], "Abingdon")
+            self.assertEqual(submission.submitted_data["vphc"]["cancel_no"], "6")
 
     def test_the_scan_attaches_to_exactly_one_colour_variant(self):
         # E5: one scan is evidence for one physical device. Copying it onto
@@ -311,17 +311,17 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         self.write()
         self.run_apply()
 
-        with_images = [c for c in Contribution.objects.all()
+        with_images = [c for c in Submission.objects.all()
                        if c.submitted_data.get("marking_image_metas")]
         self.assertEqual(len(with_images), 1)
-        self.assertEqual(Contribution.objects.count(), 3)
-        without = [c for c in Contribution.objects.all()
+        self.assertEqual(Submission.objects.count(), 3)
+        without = [c for c in Submission.objects.all()
                    if not c.submitted_data.get("marking_image_metas")]
         # _sync_images refuses a marking that neither has an image nor says it
         # has none deliberately.
         self.assertTrue(all(c.submitted_data["no_marking_image"] for c in without))
 
-    def test_a_multi_colour_edit_stays_exactly_one_contribution(self):
+    def test_a_multi_colour_edit_stays_exactly_one_submission(self):
         # Rule I3 already paired edits one-per-colour against live rows, so an
         # edit targets one existing marking and must not fan out. Its
         # description must also stay byte-identical.
@@ -350,11 +350,11 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         self.write()
         self.run_apply(only="update")
 
-        contribution = Contribution.objects.get()
-        self.assertNotIn("color", contribution.submitted_data)
+        submission = Submission.objects.get()
+        self.assertNotIn("color", submission.submitted_data)
         self.assertIn(
             "Colours recorded: BLACK, RED, BLUE",
-            contribution.submitted_data["desc"],
+            submission.submitted_data["desc"],
         )
 
     def test_the_ledger_records_one_line_per_decision_not_per_row(self):
@@ -368,24 +368,24 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         with open(os.path.join(self.dir, "LEDGER.jsonl"), encoding="utf-8") as fh:
             written = [json.loads(line) for line in fh if line.strip()]
         self.assertEqual(len(written), 1)
-        self.assertEqual(Contribution.objects.count(), 3)
+        self.assertEqual(Submission.objects.count(), 3)
 
     def test_a_single_colour_create_is_unchanged(self):
         self.rows[0]["sheet_colors"] = "BLACK"
         self.write()
         self.run_apply()
 
-        contribution = Contribution.objects.get()
-        self.assertEqual(contribution.submitted_data["color"], "BLACK")
-        self.assertNotIn("Colours recorded", contribution.submitted_data["desc"])
+        submission = Submission.objects.get()
+        self.assertEqual(submission.submitted_data["color"], "BLACK")
+        self.assertNotIn("Colours recorded", submission.submitted_data["desc"])
 
     def test_a_create_with_no_colour_at_all_still_emits_one_row(self):
         self.rows[0]["sheet_colors"] = ""
         self.write()
         self.run_apply()
 
-        contribution = Contribution.objects.get()
-        self.assertNotIn("color", contribution.submitted_data)
+        submission = Submission.objects.get()
+        self.assertNotIn("color", submission.submitted_data)
 
     def test_an_edit_whose_first_colour_is_unknown_keeps_the_marking_s_own(self):
         """The fan-out must not repaint a live marking.
@@ -422,7 +422,7 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         self.write()
         self.run_apply(only="update")
 
-        data = Contribution.objects.get().submitted_data
+        data = Submission.objects.get().submitted_data
         self.assertEqual(data["color"], "RED")
         self.assertIn("color_unrecognised", data["vphc"]["flags"])
 
@@ -453,7 +453,7 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         })
         self.write()
         self.run_apply(only="update")
-        return Contribution.objects.get()
+        return Submission.objects.get()
 
     def test_an_edit_carries_the_matched_colour_not_the_sheet_s_first(self):
         """Issue #117, stated as the case that actually occurred 58 times.
@@ -484,8 +484,8 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         self.doomed.save(update_fields=["color"])
         before = self.doomed.color_id
 
-        contribution = self._queue_edit("BLACK;RED;BLUE")
-        apply_contribution_to_catalog(contribution)
+        submission = self._queue_edit("BLACK;RED;BLUE")
+        apply_submission_to_catalog(submission)
 
         self.doomed.refresh_from_db()
         self.assertEqual(self.doomed.color_id, before)
@@ -498,10 +498,10 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         self._recognise("BLACK", "RED")
         self.assertIsNone(self.doomed.color_id)
 
-        contribution = self._queue_edit("BLACK;RED")
-        self.assertNotIn("color", contribution.submitted_data)
+        submission = self._queue_edit("BLACK;RED")
+        self.assertNotIn("color", submission.submitted_data)
 
-        apply_contribution_to_catalog(contribution)
+        apply_submission_to_catalog(submission)
         self.doomed.refresh_from_db()
         self.assertIsNone(self.doomed.color_id)
 
@@ -558,7 +558,7 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         self.assertEqual(skipped[0]["reason"], "state cannot be determined")
         self.assertEqual(skipped[0]["county"], "BANK'S DIVISION")
         # the listing the applier DID emit is untouched by any of this
-        self.assertEqual(Contribution.objects.count(), 1)
+        self.assertEqual(Submission.objects.count(), 1)
 
     # ------------------------------------------------------------ issue #120
     #
@@ -576,10 +576,10 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         self.lines[0]["cancel"] = cancel_no
         self.write()
         self.run_apply(only="create")
-        return Contribution.objects.get().submitted_data
+        return Submission.objects.get().submitted_data
 
     def test_the_rate_comes_from_the_device_not_the_drawing_number(self):
-        """Ian's report, 2026-08-24: contribution 9145 shows 4, should be 3.
+        """Ian's report, 2026-08-24: submission 9145 shows 4, should be 3.
 
         Its sheet row is cancel='DUE 3' at cancel_no=4, which crosswalk.csv
         carries as the key set "3/DUE;DUE 3;DUE/3". first() takes "3/DUE",
@@ -599,7 +599,7 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         ROMAN_RATE). The applier knew no numerals at all, so all four such
         listings took the drawing number instead."""
         self.assertEqual(self._ratemark("X", "6")["rate_val"], "10")
-        Contribution.objects.all().delete()
+        Submission.objects.all().delete()
         self.assertEqual(self._ratemark("V", "7")["rate_val"], "5")
 
     def test_an_underivable_rate_omits_the_key_rather_than_inventing_one(self):
@@ -642,11 +642,11 @@ class ApplyVphcLedgerTests(VphcLedgerFixture):
         self.write()
         self.run_apply(only="update")
 
-        contribution = Contribution.objects.get(
+        submission = Submission.objects.get(
             submitted_data__edit_marking_id=self.doomed.pk)
-        self.assertEqual(contribution.submitted_data["rate_val"], "3")
+        self.assertEqual(submission.submitted_data["rate_val"], "3")
 
-        apply_contribution_to_catalog(contribution)
+        apply_submission_to_catalog(submission)
         self.doomed.refresh_from_db()
         self.assertEqual(int(self.doomed.rate_val), 3)
 
@@ -695,14 +695,14 @@ class ManuscriptLedgerTests(VphcLedgerFixture):
         self.only_manuscript()
         self.run_apply()
 
-        contribution = Contribution.objects.get()
-        self.assertTrue(contribution.submitted_data["is_manuscript"])
+        submission = Submission.objects.get()
+        self.assertTrue(submission.submitted_data["is_manuscript"])
         # "Not irregular" is a different claim from "irregularity does not
         # apply", and the review UI reads submitted_data back verbatim.
-        self.assertNotIn("is_irreg", contribution.submitted_data)
-        self.assertTrue(contribution.submitted_data["no_marking_image"])
+        self.assertNotIn("is_irreg", submission.submitted_data)
+        self.assertTrue(submission.submitted_data["no_marking_image"])
 
-        marking = apply_contribution_to_catalog(contribution)
+        marking = apply_submission_to_catalog(submission)
         self.assertTrue(marking.is_manuscript)
         # marking_manuscript_consistency requires all three to be NULL. If the
         # payload had leaked a value through, the save would have raised here.
@@ -717,11 +717,11 @@ class ManuscriptLedgerTests(VphcLedgerFixture):
     def test_a_phase_2_line_is_still_not_a_manuscript(self):
         """The shipped path, unchanged: no is_manuscript in `after` means False."""
         self.run_apply()
-        contribution = Contribution.objects.get()
-        self.assertFalse(contribution.submitted_data["is_manuscript"])
-        self.assertIs(contribution.submitted_data["is_irreg"], False)
+        submission = Submission.objects.get()
+        self.assertFalse(submission.submitted_data["is_manuscript"])
+        self.assertIs(submission.submitted_data["is_irreg"], False)
 
-        marking = apply_contribution_to_catalog(contribution)
+        marking = apply_submission_to_catalog(submission)
         self.assertFalse(marking.is_manuscript)
         self.assertIs(marking.is_irreg, False)
 
@@ -740,8 +740,8 @@ class ManuscriptLedgerTests(VphcLedgerFixture):
         self.run_apply(ledger="manuscripts/ledger-va.jsonl",
                        crosswalk="manuscripts/crosswalk-va.csv")
 
-        # Exactly one contribution, and it came from the override -- the Phase 2
+        # Exactly one submission, and it came from the override -- the Phase 2
         # fixture written by setUp() is still on disk and was not read.
-        contribution = Contribution.objects.get()
-        self.assertTrue(contribution.submitted_data["is_manuscript"])
-        self.assertEqual(contribution.submitted_data["vphc"]["cancel_no"], "12")
+        submission = Submission.objects.get()
+        self.assertTrue(submission.submitted_data["is_manuscript"])
+        self.assertEqual(submission.submitted_data["vphc"]["cancel_no"], "12")

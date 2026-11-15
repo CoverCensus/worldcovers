@@ -8,7 +8,7 @@ import django_filters
 from django.db.models import Q
 from rest_framework import filters
 
-from .models import Citation, Contribution, CoverMarking, Marking, MarkingType, Region, Shape
+from .models import Citation, Submission, CoverMarking, Marking, MarkingType, Region, Shape
 
 
 def regions_matching_state_term(value):
@@ -469,11 +469,11 @@ class CoverMarkingFilter(django_filters.FilterSet):
         fields = ["cover", "marking", "is_backstamp", "placement", "review_status"]
 
 
-class ContributionListFilter(django_filters.FilterSet):
+class SubmissionListFilter(django_filters.FilterSet):
     """List filters for the editor review queue (issue #109).
 
     These exist because the dashboard used to filter the page it had already
-    fetched. Pagination is server side, so at 2,440 queued contributions the
+    fetched. Pagination is server side, so at 2,440 queued submissions the
     search box was looking at one page in twenty-five: searching "farm" on
     woco.dev returned nothing on page 1 and Farmville turned up on page 16. A
     lookup that finds nothing does not read as a broken filter, it reads as
@@ -482,9 +482,9 @@ class ContributionListFilter(django_filters.FilterSet):
 
     Town, shape and colour live only inside `submitted_data`, so every one of
     these is a JSON key transform. That is already the shipped pattern for
-    `state` (ContributionViewSet.get_queryset). No index is possible -- MariaDB
+    `state` (SubmissionViewSet.get_queryset). No index is possible -- MariaDB
     10.11 has no functional indexes -- so each of these is a full scan of the
-    Contributions table. Measured on the dev copy at 2,062 rows: 13 ms to
+    Submissions table. Measured on the dev copy at 2,062 rows: 13 ms to
     count, 21 ms to serve a 100-row page. Revisit around 100k rows, where the
     answer is denormalised columns rather than a cleverer query.
 
@@ -519,7 +519,7 @@ class ContributionListFilter(django_filters.FilterSet):
     )
 
     class Meta:
-        model = Contribution
+        model = Submission
         # Preserves the viewset's previous `filterset_fields = ["status"]`
         # exactly -- an auto-built ChoiceFilter validated against STATUS_CHOICES.
         fields = ["status"]
@@ -583,7 +583,7 @@ class ContributionListFilter(django_filters.FilterSet):
     @staticmethod
     def filter_by_town(queryset, name, value):
         # Contains, not exact: the queue's town box is a search field, and
-        # contribution towns are free text that has not been resolved to a
+        # submission towns are free text that has not been resolved to a
         # PostOffice yet (that happens at approval).
         text = str(value or "").strip()
         if not text:

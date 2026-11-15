@@ -5,11 +5,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
 import {
-  getContribution,
+  getSubmission,
   getDirectCatalogCodeSuggestion,
-  mapApiItemToContribution,
-} from "@/services/contributions";
-import ContributionDetail from "./ContributionDetail";
+  mapApiItemToSubmission,
+} from "@/services/submissions";
+import SubmissionDetail from "./SubmissionDetail";
 
 jest.mock("@/hooks/useAuth", () => ({ useAuth: jest.fn() }));
 jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: jest.fn() }) }));
@@ -25,9 +25,9 @@ jest.mock("@/services/markings", () => ({
   getMarkingListImageUrl: () => null,
   getMarkingById: jest.fn().mockResolvedValue({ id: 7, town: "Burlington", state: "VT" }),
 }));
-jest.mock("@/services/contributions", () => ({
-  ...jest.requireActual("@/services/contributions"),
-  getContribution: jest.fn(),
+jest.mock("@/services/submissions", () => ({
+  ...jest.requireActual("@/services/submissions"),
+  getSubmission: jest.fn(),
   getDirectCatalogCodeSuggestion: jest.fn().mockResolvedValue({ catalogCode: "APMC-VT-M0001" }),
 }));
 
@@ -45,7 +45,7 @@ beforeEach(() => jest.clearAllMocks());
 describe.each(["marking", "cover"])("%s Submission review permissions", (kind) => {
   it("keeps known details readable and prevents approval of unrecognized fields", async () => {
     (useAuth as jest.Mock).mockReturnValue(editor);
-    (getContribution as jest.Mock).mockResolvedValue(mapApiItemToContribution({
+    (getSubmission as jest.Mock).mockResolvedValue(mapApiItemToSubmission({
       id: 9327, collection: 100, contributor: editor.id, status: "pending",
       submitted_data: {
         submission_kind: kind, type: kind === "cover" ? "FL" : "TOWNMARK",
@@ -53,8 +53,8 @@ describe.each(["marking", "cover"])("%s Submission review permissions", (kind) =
         ...(kind === "cover" ? { parent_marking_id: 7 } : {}),
       },
     }));
-    render(<TooltipProvider><MemoryRouter initialEntries={["/contribution/9327"]}>
-      <Routes><Route path="/contribution/:id" element={<ContributionDetail />} /></Routes>
+    render(<TooltipProvider><MemoryRouter initialEntries={["/submission/9327"]}>
+      <Routes><Route path="/submission/:id" element={<SubmissionDetail />} /></Routes>
     </MemoryRouter></TooltipProvider>);
     await screen.findByText("Recognized submitted description");
     expect(screen.getByRole("alert").textContent).toContain("Approval is unavailable");
@@ -78,7 +78,7 @@ describe.each(["marking", "cover"])("%s Submission review permissions", (kind) =
 
   it.each(cases)("shows review controls only when permitted: $name", async ({ user, collection, status, allowed }) => {
     (useAuth as jest.Mock).mockReturnValue(user);
-    (getContribution as jest.Mock).mockResolvedValue(mapApiItemToContribution({
+    (getSubmission as jest.Mock).mockResolvedValue(mapApiItemToSubmission({
       id: 9327,
       collection,
       contributor: editor.id,
@@ -94,11 +94,11 @@ describe.each(["marking", "cover"])("%s Submission review permissions", (kind) =
       },
     }));
 
-    render(<TooltipProvider><MemoryRouter initialEntries={["/contribution/9327"]}>
-      <Routes><Route path="/contribution/:id" element={<ContributionDetail />} /></Routes>
+    render(<TooltipProvider><MemoryRouter initialEntries={["/submission/9327"]}>
+      <Routes><Route path="/submission/:id" element={<SubmissionDetail />} /></Routes>
     </MemoryRouter></TooltipProvider>);
 
-    await screen.findByText(/Contribution Details|Cover Details/i);
+    await screen.findByText(/Submission Details|Cover Details/i);
     for (const name of ["Approve", "Reject", "Return"]) {
       expect(screen.queryByRole("button", { name }) !== null).toBe(allowed);
     }

@@ -11,7 +11,7 @@
  * catalog (rememberCatalogLocation / catalogHref). Both mirror the view into
  * sessionStorage. That works while the editor is browsing, and it fails in
  * exactly the case an editor hits most: **arriving by a link someone sent
- * them.** Ian mails contribution URLs directly (`woco.dev/contribution/9145` in
+ * them.** Ian mails submission URLs directly (`woco.dev/submission/9145` in
  * the 2026-08-24 thread), and a fresh browsing context has no remembered view
  * and no router state, so the editor is returned to a defaulted screen.
  *

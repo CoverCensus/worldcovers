@@ -3,7 +3,7 @@ Batch-export every Marking that carries user-origin content to per-marking
 JSON backups (one backup_marking call per Marking.code).
 
 Built for the drop/re-import refresh flow: drop_ascc_state deletes a state's
-catalog tree INCLUDING the user-submitted covers, images, and contributions
+catalog tree INCLUDING the user-submitted covers, images, and submissions
 hanging off its markings, and post-policy bundles no longer contain covers.
 Running this before the drop (and restore_user_markings after the re-import)
 is what preserves that data across a refresh.
@@ -11,7 +11,7 @@ is what preserves that data across a refresh.
 A marking is considered to carry user content when any of these hold:
   * it has at least one CoverMarking (covers are user/legacy data and are
     never re-created by bundle import),
-  * a Contribution references it, directly or through a cover-submission
+  * a Submission references it, directly or through a cover-submission
     payload,
   * an editor vetted it (is_reviewed=True),
   * it has MarkingVersion edit history,
@@ -42,9 +42,9 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Q
 from django.utils import timezone
 
-from common.management.commands.backup_marking import _cover_contribution_marking_id
+from common.management.commands.backup_marking import _cover_submission_marking_id
 from common.models import (
-    Contribution,
+    Submission,
     Cover,
     CoverMarking,
     Image,
@@ -65,7 +65,7 @@ def backup_filename(code):
 class Command(BaseCommand):
     help = (
         "Batch-export every marking carrying user-origin content (covers, "
-        "contributions, editor review, edit history) to per-marking JSON "
+        "submissions, editor review, edit history) to per-marking JSON "
         "backups via backup_marking."
     )
 
@@ -195,7 +195,7 @@ class Command(BaseCommand):
     def _collect_marking_ids(self, uploaders):
         ids = set(CoverMarking.objects.values_list("marking_id", flat=True))
         ids.update(
-            Contribution.objects.exclude(marking=None).values_list(
+            Submission.objects.exclude(marking=None).values_list(
                 "marking_id", flat=True
             )
         )
@@ -203,10 +203,10 @@ class Command(BaseCommand):
             Marking.all_objects.filter(is_reviewed=True).values_list("pk", flat=True)
         )
         ids.update(MarkingVersion.objects.values_list("marking_id", flat=True))
-        for contribution in Contribution.objects.filter(
+        for submission in Submission.objects.filter(
             submitted_data__submission_kind="cover"
         ):
-            marking_id = _cover_contribution_marking_id(contribution)
+            marking_id = _cover_submission_marking_id(submission)
             if marking_id is not None:
                 ids.add(marking_id)
         if uploaders:

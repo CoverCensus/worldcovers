@@ -16,7 +16,7 @@ from django.test import TestCase
 from common.models import (
     Citation,
     Collection,
-    Contribution,
+    Submission,
     Marking,
     PostOffice,
     PostOfficeRegion,
@@ -51,7 +51,7 @@ class RepairVphcRateTests(TestCase):
             publisher="Virginia Postal History Society", publication_year=1982,
             created_by=self.user, modified_by=self.user)
 
-        self.wrong = self._contribution(payload())
+        self.wrong = self._submission(payload())
         # A real person's submission. It has no `vphc` key, and nothing this
         # command does may reach it -- the census that found only two of these
         # missed six, and "delete all pending" would have destroyed eight.
@@ -61,13 +61,13 @@ class RepairVphcRateTests(TestCase):
         # A contributor is allowed to be wrong; correcting them is not this
         # command's job, and a row that survives only because its value happens
         # to agree proves nothing.
-        self.human = self._contribution({
+        self.human = self._submission({
             "submission_kind": "marking", "type": "RATEMARK",
             "town": "Boston", "inscription_txt": "3/PAID", "rate_val": "9",
         })
 
-    def _contribution(self, submitted_data, status=Contribution.STATUS_PENDING):
-        return Contribution.objects.create(
+    def _submission(self, submitted_data, status=Submission.STATUS_PENDING):
+        return Submission.objects.create(
             contributor=self.user, collection=self.collection,
             submitted_data=submitted_data, status=status,
             created_by=self.user, modified_by=self.user)
@@ -125,7 +125,7 @@ class RepairVphcRateTests(TestCase):
 
     def test_an_underivable_rate_removes_the_key_rather_than_emptying_it(self):
         """Absent means keep, "" means clear. The difference is a live rate."""
-        row = self._contribution(payload(inscription_txt="PAID", rate_val="8"))
+        row = self._submission(payload(inscription_txt="PAID", rate_val="8"))
         self.run_repair(commit=True)
         row.refresh_from_db()
         self.assertNotIn("rate_val", row.submitted_data)
@@ -133,7 +133,7 @@ class RepairVphcRateTests(TestCase):
     def test_an_already_approved_row_is_reported_but_not_edited(self):
         """Its payload is already in the catalog; editing it here would desync
         the two and still leave the wrong rate live."""
-        row = self._contribution(payload(), status=Contribution.STATUS_APPROVED)
+        row = self._submission(payload(), status=Submission.STATUS_APPROVED)
         output = self.run_repair(commit=True)
         row.refresh_from_db()
         self.assertEqual(row.submitted_data["rate_val"], "4")
@@ -155,7 +155,7 @@ class RepairVphcRateTests(TestCase):
         """This call site passes a SINGLE stored inscription, not the
         crosswalk's semicolon key set -- "DUE 3" rather than "3/DUE;DUE 3".
         Both spellings reach production, so both must yield 3."""
-        row = self._contribution(payload(inscription_txt="DUE 3", rate_val="4"))
+        row = self._submission(payload(inscription_txt="DUE 3", rate_val="4"))
         self.run_repair(commit=True)
         row.refresh_from_db()
         self.assertEqual(row.submitted_data["rate_val"], "3")
@@ -170,9 +170,9 @@ class RepairVphcRateTests(TestCase):
     # that cannot pass is worse than no check.
 
     def _approved(self, inscription_txt="1/PAID", rate_val="29"):
-        return self._contribution(
+        return self._submission(
             payload(inscription_txt=inscription_txt, rate_val=rate_val),
-            status=Contribution.STATUS_APPROVED)
+            status=Submission.STATUS_APPROVED)
 
     def test_an_approved_payload_syncs_once_the_catalog_is_clean(self):
         row = self._approved()
@@ -181,7 +181,7 @@ class RepairVphcRateTests(TestCase):
         row.refresh_from_db()
         self.assertEqual(row.submitted_data["rate_val"], "1")
         # The two repair paths must stay on their own side of the line: the
-        # payload sync writes Contributions, --audit-live writes Markings, and
+        # payload sync writes Submissions, --audit-live writes Markings, and
         # a correct marking is not touched by either.
         marking.refresh_from_db()
         self.assertEqual(marking.rate_val, Decimal("1.00"))

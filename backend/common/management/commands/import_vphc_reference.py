@@ -3,7 +3,7 @@ Load the VPHC reference layer: counties, post offices, postmasters, tenures.
 
 Phase B of the VPHC ingest. This is the *reference* half -- the places and
 people that markings hang off. It must run before the marking import, because a
-contribution cannot name a town that has no post office and a tenure cannot
+submission cannot name a town that has no post office and a tenure cannot
 hang off one either.
 
 Runbook:

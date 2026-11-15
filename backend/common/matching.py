@@ -10,7 +10,7 @@ Rows are ``.values()`` dicts carrying at least ``SCAN_FIELDS`` plus the two
 ``primary_region_subquery`` annotations ``state_code`` and ``state_abbrev``.
 
 Imports only Django and ``common.models``: never ``views`` or
-``contribution_apply``, both of which import from here.
+``submission_apply``, both of which import from here.
 """
 from __future__ import annotations
 

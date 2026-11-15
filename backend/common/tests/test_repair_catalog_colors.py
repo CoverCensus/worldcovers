@@ -2,7 +2,7 @@
 
 Pins what the old admin action got wrong and what would be expensive to get
 wrong again: a Cover holding the colour (ProtectedError), a recycle-binned
-Marking holding it, a version snapshot or a pending contribution still naming
+Marking holding it, a version snapshot or a pending submission still naming
 a row that no longer exists, a dry run that writes, and a stale --expect that
 is trusted anyway.
 """
@@ -22,10 +22,10 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from common.audit import build_marking_snapshot, restore_marking_from_snapshot
-from common.contribution_apply import _resolve_fk
+from common.submission_apply import _resolve_fk
 from common.models import (
     Collection,
-    Contribution,
+    Submission,
     Cover,
     CoverVersion,
     Color,
@@ -77,16 +77,16 @@ class RepairCatalogColorsTests(TestCase):
             snapshot={"color_id": self.red35.pk, "type": "FL"},
             created_by=self.user)
 
-        self.pending = self._contribution(
+        self.pending = self._submission(
             {"submission_kind": "marking", "type": "TOWNMARK", "town": "Abingdon",
              "color": "Red 35", "color_id": str(self.red35.pk)})
-        self.name_only = self._contribution(
+        self.name_only = self._submission(
             {"submission_kind": "marking", "type": "TOWNMARK", "town": "Abingdon",
              "color": "PAID"})
-        self.approved = self._contribution(
+        self.approved = self._submission(
             {"submission_kind": "marking", "type": "TOWNMARK", "town": "Abingdon",
              "color": "RED 35", "color_id": self.red35.pk},
-            status=Contribution.STATUS_APPROVED)
+            status=Submission.STATUS_APPROVED)
 
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -103,8 +103,8 @@ class RepairCatalogColorsTests(TestCase):
             color=color, is_manuscript=False, is_irreg=False,
             post_office=self.office, created_by=self.user, modified_by=self.user)
 
-    def _contribution(self, submitted_data, status=Contribution.STATUS_PENDING):
-        return Contribution.objects.create(
+    def _submission(self, submitted_data, status=Submission.STATUS_PENDING):
+        return Submission.objects.create(
             contributor=self.user, collection=self.collection,
             submitted_data=submitted_data, status=status,
             created_by=self.user, modified_by=self.user)
@@ -142,7 +142,7 @@ class RepairCatalogColorsTests(TestCase):
         self.assertEqual(red35["n_covers"], "1")
         self.assertEqual(red35["n_marking_versions"], "1")
         self.assertEqual(red35["n_cover_versions"], "1")
-        self.assertEqual(red35["n_contributions"], "2")
+        self.assertEqual(red35["n_submissions"], "2")
         paid = rows["PAID"]
         self.assertEqual(paid["action"], "null")
         self.assertEqual(paid["suggested_target"], "")
@@ -198,7 +198,7 @@ class RepairCatalogColorsTests(TestCase):
             Marking.objects.get(pk=self.marking.pk), self.version.snapshot, self.user)
         self.assertEqual(restored.color_id, self.red.pk)
 
-    def test_contribution_payloads_are_rewritten_and_still_resolve(self):
+    def test_submission_payloads_are_rewritten_and_still_resolve(self):
         self._run("--mapping", self._mapping(self.STANDARD), "--expect", "3",
                   "--commit", "--actor", str(self.user.pk))
         self.pending.refresh_from_db()
@@ -373,7 +373,7 @@ class RepairCatalogColorsTests(TestCase):
         state = Path(self.tmp.name) / "state.json"
         with patch("builtins.print"):
             check("before", Path(path), state, actor_id=self.user.pk)
-        models = (Color, Marking, Cover, MarkingVersion, CoverVersion, Contribution)
+        models = (Color, Marking, Cover, MarkingVersion, CoverVersion, Submission)
         before = {model: list(model._base_manager.order_by("pk").values())
                   for model in models}
         self._run("--mapping", path, "--expect", "20",
