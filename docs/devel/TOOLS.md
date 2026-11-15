@@ -1,162 +1,186 @@
 # Tools Reference
 
-This document covers data/tooling scripts and checked-in Django management commands.
+Every command an operator or developer can run, grouped by task.
 
-Source of truth for command availability:
+To find a command, use the [Command Index](#command-index). Each row links
+to its section. Run `./woco help` from the repo root to list the commands
+in your checkout.
 
-- Host and integration scripts live under `tools/`. Extraction implementations
-  live in the optional private [bodger repository](https://github.com/CoverCensus/bodger).
-- Deployment scripts and host config templates live under `deploy/`.
-- Django commands live under `backend/common/management/commands/`.
-- Run `./woco help` from repo root to list commands in the current checkout.
+## Two Repositories, Two Jobs
 
-Use `./woco <command>` from repo root for Django management commands. The
-`./woco` shim runs `woco_cli.py` with the installed `.venv/bin/python`, then
-calls Django's `execute_from_command_line`. It does not sync or rebuild
-the environment for normal commands. Several shortcuts bypass Django entirely:
-`./woco setup dev` and `./woco setup prod` run the environment setup in
-`tools/setup.sh` (see [BUILD.md](BUILD.md) and [DEPLOY.md](DEPLOY.md)),
-`./woco push [args]` runs `tools/push_data.sh`, `./woco refresh [args]`
-runs `tools/refresh_data.sh`, `./woco reload [args]`
-runs `tools/reload_data.sh` with the same arguments, and `./woco secretkey`
-prints a fresh `DJANGO_SECRET_KEY` value (it works before `.env` exists,
-which is exactly when you need it).
+Catalog data work is split across two repositories. Know which one you
+need before you start.
 
-## Overview
+| Repository | Job | Access |
+|---|---|---|
+| WorldCovers (this repo) | Import a prepared bundle. Review, repair, back up, and remove catalog data. Run the site. | Open source, GPL-3.0 |
+| [bodger](https://github.com/CoverCensus/bodger) | Turn a source catalog (scans, PDFs, workbooks, legacy exports) into a prepared bundle. | Private to the CoverCensus GitHub organization |
 
-| Tool | Purpose | Location |
-|------|---------|----------|
-| `setup.sh` | One-command dev/prod environment setup | `tools/setup.sh` |
-| `push_data.sh` | Sync local catalog data and media to staging | `tools/push_data.sh` |
-| `refresh_data.sh` | Import a bundle and keep existing catalog data | `tools/refresh_data.sh` |
-| `reload_data.sh` | Reload staging catalog data on the server | `tools/reload_data.sh` |
-| `rebuild_staging_db.sh` | Ensure DB exists, migrate, create admin, import | `tools/rebuild_staging_db.sh` |
-| `wipe_user_data.sh` | Wipe submissions, optionally reload a bundle | `tools/wipe_user_data.sh` |
-| `setup_worldcovers_db.sql` | Create database, app user, and grants | `tools/setup_worldcovers_db.sql` |
-| `ascc_page_processor.py` | Render and split ASCC catalog pages | `bodger/tools/ascc_page_processor.py` |
-| `ascc_page_extract.py` | Extract ASCC listing text from page chunks | `bodger/tools/ascc_page_extract.py` |
-| `ascc_image_extract.py` | Extract marking images from page chunks | `bodger/tools/ascc_image_extract.py` |
-| `fphc_extract.py` | Dump native FPHC text, tables, images, and printed organization | `bodger/tools/fphc_extract.py` |
-| `ascc_data_munger.py` | Build Django-shape ASCC CSV bundles | `bodger/tools/ascc_data_munger.py` |
-| `ascc import` | Load an ASCC CSV bundle | `backend/common/management/commands/import_ascc_bundle.py` |
-| `ascc drop` | Delete one region's imported catalog data | `backend/common/management/commands/drop_ascc_state.py` |
-| `import_apmc_bundle` | Umbrella importer; delegates to ASCC today | `backend/common/management/commands/import_apmc_bundle.py` |
-| `import_vphc_reference` | Load VPHC counties, offices, and postmaster events | `backend/common/management/commands/import_vphc_reference.py` |
-| `apply_vphc_ledger` | Apply reviewed VPHC actions and queue marking contributions | `backend/common/management/commands/apply_vphc_ledger.py` |
-| `repair_vphc_rate` | Repair rates derived from VPHC drawing numbers | `backend/common/management/commands/repair_vphc_rate.py` |
-| `repair_catalog_colors` | Apply an operator-reviewed Color correction map | `backend/common/management/commands/repair_catalog_colors.py` |
-| `report_duplicate_markings` | Read-only census of candidate duplicate Markings (T47) | `backend/common/management/commands/report_duplicate_markings.py` |
-| `check_catalog_colors.py` | Verify Color repair before, dry-run, and after states | `tools/check_catalog_colors.py` |
-| `repair_ascc_child_inscriptions` | Remove added Townmark prefixes from Ratemarks and Auxmarks | `backend/common/management/commands/repair_ascc_child_inscriptions.py` |
-| `wipe_user_data` | Clear submission/version/recycle-bin data | `backend/common/management/commands/wipe_user_data.py` |
-| `drop_ascc_state` | Delete one state's imported catalog data | `backend/common/management/commands/drop_ascc_state.py` |
-| `consolidate_superseded_contributions` | Delete superseded non-draft contributions | `backend/common/management/commands/consolidate_superseded_contributions.py` |
-| `purge_recycle_bin` | Archive, verify, then permanently delete recycle-bin catalog rows | `backend/common/management/commands/purge_recycle_bin.py` |
-| `verify_media_integrity` | Check Image rows against files; report orphan files and orphan rows | `backend/common/management/commands/verify_media_integrity.py` |
-| `prune_revisions` | Prune django-reversion rows safely | `backend/common/management/commands/prune_revisions.py` |
-| `backup_marking` | Export one marking graph to JSON | `backend/common/management/commands/backup_marking.py` |
-| `restore_marking` | Restore one marking graph from JSON | `backend/common/management/commands/restore_marking.py` |
-| `backup_collection` | Export a complete Collection and referenced media | `backend/common/management/commands/backup_collection.py` |
-| `restore_collection` | Restore a Collection bundle without overwriting conflicts | `backend/common/management/commands/restore_collection.py` |
-| `verify_collection` | Compare restored records, relationships, and media with a bundle | `backend/common/management/commands/verify_collection.py` |
-| `backup_auth` | Export users and auth/collection config | `backend/common/management/commands/backup_auth.py` |
-| `restore_auth` | Restore users and auth/collection config | `backend/common/management/commands/restore_auth.py` |
-| `set_user_password` | Set a user's password from the CLI | `backend/common/management/commands/set_user_password.py` |
+The rule: **bodger builds a bundle; WorldCovers imports it.**
 
-See the [Color repair instructions](COLOR-REPAIR.md) for staging and production
-commands. Tool code is tracked; maps and run output belong in `tools/wip`.
+What lives in bodger, not here:
 
-## Host Scripts
+- ASCC legacy-export conversion and the munger (`ascc_data_munger.py`).
+- ASCC scanned-PDF page splitting, OCR text extraction, and image
+  extraction (`ascc_page_processor.py`, `ascc_page_extract.py`,
+  `ascc_image_extract.py`).
+- FPHC native-PDF extraction and FPHC2 bundle building (`fphc_extract.py`).
+- VPHC workbook extraction, cross-examination, and ledger building
+  (`vphc_extract.py`, `vphc_crossexam.py`, `vphc_manuscript_ledger.py`).
+- The tests and rules for all of the above.
 
-### `tools/push_data.sh`
+WorldCovers keeps only thin wrappers for those tools (`./woco ascc`,
+`./woco fphc`, `./woco bodger`). A wrapper finds the bodger checkout and
+runs the tool in bodger's own Python environment. Without bodger, a
+wrapper stops with a setup error and a non-zero exit code.
 
-Run from a local checkout:
+Bodger's own command reference is `docs/devel/TOOLS.md` inside the bodger
+checkout. The bodger sections below cover only how WorldCovers calls it.
 
-```sh
-WOCO_HOST=woco.dev ./tools/push_data.sh
-WOCO_HOST=woco.dev ./tools/push_data.sh --dry-run
-WOCO_HOST=woco.dev ./tools/push_data.sh --state VA
-WOCO_HOST=woco.dev ./tools/push_data.sh --import --state VA
-WOCO_HOST=woco.dev ./tools/push_data.sh --import --bundle-dir tools/wip/out/v1_va
-```
+## Getting Bodger Access
 
-Expected exit code: `0`.
+Bodger is a private repository. Only members of the CoverCensus GitHub
+organization who have been granted access can clone it. A 404 page at
+`https://github.com/CoverCensus/bodger` means you do not have access; it
+does not mean the repository is gone.
 
-Syncs local `tools/wip/` and `backend/media/` to the staging host. With
-`--import`, it runs `/srv/woco/tools/refresh_data.sh` remotely as `wocod` for
-the selected bundle. `--state VA` resolves to `tools/wip/out/v1_va`.
+To get access:
 
-With `--state`, only that state's bundle and media directory are uploaded.
-Set `WOCO_HOST=woco.dev` for staging; the default host is `hellowoco.app`.
+1. Open a GitHub issue on the WorldCovers repository:
+   <https://github.com/CoverCensus/worldcovers/issues/new>.
+   You cannot open one on bodger itself, because you cannot see it yet.
+2. Title it `Bodger access request`. In the body, give your GitHub
+   username and the source catalog you need to work on.
+3. A CoverCensus organization owner adds you to the bodger repository and
+   closes the issue.
+4. Follow [Optional Bodger Setup](PIPELINE.md#optional-bodger-setup).
 
-### `tools/refresh_data.sh`
+You do not need bodger to:
 
-Run on the selected host as `wocod`:
+- set up, run, or develop WorldCovers;
+- submit, review, and approve Entries;
+- import a bundle that someone else prepared;
+- run any command in Parts 2 through 7 below.
 
-```sh
-sudo -u wocod /srv/woco/tools/refresh_data.sh tools/wip/out/v1_va
-```
+You need bodger only to build a new bundle from a source catalog (Part 1).
 
-Calls the reviewed ASCC import. It resolves Post Offices and queues Entry
-Submissions in the relevant Collections. Expected exit code: `0`.
+## How To Run A Command
 
-<a id="toolsreload_datash"></a>
+- Run every command from the repo root.
+- `./woco <command>` runs a Django management command with the repo's
+  `.venv/bin/python`. It does not sync or rebuild the environment.
+- A database command needs `.env` and `mysql.cnf` in place; see
+  [BUILD.md](BUILD.md).
+- A successful command exits with code 0.
+- A command that changes data commits by default. Add `--dry-run` to
+  preview. `repair_vphc_rate` is the exception: it needs `--commit`.
+- Put inputs in `tools/wip/in/`, outputs in `tools/wip/out/`, and caches in
+  `tools/wip/cache/`. Git ignores all three.
 
-### `tools/reload_data.sh`
+These shortcuts do not load Django:
 
-Run on the staging host as `wocod`:
+| Shortcut | Runs |
+|---|---|
+| `./woco setup dev`, `./woco setup prod` | `tools/setup.sh`; see [BUILD.md](BUILD.md) and [DEPLOY.md](DEPLOY.md) |
+| `./woco secretkey` | Prints a fresh `DJANGO_SECRET_KEY`. Works before `.env` exists. |
+| `./woco push [args]` | `tools/push_data.sh` |
+| `./woco refresh [args]` | `tools/refresh_data.sh` |
+| `./woco reload [args]` | `tools/reload_data.sh` |
+| `./woco ascc <subcommand>` | `tools/ascc_cli.py` |
+| `./woco bodger <script>` | `tools/bodger_tools.py` |
 
-```sh
-sudo -u wocod /srv/woco/tools/reload_data.sh tools/wip/out/v1_va
-```
+`./woco dev` starts the local dev servers; see [BUILD.md](BUILD.md#launcher).
 
-Expected exit code: `0`.
+## Command Index
 
-Current sequence:
+**Part 1: Build A Bundle (needs bodger)**
 
-```sh
-./woco ascc import tools/wip/out/v1_va --truncate
-```
+| Command | What it does |
+|---|---|
+| [`./woco ascc doctor`, `munge`, `run`, `ocr`, `clean`](#ascc-bundle-building) | Build an ASCC bundle from legacy exports or scanned PDFs |
+| [`./woco bodger fphc_extract`](#fphc-source-extraction) | Dump text, tables, and images from the FPHC PDF |
+| [`./woco fphc extract`, `./woco fphc munge`](#build-and-import-the-fphc2-bundle) | Build the FPHC2 bundle |
+| [`./woco bodger vphc_extract`, `vphc_crossexam`, `vphc_manuscript_ledger`](#vphc-extraction) | Extract and compare the VPHC workbook |
+| [`./woco bodger <script>`](#running-any-bodger-script) | Run any bodger tool by name |
 
-This reload does not call `wipe_user_data`. It does pass `--truncate`, which
-deletes all 14 catalog import tables, including covers, before reloading the
-bundle. Run `wipe_user_data` first when submission, version, and recycle-bin
-history must also be cleared.
+**Part 2: Import A Prepared Bundle**
 
-### `tools/rebuild_staging_db.sh`
+| Command | What it does |
+|---|---|
+| [`./woco ascc import`](#ascc-import) | Queue an ASCC bundle for Editor review |
+| [`./woco fphc import`](#build-and-import-the-fphc2-bundle) | Import the FPHC2 bundle |
+| [`import_vphc_reference`](#import_vphc_reference) | Load VPHC counties, Post Offices, and Postmaster events |
+| [`apply_vphc_ledger`](#apply_vphc_ledger) | Apply reviewed VPHC actions and queue Marking Submissions |
+| [`import_apmc_bundle`](#import_apmc_bundle) | Umbrella importer; delegates to the ASCC importer |
 
-Run from repo root, with `mysql.cnf` present:
+**Part 3: Move Data Between Hosts**
 
-```sh
-WOCO_ADMIN_PASSWORD=<password> ./tools/rebuild_staging_db.sh
-WOCO_ADMIN_PASSWORD=<password> ./tools/rebuild_staging_db.sh --no-import
-```
+| Command | What it does |
+|---|---|
+| [`tools/push_data.sh`](#toolspush_datash) | Sync local bundles and media to a host |
+| [`tools/refresh_data.sh`](#toolsrefresh_datash) | Import a bundle on a host and keep existing catalog data |
+| [`tools/reload_data.sh`](#toolsreload_datash) | Truncate and reload catalog data on staging |
+| [`tools/rebuild_staging_db.sh`](#toolsrebuild_staging_dbsh) | Ensure the database exists, migrate, create the admin user, import |
 
-Expected exit code: `0`.
+**Part 4: Repair And Report**
 
-Ensures the `worldcovers` database exists, runs migrations, creates the
-Django admin user, and imports CSVs from `backend/imports/` (skipped with
-`--no-import`). It does not drop the database. One-time prerequisite: run
-`tools/setup_worldcovers_db.sql` as MySQL root to create the database and
-app user.
+| Command | What it does |
+|---|---|
+| [`repair_vphc_rate`](#repair_vphc_rate) | Fix rates that took a VPHC drawing number |
+| [`repair_ascc_child_inscriptions`](#repair_ascc_child_inscriptions) | Remove added Townmark prefixes from Ratemarks and Auxmarks |
+| [`repair_catalog_colors`, `tools/check_catalog_colors.py`](#color-repair) | Apply and verify a reviewed Color correction map |
+| [`report_duplicate_markings`](#report_duplicate_markings) | Read-only report of candidate duplicate Markings |
+| [`consolidate_superseded_contributions`](#consolidate_superseded_contributions) | Delete superseded non-draft Submissions |
 
-### `tools/wipe_user_data.sh`
+**Part 5: Remove Data**
 
-Shell wrapper around the `wipe_user_data` management command (below), with
-an optional one-step catalog reload:
+| Command | What it does |
+|---|---|
+| [`./woco ascc drop`](#ascc-drop) | Delete one Region's imported catalog data |
+| [`wipe_user_data`, `tools/wipe_user_data.sh`](#wipe_user_data) | Clear Submissions, versions, and recycle bins |
+| [`purge_recycle_bin`](#purge_recycle_bin) | Archive, verify, then permanently delete recycle-bin rows |
 
-```sh
-./tools/wipe_user_data.sh              # wipe (prompts for confirmation)
-./tools/wipe_user_data.sh --dry-run    # report counts, change nothing
-./tools/wipe_user_data.sh --reload tools/wip/out/v1_va
-```
+**Part 6: Back Up, Restore, And Check**
 
-Expected exit code: `0`.
+| Command | What it does |
+|---|---|
+| [`backup_collection`, `restore_collection`, `verify_collection`](#collection-backup-and-restore) | Move a whole Collection between instances |
+| [`backup_marking`, `restore_marking`](#backup_marking-and-restore_marking) | Export and restore one Marking graph as JSON |
+| [`backup_auth`, `restore_auth`](#backup_auth-and-restore_auth) | Export and restore users, groups, and assignments |
+| [`verify_media_integrity`](#verify_media_integrity) | Check Image rows against files; report orphans |
+| [`prune_revisions`](#prune_revisions) | Prune django-reversion history |
 
-`--reload` wipes without prompting and then imports the given bundle, so
-you end up with a fresh catalog-only system in one step.
+Full-server backups are separate; see [BACKUP.md](BACKUP.md).
 
-## ASCC Pipeline Tools
+**Part 7: Accounts**
+
+| Command | What it does |
+|---|---|
+| [`set_user_password`](#set_user_password) | Set a user's password from the command line |
+
+### Commands Without A Section Yet
+
+These exist in `backend/common/management/commands/` but are not described
+below. Run `./woco <command> --help` before using one.
+
+| Command | One-line purpose (from its help text) |
+|---|---|
+| `backup_user_markings` | Batch-export every Marking that carries user-origin content, through `backup_marking` |
+| `restore_user_markings` | Batch-restore those backups and write `restore_report.json` |
+| `recompute_marking_date_ranges` | Recompute or verify the cached earliest and latest dates on Markings |
+| `set_color_display_hex` | Fill placeholder Color hex values with approximate screen colors |
+| `load_legacy_bundle` | Load a legacy id-based bundle directly. Volume-test databases only. |
+| `seed_volume_test` | Clone-amplify the catalog to a target Marking count. Volume testing only. |
+
+---
+
+## Part 1: Build A Bundle (Needs Bodger)
+
+Everything in this part fails without a bodger checkout. See
+[Getting Bodger Access](#getting-bodger-access). The end-to-end ASCC flow
+is in [PIPELINE.md](PIPELINE.md).
+
+### ASCC Bundle Building
 
 The canonical ASCC v1-export-to-bundle workflow is documented in [PIPELINE.md](PIPELINE.md).
 Use the state-centered wrapper for demos and normal runs:
@@ -168,8 +192,8 @@ Use the state-centered wrapper for demos and normal runs:
 ./woco ascc run VA
 ```
 
-Extraction commands require the optional bodger checkout and its environment;
-see [setup and paths](PIPELINE.md#optional-bodger-setup). Source files and caches
+These commands need bodger; see [Getting Bodger Access](#getting-bodger-access)
+and [setup and paths](PIPELINE.md#optional-bodger-setup). Source files and caches
 are in bodger. Final ASCC bundles and served media stay in WorldCovers. In the
 paths below, `bodger/` means the selected checkout:
 
@@ -228,7 +252,7 @@ ANTHROPIC_API_KEY=<key> \
 OpenRouter's default model is `anthropic/claude-sonnet-4.6`. Anthropic's
 direct default model is `claude-sonnet-4-6`.
 
-## FPHC Source Extraction
+### FPHC Source Extraction
 
 Extract the 457-page 2021 second edition of *Florida Postal History
 1763-1861* from the local PDF:
@@ -314,49 +338,42 @@ This tool does not run OCR, create WoCo records, infer historical identities,
 or import a database bundle. Native text failures appear as exceptions;
 handwriting inside images remains in the image assets for later work.
 
-### Build and import the FPHC2 bundle
+### VPHC Extraction
 
-Run `./woco fphc extract` to save the native PDF extract in Bodger. Run
-`./woco fphc munge` to build WorldCovers `tools/wip/out/fphc2_fl` and stage
-the accepted image files in `backend/media/fl`. Use a fresh output directory.
-Pass `--input /absolute/path/to/manifest.json` for an existing extraction.
-The Bodger seed files must contain FL and FPHC2. The bundle includes a
-source map, review warnings, and the edition and rule version.
-
-After applying migrations, preview the bundle against the intended database:
+The VPHC workbook is extracted and compared in bodger. WorldCovers only
+forwards the call:
 
 ```sh
-./woco fphc import tools/wip/out/fphc2_fl --dry-run --review-report /tmp/fl-preview.csv
-./woco fphc import tools/wip/out/fphc2_fl --actor 1
+./woco bodger vphc_extract --help
+./woco bodger vphc_crossexam --help
+./woco bodger vphc_manuscript_ledger --help
 ```
 
-The first command writes the proposed actions and rolls back its database
-transaction. The second loads reference data, resolves Post Offices, and
-queues Marking and Cover Submissions for Florida Editors. The default
-report is `fphc_review.csv` in the bundle directory. Approve Markings
-before their Covers. Existing FPHC2 bundle records with verified source
-codes keep their identities.
+Expected exit code: `0`. Inputs, outputs, and rules are documented in
+bodger: `docs/devel/TOOLS.md` ("VPHC Source Extraction") and
+`docs/devel/VPHC-RULES.md`. These tools refuse to run where a database
+driver is installed, which is why they use bodger's environment.
 
-A unique Florida office name can resolve a Post Office. A Marking reuse
-proposal requires a matching office, kind, and inscription, compatible
-known fields, and either a full Townmark date or matching size and ink.
-A Cover reuse proposal requires an identical front or back image and a
-shared linked Marking. Ambiguous or conflicting evidence gives a separate
-listing with its FPHC Citation. The report identifies candidates and fields
-proposed for filling. Source rows held by the munger remain in its warning
-file and do not enter the Editor queue.
+The files they produce feed the [VPHC Commands](#vphc-commands) in Part 2.
 
-Approval fills blanks, adds source observations and Citations, and keeps
-existing catalog text and codes. WorldCovers stores the source wording and
-each decision under the Reference Work, kind, and bundle code. Reimporting
-the same bundle skips recorded items, including pending and rejected ones.
-If a pending proposal goes stale, preview again with `--refresh-pending
---dry-run`, then use `--refresh-pending` to refresh pending Submissions for
-review. A changed, already applied source item requires a separate editorial
-decision. Import runs entirely in WorldCovers.
-The same subcommands work with `python backend/manage.py fphc`.
+### Running Any Bodger Script
 
-## Management Commands
+```sh
+./woco bodger --help
+./woco bodger <script-name> [arguments]
+```
+
+Use the script's lowercase file name without `.py`. Arguments and the exit
+code pass straight through. Relative path arguments are relative to the
+directory you run from; a script's default paths are relative to the bodger
+checkout. A script added to bodger's `tools/` works here with no change to
+WorldCovers.
+
+---
+
+## Part 2: Import A Prepared Bundle
+
+No bodger needed. A bundle can come from any compatible source.
 
 ### `ascc import`
 
@@ -417,6 +434,137 @@ cover_markings
 cover_valuations
 ```
 
+### Build and import the FPHC2 bundle
+
+`./woco fphc extract` and `./woco fphc munge` need bodger.
+`./woco fphc import` does not; it runs entirely in WorldCovers.
+
+Run `./woco fphc extract` to save the native PDF extract in bodger. Build
+into a fresh package directory using the saved decisions and region seeds:
+
+```sh
+./woco fphc munge --input /path/to/extract/manifest.json --review-decisions /path/to/decisions.json --out-dir /path/to/package/bundle
+```
+
+Transfer the whole package directory, including `bundle/` and `media/fl/`.
+Apply the WorldCovers code and migrations before importing. Use the original
+ASCC Florida catalog as the baseline when reproducing the local build.
+
+```sh
+./woco fphc import /path/to/package/bundle --main-catalog --dry-run --review-report /tmp/fphc-preview.csv
+./woco fphc import /path/to/package/bundle --main-catalog --actor 1 --review-report /tmp/fphc-applied.csv
+```
+
+Rule version 3 publishes by default. Covers with strikes identified in the
+review decisions as English or Spanish go to the Florida Editor queue. The
+foreign inscription, office, image, page and date stay with the submission.
+An Editor can approve the Cover with a verified existing catalog Marking.
+FPHC Markings filed under Unidentified office and their linked Covers also
+go to the Florida Editor queue. Inspect the Cover scan, supply the catalog
+code of the identified Post Office and approve the Marking before its Cover.
+Repeat imports preserve pending and completed decisions. For earlier loads,
+source-owned foreign Entries are withdrawn through the recycle bin. The importer checks the decisions,
+CSV and media checksums and source accounting. It stages media and applies
+offices, Markings and Covers in order within a database transaction. Dry runs
+roll back the database and skip media writes. In a repeat import report,
+`skip` means the importer took no new action for that source row on this
+run. A Submission already awaiting Editor review can still be pending.
+Use `--queue` only when pending Editor Submissions are intended.
+Older reviewed bundles keep their previous queue behavior. Rebuild incomplete
+older bundles for main catalog use.
+
+A unique Florida office name can resolve a Post Office. A Marking reuse
+proposal requires a matching office, kind, and inscription, compatible
+known fields, and either a full Townmark date or matching size and ink.
+A Cover reuse proposal requires an identical front or back image and a
+shared linked Marking. Ambiguous or conflicting evidence gives a separate
+listing with its FPHC Citation. The report identifies candidates and fields
+proposed for filling. Source rows held by the munger remain in its warning
+file and do not enter the Editor queue.
+
+Approval fills blanks, adds source observations and Citations, and keeps
+existing catalog text and codes. WorldCovers stores the source wording and
+each decision under the Reference Work, kind, and bundle code. Reimporting
+the same bundle skips recorded items, including pending and rejected ones.
+If a pending proposal goes stale, preview again with `--refresh-pending
+--dry-run`, then use `--refresh-pending` to refresh pending Submissions for
+review. A changed, already applied source item requires a separate editorial
+decision. Import runs entirely in WorldCovers.
+The same subcommands work with `python backend/manage.py fphc`.
+
+### VPHC Commands
+
+These commands consume prepared VPHC artifacts. They do not extract the source
+workbook. Extraction and cross-examination run in bodger; see
+[VPHC extraction](#vphc-extraction).
+`import_apmc_bundle` currently delegates to ASCC; use the commands below for
+VPHC.
+
+Run from the repo root with the intended database in `mysql.cnf`. Replace
+`/path/to/vphc` with the prepared artifact directory and `ACTOR_ID` with an
+existing user's numeric ID. All three commands default to user ID 1 if
+`--actor` is omitted; choose the account that should receive audit credit.
+Expected exit code for each successful command is `0`.
+
+Before a write run against edited data, follow [BACKUP.md](BACKUP.md) to
+preserve the database and media together. A ledger log or `backup_auth` export
+does not contain a full copy of user contributions and catalog edits.
+
+#### `import_vphc_reference`
+
+Load counties, post offices, postmasters, and appointment events before
+applying marking actions. Existing offices can receive population and county
+updates. The target needs the `USA-VA1` and `USA-WV1` regions.
+
+Required files below `--vphc-dir`:
+
+- `extract/t1_markings.csv`
+- `extract/t3_postmasters.csv`
+- `crossexam/post_offices_to_create.csv`
+
+```sh
+./woco import_vphc_reference --vphc-dir /path/to/vphc --actor ACTOR_ID --dry-run
+./woco import_vphc_reference --vphc-dir /path/to/vphc --actor ACTOR_ID
+```
+
+The dry run executes the database work in one transaction and rolls it back
+after reporting counts. Omitting `--dry-run` commits the reference load.
+
+#### `apply_vphc_ledger`
+
+Apply a reviewed action ledger after the reference load. The target needs a
+`VPHC1` reference work and active collections for the states being processed.
+The default inputs are `crossexam/ledger/proposed.jsonl`,
+`crossexam/crosswalk.csv`, and scans under `extract/media/`.
+
+```sh
+./woco apply_vphc_ledger --vphc-dir /path/to/vphc --actor ACTOR_ID --dry-run
+./woco apply_vphc_ledger --vphc-dir /path/to/vphc --actor ACTOR_ID
+```
+
+Create and update actions normally produce pending contributions for editor
+review. The command can also attach scans and archive duplicate markings.
+It is not safe to replay a committed ledger as a general refresh: create
+actions can produce duplicate contributions. Check the applied log and current
+records before another run.
+
+Options:
+
+- `--only create,update,images,archive`: run a comma-separated subset of the
+  action groups. Omitting it runs all four.
+- `--ledger`, `--crosswalk`, `--applied-log`: paths relative to `--vphc-dir`.
+  The applied log defaults to `LEDGER.jsonl`. Use separate paths for a separate
+  data pass so its records do not mix with an earlier run.
+- `--auto-approve`: comma-separated verdict buckets to approve immediately.
+  The default is empty. Set it only when those buckets are approved for direct
+  publication.
+
+`--dry-run` rolls back database changes, skips scan copies, and does not
+append to the applied log. It can still write `crossexam/skipped.csv` with
+listings that could not be emitted. Review skip counts and that file. A write
+run copies media and appends applied actions to the log; those filesystem
+operations are not part of the database transaction.
+
 ### `import_apmc_bundle`
 
 Umbrella importer for the American Postal Markings Catalog. It delegates to
@@ -430,6 +578,235 @@ Umbrella importer for the American Postal Markings Catalog. It delegates to
 It accepts the same `--only`, `--allow-missing`, `--dry-run`, and `--truncate`
 flags as `import_ascc_bundle`.
 
+---
+
+## Part 3: Move Data Between Hosts
+
+Shell scripts under `tools/`. Read [RUNBOOK.md](RUNBOOK.md#data-refresh)
+before running one against a server.
+
+### `tools/push_data.sh`
+
+Run from a local checkout:
+
+```sh
+WOCO_HOST=woco.dev ./tools/push_data.sh
+WOCO_HOST=woco.dev ./tools/push_data.sh --dry-run
+WOCO_HOST=woco.dev ./tools/push_data.sh --state VA
+WOCO_HOST=woco.dev ./tools/push_data.sh --import --state VA
+WOCO_HOST=woco.dev ./tools/push_data.sh --import --bundle-dir tools/wip/out/v1_va
+```
+
+Expected exit code: `0`.
+
+Syncs local `tools/wip/` and `backend/media/` to the staging host. With
+`--import`, it runs `/srv/woco/tools/refresh_data.sh` remotely as `wocod` for
+the selected bundle. `--state VA` resolves to `tools/wip/out/v1_va`.
+
+With `--state`, only that state's bundle and media directory are uploaded.
+Set `WOCO_HOST=woco.dev` for staging; the default host is `hellowoco.app`.
+
+### `tools/refresh_data.sh`
+
+Run on the selected host as `wocod`:
+
+```sh
+sudo -u wocod /srv/woco/tools/refresh_data.sh tools/wip/out/v1_va
+```
+
+Calls the reviewed ASCC import. It resolves Post Offices and queues Entry
+Submissions in the relevant Collections. Expected exit code: `0`.
+
+<a id="toolsreload_datash"></a>
+
+### `tools/reload_data.sh`
+
+Run on the staging host as `wocod`:
+
+```sh
+sudo -u wocod /srv/woco/tools/reload_data.sh tools/wip/out/v1_va
+```
+
+Expected exit code: `0`.
+
+Current sequence:
+
+```sh
+./woco ascc import tools/wip/out/v1_va --truncate
+```
+
+This reload does not call `wipe_user_data`. It does pass `--truncate`, which
+deletes all 14 catalog import tables, including covers, before reloading the
+bundle. Run `wipe_user_data` first when submission, version, and recycle-bin
+history must also be cleared.
+
+### `tools/rebuild_staging_db.sh`
+
+Run from repo root, with `mysql.cnf` present:
+
+```sh
+WOCO_ADMIN_PASSWORD=<password> ./tools/rebuild_staging_db.sh
+WOCO_ADMIN_PASSWORD=<password> ./tools/rebuild_staging_db.sh --no-import
+```
+
+Expected exit code: `0`.
+
+Ensures the `worldcovers` database exists, runs migrations, creates the
+Django admin user, and imports CSVs from `backend/imports/` (skipped with
+`--no-import`). It does not drop the database. One-time prerequisite: run
+`tools/setup_worldcovers_db.sql` as MariaDB root to create the database and
+app user.
+
+---
+
+## Part 4: Repair And Report
+
+### `repair_vphc_rate`
+
+Repair VPHC RATEMARK contribution rates that came from a drawing number
+instead of the inscription. This edits payloads in place; do not rerun the
+ledger to perform this repair. Contributions without a `vphc` provenance key
+are excluded. Already-approved payloads are skipped by default.
+
+```sh
+./woco repair_vphc_rate --actor ACTOR_ID --dry-run --report /tmp/vphc-rates.csv
+./woco repair_vphc_rate --actor ACTOR_ID --expect COUNT --commit
+```
+
+Replace `COUNT` with the number of unapproved contribution rows reported by
+the dry run. `--expect` aborts if that count has changed; it does not count live
+catalog markings. Dry run is the default, and `--dry-run` overrides `--commit`.
+`--report` writes a CSV even in a dry run. A report-file error prints a warning
+but does not stop the repair.
+
+`--audit-live` also examines VPHC-cited RATEMARKs in the catalog. With
+`--commit`, it repairs those live rates too, so it is not a read-only option
+when combined with that flag. `--sync-approved` also updates already-approved
+contribution payloads; it requires `--audit-live` and a clean live-rate audit.
+Live marking repairs and contribution repairs use separate transactions.
+
+### `repair_ascc_child_inscriptions`
+
+`repair_ascc_child_inscriptions` removes the Townmark text that the munger
+prepended to Ratemark and Auxmark inscriptions. It matches Townmarks by
+Post Office and non-empty Catalog Text, then removes one exact inscription
+prefix plus its separating space. It skips missing or conflicting matches
+and cases with no remaining child text, printing their IDs.
+
+Running without switches commits changes. Previewing is optional:
+
+```sh
+./woco repair_ascc_child_inscriptions --dry-run
+./woco repair_ascc_child_inscriptions
+```
+
+The command prints up to five before/after examples and totals. Writes use
+one transaction and record system audit entries and new Marking versions.
+Submissions and recycle-bin records are outside this repair.
+
+Run it on `woco.dev` first, spot-check the corrected records, and repeat
+the dry run to confirm the prefixes are gone. Then repeat on
+`hellowoco.app`. Do not rerun it on a site where it has already run unless
+a new finding calls for it (Trello T50).
+
+### Color Repair
+
+`repair_catalog_colors` applies an operator-reviewed Color correction map.
+`tools/check_catalog_colors.py` verifies the before, dry-run, and after
+states. The full procedure for staging and production is in
+[COLOR-REPAIR.md](COLOR-REPAIR.md). Tool code is tracked; maps and run
+output belong in `tools/wip/`.
+
+### `report_duplicate_markings`
+
+Report candidate duplicate Markings for human review (Trello T47). Read-only:
+it never merges, archives, or deletes, and a match is evidence, not an
+authorisation. Recycle-binned Markings are not scanned.
+
+```sh
+./woco report_duplicate_markings
+./woco report_duplicate_markings --state VA --state WV --require-date-overlap
+./woco report_duplicate_markings --state VA --out tools/wip/out/dupes_va.csv
+```
+
+The default output is `tools/wip/out/duplicate_markings_<YYYYMMDD>.csv`, one
+row per group member. Expected exit code: `0`. The same groups are printed to
+the console, so a CSV that cannot be written is a warning, not a failure.
+
+Two tiers, in one report:
+
+- `EXACT`: every attribute equal except `code`, `catalog_txt`, and the audit
+  columns. This is the pipeline's own merge rule applied to database rows.
+- `NEAR`: same primary state, same town key (case, spacing, and punctuation
+  ignored, so the fragmented spellings of issue #129 meet), same type, same
+  inscription key (same normalisation, so ornament characters such as `*` are
+  ignored; the raw inscription is in the row), same shape, same colour family
+  (word order ignored, GRAY and GREY equal), and width and height within
+  0.5 mm where both are known. An unknown size never separates two rows.
+
+Every EXACT twin is also a NEAR twin, so no Marking appears twice. A group is
+`EXACT` only when all of its members are identical; `exact_match_ids` lists a
+row's identical twins inside a `NEAR` group. Markings under different primary
+states never group, so Martinsburg VA and Martinsburg WV stay apart, and one
+Marking cross-listed under two Regions is not a duplicate.
+
+`earliest_seen` and `latest_seen` are each row's cached date range.
+`dates_overlap` is `yes` or `no` for the group's known ranges and `unknown`
+with fewer than two dated members. `--require-date-overlap` drops the `no`
+groups; the default keeps them, because a date typo is itself a finding.
+
+Options:
+
+- `--state TERM`: a state name or abbreviation, repeatable. Abbreviations
+  resolve to the primary jurisdiction, never a county (issue #103).
+- `--require-date-overlap`: keep only groups whose known dates overlap.
+- `--min-group-size N`: smallest group to report (default `2`).
+- `--out PATH`: the CSV path.
+
+### `consolidate_superseded_contributions`
+
+Delete superseded non-draft Contribution rows per contributor and target.
+
+```sh
+./woco consolidate_superseded_contributions --dry-run
+./woco consolidate_superseded_contributions --no-input
+```
+
+Expected exit code: `0`. The dry run reports what would be deleted, then
+rolls back.
+
+---
+
+## Part 5: Remove Data
+
+Every command here deletes data. Take a backup first; see
+[BACKUP.md](BACKUP.md).
+
+### `ascc drop`
+
+Delete imported catalog data using an exact `Region.code`.
+
+```sh
+./woco ascc drop USA-VA1 --dry-run
+./woco ascc drop USA-VA1
+```
+
+If the Region has a Collection, removal follows its relationships and
+includes pending and archived Contributions. Shared Covers and Post Offices
+are retained. Without a Collection, the existing Post Office code-prefix
+selection applies. Neither path removes image files or account data.
+
+For source cleanup after a Collection transfer, pass both `--bundle` and
+`--verification-report`; see the runbook. The report must be a passing
+comparison from another instance, and the source must still match the
+bundle. Another Collection's Contributions or crop dependencies can block
+removal. A passing report is evidence from the operator, not a signature or
+an automatic authorization to delete data.
+
+Expected exit code: `0`. The region code is positional. The dry run reports
+delete counts and rolls back. The legacy top-level command remains available
+as `./woco drop_ascc_state`.
+
 ### `wipe_user_data`
 
 Clear user-generated submissions, versions, and recycle bins while preserving
@@ -442,6 +819,22 @@ catalog tables, auth users, groups, collections, and collection assignments.
 
 Use this only when you intentionally need to clear submission, version, and
 recycle-bin data before a separate destructive catalog refresh.
+
+#### `tools/wipe_user_data.sh`
+
+Shell wrapper around the `wipe_user_data` management command (below), with
+an optional one-step catalog reload:
+
+```sh
+./tools/wipe_user_data.sh              # wipe (prompts for confirmation)
+./tools/wipe_user_data.sh --dry-run    # report counts, change nothing
+./tools/wipe_user_data.sh --reload tools/wip/out/v1_va
+```
+
+Expected exit code: `0`.
+
+`--reload` wipes without prompting and then imports the given bundle, so
+you end up with a fresh catalog-only system in one step.
 
 ### `purge_recycle_bin`
 
@@ -511,124 +904,9 @@ Contribution review notes; it is created readable by its owner only, lives
 under `tools/wip/out/`, which is not committed, and must be treated as
 private. Expected exit code: `0`.
 
-### `verify_media_integrity`
+---
 
-Check that every Image row resolves to a file under `MEDIA_ROOT`, optionally
-with matching sha256, and report files with no Image row (orphan files) and
-Image, Citation, or DateSeen rows whose Marking or Cover no longer exists
-(orphan rows, T51). A row on a recycle-binned subject is not an orphan.
-
-```sh
-./woco verify_media_integrity
-./woco verify_media_integrity --check-checksums --json tools/wip/out/media-integrity.json
-./woco verify_media_integrity --fail-on-orphans
-```
-
-Missing or corrupt files fail the check. Orphan files and orphan rows are
-reported and fail only with `--fail-on-orphans`. The JSON report lists orphan
-rows per table with their subject and row IDs. The command deletes nothing;
-what to do with orphans is a separate decision. `--media-root` checks a
-restored snapshot instead of the live tree (see [BACKUP.md](BACKUP.md)).
-Expected exit code: `0`.
-
-### `report_duplicate_markings`
-
-Report candidate duplicate Markings for human review (Trello T47). Read-only:
-it never merges, archives, or deletes, and a match is evidence, not an
-authorisation. Recycle-binned Markings are not scanned.
-
-```sh
-./woco report_duplicate_markings
-./woco report_duplicate_markings --state VA --state WV --require-date-overlap
-./woco report_duplicate_markings --state VA --out tools/wip/out/dupes_va.csv
-```
-
-The default output is `tools/wip/out/duplicate_markings_<YYYYMMDD>.csv`, one
-row per group member. Expected exit code: `0`. The same groups are printed to
-the console, so a CSV that cannot be written is a warning, not a failure.
-
-Two tiers, in one report:
-
-- `EXACT`: every attribute equal except `code`, `catalog_txt`, and the audit
-  columns. This is the pipeline's own merge rule applied to database rows.
-- `NEAR`: same primary state, same town key (case, spacing, and punctuation
-  ignored, so the fragmented spellings of issue #129 meet), same type, same
-  inscription key (same normalisation, so ornament characters such as `*` are
-  ignored; the raw inscription is in the row), same shape, same colour family
-  (word order ignored, GRAY and GREY equal), and width and height within
-  0.5 mm where both are known. An unknown size never separates two rows.
-
-Every EXACT twin is also a NEAR twin, so no Marking appears twice. A group is
-`EXACT` only when all of its members are identical; `exact_match_ids` lists a
-row's identical twins inside a `NEAR` group. Markings under different primary
-states never group, so Martinsburg VA and Martinsburg WV stay apart, and one
-Marking cross-listed under two Regions is not a duplicate.
-
-`earliest_seen` and `latest_seen` are each row's cached date range.
-`dates_overlap` is `yes` or `no` for the group's known ranges and `unknown`
-with fewer than two dated members. `--require-date-overlap` drops the `no`
-groups; the default keeps them, because a date typo is itself a finding.
-
-Options:
-
-- `--state TERM`: a state name or abbreviation, repeatable. Abbreviations
-  resolve to the primary jurisdiction, never a county (issue #103).
-- `--require-date-overlap`: keep only groups whose known dates overlap.
-- `--min-group-size N`: smallest group to report (default `2`).
-- `--out PATH`: the CSV path.
-
-### `backup_marking` And `restore_marking`
-
-Export one marking by `Marking.code` to a single JSON file, then restore the
-same marking graph elsewhere. The JSON includes the marking, directly linked
-covers, lookup rows, contribution rows, submission transactions, snapshot
-versions, recycle-bin sidecars, dates, citations, and image metadata. It does
-not copy image files; restored Image rows still point at
-`MEDIA_ROOT/<storage_filename>`.
-
-Run from repo root, with `backend/.env` and `mysql.cnf` present:
-
-```sh
-./woco backup_marking ASCC6-VA-M0001 backups/ASCC6-VA-M0001.json
-./woco restore_marking backups/ASCC6-VA-M0001.json --dry-run
-./woco restore_marking backups/ASCC6-VA-M0001.json
-```
-
-Matching auth users must already exist locally. `restore_marking` fails before
-import when a contribution contributor username is missing. Expected exit
-code: `0`.
-
-### `prune_revisions`
-
-Prune django-reversion storage while preserving the newest configured number
-of Version rows per object. This command also purges legacy Version rows for
-the custom audit/snapshot tables that are excluded from reversion tracking.
-
-```sh
-./woco prune_revisions --dry-run
-./woco prune_revisions
-```
-
-The dry run reports what would be deleted and rolls back. Expected exit code:
-`0`. Retention defaults live in `backend/woco/settings.py` as
-`REVERSION_PRUNE_RETENTION_DAYS` and `REVERSION_PRUNE_KEEP_PER_OBJECT`.
-
-### `backup_auth` And `restore_auth`
-
-Export and restore users, groups, email addresses, collections, and collection
-assignments. Both take a single path: a JSON file by default, or a directory
-of per-table CSVs with `--emit-csv`.
-
-```sh
-./woco backup_auth /tmp/woco-auth.json
-./woco restore_auth /tmp/woco-auth.json --dry-run
-./woco restore_auth /tmp/woco-auth.json
-./woco backup_auth /tmp/woco-auth/ --emit-csv
-```
-
-The exported data contains email addresses and password hashes. Store it as
-a sensitive artifact. For the full host-to-host sync procedure, see
-[RUNBOOK.md](RUNBOOK.md#auth-sync-between-hosts).
+## Part 6: Back Up, Restore, And Check
 
 ### Collection Backup And Restore
 
@@ -684,42 +962,82 @@ file bytes. Extra destination Entries or related records also fail the
 comparison. Write its report outside the bundle. See the
 [transfer procedure](RUNBOOK.md#collection-transfer-between-instances).
 
-### `ascc drop`
+### `backup_marking` And `restore_marking`
 
-Delete imported catalog data using an exact `Region.code`.
+Export one marking by `Marking.code` to a single JSON file, then restore the
+same marking graph elsewhere. The JSON includes the marking, directly linked
+covers, lookup rows, contribution rows, submission transactions, snapshot
+versions, recycle-bin sidecars, dates, citations, and image metadata. It does
+not copy image files; restored Image rows still point at
+`MEDIA_ROOT/<storage_filename>`.
 
-```sh
-./woco ascc drop USA-VA1 --dry-run
-./woco ascc drop USA-VA1
-```
-
-If the Region has a Collection, removal follows its relationships and
-includes pending and archived Contributions. Shared Covers and Post Offices
-are retained. Without a Collection, the existing Post Office code-prefix
-selection applies. Neither path removes image files or account data.
-
-For source cleanup after a Collection transfer, pass both `--bundle` and
-`--verification-report`; see the runbook. The report must be a passing
-comparison from another instance, and the source must still match the
-bundle. Another Collection's Contributions or crop dependencies can block
-removal. A passing report is evidence from the operator, not a signature or
-an automatic authorization to delete data.
-
-Expected exit code: `0`. The region code is positional. The dry run reports
-delete counts and rolls back. The legacy top-level command remains available
-as `./woco drop_ascc_state`.
-
-### `consolidate_superseded_contributions`
-
-Delete superseded non-draft Contribution rows per contributor and target.
+Run from repo root, with `backend/.env` and `mysql.cnf` present:
 
 ```sh
-./woco consolidate_superseded_contributions --dry-run
-./woco consolidate_superseded_contributions --no-input
+./woco backup_marking ASCC6-VA-M0001 backups/ASCC6-VA-M0001.json
+./woco restore_marking backups/ASCC6-VA-M0001.json --dry-run
+./woco restore_marking backups/ASCC6-VA-M0001.json
 ```
 
-Expected exit code: `0`. The dry run reports what would be deleted, then
-rolls back.
+Matching auth users must already exist locally. `restore_marking` fails before
+import when a contribution contributor username is missing. Expected exit
+code: `0`.
+
+### `backup_auth` And `restore_auth`
+
+Export and restore users, groups, email addresses, collections, and collection
+assignments. Both take a single path: a JSON file by default, or a directory
+of per-table CSVs with `--emit-csv`.
+
+```sh
+./woco backup_auth /tmp/woco-auth.json
+./woco restore_auth /tmp/woco-auth.json --dry-run
+./woco restore_auth /tmp/woco-auth.json
+./woco backup_auth /tmp/woco-auth/ --emit-csv
+```
+
+The exported data contains email addresses and password hashes. Store it as
+a sensitive artifact. For the full host-to-host sync procedure, see
+[RUNBOOK.md](RUNBOOK.md#auth-sync-between-hosts).
+
+### `verify_media_integrity`
+
+Check that every Image row resolves to a file under `MEDIA_ROOT`, optionally
+with matching sha256, and report files with no Image row (orphan files) and
+Image, Citation, or DateSeen rows whose Marking or Cover no longer exists
+(orphan rows, T51). A row on a recycle-binned subject is not an orphan.
+
+```sh
+./woco verify_media_integrity
+./woco verify_media_integrity --check-checksums --json tools/wip/out/media-integrity.json
+./woco verify_media_integrity --fail-on-orphans
+```
+
+Missing or corrupt files fail the check. Orphan files and orphan rows are
+reported and fail only with `--fail-on-orphans`. The JSON report lists orphan
+rows per table with their subject and row IDs. The command deletes nothing;
+what to do with orphans is a separate decision. `--media-root` checks a
+restored snapshot instead of the live tree (see [BACKUP.md](BACKUP.md)).
+Expected exit code: `0`.
+
+### `prune_revisions`
+
+Prune django-reversion storage while preserving the newest configured number
+of Version rows per object. This command also purges legacy Version rows for
+the custom audit/snapshot tables that are excluded from reversion tracking.
+
+```sh
+./woco prune_revisions --dry-run
+./woco prune_revisions
+```
+
+The dry run reports what would be deleted and rolls back. Expected exit code:
+`0`. Retention defaults live in `backend/woco/settings.py` as
+`REVERSION_PRUNE_RETENTION_DAYS` and `REVERSION_PRUNE_KEEP_PER_OBJECT`.
+
+---
+
+## Part 7: Accounts
 
 ### `set_user_password`
 
@@ -733,143 +1051,25 @@ account. An Administrator must make that separate decision in Django admin.
 
 Expected exit code: `0`.
 
-## VPHC Commands
+---
 
-These commands consume prepared VPHC artifacts. They do not extract the source
-workbook. The extraction and cross-examination scripts named in their source
-comments are external workspace tools, not entry points in this checkout.
-`import_apmc_bundle` currently delegates to ASCC; use the commands below for
-VPHC.
+## Files In `tools/` That Are Not Entry Points
 
-Run from the repo root with the intended database in `mysql.cnf`. Replace
-`/path/to/vphc` with the prepared artifact directory and `ACTOR_ID` with an
-existing user's numeric ID. All three commands default to user ID 1 if
-`--actor` is omitted; choose the account that should receive audit credit.
-Expected exit code for each successful command is `0`.
+Listed so nobody mistakes their absence above for missing documentation.
 
-Before a write run against edited data, follow [BACKUP.md](BACKUP.md) to
-preserve the database and media together. A ledger log or `backup_auth` export
-does not contain a full copy of user contributions and catalog edits.
-
-### `import_vphc_reference`
-
-Load counties, post offices, postmasters, and appointment events before
-applying marking actions. Existing offices can receive population and county
-updates. The target needs the `USA-VA1` and `USA-WV1` regions.
-
-Required files below `--vphc-dir`:
-
-- `extract/t1_markings.csv`
-- `extract/t3_postmasters.csv`
-- `crossexam/post_offices_to_create.csv`
-
-```sh
-./woco import_vphc_reference --vphc-dir /path/to/vphc --actor ACTOR_ID --dry-run
-./woco import_vphc_reference --vphc-dir /path/to/vphc --actor ACTOR_ID
-```
-
-The dry run executes the database work in one transaction and rolls it back
-after reporting counts. Omitting `--dry-run` commits the reference load.
-
-### `apply_vphc_ledger`
-
-Apply a reviewed action ledger after the reference load. The target needs a
-`VPHC1` reference work and active collections for the states being processed.
-The default inputs are `crossexam/ledger/proposed.jsonl`,
-`crossexam/crosswalk.csv`, and scans under `extract/media/`.
-
-```sh
-./woco apply_vphc_ledger --vphc-dir /path/to/vphc --actor ACTOR_ID --dry-run
-./woco apply_vphc_ledger --vphc-dir /path/to/vphc --actor ACTOR_ID
-```
-
-Create and update actions normally produce pending contributions for editor
-review. The command can also attach scans and archive duplicate markings.
-It is not safe to replay a committed ledger as a general refresh: create
-actions can produce duplicate contributions. Check the applied log and current
-records before another run.
-
-Options:
-
-- `--only create,update,images,archive`: run a comma-separated subset of the
-  action groups. Omitting it runs all four.
-- `--ledger`, `--crosswalk`, `--applied-log`: paths relative to `--vphc-dir`.
-  The applied log defaults to `LEDGER.jsonl`. Use separate paths for a separate
-  data pass so its records do not mix with an earlier run.
-- `--auto-approve`: comma-separated verdict buckets to approve immediately.
-  The default is empty. Set it only when those buckets are approved for direct
-  publication.
-
-`--dry-run` rolls back database changes, skips scan copies, and does not
-append to the applied log. It can still write `crossexam/skipped.csv` with
-listings that could not be emitted. Review skip counts and that file. A write
-run copies media and appends applied actions to the log; those filesystem
-operations are not part of the database transaction.
-
-### `repair_vphc_rate`
-
-Repair VPHC RATEMARK contribution rates that came from a drawing number
-instead of the inscription. This edits payloads in place; do not rerun the
-ledger to perform this repair. Contributions without a `vphc` provenance key
-are excluded. Already-approved payloads are skipped by default.
-
-```sh
-./woco repair_vphc_rate --actor ACTOR_ID --dry-run --report /tmp/vphc-rates.csv
-./woco repair_vphc_rate --actor ACTOR_ID --expect COUNT --commit
-```
-
-Replace `COUNT` with the number of unapproved contribution rows reported by
-the dry run. `--expect` aborts if that count has changed; it does not count live
-catalog markings. Dry run is the default, and `--dry-run` overrides `--commit`.
-`--report` writes a CSV even in a dry run. A report-file error prints a warning
-but does not stop the repair.
-
-`--audit-live` also examines VPHC-cited RATEMARKs in the catalog. With
-`--commit`, it repairs those live rates too, so it is not a read-only option
-when combined with that flag. `--sync-approved` also updates already-approved
-contribution payloads; it requires `--audit-live` and a clean live-rate audit.
-Live marking repairs and contribution repairs use separate transactions.
-
-## ASCC Inscription Repair (T50)
-
-`repair_ascc_child_inscriptions` removes the Townmark text that the munger
-prepended to Ratemark and Auxmark inscriptions. It matches Townmarks by
-Post Office and non-empty Catalog Text, then removes one exact inscription
-prefix plus its separating space. It skips missing or conflicting matches
-and cases with no remaining child text, printing their IDs.
-
-Running without switches commits changes. Previewing is optional:
-
-```sh
-./woco repair_ascc_child_inscriptions --dry-run
-./woco repair_ascc_child_inscriptions
-```
-
-The command prints up to five before/after examples and totals. Writes use
-one transaction and record system audit entries and new Marking versions.
-Submissions and recycle-bin records are outside this repair.
-
-Deploy the munger fix and command to woco.dev first. Michael runs the repair,
-spot-checks the corrected records, and repeats the dry run to check that the
-prefixes are gone. After staging passes, deploy and repeat on hellowoco.app.
-Record each site's result and any skipped cases under T50.
-
-## Internal Modules (Not Operator Entry Points)
-
-`tools/` also contains modules and one-off scripts that operators do not run
-directly. Listed here so nobody mistakes their absence above for missing
-documentation:
-
-- `v1_catalog_rows.py`, `v1_attach_images.py`, `v1_bundle_overlay.py`,
-  `v1_to_v2_catalog_format.py`, `v1_synthetic_listing.py`: v1 pipeline
-  stages, orchestrated by `./woco ascc munge` / `run`.
-- `catalog_rows.py`, `pipeline_llm.py`, `ascc_pipeline/`: shared helpers for
-  the ASCC pipeline (CSV schema, LLM provider selection, orchestration).
-- `merge_ascc_bundles.py`: merges per-state bundles into one importable
-  bundle; run manually only for multi-state imports.
-- `run_ascc_pipeline.sh`: legacy wrapper that delegates to `./woco ascc ocr`.
-- `fingerprint.sh`: malware fingerprint scan run by CI before builds.
-- `schema_diff.py`, `export_azure_sql_to_csv.py`,
-  `extract_state_cross_section.py`: one-off data-migration utilities.
-- `apmc_data_explorer.ipynb`: Jupyter notebook with the v1 source-data
-  analysis behind [v1/v1-legacy-summary.md](v1/v1-legacy-summary.md).
+| Path | What it is |
+|---|---|
+| `ascc_cli.py` | Implements `./woco ascc`. Do not run it directly. |
+| `bodger_tools.py` | Finds the bodger checkout and runs its scripts. Implements `./woco bodger`. |
+| `ascc_pipeline/` | WorldCovers-side orchestration helpers for `./woco ascc` (checks, paths, run manifest). |
+| `setup.sh`, `setup_worldcovers_db.sql` | Environment and database setup; see [BUILD.md](BUILD.md). |
+| `pre_change_backup.sh` | Takes a tagged backup before a destructive change. Sourced by `reload_data.sh` and `wipe_user_data.sh`; not run directly. |
+| `pull_backups.sh`, `rehearse_restore.sh` | Workstation side of server backups; see [BACKUP.md](BACKUP.md). |
+| `run_ascc_pipeline.sh` | Legacy wrapper that delegates to `./woco ascc ocr`. |
+| `fingerprint.sh` | Malware fingerprint scan. The first step of [verification](BUILD.md#verification). |
+| `audit_image_subjects.py` | One-off report of images filed under the wrong subject by the v1 import. |
+| `schema_diff.py`, `export_azure_sql_to_csv.py` | One-off v1 data-migration utilities. |
+| `loadtest/` | Locust load-test scripts and saved results. |
+| `apmc_data_explorer.ipynb` | Jupyter notebook with the v1 source-data analysis behind [v1/v1-legacy-summary.md](v1/v1-legacy-summary.md). |
+| `tests/` | The tools test suite. Run with pytest; see [BUILD.md](BUILD.md#verification). |
+| `wip/` | Local inputs, outputs, and caches. Ignored by Git. |

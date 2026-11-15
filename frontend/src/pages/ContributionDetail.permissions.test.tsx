@@ -1,10 +1,11 @@
 /** @jest-environment jsdom */
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
 import {
+  decideContribution,
   getContribution,
   getDirectCatalogCodeSuggestion,
   mapApiItemToContribution,
@@ -28,6 +29,7 @@ jest.mock("@/services/markings", () => ({
 jest.mock("@/services/contributions", () => ({
   ...jest.requireActual("@/services/contributions"),
   getContribution: jest.fn(),
+  decideContribution: jest.fn().mockResolvedValue({ markingId: 7 }),
   getDirectCatalogCodeSuggestion: jest.fn().mockResolvedValue({ catalogCode: "APMC-VT-M0001" }),
 }));
 
@@ -41,6 +43,27 @@ const editor: AuthUser = {
 };
 
 beforeEach(() => jest.clearAllMocks());
+
+it("shows the Cover scan and sends the identified office on Marking approval", async () => {
+  (useAuth as jest.Mock).mockReturnValue(editor);
+  (getContribution as jest.Mock).mockResolvedValue(mapApiItemToContribution({
+    id: 9310, collection: 100, contributor: 7, status: "pending",
+    submitted_data: { submission_kind: "marking", type: "RATEMARK", requires_catalog_office: true,
+      catalog_code: "FPHC2-M-0373-i001-1", inscription_txt: "Sh 26",
+      cover_image_metas: [{ storage_filename: "fl/scan.png", original_filename: "scan.png" }] },
+  }));
+  render(<TooltipProvider><MemoryRouter initialEntries={["/contribution/9310"]}>
+    <Routes><Route path="/contribution/:id" element={<ContributionDetail />} /></Routes>
+  </MemoryRouter></TooltipProvider>);
+  const field = await screen.findByLabelText("Post Office catalog code");
+  expect(screen.getByAltText("scan.png").getAttribute("src")).toContain("fl/scan.png");
+  const approve = screen.getByRole("button", { name: "Approve" });
+  expect(approve.hasAttribute("disabled")).toBe(true);
+  fireEvent.change(field, { target: { value: "OFFICE-1" } });
+  fireEvent.click(approve);
+  await waitFor(() => expect(decideContribution).toHaveBeenCalledWith(9310, "approve",
+    expect.objectContaining({ catalogCode: "FPHC2-M-0373-i001-1", officeCode: "OFFICE-1" })));
+});
 
 describe.each(["marking", "cover"])("%s Submission review permissions", (kind) => {
   it("keeps known details readable and prevents approval of unrecognized fields", async () => {

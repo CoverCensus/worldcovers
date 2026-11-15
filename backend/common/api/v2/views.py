@@ -240,7 +240,7 @@ class _ContributionNotApplied(Exception):
 # the sense that this opens its own atomic block per contribution -- which is
 # what lets a bulk batch commit the rows that worked and report the ones that
 # did not (#101 AC-4).
-def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_code=None):
+def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_code=None, marking_code=None, marking_is_backstamp=False, office_code=None):
     """Approve one contribution. Returns the response body dict.
 
     Raises CatalogCodeError / ContributionApplyError for a bad payload, and
@@ -275,7 +275,15 @@ def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_cod
             contrib,
             requested_code=requested_catalog_code,
         )
-        result = contrib.apply_to_catalog()
+        source_item = getattr(contrib, "catalog_source", None)
+        if source_item and source_item.decision.get("foreign_review"):
+            from common.fphc_foreign_review import approve_foreign_cover
+            result = approve_foreign_cover(source_item, contrib, actor, marking_code, marking_is_backstamp)
+        elif source_item and source_item.decision.get("office_review"):
+            from common.fphc_office_review import approve_office_review
+            result = approve_office_review(source_item, contrib, actor, office_code)
+        else:
+            result = contrib.apply_to_catalog()
 
         # apply_to_catalog returns a Marking for marking submissions and
         # a dict {"kind": "cover", ...} for cover submissions. Branch on
@@ -3508,6 +3516,9 @@ class ContributionViewSet(
                 actor=request.user,
                 review_notes=review_notes,
                 requested_catalog_code=requested_catalog_code,
+                office_code=serializer.validated_data.get("office_code"),
+                marking_code=serializer.validated_data.get("marking_code"),
+                marking_is_backstamp=serializer.validated_data["marking_is_backstamp"],
             )
         except (CatalogCodeError, ContributionApplyError) as exc:
             return Response(

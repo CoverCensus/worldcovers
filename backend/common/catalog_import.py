@@ -9,6 +9,8 @@ from django.core.management.base import CommandError
 from django.db import transaction
 
 from common.catalog_bundle import RESOURCES, _load_dataset
+from common.fphc_foreign_review import route_foreign_item
+from common.catalog_source_approval import apply_catalog_entry
 from common.catalog_codes import strip_catalog_code_keys
 from common.catalog_source_matching import (
     FIELDS,
@@ -33,7 +35,7 @@ from common.models import (
 )
 
 
-def queue_entry(item, collection, actor, town, references, parent_id=None):
+def queue_entry(item, collection, actor, town, references, parent_id=None, *, review_note="", cover_images=()):
     source = item.evidence
     row = source["row"]
     plan = item.decision
@@ -68,7 +70,7 @@ def queue_entry(item, collection, actor, town, references, parent_id=None):
             if locator not in payload["reference_work_details"]:
                 payload["reference_work_details"].append(locator)
     for field in FIELDS[item.kind]:
-        if target and field not in plan["fills"] and field not in ("type",):
+        if target and not plan.get("office_review") and field not in plan["fills"] and field not in ("type",):
             continue
         if row.get(field) not in ("", None):
             value = row[field]
@@ -81,7 +83,13 @@ def queue_entry(item, collection, actor, town, references, parent_id=None):
         payload["parent_marking_id"] = parent_id
     # Source identity stays on the receipt even when an Editor assigns a code.
     payload["catalog_code"] = target.code if target and target.code else item.source_key
-    if source.get("images"):
+    if review_note:
+        payload["comment_for_editor"] += "\n" + review_note
+        if item.kind == "MARKING":
+            payload["requires_catalog_office"] = True
+    for image_kind, image_rows in ((item.kind.lower(), source.get("images", [])), ("cover", cover_images)):
+        if not image_rows:
+            continue
         shown = (
             "storage_filename",
             "original_filename",
@@ -92,8 +100,8 @@ def queue_entry(item, collection, actor, town, references, parent_id=None):
             "image_width",
             "image_height",
         )
-        payload[item.kind.lower() + "_image_metas"] = [
-            {k: r[k] for k in shown if k in r} for r in source["images"]
+        payload[image_kind + "_image_metas"] = [
+            {k: r[k] for k in shown if k in r} for r in image_rows
         ]
     if item.kind == "MARKING":
         payload["marking_dates_seen"] = [
@@ -104,6 +112,16 @@ def queue_entry(item, collection, actor, town, references, parent_id=None):
             }
             for r in source.get("dates_seen", [])
         ]
+    if plan.get("foreign_review"):
+        payload["requires_catalog_marking"] = True
+        payload["comment_for_editor"] += "\n" + plan["foreign_text"]
+    if item.kind == "COVER" and (plan.get("foreign_review") or plan.get("office_review")):
+        for obs in source.get("dates_seen", [])[:1]:
+            payload["cover_date"] = obs["date"]
+            payload["cover_granularity"] = obs["granularity"]
+            for part in ("year", "month", "day"):
+                if obs.get("date_" + part):
+                    payload["cover_date_" + part] = int(obs["date_" + part])
     # A queued import is a proposal against specific evidence. Do not apply
     # different fields from those an Editor saw after a Submission revision.
     item.decision["review_payload"] = strip_catalog_code_keys(payload)
@@ -157,7 +175,7 @@ def write_review_report(report, items, results, edition):
                     kind,
                     code,
                     action,
-                    plan["target_code"],
+                    plan.get("target_code") or codes[kind].get(plan["target"], ""),
                     plan["target"],
                     plan["reason"],
                     json.dumps(filled),
@@ -180,7 +198,19 @@ def refresh_receipt(item: CatalogSourceItem, data: dict, refresh: bool) -> bool:
     if not item.applied and not item.contribution_id:
         raise CommandError(f"The Submission for {code} was removed. Review its source mapping.")
     pending = not item.applied and item.contribution.status == Contribution.STATUS_PENDING
-    if item.evidence != data:
+    saved = item.evidence
+    # The standalone review 19 supplement kept extra source notes on receipts
+    # and flattened line breaks in image captions. Preserve those old notes.
+    if (item.applied or item.decision.get("office_review")) and "source_evidence" in saved and "source_sha256" in saved:
+        saved = {k: v for k, v in saved.items() if k not in ("source_evidence", "source_sha256")}
+        if "images" in saved and len(saved["images"]) == len(data.get("images", [])):
+            imgs = []
+            for old, new in zip(saved["images"], data["images"], strict=True):
+                if old["image_description"].split() == new["image_description"].split():
+                    old = dict(old, image_description=new["image_description"])
+                imgs.append(old)
+            saved = dict(saved, images=imgs)
+    if saved != data:
         delta = {
             key: {"saved": item.evidence.get(key), "incoming": data.get(key)}
             for key in item.evidence.keys() | data.keys()
@@ -210,23 +240,28 @@ def load_lookups(directory, actor, allow_missing):
         RESOURCES[stem]().import_data(dataset, raise_errors=True)
 
 
-def office_candidates(items, edition, actor):
+def office_candidates(items, edition, actor, publish=False):
     regions = Region.objects.filter(region_tier__in=("STATE", "TERRITORY", "DISTRICT"))
     by_code = {r.code: r for r in regions}
     office_regions = {}
     office_names = Counter()
     for (kind, code), data in items.items():
         if kind == "OFFICE":
-            linked = {r["region"] for r in data["post_office_regions"]} & by_code.keys()
-            if edition == "FPHC2":
-                linked = {"USA-FL1"}
+            links = data.get("post_office_regions", [])
+            linked = {r["region"] for r in links} & by_code.keys()
+            if not links and edition == "FPHC2" and code.startswith("FPHC2-O-"):
+                office_regions[code] = None
+                continue
             if len(linked) != 1:
                 raise CommandError(f"Expected one Collection Region for Post Office {code}.")
             region = by_code[linked.pop()]
             office_regions[code] = region
             office_names[region.abbrev, office_key(data["row"]["name"])] += 1
     collections = {}
-    for region in sorted(set(office_regions.values()), key=lambda r: r.pk):
+    queue_regions = {r for r in office_regions.values() if r} if not publish else set()
+    if not publish and None in office_regions.values():
+        queue_regions.add(by_code["USA-FL1"])
+    for region in sorted(queue_regions, key=lambda r: r.pk):
         collection, _ = Collection.objects.select_for_update().get_or_create(
             region=region, defaults={"name": region.name, "created_by": actor, "modified_by": actor}
         )
@@ -234,7 +269,7 @@ def office_candidates(items, edition, actor):
             raise CommandError(f"The {region.name} Collection is inactive.")
         collections[region.pk] = collection
     offices = defaultdict(list)
-    for region_abbrev in {r.abbrev for r in office_regions.values()}:
+    for region_abbrev in {r.abbrev for r in office_regions.values() if r}:
         local = PostOffice.objects.filter(
             post_office_regions__region__in=regions.filter(abbrev=region_abbrev)
         ).distinct()
@@ -244,7 +279,7 @@ def office_candidates(items, edition, actor):
 
 
 def import_catalog(
-    directory, actor, dry_run, stdout, report, refresh=False, *, edition=None, allow_missing=False
+    directory, actor, dry_run, stdout, report, refresh=False, *, edition=None, allow_missing=False, publish=False, foreign=None
 ):
     report = Path(report)
     protected = {directory / (stem + ".csv") for stem in RESOURCES}
@@ -260,14 +295,27 @@ def import_catalog(
     if report.resolve() in {path.resolve() for path in protected}:
         raise CommandError("Choose a report path outside the bundle input files.")
     edition, items = source_items(directory, edition, allow_missing)
+    foreign = foreign or {}
+    if any(("MARKING", code) not in items for code in foreign):
+        raise CommandError("Foreign Marking decision does not name a bundle Marking.")
+    review_covers = {code for (kind, code), data in items.items() if kind == "COVER"
+                     and any(link["marking"] in foreign for link in data["cover_markings"])}
+    from common.fphc_office_review import queue_office_review, review_links
+    office_marks, office_covers = review_links(items) if edition == "FPHC2" else ({}, {})
     results = []
     with transaction.atomic():
         load_lookups(directory, actor, allow_missing)
         ref = ReferenceWork.objects.get(code=edition)
         references = dict(ReferenceWork.objects.values_list("code", "pk"))
         office_regions, collections, offices, office_names = office_candidates(
-            items, edition, actor
+            items, edition, actor, publish
         )
+        def queue_collection(office_code):
+            region = office_regions[office_code]
+            if region is None:
+                return next(c for c in collections.values() if c.region.code == "USA-FL1")
+            return collections[region.pk]
+
         bindings = {}
         for (kind, code), data in items.items():
             item, fresh = CatalogSourceItem.objects.select_for_update().get_or_create(
@@ -277,19 +325,35 @@ def import_catalog(
                 defaults={"evidence": data, "decision": {}},
             )
             bindings[kind, code] = item
+            if (kind == "MARKING" and code in foreign) or (kind == "COVER" and code in review_covers):
+                action = route_foreign_item(item, data, foreign, actor, references, review_covers)
+                results.append((kind, code, action, item.decision))
+                continue
+            if (kind == "MARKING" and code in office_marks) or (kind == "COVER" and code in office_covers):
+                action = queue_office_review(item, data, items, office_marks, office_covers, actor, references)
+                results.append((kind, code, action, item.decision))
+                continue
             if not fresh and not refresh_receipt(item, data, refresh):
+                if publish and not item.applied:
+                    if item.contribution.status != Contribution.STATUS_PENDING:
+                        raise CommandError(f"Cannot publish {code} with status {item.contribution.status}.")
+                    from common.api.v2.views import _approve_contribution
+                    _approve_contribution(item.contribution, actor=actor, review_notes="Catalog import")
+                    item.refresh_from_db()
+                    results.append((kind, code, item.decision["action"], item.decision))
+                    continue
                 results.append((kind, code, "skip", item.decision))
                 continue
             model = MODELS[kind]
             row = data["row"]
             if kind == "OFFICE":
                 region = office_regions[code]
-                name_key = (region.abbrev, office_key(row["name"]))
+                name_key = (region.abbrev if region else None, office_key(row["name"]))
             old = model.objects.filter(code=code).first()
             if old and fresh:
                 # Adopt a previous direct import only when provenance agrees.
                 if kind == "OFFICE":
-                    verified = old.name == row["name"] and old in offices[name_key]
+                    verified = old.name == row["name"] and (old in offices[name_key] if region else not old.post_office_regions.exists())
                 elif kind == "COVER" and not data.get("citations"):
                     # Earlier ASCC bundles cited the parent Marking only.
                     verified = all(
@@ -322,11 +386,11 @@ def import_catalog(
                     )
                     item.decision = decision(
                         "create",
-                        f"No unique {region.name} office",
+                        "No unique office in the source jurisdiction",
                         candidates=[c.pk for c in candidates],
                     )
                 item.post_office = obj
-                for link in data["post_office_regions"]:
+                for link in data.get("post_office_regions", []):
                     attrs = values(
                         "post_office_regions", link, ("region", "valid_from", "valid_to")
                     )
@@ -341,36 +405,31 @@ def import_catalog(
                         },
                     )
                 item.applied = True
-            elif kind == "MARKING":
-                office = bindings["OFFICE", row["post_office"]].post_office
-                item.decision = choose_marking(data, office, edition)
-                item.marking_id = item.decision["target"]
-                queue_entry(
-                    item,
-                    collections[office_regions[row["post_office"]].pk],
-                    actor,
-                    office.name,
-                    references,
-                )
             else:
-                parents = [bindings["MARKING", link["marking"]] for link in data["cover_markings"]]
-                item.decision = choose_cover(data, parents)
-                item.cover_id = item.decision["target"]
-                office_code = parents[0].evidence["row"]["post_office"]
-                queue_entry(
-                    item,
-                    collections[office_regions[office_code].pk],
-                    actor,
-                    bindings["OFFICE", office_code].post_office.name,
-                    references,
-                    parents[0].marking_id,
-                )
+                if kind == "MARKING":
+                    office_code = row["post_office"]
+                    parents = []
+                    office = bindings["OFFICE", office_code].post_office
+                    item.decision = choose_marking(data, office, edition)
+                else:
+                    parents = [bindings["MARKING", link["marking"]] for link in data["cover_markings"]]
+                    office_code = parents[0].evidence["row"]["post_office"]
+                    office = bindings["OFFICE", office_code].post_office
+                    item.decision = choose_cover(data, parents)
+                target = item.decision["target"]
+                setattr(item, RELATIONS[kind] + "_id", target)
+                if publish:
+                    obj = model.objects.select_for_update().get(pk=target) if target else None
+                    apply_catalog_entry(item, actor, code, office, parents, obj, item.decision["fills"])
+                else:
+                    queue_entry(item, queue_collection(office_code), actor, office.name, references,
+                                parents[0].marking_id if parents else None)
             item.save()
             results.append((kind, code, item.decision["action"], item.decision))
         write_review_report(report, items, results, edition)
         if dry_run:
             transaction.set_rollback(True)
     counts = Counter((kind, action) for kind, _, action, _ in results)
-    stdout.write("Dry run rolled back." if dry_run else "Import review complete.")
+    stdout.write("Dry run rolled back." if dry_run else ("Main catalog import complete." if publish else "Import review complete."))
     for (kind, action), count in sorted(counts.items()):
         stdout.write(f"  {kind} {action}: {count}")

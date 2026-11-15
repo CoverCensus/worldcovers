@@ -187,7 +187,7 @@ until an Editor for that state reviews it. This is the second half of your job.
    The other settings, such as **Needs Revision**, **Approved** and **Rejected**, show what you
    have already dealt with. The search box (*Search across fields...*) narrows the list by town or
    any other field.
-3. Open a submission by clicking its image.
+3. Open a Submission by clicking its title, status badge, or image.
 
 <!-- screenshot: the Editor Dashboard with the Status filter set to Pending -->
 

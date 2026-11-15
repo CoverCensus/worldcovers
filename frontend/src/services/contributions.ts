@@ -397,6 +397,9 @@ export async function abandonCoverContributionDraft(contributionId: number): Pro
 export type ContributionAction = "approve" | "reject" | "revision";
 
 export interface DecideOptions {
+  officeCode?: string;
+  markingCode?: string;
+  markingIsBackstamp?: boolean;
   /** Saved as review_notes; sent only when non-empty. */
   reviewNotes?: string;
   /** Approve only; sent only when provided. */
@@ -524,6 +527,11 @@ export async function decideContribution(
   const body: Record<string, unknown> = {};
   const notes = opts?.reviewNotes?.trim();
   if (notes) body.review_notes = notes;
+  if (opts?.officeCode) body.office_code = opts.officeCode;
+  if (opts?.markingCode) {
+    body.marking_code = opts.markingCode;
+    body.marking_is_backstamp = Boolean(opts.markingIsBackstamp);
+  }
   if (opts?.estimatedValue != null) body.estimated_value = opts.estimatedValue;
   if (opts && "catalogCode" in opts) body.catalog_code = opts.catalogCode ?? "";
 

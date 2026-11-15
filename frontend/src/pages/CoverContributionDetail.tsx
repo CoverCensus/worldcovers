@@ -104,6 +104,8 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   const [error, setError] = useState<string | null>(null);
   const [carouselApi, setCarouselApi] = useState<CarouselApi>();
   const [carouselCurrent, setCarouselCurrent] = useState(0);
+  const [markingCode, setMarkingCode] = useState("");
+  const [markingIsBackstamp, setMarkingIsBackstamp] = useState(false);
   const [comment, setComment] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
   const [catalogCode, setCatalogCode] = useState("");
@@ -311,6 +313,10 @@ export default function CoverContributionDetail({ initialContribution = null }: 
   // defect. The direct endpoint computes the same code and saves nothing.
   useEffect(() => {
     if (contributionId == null || !canReview) return;
+    if ((sd.requires_catalog_marking || parentMarkingId == null) && sd.catalog_code) {
+      setCatalogCode(sd.catalog_code);
+      return;
+    }
     if (parentMarkingId == null) return;
     let cancelled = false;
     setCatalogCodeLoading(true);
@@ -330,7 +336,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
     return () => {
       cancelled = true;
     };
-  }, [contributionId, canReview, parentMarkingId]);
+  }, [contributionId, canReview, parentMarkingId, sd.requires_catalog_marking, sd.catalog_code]);
 
   const ensureCatalogCode = async (): Promise<string> => {
     if (!contribution) return "";
@@ -366,6 +372,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
       const result = await decideContribution(contribution.id, kind, {
         reviewNotes: comment.trim() || undefined,
         ...(kind === "approve" ? { catalogCode: finalCatalogCode } : {}),
+        ...(kind === "approve" && sd.requires_catalog_marking ? { markingCode: markingCode.trim(), markingIsBackstamp } : {}),
       });
       const actionLabel = kind === "approve" ? "Approved" : kind === "reject" ? "Rejected" : "Submission returned";
       // Issue #87: every decision returns to the review queue, matching the
@@ -557,6 +564,18 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                   />
                   {catalogCodeError ? <p className="text-sm text-destructive">{catalogCodeError}</p> : null}
                 </div>
+                {sd.requires_catalog_marking && (
+                  <div className="space-y-2">
+                    <Label htmlFor="cover-review-marking">Catalog code of the Marking on this Cover</Label>
+                    <Input id="cover-review-marking" value={markingCode}
+                      onChange={(e) => setMarkingCode(e.target.value)} disabled={submitting} />
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={markingIsBackstamp} disabled={submitting}
+                        onChange={(e) => setMarkingIsBackstamp(e.target.checked)} />
+                      The selected Marking is on the back
+                    </label>
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="cover-contribution-comment">Comment</Label>
                   <Textarea
@@ -577,7 +596,7 @@ export default function CoverContributionDetail({ initialContribution = null }: 
                   <Button
                     type="button"
                     onClick={() => void submitDecision("approve")}
-                    disabled={submitting || unsupportedFields.length > 0}
+                    disabled={submitting || unsupportedFields.length > 0 || (sd.requires_catalog_marking && !markingCode.trim())}
                     className="bg-green-600 hover:bg-green-700"
                   >
                     <CheckCircle className="mr-2 h-4 w-4" />

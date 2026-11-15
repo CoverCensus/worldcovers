@@ -1817,6 +1817,9 @@ class ContributionApproveRejectSerializer(serializers.Serializer):
     """Payload for approve / reject actions."""
     review_notes = serializers.CharField(required=False, allow_blank=True)
     catalog_code = serializers.CharField(required=False, allow_blank=True)
+    office_code = serializers.CharField(required=False, max_length=40)
+    marking_code = serializers.CharField(required=False, max_length=30)
+    marking_is_backstamp = serializers.BooleanField(required=False, default=False)
 
 
 ###################################################################################################

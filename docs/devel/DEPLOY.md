@@ -24,7 +24,7 @@ not yet aligned. Status recorded on 2026-09-13:
 
 | Environment | Current evidence | Planned change |
 |---|---|---|
-| CI | Staging deploys and PRs targeting `staging` use `mariadb:12.3`. Production deploys and other PRs use `mariadb:10.11`. | Update production verification with its server upgrade. |
+| Former CI (historical) | Staging deploys and PRs targeting `staging` used `mariadb:12.3`. Production deploys and other PRs used `mariadb:10.11`. PR #227 removed these workflows. | Checks now run manually; see [verification](BUILD.md#verification). |
 | Local workspace | MariaDB 12.2.2 was observed locally; setup does not enforce a release series. | No local upgrade has been made as part of this work. |
 | Staging, `woco.dev` | Migration from MySQL to MariaDB LTS completed successfully, confirmed by the operator. The migration procedure targeted 12.3. | Align provisioning with the selected LTS series. |
 | Production, `hellowoco.app` | MariaDB was reported; prior deployment records give 10.11.14. | A separate upgrade is planned. Completion is not confirmed. |
@@ -204,13 +204,11 @@ cd /srv/woco && ./deploy/deploy.sh
 sudo -n /bin/systemctl start worldcovers
 ```
 
-Production deploy fails before stopping the service if the checked-in unit file
-differs from the installed unit. A root operator must review and apply that
-change manually.
-
-Both workflows install an EXIT trap before stopping the app. If a later
-deploy step fails, the trap attempts to start the service again. It does not
-roll back code or database migrations.
+Run the commands in order and stop at the first failure. If the production
+unit files differ, leave the service running while a root operator reviews
+the difference. If a step fails after the service stops, the operator must
+resolve the failure, start the service, and check `systemctl is-active
+worldcovers`. Recovery of code or database migrations is manual.
 
 ## What deploy/deploy.sh Does
 

@@ -183,7 +183,7 @@ const submissionFields = {
   edit_cover_id: field(number), edit_cover_marking_id: field(number),
   materialized_cover_marking_id: field(number, "cover_marking_id", "coverMarkingId"),
   source_marking_image_id: field(number), source_marking_image_position: field(number),
-  routing_deferred: field(boolean),
+  routing_deferred: field(boolean), requires_catalog_marking: field(boolean), requires_catalog_office: field(boolean),
   catalog_code: field(text, "code"), catalog_code_source: field(text),
   catalog_code_reference_code: field(text), catalog_code_region_abbrev: field(text),
   reference_work_ids: field(referenceIds, "reference_work_ids[]"), reference_work_details: field(references),

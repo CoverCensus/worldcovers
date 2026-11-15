@@ -176,6 +176,171 @@ class FloridaReconciliationTests(TestCase):
             source.contribution, actor=self.actor, review_notes="Checked against the source"
         )
 
+    def test_complete_package_publishes_and_repeats_without_submissions(self):
+        import hashlib
+        import json
+
+        office = "FPHC2-O-0315-i002-1"
+        grid = "FPHC2-M-0315-i002-1"
+        self.write("post_offices", [{"code": self.row["post_office"], "name": "APALACHICOLA"},
+                                   {"code": office, "name": "Boston (Massachusetts)"}])
+        self.write("markings", [dict(self.row, desc=""), dict(self.row, code=grid, post_office=office,
+                   type="AUXMARK", inscription_txt="", desc="Grid cancellation", width="", height="")])
+        self.write("cover_markings", [dict(cover=self.cover, marking=grid, is_backstamp=True)])
+        cites = [dict(subject_type=k, subject_id=c, reference_work="FPHC2", citation_detail="p. 315")
+                 for k, c in [("MARKING", grid), ("MARKING", self.mark), ("COVER", self.cover)]]
+        self.write("citations", cites)
+        self.write("dates_seen", [dict(subject_type="MARKING", subject_id=self.mark, **self.day),
+                                  dict(subject_type="COVER", subject_id=self.cover, **self.day)])
+        media = self.bundle / "package-media"
+        (media / "fl").mkdir(parents=True)
+        source = media / "fl/scan.png"
+        source.write_bytes(b"test media")
+        self.image["file_checksum"] = hashlib.sha256(source.read_bytes()).hexdigest()
+        self.write("images", [self.image])
+        decisions = self.bundle / "review_decisions.json"
+        decisions.write_text("{}")
+        manifest = dict(catalog="FPHC2", rule_version=3,
+                        counts=dict(images=1, held_figures=0, emitted_figures=1, held_usage_rows=0,
+                                    usage_rows=2, emitted_usage_rows=2, grouped_usage_rows=0),
+                        review_sha256=hashlib.sha256(decisions.read_bytes()).hexdigest(),
+                        csv_sha256={p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                                    for p in self.bundle.glob("*.csv")})
+        (self.bundle / "fphc_manifest.json").write_text(json.dumps(manifest))
+        staged = self.bundle / "served"
+        with self.settings(MEDIA_ROOT=staged):
+            self.load("--media-dir", str(media), "--dry-run")
+            self.assertFalse(staged.exists())
+            self.assertFalse(Cover.objects.exists())
+            self.load("--media-dir", str(media))
+            self.load("--media-dir", str(media))
+            source.write_bytes(b"corrupt")
+            with self.assertRaisesMessage(CommandError, "Image checksum mismatch"):
+                self.load("--media-dir", str(media))
+        self.assertFalse(Contribution.objects.exists())
+        self.assertEqual(Marking.objects.count(), 2)
+        self.marking.refresh_from_db()
+        self.assertEqual(self.marking.width, 22)
+        self.assertEqual((staged / "fl/scan.png").read_bytes(), b"test media")
+        self.assertEqual(CoverMarking.objects.get().marking.code, grid)
+        self.assertTrue(CoverMarking.objects.get().is_backstamp)
+        self.assertTrue(DateSeen.objects.filter(subject_type="COVER").exists())
+        self.assertFalse(PostOffice.objects.get(code=office).post_office_regions.exists())
+        self.assertEqual(CatalogSourceItem.objects.filter(applied=True).count(), 5)
+
+    def test_foreign_cover_review_fresh_and_previously_published(self):
+        from common.catalog_import import import_catalog
+        from common.fphc_foreign_review import foreign_markings
+
+        self.actor.is_superuser = True
+        self.actor.save(update_fields=["is_superuser"])
+
+        location = {"office": "London", "region": "England", "inscription": "SHIP LRE",
+                    "reason": "London ship-letter strike on mail from Pensacola."}
+        review = {"figures": [{"source_id": "fphc-p0311-i003", "action": "deferred_cover",
+                               "markings": [location, dict(location, region="Georgia"),
+                                            dict(location, region="")]}]}
+        foreign = foreign_markings(review)
+        self.assertEqual(list(foreign), ["FPHC2-M-0311-i003-1"])
+        code = next(iter(foreign))
+        office = "FPHC2-O-0311-i003-1"
+        self.write("post_offices", [{"code": office, "name": "London (England)"}])
+        (self.bundle / "post_office_regions.csv").write_text("post_office,region\n")
+        self.write("markings", [dict(self.row, code=code, post_office=office, inscription_txt="SHIP LRE")])
+        self.write("cover_markings", [dict(cover=self.cover, marking=code, is_backstamp=False)])
+        self.write("citations", [dict(subject_type=k, subject_id=c, reference_work="FPHC2", citation_detail="p. 311")
+                                 for k, c in [("COVER", self.cover), ("MARKING", code)]])
+        self.write("dates_seen", [dict(subject_type="COVER", subject_id=self.cover, **self.day)])
+
+        def load_foreign(routing):
+            import_catalog(self.bundle, self.actor, False, StringIO(), self.bundle / "report.csv",
+                           edition="FPHC2", publish=True, foreign=routing)
+
+        from django.db import transaction
+        for published in (False, True):
+            with transaction.atomic():
+                if published:
+                    load_foreign({})
+                    self.assertTrue(Marking.objects.filter(code=code).exists())
+                load_foreign(foreign)
+                load_foreign(foreign)
+                ticket = Contribution.objects.get()
+                self.assertEqual(ticket.collection.region.code, "USA-FL1")
+                self.assertEqual(ticket.status, "pending")
+                self.assertTrue(ticket.submitted_data["cover_image_metas"])
+                self.assertEqual(ticket.submitted_data["cover_date"], "1833-05-11")
+                self.assertIn("SHIP LRE (London, England)", ticket.submitted_data["comment_for_editor"])
+                self.assertFalse(Marking.objects.filter(code=code).exists())
+                self.assertFalse(Cover.objects.exists())
+                with self.assertRaisesMessage(ContributionApplyError, "Select an existing"):
+                    _approve_contribution(ticket, actor=self.actor, review_notes="")
+                ticket.refresh_from_db()
+                _approve_contribution(ticket, actor=self.actor, review_notes="Verified separate strike.",
+                                      marking_code=self.marking.code, marking_is_backstamp=True)
+                load_foreign(foreign)
+                self.assertFalse(Marking.objects.filter(code=code).exists())
+                self.assertTrue(CoverMarking.objects.get(cover=Cover.objects.get()).is_backstamp)
+                self.assertEqual(CoverMarking.objects.get().marking_id, self.marking.pk)
+                self.assertEqual(Contribution.objects.get().status, "approved")
+                transaction.set_rollback(True)
+
+    def test_unidentified_office_review_fresh_and_previously_published(self):
+        from unittest.mock import patch
+        from django.db import transaction
+        from common.catalog_import import import_catalog
+
+        office = "FPHC2-O-0072-i001-1"
+        self.write("post_offices", [{"code": office, "name": "Unidentified office (FPHC2 p. 72, figure 1)"}])
+        (self.bundle / "post_office_regions.csv").write_text("post_office,region\n")
+        self.write("markings", [dict(self.row, post_office=office)])
+        self.write("cover_markings", [dict(cover=self.cover, marking=self.mark, is_backstamp=True)])
+
+        def load():
+            import_catalog(self.bundle, self.actor, False, StringIO(), self.bundle / "report.csv",
+                           edition="FPHC2", publish=True)
+
+        for published in (False, True):
+            with self.subTest(published=published), transaction.atomic():
+                self.actor.is_superuser = True
+                self.actor.save(update_fields=["is_superuser"])
+                if published:
+                    with patch("common.fphc_office_review.review_links", return_value=({}, {})):
+                        load()
+                    previous_mark = Marking.objects.get(code=self.mark).pk
+                    previous_cover = Cover.objects.get(code=self.cover).pk
+                load()
+                load()
+                self.assertFalse(Marking.objects.filter(code=self.mark).exists())
+                self.assertFalse(Cover.objects.filter(code=self.cover).exists())
+                self.assertEqual(Contribution.objects.filter(status="pending", collection__region__code="USA-FL1").count(), 2)
+                m = CatalogSourceItem.objects.get(source_key=self.mark).contribution
+                c = CatalogSourceItem.objects.get(source_key=self.cover).contribution
+                self.assertTrue(m.submitted_data["requires_catalog_office"])
+                self.assertEqual(m.submitted_data["cover_image_metas"][0]["storage_filename"], "fl/scan.png")
+                self.assertIn(self.mark, c.submitted_data["comment_for_editor"])
+                with self.assertRaisesMessage(ContributionApplyError, "Approve the linked Marking"):
+                    _approve_contribution(c, actor=self.actor, review_notes="")
+                for invalid in (None, office, "no-such-office"):
+                    with self.assertRaisesMessage(ContributionApplyError, "Select an identified"):
+                        _approve_contribution(m, actor=self.actor, review_notes="", office_code=invalid)
+                self.actor.is_superuser = False
+                with self.assertRaisesMessage(ContributionApplyError, "assigned Collections"):
+                    _approve_contribution(m, actor=self.actor, review_notes="", office_code=self.office.code)
+                self.actor.is_superuser = True
+                _approve_contribution(m, actor=self.actor, review_notes="", office_code=self.office.code)
+                _approve_contribution(c, actor=self.actor, review_notes="")
+                load()
+                mark = Marking.objects.get(code=self.mark)
+                cover = Cover.objects.get(code=self.cover)
+                if published:
+                    self.assertEqual((mark.pk, cover.pk), (previous_mark, previous_cover))
+                self.assertEqual(mark.post_office, self.office)
+                self.assertTrue(CoverMarking.objects.get(cover=cover, marking=mark).is_backstamp)
+                self.assertEqual(Image.objects.get().subject_type, "COVER")
+                self.assertEqual(CatalogSourceItem.objects.get(source_key=self.mark).evidence["row"]["post_office"], office)
+                self.assertEqual(Contribution.objects.filter(status="approved").count(), 2)
+                transaction.set_rollback(True)
+
     def test_preview_queue_approve_and_repeat(self):
         self.load("--dry-run")
         self.assertFalse(CatalogSourceItem.objects.exists())

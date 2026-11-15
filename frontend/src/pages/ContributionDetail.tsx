@@ -111,6 +111,7 @@ const ContributionDetail = () => {
 
   const [comment, setComment] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
+  const [officeCode, setOfficeCode] = useState("");
   const [catalogCode, setCatalogCode] = useState("");
   const [catalogCodeError, setCatalogCodeError] = useState<string | null>(null);
   const [catalogCodeLoading, setCatalogCodeLoading] = useState(false);
@@ -242,6 +243,11 @@ const ContributionDetail = () => {
     if (contributionId == null || !canReview) return;
     if (isCoverContributionData(contributionSubmittedData)) return;
     const sd = (contributionSubmittedData ?? {});
+    if (sd.requires_catalog_office && sd.catalog_code) {
+      setCatalogCode(sd.catalog_code);
+      setOfficeCode("");
+      return;
+    }
     const referenceWorkIds = Array.isArray(sd.reference_work_ids)
       ? (sd.reference_work_ids as number[])
       : undefined;
@@ -305,6 +311,7 @@ const ContributionDetail = () => {
       const result = await decideContribution(contribution.id, kind, {
         reviewNotes: comment.trim() || undefined,
         ...(kind === "approve" ? { catalogCode: finalCatalogCode } : {}),
+        ...(kind === "approve" && contribution.submittedData.requires_catalog_office ? { officeCode: officeCode.trim() } : {}),
       });
       const actionLabel = kind === "approve" ? "Approved" : kind === "reject" ? "Rejected" : "Submission returned";
       // Issue #87: every decision returns to the review queue the editor came
@@ -430,7 +437,7 @@ const ContributionDetail = () => {
   const imageRoot = baseImageUrl || "/media";
   const resolveStorageImageUrl = (storageFilename: string) =>
     normalizeImageUrl(`${imageRoot}/${storageFilename.replace(/^\/+/, "")}`);
-  const imageMetasRaw = sd.image_metas;
+  const imageMetasRaw = sd.requires_catalog_office ? sd.cover_image_metas : sd.image_metas;
   const imageMetaSingle = sd.image_meta;
   const imageMetaList: Array<{ imageUrl: string; originalFilename?: string; description?: string }> = [];
   const categorizedImageUrls = [...(sd.ratemark_images ?? []), ...(sd.auxmark_images ?? [])];
@@ -717,6 +724,13 @@ const ContributionDetail = () => {
                         <p className="text-sm text-destructive">{catalogCodeError}</p>
                       ) : null}
                     </div>
+                    {sd.requires_catalog_office && (
+                      <div className="space-y-2">
+                        <Label htmlFor="identified-office">Post Office catalog code</Label>
+                        <Input id="identified-office" value={officeCode} onChange={(e) => setOfficeCode(e.target.value)}
+                          disabled={submitting} placeholder="Enter the identified Post Office code" />
+                      </div>
+                    )}
                     <div className="space-y-2">
                       <Label htmlFor="contribution-comment">Comment</Label>
                       <Textarea
@@ -739,7 +753,7 @@ const ContributionDetail = () => {
                       <Button
                         type="button"
                         onClick={() => submitDecision("approve")}
-                        disabled={submitting || unsupportedFields.length > 0}
+                        disabled={submitting || unsupportedFields.length > 0 || (sd.requires_catalog_office && !officeCode.trim())}
                         className="bg-green-600 hover:bg-green-700"
                       >
                         <CheckCircle className="mr-2 h-4 w-4" />

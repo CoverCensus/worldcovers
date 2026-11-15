@@ -2,7 +2,7 @@
 
 ## Summary
 
-*WorldCovers* is a software system, not a single utility. This document defines four user roles spanning unauthenticated browsing through system administration. Of its forty-nine stories, thirty-three are active, fifteen are deferred, and one is declined. The feature map has thirteen identifiers, including shared engineering and project administration; F4 Comment Workflow is deferred. The role model is cumulative: each tier inherits the capabilities of those below it. Collection Entries require Editor review before publication. All submissions are logged as system transactions. Standalone Entry comments, their review, and Collection creation are in Backlog, confirmed by Michael on 2026-09-19.
+*WorldCovers* is a software system, not a single utility. This document defines four user roles spanning unauthenticated browsing through system administration. Of its forty-nine stories, thirty-three are active, fifteen are deferred, and one is declined. The feature map has thirteen identifiers, including shared engineering and project administration; F4 Comment Workflow is deferred. The role model is cumulative: each tier inherits the capabilities of those below it. Collection Entries require Editor review before publication. All submissions are logged as system transactions. Standalone Entry comments, their review, and Collection creation are in Backlog.
 
 ## Roles
 
@@ -62,7 +62,7 @@
 
 **S26** - As an Administrator, I want to restore the system from a backup through the application, so that I can *recover from data issues without requiring infrastructure access.*
 
-**S27** - As an Administrator, I want to apply system updates through operator tools and deployment workflows, so that I can *keep the platform current through controlled deployment steps.* Operator access remains required, as confirmed by Michael on 2026-09-19. An application update interface is not required for this story.
+**S27** - As an Administrator, I want to apply system updates through operator tools and deployment workflows, so that I can *keep the platform current through controlled deployment steps.* Operator access remains required. An application update interface is not required for this story.
 
 **S28** - As an Administrator, I want to invoke exploratory queries against catalog datasets, so that I can *assess data quality.*
 

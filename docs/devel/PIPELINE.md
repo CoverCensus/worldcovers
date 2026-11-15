@@ -13,7 +13,12 @@ changes are separate decisions; the existing licenses remain in force.
 
 ## Optional Bodger Setup
 
-An operator with access to the private repository can install it separately:
+Bodger is private to the CoverCensus GitHub organization. If
+`https://github.com/CoverCensus/bodger` shows a 404 page, you do not have
+access yet. Request it by opening a GitHub issue on the WorldCovers
+repository; see [Getting Bodger Access](TOOLS.md#getting-bodger-access).
+
+Once you have access, install it separately:
 
 ```sh
 git clone git@github.com:CoverCensus/bodger.git ../bodger

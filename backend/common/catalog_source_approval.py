@@ -87,12 +87,15 @@ def approve_source_entry(item, contribution):
         raise ContributionApplyError(
             "The Submission differs from the import proposal. Refresh and review it again."
         )
+    if item.decision.get("office_review"):
+        raise ContributionApplyError("Complete the Post Office review before approval.")
+    if item.decision.get("foreign_review"):
+        raise ContributionApplyError("Select a catalog Marking for this Cover before approval.")
     data = item.evidence
     row = data["row"]
     actor = contribution.contributor
-    stamp = {"created_by": actor, "modified_by": actor}
     kind = item.kind
-    attrs = values("markings" if kind == "MARKING" else "covers", row, FIELDS[kind])
+    office, parents = None, []
     target = item.decision["target"]
     obj = MODELS[kind].objects.select_for_update().filter(pk=target).first() if target else None
     if obj and obj.code and contribution.submitted_data["catalog_code"] != obj.code:
@@ -122,28 +125,41 @@ def approve_source_entry(item, contribution):
         raise ContributionApplyError(
             "The proposed match or blank fields changed. Refresh the catalog proposal."
         )
+    return apply_catalog_entry(item, actor, contribution.submitted_data["catalog_code"],
+                               office, parents, obj, live["fills"])
+
+
+def apply_catalog_entry(item, actor, code, office, parents, obj, fills, cover_links=None):
+    """Write the source evidence and relations in the caller's transaction."""
+    data = item.evidence
+    row = data["row"]
+    kind = item.kind
+    stamp = {"created_by": actor, "modified_by": actor}
+    attrs = values("markings" if kind == "MARKING" else "covers", row, FIELDS[kind])
+    # A grid cancellation can have a description and no physical inscription.
+    exclude = ["inscription_txt"] if kind == "MARKING" and not row["inscription_txt"] and row.get("desc") else []
     if obj:
-        for field in live["fills"]:
+        for field in fills:
             setattr(obj, field, attrs[field])
-        if live["fills"]:
+        if fills:
             obj.modified_by = actor
-            obj.full_clean()
-            obj.save(update_fields=[*live["fills"], "modified_by", "modified_date"])
+            obj.full_clean(exclude=exclude)
+            obj.save(update_fields=[*fills, "modified_by", "modified_date"])
     else:
         if kind == "MARKING":
             attrs.update(post_office=office, catalog_txt=row["catalog_txt"])
-        obj = MODELS[kind](code=contribution.submitted_data["catalog_code"], **attrs, **stamp)
-        obj.full_clean()
+        obj = MODELS[kind](code=code, **attrs, **stamp)
+        obj.full_clean(exclude=exclude)
         obj.save()
     attach_observations(item, obj, actor)
     setattr(item, RELATIONS[kind], obj)
     item.applied = True
-    item.decision["filled"] = {field: row[field] for field in live["fills"]}
+    item.decision["filled"] = {field: row[field] for field in fills}
     item.save(update_fields=[RELATIONS[kind], "applied", "decision"])
     if kind == "MARKING":
         return obj
     links = []
-    for p, link in zip(parents, data["cover_markings"], strict=True):
+    for p, link in zip(parents, data["cover_markings"] if cover_links is None else cover_links, strict=True):
         attrs = values("cover_markings", link, ("is_backstamp", "placement", "contributor_comment"))
         saved, created = CoverMarking.objects.select_for_update().get_or_create(
             cover=obj,

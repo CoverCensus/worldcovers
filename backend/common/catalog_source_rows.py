@@ -62,7 +62,8 @@ def source_items(directory: Path, edition: str | None, allow_missing: bool) -> t
     for (kind, code), data in items.items():
         if kind == "OFFICE":
             regions = {r["region"] for r in data.get("post_office_regions", [])}
-            if not regions or (edition == "FPHC2" and "USA-FL1" not in regions):
+            figure_office = edition == "FPHC2" and code.startswith("FPHC2-O-")
+            if not regions and not figure_office:
                 raise ValueError(f"Missing Post Office Region for {code}")
         elif edition == "FPHC2" and not data.get("citations"):
             raise ValueError(f"Missing FPHC2 Citation for {code}")
