@@ -45,12 +45,11 @@ def queue_entry(item, collection, actor, town, references, parent_id=None, *, re
         "state": collection.region.name,
         "town": town,
         "type": row["type"],
-        "comment_for_editor": (
-            f"{item.source_key}: {plan['action']}. {plan['reason']}. "
-            f"Fill: {', '.join(plan['fills']) or 'none'}. "
-            f"Candidates: {plan['candidates']}. Source: "
-            + (row.get("catalog_txt") or row.get("description", ""))
-        ),
+        # No comment_for_editor on a plain import: that field is the
+        # contributor's own note, and the match decision already lives on
+        # CatalogSourceItem.decision and in the review report CSV. Only the
+        # foreign-strike and unidentified-office review queues add one below,
+        # because those Submissions wait on a specific Editor decision.
         "reference_work_ids": list(dict.fromkeys(references[code] for code, _ in citations)),
         "reference_work_details": [
             {
@@ -84,7 +83,7 @@ def queue_entry(item, collection, actor, town, references, parent_id=None, *, re
     # Source identity stays on the receipt even when an Editor assigns a code.
     payload["catalog_code"] = target.code if target and target.code else item.source_key
     if review_note:
-        payload["comment_for_editor"] += "\n" + review_note
+        payload["comment_for_editor"] = review_note
         if item.kind == "MARKING":
             payload["requires_catalog_office"] = True
     for image_kind, image_rows in ((item.kind.lower(), source.get("images", [])), ("cover", cover_images)):
@@ -114,7 +113,7 @@ def queue_entry(item, collection, actor, town, references, parent_id=None, *, re
         ]
     if plan.get("foreign_review"):
         payload["requires_catalog_marking"] = True
-        payload["comment_for_editor"] += "\n" + plan["foreign_text"]
+        payload["comment_for_editor"] = plan["foreign_text"]
     if item.kind == "COVER" and (plan.get("foreign_review") or plan.get("office_review")):
         for obs in source.get("dates_seen", [])[:1]:
             payload["cover_date"] = obs["date"]
@@ -338,7 +337,9 @@ def import_catalog(
                     if item.contribution.status != Contribution.STATUS_PENDING:
                         raise CommandError(f"Cannot publish {code} with status {item.contribution.status}.")
                     from common.api.v2.views import _approve_contribution
-                    _approve_contribution(item.contribution, actor=actor, review_notes="Catalog import")
+                    # Blank review_notes: no Editor reviewed this; it shows
+                    # in the UI as "Editor feedback".
+                    _approve_contribution(item.contribution, actor=actor, review_notes="")
                     item.refresh_from_db()
                     results.append((kind, code, item.decision["action"], item.decision))
                     continue

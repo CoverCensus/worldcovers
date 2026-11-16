@@ -200,6 +200,9 @@ class FloridaReconciliationTests(TestCase):
         self.write("images", [self.image])
         decisions = self.bundle / "review_decisions.json"
         decisions.write_text("{}")
+        # Every complete package carries figure_review.jsonl; the fphc command
+        # reads deferred foreign-strike Marking codes from it.
+        (self.bundle / "figure_review.jsonl").write_text("")
         manifest = dict(catalog="FPHC2", rule_version=3,
                         counts=dict(images=1, held_figures=0, emitted_figures=1, held_usage_rows=0,
                                     usage_rows=2, emitted_usage_rows=2, grouped_usage_rows=0),
@@ -237,11 +240,16 @@ class FloridaReconciliationTests(TestCase):
 
         location = {"office": "London", "region": "England", "inscription": "SHIP LRE",
                     "reason": "London ship-letter strike on mail from Pensacola."}
-        review = {"figures": [{"source_id": "fphc-p0311-i003", "action": "deferred_cover",
-                               "markings": [location, dict(location, region="Georgia"),
-                                            dict(location, region="")]}]}
-        foreign = foreign_markings(review)
-        self.assertEqual(list(foreign), ["FPHC2-M-0311-i003-1"])
+        # One figure_review.jsonl row; the munger records the final catalog
+        # code of each decision mark in deferred_marking_codes.
+        decision = {"source_id": "fphc-p0311-i003", "action": "deferred_cover",
+                    "markings": [location, dict(location, region="Georgia"), dict(location, region="")]}
+        rows = [{"source_id": decision["source_id"], "review": decision,
+                 "deferred_marking_codes": ["FPHC2-M-0001", "FPHC2-M-0002", "FPHC2-M-0003"]}]
+        foreign = foreign_markings(rows)
+        self.assertEqual(list(foreign), ["FPHC2-M-0001"])
+        with self.assertRaisesMessage(CommandError, "Rebuild the FPHC bundle"):
+            foreign_markings([dict(rows[0], deferred_marking_codes=["FPHC2-M-0001"])])
         code = next(iter(foreign))
         office = "FPHC2-O-0311-i003-1"
         self.write("post_offices", [{"code": office, "name": "London (England)"}])

@@ -297,6 +297,8 @@ class AsccAdditiveImportTests(TestCase):
         for kind in ("MARKING", "COVER"):
             source = CatalogSourceItem.objects.get(kind=kind)
             self.assertEqual(source.contribution.submitted_data["state"], "Virginia")
+            # A plain bundle import writes no contributor comment.
+            self.assertNotIn("comment_for_editor", source.contribution.submitted_data)
             _approve_contribution(source.contribution, actor=self.user, review_notes="Checked")
         load()
         self.assertEqual(Contribution.objects.count(), 2)

@@ -458,6 +458,10 @@ ASCC Florida catalog as the baseline when reproducing the local build.
 Rule version 3 publishes by default. Covers with strikes identified in the
 review decisions as English or Spanish go to the Florida Editor queue. The
 foreign inscription, office, image, page and date stay with the submission.
+The importer takes each foreign strike's Marking code (`FPHC2-M-####`) from
+`deferred_marking_codes` in the bundle's `figure_review.jsonl`; it never
+rebuilds a code from the source id. A bundle without those codes is refused
+and must be rebuilt.
 An Editor can approve the Cover with a verified existing catalog Marking.
 FPHC Markings filed under Unidentified office and their linked Covers also
 go to the Florida Editor queue. Inspect the Cover scan, supply the catalog

@@ -11,16 +11,30 @@ from common.models import (
 REASON = "Foreign Marking recorded as source evidence for Florida Cover review."
 
 
-def foreign_markings(review):
-    """Use the attributed strike location, independent of the letter's route."""
+def foreign_markings(figure_rows):
+    """Map each foreign strike's bundle Marking code to its decision mark.
+
+    Uses the attributed strike location, independent of the letter's route.
+    figure_rows are the parsed lines of the bundle's figure_review.jsonl. The
+    Bodger munger assigns catalog codes (FPHC2-M-####) after the build, so the
+    code is never rebuilt from the source id here; each deferred_cover row
+    carries the final codes in the same order as its decision marks:
+      {"source_id": "fphc-...-p0373-i003",
+       "review": {"action": "deferred_cover", "markings": [{"region": "Spain", ...}]},
+       "deferred_marking_codes": ["FPHC2-M-0911"]}
+    """
     marks = {}
-    for entry in review.get("figures", []):
+    for row in figure_rows:
+        entry = row.get("review") or {}
         if entry.get("action") != "deferred_cover":
             continue
-        suffix = entry["source_id"].split("-p")[-1]
-        for n, mark in enumerate(entry["markings"], 1):
+        codes = row.get("deferred_marking_codes")
+        if codes is None or len(codes) != len(entry["markings"]):
+            raise CommandError("Rebuild the FPHC bundle: figure_review lacks deferred Marking codes for "
+                               + row["source_id"])
+        for code, mark in zip(codes, entry["markings"]):
             if mark["region"] in ("England", "Spain"):
-                marks[f"FPHC2-M-{suffix}-{n}"] = mark
+                marks[code] = mark
     return marks
 
 

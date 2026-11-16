@@ -120,8 +120,9 @@ class Command(BaseCommand):
                 check_package(directory, manifest, opts["media_dir"] or directory.parent / "media", opts["dry_run"])
             foreign = {}
             if complete_format:
-                review = json.loads((directory / "review_decisions.json").read_text())
-                foreign = foreign_markings(review)
+                figure_rows = [json.loads(line) for line in
+                               (directory / "figure_review.jsonl").read_text().splitlines() if line.strip()]
+                foreign = foreign_markings(figure_rows)
             actor = get_user_model().objects.filter(pk=opts["actor"]).first()
             if actor is None:
                 raise CommandError("Unknown import user.")
