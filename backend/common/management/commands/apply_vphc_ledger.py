@@ -1,7 +1,7 @@
 """
 Apply the reviewed VPHC ledger: markings, their scans, and duplicate archiving.
 
-Phase C of the VPHC ingest. Run *after* import_vphc_reference -- a contribution
+Phase C of the VPHC ingest. Run *after* import_vphc_reference -- a submission
 cannot name a town that has no post office.
 
 Runbook:
@@ -10,10 +10,10 @@ Runbook:
                --vphc-dir ../docs/vphc --actor 1 --dry-run
   expected exit code: 0
 
-Markings arrive as **pending contributions**, not catalog rows, so an editor
+Markings arrive as **pending submissions**, not catalog rows, so an editor
 reviews every one before it enters the catalog (Reese, 2026-08-12). The
 alternative -- writing markings directly with is_reviewed=False -- puts them in
-no queue at all, because the dashboard reads Contribution and never looks at
+no queue at all, because the dashboard reads Submission and never looks at
 the catalog.
 
 Two inputs, and the split is deliberate:
@@ -52,7 +52,7 @@ from common.models import (
     Citation,
     Collection,
     Color,
-    Contribution,
+    Submission,
     Marking,
     MarkingRecycleBin,
     PostOfficeRegion,
@@ -94,7 +94,7 @@ def dec(value):
 # Rule I2: the rate is derived from the `cancel` device vocabulary, which
 # reaches us as the sheet's inscription keys. It is NEVER derived from
 # `cancel_no` -- that is the drawing number, the marking's sequence within its
-# town, and the key that names its scan (rule E5). _contribution() uses it
+# town, and the key that names its scan (rule E5). _submission() uses it
 # correctly, as a citation page_number: it is a locator, not a rate.
 #
 # Mirrors sheet_identity() in tools/vphc_crossexam.py, which computes exactly
@@ -132,7 +132,7 @@ def rate_from_inscription(sheet_insc, sep=";"):
 
 
 class Command(BaseCommand):
-    help = "Create VPHC marking contributions, attach scans, archive duplicates."
+    help = "Create VPHC marking submissions, attach scans, archive duplicates."
 
     def add_arguments(self, parser):
         parser.add_argument("--vphc-dir", required=True)
@@ -200,7 +200,7 @@ class Command(BaseCommand):
                 self.collections[abbrev] = collection
         if not self.collections:
             raise CommandError(
-                "no active Collection for VA or WV -- contributions have "
+                "no active Collection for VA or WV -- submissions have "
                 "nowhere to be filed")
 
         self.auto = {s.strip() for s in opts["auto_approve"].split(",") if s.strip()}
@@ -219,7 +219,7 @@ class Command(BaseCommand):
         try:
             with transaction.atomic():
                 if {"create", "update", "images"} & steps:
-                    self._contributions(crosswalk, ledger, steps, actor, totals,
+                    self._submissions(crosswalk, ledger, steps, actor, totals,
                                         applied, dry)
                 if "archive" in steps:
                     self._archive(ledger, actor, totals, applied)
@@ -279,7 +279,7 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------- payloads
 
-    def _contributions(self, crosswalk, ledger, steps, actor, totals, applied, dry):
+    def _submissions(self, crosswalk, ledger, steps, actor, totals, applied, dry):
         # The ledger says which rows act; the crosswalk carries their values.
         by_src = defaultdict(list)
         for row in crosswalk:
@@ -296,7 +296,7 @@ class Command(BaseCommand):
                     totals["creates skipped (no crosswalk row)"] += 1
                     self._skip(line, None, "no crosswalk row")
                     continue
-                self._contribution(row, line, None, actor, totals, applied, dry)
+                self._submission(row, line, None, actor, totals, applied, dry)
             elif action == "update" and "update" in steps:
                 key = (line["src"], line["target_code"])
                 if key not in changed:
@@ -307,10 +307,10 @@ class Command(BaseCommand):
                     totals["updates skipped (no crosswalk row)"] += 1
                     self._skip(line, None, "no crosswalk row")
                     continue
-                self._contribution(row, line, line["target_code"], actor,
+                self._submission(row, line, line["target_code"], actor,
                                    totals, applied, dry)
 
-    def _contribution(self, row, line, edit_code, actor, totals, applied, dry):
+    def _submission(self, row, line, edit_code, actor, totals, applied, dry):
         state = row["state"].strip().upper()
         if state not in self.collections:
             # The sheet leaves the state blank when the county is missing, but
@@ -400,7 +400,7 @@ class Command(BaseCommand):
         else:
             if unrecognised:
                 # A colour the catalog has never heard of is dropped silently
-                # by the contribution path. Say so instead.
+                # by the submission path. Say so instead.
                 flags.append("color_unrecognised")
                 totals["colours not in the catalog vocabulary"] += len(unrecognised)
             colour_variants = recognised or [None]
@@ -420,7 +420,7 @@ class Command(BaseCommand):
                 images=images if variant_index == 0 else [],
             ):
                 return
-        # One line per ledger entry, not per contribution: LEDGER.jsonl is the
+        # One line per ledger entry, not per submission: LEDGER.jsonl is the
         # replayable record of what the ledger decided, and a colour fan-out is
         # one decision that produced several rows.
         applied.append({**line, "applied": True, "mode": "applied"})
@@ -428,14 +428,14 @@ class Command(BaseCommand):
     def _emit(self, row, line, edit_code, actor, totals, applied, dry, *,
               state, flags, marking_type, inscription, colours, unrecognised,
               colour, images):
-        """Build and create one contribution. False means stop the whole row."""
+        """Build and create one submission. False means stop the whole row."""
         # Phase 6. The ledger line is the authority on what happens, so the
         # manuscript decision rides there rather than in a new crosswalk column:
         # a Phase 2 line has no `is_manuscript` in `after` and so still reads
         # False, which is exactly what it did when it was applied.
         #
         # is_irreg is omitted entirely for a manuscript rather than sent as
-        # False. contribution_apply forces it to None either way (the model's
+        # False. submission_apply forces it to None either way (the model's
         # marking_manuscript_consistency constraint requires NULL), but
         # submitted_data is read back by the review UI, and "not irregular" is a
         # different claim from "irregularity does not apply to this marking".
@@ -532,16 +532,16 @@ class Command(BaseCommand):
                 if rid != self.reference.pk
             ]
 
-        status = (Contribution.STATUS_APPROVED
+        status = (Submission.STATUS_APPROVED
                   if line.get("why_unmatched") in self.auto
-                  else Contribution.STATUS_PENDING)
-        Contribution.objects.create(
+                  else Submission.STATUS_PENDING)
+        Submission.objects.create(
             contributor=actor, collection=self.collections[state],
             submitted_data=payload, status=status,
             created_by=actor, modified_by=actor)
-        totals[f"contributions created ({'edit' if edit_code else 'new'})"] += 1
+        totals[f"submissions created ({'edit' if edit_code else 'new'})"] += 1
         if flags:
-            totals["contributions carrying a flag"] += 1
+            totals["submissions carrying a flag"] += 1
         return True
 
     def _colour_names(self):

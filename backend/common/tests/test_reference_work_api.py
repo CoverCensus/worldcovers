@@ -28,7 +28,7 @@ class ReferenceWorkApiTests(TestCase):
         # Legacy group-based Editor: Editors group with the review permission only.
         self.group_editor = User.objects.create_user(username="group-editor", password="pw")
         editors = Group.objects.create(name="Editors")
-        editors.permissions.add(Permission.objects.get(codename="review_contribution"))
+        editors.permissions.add(Permission.objects.get(codename="review_submission"))
         self.group_editor.groups.add(editors)
         # Scoped Editor: a CollectionAssignment and nothing else.
         self.scoped_editor = User.objects.create_user(username="scoped-editor", password="pw")

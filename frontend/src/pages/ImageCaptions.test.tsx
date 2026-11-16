@@ -5,7 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { EntryImageGalleryCard } from "@/components/entry-detail/EntryImageGalleryCard";
 import Contribute from "./Contribute";
 import CoverEdit from "./CoverEdit";
-import { createContribution, getContribution } from "@/services/contributions";
+import { createSubmission, getSubmission } from "@/services/submissions";
 
 jest.mock("@/assets/image-not-available.jpg", () => "image-not-available.jpg");
 jest.mock("@/components/Navigation", () => ({ Navigation: () => null }));
@@ -19,9 +19,9 @@ jest.mock("@/services/postOffices", () => ({ getPostOffices: jest.fn().mockResol
 jest.mock("@/services/regions", () => ({ getRegions: jest.fn().mockResolvedValue([{ value: "VA", label: "Virginia" }]) }));
 jest.mock("@/services/letterings", () => ({ getLetterings: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/constants/markingEnums", () => ({ getDateFormats: jest.fn().mockResolvedValue([]) }));
-jest.mock("@/services/contributions", () => ({
-  getContribution: jest.fn(), createContribution: jest.fn(),
-  listContributions: jest.fn().mockResolvedValue({ items: [] }),
+jest.mock("@/services/submissions", () => ({
+  getSubmission: jest.fn(), createSubmission: jest.fn(),
+  listSubmissions: jest.fn().mockResolvedValue({ items: [] }),
 }));
 jest.mock("@/services/referenceWorks", () => ({
   ...jest.requireActual("@/services/referenceWorks"), getReferenceWorks: jest.fn().mockResolvedValue([]),
@@ -60,11 +60,11 @@ beforeAll(() => {
 });
 beforeEach(() => {
   jest.clearAllMocks();
-  (createContribution as jest.Mock).mockResolvedValue({ id: 1 });
+  (createSubmission as jest.Mock).mockResolvedValue({ id: 1 });
 });
 
 function resumeDraft(kind: "marking" | "cover", extra: Record<string, unknown> = {}) {
-  (getContribution as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
+  (getSubmission as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
     state: "VA", type: kind === "cover" ? "FC" : "TOWNMARK", submission_kind: kind,
     parent_marking_id: 7, ...extra,
   } });
@@ -96,8 +96,8 @@ it.each(["marking", "cover"] as const)(
 
     fireEvent.change(caption, { target: { value: "Strike on the front " } });
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
-    await waitFor(() => expect(createContribution).toHaveBeenCalled());
-    const payload = (createContribution as jest.Mock).mock.calls[0][0] as FormData;
+    await waitFor(() => expect(createSubmission).toHaveBeenCalled());
+    const payload = (createSubmission as jest.Mock).mock.calls[0][0] as FormData;
     expect(JSON.parse(String(payload.get(`${kind}_image_descriptions`)))).toEqual(["Strike on the front"]);
   },
 );
@@ -118,8 +118,8 @@ it("sends the rotated copy of a Cover upload in its place", async () => {
   await waitFor(() => expect(screen.queryByAltText("Image to rotate")).toBeNull());
 
   fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalled());
-  const payload = (createContribution as jest.Mock).mock.calls[0][0] as FormData;
+  await waitFor(() => expect(createSubmission).toHaveBeenCalled());
+  const payload = (createSubmission as jest.Mock).mock.calls[0][0] as FormData;
   expect((payload.getAll("cover_image") as File[]).map((f) => f.name)).toEqual(["strike-rotated.png"]);
   expect(JSON.parse(String(payload.get("cover_image_descriptions")))).toEqual(["Front"]);
 });
@@ -131,8 +131,8 @@ it("lets a resumed Marking draft change a saved image's caption and sends only t
   const caption = await screen.findByDisplayValue("Back of the cover", {}, { timeout: 5000 });
   fireEvent.change(caption, { target: { value: "Front of the cover " } });
   fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalled());
-  const payload = (createContribution as jest.Mock).mock.calls[0][0];
+  await waitFor(() => expect(createSubmission).toHaveBeenCalled());
+  const payload = (createSubmission as jest.Mock).mock.calls[0][0];
   const sent = payload instanceof FormData
     ? JSON.parse(String(payload.get("existing_image_descriptions")))
     : payload.existing_image_descriptions;

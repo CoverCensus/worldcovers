@@ -1,9 +1,9 @@
-import type { Submission, SubmissionImage } from "@/lib/submission";
+import type { SubmittedData, SubmissionImage } from "@/lib/submission";
 import apiClient from "@/lib/api";
 import type { MarkingImage } from "@/services/markings";
 
-/** Build a public URL for a contribution image meta dict (storage_filename or direct url). */
-export function contributionMetaImageUrl(meta: SubmissionImage): string | null {
+/** Build a public URL for a submission image meta dict (storage_filename or direct url). */
+export function submissionMetaImageUrl(meta: SubmissionImage): string | null {
   if (!meta || typeof meta !== "object") return null;
   if (meta.url?.trim()) return absolutizeMediaPath(meta.url.trim());
   const sf = meta.storage_filename;
@@ -34,9 +34,9 @@ function absolutizeMediaPath(path: string): string | null {
   return path;
 }
 
-/** Cover/marking image metas stored on Contribution.submitted_data. */
-export function contributionImageMetasFromSubmittedData(
-  sd: Submission,
+/** Cover/marking image metas stored on Submission.submitted_data. */
+export function submissionImageMetasFromSubmittedData(
+  sd: SubmittedData,
 ): SubmissionImage[] {
   const keys = [
     "cover_image_metas",
@@ -52,18 +52,18 @@ export function contributionImageMetasFromSubmittedData(
 }
 
 /** Synthetic MarkingImage rows for draft previews (negative imageId = not persisted as Image yet). */
-export function markingImagesFromContributionMetas(
+export function markingImagesFromSubmissionMetas(
   metas: SubmissionImage[],
   subjectId: number,
 ): MarkingImage[] {
   const rows: MarkingImage[] = [];
   metas.forEach((meta, idx) => {
-    const imageUrl = contributionMetaImageUrl(meta);
+    const imageUrl = submissionMetaImageUrl(meta);
     if (!imageUrl) return;
     const obj = meta;
     const storageFilename = obj.storage_filename ?? "";
     const originalFilename = obj.original_filename ?? "";
-    // Read dimensions from the same submitted_data keys contribution_apply
+    // Read dimensions from the same submitted_data keys submission_apply
     // uses when it creates the real Image row, so a draft preview and the row
     // it becomes agree. Absent or unparseable means 0, which the shape
     // classifier reads as indeterminate (issues.md 167).
@@ -89,18 +89,18 @@ export function markingImagesFromContributionMetas(
   return rows;
 }
 
-/** True for preview rows from Contribution.submitted_data (not yet Image rows). */
-export function isDraftContributionImage(imageId: number): boolean {
+/** True for preview rows from Submission.submitted_data (not yet Image rows). */
+export function isDraftSubmissionImage(imageId: number): boolean {
   return imageId < 0;
 }
 
-/** Fetch a draft contribution preview into a File for catalog image upload. */
-export async function fileFromContributionDraftImage(img: {
+/** Fetch a draft submission preview into a File for catalog image upload. */
+export async function fileFromSubmissionDraftImage(img: {
   imageUrl: string;
   originalFilename?: string;
   storageFilename?: string;
 }): Promise<File> {
-  const url = contributionMetaImageUrl({
+  const url = submissionMetaImageUrl({
     url: img.imageUrl,
     storage_filename: img.storageFilename,
     original_filename: img.originalFilename,

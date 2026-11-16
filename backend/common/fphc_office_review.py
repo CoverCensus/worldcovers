@@ -5,7 +5,7 @@ from common.audit import log_cover_restored, log_marking_restored
 from common.catalog_codes import strip_catalog_code_keys
 from common.catalog_source_approval import apply_catalog_entry
 from common.catalog_source_matching import decision
-from common.contribution_apply import ContributionApplyError
+from common.submission_apply import SubmissionApplyError
 from common.fphc_foreign_review import florida_review_collection, withdraw_source_target
 from common.models import CatalogSourceItem, CoverRecycleBin, Marking, MarkingRecycleBin, PostOffice
 
@@ -35,7 +35,7 @@ def queue_office_review(item, data, items, marks, covers, actor, references):
     if item.decision.get("office_review"):
         refresh_receipt(item, data, False)
         return "skip"
-    if item.applied or item.contribution_id:
+    if item.applied or item.submission_id:
         refresh_receipt(item, data, False)
     # A queued match was only proposed. Leave the existing catalog target alone.
     if not item.applied:
@@ -65,16 +65,16 @@ def queue_office_review(item, data, items, marks, covers, actor, references):
 def approve_office_review(item, ticket, actor, office_code):
     item = CatalogSourceItem.objects.select_for_update().get(pk=item.pk)
     if item.applied or not item.decision.get("office_review"):
-        raise ContributionApplyError("This Entry is no longer pending office review.")
+        raise SubmissionApplyError("This Entry is no longer pending office review.")
     if strip_catalog_code_keys(ticket.submitted_data) != item.decision["review_payload"]:
-        raise ContributionApplyError("The submission differs from the source proposal.")
+        raise SubmissionApplyError("The submission differs from the source proposal.")
     office, parents = None, []
     if item.kind == "MARKING":
         office = PostOffice.objects.select_for_update().filter(code=office_code).first() if office_code else None
         if not office or office.name.strip().lower().startswith(OFFICE_PREFIX):
-            raise ContributionApplyError("Select an identified Post Office by its catalog code.")
+            raise SubmissionApplyError("Select an identified Post Office by its catalog code.")
         if not user_is_responsible_for_post_office(actor, office):
-            raise ContributionApplyError("Select a Post Office within your assigned Collections.")
+            raise SubmissionApplyError("Select a Post Office within your assigned Collections.")
         obj, bin_model, log_restore = item.marking, MarkingRecycleBin, log_marking_restored
         item.decision["editor_office_code"] = office.code
     else:
@@ -82,16 +82,16 @@ def approve_office_review(item, ticket, actor, office_code):
             parent = CatalogSourceItem.objects.get(reference_work=item.reference_work, kind="MARKING",
                                                    source_key=link["marking"])
             if not parent.applied or not Marking.objects.filter(pk=parent.marking_id).exists():
-                raise ContributionApplyError("Approve the linked Marking before this Cover.")
+                raise SubmissionApplyError("Approve the linked Marking before this Cover.")
             parents.append(parent)
         obj, bin_model, log_restore = item.cover, CoverRecycleBin, log_cover_restored
     code = ticket.submitted_data["catalog_code"]
     if obj:
         if obj.code != code:
-            raise ContributionApplyError("Keep the existing catalog code.")
+            raise SubmissionApplyError("Keep the existing catalog code.")
         removed, _ = bin_model.objects.filter(**{item.kind.lower(): obj}, reason=REASON).delete()
         if not removed:
-            raise ContributionApplyError("The stored Entry is no longer in office review.")
+            raise SubmissionApplyError("The stored Entry is no longer in office review.")
         if office:
             obj.post_office = office
             obj.modified_by = actor

@@ -12,7 +12,7 @@
  * and none of them belong in a shareable URL.
  *
  * Router state is gone once the draft is saved and reopened from the Dashboard,
- * so the contribution detail endpoint returns the same descriptor as
+ * so the submission detail endpoint returns the same descriptor as
  * `source_marking_image` (Trello T37). Both arrive here, in one parser, so the
  * resumed form and the review gallery see exactly what the first visit saw.
  *
@@ -70,8 +70,8 @@ export function sourceMarkingImageFromDescriptor(raw: unknown): SourceMarkingIma
   const imageId = num(o.imageId ?? o.id);
   const imageUrl = str(o.imageUrl ?? o.image_url);
 
-  // A negative id is the draft-contribution preview sentinel
-  // (lib/contributionImages.ts): those rows are not catalog images and there is
+  // A negative id is the draft-submission preview sentinel
+  // (lib/submissionImages.ts): those rows are not catalog images and there is
   // nothing on the server to repoint later.
   if (!Number.isFinite(imageId) || imageId <= 0) return null;
   if (!imageUrl) return null;
@@ -103,11 +103,11 @@ export function sourceMarkingImageFromState(state: unknown): SourceMarkingImage 
 }
 
 /**
- * The descriptor the contribution detail endpoint resolved for a saved
+ * The descriptor the submission detail endpoint resolved for a saved
  * submission, or null when it carries nothing (or the image has since moved
  * off the marking and will not transfer on approval).
  */
-export function sourceMarkingImageFromContribution(item: {
+export function sourceMarkingImageFromSubmission(item: {
   source_marking_image?: unknown;
   sourceMarkingImage?: unknown;
 }): SourceMarkingImage | null {

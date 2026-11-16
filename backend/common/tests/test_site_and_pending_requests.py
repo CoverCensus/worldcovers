@@ -141,7 +141,7 @@ class PendingLoginRequestsTests(TestCase):
         self.contributor = User.objects.create_user("contributor", password="pw")
         self.editor = User.objects.create_user("editor", password="pw")
         group = Group.objects.create(name="Editors")
-        group.permissions.add(Permission.objects.get(codename="review_contribution"))
+        group.permissions.add(Permission.objects.get(codename="review_submission"))
         self.editor.groups.add(group)
 
         # The request: what LoginRequestView creates.

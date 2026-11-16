@@ -1,7 +1,7 @@
 """Scale benchmark for catalog serial allocation.
 
 Not a pass/fail gate -- it prints a measurement. `_next_serial` used to be
-O(markings + all pending contributions) in Python, with a json.loads per queued
+O(markings + all pending submissions) in Python, with a json.loads per queued
 row, which made draining a queue of N rows O(N^2). This builds a queue at the
 VPHC ingest's real size and reports what one allocation costs.
 
@@ -16,7 +16,7 @@ from django.test.utils import CaptureQueriesContext
 from django.db import connection
 
 from common.catalog_codes import _next_serial
-from common.models import Collection, Contribution, Marking, PostOffice, Region
+from common.models import Collection, Submission, Marking, PostOffice, Region
 
 PREFIX = "ASCC6-VA-M"
 PENDING = 2443       # woco.dev, 2026-08-17 census
@@ -47,10 +47,10 @@ class NextSerialScaleTests(TestCase):
         # Payloads shaped like the real queue: the VPHC blob is what makes
         # json.loads-per-row expensive, so a bare {"catalog_code": ...} would
         # flatter the old implementation.
-        Contribution.objects.bulk_create([
-            Contribution(
+        Submission.objects.bulk_create([
+            Submission(
                 contributor=user, collection=collection,
-                status=Contribution.STATUS_PENDING,
+                status=Submission.STATUS_PENDING,
                 submitted_data={
                     "catalog_code": "{}{:04d}".format(PREFIX, MARKINGS + i),
                     "town": "RICHMOND", "state": "VA", "type": "TOWNMARK",
@@ -70,7 +70,7 @@ class NextSerialScaleTests(TestCase):
             elapsed = time.perf_counter() - start
 
         print(
-            "\n  _next_serial over {:,} markings + {:,} pending contributions"
+            "\n  _next_serial over {:,} markings + {:,} pending submissions"
             "\n    {:.1f} ms, {} queries, next serial = {:,}"
             "\n    a full queue drain is {:,} allocations\n".format(
                 MARKINGS, PENDING, elapsed * 1000, len(ctx), serial, PENDING)

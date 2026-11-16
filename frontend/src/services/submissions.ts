@@ -1,10 +1,10 @@
-import { readSubmission, SubmissionFormData, type Submission, type SubmissionRequest } from "@/lib/submission";
+import { readSubmittedData, SubmissionFormData, type SubmittedData, type SubmissionRequest } from "@/lib/submission";
 /**
- * Contributions (v2 Contribution moderation tickets): list, read, submit, and
+ * Submissions (v2 Submission moderation tickets): list, read, submit, and
  * editor decisions (approve / reject / request-revision).
  *
- * Single source for the contribution transport that used to be copy-pasted as
- * raw fetch() across ContributionDetail, CoverContributionDetail, Dashboard,
+ * Single source for the submission transport that used to be copy-pasted as
+ * raw fetch() across SubmissionDetail, CoverSubmissionDetail, Dashboard,
  * Contribute, and CoverEdit. Each of those sites manually
  * re-read VITE_API_URL, read the CSRF cookie, hand-built headers, parsed res.ok,
  * and re-implemented camelCase/snake_case normalization. All of that lives here
@@ -16,19 +16,19 @@ import { readSubmission, SubmissionFormData, type Submission, type SubmissionReq
  */
 import apiClient, { ensureCsrfToken } from "@/lib/api";
 import type { AuthUser } from "@/lib/auth";
-import { countyIntentFromApi, type CountyIntent } from "@/lib/contributionDisplay";
+import { countyIntentFromApi, type CountyIntent } from "@/lib/submissionDisplay";
 import {
-  sourceMarkingImageFromContribution,
+  sourceMarkingImageFromSubmission,
   type SourceMarkingImage,
 } from "@/lib/coverFromImageHandoff";
 
-const CONTRIBUTION_UPLOAD_TIMEOUT_MS = 300000;
+const SUBMISSION_UPLOAD_TIMEOUT_MS = 300000;
 
 /**
- * One contribution row off the wire. Tolerates camelCase (renderer) and
+ * One submission row off the wire. Tolerates camelCase (renderer) and
  * snake_case, plus the optional display fields the editor lists read.
  */
-export interface ContributionApiItem {
+export interface SubmissionApiItem {
   id: number;
   collection?: number | null;
   status?: string;
@@ -61,14 +61,14 @@ export interface ContributionApiItem {
   markingId?: number | null;
   cover_id?: number | null;
   coverId?: number | null;
-  // ContributionDetailSerializer exposes the approved marking link as plain
+  // SubmissionDetailSerializer exposes the approved marking link as plain
   // "marking" (the FK pk), distinct from the list serializer's "marking_id".
   marking?: number | null;
-  // ContributionDetailSerializer resolves a "Create cover from this image"
+  // SubmissionDetailSerializer resolves a "Create cover from this image"
   // submission's carried-over marking image (Trello T37); list rows omit it.
   source_marking_image?: unknown;
   sourceMarkingImage?: unknown;
-  // ContributionDetailSerializer: a pending edit's target as it stands now,
+  // SubmissionDetailSerializer: a pending edit's target as it stands now,
   // in the submit keys (Trello T39); null otherwise and on list rows.
   edit_baseline?: unknown;
   editBaseline?: unknown;
@@ -76,21 +76,21 @@ export interface ContributionApiItem {
   [k: string]: unknown;
 }
 
-/** DRF paginated envelope for GET /contributions/ (count/results survive camelCasing). */
-export interface ContributionListResponse {
+/** DRF paginated envelope for GET /submissions/ (count/results survive camelCasing). */
+export interface SubmissionListResponse {
   count?: number;
   next?: string | null;
   previous?: string | null;
-  results?: ContributionApiItem[];
+  results?: SubmissionApiItem[];
 }
 
 /**
- * Normalized contribution for the SPA. Replaces the inline Contribution /
- * ContributionRecord / SubmittedData interfaces that used to live in the page
+ * Normalized submission for the SPA. Replaces the inline Submission /
+ * SubmissionRecord / SubmittedData interfaces that used to live in the page
  * components. `submittedData` is read once at this API boundary into the shared
  * Submission type. Display helpers receive that type.
  */
-export interface Contribution {
+export interface Submission {
   id: number;
   collectionId: number | null;
   contributorId: number | null;
@@ -98,7 +98,7 @@ export interface Contribution {
   contributorUsername: string;
   reviewNotes: string | null;
   createdAt: string;
-  submittedData: Submission;
+  submittedData: SubmittedData;
   unsupportedSubmissionFields?: string[];
   displayName?: string;
   updatedAt?: string;
@@ -127,7 +127,7 @@ export interface Contribution {
    * the review page's current-vs-proposed table. Null unless a reviewer is
    * viewing an edit that awaits a decision (Trello T39).
    */
-  editBaseline: Submission | null;
+  editBaseline: SubmittedData | null;
   /** The server's verdict on the submission's county, or null (Trello T70). */
   countyIntent: CountyIntent | null;
 }
@@ -149,7 +149,7 @@ function toNumberOrNull(v: unknown): number | null {
   return null;
 }
 
-function listImageUrl(item: ContributionApiItem): string {
+function listImageUrl(item: SubmissionApiItem): string {
   const image = item.mainImage ?? item.main_image;
   if (typeof image === "string") return image;
   if (image && typeof image === "object") {
@@ -168,11 +168,11 @@ function firstDefined(...vals: unknown[]): unknown {
   return null;
 }
 
-export function mapApiItemToContribution(item: ContributionApiItem): Contribution {
+export function mapApiItemToSubmission(item: SubmissionApiItem): Submission {
   const submittedRaw = item.submitted_data ?? item.submittedData ?? {};
-  const parsed = readSubmission(submittedRaw);
+  const parsed = readSubmittedData(submittedRaw);
   const baselineRaw = firstDefined(item.edit_baseline, item.editBaseline);
-  const baseline = baselineRaw == null ? null : readSubmission(baselineRaw);
+  const baseline = baselineRaw == null ? null : readSubmittedData(baselineRaw);
   return {
     id: item.id,
     collectionId: toNumberOrNull(item.collection),
@@ -203,23 +203,23 @@ export function mapApiItemToContribution(item: ContributionApiItem): Contributio
     // page sees a null marking id and the approved-to-record redirect never fires.
     markingId: toNumberOrNull(firstDefined(item.marking_id, item.markingId, item.marking)),
     coverId: toNumberOrNull(firstDefined(item.cover_id, item.coverId)),
-    sourceMarkingImage: sourceMarkingImageFromContribution(item),
+    sourceMarkingImage: sourceMarkingImageFromSubmission(item),
     editBaseline: baseline?.data ?? null,
     countyIntent: countyIntentFromApi(item.county_intent),
   };
 }
 
-export function canReviewContribution(user: AuthUser | null, contribution: Contribution | null): boolean {
-  if (!user || !contribution || contribution.status !== "pending") return false;
+export function canReviewSubmission(user: AuthUser | null, submission: Submission | null): boolean {
+  if (!user || !submission || submission.status !== "pending") return false;
   if (user.is_superuser || user.role === "administrator") return true;
   return (
-    user.role === "editor" && contribution.collectionId != null &&
-    (user.assigned_collections ?? []).some((collection) => collection.id === contribution.collectionId)
+    user.role === "editor" && submission.collectionId != null &&
+    (user.assigned_collections ?? []).some((collection) => collection.id === submission.collectionId)
   );
 }
 
-/** Query filters for GET /contributions/. camelCase here maps to snake_case params. */
-export interface ContributionListParams {
+/** Query filters for GET /submissions/. camelCase here maps to snake_case params. */
+export interface SubmissionListParams {
   /** "archived" is the editor recycle bin -- same scoping as "editor" (#89). */
   mode?: "editor" | "archived";
   status?: string;
@@ -249,14 +249,14 @@ export interface ContributionListParams {
   ordering?: string;
 }
 
-export interface ContributionListResult {
-  items: Contribution[];
+export interface SubmissionListResult {
+  items: Submission[];
   /** null when the API returns a bare array instead of a paginated envelope. */
   count: number | null;
   next: string | null;
 }
 
-/** GET /contributions/ with optional filters. Handles array or paginated responses. */
+/** GET /submissions/ with optional filters. Handles array or paginated responses. */
 /**
  * Wire params for the queue, shared by the list and by "select all matching".
  *
@@ -266,8 +266,8 @@ export interface ContributionListResult {
  * from the ones on screen -- and an editor would approve rows they never saw.
  * Pagination is excluded: the id list is the whole match set, not a page of it.
  */
-function buildContributionQuery(
-  params?: ContributionListParams,
+function buildSubmissionQuery(
+  params?: SubmissionListParams,
 ): Record<string, string | number> {
   const query: Record<string, string | number> = {};
   if (params?.mode) query.mode = params.mode;
@@ -286,43 +286,43 @@ function buildContributionQuery(
   return query;
 }
 
-export async function listContributions(
-  params?: ContributionListParams,
-): Promise<ContributionListResult> {
-  const query = buildContributionQuery(params);
+export async function listSubmissions(
+  params?: SubmissionListParams,
+): Promise<SubmissionListResult> {
+  const query = buildSubmissionQuery(params);
   if (params?.page != null) query.page = params.page;
   if (params?.pageSize != null) query.page_size = params.pageSize;
   if (params?.ordering) query.ordering = params.ordering;
 
-  const res = await apiClient.get("/contributions/", { params: query });
+  const res = await apiClient.get("/submissions/", { params: query });
   const data = res.data;
-  const rawItems: ContributionApiItem[] = Array.isArray(data)
-    ? (data as ContributionApiItem[])
-    : Array.isArray((data as ContributionListResponse)?.results)
-      ? ((data as ContributionListResponse).results as ContributionApiItem[])
+  const rawItems: SubmissionApiItem[] = Array.isArray(data)
+    ? (data as SubmissionApiItem[])
+    : Array.isArray((data as SubmissionListResponse)?.results)
+      ? ((data as SubmissionListResponse).results as SubmissionApiItem[])
       : [];
   const count = Array.isArray(data)
     ? data.length
-    : typeof (data as ContributionListResponse)?.count === "number"
-      ? ((data as ContributionListResponse).count as number)
+    : typeof (data as SubmissionListResponse)?.count === "number"
+      ? ((data as SubmissionListResponse).count as number)
       : null;
-  const next = !Array.isArray(data) && typeof (data as ContributionListResponse)?.next === "string"
-    ? (data as ContributionListResponse).next as string
+  const next = !Array.isArray(data) && typeof (data as SubmissionListResponse)?.next === "string"
+    ? (data as SubmissionListResponse).next as string
     : null;
-  return { items: rawItems.map(mapApiItemToContribution), count, next };
+  return { items: rawItems.map(mapApiItemToSubmission), count, next };
 }
 
 /** Load every submission owned by the signed-in user for My Submissions. */
-export async function listMyContributions(): Promise<{
-  items: Contribution[];
+export async function listMySubmissions(): Promise<{
+  items: Submission[];
   incomplete: boolean;
 }> {
   const pageSize = 100;
-  const all: Contribution[] = [];
+  const all: Submission[] = [];
   for (let page = 1; ; page += 1) {
-    let result: ContributionListResult;
+    let result: SubmissionListResult;
     try {
-      result = await listContributions({ page, pageSize });
+      result = await listSubmissions({ page, pageSize });
     } catch (error) {
       if (page === 1) throw error;
       return { items: all, incomplete: true };
@@ -334,25 +334,25 @@ export async function listMyContributions(): Promise<{
   }
 }
 
-/** GET /contributions/{id}/ -- normalized single contribution. Errors propagate. */
-export async function getContribution(id: number): Promise<Contribution> {
-  const res = await apiClient.get(`/contributions/${id}/`);
-  return mapApiItemToContribution(res.data as ContributionApiItem);
+/** GET /submissions/{id}/ -- normalized single submission. Errors propagate. */
+export async function getSubmission(id: number): Promise<Submission> {
+  const res = await apiClient.get(`/submissions/${id}/`);
+  return mapApiItemToSubmission(res.data as SubmissionApiItem);
 }
 
 /** Minimal write result; `raw` is the untouched response for any field not unified here. */
-export interface ContributionWriteResult {
-  contributionId: number | null;
+export interface SubmissionWriteResult {
+  submissionId: number | null;
   markingId: number | null;
   coverId: number | null;
   raw: Record<string, unknown>;
 }
 
-function mapWriteResult(raw: unknown): ContributionWriteResult {
+function mapWriteResult(raw: unknown): SubmissionWriteResult {
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   return {
-    contributionId: toNumberOrNull(
-      firstDefined(o.contributionId, o.contribution_id, o.id),
+    submissionId: toNumberOrNull(
+      firstDefined(o.submissionId, o.submission_id, o.id),
     ),
     markingId: toNumberOrNull(firstDefined(o.marking_id, o.markingId)),
     coverId: toNumberOrNull(firstDefined(o.cover_id, o.coverId)),
@@ -361,7 +361,7 @@ function mapWriteResult(raw: unknown): ContributionWriteResult {
 }
 
 /**
- * POST /contributions/ -- submit a contribution (new, draft, edit, or abandon).
+ * POST /submissions/ -- submit a submission (new, draft, edit, or abandon).
  *
  * The caller builds the body. Pass a FormData when uploading images (apiClient
  * strips Content-Type so the browser sets the multipart boundary) or a plain
@@ -369,32 +369,32 @@ function mapWriteResult(raw: unknown): ContributionWriteResult {
  * builders stay in the page components since they are tightly coupled to form
  * state; this function owns only CSRF + transport + response normalization.
  */
-export async function createContribution(
+export async function createSubmission(
   body: SubmissionFormData | SubmissionRequest,
-): Promise<ContributionWriteResult> {
+): Promise<SubmissionWriteResult> {
   await ensureCsrfToken();
   const isMultipart = typeof FormData !== "undefined" && body instanceof FormData;
   const res = await apiClient.post(
-    "/contributions/",
+    "/submissions/",
     body,
-    isMultipart ? { timeout: CONTRIBUTION_UPLOAD_TIMEOUT_MS } : undefined,
+    isMultipart ? { timeout: SUBMISSION_UPLOAD_TIMEOUT_MS } : undefined,
   );
   return mapWriteResult(res.data);
 }
 
 /**
- * Discard a cover Contribution draft after its cover was submitted via the
- * catalog API. Thin wrapper over createContribution with the abandon flags.
+ * Discard a cover Submission draft after its cover was submitted via the
+ * catalog API. Thin wrapper over createSubmission with the abandon flags.
  */
-export async function abandonCoverContributionDraft(contributionId: number): Promise<void> {
+export async function abandonCoverSubmissionDraft(submissionId: number): Promise<void> {
   const form = new SubmissionFormData();
   form.append("submission_kind", "cover");
   form.append("abandon_draft", "true");
-  form.append("edit_contribution_id", String(contributionId));
-  await createContribution(form);
+  form.append("edit_submission_id", String(submissionId));
+  await createSubmission(form);
 }
 
-export type ContributionAction = "approve" | "reject" | "revision";
+export type SubmissionAction = "approve" | "reject" | "revision";
 
 export interface DecideOptions {
   officeCode?: string;
@@ -412,22 +412,22 @@ export interface DecideResult {
   markingId: number | null;
   coverId: number | null;
   /** Trello T37: the Cover submission approval created from a Marking that carried one. */
-  pendingCoverContributionId: number | null;
+  pendingCoverSubmissionId: number | null;
   raw: Record<string, unknown>;
 }
 
 /**
- * GET /contributions/ids/ -- every id matching the current filters (#101).
+ * GET /submissions/ids/ -- every id matching the current filters (#101).
  *
  * This is what "select all matching" means. It deliberately does NOT reuse the
  * fetched page: #109's lesson is that anything derived client-side from one
  * page lies at scale, and here that lie would approve the wrong rows.
  */
-export async function listContributionIds(
-  params?: ContributionListParams,
+export async function listSubmissionIds(
+  params?: SubmissionListParams,
 ): Promise<{ ids: number[]; count: number }> {
-  const res = await apiClient.get("/contributions/ids/", {
-    params: buildContributionQuery(params),
+  const res = await apiClient.get("/submissions/ids/", {
+    params: buildSubmissionQuery(params),
   });
   const data = res.data as { ids?: unknown; count?: unknown };
   const ids = Array.isArray(data.ids)
@@ -457,7 +457,7 @@ export interface BulkReviewResult {
 export const BULK_REVIEW_BATCH_SIZE = 25;
 
 /**
- * POST /contributions/bulk-{approve,reject}/ over `ids`, in batches.
+ * POST /submissions/bulk-{approve,reject}/ over `ids`, in batches.
  *
  * Sequential, not parallel: every row in a batch mints catalog codes off the
  * same prefix, and concurrent requests would race for the same serial. The
@@ -468,7 +468,7 @@ export const BULK_REVIEW_BATCH_SIZE = 25;
  * a bad row is reported and the rest still land (#101 AC-4); the caller gets
  * every failure at the end and can retry just those ids.
  */
-export async function bulkReviewContributions(
+export async function bulkReviewSubmissions(
   action: "approve" | "reject",
   ids: number[],
   options?: {
@@ -487,7 +487,7 @@ export async function bulkReviewContributions(
     const slice = ids.slice(i, i + BULK_REVIEW_BATCH_SIZE);
     try {
       const res = await apiClient.post(
-        `/contributions/${path}/`,
+        `/submissions/${path}/`,
         { ids: slice, review_notes: options?.reviewNotes ?? "" },
         { signal: options?.signal },
       );
@@ -513,12 +513,12 @@ export async function bulkReviewContributions(
 }
 
 /**
- * POST /contributions/{id}/{approve|reject|request-revision}/.
+ * POST /submissions/{id}/{approve|reject|request-revision}/.
  * "revision" maps to the "request-revision" path.
  */
-export async function decideContribution(
+export async function decideSubmission(
   id: number,
-  action: ContributionAction,
+  action: SubmissionAction,
   opts?: DecideOptions,
 ): Promise<DecideResult> {
   await ensureCsrfToken();
@@ -535,13 +535,13 @@ export async function decideContribution(
   if (opts?.estimatedValue != null) body.estimated_value = opts.estimatedValue;
   if (opts && "catalogCode" in opts) body.catalog_code = opts.catalogCode ?? "";
 
-  const res = await apiClient.post(`/contributions/${id}/${actionPath}/`, body);
+  const res = await apiClient.post(`/submissions/${id}/${actionPath}/`, body);
   const o = res.data && typeof res.data === "object" ? (res.data as Record<string, unknown>) : {};
   return {
     markingId: toNumberOrNull(firstDefined(o.marking_id, o.markingId)),
     coverId: toNumberOrNull(firstDefined(o.cover_id, o.coverId)),
-    pendingCoverContributionId: toNumberOrNull(
-      firstDefined(o.pendingCoverContributionId, o.pending_cover_contribution_id),
+    pendingCoverSubmissionId: toNumberOrNull(
+      firstDefined(o.pendingCoverSubmissionId, o.pending_cover_submission_id),
     ),
     raw: o,
   };
@@ -561,13 +561,13 @@ function mapCatalogCodeSuggestion(raw: unknown): CatalogCodeSuggestion {
   };
 }
 
-export async function getContributionCatalogCodeSuggestion(
-  contributionId: number,
+export async function getSubmissionCatalogCodeSuggestion(
+  submissionId: number,
   opts?: { force?: boolean },
 ): Promise<CatalogCodeSuggestion> {
   await ensureCsrfToken();
   const res = await apiClient.post(
-    `/contributions/${contributionId}/catalog-code-suggestion/`,
+    `/submissions/${submissionId}/catalog-code-suggestion/`,
     opts?.force ? { force: true } : {},
   );
   return mapCatalogCodeSuggestion(res.data);
@@ -595,12 +595,12 @@ export async function getDirectCatalogCodeSuggestion(payload: {
   return mapCatalogCodeSuggestion(res.data);
 }
 
-// DELETE /contributions/{id}/  -- hard-deletes (withdraws) an unapproved
-// contribution; backend enforces IsOwnDeletableContribution (status must NOT be
+// DELETE /submissions/{id}/  -- hard-deletes (withdraws) an unapproved
+// submission; backend enforces IsOwnDeletableSubmission (status must NOT be
 // "approved" and requester must be the owner or a superuser). No response body.
-export async function deleteOwnContribution(contributionId: number): Promise<void> {
+export async function deleteOwnSubmission(submissionId: number): Promise<void> {
   await ensureCsrfToken();
-  await apiClient.delete(`/contributions/${contributionId}/`);
+  await apiClient.delete(`/submissions/${submissionId}/`);
 }
 
 /** Result shape shared by the archive/restore actions; mirrors removeMarking. */
@@ -613,17 +613,17 @@ function archiveError(err: unknown, fallback: string): ArchiveResult {
 }
 
 /**
- * Editor: POST /contributions/{id}/archive/ -- clear a reviewed entry off the
- * review dashboard (Issue #89). Soft: the contribution is untouched and stays
- * visible to its contributor. The backend rejects a pending contribution.
+ * Editor: POST /submissions/{id}/archive/ -- clear a reviewed entry off the
+ * review dashboard (Issue #89). Soft: the submission is untouched and stays
+ * visible to its contributor. The backend rejects a pending submission.
  */
-export async function archiveContribution(
-  contributionId: number,
+export async function archiveSubmission(
+  submissionId: number,
   reason?: string,
 ): Promise<ArchiveResult> {
   await ensureCsrfToken();
   try {
-    await apiClient.post(`/contributions/${contributionId}/archive/`, {
+    await apiClient.post(`/submissions/${submissionId}/archive/`, {
       reason: reason ?? "",
     });
     return { ok: true };
@@ -632,13 +632,13 @@ export async function archiveContribution(
   }
 }
 
-/** Editor: POST /contributions/{id}/restore/ -- put an archived entry back in the queue. */
-export async function restoreContribution(
-  contributionId: number,
+/** Editor: POST /submissions/{id}/restore/ -- put an archived entry back in the queue. */
+export async function restoreSubmission(
+  submissionId: number,
 ): Promise<ArchiveResult> {
   await ensureCsrfToken();
   try {
-    await apiClient.post(`/contributions/${contributionId}/restore/`, {});
+    await apiClient.post(`/submissions/${submissionId}/restore/`, {});
     return { ok: true };
   } catch (err: unknown) {
     return archiveError(err, "Could not restore this entry.");

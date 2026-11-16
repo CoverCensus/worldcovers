@@ -1,5 +1,5 @@
-import { isCoverSubmission as isCoverContributionData, type Submission } from "@/lib/submission";
-/** Helpers to distinguish cover vs marking rows in Contribution.submitted_data. */
+import { isCoverSubmittedData as isCoverSubmissionData, type SubmittedData } from "@/lib/submission";
+/** Helpers to distinguish cover vs marking rows in Submission.submitted_data. */
 import {
   formatPartialDateInput,
   markingBoundaryDateInputFromSubmission,
@@ -11,41 +11,41 @@ import { ENTRY_LABELS } from "@/labels/entry";
 import { COVER_TYPE_LABELS } from "@/lib/coverTypes";
 
 
-export { isCoverSubmission as isCoverContributionData } from "@/lib/submission";
+export { isCoverSubmittedData as isCoverSubmissionData } from "@/lib/submission";
 
 /**
- * "Cover" or "Marking" for a contribution -- Ian, 2026-09-21: "from this I do
+ * "Cover" or "Marking" for a submission -- Ian, 2026-09-21: "from this I do
  * not know if it is a cover he is submitting or a marking. Could it say which
  * it is on the screen".
  *
- * Deliberately the same predicate `ContributionDetail` dispatches on, so the
+ * Deliberately the same predicate `SubmissionDetail` dispatches on, so the
  * label and the screen can never disagree. If the heuristic below is ever
  * wrong, the badge is wrong in the same direction -- which makes the
  * misclassification visible and reportable instead of silent.
  */
-export function entryKindForContribution(
-  sd: Submission,
+export function entryKindForSubmission(
+  sd: SubmittedData,
 ): "Cover" | "Marking" {
-  return isCoverContributionData(sd) ? "Cover" : "Marking";
+  return isCoverSubmissionData(sd) ? "Cover" : "Marking";
 }
 
-export function parentMarkingIdFromContribution(sd: Submission): number | null {
+export function parentMarkingIdFromSubmission(sd: SubmittedData): number | null {
   const raw = sd.parent_marking_id;
   if (raw == null || raw === "") return null;
   const n = parseInt(String(raw), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-export function materializedCoverIdFromContribution(sd: Submission): number | null {
+export function materializedCoverIdFromSubmission(sd: SubmittedData): number | null {
   const raw = sd.cover_id;
   if (raw == null || raw === "") return null;
   const n = parseInt(String(raw), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-export function coverContributionDisplayName(
-  sd: Submission,
-  contributionId: number,
+export function coverSubmissionDisplayName(
+  sd: SubmittedData,
+  submissionId: number,
   parentLocation?: { town?: string | null; state?: string | null },
 ): string {
   const typeCode = String(sd.type ?? "").trim().toUpperCase();
@@ -57,18 +57,18 @@ export function coverContributionDisplayName(
   const parts = [location, typeLabel];
   if (date) parts.push(date);
   const label = parts.filter(Boolean).join(" - ");
-  return label || `Submission #${contributionId}`;
+  return label || `Submission #${submissionId}`;
 }
 
-export function coverContributionDisplayLabel(
-  contribution: { displayName?: unknown; display_name?: unknown },
-  sd: Submission,
-  contributionId: number,
+export function coverSubmissionDisplayLabel(
+  submission: { displayName?: unknown; display_name?: unknown },
+  sd: SubmittedData,
+  submissionId: number,
   parentLocation?: { town?: string | null; state?: string | null },
 ): string {
   return (
-    String(contribution.displayName ?? contribution.display_name ?? "").trim() ||
-    coverContributionDisplayName(sd, contributionId, parentLocation)
+    String(submission.displayName ?? submission.display_name ?? "").trim() ||
+    coverSubmissionDisplayName(sd, submissionId, parentLocation)
   );
 }
 
@@ -78,20 +78,20 @@ const MARKING_TYPE_LABELS: Record<string, string> = {
   AUXMARK: ENTRY_LABELS.markingType.AUXMARK,
 };
 
-export interface ContributionCardField {
+export interface SubmissionCardField {
   label: string;
   value: string;
 }
 
-export interface ContributionCardPresentation {
+export interface SubmissionCardPresentation {
   entryKind: "Cover" | "Marking";
   title: string;
-  fields: ContributionCardField[];
+  fields: SubmissionCardField[];
 }
 
-interface ContributionCardPresentationInput {
+interface SubmissionCardPresentationInput {
   id: number;
-  submittedData: Submission;
+  submittedData: SubmittedData;
   town?: unknown;
   state?: unknown;
   type?: unknown;
@@ -105,11 +105,11 @@ function displayValue(value: unknown): string {
   return text === "-" || text.toLowerCase() === "unknown" ? "" : text;
 }
 
-function markingBoundaryDate(sd: Submission, prefix: "marking_erd" | "marking_lrd"): string {
+function markingBoundaryDate(sd: SubmittedData, prefix: "marking_erd" | "marking_lrd"): string {
   return formatPartialDateInput(markingBoundaryDateInputFromSubmission(sd, prefix));
 }
 
-function markingDateLabel(sd: Submission): string {
+function markingDateLabel(sd: SubmittedData): string {
   const earliest =
     markingBoundaryDate(sd, "marking_erd") ||
     displayValue(sd.first_seen);
@@ -121,7 +121,7 @@ function markingDateLabel(sd: Submission): string {
   return displayValue(sd.date_range);
 }
 
-export function contributionCardPresentation({
+export function submissionCardPresentation({
   id,
   submittedData: sd,
   town,
@@ -130,8 +130,8 @@ export function contributionCardPresentation({
   shape,
   color,
   size,
-}: ContributionCardPresentationInput): ContributionCardPresentation {
-  const isCover = isCoverContributionData(sd);
+}: SubmissionCardPresentationInput): SubmissionCardPresentation {
+  const isCover = isCoverSubmissionData(sd);
   const entryKind = isCover ? "Cover" : "Marking";
   const locationTown = displayValue(town) || displayValue(sd.town);
   const locationState = displayValue(state) || displayValue(sd.state);
@@ -140,7 +140,7 @@ export function contributionCardPresentation({
   const typeLabel = isCover
     ? COVER_TYPE_LABELS[rawType.toUpperCase()] || rawType
     : MARKING_TYPE_LABELS[rawType.toUpperCase()] || rawType;
-  const fields: ContributionCardField[] = [];
+  const fields: SubmissionCardField[] = [];
 
   if (typeLabel) {
     fields.push({ label: isCover ? "Cover type" : "Marking type", value: typeLabel });
@@ -168,7 +168,7 @@ export function contributionCardPresentation({
 /**
  * The Cover a contributor submitted together with a new Marking (Trello T37),
  * read from submitted_data.pending_cover. Approval turns it into its own cover
- * contribution; until then it travels inside the Marking submission.
+ * submission; until then it travels inside the Marking submission.
  */
 export interface PendingCoverSummary {
   type: string;
@@ -186,7 +186,7 @@ function truthy(v: unknown): boolean {
 }
 
 export function pendingCoverFromSubmittedData(
-  sd: Submission | null | undefined,
+  sd: SubmittedData | null | undefined,
 ): PendingCoverSummary | null {
   const raw = sd?.pending_cover;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -206,20 +206,20 @@ export function pendingCoverFromSubmittedData(
 }
 
 /** Set on the Marking submission once approval created its Cover submission. */
-export function pendingCoverContributionIdFromSubmittedData(
-  sd: Submission | null | undefined,
+export function pendingCoverSubmissionIdFromSubmittedData(
+  sd: SubmittedData | null | undefined,
 ): number | null {
-  const raw = sd?.pending_cover_contribution_id;
+  const raw = sd?.pending_cover_submission_id;
   if (raw == null || raw === "") return null;
   const n = parseInt(String(raw), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-/** Set on a cover contribution that approval created from a Marking submission. */
-export function createdFromContributionIdFromSubmittedData(
-  sd: Submission | null | undefined,
+/** Set on a cover submission that approval created from a Marking submission. */
+export function createdFromSubmissionIdFromSubmittedData(
+  sd: SubmittedData | null | undefined,
 ): number | null {
-  const raw = sd?.created_from_contribution_id;
+  const raw = sd?.created_from_submission_id;
   if (raw == null || raw === "") return null;
   const n = parseInt(String(raw), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -227,12 +227,12 @@ export function createdFromContributionIdFromSubmittedData(
 
 /** Trello T70: a county the contributor typed because it was not in the list. Never applied by approval. */
 export function countyProposedFromSubmittedData(
-  sd: Submission | null | undefined,
+  sd: SubmittedData | null | undefined,
 ): string {
   return String(sd?.county_proposed ?? "").trim();
 }
 
-/** Trello T70: the server's verdict on a submission's county (ContributionDetailSerializer.county_intent). */
+/** Trello T70: the server's verdict on a submission's county (SubmissionDetailSerializer.county_intent). */
 export interface CountyIntent {
   countyId: number | null;
   countyName: string;

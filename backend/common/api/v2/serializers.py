@@ -21,20 +21,20 @@ from common.catalog_codes import (
     strip_catalog_code_keys,
     validate_unique_catalog_code,
 )
-from common.contribution_apply import (
+from common.submission_apply import (
     _parse_int,
     _source_marking_image_id,
     _source_marking_image_position,
     describe_county_intent,
 )
-from common.contribution_consolidation import contribution_target
+from common.submission_consolidation import submission_target
 from common.edit_baseline import cover_edit_baseline, marking_edit_baseline
 from common.models import (
     Citation,
     Collection,
     CollectionAssignment,
     Color,
-    Contribution,
+    Submission,
     Cover,
     CoverMarking,
     CoverRecycleBin,
@@ -58,8 +58,8 @@ from common.postmaster_names import postmaster_sort_name
 from .permissions import (
     _user_is_responsible_for_cover,
     _user_is_responsible_for_marking,
-    REVIEW_CONTRIBUTION_PERM,
-    user_can_review_contributions,
+    REVIEW_SUBMISSION_PERM,
+    user_can_review_submissions,
 )
 
 
@@ -69,7 +69,7 @@ User = get_user_model()
 def _viewer_may_see_catalog_code(user) -> bool:
     if not user or not getattr(user, "is_authenticated", False):
         return False
-    return bool(user.is_superuser or user.has_perm(REVIEW_CONTRIBUTION_PERM))
+    return bool(user.is_superuser or user.has_perm(REVIEW_SUBMISSION_PERM))
 
 
 def _redact_catalog_code(serializer, data):
@@ -366,7 +366,7 @@ def image_public_url(image, request):
     Some imported storage_filename values include their media subdirectory;
     those files still live under MEDIA_ROOT at that exact path.
 
-    Shared by ImageSerializer and by the contribution detail's resolved
+    Shared by ImageSerializer and by the submission detail's resolved
     carried-over image (Trello T37), so both render the same URL.
     """
     storage = (getattr(image, "storage_filename", "") or "").lstrip("/")
@@ -675,7 +675,7 @@ class DateSeenSerializer(serializers.ModelSerializer):
         # (issue #128). Delete-and-recreate is exactly equivalent and is fully
         # audited, and it keeps one row hanging off one parent, so the audit
         # trail never has to fork across two. The ORM path used by the admin,
-        # the importers and contribution_apply is untouched.
+        # the importers and submission_apply is untouched.
         if self.instance is not None:
             for key in ("subject_type", "subject_id"):
                 if key in attrs and attrs[key] != getattr(self.instance, key):
@@ -991,22 +991,22 @@ def _marking_regions(marking):
     ]
 
 
-def _viewer_may_see_contribution_notes(user, contribution) -> bool:
-    # contribution: Contribution | None. Returns True for any editor/admin/superuser
+def _viewer_may_see_submission_notes(user, submission) -> bool:
+    # submission: Submission | None. Returns True for any editor/admin/superuser
     # or the contributor who made it. False for anon and unrelated users. This is
     # intentionally NOT region-scoped (unlike _user_is_responsible_for_marking):
     # any editor may see the comment-for-editor and editor feedback.
     if user is None or not getattr(user, "is_authenticated", False):
         return False
-    if contribution is None:
+    if submission is None:
         return False
-    if user.is_superuser or user.has_perm(REVIEW_CONTRIBUTION_PERM):
+    if user.is_superuser or user.has_perm(REVIEW_SUBMISSION_PERM):
         return True
-    return getattr(contribution, "contributor_id", None) == user.id
+    return getattr(submission, "contributor_id", None) == user.id
 
 
 def _comment_for_editor_from(submitted_data) -> str:
-    # The contributor's "comment for editor" lives in Contribution.submitted_data.
+    # The contributor's "comment for editor" lives in Submission.submitted_data.
     # The submit form writes it under both contributor_comment and comment_for_editor;
     # fall back to plain "comment" for older rows.
     if not isinstance(submitted_data, dict):
@@ -1322,23 +1322,23 @@ class MarkingSerializer(serializers.ModelSerializer):
     def get_editor_feedback(self, obj):
         request = self.context.get("request")
         user = getattr(request, "user", None)
-        contribution = getattr(obj, "contribution", None)
-        if not _viewer_may_see_contribution_notes(user, contribution):
+        submission = getattr(obj, "submission", None)
+        if not _viewer_may_see_submission_notes(user, submission):
             return ""
-        return (contribution.review_notes or "").strip()
+        return (submission.review_notes or "").strip()
 
     def get_comment_for_editor(self, obj):
         request = self.context.get("request")
         user = getattr(request, "user", None)
-        contribution = getattr(obj, "contribution", None)
-        if not _viewer_may_see_contribution_notes(user, contribution):
+        submission = getattr(obj, "submission", None)
+        if not _viewer_may_see_submission_notes(user, submission):
             return ""
-        return _comment_for_editor_from(contribution.submitted_data)
+        return _comment_for_editor_from(submission.submitted_data)
 
     def get_vphc_provenance(self, obj):
-        # Issue #110. contribution_apply strips the ingest's [VPHC: ...] markers
+        # Issue #110. submission_apply strips the ingest's [VPHC: ...] markers
         # out of `desc` on approval, because `desc` is public. The doubt is not
-        # discarded -- it stays on the contribution -- but nothing linked an
+        # discarded -- it stays on the submission -- but nothing linked an
         # approved marking back to it, so an editor looking at a flagged record
         # had no way to see why. This is that path.
         #
@@ -1349,10 +1349,10 @@ class MarkingSerializer(serializers.ModelSerializer):
         # the contributor; never anonymous.
         request = self.context.get("request")
         user = getattr(request, "user", None)
-        contribution = getattr(obj, "contribution", None)
-        if not _viewer_may_see_contribution_notes(user, contribution):
+        submission = getattr(obj, "submission", None)
+        if not _viewer_may_see_submission_notes(user, submission):
             return None
-        blob = (contribution.submitted_data or {}).get("vphc")
+        blob = (submission.submitted_data or {}).get("vphc")
         return blob if isinstance(blob, dict) else None
 
     def get_state(self, obj):
@@ -1406,9 +1406,9 @@ class MarkingSerializer(serializers.ModelSerializer):
 
 
 ###################################################################################################
-## Contribution (moderation queue)
+## Submission (moderation queue)
 ###################################################################################################
-def _contribution_submitted_data_is_cover(sd) -> bool:
+def _submission_submitted_data_is_cover(sd) -> bool:
     if not isinstance(sd, dict):
         return False
     kind = str(sd.get("submission_kind") or sd.get("submissionKind") or "").strip().lower()
@@ -1491,9 +1491,9 @@ def _submitted_cover_date_label(sd) -> str:
     return ""
 
 
-def _contribution_target_marking_id(obj):
+def _submission_target_marking_id(obj):
     sd = obj.submitted_data or {}
-    if _contribution_submitted_data_is_cover(sd):
+    if _submission_submitted_data_is_cover(sd):
         raw = sd.get("parent_marking_id") or sd.get("marking_id")
         if raw in (None, ""):
             return None
@@ -1502,21 +1502,21 @@ def _contribution_target_marking_id(obj):
         except (TypeError, ValueError):
             return None
         return value if value > 0 else None
-    target = contribution_target(obj)
+    target = submission_target(obj)
     if target is None or target.kind != "marking":
         return None
     return target.id
 
 
-def _contribution_target_cover_id(obj):
-    target = contribution_target(obj)
+def _submission_target_cover_id(obj):
+    target = submission_target(obj)
     if target is None or target.kind != "cover":
         return None
     return target.id
 
 
-class ContributionListSerializer(serializers.ModelSerializer):
-    """List view for contributions (moderation queue)."""
+class SubmissionListSerializer(serializers.ModelSerializer):
+    """List view for submissions (moderation queue)."""
     contributor_username = serializers.CharField(source="contributor.username", read_only=True)
     reviewer_username = serializers.CharField(source="reviewer.username", read_only=True, allow_null=True)
     marking_id = serializers.SerializerMethodField()
@@ -1538,7 +1538,7 @@ class ContributionListSerializer(serializers.ModelSerializer):
     archive_reason = serializers.SerializerMethodField()
 
     class Meta:
-        model = Contribution
+        model = Submission
         fields = [
             "id",
             "contributor",
@@ -1586,7 +1586,7 @@ class ContributionListSerializer(serializers.ModelSerializer):
         return entry.reason if entry else ""
 
     def get_marking_id(self, obj):
-        return _contribution_target_marking_id(obj)
+        return _submission_target_marking_id(obj)
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -1599,25 +1599,25 @@ class ContributionListSerializer(serializers.ModelSerializer):
         return data
 
     def get_cover_id(self, obj):
-        return _contribution_target_cover_id(obj)
+        return _submission_target_cover_id(obj)
 
     def _parent_location(self, obj):
         """(town, state) inherited from a cover draft's parent marking.
 
-        Issue #135/#137. A cover contribution carries no town of its own --
+        Issue #135/#137. A cover submission carries no town of its own --
         CoverEdit never sends one, and it must not:
-        _contribution_submitted_data_is_cover keys "this is a cover" partly on
+        _submission_submitted_data_is_cover keys "this is a cover" partly on
         the ABSENCE of a town, so denormalizing one into submitted_data would
         reclassify every cover draft as a marking. The town lives on the parent
         marking and has to be looked up.
 
         The map is built once per page by the viewset
-        (_contribution_parent_locations) and arrives through context, so this is
+        (_submission_parent_locations) and arrives through context, so this is
         a dict hit rather than a query per row. An empty pair is the honest
         answer when the map is absent (a serializer used outside the list view)
         or the parent cannot be resolved -- callers degrade, never fail.
         """
-        marking_id = _contribution_target_marking_id(obj)
+        marking_id = _submission_target_marking_id(obj)
         if marking_id is None:
             return "", ""
         locations = (self.context or {}).get("parent_marking_locations") or {}
@@ -1625,7 +1625,7 @@ class ContributionListSerializer(serializers.ModelSerializer):
 
     def get_state_display(self, obj):
         sd = obj.submitted_data or {}
-        if _contribution_submitted_data_is_cover(sd) and not str(sd.get("state") or "").strip():
+        if _submission_submitted_data_is_cover(sd) and not str(sd.get("state") or "").strip():
             _, state = self._parent_location(obj)
             if state:
                 return state
@@ -1633,7 +1633,7 @@ class ContributionListSerializer(serializers.ModelSerializer):
 
     def get_town_display(self, obj):
         sd = obj.submitted_data or {}
-        if _contribution_submitted_data_is_cover(sd) and not str(sd.get("town") or "").strip():
+        if _submission_submitted_data_is_cover(sd) and not str(sd.get("town") or "").strip():
             town, _ = self._parent_location(obj)
             if town:
                 return town
@@ -1645,7 +1645,7 @@ class ContributionListSerializer(serializers.ModelSerializer):
     def get_display_name(self, obj):
         sd = obj.submitted_data or {}
 
-        if _contribution_submitted_data_is_cover(sd):
+        if _submission_submitted_data_is_cover(sd):
             cover_types = Cover.COVER_TYPE_LABELS
             type_code = str(sd.get("type") or "").strip().upper()
             type_label = cover_types.get(type_code, type_code or "Cover")
@@ -1675,7 +1675,7 @@ class ContributionListSerializer(serializers.ModelSerializer):
         return " - ".join(parts) if parts else f"Submission #{obj.id}"
 
 
-class ContributionDetailSerializer(serializers.ModelSerializer):
+class SubmissionDetailSerializer(serializers.ModelSerializer):
     contributor_username = serializers.CharField(source="contributor.username", read_only=True)
     reviewer_username = serializers.CharField(source="reviewer.username", read_only=True, allow_null=True)
     marking_id = serializers.SerializerMethodField()
@@ -1687,7 +1687,7 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
     updated_at = serializers.DateTimeField(source="modified_date", read_only=True)
 
     class Meta:
-        model = Contribution
+        model = Submission
         fields = [
             "id",
             "contributor",
@@ -1720,10 +1720,10 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
         return data
 
     def get_marking_id(self, obj):
-        return _contribution_target_marking_id(obj)
+        return _submission_target_marking_id(obj)
 
     def get_cover_id(self, obj):
-        return _contribution_target_cover_id(obj)
+        return _submission_target_cover_id(obj)
 
     def get_source_marking_image(self, obj):
         """
@@ -1740,7 +1740,7 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
         """
         sd = obj.submitted_data or {}
         image_id = _source_marking_image_id(sd)
-        parent_pk = _contribution_target_marking_id(obj)
+        parent_pk = _submission_target_marking_id(obj)
         if image_id is None or parent_pk is None:
             return None
         row = Image.objects.filter(
@@ -1774,9 +1774,9 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
         None, as does any other submission.
         """
         request = self.context.get("request") if self.context else None
-        if obj.status not in (Contribution.STATUS_PENDING, Contribution.STATUS_NEEDS_REVISION):
+        if obj.status not in (Submission.STATUS_PENDING, Submission.STATUS_NEEDS_REVISION):
             return None
-        if not user_can_review_contributions(getattr(request, "user", None)):
+        if not user_can_review_submissions(getattr(request, "user", None)):
             return None
         sd = obj.submitted_data or {}
         cover_id = _parse_int(sd.get("edit_cover_id"))
@@ -1807,13 +1807,13 @@ class ContributionDetailSerializer(serializers.ModelSerializer):
         carry no county keys, so they get None without a special case.
         """
         if obj.status not in (
-            Contribution.STATUS_DRAFT, Contribution.STATUS_PENDING, Contribution.STATUS_NEEDS_REVISION
+            Submission.STATUS_DRAFT, Submission.STATUS_PENDING, Submission.STATUS_NEEDS_REVISION
         ):
             return None
         return describe_county_intent(obj.submitted_data or {})
 
 
-class ContributionApproveRejectSerializer(serializers.Serializer):
+class SubmissionApproveRejectSerializer(serializers.Serializer):
     """Payload for approve / reject actions."""
     review_notes = serializers.CharField(required=False, allow_blank=True)
     catalog_code = serializers.CharField(required=False, allow_blank=True)

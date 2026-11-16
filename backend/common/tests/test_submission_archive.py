@@ -6,8 +6,8 @@ from rest_framework.test import APIClient
 from common.models import (
     Collection,
     CollectionAssignment,
-    Contribution,
-    ContributionRecycleBin,
+    Submission,
+    SubmissionRecycleBin,
     Region,
 )
 
@@ -15,7 +15,7 @@ from common.models import (
 User = get_user_model()
 
 
-class ContributionArchiveTests(TestCase):
+class SubmissionArchiveTests(TestCase):
     """
     Issue #89: editors clear reviewed entries off the review dashboard without
     deleting them, and the contributor keeps seeing their own submission.
@@ -28,7 +28,7 @@ class ContributionArchiveTests(TestCase):
         )
         self.editor = User.objects.create_user(username="editor", password="pw")
         editors = Group.objects.create(name="Editors")
-        editors.permissions.add(Permission.objects.get(codename="review_contribution"))
+        editors.permissions.add(Permission.objects.get(codename="review_submission"))
         self.editor.groups.add(editors)
         self.other_editor = User.objects.create_user(username="other-editor", password="pw")
         self.other_editor.groups.add(editors)
@@ -54,8 +54,8 @@ class ContributionArchiveTests(TestCase):
             modified_by=self.admin,
         )
 
-    def _contribution(self, status=Contribution.STATUS_REJECTED):
-        return Contribution.objects.create(
+    def _submission(self, status=Submission.STATUS_REJECTED):
+        return Submission.objects.create(
             contributor=self.contributor,
             collection=self.collection,
             submitted_data={"state": "Virginia", "town": "Richmond"},
@@ -64,87 +64,87 @@ class ContributionArchiveTests(TestCase):
             modified_by=self.contributor,
         )
 
-    def _archive(self, contribution, user, reason="Duplicate"):
+    def _archive(self, submission, user, reason="Duplicate"):
         self.client.force_authenticate(user)
         return self.client.post(
-            f"/api/v2/contributions/{contribution.pk}/archive/",
+            f"/api/v2/submissions/{submission.pk}/archive/",
             {"reason": reason},
             format="json",
         )
 
     def _editor_queue_ids(self, mode="editor"):
         self.client.force_authenticate(self.editor)
-        response = self.client.get(f"/api/v2/contributions/?mode={mode}")
+        response = self.client.get(f"/api/v2/submissions/?mode={mode}")
         self.assertEqual(response.status_code, 200, response.data)
         results = response.data.get("results", response.data)
         return [row["id"] for row in results]
 
     def test_archive_then_restore_round_trip(self):
-        contribution = self._contribution()
+        submission = self._submission()
 
-        response = self._archive(contribution, self.editor)
+        response = self._archive(submission, self.editor)
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertTrue(
-            ContributionRecycleBin.objects.filter(contribution=contribution).exists()
+            SubmissionRecycleBin.objects.filter(submission=submission).exists()
         )
-        # The contribution row itself is untouched -- status and history survive.
-        contribution.refresh_from_db()
-        self.assertEqual(contribution.status, Contribution.STATUS_REJECTED)
-        self.assertNotIn(contribution.pk, self._editor_queue_ids())
-        self.assertIn(contribution.pk, self._editor_queue_ids(mode="archived"))
+        # The submission row itself is untouched -- status and history survive.
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.STATUS_REJECTED)
+        self.assertNotIn(submission.pk, self._editor_queue_ids())
+        self.assertIn(submission.pk, self._editor_queue_ids(mode="archived"))
 
         self.client.force_authenticate(self.editor)
         restore = self.client.post(
-            f"/api/v2/contributions/{contribution.pk}/restore/", {}, format="json"
+            f"/api/v2/submissions/{submission.pk}/restore/", {}, format="json"
         )
 
         self.assertEqual(restore.status_code, 200, restore.data)
         self.assertFalse(
-            ContributionRecycleBin.objects.filter(contribution=contribution).exists()
+            SubmissionRecycleBin.objects.filter(submission=submission).exists()
         )
-        self.assertIn(contribution.pk, self._editor_queue_ids())
+        self.assertIn(submission.pk, self._editor_queue_ids())
 
     def test_archived_entry_stays_visible_to_its_contributor(self):
-        contribution = self._contribution()
-        self._archive(contribution, self.editor)
+        submission = self._submission()
+        self._archive(submission, self.editor)
 
         self.client.force_authenticate(self.contributor)
-        response = self.client.get("/api/v2/contributions/")
+        response = self.client.get("/api/v2/submissions/")
 
         self.assertEqual(response.status_code, 200, response.data)
         results = response.data.get("results", response.data)
-        self.assertIn(contribution.pk, [row["id"] for row in results])
+        self.assertIn(submission.pk, [row["id"] for row in results])
 
-    def test_pending_contribution_cannot_be_archived(self):
-        contribution = self._contribution(status=Contribution.STATUS_PENDING)
+    def test_pending_submission_cannot_be_archived(self):
+        submission = self._submission(status=Submission.STATUS_PENDING)
 
-        response = self._archive(contribution, self.editor)
+        response = self._archive(submission, self.editor)
 
         self.assertEqual(response.status_code, 400, response.data)
         self.assertFalse(
-            ContributionRecycleBin.objects.filter(contribution=contribution).exists()
+            SubmissionRecycleBin.objects.filter(submission=submission).exists()
         )
 
     def test_editor_without_the_collection_cannot_archive(self):
-        contribution = self._contribution()
+        submission = self._submission()
 
-        response = self._archive(contribution, self.other_editor)
+        response = self._archive(submission, self.other_editor)
 
         self.assertEqual(response.status_code, 404, response.data)
         self.assertFalse(
-            ContributionRecycleBin.objects.filter(contribution=contribution).exists()
+            SubmissionRecycleBin.objects.filter(submission=submission).exists()
         )
 
     def test_archive_records_who_and_why(self):
-        contribution = self._contribution(status=Contribution.STATUS_NEEDS_REVISION)
-        self._archive(contribution, self.editor, reason="Blatantly wrong")
+        submission = self._submission(status=Submission.STATUS_NEEDS_REVISION)
+        self._archive(submission, self.editor, reason="Blatantly wrong")
 
-        entry = ContributionRecycleBin.objects.get(contribution=contribution)
+        entry = SubmissionRecycleBin.objects.get(submission=submission)
         self.assertEqual(entry.archived_by, self.editor)
         self.assertEqual(entry.reason, "Blatantly wrong")
 
-        rows = self.client.get("/api/v2/contributions/?mode=archived").data
+        rows = self.client.get("/api/v2/submissions/?mode=archived").data
         row = (rows.get("results", rows))[0]
         self.assertTrue(row["is_archived"])
         self.assertEqual(row["archived_by_username"], "editor")

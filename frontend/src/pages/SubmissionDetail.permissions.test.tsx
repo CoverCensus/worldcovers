@@ -5,12 +5,12 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthUser } from "@/lib/auth";
 import {
-  decideContribution,
-  getContribution,
+  decideSubmission,
+  getSubmission,
   getDirectCatalogCodeSuggestion,
-  mapApiItemToContribution,
-} from "@/services/contributions";
-import ContributionDetail from "./ContributionDetail";
+  mapApiItemToSubmission,
+} from "@/services/submissions";
+import SubmissionDetail from "./SubmissionDetail";
 
 jest.mock("@/hooks/useAuth", () => ({ useAuth: jest.fn() }));
 jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: jest.fn() }) }));
@@ -26,10 +26,10 @@ jest.mock("@/services/markings", () => ({
   getMarkingListImageUrl: () => null,
   getMarkingById: jest.fn().mockResolvedValue({ id: 7, town: "Burlington", state: "VT" }),
 }));
-jest.mock("@/services/contributions", () => ({
-  ...jest.requireActual("@/services/contributions"),
-  getContribution: jest.fn(),
-  decideContribution: jest.fn().mockResolvedValue({ markingId: 7 }),
+jest.mock("@/services/submissions", () => ({
+  ...jest.requireActual("@/services/submissions"),
+  getSubmission: jest.fn(),
+  decideSubmission: jest.fn().mockResolvedValue({ markingId: 7 }),
   getDirectCatalogCodeSuggestion: jest.fn().mockResolvedValue({ catalogCode: "APMC-VT-M0001" }),
 }));
 
@@ -46,14 +46,14 @@ beforeEach(() => jest.clearAllMocks());
 
 it("shows the Cover scan and sends the identified office on Marking approval", async () => {
   (useAuth as jest.Mock).mockReturnValue(editor);
-  (getContribution as jest.Mock).mockResolvedValue(mapApiItemToContribution({
+  (getSubmission as jest.Mock).mockResolvedValue(mapApiItemToSubmission({
     id: 9310, collection: 100, contributor: 7, status: "pending",
     submitted_data: { submission_kind: "marking", type: "RATEMARK", requires_catalog_office: true,
-      catalog_code: "FPHC2-M-0373-i001-1", inscription_txt: "Sh 26",
+      catalog_code: "FPHC2-M-0001", inscription_txt: "Sh 26",
       cover_image_metas: [{ storage_filename: "fl/scan.png", original_filename: "scan.png" }] },
   }));
-  render(<TooltipProvider><MemoryRouter initialEntries={["/contribution/9310"]}>
-    <Routes><Route path="/contribution/:id" element={<ContributionDetail />} /></Routes>
+  render(<TooltipProvider><MemoryRouter initialEntries={["/submission/9310"]}>
+    <Routes><Route path="/submission/:id" element={<SubmissionDetail />} /></Routes>
   </MemoryRouter></TooltipProvider>);
   const field = await screen.findByLabelText("Post Office catalog code");
   expect(screen.getByAltText("scan.png").getAttribute("src")).toContain("fl/scan.png");
@@ -61,14 +61,14 @@ it("shows the Cover scan and sends the identified office on Marking approval", a
   expect(approve.hasAttribute("disabled")).toBe(true);
   fireEvent.change(field, { target: { value: "OFFICE-1" } });
   fireEvent.click(approve);
-  await waitFor(() => expect(decideContribution).toHaveBeenCalledWith(9310, "approve",
-    expect.objectContaining({ catalogCode: "FPHC2-M-0373-i001-1", officeCode: "OFFICE-1" })));
+  await waitFor(() => expect(decideSubmission).toHaveBeenCalledWith(9310, "approve",
+    expect.objectContaining({ catalogCode: "FPHC2-M-0001", officeCode: "OFFICE-1" })));
 });
 
 describe.each(["marking", "cover"])("%s Submission review permissions", (kind) => {
   it("keeps known details readable and prevents approval of unrecognized fields", async () => {
     (useAuth as jest.Mock).mockReturnValue(editor);
-    (getContribution as jest.Mock).mockResolvedValue(mapApiItemToContribution({
+    (getSubmission as jest.Mock).mockResolvedValue(mapApiItemToSubmission({
       id: 9327, collection: 100, contributor: editor.id, status: "pending",
       submitted_data: {
         submission_kind: kind, type: kind === "cover" ? "FL" : "TOWNMARK",
@@ -76,8 +76,8 @@ describe.each(["marking", "cover"])("%s Submission review permissions", (kind) =
         ...(kind === "cover" ? { parent_marking_id: 7 } : {}),
       },
     }));
-    render(<TooltipProvider><MemoryRouter initialEntries={["/contribution/9327"]}>
-      <Routes><Route path="/contribution/:id" element={<ContributionDetail />} /></Routes>
+    render(<TooltipProvider><MemoryRouter initialEntries={["/submission/9327"]}>
+      <Routes><Route path="/submission/:id" element={<SubmissionDetail />} /></Routes>
     </MemoryRouter></TooltipProvider>);
     await screen.findByText("Recognized submitted description");
     expect(screen.getByRole("alert").textContent).toContain("Approval is unavailable");
@@ -101,7 +101,7 @@ describe.each(["marking", "cover"])("%s Submission review permissions", (kind) =
 
   it.each(cases)("shows review controls only when permitted: $name", async ({ user, collection, status, allowed }) => {
     (useAuth as jest.Mock).mockReturnValue(user);
-    (getContribution as jest.Mock).mockResolvedValue(mapApiItemToContribution({
+    (getSubmission as jest.Mock).mockResolvedValue(mapApiItemToSubmission({
       id: 9327,
       collection,
       contributor: editor.id,
@@ -117,11 +117,11 @@ describe.each(["marking", "cover"])("%s Submission review permissions", (kind) =
       },
     }));
 
-    render(<TooltipProvider><MemoryRouter initialEntries={["/contribution/9327"]}>
-      <Routes><Route path="/contribution/:id" element={<ContributionDetail />} /></Routes>
+    render(<TooltipProvider><MemoryRouter initialEntries={["/submission/9327"]}>
+      <Routes><Route path="/submission/:id" element={<SubmissionDetail />} /></Routes>
     </MemoryRouter></TooltipProvider>);
 
-    await screen.findByText(/Contribution Details|Cover Details/i);
+    await screen.findByText(/Submission Details|Cover Details/i);
     for (const name of ["Approve", "Reject", "Return"]) {
       expect(screen.queryByRole("button", { name }) !== null).toBe(allowed);
     }

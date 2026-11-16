@@ -1,13 +1,13 @@
-import { readSubmission } from "@/lib/submission";
+import { readSubmittedData } from "@/lib/submission";
 import { readVphcProvenance, describeVphcUnmatchedReason } from "./vphcProvenance";
 
 describe("readVphcProvenance", () => {
-  it("returns null for a contribution that did not come from the ingest", () => {
-    expect(readVphcProvenance(readSubmission({ state: "VA", town: "Richmond" }).data)).toBeNull();
+  it("returns null for a submission that did not come from the ingest", () => {
+    expect(readVphcProvenance(readSubmittedData({ state: "VA", town: "Richmond" }).data)).toBeNull();
   });
 
   it("reads the blob apply_vphc_ledger writes", () => {
-    const p = readVphcProvenance(readSubmission({
+    const p = readVphcProvenance(readSubmittedData({
       vphc: {
         src: "T1:r8",
         flags: [],
@@ -31,7 +31,7 @@ describe("readVphcProvenance", () => {
   // A reviewer scanning the queue should meet the flags that mean "this may be
   // wrong" before the ones that mean "we fixed this for you".
   it("sorts uncertain flags ahead of repaired ones", () => {
-    const p = readVphcProvenance(readSubmission({
+    const p = readVphcProvenance(readSubmittedData({
       vphc: { flags: ["century_inferred", "state_unknown", "county_repaired", "date_unresolved"] },
     }).data);
 
@@ -50,7 +50,7 @@ describe("readVphcProvenance", () => {
   });
 
   it("explains a flag with the pipeline's own wording", () => {
-    const p = readVphcProvenance(readSubmission({ vphc: { flags: ["date_low_confidence"] } }).data);
+    const p = readVphcProvenance(readSubmittedData({ vphc: { flags: ["date_low_confidence"] } }).data);
     expect(p!.flags[0].label).toBe("Date low confidence");
     expect(p!.flags[0].reason).toContain("run was too short to corroborate the century");
   });
@@ -58,17 +58,17 @@ describe("readVphcProvenance", () => {
   // The crossexam vocabulary can grow. A flag we don't recognise is the one a
   // reviewer most needs to see, so it must survive rather than be filtered out.
   it("keeps a flag that is not in the glossary", () => {
-    const p = readVphcProvenance(readSubmission({ vphc: { flags: ["some_new_flag"] } }).data);
+    const p = readVphcProvenance(readSubmittedData({ vphc: { flags: ["some_new_flag"] } }).data);
     expect(p!.flags).toHaveLength(1);
     expect(p!.flags[0].label).toBe("Some new flag");
     expect(p!.flags[0].severity).toBe("uncertain");
   });
 
   it("rejects malformed provenance at the boundary", () => {
-    expect(() => readSubmission({ vphc: "nope" })).toThrow(/Submission.vphc/);
-    expect(() => readSubmission({ vphc: ["nope"] })).toThrow(/Submission.vphc/);
-    expect(readVphcProvenance(readSubmission({ vphc: {} }).data)!.flags).toEqual([]);
-    expect(() => readSubmission({ vphc: { flags: "not-an-array" } })).toThrow(/Submission.vphc.flags/);
+    expect(() => readSubmittedData({ vphc: "nope" })).toThrow(/Submission.vphc/);
+    expect(() => readSubmittedData({ vphc: ["nope"] })).toThrow(/Submission.vphc/);
+    expect(readVphcProvenance(readSubmittedData({ vphc: {} }).data)!.flags).toEqual([]);
+    expect(() => readSubmittedData({ vphc: { flags: "not-an-array" } })).toThrow(/Submission.vphc.flags/);
   });
 });
 

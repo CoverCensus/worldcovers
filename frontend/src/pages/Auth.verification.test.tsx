@@ -17,7 +17,7 @@ async function login() {
   render(<MemoryRouter initialEntries={[{ pathname: "/auth", state: { from: "/contribute" } }]}>
     <Routes>
       <Route path="/auth" element={<Auth />} />
-      <Route path="/contribute" element={<p>Contribution form</p>} />
+      <Route path="/contribute" element={<p>Submission form</p>} />
     </Routes>
   </MemoryRouter>);
   const user = userEvent.setup();
@@ -30,11 +30,11 @@ it("shows a persistent verification notice instead of navigating", async () => {
   (signIn as jest.Mock).mockResolvedValue(false);
   await login();
   expect((await screen.findByText("Check your email")).textContent).toContain("Check your email");
-  expect(screen.queryByText("Contribution form")).toBeNull();
+  expect(screen.queryByText("Submission form")).toBeNull();
 });
 
 it("preserves the intended destination after a verified login", async () => {
   (signIn as jest.Mock).mockResolvedValue(true);
   await login();
-  expect(await screen.findByText("Contribution form")).toBeTruthy();
+  expect(await screen.findByText("Submission form")).toBeTruthy();
 });

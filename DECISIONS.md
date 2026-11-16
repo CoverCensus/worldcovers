@@ -29,7 +29,7 @@ also sets responsibility for review.
 
 **Evidence:** [Domain model](docs/devel/model.md#domain-tables);
 [models](backend/common/models.py) (`Marking`, `Cover`, `CoverMarking`,
-`Collection`); [Cover approval tests](backend/common/tests/test_cover_contribution_apply.py)
+`Collection`); [Cover approval tests](backend/common/tests/test_cover_submission_apply.py)
 check separate Cover creation and its Marking link.
 
 **Open work:** [S49](docs/devel/design.md#backlog-stories), Personal Collections,
@@ -88,7 +88,7 @@ and permissions.
 **Evidence:** [Submission stories S6-S15](docs/devel/design.md#stories);
 [approval and removal paths](backend/common/api/v2/views.py);
 [withdrawal tests](backend/common/tests/test_contribution_withdraw.py) and
-[approval tests](backend/common/tests/test_cover_contribution_apply.py).
+[approval tests](backend/common/tests/test_cover_submission_apply.py).
 
 **Open work:** [T41](ISSUE.md#f3-submission-workflow) covers further rescind and
 inactivity rules. Do not invent an expiry period or automatic deletion rule.
@@ -111,11 +111,11 @@ and relationship lists are always appended to existing data.
 values as empty can erase information the Contributor never changed.
 
 **Evidence:** [Edit story S7](docs/devel/design.md#stories);
-[approval helpers](backend/common/contribution_apply.py)
+[approval helpers](backend/common/submission_apply.py)
 (`_apply_marking_edit`, `_apply_cover_edit`, `_sync_citations`,
 `_sync_cover_date_seen`);
 [merge tests](backend/common/tests/test_marking_edit_merge.py) and
-[Cover/edit tests](backend/common/tests/test_cover_contribution_apply.py);
+[Cover/edit tests](backend/common/tests/test_cover_submission_apply.py);
 [submission tests](backend/common/tests/test_submission_citations.py) and
 [form tests](frontend/src/pages/SubmissionCitations.test.tsx).
 
@@ -158,7 +158,7 @@ county links came from the VPHC import and may be right or wrong; that is an
 Administrator's call, surfaced by the review comparison, not an approval
 side effect.
 
-**Evidence:** Trello T70; [`_link_county` and `describe_county_intent`](backend/common/contribution_apply.py);
+**Evidence:** Trello T70; [`_link_county` and `describe_county_intent`](backend/common/submission_apply.py);
 [approval and verdict tests](backend/common/tests/test_county_link_on_approval.py);
 [edit baseline](backend/common/edit_baseline.py);
 [review comparison](frontend/src/lib/editComparison.ts) and
@@ -181,7 +181,7 @@ consent to change another person's public-name preference.
 identify a Contributor who chose not to receive public credit.
 
 **Evidence:** [serializers](backend/common/api/v2/serializers.py),
-[approval helpers](backend/common/contribution_apply.py), and
+[approval helpers](backend/common/submission_apply.py), and
 [admin forms](backend/common/admin.py);
 [public-response tests](backend/common/tests/test_marking_public_user_fields.py),
 [preference tests](backend/common/tests/test_submitter_name_preference.py), and
@@ -692,8 +692,8 @@ readable and disable approval on that review page until it can show the data.
 which stops Editors from reading valid Submissions. Django still stores
 the data on a Contribution; `submission.ts` defines its frontend shape.
 
-**Evidence:** `submission.test.ts`, `ContributionDetail.pendingCover.test.tsx`, and
-`ContributionDetail.permissions.test.tsx`.
+**Evidence:** `submission.test.ts`, `SubmissionDetail.pendingCover.test.tsx`, and
+`SubmissionDetail.permissions.test.tsx`.
 
 ## Approve Images In The Order The Contributor Arranged
 

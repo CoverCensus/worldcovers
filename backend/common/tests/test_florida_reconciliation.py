@@ -8,13 +8,13 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase
 
-from common.api.v2.views import _approve_contribution
-from common.contribution_apply import ContributionApplyError
+from common.api.v2.views import _approve_submission
+from common.submission_apply import SubmissionApplyError
 from common.models import (
     CatalogSourceItem,
     Citation,
     Color,
-    Contribution,
+    Submission,
     Cover,
     CoverMarking,
     DateSeen,
@@ -172,8 +172,8 @@ class FloridaReconciliationTests(TestCase):
 
     def approve(self, code):
         source = CatalogSourceItem.objects.get(source_key=code)
-        return _approve_contribution(
-            source.contribution, actor=self.actor, review_notes="Checked against the source"
+        return _approve_submission(
+            source.submission, actor=self.actor, review_notes="Checked against the source"
         )
 
     def test_complete_package_publishes_and_repeats_without_submissions(self):
@@ -181,7 +181,7 @@ class FloridaReconciliationTests(TestCase):
         import json
 
         office = "FPHC2-O-0315-i002-1"
-        grid = "FPHC2-M-0315-i002-1"
+        grid = "FPHC2-M-0001"
         self.write("post_offices", [{"code": self.row["post_office"], "name": "APALACHICOLA"},
                                    {"code": office, "name": "Boston (Massachusetts)"}])
         self.write("markings", [dict(self.row, desc=""), dict(self.row, code=grid, post_office=office,
@@ -220,7 +220,7 @@ class FloridaReconciliationTests(TestCase):
             source.write_bytes(b"corrupt")
             with self.assertRaisesMessage(CommandError, "Image checksum mismatch"):
                 self.load("--media-dir", str(media))
-        self.assertFalse(Contribution.objects.exists())
+        self.assertFalse(Submission.objects.exists())
         self.assertEqual(Marking.objects.count(), 2)
         self.marking.refresh_from_db()
         self.assertEqual(self.marking.width, 22)
@@ -272,7 +272,7 @@ class FloridaReconciliationTests(TestCase):
                     self.assertTrue(Marking.objects.filter(code=code).exists())
                 load_foreign(foreign)
                 load_foreign(foreign)
-                ticket = Contribution.objects.get()
+                ticket = Submission.objects.get()
                 self.assertEqual(ticket.collection.region.code, "USA-FL1")
                 self.assertEqual(ticket.status, "pending")
                 self.assertTrue(ticket.submitted_data["cover_image_metas"])
@@ -280,16 +280,16 @@ class FloridaReconciliationTests(TestCase):
                 self.assertIn("SHIP LRE (London, England)", ticket.submitted_data["comment_for_editor"])
                 self.assertFalse(Marking.objects.filter(code=code).exists())
                 self.assertFalse(Cover.objects.exists())
-                with self.assertRaisesMessage(ContributionApplyError, "Select an existing"):
-                    _approve_contribution(ticket, actor=self.actor, review_notes="")
+                with self.assertRaisesMessage(SubmissionApplyError, "Select an existing"):
+                    _approve_submission(ticket, actor=self.actor, review_notes="")
                 ticket.refresh_from_db()
-                _approve_contribution(ticket, actor=self.actor, review_notes="Verified separate strike.",
+                _approve_submission(ticket, actor=self.actor, review_notes="Verified separate strike.",
                                       marking_code=self.marking.code, marking_is_backstamp=True)
                 load_foreign(foreign)
                 self.assertFalse(Marking.objects.filter(code=code).exists())
                 self.assertTrue(CoverMarking.objects.get(cover=Cover.objects.get()).is_backstamp)
                 self.assertEqual(CoverMarking.objects.get().marking_id, self.marking.pk)
-                self.assertEqual(Contribution.objects.get().status, "approved")
+                self.assertEqual(Submission.objects.get().status, "approved")
                 transaction.set_rollback(True)
 
     def test_unidentified_office_review_fresh_and_previously_published(self):
@@ -320,23 +320,23 @@ class FloridaReconciliationTests(TestCase):
                 load()
                 self.assertFalse(Marking.objects.filter(code=self.mark).exists())
                 self.assertFalse(Cover.objects.filter(code=self.cover).exists())
-                self.assertEqual(Contribution.objects.filter(status="pending", collection__region__code="USA-FL1").count(), 2)
-                m = CatalogSourceItem.objects.get(source_key=self.mark).contribution
-                c = CatalogSourceItem.objects.get(source_key=self.cover).contribution
+                self.assertEqual(Submission.objects.filter(status="pending", collection__region__code="USA-FL1").count(), 2)
+                m = CatalogSourceItem.objects.get(source_key=self.mark).submission
+                c = CatalogSourceItem.objects.get(source_key=self.cover).submission
                 self.assertTrue(m.submitted_data["requires_catalog_office"])
                 self.assertEqual(m.submitted_data["cover_image_metas"][0]["storage_filename"], "fl/scan.png")
                 self.assertIn(self.mark, c.submitted_data["comment_for_editor"])
-                with self.assertRaisesMessage(ContributionApplyError, "Approve the linked Marking"):
-                    _approve_contribution(c, actor=self.actor, review_notes="")
+                with self.assertRaisesMessage(SubmissionApplyError, "Approve the linked Marking"):
+                    _approve_submission(c, actor=self.actor, review_notes="")
                 for invalid in (None, office, "no-such-office"):
-                    with self.assertRaisesMessage(ContributionApplyError, "Select an identified"):
-                        _approve_contribution(m, actor=self.actor, review_notes="", office_code=invalid)
+                    with self.assertRaisesMessage(SubmissionApplyError, "Select an identified"):
+                        _approve_submission(m, actor=self.actor, review_notes="", office_code=invalid)
                 self.actor.is_superuser = False
-                with self.assertRaisesMessage(ContributionApplyError, "assigned Collections"):
-                    _approve_contribution(m, actor=self.actor, review_notes="", office_code=self.office.code)
+                with self.assertRaisesMessage(SubmissionApplyError, "assigned Collections"):
+                    _approve_submission(m, actor=self.actor, review_notes="", office_code=self.office.code)
                 self.actor.is_superuser = True
-                _approve_contribution(m, actor=self.actor, review_notes="", office_code=self.office.code)
-                _approve_contribution(c, actor=self.actor, review_notes="")
+                _approve_submission(m, actor=self.actor, review_notes="", office_code=self.office.code)
+                _approve_submission(c, actor=self.actor, review_notes="")
                 load()
                 mark = Marking.objects.get(code=self.mark)
                 cover = Cover.objects.get(code=self.cover)
@@ -346,19 +346,19 @@ class FloridaReconciliationTests(TestCase):
                 self.assertTrue(CoverMarking.objects.get(cover=cover, marking=mark).is_backstamp)
                 self.assertEqual(Image.objects.get().subject_type, "COVER")
                 self.assertEqual(CatalogSourceItem.objects.get(source_key=self.mark).evidence["row"]["post_office"], office)
-                self.assertEqual(Contribution.objects.filter(status="approved").count(), 2)
+                self.assertEqual(Submission.objects.filter(status="approved").count(), 2)
                 transaction.set_rollback(True)
 
     def test_preview_queue_approve_and_repeat(self):
         self.load("--dry-run")
         self.assertFalse(CatalogSourceItem.objects.exists())
-        self.assertFalse(Contribution.objects.exists())
+        self.assertFalse(Submission.objects.exists())
         self.load()
         self.load()
-        self.assertEqual(Contribution.objects.filter(status="pending").count(), 2)
+        self.assertEqual(Submission.objects.filter(status="pending").count(), 2)
         self.assertEqual(PostOffice.objects.count(), 1)
         self.assertFalse(Cover.objects.exists())
-        with self.assertRaisesMessage(ContributionApplyError, "Approve the linked"):
+        with self.assertRaisesMessage(SubmissionApplyError, "Approve the linked"):
             self.approve(self.cover)
         self.approve(self.mark)
         self.approve(self.cover)
@@ -371,14 +371,14 @@ class FloridaReconciliationTests(TestCase):
         self.assertEqual(Image.objects.get().file_checksum, "a" * 64)
         self.assertEqual(DateSeen.objects.count(), 1)
         self.assertEqual(Citation.objects.count(), 4)
-        self.assertEqual(Contribution.objects.count(), 2)
+        self.assertEqual(Submission.objects.count(), 2)
         self.assertEqual(CatalogSourceItem.objects.filter(applied=True).count(), 3)
 
     def test_changed_target_requires_review_then_separate_listing(self):
         self.load()
         self.marking.width = 29
         self.marking.save()
-        with self.assertRaisesMessage(ContributionApplyError, "Refresh"):
+        with self.assertRaisesMessage(SubmissionApplyError, "Refresh"):
             self.approve(self.mark)
         self.load("--refresh-pending")
         source = CatalogSourceItem.objects.get(source_key=self.mark)
@@ -457,7 +457,7 @@ class FloridaReconciliationTests(TestCase):
             fields["decision"]["target"], {"$record": f"common.marking:{self.marking.pk}"}
         )
         self.assertEqual(
-            fields["contribution"], {"$record": f"common.contribution:{item.contribution_id}"}
+            fields["submission"], {"$record": f"common.submission:{item.submission_id}"}
         )
 
     def test_dated_office_spans_survive_repeat_import(self):

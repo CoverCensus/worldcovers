@@ -32,14 +32,14 @@ import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious
 import { getLetterings, type LetteringOption } from "@/services/letterings";
 import { getDateFormats, type DateFormatOption } from "@/constants/markingEnums";
 import {
-  entryKindForContribution,
-  isCoverContributionData,
-  pendingCoverContributionIdFromSubmittedData,
+  entryKindForSubmission,
+  isCoverSubmissionData,
+  pendingCoverSubmissionIdFromSubmittedData,
   pendingCoverFromSubmittedData,
   countyProposedFromSubmittedData,
-} from "@/lib/contributionDisplay";
+} from "@/lib/submissionDisplay";
 import { PendingCoverCard } from "@/components/PendingCoverCard";
-import CoverContributionDetail from "@/pages/CoverContributionDetail";
+import CoverSubmissionDetail from "@/pages/CoverSubmissionDetail";
 import { CatalogRecordFields } from "@/components/CatalogRecordFields";
 import {
   buildCatalogSearchTitleFromParts,
@@ -47,7 +47,7 @@ import {
   markingTypeLabel,
   type CatalogFieldValues,
 } from "@/lib/catalogRecordDisplay";
-import { submittedDataToFieldInput } from "@/lib/contributionToFields";
+import { submittedDataToFieldInput } from "@/lib/submissionToFields";
 import { readVphcProvenance } from "@/lib/vphcProvenance";
 import { VphcProvenanceCard } from "@/components/VphcProvenanceCard";
 import { EntryCitationsCard } from "@/components/entry-detail/EntryCitationsCard";
@@ -58,14 +58,14 @@ import { submissionCitations } from "@/lib/submissionCitations";
 import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
 import type { MarkingFieldInput } from "@/lib/markingFields";
 import {
-  type Contribution,
-  canReviewContribution,
-  getContribution,
-  decideContribution,
-  deleteOwnContribution,
-  getContributionCatalogCodeSuggestion,
+  type Submission,
+  canReviewSubmission,
+  getSubmission,
+  decideSubmission,
+  deleteOwnSubmission,
+  getSubmissionCatalogCodeSuggestion,
   getDirectCatalogCodeSuggestion,
-} from "@/services/contributions";
+} from "@/services/submissions";
 
 
 function toPositiveInt(value: unknown): number | null {
@@ -74,7 +74,7 @@ function toPositiveInt(value: unknown): number | null {
 }
 
 
-function buildContributionCatalogFields(input: MarkingFieldInput, countyName: string): CatalogFieldValues {
+function buildSubmissionCatalogFields(input: MarkingFieldInput, countyName: string): CatalogFieldValues {
   return {
     type: displayCatalogField(markingTypeLabel(input.type) || ""),
     town: displayCatalogField(input.town),
@@ -99,13 +99,13 @@ function buildContributionCatalogFields(input: MarkingFieldInput, countyName: st
   };
 }
 
-const ContributionDetail = () => {
+const SubmissionDetail = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const user = useAuth();
   const { toast } = useToast();
   const { id } = useParams();
-  const [contribution, setContribution] = useState<Contribution | null>(null);
+  const [submission, setSubmission] = useState<Submission | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -117,8 +117,8 @@ const ContributionDetail = () => {
   const [catalogCodeLoading, setCatalogCodeLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // Withdraw/delete -- the contributor may delete any of their own UNapproved
-  // submissions; the backend enforces IsOwnDeletableContribution on
-  // DELETE /contributions/{id}/ (status must not be "approved").
+  // submissions; the backend enforces IsOwnDeletableSubmission on
+  // DELETE /submissions/{id}/ (status must not be "approved").
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [letteringOptions, setLetteringOptions] = useState<LetteringOption[]>([]);
@@ -136,7 +136,7 @@ const ContributionDetail = () => {
   const dashboardTab = locationState?.dashboardTab;
   // Issue #147: the listing the editor came from, carried in `?from=`. Unlike
   // location.state and the sessionStorage mirror, this survives a direct link --
-  // which is how editors most often arrive, because Ian mails contribution URLs.
+  // which is how editors most often arrive, because Ian mails submission URLs.
   // Null whenever the param is absent or fails the same-origin check, and every
   // caller below falls back to the pre-#147 dashboard behaviour in that case.
   const returnTo = readReturnTo(new URLSearchParams(location.search));
@@ -148,29 +148,29 @@ const ContributionDetail = () => {
   const returnHref = (fallbackTab: "submissions" | "editor") =>
     returnTo ?? dashboardHrefForTab(dashboardTab ?? fallbackTab);
   const backLabel = returnToLabel(returnTo);
-  const canReview = canReviewContribution(user, contribution);
-  const unsupportedFields = contribution?.unsupportedSubmissionFields ?? [];
+  const canReview = canReviewSubmission(user, submission);
+  const unsupportedFields = submission?.unsupportedSubmissionFields ?? [];
   /** True when this user submitted the Submission. */
   const isContributor =
     !!user &&
-    !!contribution &&
-    (contribution.contributorId === user.id ||
-      contribution.contributorUsername === user.username ||
-      contribution.contributorUsername === user.email);
+    !!submission &&
+    (submission.contributorId === user.id ||
+      submission.contributorUsername === user.username ||
+      submission.contributorUsername === user.email);
 
   useEffect(() => {
-    const contributionId = id ? parseInt(String(id), 10) : null;
-    if (!contributionId || isNaN(contributionId)) {
-      setError("Invalid contribution");
+    const submissionId = id ? parseInt(String(id), 10) : null;
+    if (!submissionId || isNaN(submissionId)) {
+      setError("Invalid submission");
       setLoading(false);
       return;
     }
 
     let cancelled = false;
-    getContribution(contributionId)
+    getSubmission(submissionId)
       .then((normalized) => {
         if (cancelled) return;
-        setContribution(normalized);
+        setSubmission(normalized);
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load");
@@ -196,7 +196,7 @@ const ContributionDetail = () => {
   }, [carouselApi]);
 
   // Lettering / date format lookups -- needed to resolve numeric ids /
-  // codes stored on a contribution's submitted_data to human-readable names.
+  // codes stored on a submission's submitted_data to human-readable names.
   useEffect(() => {
     let cancelled = false;
     Promise.all([getLetterings(), getDateFormats()])
@@ -224,11 +224,11 @@ const ContributionDetail = () => {
     };
   }, []);
 
-  const contributionId = contribution?.id;
-  const contributionSubmittedData = contribution?.submittedData;
+  const submissionId = submission?.id;
+  const submissionSubmittedData = submission?.submittedData;
 
-  // Preview the code WITHOUT writing it. `getContributionCatalogCodeSuggestion`
-  // persists its answer into submitted_data (catalog_codes.suggest_for_contribution),
+  // Preview the code WITHOUT writing it. `getSubmissionCatalogCodeSuggestion`
+  // persists its answer into submitted_data (catalog_codes.suggest_for_submission),
   // so firing it from an effect meant merely OPENING a pending row wrote to the
   // database -- no click, no intent, outside any transaction, and with no audit
   // row. That is issue #118: 27 VPHC rows in the review queue were carrying a
@@ -237,12 +237,12 @@ const ContributionDetail = () => {
   //
   // The direct endpoint computes the same code from the same payload via the
   // same helpers (_region_from_payload, _reference_code_from_selected_payload)
-  // but takes no contribution and saves nothing. Minting stays where it belongs:
+  // but takes no submission and saves nothing. Minting stays where it belongs:
   // ensureCatalogCode() below, at approve time, deliberately.
   useEffect(() => {
-    if (contributionId == null || !canReview) return;
-    if (isCoverContributionData(contributionSubmittedData)) return;
-    const sd = (contributionSubmittedData ?? {});
+    if (submissionId == null || !canReview) return;
+    if (isCoverSubmissionData(submissionSubmittedData)) return;
+    const sd = (submissionSubmittedData ?? {});
     if (sd.requires_catalog_office && sd.catalog_code) {
       setCatalogCode(sd.catalog_code);
       setOfficeCode("");
@@ -275,16 +275,16 @@ const ContributionDetail = () => {
     return () => {
       cancelled = true;
     };
-  }, [contributionId, contributionSubmittedData, canReview]);
+  }, [submissionId, submissionSubmittedData, canReview]);
 
   const ensureCatalogCode = async (): Promise<string> => {
-    if (!contribution) return "";
+    if (!submission) return "";
     const current = catalogCode.trim();
     if (current) return current;
     setCatalogCodeLoading(true);
     setCatalogCodeError(null);
     try {
-      const suggestion = await getContributionCatalogCodeSuggestion(contribution.id, { force: true });
+      const suggestion = await getSubmissionCatalogCodeSuggestion(submission.id, { force: true });
       setCatalogCode(suggestion.catalogCode);
       return suggestion.catalogCode;
     } catch (err) {
@@ -297,7 +297,7 @@ const ContributionDetail = () => {
   };
 
   const submitDecision = async (kind: "approve" | "reject" | "revision") => {
-    if (!contribution || !canReview) return;
+    if (!submission || !canReview) return;
     if (kind === "approve" && unsupportedFields.length > 0) return;
     if (kind !== "approve" && !comment.trim()) {
       setCommentError("A comment is required to reject or request revision.");
@@ -308,10 +308,10 @@ const ContributionDetail = () => {
     setSubmitting(true);
     try {
       const finalCatalogCode = kind === "approve" ? await ensureCatalogCode() : "";
-      const result = await decideContribution(contribution.id, kind, {
+      const result = await decideSubmission(submission.id, kind, {
         reviewNotes: comment.trim() || undefined,
         ...(kind === "approve" ? { catalogCode: finalCatalogCode } : {}),
-        ...(kind === "approve" && contribution.submittedData.requires_catalog_office ? { officeCode: officeCode.trim() } : {}),
+        ...(kind === "approve" && submission.submittedData.requires_catalog_office ? { officeCode: officeCode.trim() } : {}),
       });
       const actionLabel = kind === "approve" ? "Approved" : kind === "reject" ? "Rejected" : "Submission returned";
       // Issue #87: every decision returns to the review queue the editor came
@@ -324,14 +324,14 @@ const ContributionDetail = () => {
         // Trello T37: a Marking that carried a Cover has just produced a Cover
         // submission; the queue the editor returns to lists it, and the toast
         // offers it directly.
-        ...(kind === "approve" && result.pendingCoverContributionId != null
+        ...(kind === "approve" && result.pendingCoverSubmissionId != null
           ? { description: "Your comment was saved. A Cover submission was created for review." }
           : {}),
         action:
-          kind === "approve" && result.pendingCoverContributionId != null ? (
+          kind === "approve" && result.pendingCoverSubmissionId != null ? (
             <ToastAction
               altText="Review the Cover submission created with this marking"
-              onClick={() => navigate(`/contribution/${result.pendingCoverContributionId}`)}
+              onClick={() => navigate(`/submission/${result.pendingCoverSubmissionId}`)}
             >
               Review the Cover
             </ToastAction>
@@ -367,10 +367,10 @@ const ContributionDetail = () => {
   };
 
   const handleDeleteConfirm = async () => {
-    if (!contribution) return;
+    if (!submission) return;
     setDeleting(true);
     try {
-      await deleteOwnContribution(contribution.id);
+      await deleteOwnSubmission(submission.id);
       toast({ title: "Draft deleted" });
       setDeleteOpen(false);
       // Issue #147: a finished action returns to the listing it started from,
@@ -399,12 +399,12 @@ const ContributionDetail = () => {
     );
   }
 
-  if (error || !contribution) {
+  if (error || !submission) {
     return (
       <div className="min-h-screen flex flex-col">
         <Navigation />
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
-          <p className="text-muted-foreground">{error || "Contribution not found"}</p>
+          <p className="text-muted-foreground">{error || "Submission not found"}</p>
           <Button variant="outline" onClick={handleBack}>
             {backLabel}
           </Button>
@@ -414,11 +414,11 @@ const ContributionDetail = () => {
     );
   }
 
-  const sd = contribution.submittedData;
-  if (isCoverContributionData(sd)) {
+  const sd = submission.submittedData;
+  if (isCoverSubmissionData(sd)) {
     return (
-      <CoverContributionDetail
-        initialContribution={{ ...contribution, submittedData: sd }}
+      <CoverSubmissionDetail
+        initialSubmission={{ ...submission, submittedData: sd }}
       />
     );
   }
@@ -480,7 +480,7 @@ const ContributionDetail = () => {
   }
   const images = imageMetaList;
 
-  const normalizedStatus = String(contribution.status || "").toLowerCase();
+  const normalizedStatus = String(submission.status || "").toLowerCase();
   const statusLabel =
     normalizedStatus === "approved"
       ? "Approved"
@@ -501,10 +501,10 @@ const ContributionDetail = () => {
   // Build the catalog-search-style field block from submitted_data. The review
   // header/details intentionally mirror Catalog Search cards so the same entry
   // is recognizable before and after approval.
-  let contributionCatalogFields: CatalogFieldValues | null = null;
+  let submissionCatalogFields: CatalogFieldValues | null = null;
   // Trello T37: the Cover carried inside this Marking submission, if any.
-  const pendingCover = pendingCoverFromSubmittedData(contribution.submittedData);
-  let displayName = `Submission #${contribution.id}`;
+  const pendingCover = pendingCoverFromSubmittedData(submission.submittedData);
+  let displayName = `Submission #${submission.id}`;
   let fieldRowsError: string | null = null;
   try {
     const fieldData = { ...sd };
@@ -512,13 +512,13 @@ const ContributionDetail = () => {
     const fieldInput = submittedDataToFieldInput(
       fieldData,
       { letteringOptions, dateFormatOptions },
-      { contributionId: contribution.id },
+      { submissionId: submission.id },
     );
     // T70: the county name the server resolved from the Region, never the
     // client-sent text, with the sent text only as a fallback for old rows.
-    contributionCatalogFields = buildContributionCatalogFields(
+    submissionCatalogFields = buildSubmissionCatalogFields(
       fieldInput,
-      contribution.countyIntent?.countyName || fieldInput.county || "",
+      submission.countyIntent?.countyName || fieldInput.county || "",
     );
     displayName = buildCatalogSearchTitleFromParts({
       town: fieldInput.town,
@@ -532,15 +532,15 @@ const ContributionDetail = () => {
   // Trello T39: an edit under review is set beside the marking as it is now.
   let editComparison: ComparisonRow[] | null = null;
   let editComparisonError: string | null = null;
-  if (contribution.editBaseline) {
+  if (submission.editBaseline) {
     try {
       editComparison = compareMarkingEdit(
-        contribution.editBaseline,
+        submission.editBaseline,
         sd,
         { letteringOptions, dateFormatOptions },
         referenceWorks,
-        contribution.id,
-        contribution.countyIntent,
+        submission.id,
+        submission.countyIntent,
       );
     } catch (err) {
       editComparisonError = err instanceof Error ? err.message : String(err);
@@ -548,23 +548,23 @@ const ContributionDetail = () => {
   }
   // T70: the server's verdict on the county for a NEW marking; edits show it
   // in the comparison row instead.
-  const countyIntent = contribution.countyIntent;
-  const showCountyVerdict = !!countyIntent && !contribution.editBaseline && (countyIntent.countyId != null || !!countyIntent.error);
+  const countyIntent = submission.countyIntent;
+  const showCountyVerdict = !!countyIntent && !submission.editBaseline && (countyIntent.countyId != null || !!countyIntent.error);
   const showEditorFeedbackCard =
-    contribution.status !== "pending" || !!(contribution.reviewNotes && contribution.reviewNotes.trim());
+    submission.status !== "pending" || !!(submission.reviewNotes && submission.reviewNotes.trim());
   // Unified edit/remove buttons (mirror the entry detail page). Edit is offered
   // for any still-editable status; Delete (withdraw) is offered to the
   // contributor for any of their own UNAPPROVED submissions -- the backend
-  // (IsOwnDeletableContribution) permits removing draft/pending/needs_revision/
-  // rejected, but never an approved contribution.
+  // (IsOwnDeletableSubmission) permits removing draft/pending/needs_revision/
+  // rejected, but never an approved submission.
   const canContributorEdit =
     isContributor &&
-    (contribution.status === "draft" ||
-      contribution.status === "pending" ||
-      contribution.status === "needs_revision" ||
-      contribution.status === "rejected");
-  const canDeleteOwn = isContributor && contribution.status !== "approved";
-  const markingId = contribution.markingId;
+    (submission.status === "draft" ||
+      submission.status === "pending" ||
+      submission.status === "needs_revision" ||
+      submission.status === "rejected");
+  const canDeleteOwn = isContributor && submission.status !== "approved";
+  const markingId = submission.markingId;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -583,7 +583,7 @@ const ContributionDetail = () => {
                   screen". Derived from the same predicate this page dispatches
                   on, so the label and the screen cannot disagree. */}
               <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-xs">
-                {entryKindForContribution(sd)}
+                {entryKindForSubmission(sd)}
               </Badge>
               <Badge className={statusBadgeClassName}>{statusLabel}</Badge>
               {markingId != null && (
@@ -598,7 +598,7 @@ const ContributionDetail = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => navigate(`/contribute?edit=${contribution.id}`)}
+                  onClick={() => navigate(`/contribute?edit=${submission.id}`)}
                 >
                   <Pencil className="mr-2 h-4 w-4" />
                   Edit
@@ -706,9 +706,9 @@ const ContributionDetail = () => {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="contribution-catalog-code">Catalog Marking code</Label>
+                      <Label htmlFor="submission-catalog-code">Catalog Marking code</Label>
                       <Input
-                        id="contribution-catalog-code"
+                        id="submission-catalog-code"
                         value={catalogCode}
                         onChange={(e) => {
                           setCatalogCode(e.target.value);
@@ -732,9 +732,9 @@ const ContributionDetail = () => {
                       </div>
                     )}
                     <div className="space-y-2">
-                      <Label htmlFor="contribution-comment">Comment</Label>
+                      <Label htmlFor="submission-comment">Comment</Label>
                       <Textarea
-                        id="contribution-comment"
+                        id="submission-comment"
                         placeholder="Optional for approvals, required for rejection/revision."
                         rows={4}
                         value={comment}
@@ -792,19 +792,19 @@ const ContributionDetail = () => {
                       Editor feedback
                     </CardTitle>
                     <p className="text-sm text-muted-foreground">
-                      {contribution.status === "approved"
+                      {submission.status === "approved"
                         ? "Your submission was approved and added to the catalog. If the editor left a comment below, use it as guidance for future submissions."
-                        : contribution.status === "rejected"
+                        : submission.status === "rejected"
                           ? "Your submission was not accepted. See the comment below for details."
-                          : contribution.status === "needs_revision"
+                          : submission.status === "needs_revision"
                             ? "The editor requested changes. Please update this submission and resubmit."
                             : "The reviewer left a comment for you. Use this feedback to improve your submission or add a new marking if requested."}
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    {contribution.reviewNotes?.trim() ? (
+                    {submission.reviewNotes?.trim() ? (
                       <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
-                        {contribution.reviewNotes.trim()}
+                        {submission.reviewNotes.trim()}
                       </p>
                     ) : null}
                   </CardContent>
@@ -823,8 +823,8 @@ const ContributionDetail = () => {
               {pendingCover && (
                 <PendingCoverCard
                   summary={pendingCover}
-                  createdContributionId={pendingCoverContributionIdFromSubmittedData(contribution.submittedData)}
-                  approved={contribution.status === "approved"}
+                  createdSubmissionId={pendingCoverSubmissionIdFromSubmittedData(submission.submittedData)}
+                  approved={submission.status === "approved"}
                 />
               )}
               {editComparisonError && (
@@ -835,13 +835,13 @@ const ContributionDetail = () => {
 
               <Card className="shadow-archival-md border-primary/10">
                 <CardHeader>
-                  <CardTitle className="font-heading text-lg">Contribution details</CardTitle>
+                  <CardTitle className="font-heading text-lg">Submission details</CardTitle>
                   <p className="text-sm text-muted-foreground">
                     {canReview
                       ? "Read-only view of the contributor's submission. Use Return for revision if changes are needed."
                       : isContributor
                         ? "What you submitted. An editor will review this."
-                        : "Snapshot of fields stored on this contribution."}
+                        : "Snapshot of fields stored on this submission."}
                   </p>
                 </CardHeader>
                 <CardContent>
@@ -849,11 +849,11 @@ const ContributionDetail = () => {
                     <p className="text-sm text-destructive rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2">
                       Failed to render submitted data: {fieldRowsError}
                     </p>
-                  ) : contributionCatalogFields ? (
-                    <CatalogRecordFields row={contributionCatalogFields} variant="contribution" />
+                  ) : submissionCatalogFields ? (
+                    <CatalogRecordFields row={submissionCatalogFields} variant="submission" />
                   ) : (
                     <p className="text-sm text-muted-foreground py-2">
-                      No submitted data returned for this contribution.
+                      No submitted data returned for this submission.
                     </p>
                   )}
                   {showCountyVerdict && countyIntent ? (
@@ -893,7 +893,7 @@ const ContributionDetail = () => {
               </Card>
               {referenceWorksError && <p role="alert" className="text-destructive">{referenceWorksError}</p>}
               <EntryCitationsCard
-                citations={submissionCitations(contribution.submittedData ?? {}, referenceWorks)}
+                citations={submissionCitations(submission.submittedData ?? {}, referenceWorks)}
                 emptyMessage="No Citations selected for this submission."
               />
 
@@ -907,10 +907,10 @@ const ContributionDetail = () => {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {contribution.status === "draft" ? "Delete draft" : "Delete submission"}
+              {submission.status === "draft" ? "Delete draft" : "Delete submission"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {contribution.status === "pending"
+              {submission.status === "pending"
                 ? "This withdraws your submission and permanently deletes it before it is reviewed. This cannot be undone."
                 : "This permanently deletes this submission. This cannot be undone."}
             </AlertDialogDescription>
@@ -936,4 +936,4 @@ const ContributionDetail = () => {
   );
 };
 
-export default ContributionDetail;
+export default SubmissionDetail;

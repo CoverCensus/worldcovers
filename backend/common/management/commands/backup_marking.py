@@ -17,7 +17,7 @@ from common.models import (
     Citation,
     Collection,
     Color,
-    Contribution,
+    Submission,
     Cover,
     CoverMarking,
     CoverRecycleBin,
@@ -55,27 +55,27 @@ def _parse_int(value):
     return parsed if parsed > 0 else None
 
 
-def _is_cover_contribution_data(data):
+def _is_cover_submission_data(data):
     if not isinstance(data, dict):
         return False
     kind = str(data.get("submission_kind") or data.get("submissionKind") or "")
     return kind.strip().lower() == "cover"
 
 
-def _cover_contribution_marking_id(contribution):
-    data = contribution.submitted_data or {}
-    if not _is_cover_contribution_data(data):
+def _cover_submission_marking_id(submission):
+    data = submission.submitted_data or {}
+    if not _is_cover_submission_data(data):
         return None
     for key in ("parent_marking_id", "marking_id", "marking"):
         marking_id = _parse_int(data.get(key))
         if marking_id is not None:
             return marking_id
-    return contribution.marking_id
+    return submission.marking_id
 
 
-def _cover_contribution_cover_id(contribution):
-    data = contribution.submitted_data or {}
-    if not _is_cover_contribution_data(data):
+def _cover_submission_cover_id(submission):
+    data = submission.submitted_data or {}
+    if not _is_cover_submission_data(data):
         return None
     for key in (
         "edit_cover_id",
@@ -218,26 +218,26 @@ class Command(BaseCommand):
                 flat=True,
             )
         )
-        contribution_ids = set(
-            Contribution.objects.filter(marking=root).values_list("pk", flat=True)
+        submission_ids = set(
+            Submission.objects.filter(marking=root).values_list("pk", flat=True)
         )
-        for contribution in Contribution.objects.filter(
+        for submission in Submission.objects.filter(
             submitted_data__submission_kind="cover",
         ):
-            if _cover_contribution_marking_id(contribution) != root.pk:
+            if _cover_submission_marking_id(submission) != root.pk:
                 continue
-            contribution_ids.add(contribution.pk)
-            cover_id = _cover_contribution_cover_id(contribution)
+            submission_ids.add(submission.pk)
+            cover_id = _cover_submission_cover_id(submission)
             if cover_id is not None:
                 cover_ids.add(cover_id)
         collection_ids = set(
-            Contribution.objects.filter(pk__in=contribution_ids).values_list(
+            Submission.objects.filter(pk__in=submission_ids).values_list(
                 "collection_id",
                 flat=True,
             )
         )
 
-        tx_filter = Q(marking=root) | Q(contribution_id__in=contribution_ids)
+        tx_filter = Q(marking=root) | Q(submission_id__in=submission_ids)
         if cover_ids:
             tx_filter |= Q(cover_id__in=cover_ids)
         submission_transaction_ids = set(
@@ -253,8 +253,8 @@ class Command(BaseCommand):
             .exclude(color_id__isnull=True)
             .values_list("color_id", flat=True)
         )
-        for data in Contribution.objects.filter(
-            pk__in=contribution_ids,
+        for data in Submission.objects.filter(
+            pk__in=submission_ids,
         ).values_list("submitted_data", flat=True):
             if not isinstance(data, dict):
                 continue
@@ -301,7 +301,7 @@ class Command(BaseCommand):
             "region_ids": region_ids,
             "reference_work_ids": reference_work_ids,
             "collection_ids": collection_ids,
-            "contribution_ids": contribution_ids,
+            "submission_ids": submission_ids,
             "submission_transaction_ids": submission_transaction_ids,
             "polymorphic_filter": polymorphic_filter,
         }
@@ -354,8 +354,8 @@ class Command(BaseCommand):
             "marking_recycle_bin": MarkingRecycleBin.objects.filter(
                 marking_id=root_id,
             ).order_by("marking__code"),
-            "contributions": Contribution.objects.filter(
-                pk__in=scope["contribution_ids"],
+            "submissions": Submission.objects.filter(
+                pk__in=scope["submission_ids"],
             ).order_by("marking__code", "pk"),
             "submission_transactions": SubmissionTransaction.objects.filter(
                 pk__in=scope["submission_transaction_ids"],

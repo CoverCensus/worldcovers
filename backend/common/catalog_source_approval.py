@@ -76,38 +76,38 @@ def attach_observations(item, obj, actor):
             raise ValueError("An existing Image has different source evidence.")
 
 
-def approve_source_entry(item, contribution):
-    from common.contribution_apply import ContributionApplyError
+def approve_source_entry(item, submission):
+    from common.submission_apply import SubmissionApplyError
 
-    Collection.objects.select_for_update().get(pk=contribution.collection_id)
+    Collection.objects.select_for_update().get(pk=submission.collection_id)
     item = CatalogSourceItem.objects.select_for_update().get(pk=item.pk)
     if item.applied:
-        raise ContributionApplyError("This source listing has already been approved.")
-    if strip_catalog_code_keys(contribution.submitted_data) != item.decision["review_payload"]:
-        raise ContributionApplyError(
+        raise SubmissionApplyError("This source listing has already been approved.")
+    if strip_catalog_code_keys(submission.submitted_data) != item.decision["review_payload"]:
+        raise SubmissionApplyError(
             "The Submission differs from the import proposal. Refresh and review it again."
         )
     if item.decision.get("office_review"):
-        raise ContributionApplyError("Complete the Post Office review before approval.")
+        raise SubmissionApplyError("Complete the Post Office review before approval.")
     if item.decision.get("foreign_review"):
-        raise ContributionApplyError("Select a catalog Marking for this Cover before approval.")
+        raise SubmissionApplyError("Select a catalog Marking for this Cover before approval.")
     data = item.evidence
     row = data["row"]
-    actor = contribution.contributor
+    actor = submission.contributor
     kind = item.kind
     office, parents = None, []
     target = item.decision["target"]
     obj = MODELS[kind].objects.select_for_update().filter(pk=target).first() if target else None
-    if obj and obj.code and contribution.submitted_data["catalog_code"] != obj.code:
-        raise ContributionApplyError("The existing catalog code must be preserved.")
+    if obj and obj.code and submission.submitted_data["catalog_code"] != obj.code:
+        raise SubmissionApplyError("The existing catalog code must be preserved.")
     if target and obj is None:
-        raise ContributionApplyError("The proposed target has been removed.")
+        raise SubmissionApplyError("The proposed target has been removed.")
     if kind == "MARKING":
         office = CatalogSourceItem.objects.get(
             reference_work=item.reference_work, kind="OFFICE", source_key=row["post_office"]
         ).post_office
         if not office:
-            raise ContributionApplyError("The resolved Post Office has been removed.")
+            raise SubmissionApplyError("The resolved Post Office has been removed.")
         live = choose_marking(data, office, item.reference_work.code)
     else:
         parents = [
@@ -119,13 +119,13 @@ def approve_source_entry(item, contribution):
         if any(
             not p.applied or not Marking.objects.filter(pk=p.marking_id).exists() for p in parents
         ):
-            raise ContributionApplyError("Approve the linked catalog Marking before this Cover.")
+            raise SubmissionApplyError("Approve the linked catalog Marking before this Cover.")
         live = choose_cover(data, parents)
     if live["target"] != target or set(live["fills"]) - set(item.decision["fills"]):
-        raise ContributionApplyError(
+        raise SubmissionApplyError(
             "The proposed match or blank fields changed. Refresh the catalog proposal."
         )
-    return apply_catalog_entry(item, actor, contribution.submitted_data["catalog_code"],
+    return apply_catalog_entry(item, actor, submission.submitted_data["catalog_code"],
                                office, parents, obj, live["fills"])
 
 

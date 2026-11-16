@@ -8,7 +8,7 @@ import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { coverTypeLabel } from "@/lib/coverTypes";
 import { formatPartialDateInput } from "@/lib/partialDate";
-import { type PendingCoverSummary } from "@/lib/contributionDisplay";
+import { type PendingCoverSummary } from "@/lib/submissionDisplay";
 import { normalizeImageUrl } from "@/services/markings";
 
 // Same root the review page uses for saved uploads (VITE_IMAGE_URL, else /media).
@@ -16,22 +16,22 @@ const MEDIA_BASE = (import.meta.env.VITE_IMAGE_URL ?? "").replace(/\/+$/, "") ||
 
 interface PendingCoverCardProps {
   summary: PendingCoverSummary;
-  createdContributionId: number | null;
+  createdSubmissionId: number | null;
   approved: boolean;
 }
 
-export function PendingCoverCard({ summary, createdContributionId, approved }: PendingCoverCardProps) {
+export function PendingCoverCard({ summary, createdSubmissionId, approved }: PendingCoverCardProps) {
   const date = summary.date.unknown ? "Unknown" : formatPartialDateInput(summary.date) || "Not given";
   return (
     <Card className="shadow-archival-md border-primary/10" data-testid="pending-cover-card">
       <CardHeader>
         <CardTitle className="font-heading text-lg">Cover submitted with this marking</CardTitle>
         <p className="text-sm text-muted-foreground">
-          {createdContributionId != null ? (
+          {createdSubmissionId != null ? (
             <>
               Approving the marking created{" "}
-              <Link to={`/contribution/${createdContributionId}`} className="text-primary underline">
-                Cover submission #{createdContributionId}
+              <Link to={`/submission/${createdSubmissionId}`} className="text-primary underline">
+                Cover submission #{createdSubmissionId}
               </Link>
               , which is reviewed separately.
             </>

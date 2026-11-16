@@ -1,31 +1,31 @@
-import { readSubmission } from "@/lib/submission";
+import { readSubmittedData } from "@/lib/submission";
 import {
-  contributionCardPresentation,
-  entryKindForContribution,
-  coverContributionDisplayLabel,
-  coverContributionDisplayName,
-  materializedCoverIdFromContribution,
-} from "./contributionDisplay";
+  submissionCardPresentation,
+  entryKindForSubmission,
+  coverSubmissionDisplayLabel,
+  coverSubmissionDisplayName,
+  materializedCoverIdFromSubmission,
+} from "./submissionDisplay";
 
-describe("materializedCoverIdFromContribution", () => {
+describe("materializedCoverIdFromSubmission", () => {
   it("reads snake_case and camelCase cover ids", () => {
-    expect(materializedCoverIdFromContribution(readSubmission({ cover_id: 12 }).data)).toBe(12);
-    expect(materializedCoverIdFromContribution(readSubmission({ coverId: "34" }).data)).toBe(34);
+    expect(materializedCoverIdFromSubmission(readSubmittedData({ cover_id: 12 }).data)).toBe(12);
+    expect(materializedCoverIdFromSubmission(readSubmittedData({ coverId: "34" }).data)).toBe(34);
   });
 
   it("returns null for missing, empty, or invalid cover ids", () => {
-    expect(materializedCoverIdFromContribution(readSubmission({}).data)).toBeNull();
-    expect(materializedCoverIdFromContribution(readSubmission({ cover_id: "" }).data)).toBeNull();
-    expect(materializedCoverIdFromContribution(readSubmission({ cover_id: "0" }).data)).toBeNull();
-    expect(() => readSubmission({ cover_id: "abc" })).toThrow(/Submission.cover_id/);
+    expect(materializedCoverIdFromSubmission(readSubmittedData({}).data)).toBeNull();
+    expect(materializedCoverIdFromSubmission(readSubmittedData({ cover_id: "" }).data)).toBeNull();
+    expect(materializedCoverIdFromSubmission(readSubmittedData({ cover_id: "0" }).data)).toBeNull();
+    expect(() => readSubmittedData({ cover_id: "abc" })).toThrow(/Submission.cover_id/);
   });
 });
 
-describe("coverContributionDisplayName", () => {
+describe("coverSubmissionDisplayName", () => {
   it("uses the submitted location before the parent location", () => {
     expect(
-      coverContributionDisplayName(
-        readSubmission({ type: "FL", town: "Alexandria", state: "VA", parent_marking_id: 12 }).data,
+      coverSubmissionDisplayName(
+        readSubmittedData({ type: "FL", town: "Alexandria", state: "VA", parent_marking_id: 12 }).data,
         7,
         { town: "Richmond", state: "VA" },
       ),
@@ -34,8 +34,8 @@ describe("coverContributionDisplayName", () => {
 
   it("uses the parent location when the submission has none", () => {
     expect(
-      coverContributionDisplayName(
-        readSubmission({ type: "FC", parent_marking_id: 12 }).data,
+      coverSubmissionDisplayName(
+        readSubmittedData({ type: "FC", parent_marking_id: 12 }).data,
         7,
         { town: "Richmond", state: "VA" },
       ),
@@ -43,13 +43,13 @@ describe("coverContributionDisplayName", () => {
   });
 
   it("omits missing locations and keeps non-draft wording", () => {
-    expect(coverContributionDisplayName(readSubmission({ type: "FL" }).data, 7)).toBe("Folded Letter");
+    expect(coverSubmissionDisplayName(readSubmittedData({ type: "FL" }).data, 7)).toBe("Folded Letter");
   });
 
   it("formats a partial date", () => {
     expect(
-      coverContributionDisplayName(
-        readSubmission({
+      coverSubmissionDisplayName(
+        readSubmittedData({
           type: "FL",
           cover_date_year: 1863,
           cover_date_month: 6,
@@ -61,12 +61,12 @@ describe("coverContributionDisplayName", () => {
   });
 });
 
-describe("coverContributionDisplayLabel", () => {
+describe("coverSubmissionDisplayLabel", () => {
   const submitted = { type: "FL", parent_marking_id: 12 };
 
   it("prefers a camel-case API display name", () => {
     expect(
-      coverContributionDisplayLabel(
+      coverSubmissionDisplayLabel(
         { displayName: "Richmond, VA - Folded Letter" },
         submitted,
         7,
@@ -76,7 +76,7 @@ describe("coverContributionDisplayLabel", () => {
 
   it("prefers a snake-case API display name", () => {
     expect(
-      coverContributionDisplayLabel(
+      coverSubmissionDisplayLabel(
         { display_name: "Norfolk, VA - Folded Letter" },
         submitted,
         7,
@@ -86,7 +86,7 @@ describe("coverContributionDisplayLabel", () => {
 
   it("uses the local fallback for a blank API display name", () => {
     expect(
-      coverContributionDisplayLabel(
+      coverSubmissionDisplayLabel(
         { displayName: "  " },
         submitted,
         7,
@@ -96,12 +96,12 @@ describe("coverContributionDisplayLabel", () => {
   });
 });
 
-describe("contributionCardPresentation", () => {
+describe("submissionCardPresentation", () => {
   it("separates a Cover title, Entry type, status-independent fields", () => {
     expect(
-      contributionCardPresentation({
+      submissionCardPresentation({
         id: 7,
-        submittedData: readSubmission({
+        submittedData: readSubmittedData({
           submission_kind: "cover",
           type: "FL",
           parent_marking_id: 12,
@@ -123,9 +123,9 @@ describe("contributionCardPresentation", () => {
 
   it("uses the same structure with Marking-specific fields", () => {
     expect(
-      contributionCardPresentation({
+      submissionCardPresentation({
         id: 8,
-        submittedData: readSubmission({
+        submittedData: readSubmittedData({
           submission_kind: "marking",
           type: "TOWNMARK",
           inscription_txt: "RICHMOND VA",
@@ -155,9 +155,9 @@ describe("contributionCardPresentation", () => {
 
   it("uses an honest fallback when location is unavailable", () => {
     expect(
-      contributionCardPresentation({
+      submissionCardPresentation({
         id: 9,
-        submittedData: readSubmission({ submission_kind: "cover", type: "FC", parent_marking_id: 12 }).data,
+        submittedData: readSubmittedData({ submission_kind: "cover", type: "FC", parent_marking_id: 12 }).data,
       }).title,
     ).toBe("Submission #9");
   });
@@ -173,22 +173,22 @@ describe("contributionCardPresentation", () => {
  * backend only started defaulting it at views.py:3481 -- so older rows carry
  * neither and fall through to the guesswork below.
  */
-describe("entryKindForContribution", () => {
+describe("entryKindForSubmission", () => {
   it("trusts an explicit submission_kind", () => {
-    expect(entryKindForContribution(readSubmission({ submission_kind: "cover" }).data)).toBe("Cover");
-    expect(entryKindForContribution(readSubmission({ submission_kind: "marking" }).data)).toBe("Marking");
+    expect(entryKindForSubmission(readSubmittedData({ submission_kind: "cover" }).data)).toBe("Cover");
+    expect(entryKindForSubmission(readSubmittedData({ submission_kind: "marking" }).data)).toBe("Marking");
   });
 
   it("reads a legacy cover row with no submission_kind", () => {
     // Parent marking, a cover type, no town, no marking type.
     expect(
-      entryKindForContribution(readSubmission({ parent_marking_id: 12, type: "FL" }).data),
+      entryKindForSubmission(readSubmittedData({ parent_marking_id: 12, type: "FL" }).data),
     ).toBe("Cover");
   });
 
   it("reads a legacy marking row with no submission_kind", () => {
     expect(
-      entryKindForContribution(readSubmission({ town: "RICHMOND", type: "TOWNMARK" }).data),
+      entryKindForSubmission(readSubmittedData({ town: "RICHMOND", type: "TOWNMARK" }).data),
     ).toBe("Marking");
   });
 
@@ -196,20 +196,20 @@ describe("entryKindForContribution", () => {
     // No parent, no type, no date: nothing says cover. Defaulting to Marking
     // keeps it on the screen that shows every field, so an editor can see what
     // it actually is instead of a cover form with blanks.
-    expect(entryKindForContribution(readSubmission({}).data)).toBe("Marking");
+    expect(entryKindForSubmission(readSubmittedData({}).data)).toBe("Marking");
   });
 });
 
 describe("new cover types (Trello T67)", () => {
   it("treats every cover type code as a cover, not only FC and FL", () => {
     for (const type of ["FLF", "ENV", "ENVF", "UNK"]) {
-      expect(entryKindForContribution(readSubmission({ parent_marking_id: 12, type }).data)).toBe("Cover");
+      expect(entryKindForSubmission(readSubmittedData({ parent_marking_id: 12, type }).data)).toBe("Cover");
     }
   });
 
   it("labels the new codes in the display name", () => {
-    expect(coverContributionDisplayName(readSubmission({ type: "FLF" }).data, 7)).toBe("Folded Letter Front");
-    expect(coverContributionDisplayName(readSubmission({ type: "ENVF" }).data, 7)).toBe("Envelope Front");
-    expect(coverContributionDisplayName(readSubmission({ type: "UNK" }).data, 7)).toBe("Unknown");
+    expect(coverSubmissionDisplayName(readSubmittedData({ type: "FLF" }).data, 7)).toBe("Folded Letter Front");
+    expect(coverSubmissionDisplayName(readSubmittedData({ type: "ENVF" }).data, 7)).toBe("Envelope Front");
+    expect(coverSubmissionDisplayName(readSubmittedData({ type: "UNK" }).data, 7)).toBe("Unknown");
   });
 });

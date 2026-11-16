@@ -20,7 +20,7 @@ class CatalogWritePermissionTests(TestCase):
             password="pw",
         )
         self.editors_group = Group.objects.create(name="Editors")
-        review_perm = Permission.objects.get(codename="review_contribution")
+        review_perm = Permission.objects.get(codename="review_submission")
         self.editors_group.permissions.add(review_perm)
         self.editor.groups.add(self.editors_group)
 
@@ -69,7 +69,7 @@ class AuthPayloadRoleTests(TestCase):
             password="pw",
         )
         self.editors_group = Group.objects.create(name="Editors")
-        review_perm = Permission.objects.get(codename="review_contribution")
+        review_perm = Permission.objects.get(codename="review_submission")
         self.editors_group.permissions.add(review_perm)
         self.editor.groups.add(self.editors_group)
         self.region = Region.objects.create(

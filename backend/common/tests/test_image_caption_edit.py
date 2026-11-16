@@ -5,7 +5,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from common.models import (
-    Collection, CollectionAssignment, Contribution, Cover, CoverMarking, Image, Marking,
+    Collection, CollectionAssignment, Submission, Cover, CoverMarking, Image, Marking,
     PostOffice, PostOfficeRegion, Region, SubmissionTransaction,
 )
 
@@ -18,7 +18,7 @@ class ImageCaptionEditTests(TestCase):
         self.admin = User.objects.create_superuser("admin", password="pw")
         self.editor = User.objects.create_user("va-editor", password="pw")
         editors = Group.objects.create(name="Editors")
-        editors.permissions.add(Permission.objects.get(codename="review_contribution"))
+        editors.permissions.add(Permission.objects.get(codename="review_submission"))
         self.editor.groups.add(editors)
         audit = {"created_by": self.admin, "modified_by": self.admin}
         region = Region.objects.create(name="Virginia", abbrev="VA", region_tier="STATE", **audit)
@@ -97,8 +97,8 @@ class ImageCaptionEditTests(TestCase):
 
     def test_resumed_draft_recaptions_its_saved_image_and_approval_keeps_it(self):
         contributor = User.objects.create_user("contributor")
-        draft = Contribution.objects.create(
-            contributor=contributor, collection=self.collection, status=Contribution.STATUS_DRAFT,
+        draft = Submission.objects.create(
+            contributor=contributor, collection=self.collection, status=Submission.STATUS_DRAFT,
             submitted_data={
                 "state": "VA", "town": "Fetterman", "type": "TOWNMARK", "is_manuscript": True,
                 "inscription_txt": "FETTERMAN VA",
@@ -110,8 +110,8 @@ class ImageCaptionEditTests(TestCase):
             created_by=contributor, modified_by=contributor,
         )
         self.client.force_authenticate(contributor)
-        response = self.client.post("/api/v2/contributions/", {
-            "edit_contribution_id": draft.pk, "state": "VA", "town": "Fetterman", "type": "TOWNMARK",
+        response = self.client.post("/api/v2/submissions/", {
+            "edit_submission_id": draft.pk, "state": "VA", "town": "Fetterman", "type": "TOWNMARK",
             "is_manuscript": True, "inscription_txt": "FETTERMAN VA",
             "existing_image_descriptions": {"/media/va/saved.png": "  New caption "},
         }, format="json")
@@ -121,7 +121,7 @@ class ImageCaptionEditTests(TestCase):
         self.assertNotIn("existing_image_descriptions", draft.submitted_data)
 
         self.client.force_authenticate(self.admin)
-        approved = self.client.post(f"/api/v2/contributions/{draft.pk}/approve/", {}, format="json")
+        approved = self.client.post(f"/api/v2/submissions/{draft.pk}/approve/", {}, format="json")
         self.assertEqual(approved.status_code, 200, approved.data)
         draft.refresh_from_db()
         row = Image.objects.get(subject_type=Image.SUBJECT_MARKING, subject_id=draft.marking_id)

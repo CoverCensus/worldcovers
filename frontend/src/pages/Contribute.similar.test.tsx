@@ -19,9 +19,9 @@ jest.mock("@/services/postOffices", () => ({ getPostOffices: jest.fn().mockResol
 jest.mock("@/services/regions", () => ({ getRegions: jest.fn().mockResolvedValue([{ value: "VA", label: "Virginia" }]) }));
 jest.mock("@/services/letterings", () => ({ getLetterings: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/constants/markingEnums", () => ({ getDateFormats: jest.fn().mockResolvedValue([]) }));
-jest.mock("@/services/contributions", () => ({
-  getContribution: jest.fn(), createContribution: jest.fn(),
-  listContributions: jest.fn().mockResolvedValue({ items: [] }),
+jest.mock("@/services/submissions", () => ({
+  getSubmission: jest.fn(), createSubmission: jest.fn(),
+  listSubmissions: jest.fn().mockResolvedValue({ items: [] }),
   getDirectCatalogCodeSuggestion: jest.fn().mockResolvedValue({ catalogCode: "VA-NEW" }),
 }));
 jest.mock("@/services/referenceWorks", () => ({

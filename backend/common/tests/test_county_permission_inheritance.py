@@ -6,7 +6,7 @@ from common.api.v2.permissions import (
     _user_is_responsible_for_cover,
     _user_is_responsible_for_marking,
 )
-from common.contribution_apply import _resolve_post_office
+from common.submission_apply import _resolve_post_office
 from common.models import (
     Collection, CollectionAssignment, Cover, CoverMarking, Marking,
     PostOffice, PostOfficeRegion, Region,

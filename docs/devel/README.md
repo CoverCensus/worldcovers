@@ -87,9 +87,8 @@ How a Submission moves through the system:
 4. The Editor chooses Approve, Reject, or Return.
 5. On Approve, the backend writes the Marking or Cover into the catalog.
 
-Naming trap: the docs and the UI say Submission. The code says
-`Contribution` (`backend/common/models.py`, `frontend/src/services/contributions.ts`).
-They are the same thing.
+The code uses the same name as the docs and the UI: `Submission`
+(`backend/common/models.py`, `frontend/src/services/submissions.ts`).
 
 ### Directory Map
 

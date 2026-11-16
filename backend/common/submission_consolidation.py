@@ -1,10 +1,10 @@
 """
-Helpers for keeping only the latest non-draft Contribution per contributor and
+Helpers for keeping only the latest non-draft Submission per contributor and
 catalog target.
 
 Runbook:
   cwd: repo root
-  command: .venv/bin/python backend/manage.py test common.tests.test_contribution_consolidation
+  command: .venv/bin/python backend/manage.py test common.tests.test_submission_consolidation
   expected exit code: 0
 
 Target shape example:
@@ -16,11 +16,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from common.models import Contribution, Cover, Marking, SubmissionTransaction
+from common.models import Submission, Cover, Marking, SubmissionTransaction
 
 
 @dataclass(frozen=True)
-class ContributionTarget:
+class SubmissionTarget:
     kind: str
     id: int
 
@@ -82,10 +82,10 @@ def _first_positive_int(submitted_data: dict, keys: Iterable[str]) -> int | None
     return None
 
 
-def contribution_target(contribution: Contribution) -> ContributionTarget | None:
+def submission_target(submission: Submission) -> SubmissionTarget | None:
     submitted_data = (
-        contribution.submitted_data
-        if isinstance(contribution.submitted_data, dict)
+        submission.submitted_data
+        if isinstance(submission.submitted_data, dict)
         else {}
     )
     if _is_cover_payload(submitted_data):
@@ -102,10 +102,10 @@ def contribution_target(contribution: Contribution) -> ContributionTarget | None
         )
         if cover_id is None:
             return None
-        return ContributionTarget("cover", cover_id)
+        return SubmissionTarget("cover", cover_id)
 
     marking_id = (
-        _parse_positive_int(contribution.marking_id)
+        _parse_positive_int(submission.marking_id)
         or _first_positive_int(
             submitted_data,
             (
@@ -120,10 +120,10 @@ def contribution_target(contribution: Contribution) -> ContributionTarget | None
     )
     if marking_id is None:
         return None
-    return ContributionTarget("marking", marking_id)
+    return SubmissionTarget("marking", marking_id)
 
 
-def _target_object(target: ContributionTarget):
+def _target_object(target: SubmissionTarget):
     if target.kind == "marking":
         return Marking.all_objects.filter(pk=target.id).first()
     if target.kind == "cover":
@@ -131,46 +131,46 @@ def _target_object(target: ContributionTarget):
     return None
 
 
-def _same_target(contribution: Contribution, target: ContributionTarget) -> bool:
-    candidate = contribution_target(contribution)
+def _same_target(submission: Submission, target: SubmissionTarget) -> bool:
+    candidate = submission_target(submission)
     return candidate == target
 
 
-def _superseded_payload(contribution: Contribution) -> dict:
+def _superseded_payload(submission: Submission) -> dict:
     return {
-        "contribution_id": contribution.pk,
-        "status": contribution.status,
-        "collection_id": contribution.collection_id,
-        "submitted_data": contribution.submitted_data or {},
-        "created_date": contribution.created_date,
-        "modified_date": contribution.modified_date,
+        "submission_id": submission.pk,
+        "status": submission.status,
+        "collection_id": submission.collection_id,
+        "submitted_data": submission.submitted_data or {},
+        "created_date": submission.created_date,
+        "modified_date": submission.modified_date,
     }
 
 
-def consolidate_superseded_contributions(
+def consolidate_superseded_submissions(
     *,
-    current: Contribution,
-    target: ContributionTarget | None = None,
+    current: Submission,
+    target: SubmissionTarget | None = None,
     actor=None,
     source: str = SubmissionTransaction.SOURCE_SYSTEM,
 ) -> int:
     """
-    Delete older non-draft Contribution rows for current.contributor and target.
+    Delete older non-draft Submission rows for current.contributor and target.
 
     Drafts are intentionally retained because a draft is still editable working
     state, not dashboard history. The current row is never deleted.
     """
-    if current.status == Contribution.STATUS_DRAFT or getattr(current, "catalog_source", None):
+    if current.status == Submission.STATUS_DRAFT or getattr(current, "catalog_source", None):
         return 0
-    resolved = target or contribution_target(current)
+    resolved = target or submission_target(current)
     if resolved is None:
         return 0
 
     target_obj = _target_object(resolved)
     candidates = (
-        Contribution.objects.filter(contributor=current.contributor, catalog_source__isnull=True)
+        Submission.objects.filter(contributor=current.contributor, catalog_source__isnull=True)
         .exclude(pk=current.pk)
-        .exclude(status=Contribution.STATUS_DRAFT)
+        .exclude(status=Submission.STATUS_DRAFT)
         .order_by("modified_date", "pk")
     )
 
@@ -181,17 +181,17 @@ def consolidate_superseded_contributions(
         if not _same_target(candidate, resolved):
             continue
         log_submission_transaction(
-            action=SubmissionTransaction.ACTION_CONTRIBUTION_SUPERSEDED,
+            action=SubmissionTransaction.ACTION_SUBMISSION_SUPERSEDED,
             actor=actor,
-            contribution=None,
+            submission=None,
             marking=target_obj if resolved.kind == "marking" else None,
             cover=target_obj if resolved.kind == "cover" else None,
             source=source,
             before_payload=_superseded_payload(candidate),
             after_payload={},
             extra_payload={
-                "superseded_contribution_id": candidate.pk,
-                "superseded_by_contribution_id": current.pk,
+                "superseded_submission_id": candidate.pk,
+                "superseded_by_submission_id": current.pk,
                 "target_kind": resolved.kind,
                 "target_id": resolved.id,
             },
@@ -202,7 +202,7 @@ def consolidate_superseded_contributions(
 
 
 __all__ = [
-    "ContributionTarget",
-    "consolidate_superseded_contributions",
-    "contribution_target",
+    "SubmissionTarget",
+    "consolidate_superseded_submissions",
+    "submission_target",
 ]

@@ -1,6 +1,6 @@
 """Repair the rate the VPHC ingest took from the drawing number (issue #120).
 
-Ian, 2026-08-24, on contributions 9145/9138/9137: "The rate is 3 but is showing
+Ian, 2026-08-24, on submissions 9145/9138/9137: "The rate is 3 but is showing
 4 ... It is bringing in the drawing number instead of the rate."
 
 `apply_vphc_ledger` used to read `rate_val` out of `cancel_no` whenever the
@@ -38,7 +38,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from common.models import Citation, Contribution, Marking, ReferenceWork
+from common.models import Citation, Submission, Marking, ReferenceWork
 
 from .apply_vphc_ledger import VPHC_REFERENCE_CODE, rate_from_inscription
 
@@ -76,7 +76,7 @@ def repaired_rate(submitted_data):
 
 
 class Command(BaseCommand):
-    help = "Fix rate_val on VPHC contributions that took the drawing number."
+    help = "Fix rate_val on VPHC submissions that took the drawing number."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -89,7 +89,7 @@ class Command(BaseCommand):
                  "must never be the one that errors.")
         parser.add_argument(
             "--expect", type=int, default=None,
-            help="Abort unless exactly this many CONTRIBUTION rows need "
+            help="Abort unless exactly this many SUBMISSION rows need "
                  "repair. It does not cover --audit-live, whose catalog "
                  "markings are counted and reported separately.")
         parser.add_argument(
@@ -98,10 +98,10 @@ class Command(BaseCommand):
         parser.add_argument(
             "--audit-live", action="store_true",
             help="Also report catalog markings already carrying the drawing "
-                 "number, from contributions approved before the fix.")
+                 "number, from submissions approved before the fix.")
         parser.add_argument(
             "--sync-approved", action="store_true",
-            help="Also rewrite the payload of ALREADY-APPROVED contributions "
+            help="Also rewrite the payload of ALREADY-APPROVED submissions "
                  "to the rate their device states. Requires --audit-live, and "
                  "refuses unless that audit comes back with zero wrong "
                  "markings -- a clean catalog is what makes the rewrite safe.")
@@ -129,7 +129,7 @@ class Command(BaseCommand):
                 f"actor defaulted to id 1 ({actor.get_username()}); "
                 f"every write will be attributed to them."))
 
-        rows = list(Contribution.objects.all().order_by("id"))
+        rows = list(Submission.objects.all().order_by("id"))
         ours, protected = [], []
         for row in rows:
             data = row.submitted_data
@@ -139,7 +139,7 @@ class Command(BaseCommand):
                 protected.append(row)
 
         self.stdout.write(
-            f"contributions total {len(rows)} · vphc {len(ours)} · "
+            f"submissions total {len(rows)} · vphc {len(ours)} · "
             f"not ours {len(protected)}")
         self.stdout.write(self.style.WARNING(
             f"PROTECTED -- {len(protected)} non-VPHC submission(s), never touched:"))
@@ -159,7 +159,7 @@ class Command(BaseCommand):
             # afterwards (--sync-approved), never the other way round. Doing
             # the payload alone would leave the wrong rate live and merely
             # hide it from this report.
-            if row.status == Contribution.STATUS_APPROVED:
+            if row.status == Submission.STATUS_APPROVED:
                 blocked.append((row, change))
             else:
                 planned.append((row, change))
@@ -202,7 +202,7 @@ class Command(BaseCommand):
             for row, (_old, new) in planned + syncing:
                 self._rewrite_rate(row, new, actor)
         self.stdout.write(self.style.SUCCESS(
-            f"repaired {len(planned)} contribution(s)."))
+            f"repaired {len(planned)} submission(s)."))
         if syncing:
             self.stdout.write(self.style.SUCCESS(
                 f"synced {len(syncing)} approved payload(s) to the catalog."))
@@ -217,7 +217,7 @@ class Command(BaseCommand):
         row.modified_by = actor
         # Per-row save, not bulk_update: bulk_update skips save(), skips the
         # pre_save/post_save signals and does not respect auto_now, and
-        # Contribution.modified_date is auto_now. At this row count the speed
+        # Submission.modified_date is auto_now. At this row count the speed
         # is worth nothing and the trail is worth a lot.
         # https://docs.djangoproject.com/en/5.2/ref/models/querysets/#bulk-update
         row.save(update_fields=["submitted_data", "modified_by",
@@ -227,16 +227,16 @@ class Command(BaseCommand):
         """Which approved payloads may be rewritten, and why the rest may not.
 
         The safety argument is coverage, not per-row linkage. Every approved
-        VPHC contribution carries a VPHC1 citation by construction, so
+        VPHC submission carries a VPHC1 citation by construction, so
         --audit-live's sweep of VPHC-cited RATEMARKs examines all of them; if
         it comes back clean, the catalog already states the device's rate
         everywhere and rewriting a payload to that same rate cannot introduce
         a disagreement.
 
-        Resolving each contribution to its own Marking would be the obvious
-        alternative and it is wrong here: Contribution.marking is a
+        Resolving each submission to its own Marking would be the obvious
+        alternative and it is wrong here: Submission.marking is a
         OneToOneField that the approve view only sets when no sibling
-        contribution already claims that marking, so on a colour fan-out it is
+        submission already claims that marking, so on a colour fan-out it is
         legitimately NULL on an approved row -- and a per-row link would
         silently skip exactly the rows this exists for.
         """
@@ -303,7 +303,7 @@ class Command(BaseCommand):
     def _write_report_rows(self, path, planned, blocked):
         with open(path, "w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh, lineterminator="\n")
-            writer.writerow(["contribution_id", "status", "vphc_code",
+            writer.writerow(["submission_id", "status", "vphc_code",
                              "cancel_no", "inscription_txt", "old_rate",
                              "new_rate", "action"])
             for row, (old, new) in planned + blocked:
@@ -314,7 +314,7 @@ class Command(BaseCommand):
                     vphc.get("cancel_no", ""), data.get("inscription_txt", ""),
                     old, new,
                     "skipped (approved)"
-                    if row.status == Contribution.STATUS_APPROVED else "repair",
+                    if row.status == Submission.STATUS_APPROVED else "repair",
                 ])
 
     # ----------------------------------------------------- the live catalog

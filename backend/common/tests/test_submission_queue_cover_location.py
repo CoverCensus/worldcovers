@@ -3,14 +3,14 @@ Issues #135 / #137 -- a cover draft on the editor dashboard must name its town.
 
 Ian's two complaints were filed separately ("town name on dashboard screen",
 "put the town and state before cover draft") but they are one defect with one
-cause: a cover contribution has NO town in its submitted_data. CoverEdit never
-sends one, and it must not -- _contribution_submitted_data_is_cover keys "this
+cause: a cover submission has NO town in its submitted_data. CoverEdit never
+sends one, and it must not -- _submission_submitted_data_is_cover keys "this
 is a cover" partly on the ABSENCE of a town, so denormalizing one into the blob
 would reclassify every cover draft as a marking. The town belongs to the parent
 marking and has to be resolved.
 
 The old rows omitted the town and led with redundant status and relationship
-text. Marking contributions were never affected because they already led with
+text. Marking submissions were never affected because they already led with
 their location.
 
 ⭐ The query-count test is not hygiene, it is the acceptance criterion. Resolving
@@ -19,7 +19,7 @@ been over 2,400 rows since the VPHC ingest, so "it renders the town" and "it
 renders the town without melting the dashboard" are two different claims and
 only the second one is worth shipping.
 
-Run: uv run python backend/manage.py test common.tests.test_contribution_queue_cover_location
+Run: uv run python backend/manage.py test common.tests.test_submission_queue_cover_location
 """
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
@@ -32,7 +32,7 @@ from common.models import (
     Collection,
     CollectionAssignment,
     Color,
-    Contribution,
+    Submission,
     Marking,
     PostOffice,
     PostOfficeRegion,
@@ -42,7 +42,7 @@ from common.models import (
 
 User = get_user_model()
 
-URL = "/api/v2/contributions/"
+URL = "/api/v2/submissions/"
 
 
 class CoverDraftLocationTests(TestCase):
@@ -53,7 +53,7 @@ class CoverDraftLocationTests(TestCase):
         )
         self.editor = User.objects.create_user(username="editor", password="pw")
         editors = Group.objects.create(name="Editors")
-        editors.permissions.add(Permission.objects.get(codename="review_contribution"))
+        editors.permissions.add(Permission.objects.get(codename="review_submission"))
         self.editor.groups.add(editors)
         self.contributor = User.objects.create_user(username="gstone", password="pw")
 
@@ -127,10 +127,10 @@ class CoverDraftLocationTests(TestCase):
             "cover_granularity": "DAY",
         }
         sd.update(overrides)
-        return Contribution.objects.create(
+        return Submission.objects.create(
             contributor=self.contributor,
             collection=self.collection,
-            status=Contribution.STATUS_PENDING,
+            status=Submission.STATUS_PENDING,
             submitted_data=sd,
             created_by=self.admin,
             modified_by=self.admin,
@@ -190,12 +190,12 @@ class CoverDraftLocationTests(TestCase):
         self.assertEqual(row["display_name"], "Folded Cover - 06/01/1850")
         self.assertEqual(row["town_display"], "-")
 
-    def test_marking_contributions_are_untouched(self):
+    def test_marking_submissions_are_untouched(self):
         """They already led with their location; this must not disturb them."""
-        Contribution.objects.create(
+        Submission.objects.create(
             contributor=self.contributor,
             collection=self.collection,
-            status=Contribution.STATUS_PENDING,
+            status=Submission.STATUS_PENDING,
             submitted_data={
                 "submission_kind": "marking",
                 "type": "TOWNMARK",

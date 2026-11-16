@@ -1,34 +1,34 @@
 """
-Apply an approved Contribution to the catalog.
+Apply an approved Submission to the catalog.
 
 The approve view in backend/common/api/v2/views.py wraps a call to
-apply_contribution_to_catalog(contrib) in transaction.atomic(); this
+apply_submission_to_catalog(contrib) in transaction.atomic(); this
 module must therefore NOT open its own transaction. On any error it
-raises -- ContributionApplyError for malformed submission data (becomes
+raises -- SubmissionApplyError for malformed submission data (becomes
 a 500 with a field-specific message).
 
 Scope:
   * Marking submissions (type in TOWNMARK/RATEMARK/AUXMARK): create one
     Marking + Image rows unless no image was explicitly affirmed + zero-or-more Citation rows.
-    apply_contribution_to_catalog returns the created Marking.
+    apply_submission_to_catalog returns the created Marking.
   * Cover submissions (submission_kind == "cover" or type in FC/FL):
     create one Cover + one CoverMarking (linked to the parent marking,
     review_status=APPROVED) + zero-or-one DateSeen + Image
     rows + zero-or-more Citation rows + zero-or-one CoverValuation. The
     cover branch returns a dict, NOT a Marking -- see
-    apply_cover_contribution_to_catalog for the exact shape. The approve
-    view (common/api/v2/views.py ContributionViewSet.approve) branches on
+    apply_cover_submission_to_catalog for the exact shape. The approve
+    view (common/api/v2/views.py SubmissionViewSet.approve) branches on
     the return type.
   * Edit flow (update-in-place, no duplicate row):
       - Marking edit: payload carries edit_marking_id. The existing Marking
         is re-resolved and overwritten; its Images and Citations are
         reconciled against the FULL desired set in submitted_data.
-        apply_contribution_to_catalog returns that existing Marking.
+        apply_submission_to_catalog returns that existing Marking.
       - Cover edit: payload carries edit_cover_id (and usually
         edit_cover_marking_id). The existing Cover is overwritten in place
         (its code is kept), the existing CoverMarking link's positional fields
         are updated, and the cover's DateSeen / Images / Citations / Valuation
-        are reconciled. apply_cover_contribution_to_catalog returns the same
+        are reconciled. apply_cover_submission_to_catalog returns the same
         dict shape as the create path, with the existing entities.
 
 Create vs edit share child reconcilers (_sync_images / _sync_citations /
@@ -37,7 +37,7 @@ the existing set is empty, so a _sync_* call behaves exactly like the old
 create-only path.
 
 The function reads contrib.submitted_data (a JSON blob written by the
-v2 ContributionSubmitView) under the caller's transaction.
+v2 SubmissionSubmitView) under the caller's transaction.
 """
 
 from __future__ import annotations
@@ -114,8 +114,8 @@ _COVER_DATE_KEYS = (
 )
 
 
-class ContributionApplyError(ValueError):
-    """Raised when contribution submitted_data is malformed.
+class SubmissionApplyError(ValueError):
+    """Raised when submission submitted_data is malformed.
 
     The approve view surfaces this as a 500 with the error message
     visible to the editor, so messages should name the specific field
@@ -123,9 +123,9 @@ class ContributionApplyError(ValueError):
     """
 
 
-def apply_contribution_to_catalog(contrib):
+def apply_submission_to_catalog(contrib):
     """
-    Apply an approved Contribution to the catalog by creating a Marking
+    Apply an approved Submission to the catalog by creating a Marking
     (+ Images + Citations) from contrib.submitted_data. Caller must wrap
     in a transaction; this function does not.
     """
@@ -136,16 +136,16 @@ def apply_contribution_to_catalog(contrib):
         try:
             return approve_source_entry(source, contrib)
         except (DjangoValidationError, ValueError) as exc:
-            raise ContributionApplyError(str(exc)) from exc
+            raise SubmissionApplyError(str(exc)) from exc
     payload = contrib.submitted_data or {}
     actor = contrib.contributor
 
     submission_kind = payload.get("submission_kind") or payload.get("submissionKind")
     sub_type = payload.get("type")
     if submission_kind == "cover" or sub_type in _COVER_TYPES:
-        return apply_cover_contribution_to_catalog(contrib)
+        return apply_cover_submission_to_catalog(contrib)
     if sub_type not in _MARKING_TYPES:
-        raise ContributionApplyError(
+        raise SubmissionApplyError(
             "Marking type is required and must be one of "
             "TOWNMARK/RATEMARK/AUXMARK; got {!r}.".format(sub_type)
         )
@@ -234,7 +234,7 @@ def apply_contribution_to_catalog(contrib):
 
 def _apply_marking_edit(contrib, payload: dict, actor, marking_id: int) -> Marking:
     """
-    Apply an approved marking-EDIT contribution in place: merge the submitted
+    Apply an approved marking-EDIT submission in place: merge the submitted
     scalars into the existing row (no new Marking), then reconcile its Images
     and Citations. Returns the updated Marking -- the same contract as the
     create path.
@@ -260,7 +260,7 @@ def _apply_marking_edit(contrib, payload: dict, actor, marking_id: int) -> Marki
     try:
         marking = Marking.all_objects.get(pk=marking_id)
     except Marking.DoesNotExist:
-        raise ContributionApplyError(
+        raise SubmissionApplyError(
             "Unknown marking id for edit: {}".format(marking_id)
         )
 
@@ -370,13 +370,13 @@ def _apply_marking_edit(contrib, payload: dict, actor, marking_id: int) -> Marki
     return marking
 
 
-def apply_cover_contribution_to_catalog(contrib) -> dict:
+def apply_cover_submission_to_catalog(contrib) -> dict:
     """
-    Materialize an approved cover Contribution into the catalog: create one
+    Materialize an approved cover Submission into the catalog: create one
     Cover, one CoverMarking (linked to the parent Marking, review_status
     APPROVED), zero-or-one DateSeen, one-or-more Image rows, zero-or-more
     Citation rows, and zero-or-one CoverValuation -- all from
-    contrib.submitted_data. The caller (ContributionViewSet.approve) owns the
+    contrib.submitted_data. The caller (SubmissionViewSet.approve) owns the
     transaction.atomic(); this function MUST NOT open its own.
 
     Returns a dict so the approve view can tell covers from markings:
@@ -405,7 +405,7 @@ def apply_cover_contribution_to_catalog(contrib) -> dict:
         except (TypeError, ValueError):
             continue
     if parent_id is None:
-        raise ContributionApplyError(
+        raise SubmissionApplyError(
             "parent_marking_id (or marking_id) is required for a cover submission."
         )
     # all_objects so a recycle-binned parent still resolves (mirrors
@@ -413,7 +413,7 @@ def apply_cover_contribution_to_catalog(contrib) -> dict:
     try:
         parent_marking = Marking.all_objects.get(pk=parent_id)
     except Marking.DoesNotExist:
-        raise ContributionApplyError("Unknown parent marking id: {}".format(parent_id))
+        raise SubmissionApplyError("Unknown parent marking id: {}".format(parent_id))
 
     edit_cover_id = _parse_int(payload.get("edit_cover_id") or payload.get("editCoverId"))
     if edit_cover_id is not None:
@@ -433,7 +433,7 @@ def apply_cover_contribution_to_catalog(contrib) -> dict:
     if isinstance(cover_type, str):
         cover_type = cover_type.strip().upper() or None
     if cover_type is not None and cover_type not in _COVER_TYPES:
-        raise ContributionApplyError(
+        raise SubmissionApplyError(
             "Cover type must be one of {}; got {!r}.".format(
                 ", ".join(sorted(_COVER_TYPES)), cover_type)
         )
@@ -531,7 +531,7 @@ def _apply_cover_edit(
     cover_marking_id,
 ) -> dict:
     """
-    Apply an approved cover-EDIT contribution in place: overwrite the existing
+    Apply an approved cover-EDIT submission in place: overwrite the existing
     Cover's scalar fields (keeping its assigned code), update the existing
     CoverMarking link's positional fields, and reconcile the cover's DateSeen /
     Images / Citations / Valuation. Returns the SAME dict shape as the cover
@@ -553,7 +553,7 @@ def _apply_cover_edit(
     try:
         cover = Cover.all_objects.get(pk=cover_id)
     except Cover.DoesNotExist:
-        raise ContributionApplyError(
+        raise SubmissionApplyError(
             "Unknown cover id for edit: {}".format(cover_id)
         )
 
@@ -562,7 +562,7 @@ def _apply_cover_edit(
         raw_type = raw_type.strip().upper() or None
     if raw_type is not None:
         if raw_type not in _COVER_TYPES:
-            raise ContributionApplyError(
+            raise SubmissionApplyError(
                 "Cover type must be one of {}; got {!r}.".format(
                     ", ".join(sorted(_COVER_TYPES)), raw_type)
             )
@@ -617,7 +617,7 @@ def _apply_cover_edit(
             cover=cover, marking=parent_marking
         ).first()
     if cover_marking is None:
-        raise ContributionApplyError(
+        raise SubmissionApplyError(
             "No CoverMarking link found for cover {} and marking {}.".format(
                 cover.pk, parent_marking.pk
             )
@@ -689,10 +689,10 @@ def _apply_cover_edit(
 def _required_str(payload: dict, key: str) -> str:
     raw = payload.get(key)
     if raw is None:
-        raise ContributionApplyError("{} is required.".format(key))
+        raise SubmissionApplyError("{} is required.".format(key))
     s = str(raw).strip()
     if not s:
-        raise ContributionApplyError("{} is required.".format(key))
+        raise SubmissionApplyError("{} is required.".format(key))
     return s
 
 
@@ -703,7 +703,7 @@ def _coerce_required_bool(payload: dict, key: str) -> bool:
     other value -- including missing key -- raises.
     """
     if key not in payload:
-        raise ContributionApplyError(
+        raise SubmissionApplyError(
             "{} is required and must be true or false.".format(key)
         )
     raw = payload[key]
@@ -720,7 +720,7 @@ def _coerce_required_bool(payload: dict, key: str) -> bool:
             return True
         if s in _BOOL_FALSE:
             return False
-    raise ContributionApplyError(
+    raise SubmissionApplyError(
         "{} is required and must be true or false.".format(key)
     )
 
@@ -838,7 +838,7 @@ def _resolve_fk(model, payload: dict, id_key: str, name_key: str, *fallback_id_k
         try:
             return model.objects.get(pk=pk)
         except model.DoesNotExist:
-            raise ContributionApplyError(
+            raise SubmissionApplyError(
                 "Unknown {} id: {}".format(model.__name__.lower(), pk)
             )
     raw_name = payload.get(name_key)
@@ -878,15 +878,15 @@ def _payload_mentions_fk(payload: dict, id_key: str, name_key: str, *fallback_id
 # codes leaking into editor-facing prose.
 #
 # Stripped here, at the point of approval, rather than by re-emitting the
-# queue: this text is baked into submitted_data on ~2,084 contributions and
+# queue: this text is baked into submitted_data on ~2,084 submissions and
 # apply_vphc_ledger is not idempotent, so a re-emit means a delete-and-rebuild
-# with eight human submissions to protect. The contribution keeps the original
+# with eight human submissions to protect. The submission keeps the original
 # text either way, and MarkingDetailSerializer.vphc_provenance is what shows it
 # to editors afterwards -- including the sheet cell, which the provenance blob
 # carries as `src`.
 #
 # MARKER: non-greedy, and every occurrence rather than the last. 118 of the
-# 2,062 contributions measured carry TWO markers -- the crossexam one plus the
+# 2,062 submissions measured carry TWO markers -- the crossexam one plus the
 # type_defaulted one apply_vphc_ledger appends separately (:452 and :454), so a
 # trailing-only strip leaves one behind. Verified across 1,730 crosswalk and
 # 1,576 emitted markers that none contains an inner "]", so .*? cannot truncate
@@ -951,7 +951,7 @@ def _resolve_lettering(payload: dict) -> Lettering | None:
         try:
             return Lettering.objects.get(pk=nested_id)
         except Lettering.DoesNotExist:
-            raise ContributionApplyError(
+            raise SubmissionApplyError(
                 "Unknown lettering id: {}".format(nested_id)
             )
     return _resolve_fk(
@@ -1059,7 +1059,7 @@ def _resolve_post_office(state_name: str, town_name: str, actor) -> PostOffice:
     # 2026-08-19 before the queue was restored.
     region = Region.primary_for_state_term(state_name)
     if region is None:
-        raise ContributionApplyError("Unknown state: {}".format(state_name))
+        raise SubmissionApplyError("Unknown state: {}".format(state_name))
 
     po = _find_post_office(region, town_name)
     if po is None:
@@ -1101,29 +1101,29 @@ def _validate_county(payload: dict, state_name: str) -> Region | None:
     must be a COUNTY whose parent is the submitted state, and a non-empty
     `county` name must agree with that Region's name: an id whose
     client-supplied name disagrees is never linked. Every failure is a
-    ContributionApplyError, never a silent skip.
+    SubmissionApplyError, never a silent skip.
     """
     raw = payload.get("county_id")
     if raw in (None, ""):
         return None
     county_id = _parse_int(raw)
     if county_id is None:
-        raise ContributionApplyError("county_id {!r} is not a Region id.".format(raw))
+        raise SubmissionApplyError("county_id {!r} is not a Region id.".format(raw))
     county = Region.objects.filter(pk=county_id).select_related("parent_region").first()
     if county is None or county.region_tier != "COUNTY":
-        raise ContributionApplyError(
+        raise SubmissionApplyError(
             "county_id {} is not a County region.".format(county_id)
         )
     state_region = Region.primary_for_state_term(state_name)
     if state_region is None:
-        raise ContributionApplyError("Unknown state: {}".format(state_name))
+        raise SubmissionApplyError("Unknown state: {}".format(state_name))
     if county.parent_region_id != state_region.pk:
-        raise ContributionApplyError(
+        raise SubmissionApplyError(
             "County {!r} is not in {!r}.".format(county.name, state_name)
         )
     sent_name = str(payload.get("county") or "").strip()
     if sent_name and sent_name.lower() != county.name.lower():
-        raise ContributionApplyError(
+        raise SubmissionApplyError(
             "County name {!r} does not match county #{} ({}).".format(
                 sent_name, county.pk, county.name)
         )
@@ -1180,7 +1180,7 @@ def describe_county_intent(submitted_data: dict) -> dict | None:
         return result
     try:
         county = _validate_county(payload, state_name)
-    except ContributionApplyError as exc:
+    except SubmissionApplyError as exc:
         result["error"] = str(exc)
         result["note"] = str(exc)
         return result
@@ -1475,7 +1475,7 @@ def _sync_images(
                 subject_id=subject_id,
             ).delete()
             return
-        raise ContributionApplyError(
+        raise SubmissionApplyError(
             "Submission has no images; at least one image is required."
         )
 
@@ -1490,12 +1490,12 @@ def _sync_images(
     new_index = 0
     for i, meta in enumerate(metas):
         if not isinstance(meta, dict):
-            raise ContributionApplyError(
+            raise SubmissionApplyError(
                 "{}[{}] is not an object.".format(metas_keys[0], i)
             )
         raw_sf = meta.get("storage_filename")
         if not raw_sf:
-            raise ContributionApplyError(
+            raise SubmissionApplyError(
                 "{}[{}].storage_filename is required.".format(metas_keys[0], i)
             )
         sf = _normalize_storage(raw_sf)
@@ -1564,10 +1564,10 @@ def _append_new_images(
     new_index = 0
     for i, meta in enumerate(metas):
         if not isinstance(meta, dict):
-            raise ContributionApplyError("{}[{}] is not an object.".format(metas_key, i))
+            raise SubmissionApplyError("{}[{}] is not an object.".format(metas_key, i))
         raw_sf = meta.get("storage_filename")
         if not raw_sf:
-            raise ContributionApplyError(
+            raise SubmissionApplyError(
                 "{}[{}].storage_filename is required.".format(metas_key, i)
             )
         if _normalize_storage(raw_sf) in current:
@@ -1623,7 +1623,7 @@ def _sync_citations(subject_type: str, subject_id, payload: dict, actor) -> None
         ids_raw = [ids_raw] if str(ids_raw).strip() else []
 
     if ids_raw and not isinstance(ids_raw, (list, tuple)):
-        raise ContributionApplyError(
+        raise SubmissionApplyError(
             "reference_work_ids must be a list of ids."
         )
 
@@ -1662,13 +1662,13 @@ def _sync_citations(subject_type: str, subject_id, payload: dict, actor) -> None
         try:
             rwid = int(rid_raw)
         except (TypeError, ValueError):
-            raise ContributionApplyError(
+            raise SubmissionApplyError(
                 "Invalid reference work id: {!r}".format(rid_raw)
             )
         try:
             rw = ReferenceWork.objects.get(pk=rwid)
         except ReferenceWork.DoesNotExist:
-            raise ContributionApplyError(
+            raise SubmissionApplyError(
                 "Unknown reference work id: {}".format(rwid)
             )
         detail = detail_by_id.get(rwid, {})
@@ -1735,7 +1735,7 @@ def _sync_cover_date_seen(cover_id, payload: dict, actor) -> None:
         try:
             row.normalize_date_parts()
         except DjangoValidationError as exc:
-            raise ContributionApplyError("Invalid cover date components: {}".format(exc))
+            raise SubmissionApplyError("Invalid cover date components: {}".format(exc))
         row.save()
         return
 
@@ -1744,12 +1744,12 @@ def _sync_cover_date_seen(cover_id, payload: dict, actor) -> None:
         return
     parsed = parse_date(str(raw)[:10])
     if parsed is None:
-        raise ContributionApplyError("Invalid cover_date: {!r}".format(raw))
+        raise SubmissionApplyError("Invalid cover_date: {!r}".format(raw))
     granularity = payload.get("cover_granularity") or payload.get("coverGranularity") or "DAY"
     if isinstance(granularity, str):
         granularity = granularity.strip().upper() or "DAY"
     if granularity not in ("DAY", "MONTH", "YEAR"):
-        raise ContributionApplyError("Invalid cover_granularity: {!r}".format(granularity))
+        raise SubmissionApplyError("Invalid cover_granularity: {!r}".format(granularity))
     DateSeen.objects.create(
         subject_type=DateSeen.SUBJECT_COVER,
         subject_id=cover_id,
@@ -1762,7 +1762,7 @@ def _sync_cover_date_seen(cover_id, payload: dict, actor) -> None:
 
 # Form keys carrying manual Marking dates and ERD/LRD (+ granularity), read
 # by _sync_marking_dates_seen below. Setting a marking's date is editor-only
-# (issue #27): the contribution submit handler strips these from a non-editor's
+# (issue #27): the submission submit handler strips these from a non-editor's
 # submission, exactly as it strips CATALOG_CODE_KEYS. Kept here, next to the
 # code that consumes them, so the key list has one home.
 MARKING_DATE_SUBMIT_KEYS = frozenset({
@@ -1793,23 +1793,23 @@ def normalize_marking_dates_seen(value) -> list[dict]:
         try:
             value = json.loads(value)
         except ValueError as exc:
-            raise ContributionApplyError("Dates seen must be a list of dates.") from exc
+            raise SubmissionApplyError("Dates seen must be a list of dates.") from exc
     if not isinstance(value, list):
-        raise ContributionApplyError("Dates seen must be a list of dates.")
+        raise SubmissionApplyError("Dates seen must be a list of dates.")
     result = []
     for parts in value:
         if not isinstance(parts, dict):
-            raise ContributionApplyError("Each date must contain date components.")
+            raise SubmissionApplyError("Each date must contain date components.")
         keys = ("date_year", "date_month", "date_day")
         if any(parts.get(key) is not None and type(parts[key]) is not int for key in keys):
-            raise ContributionApplyError("Date components must be whole numbers or null.")
+            raise SubmissionApplyError("Date components must be whole numbers or null.")
         if all(parts.get(key) is None for key in keys):
-            raise ContributionApplyError("Enter at least one date component.")
+            raise SubmissionApplyError("Enter at least one date component.")
         row = DateSeen(granularity="", **{key: parts.get(key) for key in keys})
         try:
             row.normalize_date_parts()
         except DjangoValidationError as exc:
-            raise ContributionApplyError("Invalid date components: {}".format(exc)) from exc
+            raise SubmissionApplyError("Invalid date components: {}".format(exc)) from exc
         normalized = {
             **{key: getattr(row, key) for key in keys},
             "granularity": row.granularity,
@@ -1881,7 +1881,7 @@ def _sync_marking_dates_seen(marking_id, payload: dict, actor) -> None:
             try:
                 row.normalize_date_parts()
             except DjangoValidationError as exc:
-                raise ContributionApplyError("Invalid {} components: {}".format(date_key, exc))
+                raise SubmissionApplyError("Invalid {} components: {}".format(date_key, exc))
             DateSeen.objects.get_or_create(
                 subject_type=DateSeen.SUBJECT_MARKING,
                 subject_id=marking_id,
@@ -1902,12 +1902,12 @@ def _sync_marking_dates_seen(marking_id, payload: dict, actor) -> None:
             continue
         parsed = parse_date(str(raw)[:10])
         if parsed is None:
-            raise ContributionApplyError("Invalid {}: {!r}".format(date_key, raw))
+            raise SubmissionApplyError("Invalid {}: {!r}".format(date_key, raw))
         granularity = payload.get(gran_key) or "DAY"
         if isinstance(granularity, str):
             granularity = granularity.strip().upper() or "DAY"
         if granularity not in ("DAY", "MONTH", "YEAR"):
-            raise ContributionApplyError(
+            raise SubmissionApplyError(
                 "Invalid {}: {!r}".format(gran_key, granularity)
             )
         row = DateSeen(
@@ -1921,7 +1921,7 @@ def _sync_marking_dates_seen(marking_id, payload: dict, actor) -> None:
         try:
             row.normalize_date_parts()
         except DjangoValidationError as exc:
-            raise ContributionApplyError("Invalid {}: {}".format(date_key, exc))
+            raise SubmissionApplyError("Invalid {}: {}".format(date_key, exc))
         DateSeen.objects.get_or_create(
             subject_type=DateSeen.SUBJECT_MARKING,
             subject_id=marking_id,
@@ -1979,7 +1979,7 @@ def _sync_cover_valuation(cover_id, payload: dict, actor) -> None:
 
 
 __all__ = [
-    "apply_contribution_to_catalog",
-    "apply_cover_contribution_to_catalog",
-    "ContributionApplyError",
+    "apply_submission_to_catalog",
+    "apply_cover_submission_to_catalog",
+    "SubmissionApplyError",
 ]

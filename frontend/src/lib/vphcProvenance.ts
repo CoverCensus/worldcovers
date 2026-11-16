@@ -1,8 +1,8 @@
-import type { Submission } from "@/lib/submission";
+import type { SubmittedData } from "@/lib/submission";
 // Reader for the `vphc` provenance blob that apply_vphc_ledger attaches to
-// every contribution produced by the VPHC ingest.
+// every submission produced by the VPHC ingest.
 //
-// The blob is not catalog data -- contributionToFields deliberately ignores it
+// The blob is not catalog data -- submissionToFields deliberately ignores it
 // -- but it carries the uncertainty the ingest could not resolve, and a
 // reviewer approving one of these records needs to see it. Without this strip
 // a marking whose century was guessed and whose county could not be resolved
@@ -28,7 +28,7 @@ export interface VphcProvenance {
 }
 
 // Mirrors FLAG_REASONS in tools/vphc_crossexam.py (the source of truth) plus
-// the two flags apply_vphc_ledger adds at contribution time. Keep the wording
+// the two flags apply_vphc_ledger adds at submission time. Keep the wording
 // in step with that dict -- a reviewer should read the same sentence here as
 // in the crossexam report.
 const FLAG_REASONS: Record<string, string> = {
@@ -107,9 +107,9 @@ export function describeVphcUnmatchedReason(code: string): string {
   return UNMATCHED_REASONS[code] ?? humanize(code);
 }
 
-// Returns null for any contribution that did not come from the VPHC ingest,
+// Returns null for any submission that did not come from the VPHC ingest,
 // which is what the caller uses to decide whether to render the strip at all.
-export function readVphcProvenance(sd: Submission): VphcProvenance | null {
+export function readVphcProvenance(sd: SubmittedData): VphcProvenance | null {
   const raw = sd.vphc;
   if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const blob = raw;

@@ -19,14 +19,14 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from common.catalog_codes import _next_serial, code_value_from_payload
-from common.models import Collection, Contribution, Marking, PostOffice, Region
+from common.models import Collection, Submission, Marking, PostOffice, Region
 
 PREFIX = "ASCC6-VA-M"
 _CODE_NUMBER_RE = re.compile(r"^(\d{4,})$")
 
 
 def oracle_next_serial(*, subject_type, prefix, exclude_id=None,
-                       exclude_contribution_id=None):
+                       exclude_submission_id=None):
     """origin/staging's implementation, kept verbatim as the reference."""
     max_seen = 0
     qs = Marking.all_objects.filter(code__startswith=prefix).only("id", "code")
@@ -39,15 +39,15 @@ def oracle_next_serial(*, subject_type, prefix, exclude_id=None,
             continue
         max_seen = max(max_seen, int(match.group(1)))
 
-    pending_qs = Contribution.objects.filter(
+    pending_qs = Submission.objects.filter(
         status__in=(
-            Contribution.STATUS_DRAFT,
-            Contribution.STATUS_PENDING,
-            Contribution.STATUS_NEEDS_REVISION,
+            Submission.STATUS_DRAFT,
+            Submission.STATUS_PENDING,
+            Submission.STATUS_NEEDS_REVISION,
         ),
     ).only("id", "submitted_data")
-    if exclude_contribution_id is not None:
-        pending_qs = pending_qs.exclude(pk=exclude_contribution_id)
+    if exclude_submission_id is not None:
+        pending_qs = pending_qs.exclude(pk=exclude_submission_id)
     for contrib_row in pending_qs:
         code = code_value_from_payload(dict(contrib_row.submitted_data or {}))
         if not code or not code.startswith(prefix):
@@ -94,8 +94,8 @@ class SerialDifferentialTests(TestCase):
             post_office=self.post_office,
             created_by=self.user, modified_by=self.user)
 
-    def _contribution(self, payload, status=Contribution.STATUS_PENDING):
-        return Contribution.objects.create(
+    def _submission(self, payload, status=Submission.STATUS_PENDING):
+        return Submission.objects.create(
             contributor=self.user, collection=self.collection, status=status,
             submitted_data=payload, created_by=self.user, modified_by=self.user)
 
@@ -113,16 +113,16 @@ class SerialDifferentialTests(TestCase):
         """50 randomised populations, rebuilt from scratch each round."""
         rng = random.Random(20260819)
         statuses = [
-            Contribution.STATUS_DRAFT, Contribution.STATUS_PENDING,
-            Contribution.STATUS_NEEDS_REVISION, Contribution.STATUS_APPROVED,
-            Contribution.STATUS_REJECTED,
+            Submission.STATUS_DRAFT, Submission.STATUS_PENDING,
+            Submission.STATUS_NEEDS_REVISION, Submission.STATUS_APPROVED,
+            Submission.STATUS_REJECTED,
         ]
         code_keys = ["catalog_code", "catalogCode", "code"]
         blanks = ["", "   ", "\t", None]
 
         for round_no in range(50):
             Marking.all_objects.all().delete()
-            Contribution.objects.all().delete()
+            Submission.objects.all().delete()
 
             used = set()
             for _ in range(rng.randint(0, 8)):
@@ -148,22 +148,22 @@ class SerialDifferentialTests(TestCase):
                             + rng.choice(SUFFIXES)
                 if rng.random() < 0.1:
                     payload["catalog_code"] = rng.randint(1000, 99999)  # not a str
-                self._contribution(payload, status=rng.choice(statuses))
+                self._submission(payload, status=rng.choice(statuses))
 
             self._assert_agrees("round {}".format(round_no))
 
     def test_agrees_with_exclusions(self):
         """The exclude_* arguments are how a row avoids colliding with itself."""
         marking = self._marking(PREFIX + "0400")
-        contrib = self._contribution({"catalog_code": PREFIX + "0500"})
+        contrib = self._submission({"catalog_code": PREFIX + "0500"})
         self._marking(PREFIX + "0300")
 
         self._assert_agrees("no exclusions")
         self._assert_agrees("exclude marking", exclude_id=marking.pk)
-        self._assert_agrees("exclude contribution",
-                            exclude_contribution_id=contrib.pk)
+        self._assert_agrees("exclude submission",
+                            exclude_submission_id=contrib.pk)
         self._assert_agrees("exclude both", exclude_id=marking.pk,
-                            exclude_contribution_id=contrib.pk)
+                            exclude_submission_id=contrib.pk)
 
     def test_agrees_on_empty_population(self):
         self.assertEqual(self._assert_agrees("empty"), 1)

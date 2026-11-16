@@ -82,7 +82,7 @@ and West Virginia **every** marking has zero postmasters -- that is the common p
 
 ## 2026-08-24 -- Town resolution matches punctuation-blind and mints a code on create
 
-**What was decided.** `_resolve_post_office` (`backend/common/contribution_apply.py`) gained three
+**What was decided.** `_resolve_post_office` (`backend/common/submission_apply.py`) gained three
 behaviours, in this order:
 
 1. **Exact (`iexact`) name match first, unchanged** -- the cheap path and the common case.

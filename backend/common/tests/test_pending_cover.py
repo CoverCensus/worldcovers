@@ -3,8 +3,8 @@
 A contributor usually has one scan of the whole cover. Today the Cover cannot be
 submitted until the Marking is approved. Now the Marking submission may carry a
 `pending_cover`: the Cover's fields and its own uploads, stored inside the
-Marking contribution. Approving the Marking creates an ordinary pending Cover
-contribution for the new Marking, reviewed with the existing cover page -- two
+Marking submission. Approving the Marking creates an ordinary pending Cover
+submission for the new Marking, reviewed with the existing cover page -- two
 approvals, one form. No model change.
 """
 import io
@@ -19,12 +19,12 @@ from PIL import Image as PILImage
 from rest_framework.test import APIClient
 
 from common.models import (
-    Collection, Contribution, Cover, CoverMarking, Image, Marking, PostOffice,
+    Collection, Submission, Cover, CoverMarking, Image, Marking, PostOffice,
     PostOfficeRegion, Region, SubmissionTransaction,
 )
 
 MEDIA_ROOT = tempfile.mkdtemp(prefix="woco-pending-cover-tests-")
-SUBMIT = "/api/v2/contributions/"
+SUBMIT = "/api/v2/submissions/"
 
 
 def _png(name, size=(40, 30)):
@@ -81,13 +81,13 @@ class PendingCoverTests(TestCase):
 
     # ------------------------------------------------------------ submit
 
-    def test_submit_stores_the_cover_and_its_image_inside_the_marking_contribution(self):
+    def test_submit_stores_the_cover_and_its_image_inside_the_marking_submission(self):
         response = self._submit(
             pending_cover=_cover(), pending_cover_image=[_png("whole-cover.png", (400, 250))],
         )
 
         self.assertEqual(response.status_code, 201, response.data)
-        sd = Contribution.objects.get(pk=response.data["id"]).submitted_data
+        sd = Submission.objects.get(pk=response.data["id"]).submitted_data
         self.assertEqual(sd["submission_kind"], "marking")
         self.assertEqual(len(sd["marking_image_metas"]), 1)
         pc = sd["pending_cover"]
@@ -119,7 +119,7 @@ class PendingCoverTests(TestCase):
             no_image.data["detail"],
             "Add at least one cover image or confirm no image is available.",
         )
-        self.assertEqual(Contribution.objects.count(), 0)
+        self.assertEqual(Submission.objects.count(), 0)
 
     def test_a_draft_may_hold_an_incomplete_cover_and_a_resubmit_keeps_its_images(self):
         draft = self._submit(
@@ -128,32 +128,32 @@ class PendingCoverTests(TestCase):
         )
         self.assertEqual(draft.status_code, 201, draft.data)
         pk = draft.data["id"]
-        saved_meta = Contribution.objects.get(pk=pk).submitted_data["pending_cover"]["image_metas"][0]
+        saved_meta = Submission.objects.get(pk=pk).submitted_data["pending_cover"]["image_metas"][0]
 
         # Resubmit: fields replaced, no new cover file, saved image kept.
         # A resubmit answers 200 (existing row), not 201. No new marking file either.
-        done = self._submit(edit_contribution_id=pk, pending_cover=_cover(type="FC"), marking_image=[])
+        done = self._submit(edit_submission_id=pk, pending_cover=_cover(type="FC"), marking_image=[])
         self.assertEqual(done.status_code, 200, done.data)
-        contrib = Contribution.objects.get(pk=pk)
-        self.assertEqual(contrib.status, Contribution.STATUS_PENDING)
+        contrib = Submission.objects.get(pk=pk)
+        self.assertEqual(contrib.status, Submission.STATUS_PENDING)
         pc = contrib.submitted_data["pending_cover"]
         self.assertEqual(pc["type"], "FC")
         self.assertEqual(pc["image_metas"], [saved_meta])
 
         # Removing the saved image by its displayed URL and adding a new one swaps them.
         swapped = self._submit(
-            edit_contribution_id=pk, pending_cover=_cover(type="FC"), marking_image=[],
+            edit_submission_id=pk, pending_cover=_cover(type="FC"), marking_image=[],
             pending_cover_removed_image_keys=json.dumps([f"/media/{saved_meta['storage_filename']}"]),
             pending_cover_image=[_png("replacement.png")],
         )
         self.assertEqual(swapped.status_code, 200, swapped.data)
-        metas = Contribution.objects.get(pk=pk).submitted_data["pending_cover"]["image_metas"]
+        metas = Submission.objects.get(pk=pk).submitted_data["pending_cover"]["image_metas"]
         self.assertEqual([m["original_filename"] for m in metas], ["replacement.png"])
 
         # Dropping the section removes the stored cover entirely.
-        dropped = self._submit(edit_contribution_id=pk, drop_pending_cover="true", marking_image=[])
+        dropped = self._submit(edit_submission_id=pk, drop_pending_cover="true", marking_image=[])
         self.assertEqual(dropped.status_code, 200, dropped.data)
-        self.assertNotIn("pending_cover", Contribution.objects.get(pk=pk).submitted_data)
+        self.assertNotIn("pending_cover", Submission.objects.get(pk=pk).submitted_data)
 
     def test_a_refused_submit_writes_no_cover_file_and_stamps_cannot_be_forged(self):
         import os
@@ -162,19 +162,19 @@ class PendingCoverTests(TestCase):
         self.assertEqual(refused.status_code, 400)
         self.assertEqual(sum(len(files) for _, _, files in os.walk(MEDIA_ROOT)), before)
 
-        forged = self._submit(pending_cover_contribution_id=999, created_from_contribution_id=998)
+        forged = self._submit(pending_cover_submission_id=999, created_from_submission_id=998)
         self.assertEqual(forged.status_code, 201, forged.data)
-        sd = Contribution.objects.get(pk=forged.data["id"]).submitted_data
-        self.assertNotIn("pending_cover_contribution_id", sd)
-        self.assertNotIn("created_from_contribution_id", sd)
+        sd = Submission.objects.get(pk=forged.data["id"]).submitted_data
+        self.assertNotIn("pending_cover_submission_id", sd)
+        self.assertNotIn("created_from_submission_id", sd)
 
     def test_a_pending_row_cannot_be_saved_with_an_incomplete_cover(self):
         created = self._submit(pending_cover=_cover(), pending_cover_image=[_png("c.png")])
         pk = created.data["id"]
         # Draft-style save on a pending row keeps it pending, so the cover rules still apply.
-        saved = self._submit(edit_contribution_id=pk, save_as_draft="true", pending_cover=_cover(type=""), marking_image=[])
+        saved = self._submit(edit_submission_id=pk, save_as_draft="true", pending_cover=_cover(type=""), marking_image=[])
         self.assertEqual(saved.status_code, 400, saved.data)
-        self.assertEqual(Contribution.objects.get(pk=pk).submitted_data["pending_cover"]["type"], "ENV")
+        self.assertEqual(Submission.objects.get(pk=pk).submitted_data["pending_cover"]["type"], "ENV")
 
     def test_a_draft_that_becomes_a_marking_edit_sheds_its_cover(self):
         audit = {"created_by": self.editor, "modified_by": self.editor}
@@ -183,17 +183,17 @@ class PendingCoverTests(TestCase):
         draft = self._submit(save_as_draft="true", pending_cover=_cover(), pending_cover_image=[_png("c.png")])
         pk = draft.data["id"]
 
-        turned = self._submit(edit_contribution_id=pk, edit_marking_id=existing.pk, marking_image=[])
+        turned = self._submit(edit_submission_id=pk, edit_marking_id=existing.pk, marking_image=[])
         self.assertEqual(turned.status_code, 200, turned.data)
-        self.assertNotIn("pending_cover", Contribution.objects.get(pk=pk).submitted_data)
+        self.assertNotIn("pending_cover", Submission.objects.get(pk=pk).submitted_data)
 
         # Belt and braces: a stored cover on an edit row never produces a child on approval.
-        edit_row = Contribution.objects.get(pk=pk)
+        edit_row = Submission.objects.get(pk=pk)
         edit_row.submitted_data["pending_cover"] = {"type": "ENV", "image_metas": []}
         edit_row.save(update_fields=["submitted_data"])
         approved = self._approve(pk)
         self.assertEqual(approved.status_code, 200, approved.data)
-        self.assertNotIn("pendingCoverContributionId", approved.data)
+        self.assertNotIn("pendingCoverSubmissionId", approved.data)
 
     # ------------------------------------------------------------ approve
 
@@ -205,9 +205,9 @@ class PendingCoverTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         marking_id = response.data["markingId"]
-        child_pk = response.data["pendingCoverContributionId"]
-        child = Contribution.objects.get(pk=child_pk)
-        self.assertEqual(child.status, Contribution.STATUS_PENDING)
+        child_pk = response.data["pendingCoverSubmissionId"]
+        child = Submission.objects.get(pk=child_pk)
+        self.assertEqual(child.status, Submission.STATUS_PENDING)
         self.assertEqual(child.contributor, self.contributor)
         self.assertEqual(child.collection, self.collection)
         sd = child.submitted_data
@@ -216,14 +216,14 @@ class PendingCoverTests(TestCase):
         self.assertEqual(sd["state"], "VA")
         self.assertEqual(sd["type"], "ENV")
         self.assertEqual(sd["cover_date_year"], "1851")
-        self.assertEqual(sd["created_from_contribution_id"], parent_pk)
+        self.assertEqual(sd["created_from_submission_id"], parent_pk)
         self.assertEqual(len(sd["cover_image_metas"]), 1)
-        parent = Contribution.objects.get(pk=parent_pk)
-        self.assertEqual(parent.status, Contribution.STATUS_APPROVED)
-        self.assertEqual(parent.submitted_data["pending_cover_contribution_id"], child_pk)
+        parent = Submission.objects.get(pk=parent_pk)
+        self.assertEqual(parent.status, Submission.STATUS_APPROVED)
+        self.assertEqual(parent.submitted_data["pending_cover_submission_id"], child_pk)
         self.assertTrue(
             SubmissionTransaction.objects.filter(
-                contribution=child, action=SubmissionTransaction.ACTION_SUBMIT,
+                submission=child, action=SubmissionTransaction.ACTION_SUBMIT,
                 source=SubmissionTransaction.SOURCE_SYSTEM,
             ).exists()
         )
@@ -232,8 +232,8 @@ class PendingCoverTests(TestCase):
         created = self._submit(pending_cover=_cover(), pending_cover_image=[_png("whole-cover.png")])
         approved = self._approve(created.data["id"])
         marking_id = approved.data["markingId"]
-        child_pk = approved.data["pendingCoverContributionId"]
-        scan = Contribution.objects.get(pk=child_pk).submitted_data["cover_image_metas"][0]["storage_filename"]
+        child_pk = approved.data["pendingCoverSubmissionId"]
+        scan = Submission.objects.get(pk=child_pk).submitted_data["cover_image_metas"][0]["storage_filename"]
 
         response = self._approve(child_pk)
 
@@ -258,7 +258,7 @@ class PendingCoverTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["approved"], [created.data["id"]])
         self.assertEqual(
-            Contribution.objects.filter(submitted_data__created_from_contribution_id=created.data["id"]).count(), 1
+            Submission.objects.filter(submitted_data__created_from_submission_id=created.data["id"]).count(), 1
         )
 
     def test_reject_and_a_plain_marking_create_nothing(self):
@@ -271,5 +271,5 @@ class PendingCoverTests(TestCase):
         plain = self._submit()
         approved = self._approve(plain.data["id"])
         self.assertEqual(approved.status_code, 200, approved.data)
-        self.assertNotIn("pendingCoverContributionId", approved.data)
-        self.assertEqual(Contribution.objects.filter(submitted_data__submission_kind="cover").count(), 0)
+        self.assertNotIn("pendingCoverSubmissionId", approved.data)
+        self.assertEqual(Submission.objects.filter(submitted_data__submission_kind="cover").count(), 0)

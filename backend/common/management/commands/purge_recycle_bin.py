@@ -5,7 +5,7 @@ after writing and verifying a restorable archive of them (Trello T51).
 This command deletes the binned Marking and Cover rows themselves. Deleting
 only MarkingRecycleBin or CoverRecycleBin rows would restore those records, so
 the command starts from sidecar IDs and then hard-deletes the catalog rows.
-The ORM cascades from those rows to approved Contributions, version
+The ORM cascades from those rows to approved Submissions, version
 snapshots, valuations and cover links, and nulls the links that transactions
 and crop Images hold on them; the archive covers all of those rows and the
 image bytes of the deleted Image rows. Files on disk are never deleted.

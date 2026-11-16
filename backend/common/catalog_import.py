@@ -27,7 +27,7 @@ from common.models import (
     CatalogSourceItem,
     Citation,
     Collection,
-    Contribution,
+    Submission,
     PostOffice,
     PostOfficeRegion,
     ReferenceWork,
@@ -124,18 +124,18 @@ def queue_entry(item, collection, actor, town, references, parent_id=None, *, re
     # A queued import is a proposal against specific evidence. Do not apply
     # different fields from those an Editor saw after a Submission revision.
     item.decision["review_payload"] = strip_catalog_code_keys(payload)
-    if item.contribution_id:
-        ticket = item.contribution
+    if item.submission_id:
+        ticket = item.submission
         ticket.submitted_data = payload
         ticket.save(update_fields=["submitted_data", "modified_date"])
     else:
-        item.contribution = Contribution.objects.create(
+        item.submission = Submission.objects.create(
             collection=collection,
             contributor=actor,
             created_by=actor,
             modified_by=actor,
             submitted_data=payload,
-            status=Contribution.STATUS_PENDING,
+            status=Submission.STATUS_PENDING,
         )
 
 
@@ -194,9 +194,9 @@ def refresh_receipt(item: CatalogSourceItem, data: dict, refresh: bool) -> bool:
     code = item.source_key
     if item.applied and not getattr(item, RELATIONS[item.kind] + "_id"):
         raise CommandError(f"The saved target of {code} was removed. Review its source mapping.")
-    if not item.applied and not item.contribution_id:
+    if not item.applied and not item.submission_id:
         raise CommandError(f"The Submission for {code} was removed. Review its source mapping.")
-    pending = not item.applied and item.contribution.status == Contribution.STATUS_PENDING
+    pending = not item.applied and item.submission.status == Submission.STATUS_PENDING
     saved = item.evidence
     # The standalone review 19 supplement kept extra source notes on receipts
     # and flattened line breaks in image captions. Preserve those old notes.
@@ -334,12 +334,12 @@ def import_catalog(
                 continue
             if not fresh and not refresh_receipt(item, data, refresh):
                 if publish and not item.applied:
-                    if item.contribution.status != Contribution.STATUS_PENDING:
-                        raise CommandError(f"Cannot publish {code} with status {item.contribution.status}.")
-                    from common.api.v2.views import _approve_contribution
+                    if item.submission.status != Submission.STATUS_PENDING:
+                        raise CommandError(f"Cannot publish {code} with status {item.submission.status}.")
+                    from common.api.v2.views import _approve_submission
                     # Blank review_notes: no Editor reviewed this; it shows
                     # in the UI as "Editor feedback".
-                    _approve_contribution(item.contribution, actor=actor, review_notes="")
+                    _approve_submission(item.submission, actor=actor, review_notes="")
                     item.refresh_from_db()
                     results.append((kind, code, item.decision["action"], item.decision))
                     continue

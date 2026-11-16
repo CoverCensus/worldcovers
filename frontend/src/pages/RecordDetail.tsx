@@ -51,7 +51,7 @@ import {
   getMarkingById,
   getMarkingChangelog,
   getMarkingRestorePreview,
-  getCoverContributionDraftsForMarking,
+  getCoverSubmissionDraftsForMarking,
   loadAssociatedCoversForMarking,
   normalizeImageUrl,
   primaryRegions,
@@ -262,7 +262,7 @@ function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
     originalFilename: img.originalFilename || undefined,
     subjectLabel: img.subjectType === "COVER" ? "Cover" : typeLabel,
     // display_order=0 is the canonical "default" slot -- matches the editor
-    // tooling on ContributionDetail.tsx where displayOrder===0 is what gets
+    // tooling on SubmissionDetail.tsx where displayOrder===0 is what gets
     // labeled "Default" / "Set default".
     isDefault: img.displayOrder === 0,
     isTracing: img.subjectType === "MARKING" && img.isTracing,
@@ -272,8 +272,8 @@ function buildGalleryImages(record: MarkingRecord): GalleryImage[] {
 }
 
 function coverLinkReviewBadgeLabel(cover: AssociatedCover): string {
-  if (cover.contributionDraftId != null) {
-    const st = (cover.contributionStatus ?? "draft").toLowerCase();
+  if (cover.submissionDraftId != null) {
+    const st = (cover.submissionStatus ?? "draft").toLowerCase();
     if (st === "draft") return "Draft - not yet submitted";
     if (st === "needs_revision") return "Needs revision";
     if (st === "pending") return "Pending review";
@@ -292,7 +292,7 @@ function coverLinkReviewBadgeLabel(cover: AssociatedCover): string {
 }
 
 function associatedCoverShowsStatusBadge(cover: AssociatedCover): boolean {
-  if (cover.contributionDraftId != null) return true;
+  if (cover.submissionDraftId != null) return true;
   return cover.reviewStatus !== "approved";
 }
 
@@ -426,7 +426,7 @@ const RecordDetail = () => {
       setAssociatedCovers(rows);
       // Own drafts ride behind the approved list so the public panel never
       // waits on them; `cancelled` keeps a stale answer off a newer page.
-      const drafts = viewerId != null ? await getCoverContributionDraftsForMarking(markingId) : [];
+      const drafts = viewerId != null ? await getCoverSubmissionDraftsForMarking(markingId) : [];
       if (cancelled) return;
       setOwnCoverDrafts(drafts);
     })();
@@ -637,7 +637,7 @@ const RecordDetail = () => {
   }
 
   // Comment-for-editor and editor feedback come straight off the marking's
-  // approved Contribution. The backend returns "" unless the viewer is that
+  // approved Submission. The backend returns "" unless the viewer is that
   // contributor or an editor, so a non-empty string is already authorized to show.
   const commentForEditor = record.commentForEditor?.trim() ?? "";
   const editorFeedback = record.editorFeedback?.trim() ?? "";
@@ -816,7 +816,7 @@ const RecordDetail = () => {
 
 
   // Field order and visibility rules live in buildMarkingFields so
-  // ContributionDetail renders the same sequence.
+  // SubmissionDetail renders the same sequence.
   const detailRows = buildMarkingFields(
     {
       type: record.type,
@@ -910,8 +910,8 @@ const RecordDetail = () => {
 
   const goCoverView = (cover: AssociatedCover) => {
     if (markingId == null) return;
-    if (cover.contributionDraftId != null) {
-      navigate(`/record/${markingId}/cover/new?edit=${cover.contributionDraftId}`, {
+    if (cover.submissionDraftId != null) {
+      navigate(`/record/${markingId}/cover/new?edit=${cover.submissionDraftId}`, {
         state: { from: location.pathname + location.search },
       });
       return;
@@ -1262,19 +1262,19 @@ const RecordDetail = () => {
                           const codeLabel =
                             cover.displayLabel?.trim() ||
                             (isStaff ? c?.code?.trim() : "") ||
-                            (cover.contributionDraftId != null
-                              ? `Submission #${cover.contributionDraftId}`
+                            (cover.submissionDraftId != null
+                              ? `Submission #${cover.submissionDraftId}`
                               : `Cover #${c?.id ?? cover.id}`);
                           const rs = cover.reviewStatus;
                           const canOpenCover =
                             markingId != null &&
-                            (cover.contributionDraftId != null ||
+                            (cover.submissionDraftId != null ||
                               (c?.id != null && c.id > 0));
                           return (
                             <Card
-                              // Draft ids (Contribution) and link ids (CoverMarking) are
+                              // Draft ids (Submission) and link ids (CoverMarking) are
                               // independent sequences, so prefix them (T92).
-                              key={cover.contributionDraftId != null ? `draft-${cover.contributionDraftId}` : `link-${cover.id}`}
+                              key={cover.submissionDraftId != null ? `draft-${cover.submissionDraftId}` : `link-${cover.id}`}
                               className={`relative shadow-archival-md hover:shadow-archival-lg transition-shadow ${
                                 canOpenCover ? "cursor-pointer" : ""
                               }`}
@@ -1297,7 +1297,7 @@ const RecordDetail = () => {
                               tabIndex={canOpenCover ? 0 : undefined}
                               aria-label={canOpenCover ? `Open cover ${codeLabel}` : undefined}
                             >
-                              {cover.contributionDraftId == null && (
+                              {cover.submissionDraftId == null && (
                                 <AdminEditLink
                                   user={user}
                                   kind="cover"
@@ -1306,7 +1306,7 @@ const RecordDetail = () => {
                                 />
                               )}
                               <CardContent
-                                className={user?.is_superuser === true && cover.contributionDraftId == null ? "p-4 pr-16" : "p-4"}
+                                className={user?.is_superuser === true && cover.submissionDraftId == null ? "p-4 pr-16" : "p-4"}
                               >
                                 <div className="flex gap-6 md:flex-row flex-col">
                                   <div className="shrink-0 md:w-32 w-full">
@@ -1330,7 +1330,7 @@ const RecordDetail = () => {
                                       {associatedCoverShowsStatusBadge(cover) && (
                                         <Badge
                                           variant={
-                                            cover.contributionDraftId != null
+                                            cover.submissionDraftId != null
                                               ? "secondary"
                                               : rs === "pending"
                                                 ? "secondary"

@@ -7,7 +7,7 @@ Role mapping (see plan in
     Guest          -> anonymous request
     Contributor    -> in `Contributors` group
     Editor         -> assigned to at least one Collection, or has
-                      `common.review_contribution`
+                      `common.review_submission`
     Administrator  -> `is_superuser` (single-person admin per design)
 
 There is no separate Administrator group. `IsSuperuser` below is the
@@ -19,10 +19,10 @@ from __future__ import annotations
 
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
-from common.models import Contribution, Region
+from common.models import Submission, Region
 
 
-REVIEW_CONTRIBUTION_PERM = "common.review_contribution"
+REVIEW_SUBMISSION_PERM = "common.review_submission"
 APPROVE_IMAGE_PERM = "common.approve_image"
 
 
@@ -35,19 +35,19 @@ def user_assigned_collection_ids(user) -> set[int]:
     )
 
 
-def user_can_review_contributions(user) -> bool:
+def user_can_review_submissions(user) -> bool:
     """
     Return True when the user can enter review flows.
 
     CollectionAssignment is the scoped editor source of truth. The
-    `common.review_contribution` permission is retained for legacy group-based
+    `common.review_submission` permission is retained for legacy group-based
     editor accounts and broad catalog tooling.
     """
     if not user or not user.is_authenticated:
         return False
     if user.is_superuser:
         return True
-    if user.has_perm(REVIEW_CONTRIBUTION_PERM):
+    if user.has_perm(REVIEW_SUBMISSION_PERM):
         return True
     return bool(user_assigned_collection_ids(user))
 
@@ -70,7 +70,7 @@ def user_is_responsible_for_post_office(user, post_office):
         return False
     if user.is_superuser:
         return True
-    if not user_can_review_contributions(user):
+    if not user_can_review_submissions(user):
         return False
     if post_office is None:
         return False
@@ -100,7 +100,7 @@ def _user_is_responsible_for_cover(user, cover):
         return False
     if user.is_superuser:
         return True
-    if not user_can_review_contributions(user):
+    if not user_can_review_submissions(user):
         return False
     assigned_ids = set(
         _get_user_assigned_regions(user).values_list("pk", flat=True)
@@ -139,15 +139,15 @@ class IsEditor(BasePermission):
     Granted to assigned editors, users with the review permission, or superusers.
 
     This is a pure role check; it does NOT scope to a specific Collection.
-    Use `CanReviewContribution` when you need to also verify the user is
-    assigned to the contribution's Collection.
+    Use `CanReviewSubmission` when you need to also verify the user is
+    assigned to the submission's Collection.
     """
 
     def has_permission(self, request, view):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        return user_can_review_contributions(user)
+        return user_can_review_submissions(user)
 
 
 class IsEditorOrAdminWrite(IsEditor):
@@ -155,7 +155,7 @@ class IsEditorOrAdminWrite(IsEditor):
     Public reads pass; unsafe writes require an Editor or Administrator.
 
     Use this for direct catalog endpoints where contributors must go through
-    the contribution review flow, but editors are allowed to enter live catalog
+    the submission review flow, but editors are allowed to enter live catalog
     vocabulary and records.
     """
 
@@ -230,7 +230,7 @@ class IsResponsibleForImageSubject(BasePermission):
         return bool(
             user
             and user.is_authenticated
-            and (user.is_superuser or user_can_review_contributions(user))
+            and (user.is_superuser or user_can_review_submissions(user))
         )
 
     def has_object_permission(self, request, view, obj):
@@ -258,7 +258,7 @@ class IsResponsibleForDateSeenSubject(BasePermission):
         return bool(
             user
             and user.is_authenticated
-            and (user.is_superuser or user_can_review_contributions(user))
+            and (user.is_superuser or user_can_review_submissions(user))
         )
 
     def has_object_permission(self, request, view, obj):
@@ -286,7 +286,7 @@ class IsResponsibleForTenureOffice(BasePermission):
         return bool(
             user
             and user.is_authenticated
-            and (user.is_superuser or user_can_review_contributions(user))
+            and (user.is_superuser or user_can_review_submissions(user))
         )
 
     def has_object_permission(self, request, view, obj):
@@ -295,14 +295,14 @@ class IsResponsibleForTenureOffice(BasePermission):
         return user_is_responsible_for_post_office(request.user, obj.post_office)
 
 
-class CanReviewContribution(BasePermission):
+class CanReviewSubmission(BasePermission):
     """
-    Object-level: user can review (approve/reject/edit) THIS contribution.
+    Object-level: user can review (approve/reject/edit) THIS submission.
 
     Allowed if:
     - superuser, or
-    - is assigned to the contribution's Collection, with legacy support for
-      users carrying `common.review_contribution`.
+    - is assigned to the submission's Collection, with legacy support for
+      users carrying `common.review_submission`.
 
     For collection-listing actions (no object yet), allow any authenticated user
     in the Editors group; per-object filtering happens in get_queryset.
@@ -325,21 +325,21 @@ class CanReviewContribution(BasePermission):
         if request.method in SAFE_METHODS:
             if getattr(obj, "contributor_id", None) == user.id:
                 return True
-            if not user_can_review_contributions(user):
+            if not user_can_review_submissions(user):
                 return False
             return obj.collection_id in user_assigned_collection_ids(user)
 
         # Write access (approve/reject/edit): must be assigned to this Collection.
-        if not user_can_review_contributions(user):
+        if not user_can_review_submissions(user):
             return False
         return obj.collection_id in user_assigned_collection_ids(user)
 
 
 class IsDraftOwner(BasePermission):
     """
-    Object-level: user may hard-DELETE this Contribution only if it is a draft
+    Object-level: user may hard-DELETE this Submission only if it is a draft
     that they own. True DELETE is permitted exclusively for drafts
-    (status=draft); a non-draft contribution can never be hard-deleted through
+    (status=draft); a non-draft submission can never be hard-deleted through
     this path, not even by a superuser (use the marking REMOVE flow instead).
     For drafts, the owner (contributor or editor) may delete; superusers may
     delete any draft.
@@ -354,24 +354,24 @@ class IsDraftOwner(BasePermission):
         if not user or not user.is_authenticated:
             return False
         # DELETE is for drafts only -- no exceptions, including superusers.
-        if getattr(obj, "status", None) != Contribution.STATUS_DRAFT:
+        if getattr(obj, "status", None) != Submission.STATUS_DRAFT:
             return False
         if user.is_superuser:
             return True
         return getattr(obj, "contributor_id", None) == user.id
 
 
-class IsOwnDeletableContribution(BasePermission):
+class IsOwnDeletableSubmission(BasePermission):
     """
-    Object-level: a user may hard-DELETE (withdraw) a Contribution they own as
+    Object-level: a user may hard-DELETE (withdraw) a Submission they own as
     long as it has NOT been approved. Draft, pending, needs_revision and
-    rejected contributions have no published Marking of their own yet -- the
+    rejected submissions have no published Marking of their own yet -- the
     catalog row is only created/updated on approval -- so deleting them has no
     downstream catalog impact, the same rationale that made draft delete safe.
-    An approved contribution can never be hard-deleted through this path (not
+    An approved submission can never be hard-deleted through this path (not
     even by a superuser); removing the resulting published marking goes through
     the marking REMOVE / recycle-bin flow instead. The owner (contributor) may
-    delete their own; superusers may delete any non-approved contribution.
+    delete their own; superusers may delete any non-approved submission.
     """
 
     def has_permission(self, request, view):
@@ -382,8 +382,8 @@ class IsOwnDeletableContribution(BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        # Approved contributions are off-limits to this true-delete path.
-        if getattr(obj, "status", None) == Contribution.STATUS_APPROVED:
+        # Approved submissions are off-limits to this true-delete path.
+        if getattr(obj, "status", None) == Submission.STATUS_APPROVED:
             return False
         if user.is_superuser:
             return True
@@ -409,5 +409,5 @@ class CanManageReferenceWorks(BasePermission):
         if user.is_superuser:
             return True
         if request.method in ("POST", "PUT", "PATCH"):
-            return user_can_review_contributions(user)
+            return user_can_review_submissions(user)
         return False

@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Contribute from "./Contribute";
 import CoverEdit from "./CoverEdit";
-import { createContribution, getContribution } from "@/services/contributions";
+import { createSubmission, getSubmission } from "@/services/submissions";
 import { getMarkingByIdRaw, getMarkingCovers } from "@/services/markings";
 import { getCoverById } from "@/services/covers";
 
@@ -20,9 +20,9 @@ jest.mock("@/services/postOffices", () => ({ getPostOffices: jest.fn().mockResol
 jest.mock("@/services/regions", () => ({ getRegions: jest.fn().mockResolvedValue([{ value: "VA", label: "Virginia" }]) }));
 jest.mock("@/services/letterings", () => ({ getLetterings: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/constants/markingEnums", () => ({ getDateFormats: jest.fn().mockResolvedValue([]) }));
-jest.mock("@/services/contributions", () => ({
-  getContribution: jest.fn(), createContribution: jest.fn(),
-  listContributions: jest.fn().mockResolvedValue({ items: [] }),
+jest.mock("@/services/submissions", () => ({
+  getSubmission: jest.fn(), createSubmission: jest.fn(),
+  listSubmissions: jest.fn().mockResolvedValue({ items: [] }),
 }));
 jest.mock("@/services/referenceWorks", () => ({
   ...jest.requireActual("@/services/referenceWorks"), getReferenceWorks: jest.fn().mockResolvedValue([]),
@@ -49,7 +49,7 @@ beforeAll(() => {
 });
 beforeEach(() => {
   jest.clearAllMocks();
-  (createContribution as jest.Mock).mockResolvedValue({ id: 1 });
+  (createSubmission as jest.Mock).mockResolvedValue({ id: 1 });
 });
 
 function openForm(path: string) {
@@ -80,7 +80,7 @@ it.each([
   };
   (getMarkingCovers as jest.Mock).mockResolvedValue({ covers: [{ id: 1, coverDetails: cover }] });
   (getCoverById as jest.Mock).mockResolvedValue(cover);
-  (getContribution as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
+  (getSubmission as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
     state: "VA", town: "Richmond", type: kind === "Cover" ? "FC" : "TOWNMARK",
     submission_kind: kind === "Cover" ? "cover" : "marking",
     parent_marking_id: 7, is_manuscript: true, description: "Ready",
@@ -99,8 +99,8 @@ it.each([
     expect(screen.queryByRole("checkbox", { name: preferenceLabel })).toBeNull();
   }
   fireEvent.click(await screen.findByRole("button", { name: /save as draft/i }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalled());
-  const payload = (createContribution as jest.Mock).mock.calls[0][0];
+  await waitFor(() => expect(createSubmission).toHaveBeenCalled());
+  const payload = (createSubmission as jest.Mock).mock.calls[0][0];
   if (payload instanceof FormData) {
     expect(payload.get("display_submitter_name")).toBe(isCreator ? "true" : null);
   } else {
@@ -110,15 +110,15 @@ it.each([
 
 it.each(["Marking", "Cover"])("keeps opt-in on new %s drafts", async (kind) => {
   (getMarkingCovers as jest.Mock).mockResolvedValue({ covers: [] });
-  (getContribution as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
+  (getSubmission as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
     state: "VA", town: "Richmond", type: kind === "Cover" ? "FC" : "TOWNMARK",
     submission_kind: kind === "Cover" ? "cover" : "marking", parent_marking_id: 7,
   } });
   openForm(kind === "Cover" ? "/markings/7/covers/new?edit=1" : "/contribute?edit=1");
   fireEvent.click(await screen.findByRole("checkbox", { name: preferenceLabel }));
   fireEvent.click(await screen.findByRole("button", { name: /save as draft/i }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalled());
-  const payload = (createContribution as jest.Mock).mock.calls[0][0];
+  await waitFor(() => expect(createSubmission).toHaveBeenCalled());
+  const payload = (createSubmission as jest.Mock).mock.calls[0][0];
   expect(payload instanceof FormData ? payload.get("display_submitter_name") : payload.display_submitter_name)
     .toBe(payload instanceof FormData ? "true" : true);
 });

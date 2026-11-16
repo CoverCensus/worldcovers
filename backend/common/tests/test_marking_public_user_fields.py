@@ -56,7 +56,7 @@ class MarkingPublicUserFieldsTests(TestCase):
         self.editor = User.objects.create_user("editor", password="pw")
         editors_group = Group.objects.create(name="Editors")
         editors_group.permissions.add(
-            Permission.objects.get(codename="review_contribution")
+            Permission.objects.get(codename="review_submission")
         )
         self.editor.groups.add(editors_group)
 

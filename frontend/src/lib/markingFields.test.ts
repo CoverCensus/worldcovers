@@ -107,11 +107,11 @@ describe("buildMarkingFields — State/Territory tags (issue #28)", () => {
     const row = rows.find((r) => r.label === "State/Territory");
     expect(row?.tags).toHaveLength(2);
     expect(row?.tags?.[0]).toEqual({ label: "Michigan", to: "/search?state=Michigan" });
-    // value is kept as the comma-joined fallback (visibility key + ContributionDetail).
+    // value is kept as the comma-joined fallback (visibility key + SubmissionDetail).
     expect(row?.value).toBe("Michigan, Michigan Territory");
   });
 
-  it("leaves tags undefined when no region tags are supplied (ContributionDetail path)", () => {
+  it("leaves tags undefined when no region tags are supplied (SubmissionDetail path)", () => {
     const rows = buildMarkingFields(baseInput({ state: "Virginia" }), { isStaff: false });
     const row = rows.find((r) => r.label === "State/Territory");
     expect(row?.tags).toBeUndefined();

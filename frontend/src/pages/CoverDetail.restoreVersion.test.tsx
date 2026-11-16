@@ -47,7 +47,7 @@ jest.mock("@/services/markings", () => ({
     events: [{
       event_id: 1, transaction_uuid: "u", timestamp: "2026-10-01T12:00:00Z", action: "approve",
       action_label: "Approved", actor: "editor", actor_email: "editor@example.com", source: "editor_portal",
-      contribution_id: null, version_no: 2, summary: "Approved by editor", diff: [],
+      submission_id: null, version_no: 2, summary: "Approved by editor", diff: [],
     }],
     versions: [],
   }),

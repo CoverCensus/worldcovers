@@ -67,7 +67,7 @@ def withdraw_source_target(item, actor, queue, reason):
             _, created = CoverRecycleBin.objects.get_or_create(cover=obj, defaults=dict(removed_by=actor, reason=reason))
             if created:
                 log_cover_removed(obj, actor, reason)
-    if item.contribution_id and item.contribution.status != "pending":
+    if item.submission_id and item.submission.status != "pending":
         raise CommandError("Check the existing Editor decision before rerouting " + item.source_key)
 
 
@@ -94,7 +94,7 @@ def route_foreign_item(item, data, marks, actor, references, queue):
     item.decision["foreign_review"] = True
     if is_mark:
         # No Marking submission: only the Cover requires an editorial decision.
-        if item.contribution_id:
+        if item.submission_id:
             raise CommandError("A separate foreign Marking submission already exists: " + item.source_key)
     else:
         collection = florida_review_collection(actor)
@@ -112,25 +112,25 @@ def approve_foreign_cover(item, ticket, actor, marking_code, backstamp):
     from common.api.v2.permissions import _user_is_responsible_for_marking
     from common.catalog_codes import strip_catalog_code_keys
     from common.catalog_source_approval import apply_catalog_entry
-    from common.contribution_apply import ContributionApplyError
+    from common.submission_apply import SubmissionApplyError
 
     item = CatalogSourceItem.objects.select_for_update().get(pk=item.pk)
     if item.kind != "COVER" or item.applied or not item.decision.get("foreign_review"):
-        raise ContributionApplyError("This Cover is not pending foreign Marking review.")
+        raise SubmissionApplyError("This Cover is not pending foreign Marking review.")
     if strip_catalog_code_keys(ticket.submitted_data) != item.decision["review_payload"]:
-        raise ContributionApplyError("The Cover submission differs from the source proposal.")
+        raise SubmissionApplyError("The Cover submission differs from the source proposal.")
     selected = Marking.objects.select_for_update().filter(code=marking_code).first()
     if selected is None:
-        raise ContributionApplyError("Select an existing catalog Marking by its code.")
+        raise SubmissionApplyError("Select an existing catalog Marking by its code.")
     if not _user_is_responsible_for_marking(actor, selected):
-        raise ContributionApplyError("Select a Marking within your assigned Collections.")
+        raise SubmissionApplyError("Select a Marking within your assigned Collections.")
     obj = item.cover
     if obj:
         if obj.code != ticket.submitted_data["catalog_code"]:
-            raise ContributionApplyError("Keep the existing Cover code.")
+            raise SubmissionApplyError("Keep the existing Cover code.")
         removed, _ = CoverRecycleBin.objects.filter(cover=obj, reason=REASON).delete()
         if not removed:
-            raise ContributionApplyError("The stored Cover is no longer in this review.")
+            raise SubmissionApplyError("The stored Cover is no longer in this review.")
         log_cover_restored(obj, actor)
     parents, links = [], []
     for link in item.evidence["cover_markings"]:
@@ -144,7 +144,7 @@ def approve_foreign_cover(item, ticket, actor, marking_code, backstamp):
         parent = CatalogSourceItem.objects.get(reference_work=item.reference_work, kind="MARKING",
                                               source_key=link["marking"])
         if not parent.applied or not Marking.objects.filter(pk=parent.marking_id).exists():
-            raise ContributionApplyError("Approve the linked catalog Marking before this Cover.")
+            raise SubmissionApplyError("Approve the linked catalog Marking before this Cover.")
         parents.append(parent)
         links.append(link)
     if all(p.marking_id != selected.pk for p in parents):

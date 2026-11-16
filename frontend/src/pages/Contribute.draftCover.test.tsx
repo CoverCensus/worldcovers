@@ -5,7 +5,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Contribute from "./Contribute";
-import { createContribution } from "@/services/contributions";
+import { createSubmission } from "@/services/submissions";
 import { getMarkingByIdRaw } from "@/services/markings";
 
 jest.mock("@/assets/image-not-available.jpg", () => "image-not-available.jpg");
@@ -21,10 +21,10 @@ jest.mock("@/services/postOffices", () => ({ getPostOffices: jest.fn().mockResol
 jest.mock("@/services/regions", () => ({ getRegions: jest.fn().mockResolvedValue([{ value: "VA", label: "Virginia" }]) }));
 jest.mock("@/services/letterings", () => ({ getLetterings: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/constants/markingEnums", () => ({ getDateFormats: jest.fn().mockResolvedValue([]) }));
-jest.mock("@/services/contributions", () => ({
-  getContribution: jest.fn(), createContribution: jest.fn(),
+jest.mock("@/services/submissions", () => ({
+  getSubmission: jest.fn(), createSubmission: jest.fn(),
   getDirectCatalogCodeSuggestion: jest.fn().mockResolvedValue({ catalogCode: "VA-7" }),
-  listContributions: jest.fn().mockResolvedValue({ items: [] }),
+  listSubmissions: jest.fn().mockResolvedValue({ items: [] }),
 }));
 jest.mock("@/services/referenceWorks", () => ({
   ...jest.requireActual("@/services/referenceWorks"), getReferenceWorks: jest.fn().mockResolvedValue([]),
@@ -95,21 +95,21 @@ it("offers the picked file at full size from its tile", async () => {
 
 it("turns the upload into a Cover draft for the Marking and drops it from the edit", async () => {
   let finishCreate!: (value: unknown) => void;
-  (createContribution as jest.Mock).mockImplementation(() => new Promise((resolve) => { finishCreate = resolve; }));
+  (createSubmission as jest.Mock).mockImplementation(() => new Promise((resolve) => { finishCreate = resolve; }));
   open("/edit/7", "/edit/:id");
   await screen.findByRole("button", { name: /save as draft/i });
   await uploadWholeCover();
   expect(screen.getByText(/becomes a Cover draft you finish and submit separately/)).toBeTruthy();
 
   fireEvent.click(screen.getByRole("button", { name: offer }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(createSubmission).toHaveBeenCalledTimes(1));
   // While the request is in flight the offer is disabled and announced busy,
   // so a second click cannot create a second draft.
   const busy = screen.getByRole("button", { name: offer }) as HTMLButtonElement;
   expect(busy.disabled).toBe(true);
   expect(busy.getAttribute("aria-busy")).toBe("true");
-  finishCreate({ contributionId: 55, markingId: null, coverId: null, raw: {} });
-  const payload = (createContribution as jest.Mock).mock.calls[0][0] as FormData;
+  finishCreate({ submissionId: 55, markingId: null, coverId: null, raw: {} });
+  const payload = (createSubmission as jest.Mock).mock.calls[0][0] as FormData;
   expect(payload instanceof FormData).toBe(true);
   expect(payload.get("submission_kind")).toBe("cover");
   expect(payload.get("save_as_draft")).toBe("true");
@@ -128,13 +128,13 @@ it("turns the upload into a Cover draft for the Marking and drops it from the ed
 });
 
 it("keeps the upload on the edit when the draft cannot be saved", async () => {
-  (createContribution as jest.Mock).mockRejectedValue(new Error("Request failed with status code 500"));
+  (createSubmission as jest.Mock).mockRejectedValue(new Error("Request failed with status code 500"));
   open("/edit/7", "/edit/:id");
   await screen.findByRole("button", { name: /save as draft/i });
   await uploadWholeCover();
 
   fireEvent.click(screen.getByRole("button", { name: offer }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(createSubmission).toHaveBeenCalledTimes(1));
   await waitFor(() =>
     expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: "Could not save the Cover draft", variant: "destructive" })),
   );

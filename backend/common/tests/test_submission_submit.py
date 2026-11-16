@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 from common.models import (
     Collection,
     Color,
-    Contribution,
+    Submission,
     DateSeen,
     Image,
     Marking,
@@ -22,7 +22,7 @@ from common.models import (
 User = get_user_model()
 
 
-class ContributionSubmitMarkingEditTests(TestCase):
+class SubmissionSubmitMarkingEditTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="contributor", password="pw")
         self.region = Region.objects.create(
@@ -94,7 +94,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
             modified_by=self.user,
         )
 
-    def _make_pending_marking_contribution(self, **overrides):
+    def _make_pending_marking_submission(self, **overrides):
         submitted_data = {
             "submission_kind": "marking",
             "state": "VA",
@@ -117,11 +117,11 @@ class ContributionSubmitMarkingEditTests(TestCase):
             ],
         }
         submitted_data.update(overrides)
-        return Contribution.objects.create(
+        return Submission.objects.create(
             contributor=self.user,
             collection=self.collection,
             submitted_data=submitted_data,
-            status=Contribution.STATUS_PENDING,
+            status=Submission.STATUS_PENDING,
             created_by=self.user,
             modified_by=self.user,
         )
@@ -133,12 +133,12 @@ class ContributionSubmitMarkingEditTests(TestCase):
             password="pw",
         )
 
-    def _approve_url(self, contribution):
-        return "/api/v2/contributions/{}/approve/".format(contribution.pk)
+    def _approve_url(self, submission):
+        return "/api/v2/submissions/{}/approve/".format(submission.pk)
 
-    def _suggestion_url(self, contribution):
-        return "/api/v2/contributions/{}/catalog-code-suggestion/".format(
-            contribution.pk
+    def _suggestion_url(self, submission):
+        return "/api/v2/submissions/{}/catalog-code-suggestion/".format(
+            submission.pk
         )
 
     def test_marking_edit_cannot_remove_retag_or_clear_existing_images(self):
@@ -146,7 +146,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
         offers these controls; a payload that sends them anyway is ignored at
         submit, so the review screen shows what approval will publish."""
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "edit_marking_id": self.marking.pk,
                 "state": "VA",
@@ -164,7 +164,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201, response.data)
-        sd = Contribution.objects.get(pk=response.data["id"]).submitted_data
+        sd = Submission.objects.get(pk=response.data["id"]).submitted_data
         self.assertEqual(sd["edit_marking_id"], self.marking.pk)
         self.assertEqual(
             [(m["storage_filename"], m["tracing"]) for m in sd["marking_image_metas"]],
@@ -176,7 +176,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
     def test_approved_marking_edit_keeps_current_images_and_appends_uploads(self):
         """Approval enforces the rule on its own, so a payload queued before
         the submit-side rule still cannot delete or reorder a current image."""
-        contribution = self._make_pending_marking_contribution(
+        submission = self._make_pending_marking_submission(
             edit_marking_id=self.marking.pk,
             no_marking_image=True,
             existing_image_tags={"/media/va/front.jpg": "photograph"},
@@ -185,7 +185,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
             ],
         )
         self.client.force_authenticate(self._editor())
-        response = self.client.post(self._approve_url(contribution), {}, format="json")
+        response = self.client.post(self._approve_url(submission), {}, format="json")
 
         self.assertEqual(response.status_code, 200, response.data)
         rows = Image.objects.filter(
@@ -198,7 +198,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
 
     def test_new_marking_without_image_requires_affirmation(self):
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "state": "VA",
                 "town": "Richmond",
@@ -219,7 +219,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
 
     def test_new_marking_accepts_no_image_affirmation(self):
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "state": "VA",
                 "town": "Richmond",
@@ -234,12 +234,12 @@ class ContributionSubmitMarkingEditTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201, response.data)
-        contribution = Contribution.objects.get(pk=response.data["id"])
-        self.assertTrue(contribution.submitted_data["no_marking_image"])
+        submission = Submission.objects.get(pk=response.data["id"])
+        self.assertTrue(submission.submitted_data["no_marking_image"])
 
     def test_new_cover_without_image_requires_affirmation(self):
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "submission_kind": "cover",
                 "state": "VA",
@@ -259,7 +259,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
 
     def test_new_cover_accepts_no_image_affirmation(self):
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "submission_kind": "cover",
                 "state": "VA",
@@ -273,8 +273,8 @@ class ContributionSubmitMarkingEditTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201, response.data)
-        contribution = Contribution.objects.get(pk=response.data["id"])
-        self.assertTrue(contribution.submitted_data["no_cover_image"])
+        submission = Submission.objects.get(pk=response.data["id"])
+        self.assertTrue(submission.submitted_data["no_cover_image"])
 
     def _marking_image(self, marking, name="whole-cover.jpg"):
         # A catalog image sitting on a marking, for the "Create cover from this
@@ -299,7 +299,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
 
     def _post_cover_from_image(self, image_id):
         return self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "submission_kind": "cover",
                 "state": "VA",
@@ -318,13 +318,13 @@ class ContributionSubmitMarkingEditTests(TestCase):
         # has no cover_image file. Ian, 2026-09-24: the form showed the image
         # but Submit said no image was attached. This covers the submission
         # gate only; the approval-time repoint is tested in
-        # test_cover_contribution_apply.
+        # test_cover_submission_apply.
         image = self._marking_image(self.marking)
         response = self._post_cover_from_image(image.pk)
 
         self.assertEqual(response.status_code, 201, response.data)
-        contribution = Contribution.objects.get(pk=response.data["id"])
-        self.assertEqual(contribution.submitted_data["source_marking_image_id"], image.pk)
+        submission = Submission.objects.get(pk=response.data["id"])
+        self.assertEqual(submission.submitted_data["source_marking_image_id"], image.pk)
 
     def test_new_cover_rejects_a_carried_over_image_from_another_marking(self):
         # The id is contributor-supplied and approval repoints whatever row it
@@ -359,7 +359,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
 
     def _post_cover_draft(self, image_id=None, **extra):
         # Same shape as _post_cover_from_image, but for the save / resume /
-        # remove cycle: save_as_draft, edit_contribution_id and
+        # remove cycle: save_as_draft, edit_submission_id and
         # removed_existing_image_keys ride along in **extra, and the carried
         # id is optional because a resumed form does not always resend it.
         payload = {
@@ -373,7 +373,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
         if image_id is not None:
             payload["source_marking_image_id"] = image_id
         payload.update(extra)
-        return self.client.post("/api/v2/contributions/", payload, format="json")
+        return self.client.post("/api/v2/submissions/", payload, format="json")
 
     def test_detail_resolves_the_carried_over_image(self):
         # Trello T37 (Michael, 2026-09-26): a resumed draft and the review
@@ -384,7 +384,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
         created = self._post_cover_from_image(image.pk)
         self.assertEqual(created.status_code, 201, created.data)
 
-        response = self.client.get(f"/api/v2/contributions/{created.data['id']}/")
+        response = self.client.get(f"/api/v2/submissions/{created.data['id']}/")
 
         self.assertEqual(response.status_code, 200, response.data)
         resolved = response.data["source_marking_image"]
@@ -410,7 +410,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
         )
         Image.objects.filter(pk=image.pk).update(subject_id=other.pk)
 
-        response = self.client.get(f"/api/v2/contributions/{created.data['id']}/")
+        response = self.client.get(f"/api/v2/submissions/{created.data['id']}/")
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertIsNone(response.data["source_marking_image"])
@@ -419,7 +419,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
         created = self._post_cover_draft(no_cover_image=True)
         self.assertEqual(created.status_code, 201, created.data)
 
-        response = self.client.get(f"/api/v2/contributions/{created.data['id']}/")
+        response = self.client.get(f"/api/v2/submissions/{created.data['id']}/")
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertIsNone(response.data["source_marking_image"])
@@ -432,20 +432,20 @@ class ContributionSubmitMarkingEditTests(TestCase):
         image = self._marking_image(self.marking)
         draft = self._post_cover_draft(image.pk, save_as_draft="true")
         self.assertEqual(draft.status_code, 201, draft.data)
-        contribution_id = draft.data["id"]
+        submission_id = draft.data["id"]
 
         resaved = self._post_cover_draft(
-            None, save_as_draft="true", edit_contribution_id=contribution_id
+            None, save_as_draft="true", edit_submission_id=submission_id
         )
         self.assertEqual(resaved.status_code, 200, resaved.data)
-        contribution = Contribution.objects.get(pk=contribution_id)
-        self.assertEqual(int(contribution.submitted_data["source_marking_image_id"]), image.pk)
+        submission = Submission.objects.get(pk=submission_id)
+        self.assertEqual(int(submission.submitted_data["source_marking_image_id"]), image.pk)
 
-        submitted = self._post_cover_draft(None, edit_contribution_id=contribution_id)
+        submitted = self._post_cover_draft(None, edit_submission_id=submission_id)
         self.assertEqual(submitted.status_code, 200, submitted.data)
-        contribution.refresh_from_db()
-        self.assertEqual(contribution.status, Contribution.STATUS_PENDING)
-        self.assertEqual(int(contribution.submitted_data["source_marking_image_id"]), image.pk)
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.STATUS_PENDING)
+        self.assertEqual(int(submission.submitted_data["source_marking_image_id"]), image.pk)
 
     def test_submit_records_where_the_carried_over_tile_sits(self):
         # Workspace issues.md #181: image_order is consumed at submit and never
@@ -457,11 +457,11 @@ class ContributionSubmitMarkingEditTests(TestCase):
             image.pk, image_order=["__new__", "/media/va/whole-cover.jpg"]
         )
         self.assertEqual(response.status_code, 201, response.data)
-        contribution = Contribution.objects.get(pk=response.data["id"])
-        self.assertEqual(contribution.submitted_data["source_marking_image_position"], 1)
+        submission = Submission.objects.get(pk=response.data["id"])
+        self.assertEqual(submission.submitted_data["source_marking_image_position"], 1)
 
         self.client.force_authenticate(self._editor())
-        detail = self.client.get("/api/v2/contributions/{}/".format(contribution.pk))
+        detail = self.client.get("/api/v2/submissions/{}/".format(submission.pk))
         self.assertEqual(detail.status_code, 200, detail.data)
         self.assertEqual(detail.data["source_marking_image"]["position"], 1)
 
@@ -469,26 +469,26 @@ class ContributionSubmitMarkingEditTests(TestCase):
         image = self._marking_image(self.marking)
         response = self._post_cover_from_image(image.pk)
         self.assertEqual(response.status_code, 201, response.data)
-        contribution = Contribution.objects.get(pk=response.data["id"])
-        self.assertEqual(contribution.submitted_data["source_marking_image_position"], 0)
+        submission = Submission.objects.get(pk=response.data["id"])
+        self.assertEqual(submission.submitted_data["source_marking_image_position"], 0)
 
     def test_removing_the_carried_over_image_on_resume_drops_its_position_too(self):
         image = self._marking_image(self.marking)
         draft = self._post_cover_draft(
             image.pk, save_as_draft="true", image_order=["/media/va/whole-cover.jpg"]
         )
-        contribution_id = draft.data["id"]
+        submission_id = draft.data["id"]
 
         resaved = self._post_cover_draft(
             None,
             save_as_draft="true",
-            edit_contribution_id=contribution_id,
+            edit_submission_id=submission_id,
             removed_existing_image_keys=["/media/va/whole-cover.jpg"],
         )
         self.assertEqual(resaved.status_code, 200, resaved.data)
-        contribution = Contribution.objects.get(pk=contribution_id)
-        self.assertNotIn("source_marking_image_id", contribution.submitted_data)
-        self.assertNotIn("source_marking_image_position", contribution.submitted_data)
+        submission = Submission.objects.get(pk=submission_id)
+        self.assertNotIn("source_marking_image_id", submission.submitted_data)
+        self.assertNotIn("source_marking_image_position", submission.submitted_data)
 
     def test_removing_the_carried_over_image_on_resume_clears_it(self):
         # The carried image has no meta row, so the removed_existing_image_keys
@@ -497,23 +497,23 @@ class ContributionSubmitMarkingEditTests(TestCase):
         # key, exactly as it does for uploaded images.
         image = self._marking_image(self.marking)
         draft = self._post_cover_draft(image.pk, save_as_draft="true")
-        contribution_id = draft.data["id"]
+        submission_id = draft.data["id"]
         image.refresh_from_db()
         self.assertEqual(image.subject_type, Image.SUBJECT_MARKING, "draft must not move it")
 
         resaved = self._post_cover_draft(
             None,
             save_as_draft="true",
-            edit_contribution_id=contribution_id,
+            edit_submission_id=submission_id,
             removed_existing_image_keys=["/media/va/whole-cover.jpg"],
         )
         self.assertEqual(resaved.status_code, 200, resaved.data)
-        contribution = Contribution.objects.get(pk=contribution_id)
-        self.assertNotIn("source_marking_image_id", contribution.submitted_data)
+        submission = Submission.objects.get(pk=submission_id)
+        self.assertNotIn("source_marking_image_id", submission.submitted_data)
         image.refresh_from_db()
         self.assertEqual(image.subject_type, Image.SUBJECT_MARKING, "removal must not move it")
 
-        submitted = self._post_cover_draft(None, edit_contribution_id=contribution_id)
+        submitted = self._post_cover_draft(None, edit_submission_id=submission_id)
         self.assertEqual(submitted.status_code, 400, submitted.data)
         self.assertEqual(
             submitted.data["detail"],
@@ -528,7 +528,7 @@ class ContributionSubmitMarkingEditTests(TestCase):
         for code in ("FL", "FLF", "ENV", "ENVF", "FC", "UNK"):
             with self.subTest(code=code):
                 response = self.client.post(
-                    "/api/v2/contributions/",
+                    "/api/v2/submissions/",
                     {
                         "submission_kind": "cover",
                         "state": "VA",
@@ -541,12 +541,12 @@ class ContributionSubmitMarkingEditTests(TestCase):
                     format="json",
                 )
                 self.assertEqual(response.status_code, 201, response.data)
-                contribution = Contribution.objects.get(pk=response.data["id"])
-                self.assertEqual(contribution.submitted_data["type"], code)
+                submission = Submission.objects.get(pk=response.data["id"])
+                self.assertEqual(submission.submitted_data["type"], code)
 
     def test_new_cover_rejects_an_unknown_cover_type(self):
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "submission_kind": "cover",
                 "state": "VA",
@@ -562,16 +562,16 @@ class ContributionSubmitMarkingEditTests(TestCase):
         self.assertIn("ENVF", response.data["detail"])
 
     def test_fresh_marking_edit_supersedes_prior_same_contributor_rows(self):
-        original = Contribution.objects.create(
+        original = Submission.objects.create(
             contributor=self.user,
             collection=self.collection,
             submitted_data={"submission_kind": "marking", "state": "VA"},
-            status=Contribution.STATUS_APPROVED,
+            status=Submission.STATUS_APPROVED,
             marking=self.marking,
             created_by=self.user,
             modified_by=self.user,
         )
-        returned = Contribution.objects.create(
+        returned = Submission.objects.create(
             contributor=self.user,
             collection=self.collection,
             submitted_data={
@@ -579,11 +579,11 @@ class ContributionSubmitMarkingEditTests(TestCase):
                 "edit_marking_id": self.marking.pk,
                 "state": "VA",
             },
-            status=Contribution.STATUS_REJECTED,
+            status=Submission.STATUS_REJECTED,
             created_by=self.user,
             modified_by=self.user,
         )
-        draft = Contribution.objects.create(
+        draft = Submission.objects.create(
             contributor=self.user,
             collection=self.collection,
             submitted_data={
@@ -591,12 +591,12 @@ class ContributionSubmitMarkingEditTests(TestCase):
                 "edit_marking_id": self.marking.pk,
                 "state": "VA",
             },
-            status=Contribution.STATUS_DRAFT,
+            status=Submission.STATUS_DRAFT,
             created_by=self.user,
             modified_by=self.user,
         )
         other_user = User.objects.create_user(username="other", password="pw")
-        other_contribution = Contribution.objects.create(
+        other_submission = Submission.objects.create(
             contributor=other_user,
             collection=self.collection,
             submitted_data={
@@ -604,13 +604,13 @@ class ContributionSubmitMarkingEditTests(TestCase):
                 "edit_marking_id": self.marking.pk,
                 "state": "VA",
             },
-            status=Contribution.STATUS_PENDING,
+            status=Submission.STATUS_PENDING,
             created_by=other_user,
             modified_by=other_user,
         )
 
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "edit_marking_id": self.marking.pk,
                 "state": "VA",
@@ -625,42 +625,42 @@ class ContributionSubmitMarkingEditTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201, response.data)
-        self.assertFalse(Contribution.objects.filter(pk=original.pk).exists())
-        self.assertFalse(Contribution.objects.filter(pk=returned.pk).exists())
-        self.assertTrue(Contribution.objects.filter(pk=draft.pk).exists())
-        self.assertTrue(Contribution.objects.filter(pk=other_contribution.pk).exists())
+        self.assertFalse(Submission.objects.filter(pk=original.pk).exists())
+        self.assertFalse(Submission.objects.filter(pk=returned.pk).exists())
+        self.assertTrue(Submission.objects.filter(pk=draft.pk).exists())
+        self.assertTrue(Submission.objects.filter(pk=other_submission.pk).exists())
         self.assertTrue(
-            Contribution.objects.filter(
+            Submission.objects.filter(
                 pk=response.data["id"],
-                status=Contribution.STATUS_PENDING,
+                status=Submission.STATUS_PENDING,
             ).exists()
         )
         tombstones = SubmissionTransaction.objects.filter(
-            action=SubmissionTransaction.ACTION_CONTRIBUTION_SUPERSEDED,
+            action=SubmissionTransaction.ACTION_SUBMISSION_SUPERSEDED,
             marking=self.marking,
         )
         self.assertEqual(tombstones.count(), 2)
         self.assertEqual(
             sorted(
-                row.before_payload["contribution_id"]
+                row.before_payload["submission_id"]
                 for row in tombstones
             ),
             sorted([original.pk, returned.pk]),
         )
 
     def test_draft_marking_edit_does_not_supersede_prior_rows(self):
-        original = Contribution.objects.create(
+        original = Submission.objects.create(
             contributor=self.user,
             collection=self.collection,
             submitted_data={"submission_kind": "marking", "state": "VA"},
-            status=Contribution.STATUS_APPROVED,
+            status=Submission.STATUS_APPROVED,
             marking=self.marking,
             created_by=self.user,
             modified_by=self.user,
         )
 
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "edit_marking_id": self.marking.pk,
                 "save_as_draft": "true",
@@ -676,21 +676,21 @@ class ContributionSubmitMarkingEditTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201, response.data)
-        self.assertTrue(Contribution.objects.filter(pk=original.pk).exists())
+        self.assertTrue(Submission.objects.filter(pk=original.pk).exists())
         self.assertEqual(
-            Contribution.objects.get(pk=response.data["id"]).status,
-            Contribution.STATUS_DRAFT,
+            Submission.objects.get(pk=response.data["id"]).status,
+            Submission.STATUS_DRAFT,
         )
         self.assertFalse(
             SubmissionTransaction.objects.filter(
-                action=SubmissionTransaction.ACTION_CONTRIBUTION_SUPERSEDED,
+                action=SubmissionTransaction.ACTION_SUBMISSION_SUPERSEDED,
                 marking=self.marking,
             ).exists()
         )
 
     def test_contributor_submitted_catalog_code_keys_are_stripped(self):
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "state": "VA",
                 "town": "Richmond",
@@ -708,17 +708,17 @@ class ContributionSubmitMarkingEditTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201, response.data)
-        contribution = Contribution.objects.get(pk=response.data["id"])
-        self.assertNotIn("code", contribution.submitted_data)
-        self.assertNotIn("catalog_code", contribution.submitted_data)
-        self.assertNotIn("catalogCode", contribution.submitted_data)
+        submission = Submission.objects.get(pk=response.data["id"])
+        self.assertNotIn("code", submission.submitted_data)
+        self.assertNotIn("catalog_code", submission.submitted_data)
+        self.assertNotIn("catalogCode", submission.submitted_data)
 
     def test_editor_submitted_catalog_code_is_preserved(self):
         editor = self._editor("submit-code-editor")
         self.client.force_authenticate(editor)
 
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "state": "VA",
                 "town": "Richmond",
@@ -734,14 +734,14 @@ class ContributionSubmitMarkingEditTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201, response.data)
-        contribution = Contribution.objects.get(pk=response.data["id"])
-        self.assertEqual(contribution.submitted_data["catalog_code"], "APMC-VA-M0001")
+        submission = Submission.objects.get(pk=response.data["id"])
+        self.assertEqual(submission.submitted_data["catalog_code"], "APMC-VA-M0001")
 
     def test_contributor_submitted_marking_date_keys_are_stripped(self):
         # Setting a marking's date is editor-only (issue #27): a contributor's
         # ERD/LRD must not survive into submitted_data.
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "state": "VA",
                 "town": "Richmond",
@@ -764,22 +764,22 @@ class ContributionSubmitMarkingEditTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201, response.data)
-        contribution = Contribution.objects.get(pk=response.data["id"])
-        self.assertNotIn("marking_erd", contribution.submitted_data)
-        self.assertNotIn("marking_erd_granularity", contribution.submitted_data)
-        self.assertNotIn("marking_erd_date_month", contribution.submitted_data)
-        self.assertNotIn("marking_erd_date_day", contribution.submitted_data)
-        self.assertNotIn("marking_lrd", contribution.submitted_data)
-        self.assertNotIn("marking_lrd_granularity", contribution.submitted_data)
-        self.assertNotIn("marking_lrd_date_year", contribution.submitted_data)
-        self.assertNotIn("marking_lrd_date_month", contribution.submitted_data)
+        submission = Submission.objects.get(pk=response.data["id"])
+        self.assertNotIn("marking_erd", submission.submitted_data)
+        self.assertNotIn("marking_erd_granularity", submission.submitted_data)
+        self.assertNotIn("marking_erd_date_month", submission.submitted_data)
+        self.assertNotIn("marking_erd_date_day", submission.submitted_data)
+        self.assertNotIn("marking_lrd", submission.submitted_data)
+        self.assertNotIn("marking_lrd_granularity", submission.submitted_data)
+        self.assertNotIn("marking_lrd_date_year", submission.submitted_data)
+        self.assertNotIn("marking_lrd_date_month", submission.submitted_data)
 
     def test_editor_submitted_marking_dates_are_preserved(self):
         editor = self._editor("submit-date-editor")
         self.client.force_authenticate(editor)
 
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "state": "VA",
                 "town": "Richmond",
@@ -802,13 +802,13 @@ class ContributionSubmitMarkingEditTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201, response.data)
-        contribution = Contribution.objects.get(pk=response.data["id"])
-        self.assertEqual(contribution.submitted_data["marking_erd"], "1845-01-01")
-        self.assertEqual(contribution.submitted_data["marking_lrd"], "1850-12-31")
-        self.assertEqual(contribution.submitted_data["marking_erd_date_month"], "12")
-        self.assertEqual(contribution.submitted_data["marking_erd_date_day"], "1")
-        self.assertEqual(contribution.submitted_data["marking_lrd_date_year"], "1850")
-        self.assertEqual(contribution.submitted_data["marking_lrd_date_month"], "12")
+        submission = Submission.objects.get(pk=response.data["id"])
+        self.assertEqual(submission.submitted_data["marking_erd"], "1845-01-01")
+        self.assertEqual(submission.submitted_data["marking_lrd"], "1850-12-31")
+        self.assertEqual(submission.submitted_data["marking_erd_date_month"], "12")
+        self.assertEqual(submission.submitted_data["marking_erd_date_day"], "1")
+        self.assertEqual(submission.submitted_data["marking_lrd_date_year"], "1850")
+        self.assertEqual(submission.submitted_data["marking_lrd_date_month"], "12")
 
     def test_new_marking_dates_survive_draft_submit_and_approval(self):
         self.client.force_authenticate(self._editor("date-list-editor"))
@@ -825,49 +825,49 @@ class ContributionSubmitMarkingEditTests(TestCase):
                     "save_as_draft": True,
                     "marking_dates_seen": json.dumps(dates) if wire_format == "multipart" else dates,
                 }
-                response = self.client.post("/api/v2/contributions/", payload, format=wire_format)
+                response = self.client.post("/api/v2/submissions/", payload, format=wire_format)
                 self.assertEqual(response.status_code, 201, response.data)
-                contribution = Contribution.objects.get(pk=response.data["id"])
-                self.assertEqual(len(contribution.submitted_data["marking_dates_seen"]), 2)
-                payload.update({"edit_contribution_id": contribution.pk, "save_as_draft": False})
-                response = self.client.post("/api/v2/contributions/", payload, format=wire_format)
+                submission = Submission.objects.get(pk=response.data["id"])
+                self.assertEqual(len(submission.submitted_data["marking_dates_seen"]), 2)
+                payload.update({"edit_submission_id": submission.pk, "save_as_draft": False})
+                response = self.client.post("/api/v2/submissions/", payload, format=wire_format)
                 self.assertEqual(response.status_code, 200, response.data)
-                response = self.client.post(self._approve_url(contribution), {}, format="json")
+                response = self.client.post(self._approve_url(submission), {}, format="json")
                 self.assertEqual(response.status_code, 200, response.data)
-                contribution.refresh_from_db()
-                rows = DateSeen.objects.filter(subject_type="MARKING", subject_id=contribution.marking_id)
+                submission.refresh_from_db()
+                rows = DateSeen.objects.filter(subject_type="MARKING", subject_id=submission.marking_id)
                 self.assertEqual(set(rows.values_list("granularity", flat=True)), {"YEAR", "MONTH_DAY"})
-                contribution.marking.refresh_from_db()
-                self.assertEqual(contribution.marking.earliest_seen.year, 1840)
+                submission.marking.refresh_from_db()
+                self.assertEqual(submission.marking.earliest_seen.year, 1840)
 
     def test_date_list_rejects_invalid_components_and_contributor_input_is_stripped(self):
         payload = {"state": "VA", "save_as_draft": True, "marking_dates_seen": [{"date_month": 13}]}
-        response = self.client.post("/api/v2/contributions/", payload, format="json")
+        response = self.client.post("/api/v2/submissions/", payload, format="json")
         self.assertEqual(response.status_code, 201, response.data)
-        self.assertNotIn("marking_dates_seen", Contribution.objects.get(pk=response.data["id"]).submitted_data)
+        self.assertNotIn("marking_dates_seen", Submission.objects.get(pk=response.data["id"]).submitted_data)
         self.client.force_authenticate(self._editor("invalid-date-list-editor"))
         for dates in ([{"date_month": 13}], [{"date_year": "1840"}], [{}], {"date_year": 1840}):
             with self.subTest(dates=dates):
                 payload["marking_dates_seen"] = dates
-                response = self.client.post("/api/v2/contributions/", payload, format="json")
+                response = self.client.post("/api/v2/submissions/", payload, format="json")
                 self.assertEqual(response.status_code, 400, response.data)
 
     def test_removing_all_draft_dates_clears_the_submission_list(self):
         self.client.force_authenticate(self._editor("clear-date-list-editor"))
         payload = {"state": "VA", "save_as_draft": True, "marking_dates_seen": [{"date_year": 1840}]}
-        response = self.client.post("/api/v2/contributions/", payload, format="json")
+        response = self.client.post("/api/v2/submissions/", payload, format="json")
         self.assertEqual(response.status_code, 201, response.data)
-        payload.update({"edit_contribution_id": response.data["id"], "marking_dates_seen": []})
-        response = self.client.post("/api/v2/contributions/", payload, format="json")
+        payload.update({"edit_submission_id": response.data["id"], "marking_dates_seen": []})
+        response = self.client.post("/api/v2/submissions/", payload, format="json")
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(Contribution.objects.get(pk=response.data["id"]).submitted_data["marking_dates_seen"], [])
+        self.assertEqual(Submission.objects.get(pk=response.data["id"]).submitted_data["marking_dates_seen"], [])
 
     def test_editor_submitted_unknown_marking_date_is_preserved(self):
         editor = self._editor("submit-unknown-date-editor")
         self.client.force_authenticate(editor)
 
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "state": "VA",
                 "town": "Richmond",
@@ -883,15 +883,15 @@ class ContributionSubmitMarkingEditTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201, response.data)
-        contribution = Contribution.objects.get(pk=response.data["id"])
-        self.assertIs(contribution.submitted_data["marking_lrd_unknown"], True)
+        submission = Submission.objects.get(pk=response.data["id"])
+        self.assertIs(submission.submitted_data["marking_lrd_unknown"], True)
 
     def test_editor_submitted_empty_marking_date_is_rejected(self):
         editor = self._editor("submit-empty-date-editor")
         self.client.force_authenticate(editor)
 
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "state": "VA",
                 "town": "Richmond",
@@ -932,17 +932,17 @@ class ContributionSubmitMarkingEditTests(TestCase):
     def test_marking_suggestion_uses_first_submitted_reference_work(self):
         first = self._make_reference_work(code="ASCC1", title="First Catalog")
         second = self._make_reference_work(code="VPHC1", title="Second Catalog")
-        contribution = self._make_pending_marking_contribution(
+        submission = self._make_pending_marking_submission(
             reference_work_ids=[first.pk, second.pk],
         )
         self.client.force_authenticate(self._editor("suggest-editor"))
 
-        response = self.client.post(self._suggestion_url(contribution), {}, format="json")
+        response = self.client.post(self._suggestion_url(submission), {}, format="json")
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["catalog_code"], "ASCC1-VA-M0001")
-        contribution.refresh_from_db()
-        self.assertEqual(contribution.submitted_data["catalog_code"], "ASCC1-VA-M0001")
+        submission.refresh_from_db()
+        self.assertEqual(submission.submitted_data["catalog_code"], "ASCC1-VA-M0001")
 
     def test_marking_suggestion_falls_back_when_reference_code_blank(self):
         reference = self._make_reference_work(code="", title="Blank Code Catalog")
@@ -962,11 +962,11 @@ class ContributionSubmitMarkingEditTests(TestCase):
         self.assertEqual(response.data["catalog_code"], "APMC-VA-M0001")
 
     def test_approve_marking_applies_editor_override_when_unique(self):
-        contribution = self._make_pending_marking_contribution()
+        submission = self._make_pending_marking_submission()
         self.client.force_authenticate(self._editor("override-editor"))
 
         response = self.client.post(
-            self._approve_url(contribution),
+            self._approve_url(submission),
             {"catalog_code": "ASCC1-VA-M0042"},
             format="json",
         )
@@ -986,29 +986,29 @@ class ContributionSubmitMarkingEditTests(TestCase):
             created_by=self.user,
             modified_by=self.user,
         )
-        contribution = self._make_pending_marking_contribution()
+        submission = self._make_pending_marking_submission()
         self.client.force_authenticate(self._editor("duplicate-editor"))
 
         response = self.client.post(
-            self._approve_url(contribution),
+            self._approve_url(submission),
             {"catalog_code": "ASCC1-VA-M0042"},
             format="json",
         )
 
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn("already exists", response.data["detail"])
-        contribution.refresh_from_db()
-        self.assertEqual(contribution.status, Contribution.STATUS_PENDING)
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.STATUS_PENDING)
 
     def test_approve_marking_blank_regenerates_catalog_code(self):
         reference = self._make_reference_work(code="ASCC1")
-        contribution = self._make_pending_marking_contribution(
+        submission = self._make_pending_marking_submission(
             reference_work_ids=[reference.pk],
         )
         self.client.force_authenticate(self._editor("blank-approve-editor"))
 
         response = self.client.post(
-            self._approve_url(contribution),
+            self._approve_url(submission),
             {"catalog_code": ""},
             format="json",
         )
@@ -1017,13 +1017,13 @@ class ContributionSubmitMarkingEditTests(TestCase):
         marking = Marking.objects.get(pk=response.data["markingId"])
         self.assertEqual(marking.code, "ASCC1-VA-M0001")
 
-    def test_pending_marking_contribution_can_be_updated_before_review(self):
-        contribution = self._make_pending_marking_contribution()
+    def test_pending_marking_submission_can_be_updated_before_review(self):
+        submission = self._make_pending_marking_submission()
 
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
-                "edit_contribution_id": contribution.pk,
+                "edit_submission_id": submission.pk,
                 "submission_kind": "marking",
                 "state": "VA",
                 "town": "Richmond",
@@ -1037,30 +1037,30 @@ class ContributionSubmitMarkingEditTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.data)
-        contribution.refresh_from_db()
-        self.assertEqual(contribution.status, Contribution.STATUS_PENDING)
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.STATUS_PENDING)
         self.assertEqual(
-            contribution.submitted_data["inscription_txt"],
+            submission.submitted_data["inscription_txt"],
             "UPDATED RICHMOND VA",
         )
 
     def test_editor_editing_pending_marking_replaces_unknown_lrd_with_year(self):
         editor = self._editor("pending-date-editor")
-        contribution = self._make_pending_marking_contribution(
+        submission = self._make_pending_marking_submission(
             marking_lrd_unknown=True,
             marking_lrd_date_month="12",
             marking_lrd_date_day="31",
         )
-        contribution.contributor = editor
-        contribution.created_by = editor
-        contribution.modified_by = editor
-        contribution.save(update_fields=["contributor", "created_by", "modified_by"])
+        submission.contributor = editor
+        submission.created_by = editor
+        submission.modified_by = editor
+        submission.save(update_fields=["contributor", "created_by", "modified_by"])
         self.client.force_authenticate(editor)
 
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
-                "edit_contribution_id": contribution.pk,
+                "edit_submission_id": submission.pk,
                 "submission_kind": "marking",
                 "state": "VA",
                 "town": "Richmond",
@@ -1077,24 +1077,24 @@ class ContributionSubmitMarkingEditTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200, response.data)
-        contribution.refresh_from_db()
-        self.assertEqual(contribution.submitted_data["marking_lrd"], "1899-01-01")
-        self.assertEqual(contribution.submitted_data["marking_lrd_granularity"], "YEAR")
-        self.assertEqual(contribution.submitted_data["marking_lrd_date_year"], "1899")
-        self.assertNotIn("marking_lrd_unknown", contribution.submitted_data)
-        self.assertNotIn("marking_lrd_date_month", contribution.submitted_data)
-        self.assertNotIn("marking_lrd_date_day", contribution.submitted_data)
+        submission.refresh_from_db()
+        self.assertEqual(submission.submitted_data["marking_lrd"], "1899-01-01")
+        self.assertEqual(submission.submitted_data["marking_lrd_granularity"], "YEAR")
+        self.assertEqual(submission.submitted_data["marking_lrd_date_year"], "1899")
+        self.assertNotIn("marking_lrd_unknown", submission.submitted_data)
+        self.assertNotIn("marking_lrd_date_month", submission.submitted_data)
+        self.assertNotIn("marking_lrd_date_day", submission.submitted_data)
 
     def test_approve_marking_edit_updates_existing_catalog_code(self):
         self.marking.code = "ASCC1-VA-M0001"
         self.marking.save(update_fields=["code"])
-        contribution = self._make_pending_marking_contribution(
+        submission = self._make_pending_marking_submission(
             edit_marking_id=self.marking.pk,
         )
         self.client.force_authenticate(self._editor("edit-code-editor"))
 
         response = self.client.post(
-            self._approve_url(contribution),
+            self._approve_url(submission),
             {"catalog_code": "ASCC1-VA-M0002"},
             format="json",
         )
@@ -1118,16 +1118,16 @@ class ContributionSubmitMarkingEditTests(TestCase):
 
     def test_approving_marking_edit_supersedes_original_marking_link(self):
         editor = self._editor()
-        original = Contribution.objects.create(
+        original = Submission.objects.create(
             contributor=self.user,
             collection=self.collection,
             submitted_data={"state": "VA", "town": "Richmond"},
-            status=Contribution.STATUS_APPROVED,
+            status=Submission.STATUS_APPROVED,
             marking=self.marking,
             created_by=self.user,
             modified_by=self.user,
         )
-        edit = Contribution.objects.create(
+        edit = Submission.objects.create(
             contributor=self.user,
             collection=self.collection,
             created_by=self.user,
@@ -1154,27 +1154,27 @@ class ContributionSubmitMarkingEditTests(TestCase):
                     }
                 ],
             },
-            status=Contribution.STATUS_PENDING,
+            status=Submission.STATUS_PENDING,
         )
         self.client.force_authenticate(editor)
 
         response = self.client.post(
-            f"/api/v2/contributions/{edit.pk}/approve/",
+            f"/api/v2/submissions/{edit.pk}/approve/",
             {"review_notes": ""},
             format="json",
         )
 
         self.assertEqual(response.status_code, 200, response.data)
         edit.refresh_from_db()
-        self.assertFalse(Contribution.objects.filter(pk=original.pk).exists())
+        self.assertFalse(Submission.objects.filter(pk=original.pk).exists())
         self.assertEqual(edit.marking_id, self.marking.pk)
-        self.assertEqual(edit.status, Contribution.STATUS_APPROVED)
+        self.assertEqual(edit.status, Submission.STATUS_APPROVED)
         self.assertEqual(response.data["markingId"], self.marking.pk)
         self.assertTrue(
             SubmissionTransaction.objects.filter(
-                action=SubmissionTransaction.ACTION_CONTRIBUTION_SUPERSEDED,
+                action=SubmissionTransaction.ACTION_SUBMISSION_SUPERSEDED,
                 marking=self.marking,
-                before_payload__contribution_id=original.pk,
+                before_payload__submission_id=original.pk,
             ).exists()
         )
 
@@ -1196,7 +1196,7 @@ class CarriedImagePositionHelperTests(TestCase):
         self.assertIsNone(_carried_image_position(order, ""))
 
 
-class ContributionSubmitCountyKeysTests(TestCase):
+class SubmissionSubmitCountyKeysTests(TestCase):
     """Trello T70: the county keys ride submitted_data; only shape and length
     are checked at submit (meaning is checked at approval)."""
 
@@ -1216,12 +1216,12 @@ class ContributionSubmitCountyKeysTests(TestCase):
             "inscription_txt": "RICHMOND VA", "no_marking_image": True,
         }
         data.update(extra)
-        return self.client.post("/api/v2/contributions/", data, format="json")
+        return self.client.post("/api/v2/submissions/", data, format="json")
 
     def test_county_keys_are_stored_as_submitted(self):
         response = self.post(county_id=str(self.county.pk), county="Henrico", county_proposed="")
         self.assertEqual(response.status_code, 201, response.data)
-        stored = Contribution.objects.get(pk=response.data["id"]).submitted_data
+        stored = Submission.objects.get(pk=response.data["id"]).submitted_data
         self.assertEqual(
             (stored["county_id"], stored["county"], stored["county_proposed"]),
             (str(self.county.pk), "Henrico", ""),
@@ -1247,10 +1247,10 @@ class ContributionSubmitCountyKeysTests(TestCase):
     def test_detail_carries_the_server_county_verdict(self):
         response = self.post(county_id=str(self.county.pk), county="Henrico")
         self.assertEqual(response.status_code, 201, response.data)
-        detail = self.client.get(f"/api/v2/contributions/{response.data['id']}/")
+        detail = self.client.get(f"/api/v2/submissions/{response.data['id']}/")
         self.assertEqual(detail.status_code, 200, detail.data)
         verdict = detail.data["county_intent"]
         self.assertEqual((verdict["county_name"], verdict["valid"], verdict["will_link"]), ("Henrico", True, True))
         self.assertEqual(verdict["note"], "Approval links the town to this county")
         plain = self.post()
-        self.assertIsNone(self.client.get(f"/api/v2/contributions/{plain.data['id']}/").data["county_intent"])
+        self.assertIsNone(self.client.get(f"/api/v2/submissions/{plain.data['id']}/").data["county_intent"])
