@@ -2203,6 +2203,33 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
                 Q(review_status=CoverMarking.REVIEW_APPROVED) | Q(created_by_id=user.id)
             )
 
+        # ?cover=<id>: the public cover detail page lists the markings linked
+        # to one cover. Same visibility as the ?marking= branch above:
+        #   - anonymous: approved links only
+        #   - editor responsible for the cover: every link
+        #   - anyone else signed in: approved links plus their own
+        # Only the responsible editor keeps the recycle-bin exception from the
+        # top of this method; everyone else sees nothing for a removed cover,
+        # matching the 404 its detail endpoint gives them.
+        cover_param = self.request.query_params.get("cover")
+        if cover_param:
+            try:
+                cid = int(cover_param)
+            except (TypeError, ValueError):
+                return qs.none()
+            cover = Cover.all_objects.filter(pk=cid).first()
+            if not cover:
+                return qs.none()
+            qs = qs.filter(cover_id=cid)
+            if _user_is_responsible_for_cover(user, cover):
+                return qs
+            qs = qs.filter(cover__recycle_bin_entry__isnull=True)
+            if not user.is_authenticated:
+                return qs.filter(review_status=CoverMarking.REVIEW_APPROVED)
+            return qs.filter(
+                Q(review_status=CoverMarking.REVIEW_APPROVED) | Q(created_by_id=user.id)
+            )
+
         if not user.is_authenticated:
             return qs.none()
         if user_can_review_submissions(user):
