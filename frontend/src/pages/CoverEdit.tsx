@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { OpenFullSizeLink } from "@/components/OpenFullSizeLink";
 import axios from "axios";
-import { getContribution, createContribution } from "@/services/contributions";
+import { getSubmission, createSubmission } from "@/services/submissions";
 import { getCoverById } from "@/services/covers";
 
 import { Navigation } from "@/components/Navigation";
@@ -71,12 +71,12 @@ import {
   REFERENCE_WORKS_HELP,
 } from "@/labels/guidelines";
 import { FieldHelp } from "@/components/FieldHelp";
-import { isCoverContributionData } from "@/lib/contributionDisplay";
+import { isCoverSubmissionData } from "@/lib/submissionDisplay";
 import {
-  contributionImageMetasFromSubmittedData,
-  isDraftContributionImage,
-  markingImagesFromContributionMetas,
-} from "@/lib/contributionImages";
+  submissionImageMetasFromSubmittedData,
+  isDraftSubmissionImage,
+  markingImagesFromSubmissionMetas,
+} from "@/lib/submissionImages";
 
 import {
   partialDateInputFromDateSeen,
@@ -244,23 +244,23 @@ export default function CoverEdit() {
   const markingId = params.id ? parseInt(String(params.id).replace(/^api-/, ""), 10) : NaN;
   const routeCoverId = params.coverId ? parseInt(String(params.coverId).replace(/^api-/, ""), 10) : null;
   const mode: Mode = routeCoverId != null && Number.isFinite(routeCoverId) ? "edit" : "create";
-  const editContributionIdRaw = searchParams.get("edit");
-  const editContributionId =
-    editContributionIdRaw && /^\d+$/.test(editContributionIdRaw)
-      ? parseInt(editContributionIdRaw, 10)
+  const editSubmissionIdRaw = searchParams.get("edit");
+  const editSubmissionId =
+    editSubmissionIdRaw && /^\d+$/.test(editSubmissionIdRaw)
+      ? parseInt(editSubmissionIdRaw, 10)
       : null;
   // Create Similar (Trello T44): ?copy=<coverId> on the new-cover route starts a
   // NEW Cover under this Marking from that cover's fields and citations. No
   // edit_cover_* key is sent, so approval creates a separate Cover.
   const copyParam = searchParams.get("copy");
   const copySourceCoverId =
-    mode === "create" && editContributionId == null && copyParam && /^\d+$/.test(copyParam)
+    mode === "create" && editSubmissionId == null && copyParam && /^\d+$/.test(copyParam)
       ? parseInt(copyParam, 10)
       : null;
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [draftLoadDone, setDraftLoadDone] = useState(editContributionId == null);
+  const [draftLoadDone, setDraftLoadDone] = useState(editSubmissionId == null);
   const [draftLoadError, setDraftLoadError] = useState<string | null>(null);
   const [coverRow, setCoverRow] = useState<AssociatedCover | null>(null);
   const [copySource, setCopySource] = useState<AssociatedCover | null>(null);
@@ -272,7 +272,7 @@ export default function CoverEdit() {
   const [savedCaptionEdits, setSavedCaptionEdits] = useState<Record<string, string>>({});
   const [copySourceError, setCopySourceError] = useState<string | null>(null);
   const [markingRecord, setMarkingRecord] = useState<MarkingRecord | null>(null);
-  // Review state of a contribution resumed via ?edit=<id>. `mode` is "edit" only when the
+  // Review state of a submission resumed via ?edit=<id>. `mode` is "edit" only when the
   // route carries a coverId, but the dashboard sends a needs-revision cover to
   // /record/:id/cover/new?edit=<id> — i.e. create mode — so coverRow is never loaded on
   // the one path contributors actually take. Without this, the editor's feedback is
@@ -288,7 +288,7 @@ export default function CoverEdit() {
   );
 
   // Review banners must work on both routes into this page: /cover/:coverId/edit (coverRow)
-  // and /cover/new?edit=<contributionId> (draftReview).
+  // and /cover/new?edit=<submissionId> (draftReview).
   const reviewStatus = mode === "edit" ? coverRow?.reviewStatus ?? null : draftReview?.status ?? null;
   const reviewNotes = mode === "edit" ? coverRow?.reviewNotes ?? null : draftReview?.reviewNotes ?? null;
 
@@ -297,7 +297,7 @@ export default function CoverEdit() {
   const [isBackstamp, setIsBackstamp] = useState(false);
   const [displaySubmitterName, setDisplaySubmitterName] = useState(false);
   const [canChangeSubmitterName, setCanChangeSubmitterName] = useState(
-    mode === "create" && editContributionId == null,
+    mode === "create" && editSubmissionId == null,
   );
   const [description, setDescription] = useState("");
   const [coverDate, setCoverDate] = useState<PartialDateInput>({ ...EMPTY_COVER_DATE });
@@ -352,11 +352,11 @@ export default function CoverEdit() {
 
   useEffect(() => {
     citationsLoadedRef.current = false;
-  }, [routeCoverId, mode, editContributionId]);
+  }, [routeCoverId, mode, editSubmissionId]);
 
-  // Resume an existing cover draft from My Submissions (?edit=contributionId).
+  // Resume an existing cover draft from My Submissions (?edit=submissionId).
   useEffect(() => {
-    if (editContributionId == null || mode !== "create") {
+    if (editSubmissionId == null || mode !== "create") {
       setDraftLoadDone(true);
       setDraftLoadError(null);
       setDraftReview(null);
@@ -373,15 +373,15 @@ export default function CoverEdit() {
     setDraftLoadError(null);
     void (async () => {
       try {
-        const contribution = await getContribution(editContributionId);
+        const submission = await getSubmission(editSubmissionId);
         if (!cancelled) {
           setDraftReview({
-            status: String(contribution.status ?? "").toLowerCase(),
-            reviewNotes: contribution.reviewNotes ?? null,
+            status: String(submission.status ?? "").toLowerCase(),
+            reviewNotes: submission.reviewNotes ?? null,
           });
         }
-        const sd = contribution.submittedData;
-        if (!sd || typeof sd !== "object" || !isCoverContributionData(sd)) {
+        const sd = submission.submittedData;
+        if (!sd || typeof sd !== "object" || !isCoverSubmissionData(sd)) {
           if (!cancelled) {
             setDraftLoadError("This draft is not a cover submission.");
             setDraftLoadDone(true);
@@ -423,13 +423,13 @@ export default function CoverEdit() {
           sd.reference_work_details,
         ));
 
-        const metas = contributionImageMetasFromSubmittedData(sd);
-        const draftImages = markingImagesFromContributionMetas(metas, markingId);
+        const metas = submissionImageMetasFromSubmittedData(sd);
+        const draftImages = markingImagesFromSubmissionMetas(metas, markingId);
         // Trello T37: a "Create cover from this image" draft has no uploaded
         // meta for its picture, only an id the server resolves for us. Router
         // state is long gone by the time a Dashboard link reopens the draft,
         // so this is the only way the tile comes back.
-        const carried = contribution.sourceMarkingImage;
+        const carried = submission.sourceMarkingImage;
         if (!loadedNoCoverImage && (draftImages.length > 0 || carried)) {
           const tags = sd.cover_image_tags ?? [];
           const metaItems = draftImages.map((img, i) => ({
@@ -465,7 +465,7 @@ export default function CoverEdit() {
     return () => {
       cancelled = true;
     };
-  }, [editContributionId, markingId, mode, referenceWorks, referenceWorksLoading, referenceWorksError]);
+  }, [editSubmissionId, markingId, mode, referenceWorks, referenceWorksLoading, referenceWorksError]);
 
   useEffect(() => {
     if (mode !== "edit" || !initial) return;
@@ -928,13 +928,13 @@ export default function CoverEdit() {
   };
 
   // Save a cover draft (asDraft=true) or submit it for editor review (asDraft=false).
-  // Both create a Contribution via createContribution; only the save_as_draft flag and
+  // Both create a Submission via createSubmission; only the save_as_draft flag and
   // the post-success toast/navigation differ. A submitted cover goes through the same
   // review queue as a marking, so it appears under My Submissions (contributor) and the
   // editor pending-review queue -- not directly on the marking record. The backend sets
   // status=pending when save_as_draft is absent and materializes the Cover + CoverMarking
-  // on approval (see backend ContributionViewSet.approve / contribution_apply.py).
-  const submitCoverContribution = async (asDraft: boolean) => {
+  // on approval (see backend SubmissionViewSet.approve / submission_apply.py).
+  const submitCoverSubmission = async (asDraft: boolean) => {
     if (referenceWorksLoading || referenceWorksError || (mode === "edit" && !citationsLoadedRef.current)) {
       toast({
         title: "Citations are not ready",
@@ -991,8 +991,8 @@ export default function CoverEdit() {
       const form = new SubmissionFormData();
       form.append("submission_kind", "cover");
       if (asDraft) form.append("save_as_draft", "true");
-      if (editContributionId != null) {
-        form.append("edit_contribution_id", String(editContributionId));
+      if (editSubmissionId != null) {
+        form.append("edit_submission_id", String(editSubmissionId));
       }
       if (stateRoute) {
         form.append("state", stateRoute);
@@ -1081,7 +1081,7 @@ export default function CoverEdit() {
         const caption = savedCaptionEdits[item.key].trim();
         if (caption !== item.img.imageDescription.trim()) changedSavedCaptions[item.key] = caption;
       }
-      if (editContributionId != null && Object.keys(changedSavedCaptions).length > 0) {
+      if (editSubmissionId != null && Object.keys(changedSavedCaptions).length > 0) {
         form.append("existing_image_descriptions", JSON.stringify(changedSavedCaptions));
       }
       if (descriptions.some(Boolean)) {
@@ -1091,7 +1091,7 @@ export default function CoverEdit() {
 
       // Existing-image removals apply on approval in both flows: the fresh
       // published-cover edit (edit_cover_id) and the draft-resume merge
-      // (edit_contribution_id). Harmless no-op for a brand-new cover (empty list).
+      // (edit_submission_id). Harmless no-op for a brand-new cover (empty list).
       if (removedExistingImageKeys.length > 0) {
         form.append("removed_existing_image_keys", JSON.stringify(removedExistingImageKeys));
       }
@@ -1099,7 +1099,7 @@ export default function CoverEdit() {
       if (mode === "edit" && coverRow?.coverDetails) {
         // Edit markers: the backend updates the existing Cover/CoverMarking in
         // place on approval (no duplicate) -- see backend/common/api/v2/views.py
-        // _apply_fresh_edit_image_metas and contribution_apply.py _apply_cover_edit.
+        // _apply_fresh_edit_image_metas and submission_apply.py _apply_cover_edit.
         form.append("edit_cover_id", String(coverRow.coverDetails.id));
         form.append("edit_cover_marking_id", String(coverRow.id));
         // existing_image_tags: {url: "tracing"|"photograph"} over retained catalog
@@ -1118,15 +1118,15 @@ export default function CoverEdit() {
         }
       }
 
-      await createContribution(form);
+      await createSubmission(form);
 
       if (asDraft) {
         toast({
-          title: editContributionId != null ? "Cover draft updated" : "Cover draft saved",
+          title: editSubmissionId != null ? "Cover draft updated" : "Cover draft saved",
           description: "Your draft is saved and available in your Dashboard under My Submissions.",
         });
         // Return to wherever the editor opened this form from (dashboard, record,
-        // or contribution detail); returnPath honors location.state.from and
+        // or submission detail); returnPath honors location.state.from and
         // falls back to the parent marking record.
         navigate(returnPath());
       } else {
@@ -1151,11 +1151,11 @@ export default function CoverEdit() {
   };
 
   // Route the form's submit button. Both new covers and edits go through the
-  // editor review queue (submitCoverContribution); nothing writes to the catalog
+  // editor review queue (submitCoverSubmission); nothing writes to the catalog
   // directly -- approval applies the change (and updates edits in place).
   const handleFormSubmit = (e: FormEvent) => {
     e.preventDefault();
-    void submitCoverContribution(false);
+    void submitCoverSubmission(false);
   };
 
   if (loading || !draftLoadDone) {
@@ -1218,7 +1218,7 @@ export default function CoverEdit() {
                 <CardHeader>
                   <CardTitle className="font-heading text-xl">
                     {mode === "create"
-                      ? editContributionId != null
+                      ? editSubmissionId != null
                         ? reviewStatus === "needs_revision"
                           ? "Revise Cover Submission"
                           : "Continue Cover Draft"
@@ -1472,7 +1472,7 @@ export default function CoverEdit() {
                                         value={item.upload.description}
                                         onChange={(value) => setPendingDescription(item.key, value)}
                                       />
-                                    ) : isDraftContributionImage(item.img.imageId) ? (
+                                    ) : isDraftSubmissionImage(item.img.imageId) ? (
                                       <ImageCaptionInput
                                         id={`cover-caption-${idx}`}
                                         value={savedCaptionEdits[item.key] ?? item.img.imageDescription}
@@ -1732,7 +1732,7 @@ export default function CoverEdit() {
                         variant="outline"
                         className="w-full sm:flex-1"
                         disabled={submitting}
-                        onClick={() => void submitCoverContribution(true)}
+                        onClick={() => void submitCoverSubmission(true)}
                       >
                         Save as Draft
                       </Button>

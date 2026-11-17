@@ -57,14 +57,14 @@ from common.images import (
 from common.catalog_codes import (
     CATALOG_CODE_KEYS,
     CatalogCodeError,
-    final_code_for_contribution,
+    final_code_for_submission,
     strip_catalog_code_keys,
     suggest_direct_catalog_code,
-    suggest_for_contribution,
+    suggest_for_submission,
 )
-from common.contribution_apply import (
+from common.submission_apply import (
     _source_marking_image_position,
-    ContributionApplyError,
+    SubmissionApplyError,
     MARKING_DATE_SUBMIT_KEYS,
     _CITATION_ID_KEYS,
     _parse_decimal,
@@ -82,9 +82,9 @@ from common.matching import (
     sizes_compatible,
     town_match_key,
 )
-from common.contribution_consolidation import (
-    ContributionTarget,
-    consolidate_superseded_contributions,
+from common.submission_consolidation import (
+    SubmissionTarget,
+    consolidate_superseded_submissions,
 )
 from common.audit import (
     build_cover_snapshot,
@@ -109,7 +109,7 @@ from common.version_restore import (
 from common.filters import (
     AliasedOrderingFilter,
     CitationAwareMarkingSearchFilter,
-    ContributionListFilter,
+    SubmissionListFilter,
     CoverMarkingFilter,
     MarkingListFilter,
     pre_statehood_wv_marking_ids,
@@ -119,8 +119,8 @@ from common.models import (
     Collection,
     CollectionAssignment,
     Color,
-    Contribution,
-    ContributionRecycleBin,
+    Submission,
+    SubmissionRecycleBin,
     Cover,
     CoverMarking,
     CoverRecycleBin,
@@ -148,8 +148,8 @@ from woco.pagination import MarkingListPagination
 from .permissions import (
     IsEditor,
     CanManageReferenceWorks,
-    CanReviewContribution,
-    IsOwnDeletableContribution,
+    CanReviewSubmission,
+    IsOwnDeletableSubmission,
     IsEditorOrAdminWrite,
     IsResponsibleForDateSeenSubject,
     IsResponsibleForImageSubject,
@@ -158,7 +158,7 @@ from .permissions import (
     _user_is_responsible_for_cover,
     _user_is_responsible_for_marking,
     user_assigned_collection_ids,
-    user_can_review_contributions,
+    user_can_review_submissions,
     user_is_responsible_for_post_office,
     user_is_responsible_for_subject,
 )
@@ -167,16 +167,16 @@ from .serializers import (
     # (issue #135) has to pick the same marking the serializer will render, and
     # a second copy of the parent_marking_id/marking_id fallback here would be a
     # silent way for the two to disagree.
-    _contribution_submitted_data_is_cover,
-    _contribution_target_marking_id,
+    _submission_submitted_data_is_cover,
+    _submission_target_marking_id,
     _format_decimal,
     image_public_url,
     CitationSerializer,
     CollectionSerializer,
     ColorSerializer,
-    ContributionApproveRejectSerializer,
-    ContributionDetailSerializer,
-    ContributionListSerializer,
+    SubmissionApproveRejectSerializer,
+    SubmissionDetailSerializer,
+    SubmissionListSerializer,
     CoverMarkingSerializer,
     CoverSerializer,
     CoverValuationSerializer,
@@ -207,44 +207,44 @@ User = get_user_model()
 # circular import back into views.py.
 
 
-def _user_may_review_contribution(user, contribution) -> bool:
+def _user_may_review_submission(user, submission) -> bool:
     if not user or not user.is_authenticated:
         return False
     if user.is_superuser:
         return True
-    if not user_can_review_contributions(user):
+    if not user_can_review_submissions(user):
         return False
-    return contribution.collection_id in user_assigned_collection_ids(user)
+    return submission.collection_id in user_assigned_collection_ids(user)
 
 
-class _ContributionNotApplied(Exception):
+class _SubmissionNotApplied(Exception):
     """apply_to_catalog returned nothing for a marking submission.
 
-    Distinct from ContributionApplyError, which names a specific bad field and
+    Distinct from SubmissionApplyError, which names a specific bad field and
     is a 400. This is "the payload produced no marking and we do not know why",
     which stays a 500 for a single approval and a per-row failure in a batch.
     """
 
 
-# Issue #101. Extracted from ContributionViewSet.approve so bulk approve runs
+# Issue #101. Extracted from SubmissionViewSet.approve so bulk approve runs
 # the SAME path rather than a reimplementation of it. What a second copy would
 # quietly drop, in the order it matters:
 #
 #   * the BEFORE snapshots, which must be read before apply mutates in place
 #   * the cover-vs-marking branch on apply_to_catalog's return TYPE
-#   * consolidate_superseded_contributions, which deletes superseded rows
-#   * the Contribution.marking one-to-one, only claimed if unowned
+#   * consolidate_superseded_submissions, which deletes superseded rows
+#   * the Submission.marking one-to-one, only claimed if unowned
 #   * log_submission_transaction + create_*_version, the audit trail
 #
 # Callers own the permission and status checks, and own the transaction only in
-# the sense that this opens its own atomic block per contribution -- which is
+# the sense that this opens its own atomic block per submission -- which is
 # what lets a bulk batch commit the rows that worked and report the ones that
 # did not (#101 AC-4).
-def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_code=None):
-    """Approve one contribution. Returns the response body dict.
+def _approve_submission(contrib, *, actor, review_notes, requested_catalog_code=None, marking_code=None, marking_is_backstamp=False, office_code=None):
+    """Approve one submission. Returns the response body dict.
 
-    Raises CatalogCodeError / ContributionApplyError for a bad payload, and
-    _ContributionNotApplied when a marking submission yields no marking.
+    Raises CatalogCodeError / SubmissionApplyError for a bad payload, and
+    _SubmissionNotApplied when a marking submission yields no marking.
     """
     with transaction.atomic():
         # Capture the BEFORE snapshot for edits (the entity already
@@ -271,11 +271,19 @@ def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_cod
             except Marking.DoesNotExist:
                 pass
 
-        final_code_for_contribution(
+        final_code_for_submission(
             contrib,
             requested_code=requested_catalog_code,
         )
-        result = contrib.apply_to_catalog()
+        source_item = getattr(contrib, "catalog_source", None)
+        if source_item and source_item.decision.get("foreign_review"):
+            from common.fphc_foreign_review import approve_foreign_cover
+            result = approve_foreign_cover(source_item, contrib, actor, marking_code, marking_is_backstamp)
+        elif source_item and source_item.decision.get("office_review"):
+            from common.fphc_office_review import approve_office_review
+            result = approve_office_review(source_item, contrib, actor, office_code)
+        else:
+            result = contrib.apply_to_catalog()
 
         # apply_to_catalog returns a Marking for marking submissions and
         # a dict {"kind": "cover", ...} for cover submissions. Branch on
@@ -299,16 +307,16 @@ def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_cod
                 update_fields=["reviewer", "review_notes", "modified_by", "reviewed_at"]
             )
 
-            contrib.status = Contribution.STATUS_APPROVED
+            contrib.status = Submission.STATUS_APPROVED
             contrib.reviewer = actor
             contrib.review_notes = review_notes
             contrib.modified_by = actor
-            # Delete older cover contributions before checking the
+            # Delete older cover submissions before checking the
             # optional parent marking link. An older approved cover
-            # contribution may own that one-to-one link.
-            consolidate_superseded_contributions(
+            # submission may own that one-to-one link.
+            consolidate_superseded_submissions(
                 current=contrib,
-                target=ContributionTarget("cover", cover.pk),
+                target=SubmissionTarget("cover", cover.pk),
                 actor=actor,
                 source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
             )
@@ -320,11 +328,11 @@ def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_cod
                 "modified_date",
                 "modified_by",
             ]
-            if not Contribution.objects.filter(marking=parent_marking).exclude(pk=contrib.pk).exists():
+            if not Submission.objects.filter(marking=parent_marking).exclude(pk=contrib.pk).exists():
                 contrib.marking = parent_marking
                 update_fields.append("marking")
             # Stamp traceability so the frontend mapper treats this
-            # contribution as materialized (no longer a pending draft).
+            # submission as materialized (no longer a pending draft).
             sd = dict(contrib.submitted_data or {})
             sd["cover_id"] = cover.pk
             sd["cover_marking_id"] = cover_marking.pk
@@ -335,7 +343,7 @@ def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_cod
             txn = log_submission_transaction(
                 action=SubmissionTransaction.ACTION_APPROVE,
                 actor=actor,
-                contribution=contrib,
+                submission=contrib,
                 marking=parent_marking,
                 cover=cover,
                 source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
@@ -347,35 +355,35 @@ def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_cod
                 },
             )
             create_cover_version(cover, txn, actor)
-            return {"detail": "Contribution approved.", "coverId": cover.pk}
+            return {"detail": "Submission approved.", "coverId": cover.pk}
 
         marking = result
         if not marking:
-            raise _ContributionNotApplied(
-                "Could not apply contribution. Check submitted_data."
+            raise _SubmissionNotApplied(
+                "Could not apply submission. Check submitted_data."
             )
-        contrib.status = Contribution.STATUS_APPROVED
+        contrib.status = Submission.STATUS_APPROVED
         contrib.reviewer = actor
         contrib.review_notes = review_notes
         contrib.modified_by = actor
-        # Delete older marking contributions before assigning the
-        # one-to-one Contribution.marking link to the latest row.
-        consolidate_superseded_contributions(
+        # Delete older marking submissions before assigning the
+        # one-to-one Submission.marking link to the latest row.
+        consolidate_superseded_submissions(
             current=contrib,
-            target=ContributionTarget("marking", marking.pk),
+            target=SubmissionTarget("marking", marking.pk),
             actor=actor,
             source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
         )
         update_fields = ["status", "reviewer", "review_notes", "modified_date", "modified_by"]
-        if not Contribution.objects.filter(marking=marking).exclude(pk=contrib.pk).exists():
+        if not Submission.objects.filter(marking=marking).exclude(pk=contrib.pk).exists():
             contrib.marking = marking
             update_fields.append("marking")
         # Trello T37: a Cover submitted together with this Marking becomes its
-        # own pending cover contribution now that the Marking exists.
+        # own pending cover submission now that the Marking exists.
         pending_cover_child = _create_pending_cover_child(contrib, marking, actor)
         if pending_cover_child is not None:
             sd = dict(contrib.submitted_data or {})
-            sd["pending_cover_contribution_id"] = pending_cover_child.pk
+            sd["pending_cover_submission_id"] = pending_cover_child.pk
             contrib.submitted_data = sd
             update_fields.append("submitted_data")
         contrib.save(update_fields=update_fields)
@@ -383,7 +391,7 @@ def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_cod
         txn = log_submission_transaction(
             action=SubmissionTransaction.ACTION_APPROVE,
             actor=actor,
-            contribution=contrib,
+            submission=contrib,
             marking=marking,
             source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
             before_payload=before_marking_snapshot,
@@ -391,18 +399,18 @@ def _approve_contribution(contrib, *, actor, review_notes, requested_catalog_cod
             extra_payload={"review_notes": review_notes},
         )
         create_marking_version(marking, txn, actor)
-        body = {"detail": "Contribution approved.", "markingId": marking.pk}
+        body = {"detail": "Submission approved.", "markingId": marking.pk}
         if pending_cover_child is not None:
-            body["pendingCoverContributionId"] = pending_cover_child.pk
+            body["pendingCoverSubmissionId"] = pending_cover_child.pk
         return body
 
 
-def _reject_contribution(contrib, *, actor, review_notes):
-    """Reject one contribution. Extracted alongside _approve_contribution so
+def _reject_submission(contrib, *, actor, review_notes):
+    """Reject one submission. Extracted alongside _approve_submission so
     bulk reject shares the audit-trail write rather than repeating it."""
     with transaction.atomic():
         before_submission = dict(contrib.submitted_data or {})
-        contrib.status = Contribution.STATUS_REJECTED
+        contrib.status = Submission.STATUS_REJECTED
         contrib.reviewer = actor
         contrib.review_notes = review_notes
         contrib.modified_by = actor
@@ -411,14 +419,14 @@ def _reject_contribution(contrib, *, actor, review_notes):
         log_submission_transaction(
             action=SubmissionTransaction.ACTION_REJECT,
             actor=actor,
-            contribution=contrib,
+            submission=contrib,
             marking=contrib.marking,
             source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
             before_payload=before_submission,
             after_payload=before_submission,
             extra_payload={"review_notes": review_notes},
         )
-    return {"detail": "Contribution rejected."}
+    return {"detail": "Submission rejected."}
 
 
 class IsResponsibleForRegion(BasePermission):
@@ -435,7 +443,7 @@ class IsResponsibleForRegion(BasePermission):
         return bool(
             user
             and user.is_authenticated
-            and (user.is_superuser or user_can_review_contributions(user))
+            and (user.is_superuser or user_can_review_submissions(user))
         )
 
     def has_object_permission(self, request, view, obj):
@@ -479,7 +487,7 @@ class CatalogCodeSuggestionView(APIView):
 
     def post(self, request):
         user = request.user
-        if not user_can_review_contributions(user):
+        if not user_can_review_submissions(user):
             return Response(
                 {"detail": "You do not have permission to generate Catalog Marking or Catalog Cover codes."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -1686,7 +1694,7 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
         manager hides removed rows.
         """
         user = request.user
-        if not user_can_review_contributions(user):
+        if not user_can_review_submissions(user):
             return Response(
                 {"detail": "You are not allowed to view the recycle bin."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -1737,10 +1745,10 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
                 "height": snap.get("height"),
             }
 
-        # Covers have no contribution FK link, so filter on the cover FK only.
+        # Covers have no submission FK link, so filter on the cover FK only.
         txns = list(
             SubmissionTransaction.objects.filter(cover=cover)
-            .select_related("actor", "contribution")
+            .select_related("actor", "submission")
             .order_by("-created_at", "-id")
             .distinct()
         )
@@ -1776,7 +1784,7 @@ class CoverV2ViewSet(viewsets.ModelViewSet):
                     "actor": actor_name,
                     "actor_email": actor_email,
                     "source": txn.source,
-                    "contribution_id": txn.contribution_id,
+                    "submission_id": txn.submission_id,
                     "version_no": version_no_by_txn_id.get(txn.id),
                     "diff": txn.diff_payload or [],
                     "caption_change": _caption_change(txn),
@@ -2155,7 +2163,7 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
         # Hide links whose cover is in the recycle bin. select_related("cover")
         # joins the Cover table directly, bypassing Cover's default manager (which
         # hides removed rows), so a soft-removed cover would otherwise still show
-        # as associated on the marking detail / contribution review pages.
+        # as associated on the marking detail / submission review pages.
         # EXCEPTION: when the caller asks for one specific cover's links
         # (?cover=...), do not apply this filter -- the cover detail page must
         # still show what a removed cover was associated with so an editor can
@@ -2197,7 +2205,7 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
 
         if not user.is_authenticated:
             return qs.none()
-        if user_can_review_contributions(user):
+        if user_can_review_submissions(user):
             region_ids = list(
                 Region.objects.filter(collection__id__in=user_assigned_collection_ids(user)).values_list(
                     "pk", flat=True
@@ -2316,7 +2324,7 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
         log_submission_transaction(
             action=log_action,
             actor=actor,
-            contribution=None,
+            submission=None,
             marking=cover_marking.marking,
             source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
             before_payload=before,
@@ -2341,7 +2349,7 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
                 {"detail": f"Only pending cover links can be approved (status: {cm.review_status})."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer = SubmissionApproveRejectSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
         review_notes = serializer.validated_data.get("review_notes", "")
         self._transition_review(
@@ -2366,7 +2374,7 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
                 {"detail": f"Only pending cover links can be rejected (status: {cm.review_status})."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer = SubmissionApproveRejectSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
         review_notes = serializer.validated_data.get("review_notes", "")
         self._transition_review(
@@ -2391,7 +2399,7 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
                 {"detail": f"Only pending cover links can be returned for revision (status: {cm.review_status})."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer = SubmissionApproveRejectSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
         review_notes = (serializer.validated_data.get("review_notes") or "").strip()
         if not review_notes:
@@ -2435,7 +2443,7 @@ class CoverMarkingViewSet(viewsets.ModelViewSet):
         log_submission_transaction(
             action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
             actor=request.user,
-            contribution=None,
+            submission=None,
             marking=cm.marking,
             source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
             before_payload=before,
@@ -2625,7 +2633,7 @@ class MarkingViewSet(viewsets.ModelViewSet):
         txn = log_submission_transaction(
             action=SubmissionTransaction.ACTION_RECORD_CREATE,
             actor=self.request.user,
-            contribution=getattr(marking, "contribution", None),
+            submission=getattr(marking, "submission", None),
             marking=marking,
             source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
             before_payload={},
@@ -2640,7 +2648,7 @@ class MarkingViewSet(viewsets.ModelViewSet):
         txn = log_submission_transaction(
             action=SubmissionTransaction.ACTION_RECORD_UPDATE,
             actor=self.request.user,
-            contribution=getattr(marking, "contribution", None),
+            submission=getattr(marking, "submission", None),
             marking=marking,
             source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
             before_payload=before_snapshot,
@@ -2727,7 +2735,7 @@ class MarkingViewSet(viewsets.ModelViewSet):
         (who/when/why) lives in the marking changelog.
         """
         user = request.user
-        if not user_can_review_contributions(user):
+        if not user_can_review_submissions(user):
             return Response(
                 {"detail": "You are not allowed to view the recycle bin."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -2784,7 +2792,7 @@ class MarkingViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="my-submissions", permission_classes=[IsAuthenticated])
     def my_submissions(self, request):
         user = request.user
-        qs = self.get_queryset().filter(contribution__contributor=user).order_by("-created_date")
+        qs = self.get_queryset().filter(submission__contributor=user).order_by("-created_date")
         if not user.is_superuser:
             assigned_regions = _get_user_assigned_regions(user)
             if assigned_regions.exists():
@@ -2970,9 +2978,9 @@ class MarkingViewSet(viewsets.ModelViewSet):
 
         txns = list(
             SubmissionTransaction.objects.filter(
-                Q(marking=marking) | Q(contribution__marking=marking)
+                Q(marking=marking) | Q(submission__marking=marking)
             )
-            .select_related("actor", "contribution")
+            .select_related("actor", "submission")
             .order_by("-created_at", "-id")
             .distinct()
         )
@@ -3012,7 +3020,7 @@ class MarkingViewSet(viewsets.ModelViewSet):
                     # trail is contractually email-based on the UI side.
                     "actor_email": actor_email,
                     "source": txn.source,
-                    "contribution_id": txn.contribution_id,
+                    "submission_id": txn.submission_id,
                     "version_no": version_no_by_txn_id.get(txn.id),
                     "diff": txn.diff_payload or [],
                     "caption_change": _caption_change(txn),
@@ -3113,7 +3121,7 @@ class MarkingViewSet(viewsets.ModelViewSet):
                 txn = log_submission_transaction(
                     action=SubmissionTransaction.ACTION_RESTORE_VERSION,
                     actor=request.user,
-                    contribution=getattr(marking, "contribution", None),
+                    submission=getattr(marking, "submission", None),
                     marking=marking,
                     source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
                     before_payload=before_snapshot,
@@ -3166,12 +3174,12 @@ class MarkingDateRangeView(APIView):
 
 
 ###################################################################################################
-## Contribution viewset
+## Submission viewset
 ###################################################################################################
-def _get_editor_contribution_queryset(user):
-    """Editors see contributions for Collections they are assigned to."""
+def _get_editor_submission_queryset(user):
+    """Editors see submissions for Collections they are assigned to."""
     assigned_ids = user_assigned_collection_ids(user)
-    base = Contribution.objects.select_related(
+    base = Submission.objects.select_related(
         "contributor", "reviewer", "marking", "collection", "collection__region"
     )
     if not assigned_ids:
@@ -3179,7 +3187,7 @@ def _get_editor_contribution_queryset(user):
     return base.filter(collection_id__in=assigned_ids).distinct()
 
 
-def _annotate_contribution_sort_keys(queryset):
+def _annotate_submission_sort_keys(queryset):
     """Lift the JSON sort columns out of submitted_data (issue #109).
 
     Town, state, shape and colour have no columns of their own -- they live in
@@ -3188,14 +3196,14 @@ def _annotate_contribution_sort_keys(queryset):
     `JSON_UNQUOTE(JSON_EXTRACT(...))` on MariaDB (it branches on
     mysql_is_mariadb; MDEV-13594), so this is valid on both deploy targets.
     Either way it is a full scan, which is fine at queue size -- see
-    ContributionListFilter for the measurements.
+    SubmissionListFilter for the measurements.
 
     NULLIF is not decoration. An ABSENT key gives SQL NULL, but a key that is
     present and set to JSON null gives the four-character string 'null', which
     then sorts in among the words beginning with N. NULLIF folds the two cases
     together so "no value" is one group however the row was written.
 
-    The sd_ prefix keeps these clear of Contribution's own field names, which
+    The sd_ prefix keeps these clear of Submission's own field names, which
     also keeps ordering_aliases unambiguous.
     """
     def key(name):
@@ -3213,10 +3221,10 @@ def _annotate_contribution_sort_keys(queryset):
     )
 
 
-def _contribution_parent_locations(instances):
+def _submission_parent_locations(instances):
     """{marking_id: (town, state)} for the cover drafts on one page (#135/#137).
 
-    A cover contribution has no town in its submitted_data -- the town belongs
+    A cover submission has no town in its submitted_data -- the town belongs
     to the marking the cover was filed against -- so the dashboard could not
     name the record an editor was looking at. Resolving that per row is an N+1
     on the busiest editor screen, and the queue is 2,440+ rows, so every parent
@@ -3236,12 +3244,12 @@ def _contribution_parent_locations(instances):
     """
     marking_ids = set()
     for obj in instances or ():
-        # Only cover drafts need this; _contribution_target_marking_id returns
+        # Only cover drafts need this; _submission_target_marking_id returns
         # the parent for those and the edited marking for everything else, and
-        # a marking contribution already carries its own town.
-        if not _contribution_submitted_data_is_cover(obj.submitted_data or {}):
+        # a marking submission already carries its own town.
+        if not _submission_submitted_data_is_cover(obj.submitted_data or {}):
             continue
-        marking_id = _contribution_target_marking_id(obj)
+        marking_id = _submission_target_marking_id(obj)
         if marking_id is not None:
             marking_ids.add(marking_id)
     if not marking_ids:
@@ -3281,32 +3289,32 @@ def _contribution_parent_locations(instances):
 
 
 @method_decorator(csrf_exempt, name="dispatch")
-class ContributionViewSet(
+class SubmissionViewSet(
     mixins.CreateModelMixin,
     mixins.DestroyModelMixin,
     viewsets.ReadOnlyModelViewSet,
 ):
     """
-    GET list / detail at /contributions/ and /contributions/<pk>/.
-    POST /contributions/ delegates to ContributionSubmitView so authenticated
+    GET list / detail at /submissions/ and /submissions/<pk>/.
+    POST /submissions/ delegates to SubmissionSubmitView so authenticated
     contributors can submit new entries here. Approve / reject actions live on
     detail routes.
-    DELETE /contributions/<pk>/ hard-deletes (withdraws) an UNAPPROVED
-    contribution owned by the requester -- draft, pending, needs_revision or
-    rejected -- see IsOwnDeletableContribution. Approved contributions cannot be
+    DELETE /submissions/<pk>/ hard-deletes (withdraws) an UNAPPROVED
+    submission owned by the requester -- draft, pending, needs_revision or
+    rejected -- see IsOwnDeletableSubmission. Approved submissions cannot be
     hard-deleted -- removing a promoted marking goes through the recycle bin.
     """
-    permission_classes = [IsAuthenticated, CanReviewContribution]
-    serializer_class = ContributionDetailSerializer
+    permission_classes = [IsAuthenticated, CanReviewSubmission]
+    serializer_class = SubmissionDetailSerializer
     # Issue #109: the queue's search, filters and sort all have to run here.
     # They used to run in the browser over the page it had already fetched,
     # which at 2,440 rows meant an editor could not find a submission at all.
     filter_backends = [DjangoFilterBackend, AliasedOrderingFilter]
-    filterset_class = ContributionListFilter
+    filterset_class = SubmissionListFilter
     # The wire vocabulary -> real columns. `created_at` is what the serializer
     # emits for created_date, and the dashboard's sort keys are the display
     # names, so both spellings have to land somewhere real. The sd_* keys are
-    # the annotations from _annotate_contribution_sort_keys and stay private.
+    # the annotations from _annotate_submission_sort_keys and stay private.
     ordering_aliases = {
         "created_at": "created_date",
         "updated_at": "modified_date",
@@ -3340,49 +3348,49 @@ class ContributionViewSet(
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_permissions(self):
-        # POST /contributions/ is the public submission endpoint and only
+        # POST /submissions/ is the public submission endpoint and only
         # requires authentication; the editor review permission is enforced on
         # GET (list/detail) and on the approve/reject detail actions.
         if self.action == "create":
             return [IsAuthenticated()]
         # DELETE is the contributor withdraw path: an owner may remove their own
-        # unapproved contribution (draft/pending/needs_revision/rejected). Gated
-        # by IsOwnDeletableContribution, not the editor-review permission.
+        # unapproved submission (draft/pending/needs_revision/rejected). Gated
+        # by IsOwnDeletableSubmission, not the editor-review permission.
         if self.action == "destroy":
-            return [IsAuthenticated(), IsOwnDeletableContribution()]
+            return [IsAuthenticated(), IsOwnDeletableSubmission()]
         return super().get_permissions()
 
     def perform_destroy(self, instance):
-        # Reachable only for an UNAPPROVED contribution owned by the requester
-        # (IsOwnDeletableContribution): draft, pending, needs_revision or
+        # Reachable only for an UNAPPROVED submission owned by the requester
+        # (IsOwnDeletableSubmission): draft, pending, needs_revision or
         # rejected. None of these has a published Marking of its own yet, so this
         # hard-delete (withdrawal) has no downstream catalog impact. Record a
         # tombstone transaction before deleting -- before_payload.status carries
         # the real status so a withdrawn pending submission is auditable -- the
-        # contribution FK is left null because the row is about to vanish
-        # (SubmissionTransaction.contribution is SET_NULL anyway).
+        # submission FK is left null because the row is about to vanish
+        # (SubmissionTransaction.submission is SET_NULL anyway).
         log_submission_transaction(
             action=SubmissionTransaction.ACTION_DRAFT_DELETED,
             actor=self.request.user,
-            contribution=None,
+            submission=None,
             marking=None,
             source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
             before_payload={
-                "contribution_id": instance.pk,
+                "submission_id": instance.pk,
                 "status": instance.status,
                 "collection_id": instance.collection_id,
                 "submitted_data": instance.submitted_data,
             },
             after_payload={},
-            extra_payload={"deleted_contribution_id": instance.pk},
+            extra_payload={"deleted_submission_id": instance.pk},
         )
         instance.delete()
 
     def create(self, request, *args, **kwargs):
-        # Delegate to ContributionSubmitView.post so the submission logic stays
+        # Delegate to SubmissionSubmitView.post so the submission logic stays
         # in one place. The DRF Request from this viewset already exposes data,
-        # FILES, and user as ContributionSubmitView expects.
-        submit_view = ContributionSubmitView()
+        # FILES, and user as SubmissionSubmitView expects.
+        submit_view = SubmissionSubmitView()
         submit_view.request = request
         submit_view.kwargs = getattr(self, "kwargs", {})
         submit_view.format_kwarg = getattr(self, "format_kwarg", None)
@@ -3390,19 +3398,19 @@ class ContributionViewSet(
 
     def get_queryset(self):
         # Visibility rules:
-        #   list (default)          -> "My Contributions": only rows where the
+        #   list (default)          -> "My Submissions": only rows where the
         #                              logged-in user is the contributor. This
         #                              applies to everyone including editors
         #                              and superusers, so the dashboard's
-        #                              My Contributions tab never leaks other
+        #                              My Submissions tab never leaks other
         #                              users' work.
-        #   list ?mode=editor       -> editor review queue: contributions on
+        #   list ?mode=editor       -> editor review queue: submissions on
         #                              collections the user is assigned to.
         #                              Requires the review permission;
         #                              superusers see everything.
         #   retrieve (detail) and
         #   action endpoints        -> union of "mine" and "editor view" so
-        #                              opening a single contribution from
+        #                              opening a single submission from
         #                              either tab works without the caller
         #                              having to know which lens it came
         #                              from. Approve/reject/request-revision
@@ -3413,14 +3421,14 @@ class ContributionViewSet(
         # The serializers use collection_id, not the Collection or its Region.
         # Inner joins to those rows hide saved Submissions with stale links,
         # while pagination still counts them.
-        base_qs = Contribution.objects.select_related(
+        base_qs = Submission.objects.select_related(
             "contributor", "reviewer", "marking"
         )
         if self.action != "list":
             if user.is_superuser:
                 return base_qs
             mine = Q(contributor=user)
-            if user_can_review_contributions(user):
+            if user_can_review_submissions(user):
                 assigned_ids = user_assigned_collection_ids(user)
                 if assigned_ids:
                     return base_qs.filter(mine | Q(collection_id__in=assigned_ids)).distinct()
@@ -3429,13 +3437,13 @@ class ContributionViewSet(
         if mode in ("editor", "archived"):
             if user.is_superuser:
                 qs = base_qs
-            elif user_can_review_contributions(user):
-                qs = _get_editor_contribution_queryset(user)
+            elif user_can_review_submissions(user):
+                qs = _get_editor_submission_queryset(user)
             else:
                 return base_qs.none()
             # Issue #89: archiving is editor-side housekeeping. An archived
-            # contribution leaves the review queue and is only reachable through
-            # ?mode=archived -- but the "My Contributions" branch below is
+            # submission leaves the review queue and is only reachable through
+            # ?mode=archived -- but the "My Submissions" branch below is
             # deliberately NOT filtered, so its author keeps seeing it along with
             # whatever feedback the editor left.
             qs = qs.filter(recycle_bin_entry__isnull=(mode == "editor"))
@@ -3450,8 +3458,8 @@ class ContributionViewSet(
             # screen. Excluding them here makes the banner honest. The "mine"
             # branch below is deliberately untouched -- an author keeps seeing
             # their own drafts.
-            qs = qs.exclude(status=Contribution.STATUS_DRAFT)
-            # `state` stays here rather than moving into ContributionListFilter:
+            qs = qs.exclude(status=Submission.STATUS_DRAFT)
+            # `state` stays here rather than moving into SubmissionListFilter:
             # it also matches across the collection's Region relation, and it is
             # scoped to these two lenses on purpose. DjangoFilterBackend runs
             # after get_queryset, so it composes with the filterset.
@@ -3462,13 +3470,13 @@ class ContributionViewSet(
                     | Q(collection__region__abbrev__iexact=state)
                     | Q(submitted_data__state__iexact=state)
                 )
-            return _annotate_contribution_sort_keys(qs)
-        return _annotate_contribution_sort_keys(base_qs.filter(contributor=user).distinct())
+            return _annotate_submission_sort_keys(qs)
+        return _annotate_submission_sort_keys(base_qs.filter(contributor=user).distinct())
 
     def get_serializer_class(self):
         if self.action == "list":
-            return ContributionListSerializer
-        return ContributionDetailSerializer
+            return SubmissionListSerializer
+        return SubmissionDetailSerializer
 
     def get_serializer(self, *args, **kwargs):
         # Issue #135/#137: hand the list serializer the town and state of every
@@ -3477,44 +3485,47 @@ class ContributionViewSet(
         # This hook rather than list(): it sees the page DRF actually serializes
         # whether or not pagination is in play, and it is the one place both
         # branches of ListModelMixin.list pass through. Only the list action
-        # needs it -- ContributionDetailSerializer does not render a display
+        # needs it -- SubmissionDetailSerializer does not render a display
         # name -- so nothing else pays for the lookup.
         if self.action == "list" and args:
             context = kwargs.get("context") or self.get_serializer_context()
-            context["parent_marking_locations"] = _contribution_parent_locations(args[0])
+            context["parent_marking_locations"] = _submission_parent_locations(args[0])
             kwargs["context"] = context
         return super().get_serializer(*args, **kwargs)
 
     @action(detail=True, methods=["post"], url_path="approve")
     def approve(self, request, pk=None):
         contrib = self.get_object()
-        if not _user_may_review_contribution(request.user, contrib):
+        if not _user_may_review_submission(request.user, contrib):
             return Response(
-                {"detail": "You do not have permission to review this contribution."},
+                {"detail": "You do not have permission to review this submission."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        if contrib.status != Contribution.STATUS_PENDING:
+        if contrib.status != Submission.STATUS_PENDING:
             return Response(
-                {"detail": f"Contribution is not pending (status: {contrib.status})."},
+                {"detail": f"Submission is not pending (status: {contrib.status})."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer = SubmissionApproveRejectSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
         review_notes = serializer.validated_data.get("review_notes", "")
         requested_catalog_code = serializer.validated_data.get("catalog_code", None)
         try:
-            approved_response = _approve_contribution(
+            approved_response = _approve_submission(
                 contrib,
                 actor=request.user,
                 review_notes=review_notes,
                 requested_catalog_code=requested_catalog_code,
+                office_code=serializer.validated_data.get("office_code"),
+                marking_code=serializer.validated_data.get("marking_code"),
+                marking_is_backstamp=serializer.validated_data["marking_is_backstamp"],
             )
-        except (CatalogCodeError, ContributionApplyError) as exc:
+        except (CatalogCodeError, SubmissionApplyError) as exc:
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        except _ContributionNotApplied as exc:
+        except _SubmissionNotApplied as exc:
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -3540,10 +3551,10 @@ class ContributionViewSet(
         ⛔ SECURITY: this is the first detail=False WRITE action in the API, and
         that changes the permission story. Every other write is detail=True, so
         get_object() runs check_object_permissions and
-        CanReviewContribution.has_object_permission enforces
+        CanReviewSubmission.has_object_permission enforces
         `obj.collection_id in user_assigned_collection_ids(user)`. A
         detail=False action never calls get_object(), so NONE of that fires.
-        Without the explicit per-row _user_may_review_contribution below, an
+        Without the explicit per-row _user_may_review_submission below, an
         editor assigned to Virginia could approve West Virginia submissions 50
         at a time. Do not remove it, and do not assume the class-level
         permission covers it -- has_permission() returns True for any
@@ -3555,7 +3566,7 @@ class ContributionViewSet(
         raw_ids = request.data.get("ids") if isinstance(request.data, dict) else None
         if not isinstance(raw_ids, (list, tuple)) or not raw_ids:
             return Response(
-                {"detail": "ids must be a non-empty list of contribution ids."},
+                {"detail": "ids must be a non-empty list of submission ids."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if len(raw_ids) > self.BULK_ACTION_MAX:
@@ -3574,11 +3585,11 @@ class ContributionViewSet(
                 )
             ids.append(parsed)
 
-        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer = SubmissionApproveRejectSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
         review_notes = serializer.validated_data.get("review_notes", "")
 
-        found = {c.pk: c for c in Contribution.objects.filter(pk__in=ids)}
+        found = {c.pk: c for c in Submission.objects.filter(pk__in=ids)}
         succeeded, failed = [], []
         # Iterate the caller's order, not the queryset's, so the client can pair
         # results with what it sent. Duplicate ids are processed once; the
@@ -3586,26 +3597,26 @@ class ContributionViewSet(
         for pk in ids:
             contrib = found.get(pk)
             if contrib is None:
-                failed.append({"id": pk, "reason": "Contribution not found."})
+                failed.append({"id": pk, "reason": "Submission not found."})
                 continue
-            if not _user_may_review_contribution(request.user, contrib):
+            if not _user_may_review_submission(request.user, contrib):
                 failed.append({
                     "id": pk,
-                    "reason": "You do not have permission to review this contribution.",
+                    "reason": "You do not have permission to review this submission.",
                 })
                 continue
             contrib.refresh_from_db()
-            if contrib.status != Contribution.STATUS_PENDING:
+            if contrib.status != Submission.STATUS_PENDING:
                 failed.append({
                     "id": pk,
-                    "reason": "Contribution is not pending (status: {}).".format(
+                    "reason": "Submission is not pending (status: {}).".format(
                         contrib.status),
                 })
                 continue
             try:
                 apply_row(contrib, request.user, review_notes)
-            except (CatalogCodeError, ContributionApplyError,
-                    _ContributionNotApplied, IntegrityError) as exc:
+            except (CatalogCodeError, SubmissionApplyError,
+                    _SubmissionNotApplied, IntegrityError) as exc:
                 failed.append({"id": pk, "reason": str(exc)})
                 continue
             succeeded.append(pk)
@@ -3634,7 +3645,7 @@ class ContributionViewSet(
             attempts = 3
             for attempt in range(attempts):
                 try:
-                    return _approve_contribution(
+                    return _approve_submission(
                         contrib, actor=actor, review_notes=review_notes)
                 except IntegrityError:
                     if attempt == attempts - 1:
@@ -3652,7 +3663,7 @@ class ContributionViewSet(
     @action(detail=False, methods=["post"], url_path="bulk-reject")
     def bulk_reject(self, request):
         def apply_row(contrib, actor, review_notes):
-            return _reject_contribution(
+            return _reject_submission(
                 contrib, actor=actor, review_notes=review_notes)
 
         return self._bulk_review(request, apply_row=apply_row, verb="rejected")
@@ -3663,7 +3674,7 @@ class ContributionViewSet(
 
         "Select all matching" has to mean the same set the count banner reports,
         so this runs filter_queryset(get_queryset()) -- the exact path the list
-        endpoint uses, including ContributionListFilter and the mode=editor
+        endpoint uses, including SubmissionListFilter and the mode=editor
         visibility rules, and #109's server-side draft exclusion. Deriving the
         set any other way is how "select all" and "the number on screen" drift
         apart.
@@ -3673,7 +3684,7 @@ class ContributionViewSet(
         match set for "matching" to refer to.
 
         Values-only and unpaginated on purpose -- 2,443 integers is ~30 KB,
-        where 2,443 serialized contributions is megabytes.
+        where 2,443 serialized submissions is megabytes.
         """
         queryset = self.filter_queryset(self.get_queryset())
         ids = list(queryset.values_list("pk", flat=True))
@@ -3682,14 +3693,14 @@ class ContributionViewSet(
     @action(detail=True, methods=["post"], url_path="catalog-code-suggestion")
     def catalog_code_suggestion(self, request, pk=None):
         contrib = self.get_object()
-        if not _user_may_review_contribution(request.user, contrib):
+        if not _user_may_review_submission(request.user, contrib):
             return Response(
-                {"detail": "You do not have permission to review this contribution."},
+                {"detail": "You do not have permission to review this submission."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        if contrib.status != Contribution.STATUS_PENDING:
+        if contrib.status != Submission.STATUS_PENDING:
             return Response(
-                {"detail": f"Contribution is not pending (status: {contrib.status})."},
+                {"detail": f"Submission is not pending (status: {contrib.status})."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         force = str(request.data.get("force") or "").strip().lower() in {
@@ -3699,7 +3710,7 @@ class ContributionViewSet(
             "on",
         }
         try:
-            suggestion = suggest_for_contribution(contrib, force=force)
+            suggestion = suggest_for_submission(contrib, force=force)
         except CatalogCodeError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(
@@ -3717,121 +3728,121 @@ class ContributionViewSet(
     # excluded on purpose: an undecided submission must be approved, rejected or
     # returned first, so nothing leaves the queue by being hidden.
     ARCHIVABLE_STATUSES = frozenset({
-        Contribution.STATUS_APPROVED,
-        Contribution.STATUS_REJECTED,
-        Contribution.STATUS_NEEDS_REVISION,
+        Submission.STATUS_APPROVED,
+        Submission.STATUS_REJECTED,
+        Submission.STATUS_NEEDS_REVISION,
     })
 
     @action(detail=True, methods=["post"], url_path="archive")
     def archive(self, request, pk=None):
         """
-        Archive this contribution off the editor review dashboard by creating a
-        ContributionRecycleBin sidecar row. The Contribution itself is untouched,
+        Archive this submission off the editor review dashboard by creating a
+        SubmissionRecycleBin sidecar row. The Submission itself is untouched,
         so its status, review notes and audit trail survive and it stays visible
         to its contributor. Reversible via restore. Optional JSON body:
         {"reason": "..."}.
         """
         contrib = self.get_object()
-        if not _user_may_review_contribution(request.user, contrib):
+        if not _user_may_review_submission(request.user, contrib):
             return Response(
-                {"detail": "You do not have permission to archive this contribution."},
+                {"detail": "You do not have permission to archive this submission."},
                 status=status.HTTP_403_FORBIDDEN,
             )
         if contrib.status not in self.ARCHIVABLE_STATUSES:
             return Response(
                 {
-                    "detail": "Only a reviewed contribution can be archived. "
+                    "detail": "Only a reviewed submission can be archived. "
                               f"Decide this one first (status: {contrib.status})."
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if ContributionRecycleBin.objects.filter(contribution=contrib).exists():
+        if SubmissionRecycleBin.objects.filter(submission=contrib).exists():
             return Response(
-                {"detail": "Contribution is already archived."},
+                {"detail": "Submission is already archived."},
                 status=status.HTTP_409_CONFLICT,
             )
         reason = ""
         if isinstance(request.data, dict):
             reason = (request.data.get("reason") or "").strip()
         with transaction.atomic():
-            ContributionRecycleBin.objects.create(
-                contribution=contrib, archived_by=request.user, reason=reason
+            SubmissionRecycleBin.objects.create(
+                submission=contrib, archived_by=request.user, reason=reason
             )
             log_submission_transaction(
-                action=SubmissionTransaction.ACTION_CONTRIBUTION_ARCHIVED,
+                action=SubmissionTransaction.ACTION_SUBMISSION_ARCHIVED,
                 actor=request.user,
-                contribution=contrib,
+                submission=contrib,
                 marking=contrib.marking,
                 source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
                 before_payload={"status": contrib.status},
                 after_payload={"status": contrib.status},
-                extra_payload={"reason": reason, "archived_contribution_id": contrib.pk},
+                extra_payload={"reason": reason, "archived_submission_id": contrib.pk},
             )
         return Response(
-            {"detail": "Contribution archived.", "contributionId": contrib.pk},
+            {"detail": "Submission archived.", "submissionId": contrib.pk},
             status=status.HTTP_200_OK,
         )
 
     @action(detail=True, methods=["post"], url_path="restore")
     def restore(self, request, pk=None):
         """
-        Return an archived contribution to the editor review dashboard by
-        deleting its ContributionRecycleBin sidecar row.
+        Return an archived submission to the editor review dashboard by
+        deleting its SubmissionRecycleBin sidecar row.
         """
         contrib = self.get_object()
-        if not _user_may_review_contribution(request.user, contrib):
+        if not _user_may_review_submission(request.user, contrib):
             return Response(
-                {"detail": "You do not have permission to restore this contribution."},
+                {"detail": "You do not have permission to restore this submission."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        entry = ContributionRecycleBin.objects.filter(contribution=contrib).first()
+        entry = SubmissionRecycleBin.objects.filter(submission=contrib).first()
         if not entry:
             return Response(
-                {"detail": "Contribution is not archived."},
+                {"detail": "Submission is not archived."},
                 status=status.HTTP_404_NOT_FOUND,
             )
         with transaction.atomic():
             entry.delete()
             log_submission_transaction(
-                action=SubmissionTransaction.ACTION_CONTRIBUTION_RESTORED,
+                action=SubmissionTransaction.ACTION_SUBMISSION_RESTORED,
                 actor=request.user,
-                contribution=contrib,
+                submission=contrib,
                 marking=contrib.marking,
                 source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
                 before_payload={"status": contrib.status},
                 after_payload={"status": contrib.status},
-                extra_payload={"restored_contribution_id": contrib.pk},
+                extra_payload={"restored_submission_id": contrib.pk},
             )
         return Response(
-            {"detail": "Contribution restored.", "contributionId": contrib.pk},
+            {"detail": "Submission restored.", "submissionId": contrib.pk},
             status=status.HTTP_200_OK,
         )
 
     @action(detail=True, methods=["post"], url_path="reject")
     def reject(self, request, pk=None):
         contrib = self.get_object()
-        if contrib.status != Contribution.STATUS_PENDING:
+        if contrib.status != Submission.STATUS_PENDING:
             return Response(
-                {"detail": f"Contribution is not pending (status: {contrib.status})."},
+                {"detail": f"Submission is not pending (status: {contrib.status})."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer = SubmissionApproveRejectSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
         review_notes = serializer.validated_data.get("review_notes", "")
         return Response(
-            _reject_contribution(contrib, actor=request.user, review_notes=review_notes),
+            _reject_submission(contrib, actor=request.user, review_notes=review_notes),
             status=status.HTTP_200_OK,
         )
 
     @action(detail=True, methods=["post"], url_path="request-revision")
     def request_revision(self, request, pk=None):
         contrib = self.get_object()
-        if contrib.status != Contribution.STATUS_PENDING:
+        if contrib.status != Submission.STATUS_PENDING:
             return Response(
-                {"detail": f"Contribution is not pending (status: {contrib.status})."},
+                {"detail": f"Submission is not pending (status: {contrib.status})."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        serializer = ContributionApproveRejectSerializer(data=request.data or {})
+        serializer = SubmissionApproveRejectSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
         review_notes = (serializer.validated_data.get("review_notes") or "").strip()
         if not review_notes:
@@ -3840,7 +3851,7 @@ class ContributionViewSet(
                 status=status.HTTP_400_BAD_REQUEST,
             )
         before_submission = dict(contrib.submitted_data or {})
-        contrib.status = Contribution.STATUS_NEEDS_REVISION
+        contrib.status = Submission.STATUS_NEEDS_REVISION
         contrib.reviewer = request.user
         contrib.review_notes = review_notes
         contrib.modified_by = request.user
@@ -3848,7 +3859,7 @@ class ContributionViewSet(
         log_submission_transaction(
             action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
             actor=request.user,
-            contribution=contrib,
+            submission=contrib,
             marking=contrib.marking,
             source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
             before_payload=before_submission,
@@ -3856,14 +3867,14 @@ class ContributionViewSet(
             extra_payload={"review_notes": review_notes},
         )
         return Response(
-            {"detail": "Contribution returned for revision.", "status": contrib.status},
+            {"detail": "Submission returned for revision.", "status": contrib.status},
             status=status.HTTP_200_OK,
         )
 
 
 @extend_schema(
     request=inline_serializer(
-        name="ContributionSubmitRequest",
+        name="SubmissionSubmitRequest",
         fields={
             "state": serializers.CharField(help_text="State name or abbreviation; routes to a Collection"),
             "type": serializers.ChoiceField(
@@ -3875,9 +3886,9 @@ class ContributionViewSet(
     ),
     responses={
         201: inline_serializer(
-            name="ContributionSubmitResponse",
+            name="SubmissionSubmitResponse",
             fields={
-                "contribution_id": serializers.IntegerField(),
+                "submission_id": serializers.IntegerField(),
                 "status": serializers.CharField(),
             },
         ),
@@ -3896,7 +3907,7 @@ def _region_routing_value_from_post_office(post_office) -> str:
     return abbrev or name
 
 
-def _resolve_contribution_state_value(data) -> str:
+def _resolve_submission_state_value(data) -> str:
     """
     Resolve the state/region string used to pick a Collection.
 
@@ -4078,7 +4089,7 @@ def _validate_marking_date_boundary_payload(data: dict):
 
 def _clear_replaced_marking_date_boundaries(existing_data: dict, submitted_data: dict) -> None:
     """
-    Pending-contribution edits merge JSON into the prior submitted_data. If a
+    Pending-submission edits merge JSON into the prior submitted_data. If a
     user changes LRD from unknown to a date, the old *_unknown=true key must not
     survive beside the new date keys.
     """
@@ -4128,9 +4139,9 @@ def _submission_citations(data) -> dict:
 #
 # Ian, 2026-10-19: "When adding a NEW marking, give the opportunity to add the
 # corresponding cover at that time." The Cover cannot exist before its Marking
-# does, so the Marking contribution carries the Cover's fields and uploads under
+# does, so the Marking submission carries the Cover's fields and uploads under
 # submitted_data["pending_cover"]; approving the Marking turns that into an
-# ordinary pending cover contribution for the new Marking (see
+# ordinary pending cover submission for the new Marking (see
 # _create_pending_cover_child). Both Entries are approved separately, as the
 # card and ISSUE.md require. No model change: the link is the stamped ids.
 # ---------------------------------------------------------------------------
@@ -4165,7 +4176,7 @@ def _truthy(value) -> bool:
 
 
 # Trello T70: the Marking form's county keys. `county_id` is a Region pk that
-# approval validates and links (contribution_apply._link_county); `county` is
+# approval validates and links (submission_apply._link_county); `county` is
 # the display name; `county_proposed` is free text for a county not in the
 # list, shown to the Editor and never applied. Shape, length, and that the id
 # is a county of the submitted state are checked here; approval re-checks.
@@ -4284,7 +4295,7 @@ def _save_pending_cover_uploads(pending_cover, uploads, region_abbrev):
         return pending_cover
     kept = list(pending_cover.get("image_metas") or [])
     for uploaded in uploads:
-        meta = _save_contribution_image(uploaded, region_abbrev)
+        meta = _save_submission_image(uploaded, region_abbrev)
         if meta:
             kept.append(meta)
     pending_cover["image_metas"] = kept[:PENDING_COVER_MAX_IMAGES]
@@ -4317,7 +4328,7 @@ def _validate_pending_cover(pending_cover, pending_upload_count=0):
 
 def _create_pending_cover_child(contrib, marking, actor):
     """On Marking approval, turn submitted_data["pending_cover"] into a pending
-    cover contribution for the new Marking. Returns the child or None.
+    cover submission for the new Marking. Returns the child or None.
 
     Runs inside the approval's transaction.atomic(), so a failure here rolls the
     whole approval back rather than leaving a Marking whose promised Cover never
@@ -4339,7 +4350,7 @@ def _create_pending_cover_child(contrib, marking, actor):
         "entity_type": "cover",
         "parent_marking_id": marking.pk,
         "marking_id": marking.pk,
-        "created_from_contribution_id": contrib.pk,
+        "created_from_submission_id": contrib.pk,
     }
     if sd.get("state"):
         child_sd["state"] = sd["state"]
@@ -4352,35 +4363,35 @@ def _create_pending_cover_child(contrib, marking, actor):
         child_sd["cover_image_metas"] = metas
         child_sd["image_metas"] = metas
         child_sd["image_meta"] = metas[0]
-    child = Contribution.objects.create(
+    child = Submission.objects.create(
         contributor=contrib.contributor,
         collection=contrib.collection,
         submitted_data=child_sd,
-        status=Contribution.STATUS_PENDING,
+        status=Submission.STATUS_PENDING,
         created_by=contrib.contributor,
         modified_by=actor,
     )
     log_submission_transaction(
         action=SubmissionTransaction.ACTION_SUBMIT,
         actor=actor,
-        contribution=child,
+        submission=child,
         marking=marking,
         source=SubmissionTransaction.SOURCE_SYSTEM,
         before_payload={},
         after_payload=child_sd,
-        extra_payload={"created_from_contribution_id": contrib.pk},
+        extra_payload={"created_from_submission_id": contrib.pk},
     )
     return child
 
 
 @method_decorator(csrf_exempt, name="dispatch")
-class ContributionSubmitView(APIView):
+class SubmissionSubmitView(APIView):
     """
-    Public submission endpoint for new contributions.
+    Public submission endpoint for new submissions.
 
     Accepts the unified payload shape: marking_* keys,
     plus `type` (TOWNMARK | RATEMARK | AUXMARK) and `desc`. The payload is
-    persisted to Contribution.submitted_data and routed to a Collection by
+    persisted to Submission.submitted_data and routed to a Collection by
     state. Final application to the catalog (creating / updating Marking,
     Image, CoverMarking, DateSeen, CoverValuation rows) happens at approval
     time.
@@ -4394,13 +4405,13 @@ class ContributionSubmitView(APIView):
         is_cover_submission = _is_cover_submission_data(data)
         is_draft = _is_save_as_draft_submission(data)
         edit_pk = None
-        edit_raw = data.get("edit_contribution_id") or data.get("editContributionId")
+        edit_raw = data.get("edit_submission_id") or data.get("editSubmissionId")
         if edit_raw not in (None, ""):
             try:
                 edit_pk = int(edit_raw)
             except (TypeError, ValueError):
                 return Response(
-                    {"detail": "Invalid edit_contribution_id."},
+                    {"detail": "Invalid edit_submission_id."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -4410,13 +4421,13 @@ class ContributionSubmitView(APIView):
         if abandon_draft:
             if edit_pk is None:
                 return Response(
-                    {"detail": "edit_contribution_id is required to abandon a draft."},
+                    {"detail": "edit_submission_id is required to abandon a draft."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            contrib = Contribution.objects.filter(
+            contrib = Submission.objects.filter(
                 pk=edit_pk,
                 contributor=request.user,
-                status=Contribution.STATUS_DRAFT,
+                status=Submission.STATUS_DRAFT,
             ).first()
             if not contrib:
                 return Response(
@@ -4434,7 +4445,7 @@ class ContributionSubmitView(APIView):
             contrib.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
 
-        routing_state = _resolve_contribution_state_value(data)
+        routing_state = _resolve_submission_state_value(data)
         region, collection, state_value = _resolve_collection_for_submission(
             state_value=routing_state,
             is_draft=is_draft,
@@ -4445,7 +4456,7 @@ class ContributionSubmitView(APIView):
         if collection is None:
             if not routing_state:
                 return Response(
-                    {"detail": "state is required to route the contribution to a Collection."},
+                    {"detail": "state is required to route the submission to a Collection."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             if region is None:
@@ -4469,7 +4480,7 @@ class ContributionSubmitView(APIView):
             if county_error:
                 return Response({"detail": county_error}, status=status.HTTP_400_BAD_REQUEST)
         elif type_value and type_value not in Cover.COVER_TYPE_CODES:
-            # Cover contributions may send the cover type as `type`.
+            # Cover submissions may send the cover type as `type`.
             return Response(
                 {"detail": "For cover submissions, type must be one of {} when provided.".format(
                     ", ".join(code for code, _label in Cover.COVER_TYPE_CHOICES))},
@@ -4532,9 +4543,9 @@ class ContributionSubmitView(APIView):
 
         # Save uploaded image files under MEDIA_ROOT/<region_abbrev>/.
         # Marking flow uses `marking_image`; cover draft flow uses `cover_image`.
-        # stash the resulting metadata on Contribution.submitted_data so the
+        # stash the resulting metadata on Submission.submitted_data so the
         # editor portal can display previews. Approval-time materialization
-        # into Image rows happens in the contribution-apply pipeline.
+        # into Image rows happens in the submission-apply pipeline.
         if region is not None:
             region_abbrev = (region.abbrev or "").strip().lower() or "unknown"
         elif collection is not None and collection.region_id:
@@ -4551,7 +4562,7 @@ class ContributionSubmitView(APIView):
             uploaded_files = []
         image_metas = []
         for index, uploaded in enumerate(uploaded_files):
-            meta = _save_contribution_image(uploaded, region_abbrev)
+            meta = _save_submission_image(uploaded, region_abbrev)
             if meta:
                 # Index over the uploads, not the saved metas, so a file that
                 # fails to save cannot shift later captions onto the wrong image.
@@ -4581,8 +4592,8 @@ class ContributionSubmitView(APIView):
             "marking_image_descriptions",
             "cover_image_descriptions",
             "existing_image_descriptions",
-            "edit_contribution_id",
-            "editContributionId",
+            "edit_submission_id",
+            "editSubmissionId",
             "removed_existing_image_keys",
             # Image-ordering control consumed by the *_image_metas builders;
             # not a display field for the review UI.
@@ -4598,10 +4609,10 @@ class ContributionSubmitView(APIView):
             # The two provenance stamps are written by the approval, never taken
             # from the request.
             *_PENDING_COVER_TRANSPORT_KEYS,
-            "pending_cover_contribution_id",
-            "created_from_contribution_id",
+            "pending_cover_submission_id",
+            "created_from_submission_id",
         }
-        user_can_submit_catalog_code = user_can_review_contributions(request.user)
+        user_can_submit_catalog_code = user_can_review_submissions(request.user)
         if not user_can_submit_catalog_code:
             skip_keys.update(CATALOG_CODE_KEYS)
             # ERD/LRD on Submit New Marking are editor-only (issue #27); the
@@ -4625,7 +4636,7 @@ class ContributionSubmitView(APIView):
                 submitted_data["marking_dates_seen"] = normalize_marking_dates_seen(
                     submitted_data["marking_dates_seen"]
                 )
-            except ContributionApplyError as exc:
+            except SubmissionApplyError as exc:
                 return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         if is_cover_submission:
             submitted_data["submission_kind"] = "cover"
@@ -4666,7 +4677,7 @@ class ContributionSubmitView(APIView):
 
         # Collapse duplicate marking-edit drafts. When a contributor saves a
         # draft against an existing marking (edit_marking_id) without already
-        # targeting a specific draft (no edit_contribution_id), look for an
+        # targeting a specific draft (no edit_submission_id), look for an
         # open draft of theirs against the same marking and route the save
         # through the update branch below. Closes the race where two tabs (or
         # a fast click before the frontend dedupe GET resolves) would each
@@ -4684,9 +4695,9 @@ class ContributionSubmitView(APIView):
                 if epi_int is not None:
                     value_filter |= Q(submitted_data__edit_marking_id=epi_int)
                 existing_draft = (
-                    Contribution.objects.filter(
+                    Submission.objects.filter(
                         contributor=request.user,
-                        status=Contribution.STATUS_DRAFT,
+                        status=Submission.STATUS_DRAFT,
                     )
                     .filter(value_filter)
                     .order_by("-modified_date")
@@ -4701,10 +4712,10 @@ class ContributionSubmitView(APIView):
                 # Pending rows stay pending; returned rows keep their status so
                 # they stay in history with the original review_notes visible.
                 target_statuses = [
-                    Contribution.STATUS_DRAFT,
-                    Contribution.STATUS_PENDING,
-                    Contribution.STATUS_NEEDS_REVISION,
-                    Contribution.STATUS_REJECTED,
+                    Submission.STATUS_DRAFT,
+                    Submission.STATUS_PENDING,
+                    Submission.STATUS_NEEDS_REVISION,
+                    Submission.STATUS_REJECTED,
                 ]
                 transition_to_pending = False
             else:
@@ -4712,23 +4723,23 @@ class ContributionSubmitView(APIView):
                 # pending row, resubmitting a returned row, or promoting one of
                 # their own drafts to pending review. All end as pending.
                 target_statuses = [
-                    Contribution.STATUS_DRAFT,
-                    Contribution.STATUS_PENDING,
-                    Contribution.STATUS_NEEDS_REVISION,
-                    Contribution.STATUS_REJECTED,
+                    Submission.STATUS_DRAFT,
+                    Submission.STATUS_PENDING,
+                    Submission.STATUS_NEEDS_REVISION,
+                    Submission.STATUS_REJECTED,
                 ]
                 transition_to_pending = True
 
-            contrib = Contribution.objects.filter(
+            contrib = Submission.objects.filter(
                 pk=edit_pk,
                 contributor=request.user,
                 status__in=target_statuses,
             ).first()
             if not contrib:
                 detail = (
-                    "Contribution not found, not owned by you, or not in a submittable status (draft / pending / needs_revision / rejected)."
+                    "Submission not found, not owned by you, or not in a submittable status (draft / pending / needs_revision / rejected)."
                     if transition_to_pending
-                    else "Draft, pending, or returned contribution not found or not editable."
+                    else "Draft, pending, or returned submission not found or not editable."
                 )
                 return Response({"detail": detail}, status=status.HTTP_404_NOT_FOUND)
             existing_sd = dict(contrib.submitted_data or {})
@@ -4769,7 +4780,7 @@ class ContributionSubmitView(APIView):
                 cover_uploads = _pending_cover_uploads(request)
                 # A row that is (or stays) pending must carry a complete cover:
                 # a draft-style save on a pending row keeps it in the queue.
-                if transition_to_pending or contrib.status == Contribution.STATUS_PENDING:
+                if transition_to_pending or contrib.status == Submission.STATUS_PENDING:
                     cover_error = _validate_pending_cover(pending_cover, len(cover_uploads))
                     if cover_error:
                         return Response({"detail": cover_error}, status=status.HTTP_400_BAD_REQUEST)
@@ -4792,13 +4803,13 @@ class ContributionSubmitView(APIView):
             contrib.modified_by = request.user
             update_fields = ["submitted_data", "collection", "modified_date", "modified_by"]
             if transition_to_pending:
-                contrib.status = Contribution.STATUS_PENDING
+                contrib.status = Submission.STATUS_PENDING
                 contrib.reviewer = None
                 contrib.review_notes = ""
                 update_fields += ["status", "reviewer", "review_notes"]
             contrib.save(update_fields=update_fields)
             if transition_to_pending:
-                consolidate_superseded_contributions(
+                consolidate_superseded_submissions(
                     current=contrib,
                     actor=request.user,
                     source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
@@ -4806,7 +4817,7 @@ class ContributionSubmitView(APIView):
             log_submission_transaction(
                 action=SubmissionTransaction.ACTION_EDIT_SUBMISSION,
                 actor=request.user,
-                contribution=contrib,
+                submission=contrib,
                 marking=None,
                 source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
                 before_payload={},
@@ -4814,11 +4825,11 @@ class ContributionSubmitView(APIView):
                 extra_payload={"resubmitted": transition_to_pending},
             )
             return Response(
-                ContributionDetailSerializer(contrib, context={"request": request}).data,
+                SubmissionDetailSerializer(contrib, context={"request": request}).data,
                 status=status.HTTP_200_OK,
             )
 
-        # Fresh submit (no edit_contribution_id). When an edit marker is present
+        # Fresh submit (no edit_submission_id). When an edit marker is present
         # -- a PENDING edit submitted without first creating a draft -- rebuild
         # the FULL desired image set server-side from the catalog entry's
         # existing Image rows so approval-time apply reconciles correctly
@@ -4878,16 +4889,16 @@ class ContributionSubmitView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        contrib = Contribution.objects.create(
+        contrib = Submission.objects.create(
             contributor=request.user,
             collection=collection,
             submitted_data=submitted_data,
-            status=Contribution.STATUS_DRAFT if is_draft else Contribution.STATUS_PENDING,
+            status=Submission.STATUS_DRAFT if is_draft else Submission.STATUS_PENDING,
             created_by=request.user,
             modified_by=request.user,
         )
         if not is_draft:
-            consolidate_superseded_contributions(
+            consolidate_superseded_submissions(
                 current=contrib,
                 actor=request.user,
                 source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
@@ -4895,22 +4906,22 @@ class ContributionSubmitView(APIView):
         log_submission_transaction(
             action=SubmissionTransaction.ACTION_SUBMIT,
             actor=request.user,
-            contribution=contrib,
+            submission=contrib,
             marking=None,
             source=SubmissionTransaction.SOURCE_CONTRIBUTOR_PORTAL,
             before_payload={},
             after_payload=submitted_data,
         )
         return Response(
-            ContributionDetailSerializer(contrib, context={"request": request}).data,
+            SubmissionDetailSerializer(contrib, context={"request": request}).data,
             status=status.HTTP_201_CREATED,
         )
 
 
-def _save_contribution_image(uploaded_file, region_abbrev):
+def _save_submission_image(uploaded_file, region_abbrev):
     """
     Save an uploaded marking image under MEDIA_ROOT/<region_abbrev>/
-    and return a metadata dict suitable for Contribution.submitted_data.
+    and return a metadata dict suitable for Submission.submitted_data.
 
     Returns dict with storage_filename, original_filename, file_checksum,
     mime_type, image_width, image_height, file_size_bytes; or None if the

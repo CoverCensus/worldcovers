@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Contribute from "./Contribute";
 import CoverEdit from "./CoverEdit";
-import { createContribution } from "@/services/contributions";
+import { createSubmission } from "@/services/submissions";
 import { getMarkingByIdRaw, getMarkingCovers } from "@/services/markings";
 import { listCitationsForSubject } from "@/services/citations";
 
@@ -21,9 +21,9 @@ jest.mock("@/services/postOffices", () => ({ getPostOffices: jest.fn().mockResol
 jest.mock("@/services/regions", () => ({ getRegions: jest.fn().mockResolvedValue([{ value: "VA", label: "Virginia" }]) }));
 jest.mock("@/services/letterings", () => ({ getLetterings: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/constants/markingEnums", () => ({ getDateFormats: jest.fn().mockResolvedValue([]) }));
-jest.mock("@/services/contributions", () => ({
-  getContribution: jest.fn(), createContribution: jest.fn(),
-  listContributions: jest.fn().mockResolvedValue({ items: [] }),
+jest.mock("@/services/submissions", () => ({
+  getSubmission: jest.fn(), createSubmission: jest.fn(),
+  listSubmissions: jest.fn().mockResolvedValue({ items: [] }),
   getDirectCatalogCodeSuggestion: jest.fn().mockResolvedValue({ catalogCode: "VA-NEW" }),
 }));
 jest.mock("@/services/referenceWorks", () => ({
@@ -50,7 +50,7 @@ beforeAll(() => {
 });
 beforeEach(() => {
   jest.clearAllMocks();
-  (createContribution as jest.Mock).mockResolvedValue({ id: 1 });
+  (createSubmission as jest.Mock).mockResolvedValue({ id: 1 });
 });
 
 function open(path: string, route: string, page: React.ReactNode) {
@@ -63,8 +63,8 @@ function open(path: string, route: string, page: React.ReactNode) {
 
 async function saveDraft(): Promise<FormData | Record<string, unknown>> {
   fireEvent.click(await screen.findByRole("button", { name: /save as draft/i }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalled());
-  return (createContribution as jest.Mock).mock.calls[0][0];
+  await waitFor(() => expect(createSubmission).toHaveBeenCalled());
+  return (createSubmission as jest.Mock).mock.calls[0][0];
 }
 
 const get = (payload: FormData | Record<string, unknown>, key: string) =>

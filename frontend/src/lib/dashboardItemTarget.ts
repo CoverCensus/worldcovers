@@ -39,7 +39,7 @@ export function dashboardItemTarget(
     return { to: `/contribute?edit=${item.id}`, state: { from } };
   }
   return {
-    to: withReturnTo(`/contribution/${item.id}`, from),
+    to: withReturnTo(`/submission/${item.id}`, from),
     state: returnState,
   };
 }

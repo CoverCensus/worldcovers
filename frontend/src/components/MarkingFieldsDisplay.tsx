@@ -10,10 +10,10 @@ interface Props {
   rows: MarkingFieldRow[];
   // "record"       -- hide blanks per row.alwaysShow + hasDisplayValue
   //                  (RecordDetail behavior)
-  // "contribution" -- show every row; blanks render as "-" so a contribution
+  // "submission" -- show every row; blanks render as "-" so a submission
   //                  review always has the same row count and order as a
   //                  RecordDetail page
-  mode: "record" | "contribution";
+  mode: "record" | "submission";
 }
 
 export function MarkingFieldsDisplay({ rows, mode }: Props) {

@@ -1,6 +1,6 @@
 # T65 Color repair
 
-Michael runs these commands on the servers. The assistant must not connect
+A maintainer with server access runs these commands. An AI assistant must not connect
 to either server. Use account 1. No staging backup is required.
 
 ## Files and release
@@ -25,7 +25,7 @@ GitHub Actions and tests must not read them. Copy only the appropriate CSV to
 `/srv/woco/tools/wip/t65/` yourself before running the server commands.
 Record the deployed revision from `git rev-parse HEAD` as the wocod user.
 
-After staging passes and Michael accepts its result, bring the repair command,
+After staging passes and the result is accepted, bring the repair command,
 checker, tests, and documentation onto `main` through a focused PR. Include
 the full repair command if main does not have it yet. Run the tests against
 that main-based change before deployment. Copy the production CSV separately.

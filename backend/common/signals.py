@@ -97,7 +97,7 @@ def _send_activation_email(to_email: str, *, password_ready: bool = True) -> Non
 ##
 ## Marking.earliest_seen / latest_seen (+granularities) are a derived cache
 ## over DateSeen + CoverMarking. These receivers cover every ORM write path --
-## API viewsets, admin (incl. inlines and bulk delete), contribution apply,
+## API viewsets, admin (incl. inlines and bulk delete), submission apply,
 ## import-export per-row saves, and cascades (a post_delete receiver disables
 ## fast-delete, so queryset.delete() fires per instance). Bulk paths that skip
 ## the ORM (bulk_create) wrap themselves in suppress_date_range_recompute()

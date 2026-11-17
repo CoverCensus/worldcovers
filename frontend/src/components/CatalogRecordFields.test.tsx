@@ -174,8 +174,8 @@ describe("CatalogRecordFields search gallery fields", () => {
   });
 });
 
-describe("CatalogRecordFields contribution review fields", () => {
-  // issues.md 173 — Todd Hause: "the 'Contribution Details' does not include
+describe("CatalogRecordFields submission review fields", () => {
+  // issues.md 173 — Todd Hause: "the 'Submission Details' does not include
   // the 'Description' text which was entered under the date ranges in the
   // original submission." For a plain townmark it was never rendered; for
   // other types it was cut to 140 characters.
@@ -183,7 +183,7 @@ describe("CatalogRecordFields contribution review fields", () => {
 
   it("shows a plain townmark's description in full, after the dates", () => {
     const { container } = render(
-      <CatalogRecordFields row={catalogRow({ desc: longDesc })} variant="contribution" />,
+      <CatalogRecordFields row={catalogRow({ desc: longDesc })} variant="submission" />,
     );
 
     expect(renderedLabels(container)).toEqual([
@@ -202,7 +202,7 @@ describe("CatalogRecordFields contribution review fields", () => {
 
   it("omits Description when the submission has none", () => {
     const { container } = render(
-      <CatalogRecordFields row={catalogRow({ desc: "-" })} variant="contribution" />,
+      <CatalogRecordFields row={catalogRow({ desc: "-" })} variant="submission" />,
     );
 
     expect(renderedLabels(container)).not.toContain("Description");

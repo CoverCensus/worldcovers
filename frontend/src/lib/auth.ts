@@ -35,7 +35,7 @@ export interface AuthUser {
  * Normalize the auth payload coming from the backend before we hand it to the
  * rest of the SPA. The Django auth view returns role="state_editor" for users
  * in the Editors group, but every UI gate in the SPA (RecordDetail.tsx,
- * Navigation.tsx, Dashboard.tsx, ContributionDetail.tsx, ...) checks
+ * Navigation.tsx, Dashboard.tsx, SubmissionDetail.tsx, ...) checks
  * `role === "editor"`. We do the rename in one place here so individual
  * components don't need to know about the legacy string.
  */

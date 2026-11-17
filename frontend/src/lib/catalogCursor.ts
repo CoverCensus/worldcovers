@@ -17,8 +17,8 @@
  *   can scroll that row back into view when the viewer returns to that same
  *   view. It is read once and cleared.
  *
- * sessionStorage rather than router state for the reasons ENGINEERING-ARCHIVE
- * records for the view mirror: detail pages are reloaded and reached several
+ * sessionStorage rather than router state, as for the view mirror (see
+ * DECISIONS.md, "Return To The Row You Left"): detail pages are reloaded and reached several
  * navigations deep, and router state survives neither. A fresh tab has no
  * cursor and shows no Previous/Next, which is the honest answer.
  */

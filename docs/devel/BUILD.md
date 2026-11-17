@@ -74,8 +74,7 @@ production build steps (`deploy/deploy.sh`); see [DEPLOY.md](DEPLOY.md).
 
 ## Prerequisites
 
-- Local development has been tested on macOS. Linux should work with the same
-  commands when the prerequisites below are installed.
+- Local development has been tested on macOS and on Ubuntu Linux under WSL2.
 - `woco.bat` is included as a convenience wrapper for Windows cmd.exe and
   PowerShell, but the primary documented setup path is macOS/Linux shell.
 - Python 3.13 (installed automatically by `uv` from `.python-version`)
@@ -83,14 +82,15 @@ production build steps (`deploy/deploy.sh`); see [DEPLOY.md](DEPLOY.md).
 - Node.js and npm (for the frontend build)
 - MariaDB, running locally, with the `mariadb` client on PATH
 
-Use MariaDB for local development, CI, staging, and production. Setup checks
-the connected server before database bootstrap or migrations and rejects MySQL.
+Use MariaDB for local development, manual verification, staging, and production.
+Setup checks the connected server before database bootstrap or migrations and
+rejects MySQL.
 The Django backend name `django.db.backends.mysql`, the `mysqlclient` Python
 package, `mysql.cnf`, and `WOCO_MYSQL_ROOT_PASSWORD` remain compatibility names;
 they do not select a MySQL server.
 
-CI tests MariaDB 12.3 LTS for staging and 10.11 for production. Setup checks
-the server family, not a fixed release series. See
+Manual verification uses MariaDB 12.3 LTS for staging and 10.11 for production.
+Setup checks the server family, not a fixed release series. See
 [database versions](DEPLOY.md#database-versions) for the current configuration
 and planned changes.
 

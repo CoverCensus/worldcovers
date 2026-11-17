@@ -12,7 +12,7 @@ def process_view(request, view_func, view_args, view_kwargs):
         "/api/login", "/api/login/", "/api/logout", "/api/logout/",
         "/api/login-requests", "/api/login-requests/",
     )
-    contrib_action = path.startswith("/api/contributions/") and (
+    contrib_action = path.startswith("/api/submissions/") and (
         path.rstrip("/").endswith("/approve")
         or path.rstrip("/").endswith("/reject")
         or path.rstrip("/").endswith("/request-revision")

@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Contribute from "./Contribute";
-import { createContribution, getContribution } from "@/services/contributions";
+import { createSubmission, getSubmission } from "@/services/submissions";
 import { getMarkingByIdRaw } from "@/services/markings";
 import { deleteDateSeen } from "@/services/datesSeen";
 
@@ -23,10 +23,10 @@ jest.mock("@/services/postOffices", () => ({ getPostOffices: jest.fn().mockResol
 jest.mock("@/services/regions", () => ({ getRegions: jest.fn().mockResolvedValue([{ value: "VA", label: "Virginia" }]) }));
 jest.mock("@/services/letterings", () => ({ getLetterings: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/constants/markingEnums", () => ({ getDateFormats: jest.fn().mockResolvedValue([]) }));
-jest.mock("@/services/contributions", () => ({
-  getContribution: jest.fn(), createContribution: jest.fn(),
+jest.mock("@/services/submissions", () => ({
+  getSubmission: jest.fn(), createSubmission: jest.fn(),
   getDirectCatalogCodeSuggestion: jest.fn().mockResolvedValue({ catalogCode: "VA-7" }),
-  listContributions: jest.fn().mockResolvedValue({ items: [] }),
+  listSubmissions: jest.fn().mockResolvedValue({ items: [] }),
 }));
 jest.mock("@/services/referenceWorks", () => ({
   ...jest.requireActual("@/services/referenceWorks"), getReferenceWorks: jest.fn().mockResolvedValue([]),
@@ -79,7 +79,7 @@ it("shows a marking's current images read-only on Submit Edit", async () => {
 it("keeps a resumed edit draft's own upload editable and the marking's images read-only", async () => {
   mockRole = "editor";
   (getMarkingByIdRaw as jest.Mock).mockResolvedValue({ ...marking, can_edit_dates: true });
-  (getContribution as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
+  (getSubmission as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
     state: "VA", town: "Richmond", type: "TOWNMARK", submission_kind: "marking",
     is_manuscript: true, edit_marking_id: 7,
     marking_image_metas: [{ storage_filename: "va/current.jpg" }, { storage_filename: "va/mine.jpg" }],
@@ -146,7 +146,7 @@ it("lets Editors add and remove dates on a new Marking before it exists", async 
   fireEvent.click(screen.getByRole("button", { name: "Remove date" }));
   await screen.findByText("No dates added to this submission.");
   expect(screen.queryByText("Recorded date range")).toBeNull();
-  expect(createContribution).not.toHaveBeenCalled();
+  expect(createSubmission).not.toHaveBeenCalled();
   expect(deleteDateSeen).not.toHaveBeenCalled();
 });
 
@@ -167,12 +167,12 @@ it("hides the range after the last saved Marking date is removed", async () => {
 
 it("restores a new Marking draft's dates and saves an edited list with the draft", async () => {
   mockRole = "editor";
-  (getContribution as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
+  (getSubmission as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
     state: "VA", submission_kind: "marking", marking_dates_seen: [
       { date_year: 1840, date_month: null, date_day: null, granularity: "YEAR", date: "1840-01-01" },
     ],
   } });
-  (createContribution as jest.Mock).mockResolvedValue({ id: 1 });
+  (createSubmission as jest.Mock).mockResolvedValue({ id: 1 });
   openForm("/contribute?edit=1");
   await screen.findByText("1840");
   fireEvent.click(screen.getByRole("button", { name: "Edit" }));
@@ -180,24 +180,24 @@ it("restores a new Marking draft's dates and saves an edited list with the draft
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await screen.findByText("1850");
   fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalledWith(expect.objectContaining({
+  await waitFor(() => expect(createSubmission).toHaveBeenCalledWith(expect.objectContaining({
     marking_dates_seen: [{ date_year: 1850, date_month: null, date_day: null }],
   })));
 });
 
 it("does not validate or send hidden boundary dates from a draft with no Dates Seen", async () => {
   mockRole = "editor";
-  (getContribution as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
+  (getSubmission as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
     state: "VA", submission_kind: "marking", marking_dates_seen: [],
     marking_erd_date_year: 1850, marking_lrd_date_year: 1840,
   } });
-  (createContribution as jest.Mock).mockResolvedValue({ id: 1 });
+  (createSubmission as jest.Mock).mockResolvedValue({ id: 1 });
   openForm("/contribute?edit=1");
   await screen.findByText("No dates added to this submission.");
   expect(screen.queryByText("Recorded date range")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalled());
-  const payload = (createContribution as jest.Mock).mock.calls[0][0];
+  await waitFor(() => expect(createSubmission).toHaveBeenCalled());
+  const payload = (createSubmission as jest.Mock).mock.calls[0][0];
   expect(payload.marking_dates_seen).toEqual([]);
   expect(payload.marking_erd_date_year).toBeUndefined();
   expect(payload.marking_lrd_date_year).toBeUndefined();

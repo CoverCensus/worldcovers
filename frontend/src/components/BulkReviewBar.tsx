@@ -11,7 +11,7 @@
  *    client-side from one fetched page lies at scale, and here the lie would
  *    approve rows the editor never saw.
  * 2. Approval is a ONE-WAY DOOR. It mints permanent catalog codes and
- *    consolidate_superseded_contributions deletes rows. Hence the typed
+ *    consolidate_superseded_submissions deletes rows. Hence the typed
  *    confirmation above a threshold, and hence failures are surfaced per row
  *    rather than as a count.
  */
@@ -21,11 +21,11 @@ import { AlertTriangle, Check, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  bulkReviewContributions,
-  listContributionIds,
+  bulkReviewSubmissions,
+  listSubmissionIds,
   type BulkReviewFailure,
-  type ContributionListParams,
-} from "@/services/contributions";
+  type SubmissionListParams,
+} from "@/services/submissions";
 
 // Above this, an editor types the count before anything happens. Approval
 // cannot be undone, so the cost of a mis-click scales with the batch.
@@ -33,7 +33,7 @@ export const CONFIRM_THRESHOLD = 100;
 
 export interface BulkReviewBarProps {
   /** The queue's current filters. Must be the same object the list was fetched with. */
-  filters: ContributionListParams;
+  filters: SubmissionListParams;
   /** Ids ticked on the current page. */
   selectedIds: number[];
   onSelectionChange: (ids: number[]) => void;
@@ -82,7 +82,7 @@ export function BulkReviewBar({
   const selectAllMatching = async () => {
     setError(null);
     try {
-      const { ids } = await listContributionIds(filters);
+      const { ids } = await listSubmissionIds(filters);
       onSelectionChange(ids);
       setTargetIds(ids);
     } catch {
@@ -106,7 +106,7 @@ export function BulkReviewBar({
     setProgress({ done: 0, total: ids.length });
     const controller = new AbortController();
     abortRef.current = controller;
-    const result = await bulkReviewContributions(which, ids, {
+    const result = await bulkReviewSubmissions(which, ids, {
       onProgress: (done, total) => setProgress({ done, total }),
       signal: controller.signal,
     });

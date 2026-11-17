@@ -14,7 +14,7 @@ tools/munger/fields; this repairs what it already emitted, on each site.
 A colour is referenced from more places than the FK. All of them are handled:
   - Marking.color and Cover.color (both PROTECT), including recycle-binned rows
   - MarkingVersion / CoverVersion snapshot["color_id"] (restore writes it back)
-  - Contribution.submitted_data["color"] (name) and ["color_id"] (id, often a
+  - Submission.submitted_data["color"] (name) and ["color_id"] (id, often a
     string) -- approval resolves color_id FIRST and raises if the pk is gone,
     so a pending submission would stop approving
 Left alone, deliberately: django-reversion Version rows. Nothing in the app
@@ -48,7 +48,7 @@ from django.utils import timezone
 
 from common.models import (
     Color,
-    Contribution,
+    Submission,
     Cover,
     CoverVersion,
     Marking,
@@ -76,7 +76,7 @@ PROTECTED_NAMES = {"black"}
 ACTIONS = ("keep", "merge", "null")
 REPORT_FIELDS = [
     "color_id", "name", "hex_val", "n_markings", "n_covers",
-    "n_marking_versions", "n_cover_versions", "n_contributions",
+    "n_marking_versions", "n_cover_versions", "n_submissions",
     "is_suspect", "suggested_target", "action", "target",
 ]
 
@@ -115,9 +115,9 @@ def suggest_target(name: str, canonical: dict[str, Color]) -> str:
     return ""
 
 
-def _contribution_refs(color: Color):
+def _submission_refs(color: Color):
     pk = color.pk
-    return Contribution.objects.filter(
+    return Submission.objects.filter(
         Q(submitted_data__color__iexact=color.name)
         | Q(submitted_data__color_id=pk)
         | Q(submitted_data__color_id=str(pk))
@@ -180,7 +180,7 @@ class Command(BaseCommand):
 
         with transaction.atomic():
             plan = self._load_mapping(opts["mapping"])
-            self._check_contributions(plan)
+            self._check_submissions(plan)
             self._run_plan(plan, actor, commit, opts["expect"])
 
     def _run_plan(self, plan, actor, commit, expect):
@@ -219,7 +219,7 @@ class Command(BaseCommand):
                 "n_covers": Cover.all_objects.filter(color=c).count(),
                 "n_marking_versions": _version_refs(MarkingVersion, c).count(),
                 "n_cover_versions": _version_refs(CoverVersion, c).count(),
-                "n_contributions": _contribution_refs(c).count(),
+                "n_submissions": _submission_refs(c).count(),
                 "is_suspect": "yes" if suspect else "no",
                 "suggested_target": _ascii(suggestion),
                 "action": action, "target": _ascii(suggestion),
@@ -231,7 +231,7 @@ class Command(BaseCommand):
                 f"  {c.pk:<5} {_ascii(c.name):<24} markings={row['n_markings']:<5} "
                 f"covers={row['n_covers']:<4} versions="
                 f"{row['n_marking_versions'] + row['n_cover_versions']:<5} "
-                f"contributions={row['n_contributions']:<4} "
+                f"submissions={row['n_submissions']:<4} "
                 f"{'SUSPECT -> ' + (_ascii(suggestion) or 'NULL') if suspect else ''}")
         suspects = sum(1 for r in rows if r["is_suspect"] == "yes")
         self.stdout.write(
@@ -330,9 +330,9 @@ class Command(BaseCommand):
                 f"{path}:{line}: {name!a} matches {len(hits)} Color row(s), need 1")
         return hits[0]
 
-    def _check_contributions(self, plan):
+    def _check_submissions(self, plan):
         for bad, _ in plan:
-            for row in _contribution_refs(bad).select_for_update():
+            for row in _submission_refs(bad).select_for_update():
                 data = row.submitted_data
                 name = data.get("color")
                 pk = data.get("color_id")
@@ -364,8 +364,8 @@ class Command(BaseCommand):
                 version.save(update_fields=["snapshot"])
                 n_versions += 1
 
-        n_contributions = 0
-        for row in _contribution_refs(bad):
+        n_submissions = 0
+        for row in _submission_refs(bad):
             data = dict(row.submitted_data)
             if target is None:
                 # Absent leaves a live marking's colour alone on an edit and
@@ -382,14 +382,14 @@ class Command(BaseCommand):
             row.modified_by = actor
             # Per-row save: bulk_update skips auto_now and signals.
             row.save(update_fields=["submitted_data", "modified_by", "modified_date"])
-            n_contributions += 1
+            n_submissions += 1
 
         if (Marking.all_objects.filter(color=bad).exists()
                 or Cover.all_objects.filter(color=bad).exists()):
             raise CommandError(f"{_ascii(bad.name)}: still referenced after repointing")
         if (_version_refs(MarkingVersion, bad).exists()
                 or _version_refs(CoverVersion, bad).exists()
-                or _contribution_refs(bad).exists()):
+                or _submission_refs(bad).exists()):
             raise CommandError(f"Color {bad.pk}: stored references remain")
         try:
             bad.delete()
@@ -398,4 +398,4 @@ class Command(BaseCommand):
 
         self.stdout.write(
             f"  {bad.name!a} -> {label}: markings={n_markings} covers={n_covers} "
-            f"versions={n_versions} contributions={n_contributions}; row deleted")
+            f"versions={n_versions} submissions={n_submissions}; row deleted")

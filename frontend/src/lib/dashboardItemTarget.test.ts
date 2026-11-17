@@ -11,7 +11,7 @@ describe("dashboardItemTarget", () => {
   it("opens a pending submission's review page with the return-to query", () => {
     const target = dashboardItemTarget({ id: 7, status: "pending" }, FROM, RETURN_STATE);
 
-    expect(target.to.startsWith("/contribution/7?")).toBe(true);
+    expect(target.to.startsWith("/submission/7?")).toBe(true);
     expect(readReturnTo(new URLSearchParams(target.to.split("?")[1]))).toBe(FROM);
     expect(target.state).toEqual(RETURN_STATE);
   });

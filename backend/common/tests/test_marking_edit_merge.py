@@ -13,7 +13,7 @@ deleted the existing ASCC citation on 118 of 120 sampled.
 
 `fixtures/vphc_edit_payloads.json` holds one REAL payload per distinct key-set
 found across the 310 queued VPHC edits (18 shapes, censused from the local
-`Contributions` table). Replaying one of each covers all 310 by construction:
+`Submissions` table). Replaying one of each covers all 310 by construction:
 the defect is driven by which keys are present, not by their values.
 """
 import json
@@ -23,12 +23,12 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from common.audit import build_marking_snapshot, compute_payload_diff
-from common.contribution_apply import apply_contribution_to_catalog
+from common.submission_apply import apply_submission_to_catalog
 from common.models import (
     Citation,
     Collection,
     Color,
-    Contribution,
+    Submission,
     Marking,
     PostOffice,
     PostOfficeRegion,
@@ -125,15 +125,15 @@ class MarkingEditMergeTests(TestCase):
 
     def _approve(self, marking, payload):
         payload = dict(payload, edit_marking_id=marking.pk)
-        contrib = Contribution.objects.create(
+        contrib = Submission.objects.create(
             contributor=self.user,
             collection=Collection.objects.get(region=self.va),
             submitted_data=payload,
-            status=Contribution.STATUS_PENDING,
+            status=Submission.STATUS_PENDING,
             created_by=self.user,
             modified_by=self.user,
         )
-        apply_contribution_to_catalog(contrib)
+        apply_submission_to_catalog(contrib)
         marking.refresh_from_db()
         return payload
 
@@ -203,15 +203,15 @@ class MarkingEditMergeTests(TestCase):
         3.00 or Record History shows a fake "rate val: 3.00 -> 3"."""
         marking = self._marking(5000)
         before = build_marking_snapshot(marking)
-        contrib = Contribution.objects.create(
+        contrib = Submission.objects.create(
             contributor=self.user,
             collection=Collection.objects.get(region=self.va),
             submitted_data=dict(self.payloads[0], edit_marking_id=marking.pk, rate_val="3"),
-            status=Contribution.STATUS_PENDING,
+            status=Submission.STATUS_PENDING,
             created_by=self.user,
             modified_by=self.user,
         )
-        applied = apply_contribution_to_catalog(contrib)
+        applied = apply_submission_to_catalog(contrib)
 
         self.assertEqual(str(applied.rate_val), "3.00")
         changed = {row["field"] for row in compute_payload_diff(before, build_marking_snapshot(applied))}

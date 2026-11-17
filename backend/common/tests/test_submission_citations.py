@@ -6,7 +6,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from common.models import (
-    Citation, Collection, Contribution, Cover, CoverMarking, Marking,
+    Citation, Collection, Submission, Cover, CoverMarking, Marking,
     PostOffice, PostOfficeRegion, ReferenceWork, Region,
 )
 
@@ -64,9 +64,9 @@ class SubmissionCitationTests(TestCase):
 
     def post(self, payload, fmt):
         self.client.force_authenticate(self.user)
-        response = self.client.post("/api/v2/contributions/", payload, format=fmt)
-        self.assertEqual(response.status_code, 200 if "edit_contribution_id" in payload else 201, response.data)
-        return Contribution.objects.get(pk=response.data["id"])
+        response = self.client.post("/api/v2/submissions/", payload, format=fmt)
+        self.assertEqual(response.status_code, 200 if "edit_submission_id" in payload else 201, response.data)
+        return Submission.objects.get(pk=response.data["id"])
 
     def test_invalid_citation_inputs_do_not_create_a_submission(self):
         self.client.force_authenticate(self.user)
@@ -80,20 +80,20 @@ class SubmissionCitationTests(TestCase):
         ):
             with self.subTest(fields=citation_fields):
                 response = self.client.post(
-                    "/api/v2/contributions/",
+                    "/api/v2/submissions/",
                     {**self.payload("MARKING"), **citation_fields}, format="json",
                 )
                 self.assertEqual(response.status_code, 400, response.data)
-                self.assertFalse(Contribution.objects.exists())
+                self.assertFalse(Submission.objects.exists())
 
-    def approve(self, contribution, kind):
+    def approve(self, submission, kind):
         self.client.force_authenticate(self.editor)
         response = self.client.post(
-            f"/api/v2/contributions/{contribution.pk}/approve/", {}, format="json"
+            f"/api/v2/submissions/{submission.pk}/approve/", {}, format="json"
         )
         self.assertEqual(response.status_code, 200, response.data)
-        contribution.refresh_from_db()
-        return contribution.marking_id if kind == "MARKING" else response.data["coverId"]
+        submission.refresh_from_db()
+        return submission.marking_id if kind == "MARKING" else response.data["coverId"]
 
     def test_multiple_citations_survive_create_and_edit_in_both_formats(self):
         for kind in ("MARKING", "COVER"):
@@ -108,9 +108,9 @@ class SubmissionCitationTests(TestCase):
                         )
                         payload["save_as_draft"] = True
                         draft = self.post(payload, fmt)
-                        self.assertEqual(draft.status, Contribution.STATUS_DRAFT)
+                        self.assertEqual(draft.status, Submission.STATUS_DRAFT)
                         self.client.force_authenticate(self.user)
-                        review = self.client.get(f"/api/v2/contributions/{draft.pk}/")
+                        review = self.client.get(f"/api/v2/submissions/{draft.pk}/")
                         saved = review.data["submitted_data"]
                         self.assertEqual(
                             [int(value) for value in saved["reference_work_ids"]],
@@ -119,9 +119,9 @@ class SubmissionCitationTests(TestCase):
                         self.assertNotIn("reference_work_ids[]", saved)
                         # Resume without new Citation fields must retain all saved evidence.
                         resumed = self.payload(kind, edit)
-                        resumed["edit_contribution_id"] = draft.pk
+                        resumed["edit_submission_id"] = draft.pk
                         pending = self.post(resumed, fmt)
-                        self.assertEqual(pending.status, Contribution.STATUS_PENDING)
+                        self.assertEqual(pending.status, Submission.STATUS_PENDING)
                         pk = self.approve(pending, kind)
                         self.assertEqual(
                             dict(Citation.objects.filter(subject_type=kind, subject_id=pk)
@@ -154,13 +154,13 @@ class SubmissionCitationTests(TestCase):
                     self.assertFalse(rows.exists())
 
     def test_resumed_draft_replaces_legacy_citation_key(self):
-        draft = Contribution.objects.create(
+        draft = Submission.objects.create(
             contributor=self.user, collection=Collection.objects.get(),
-            status=Contribution.STATUS_DRAFT,
+            status=Submission.STATUS_DRAFT,
             submitted_data={**self.payload("MARKING"), "reference_work_ids[]": str(self.refs[0].pk)},
             **self.audit,
         )
-        payload = {**self.payload("MARKING"), "edit_contribution_id": draft.pk,
+        payload = {**self.payload("MARKING"), "edit_submission_id": draft.pk,
                    "reference_work_ids": [], "reference_work_details": []}
         pending = self.post(payload, "json")
         self.assertNotIn("reference_work_ids[]", pending.submitted_data)

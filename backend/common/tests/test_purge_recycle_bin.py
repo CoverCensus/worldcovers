@@ -16,8 +16,8 @@ from common.models import (
     Citation,
     Collection,
     Color,
-    Contribution,
-    ContributionRecycleBin,
+    Submission,
+    SubmissionRecycleBin,
     Cover,
     CoverMarking,
     CoverRecycleBin,
@@ -328,15 +328,15 @@ class PurgeArchiveTests(TestCase):
                 subject_type=subject_type, subject_id=subject_id,
                 date_year=1850, granularity="YEAR", **self.stamp,
             )
-        self.contribution = Contribution.objects.create(
+        self.submission = Submission.objects.create(
             marking=self.binned, collection=collection, contributor=self.user,
-            status=Contribution.STATUS_APPROVED, submitted_data={"town": "Richmond"},
+            status=Submission.STATUS_APPROVED, submitted_data={"town": "Richmond"},
             **self.stamp,
         )
-        ContributionRecycleBin.objects.create(contribution=self.contribution, archived_by=self.user)
+        SubmissionRecycleBin.objects.create(submission=self.submission, archived_by=self.user)
         self.transaction = SubmissionTransaction.objects.create(
             actor=self.user, action=SubmissionTransaction.ACTION_APPROVE,
-            marking=self.binned, cover=self.binned_cover, contribution=self.contribution,
+            marking=self.binned, cover=self.binned_cover, submission=self.submission,
             source=SubmissionTransaction.SOURCE_SYSTEM,
         )
         MarkingVersion.objects.create(
@@ -391,11 +391,11 @@ class PurgeArchiveTests(TestCase):
 
         # Deleted, relinked, and the file left alone.
         self.assertFalse(Marking.all_objects.filter(pk=self.binned.pk).exists())
-        self.assertFalse(Contribution.objects.filter(pk=self.contribution.pk).exists())
+        self.assertFalse(Submission.objects.filter(pk=self.submission.pk).exists())
         self.assertFalse(CoverMarking.objects.filter(pk=self.kept_link.pk).exists())
         self.transaction.refresh_from_db()
         self.assertIsNone(self.transaction.marking_id)
-        self.assertIsNone(self.transaction.contribution_id)
+        self.assertIsNone(self.transaction.submission_id)
         self.crop.refresh_from_db()
         self.assertIsNone(self.crop.cropped_from_id)
         self.assertEqual((self.media / "va/shared.jpg").read_bytes(), self.shared_bytes)
@@ -416,7 +416,7 @@ class PurgeArchiveTests(TestCase):
         self.assertEqual(self._counts(), before)
         self.assertTrue(MarkingRecycleBin.objects.filter(marking_id=self.binned.pk).exists())
         self.assertFalse(Marking.objects.filter(pk=self.binned.pk).exists())
-        self.assertTrue(Contribution.objects.filter(pk=self.contribution.pk).exists())
+        self.assertTrue(Submission.objects.filter(pk=self.submission.pk).exists())
         self.assertTrue(CoverMarking.objects.filter(pk=self.kept_link.pk).exists())
         self.transaction.refresh_from_db()
         self.assertEqual(self.transaction.marking_id, self.binned.pk)
@@ -464,7 +464,7 @@ class PurgeArchiveTests(TestCase):
             with self.assertRaisesMessage(CommandError, "archive failed"):
                 call_command("purge_recycle_bin", no_input=True, archive_dir=str(self.root / "x"), stdout=StringIO())
         self.assertTrue(Marking.all_objects.filter(pk=self.binned.pk).exists())
-        self.assertTrue(Contribution.objects.filter(pk=self.contribution.pk).exists())
+        self.assertTrue(Submission.objects.filter(pk=self.submission.pk).exists())
 
     def test_scope_missing_a_cascade_is_refused(self):
         scope = [
@@ -503,4 +503,4 @@ class PurgeArchiveTests(TestCase):
         self.assertFalse((bundle / "PURGED").exists())
         self.assertIn("[DRY RUN]", out.getvalue())
         self.assertTrue(Marking.all_objects.filter(pk=self.binned.pk).exists())
-        self.assertTrue(Contribution.objects.filter(pk=self.contribution.pk).exists())
+        self.assertTrue(Submission.objects.filter(pk=self.submission.pk).exists())

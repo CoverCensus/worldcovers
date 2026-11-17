@@ -1,5 +1,5 @@
 /**
- * State options for filters/contribution forms.
+ * State options for filters/submission forms.
  * Single source: GET /regions/ (supports assigned_only=true for State Editors).
  */
 import apiClient from "@/lib/api";
